@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Node
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/dist-ssr/
+src/frontend/.vite/
+
+# Test results
+src/frontend/test-results/
+src/frontend/playwright-report/
+
+# Go
+src/backend/server
+
+# Docker build artifacts
+data/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.sw?
