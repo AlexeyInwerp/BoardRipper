@@ -194,11 +194,6 @@ export function SettingsPanel() {
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, interaction: interactionRef,
   });
-  // keep in sync each render
-  sectionRefsMapRef.current = {
-    outline: outlineRef, parts: partsRef, pins: pinsRef,
-    netColors: netColorsRef, selection: selectionRef, interaction: interactionRef,
-  };
 
   const toggleSection = useCallback((id: SectionId) => {
     setOpenSections(prev => {

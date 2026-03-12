@@ -267,11 +267,12 @@ export function SettingsMockup({
     };
   }, [rebuildScene]);
 
-  // ── Settings changes → rebuild scene (preserve zoom/pan) ───────────────────
+  // ── Settings changes → rebuild scene (debounced to avoid per-pixel slider rebuilds) ──
   useEffect(() => {
     const state = pixiRef.current;
     if (!state) return;
-    rebuildScene(state, settings);
+    const id = requestAnimationFrame(() => rebuildScene(state, settings));
+    return () => cancelAnimationFrame(id);
   }, [settings, rebuildScene]);
 
   return (

@@ -4,7 +4,7 @@ import type { BoardData, Point, Pin, BBox } from '../parsers';
 import { boardStore } from '../store/board-store';
 import { renderSettingsStore, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
-import { buildBoardScene, BOARD_COLORS } from './board-scene';
+import { buildBoardScene, drawOutline, BOARD_COLORS } from './board-scene';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -22,7 +22,9 @@ interface BoardScene {
   outlineGfx: Graphics;
   topLayer: Container;
   bottomLayer: Container;
-  labels: Text[];
+  labels: import('pixi.js').Text[];
+  topLabels: import('pixi.js').Text[];
+  bottomLabels: import('pixi.js').Text[];
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
@@ -37,6 +39,11 @@ interface ViewportState {
 }
 
 export class BoardRenderer {
+  /** Whether top layer should be visible (accounts for butterfly mode) */
+  private get isTopVisible() { return this.isTopVisible; }
+  /** Whether bottom layer should be visible (accounts for butterfly mode) */
+  private get isBottomVisible() { return this.isBottomVisible; }
+
   private app: Application;
   private viewport!: Viewport;
   private selectionGfx!: Graphics;
@@ -264,10 +271,13 @@ export class BoardRenderer {
       broot.scale.set(sx, botSy);
 
       // Counter-flip labels for readability
-      for (const label of scene.labels) {
-        const inBottom = label.parent && this.isDescendant(label, scene.bottomLayer);
+      for (const label of scene.topLabels) {
         label.rotation = -rotation;
-        label.scale.set(sx, inBottom ? botSy : topSy);
+        label.scale.set(sx, topSy);
+      }
+      for (const label of scene.bottomLabels) {
+        label.rotation = -rotation;
+        label.scale.set(sx, botSy);
       }
     } else {
       // Normal mode
@@ -292,15 +302,6 @@ export class BoardRenderer {
     }
   }
 
-  private isDescendant(child: Container, ancestor: Container): boolean {
-    let node: Container | null = child.parent;
-    while (node) {
-      if (node === ancestor) return true;
-      node = node.parent;
-    }
-    return false;
-  }
-
   /** Set up butterfly mode: move bottom layer into its own root */
   private setupButterfly(board: BoardData, scene: BoardScene) {
     if (scene.butterflyRoot) { dbg(2, 'setupButterfly: already set up'); return; }
@@ -309,17 +310,7 @@ export class BoardRenderer {
     // Create butterfly root with a copy of the outline
     const broot = new Container();
     const boutline = new Graphics();
-    const s = renderSettingsStore.settings;
-
-    if (board.outline.length > 1) {
-      boutline.moveTo(board.outline[0].x, board.outline[0].y);
-      for (let i = 1; i < board.outline.length; i++) {
-        boutline.lineTo(board.outline[i].x, board.outline[i].y);
-      }
-      boutline.closePath();
-      boutline.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
-      boutline.stroke({ width: s.outlineWidth, color: COLORS.outline, alpha: s.outlineAlpha });
-    }
+    drawOutline(boutline, board, renderSettingsStore.settings);
 
     broot.addChild(boutline);
 
@@ -439,8 +430,8 @@ export class BoardRenderer {
 
     if (this.activeScene === scene) {
       // Same scene — just update layer visibility + flips
-      scene.topLayer.visible = boardStore.showTop || boardStore.butterfly;
-      scene.bottomLayer.visible = boardStore.showBottom || boardStore.butterfly;
+      scene.topLayer.visible = this.isTopVisible;
+      scene.bottomLayer.visible = this.isBottomVisible;
       this.applyFlips(board, scene);
       return;
     }
@@ -462,8 +453,8 @@ export class BoardRenderer {
     scene.root.addChild(this.selectionGfx);
     this.activeScene = scene;
 
-    scene.topLayer.visible = boardStore.showTop || boardStore.butterfly;
-    scene.bottomLayer.visible = boardStore.showBottom || boardStore.butterfly;
+    scene.topLayer.visible = this.isTopVisible;
+    scene.bottomLayer.visible = this.isBottomVisible;
     this.applyFlips(board, scene);
 
     // Restore viewport position or fit
@@ -532,8 +523,8 @@ export class BoardRenderer {
         this.board = board;
       } else if (board && this.activeScene) {
         // Same board — update layer visibility + flips
-        this.activeScene.topLayer.visible = boardStore.showTop || boardStore.butterfly;
-        this.activeScene.bottomLayer.visible = boardStore.showBottom || boardStore.butterfly;
+        this.activeScene.topLayer.visible = this.isTopVisible;
+        this.activeScene.bottomLayer.visible = this.isBottomVisible;
         this.applyFlips(board, this.activeScene);
       }
 
@@ -628,8 +619,8 @@ export class BoardRenderer {
           const pin = part?.pins[ref.pinIndex];
           if (!pin || !part) continue;
 
-          if (part.side === 'top' && !boardStore.showTop && !butterfly) continue;
-          if (part.side === 'bottom' && !boardStore.showBottom && !butterfly) continue;
+          if (part.side === 'top' && !this.isTopVisible) continue;
+          if (part.side === 'bottom' && !this.isBottomVisible) continue;
 
           const gfx = gfxFor(part);
           const hits = gfx === this.butterflySelectionGfx ? botHits : topHits;
@@ -707,8 +698,8 @@ export class BoardRenderer {
 
     for (let pi = 0; pi < this.board.parts.length; pi++) {
       const part = this.board.parts[pi];
-      if (part.side === 'top' && !boardStore.showTop && !boardStore.butterfly) continue;
-      if (part.side === 'bottom' && !boardStore.showBottom && !boardStore.butterfly) continue;
+      if (part.side === 'top' && !this.isTopVisible) continue;
+      if (part.side === 'bottom' && !this.isBottomVisible) continue;
 
       const local = part.side === 'bottom' ? localBot : localTop;
       const isTwoPin = part.pins.length === 2;
@@ -768,8 +759,8 @@ export class BoardRenderer {
     // Second pass: check part bounds
     for (let pi = 0; pi < this.board.parts.length; pi++) {
       const part = this.board.parts[pi];
-      if (part.side === 'top' && !boardStore.showTop && !boardStore.butterfly) continue;
-      if (part.side === 'bottom' && !boardStore.showBottom && !boardStore.butterfly) continue;
+      if (part.side === 'top' && !this.isTopVisible) continue;
+      if (part.side === 'bottom' && !this.isBottomVisible) continue;
 
       const local = part.side === 'bottom' ? localBot : localTop;
       const eb = computeEffectiveBounds(part.bounds, part.pins, s);

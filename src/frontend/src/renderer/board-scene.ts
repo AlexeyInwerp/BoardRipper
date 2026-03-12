@@ -27,6 +27,22 @@ export interface BoardSceneGraph {
   topLayer:    Container;
   bottomLayer: Container;
   labels:      Text[];
+  topLabels:   Text[];
+  bottomLabels: Text[];
+}
+
+/** Draw the board outline path into a Graphics object */
+export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings): void {
+  if (board.outline.length <= 1) return;
+  gfx.moveTo(board.outline[0].x, board.outline[0].y);
+  for (let i = 1; i < board.outline.length; i++) {
+    gfx.lineTo(board.outline[i].x, board.outline[i].y);
+  }
+  gfx.closePath();
+  if (s.boardFillAlpha > 0) {
+    gfx.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
+  }
+  gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }
 
 /**
@@ -39,6 +55,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const bottomLayer = new Container();
   const topLayer    = new Container();
   const labels: Text[] = [];
+  const topLabels: Text[] = [];
+  const bottomLabels: Text[] = [];
 
   bottomLayer.cullable = true;
   topLayer.cullable    = true;
@@ -47,18 +65,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.addChild(bottomLayer);
   root.addChild(topLayer);
 
-  // Board outline (optional fill + stroke)
-  if (board.outline.length > 1) {
-    outlineGfx.moveTo(board.outline[0].x, board.outline[0].y);
-    for (let i = 1; i < board.outline.length; i++) {
-      outlineGfx.lineTo(board.outline[i].x, board.outline[i].y);
-    }
-    outlineGfx.closePath();
-    if (s.boardFillAlpha > 0) {
-      outlineGfx.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
-    }
-    outlineGfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
-  }
+  drawOutline(outlineGfx, board, s);
 
   // Parts
   for (let pi = 0; pi < board.parts.length; pi++) {
@@ -136,11 +143,12 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         label.cullable = true;
         partContainer.addChild(label);
         labels.push(label);
+        (part.side === 'bottom' ? bottomLabels : topLabels).push(label);
       }
     }
 
     layer.addChild(partContainer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels };
 }
