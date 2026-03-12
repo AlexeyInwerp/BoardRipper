@@ -17,6 +17,7 @@ export interface BoardTab {
   selection: SelectionState;
   showTop: boolean;
   showBottom: boolean;
+  butterfly: boolean;
   searchQuery: string;
   rotation: number;
   mirrorX: boolean;
@@ -50,6 +51,7 @@ class BoardStore {
   get selection(): SelectionState { return this.activeTab?.selection ?? emptySelection; }
   get showTop(): boolean { return this.activeTab?.showTop ?? true; }
   get showBottom(): boolean { return this.activeTab?.showBottom ?? true; }
+  get butterfly(): boolean { return this.activeTab?.butterfly ?? false; }
   get searchQuery(): string { return this.activeTab?.searchQuery ?? ''; }
   get rotation(): number { return this.activeTab?.rotation ?? 0; }
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
@@ -103,7 +105,8 @@ class BoardStore {
       board: null,
       selection: { ...emptySelection },
       showTop: true,
-      showBottom: true,
+      showBottom: false,
+      butterfly: false,
       searchQuery: '',
       rotation: 0,
       mirrorX: false,
@@ -188,17 +191,40 @@ class BoardStore {
     this.notify();
   }
 
-  toggleTop() {
+  /** Switch to top view, or shift-click to show both */
+  selectTop(both = false) {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ showTop: !tab.showTop });
+    if (both) {
+      this.updateActiveTab({ showTop: true, showBottom: true, butterfly: false });
+    } else {
+      this.updateActiveTab({ showTop: true, showBottom: false, butterfly: false });
+    }
     this.notify();
   }
 
-  toggleBottom() {
+  /** Switch to bottom view, or shift-click to show both */
+  selectBottom(both = false) {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ showBottom: !tab.showBottom });
+    if (both) {
+      this.updateActiveTab({ showTop: true, showBottom: true, butterfly: false });
+    } else {
+      this.updateActiveTab({ showTop: false, showBottom: true, butterfly: false });
+    }
+    this.notify();
+  }
+
+  /** Toggle butterfly mode: show top and bottom side by side */
+  toggleButterfly() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const newButterfly = !tab.butterfly;
+    if (newButterfly) {
+      this.updateActiveTab({ butterfly: true, showTop: true, showBottom: true });
+    } else {
+      this.updateActiveTab({ butterfly: false });
+    }
     this.notify();
   }
 

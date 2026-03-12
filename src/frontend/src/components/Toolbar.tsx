@@ -7,7 +7,7 @@ import { getDockviewApi } from '../store/dockview-api';
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, board } = useBoardStore();
+  const { showTop, showBottom, butterfly, board } = useBoardStore();
 
   const handleFileOpen = () => {
     fileInputRef.current?.click();
@@ -29,23 +29,33 @@ export function Toolbar() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    await pdfStore.loadFile(file);
+    try {
+      await pdfStore.loadFile(file);
+    } catch (err) {
+      console.error('[Toolbar] Failed to load PDF:', err);
+      e.target.value = '';
+      return;
+    }
 
     // Open or activate the PDF panel in dockview
-    const api = getDockviewApi();
-    if (api) {
-      const existing = api.getPanel('pdfViewer');
-      if (existing) {
-        existing.api.setActive();
-      } else {
-        api.addPanel({
-          id: 'pdfViewer',
-          component: 'pdfViewer',
-          title: 'PDF: ' + file.name,
-          position: { referencePanel: 'board', direction: 'below' },
-          initialHeight: 400,
-        });
+    try {
+      const api = getDockviewApi();
+      if (api) {
+        const existing = api.getPanel('pdfViewer');
+        if (existing) {
+          existing.api.setActive();
+        } else {
+          api.addPanel({
+            id: 'pdfViewer',
+            component: 'pdfViewer',
+            title: 'PDF: ' + file.name,
+            position: { referencePanel: 'board', direction: 'below' },
+            initialHeight: 400,
+          });
+        }
       }
+    } catch (err) {
+      console.error('[Toolbar] Failed to open PDF panel:', err);
     }
 
     e.target.value = '';
@@ -78,46 +88,53 @@ export function Toolbar() {
       <div className="toolbar-separator" />
 
       <button
-        onClick={() => boardStore.toggleTop()}
+        onClick={(e) => boardStore.selectTop(e.shiftKey)}
         className={`toolbar-btn ${showTop ? 'active' : ''}`}
-        title="Toggle top layer"
+        title="Top layer (Shift+click for both)"
       >
         Top
       </button>
       <button
-        onClick={() => boardStore.toggleBottom()}
+        onClick={(e) => boardStore.selectBottom(e.shiftKey)}
         className={`toolbar-btn ${showBottom ? 'active' : ''}`}
-        title="Toggle bottom layer"
+        title="Bottom layer (Shift+click for both)"
       >
         Bottom
+      </button>
+      <button
+        onClick={() => boardStore.toggleButterfly()}
+        className={`toolbar-btn ${butterfly ? 'active' : ''}`}
+        title="Butterfly mode: top and bottom side by side"
+      >
+        Butterfly
       </button>
 
       <div className="toolbar-separator" />
 
       <button
         onClick={() => boardStore.rotateCCW()}
-        className="toolbar-btn"
+        className="toolbar-btn toolbar-btn-icon"
         title="Rotate 90° counter-clockwise"
       >
         ↺
       </button>
       <button
         onClick={() => boardStore.rotateCW()}
-        className="toolbar-btn"
+        className="toolbar-btn toolbar-btn-icon"
         title="Rotate 90° clockwise"
       >
         ↻
       </button>
       <button
         onClick={() => boardStore.flipHorizontal()}
-        className="toolbar-btn"
+        className="toolbar-btn toolbar-btn-icon"
         title="Mirror horizontal"
       >
         ⇔
       </button>
       <button
         onClick={() => boardStore.flipVertical()}
-        className="toolbar-btn"
+        className="toolbar-btn toolbar-btn-icon"
         title="Mirror vertical"
       >
         ⇕

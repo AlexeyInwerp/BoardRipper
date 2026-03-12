@@ -11,6 +11,7 @@ interface StoreSnapshot {
   selectedPin: Pin | null;
   showTop: boolean;
   showBottom: boolean;
+  butterfly: boolean;
   searchQuery: string;
   searchResults: Part[];
   tabs: BoardTab[];
@@ -36,6 +37,7 @@ function getSnapshot(): StoreSnapshot {
       selectedPin: boardStore.selectedPin,
       showTop: boardStore.showTop,
       showBottom: boardStore.showBottom,
+      butterfly: boardStore.butterfly,
       searchQuery: boardStore.searchQuery,
       searchResults: boardStore.searchResults,
       tabs: boardStore.tabs,

@@ -57,6 +57,7 @@ class PdfStore {
     // Clean up previous document
     if (this._doc) {
       this._doc.destroy();
+      this._doc = null;
     }
 
     this._loading = true;
@@ -66,35 +67,43 @@ class PdfStore {
     this._activeMatchIndex = -1;
     this.notify();
 
-    const buffer = await file.arrayBuffer();
-    const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+    try {
+      const buffer = await file.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
 
-    this._doc = doc;
-    this._pageCount = doc.numPages;
-    this._currentPage = 1;
+      this._doc = doc;
+      this._pageCount = doc.numPages;
+      this._currentPage = 1;
 
-    // Extract text from all pages
-    this._textPages = [];
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const content = await page.getTextContent();
-      const items: PdfTextItem[] = [];
-      for (const item of content.items) {
-        const ti = item as TextItem;
-        if (ti.str) {
-          items.push({
-            str: ti.str,
-            transform: ti.transform,
-            width: ti.width,
-            height: ti.height,
-          });
+      // Extract text from all pages
+      this._textPages = [];
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const content = await page.getTextContent();
+        const items: PdfTextItem[] = [];
+        for (const item of content.items) {
+          const ti = item as TextItem;
+          if (ti.str) {
+            items.push({
+              str: ti.str,
+              transform: ti.transform,
+              width: ti.width,
+              height: ti.height,
+            });
+          }
         }
+        this._textPages.push(items);
       }
-      this._textPages.push(items);
+    } catch (err) {
+      console.error('[PdfStore] loadFile failed:', err);
+      this._doc = null;
+      this._pageCount = 0;
+      this._textPages = [];
+      throw err;
+    } finally {
+      this._loading = false;
+      this.notify();
     }
-
-    this._loading = false;
-    this.notify();
   }
 
   async getPage(pageNum: number): Promise<PDFPageProxy> {

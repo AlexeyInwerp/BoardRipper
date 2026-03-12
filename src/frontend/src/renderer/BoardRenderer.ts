@@ -1,18 +1,20 @@
-import { Application, Graphics, Container, Text, TextStyle } from 'pixi.js';
+import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
-import type { BoardData, Point } from '../parsers';
+import type { BoardData, Point, Pin, BBox } from '../parsers';
 import { boardStore } from '../store/board-store';
-import { renderSettingsStore, getLabelFontSize, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
+import { buildBoardScene, BOARD_COLORS } from './board-scene';
 
-const COLORS = {
-  background: 0x1a1a2e,
-  outline: 0x4a9eff,
-  partBoundsTop: 0x336633,
-  partBoundsBottom: 0x663333,
-  partSelected: 0xffaa00,
-  netHighlight: 0xffff44,
-};
+// Alias for local use — all colour references go through board-scene.ts
+const COLORS = BOARD_COLORS;
+
+// Debug logging — set via browser console: window.__BV_DEBUG = 1 (or 2 for verbose)
+type DebugLevel = 0 | 1 | 2;
+function dbg(level: DebugLevel, ...args: unknown[]) {
+  const current = (globalThis as Record<string, unknown>).__BV_DEBUG as number ?? 0;
+  if (current >= level) console.log('[BoardRenderer]', ...args);
+}
 
 /** Pre-built scene graph for a single board */
 interface BoardScene {
@@ -21,6 +23,9 @@ interface BoardScene {
   topLayer: Container;
   bottomLayer: Container;
   labels: Text[];
+  /** Butterfly mode: a mirrored copy of the board for the bottom side */
+  butterflyRoot: Container | null;
+  butterflyOutline: Graphics | null;
 }
 
 /** Saved viewport transform for restoring on tab switch */
@@ -35,6 +40,7 @@ export class BoardRenderer {
   private app: Application;
   private viewport!: Viewport;
   private selectionGfx!: Graphics;
+  private butterflySelectionGfx!: Graphics;
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
@@ -59,6 +65,7 @@ export class BoardRenderer {
   }
 
   async init() {
+    dbg(1, 'init', this.containerEl.clientWidth, 'x', this.containerEl.clientHeight);
     await this.app.init({
       background: COLORS.background,
       width: this.containerEl.clientWidth,
@@ -86,6 +93,7 @@ export class BoardRenderer {
     this.app.stage.addChild(this.viewport);
 
     this.selectionGfx = new Graphics();
+    this.butterflySelectionGfx = new Graphics();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.viewport.on('clicked', (e: any) => {
@@ -110,234 +118,289 @@ export class BoardRenderer {
 
   // --- Orientation detection ---
 
-  /** Detect if the board data needs a Y-axis flip to make IC pins go counter-clockwise */
+  /**
+   * Detect if the board data needs a Y-axis flip so IC pins ascend counter-clockwise.
+   *
+   * Fallback chain:
+   * 1. Board format info (not available in BVR — reserved for future formats)
+   * 2. Pin-order heuristic on a suitable IC (DIP/QFP/SOP — not BGA)
+   */
   private needsYFlip(board: BoardData): boolean {
     const cached = this.orientationCache.get(board);
     if (cached !== undefined) return cached;
 
-    // Find best candidate: part with 4–100 pins (avoids BGAs)
-    let best: { pins: { position: Point }[] } | null = null;
-    for (const part of board.parts) {
-      if (part.pins.length < 4 || part.pins.length > 100) continue;
-      if (!best || part.pins.length > best.pins.length) {
-        best = part;
-      }
-    }
-
-    let result = false;
-    if (best) {
-      // Compute signed area using shoelace formula
-      let area = 0;
-      const pins = best.pins;
-      for (let i = 0; i < pins.length; i++) {
-        const j = (i + 1) % pins.length;
-        area += pins[i].position.x * pins[j].position.y;
-        area -= pins[j].position.x * pins[i].position.y;
-      }
-      // In screen coords (Y-down): positive area = clockwise = wrong
-      // We want counter-clockwise (negative area)
-      if (Math.abs(area) > 0.001) {
-        result = area > 0;
-      }
-    }
-
+    const result = this.detectOrientation(board);
     this.orientationCache.set(board, result);
     return result;
+  }
+
+  private detectOrientation(board: BoardData): boolean {
+    // Collect candidate ICs, scored by suitability
+    const candidates: { pins: Point[]; score: number }[] = [];
+
+    for (const part of board.parts) {
+      const n = part.pins.length;
+      if (n < 4) continue;
+
+      // Sort pins by numeric pin number for correct sequential order
+      const sorted = this.sortPinsByNumber(part.pins);
+      if (!sorted) continue; // Non-numeric pin numbers (likely BGA: A1, B2, etc.)
+
+      const positions = sorted.map(p => p.position);
+      const bb = part.bounds;
+      const bbW = bb.maxX - bb.minX;
+      const bbH = bb.maxY - bb.minY;
+      if (bbW < 0.001 || bbH < 0.001) continue;
+
+      // Filter out BGAs: check if pins fill the interior (grid pattern)
+      // For perimeter ICs (DIP/QFP), pins are only along edges
+      const edgeFrac = this.perimeterFraction(positions, bb);
+      if (edgeFrac < 0.6) continue; // More than 40% interior pins → likely BGA
+
+      // Check that pin polygon area is meaningful relative to bounding box
+      // (shoelace on a grid/zigzag path gives near-zero area)
+      const area = this.shoelaceArea(positions);
+      const bbArea = bbW * bbH;
+      const areaRatio = Math.abs(area) / bbArea;
+      if (areaRatio < 0.1) continue; // Path doesn't enclose a real polygon
+
+      // Score: prefer parts with more pins (more reliable), higher area ratio
+      const score = n * areaRatio;
+      candidates.push({ pins: positions, score });
+    }
+
+    if (candidates.length === 0) return false;
+
+    // Pick the best candidate
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    const area = this.shoelaceArea(best.pins);
+
+    // In standard math (Y-up): CCW polygon has positive shoelace area
+    // On screen (Y-down): that same polygon appears CW
+    // We want pins to appear CCW on screen → need Y-flip when area > 0
+    return area > 0;
+  }
+
+  /** Sort pins by numeric pin number. Returns null if any pin number is non-numeric. */
+  private sortPinsByNumber(pins: Pin[]): Pin[] | null {
+    const withNum: { pin: Pin; num: number }[] = [];
+    for (const pin of pins) {
+      const num = parseInt(pin.number, 10);
+      if (isNaN(num)) return null; // Non-numeric → likely BGA (A1, B2, etc.)
+      withNum.push({ pin, num });
+    }
+    withNum.sort((a, b) => a.num - b.num);
+    return withNum.map(w => w.pin);
+  }
+
+  /**
+   * What fraction of pins lie on the perimeter of the bounding box?
+   * Perimeter ICs (DIP/QFP/SOP) have ~100%; BGAs have much less.
+   */
+  private perimeterFraction(positions: Point[], bb: BBox): number {
+    const bbW = bb.maxX - bb.minX;
+    const bbH = bb.maxY - bb.minY;
+    // A pin is "on the edge" if it's within 15% of the bounding box dimension from an edge
+    const threshX = bbW * 0.15;
+    const threshY = bbH * 0.15;
+    let edgeCount = 0;
+    for (const p of positions) {
+      const nearLeft = p.x - bb.minX < threshX;
+      const nearRight = bb.maxX - p.x < threshX;
+      const nearTop = p.y - bb.minY < threshY;
+      const nearBottom = bb.maxY - p.y < threshY;
+      if (nearLeft || nearRight || nearTop || nearBottom) edgeCount++;
+    }
+    return edgeCount / positions.length;
+  }
+
+  /** Signed area via shoelace formula */
+  private shoelaceArea(positions: Point[]): number {
+    let area = 0;
+    for (let i = 0; i < positions.length; i++) {
+      const j = (i + 1) % positions.length;
+      area += positions[i].x * positions[j].y;
+      area -= positions[j].x * positions[i].y;
+    }
+    return area;
   }
 
   // --- Flip management ---
 
   /** Apply orientation, view flips, user rotation and mirror to the scene root */
   private applyFlips(board: BoardData, scene: BoardScene) {
-    const bottomFlipX = boardStore.showBottom && !boardStore.showTop;
+    dbg(2, 'applyFlips', { butterfly: boardStore.butterfly, mirrorX: boardStore.mirrorX, mirrorY: boardStore.mirrorY, rotation: boardStore.rotation });
+    const butterfly = boardStore.butterfly;
     const autoFlipY = this.needsYFlip(board);
-
-    // Combine auto flips with user transforms (XOR)
-    const flipX = bottomFlipX !== boardStore.mirrorX;
-    const flipY = autoFlipY !== boardStore.mirrorY;
     const rotation = boardStore.rotation * Math.PI / 180;
-
     const cx = (board.bounds.minX + board.bounds.maxX) / 2;
     const cy = (board.bounds.minY + board.bounds.maxY) / 2;
 
-    scene.root.pivot.set(cx, cy);
-    scene.root.position.set(cx, cy);
-    scene.root.rotation = rotation;
-    scene.root.scale.set(flipX ? -1 : 1, flipY ? -1 : 1);
+    if (butterfly) {
+      // Butterfly mode: top above, bottom below — flipped as if hinging on the bottom edge
+      this.setupButterfly(board, scene);
 
-    // Counter-flip labels so text stays readable (rotation passes through)
-    const lsx = flipX ? -1 : 1;
-    const lsy = flipY ? -1 : 1;
-    for (const label of scene.labels) {
-      label.rotation = -rotation;
-      label.scale.set(lsx, lsy);
+      const bh = board.bounds.maxY - board.bounds.minY;
+      const vgap = bh * 0.05; // 5% gap between the two halves
+
+      const flipY = autoFlipY !== boardStore.mirrorY;
+      const sx = boardStore.mirrorX ? -1 : 1;
+      const topSy = flipY ? -1 : 1;
+      // Bottom: Y inverted relative to top (flipped around bottom edge)
+      const botSy = -topSy;
+
+      // Top half: shifted up
+      scene.root.pivot.set(cx, cy);
+      scene.root.position.set(cx, cy - bh / 2 - vgap / 2);
+      scene.root.rotation = rotation;
+      scene.root.scale.set(sx, topSy);
+
+      // Bottom half: shifted down, Y-flipped (hinged on bottom edge)
+      const broot = scene.butterflyRoot!;
+      broot.pivot.set(cx, cy);
+      broot.position.set(cx, cy + bh / 2 + vgap / 2);
+      broot.rotation = rotation;
+      broot.scale.set(sx, botSy);
+
+      // Counter-flip labels for readability
+      for (const label of scene.labels) {
+        const inBottom = label.parent && this.isDescendant(label, scene.bottomLayer);
+        label.rotation = -rotation;
+        label.scale.set(sx, inBottom ? botSy : topSy);
+      }
+    } else {
+      // Normal mode
+      this.teardownButterfly(scene);
+
+      const bottomFlipX = boardStore.showBottom && !boardStore.showTop;
+      const flipX = bottomFlipX !== boardStore.mirrorX;
+      const flipY = autoFlipY !== boardStore.mirrorY;
+
+      scene.root.pivot.set(cx, cy);
+      scene.root.position.set(cx, cy);
+      scene.root.rotation = rotation;
+      scene.root.scale.set(flipX ? -1 : 1, flipY ? -1 : 1);
+
+      // Counter-flip labels so text stays readable
+      const lsx = flipX ? -1 : 1;
+      const lsy = flipY ? -1 : 1;
+      for (const label of scene.labels) {
+        label.rotation = -rotation;
+        label.scale.set(lsx, lsy);
+      }
     }
   }
 
+  private isDescendant(child: Container, ancestor: Container): boolean {
+    let node: Container | null = child.parent;
+    while (node) {
+      if (node === ancestor) return true;
+      node = node.parent;
+    }
+    return false;
+  }
+
+  /** Set up butterfly mode: move bottom layer into its own root */
+  private setupButterfly(board: BoardData, scene: BoardScene) {
+    if (scene.butterflyRoot) { dbg(2, 'setupButterfly: already set up'); return; }
+    dbg(1, 'setupButterfly');
+
+    // Create butterfly root with a copy of the outline
+    const broot = new Container();
+    const boutline = new Graphics();
+    const s = renderSettingsStore.settings;
+
+    if (board.outline.length > 1) {
+      boutline.moveTo(board.outline[0].x, board.outline[0].y);
+      for (let i = 1; i < board.outline.length; i++) {
+        boutline.lineTo(board.outline[i].x, board.outline[i].y);
+      }
+      boutline.closePath();
+      boutline.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
+      boutline.stroke({ width: s.outlineWidth, color: COLORS.outline, alpha: s.outlineAlpha });
+    }
+
+    broot.addChild(boutline);
+
+    // Move bottomLayer from root into butterfly root
+    scene.root.removeChild(scene.bottomLayer);
+    broot.addChild(scene.bottomLayer);
+
+    scene.butterflyRoot = broot;
+    scene.butterflyOutline = boutline;
+
+    broot.addChild(this.butterflySelectionGfx);
+    this.viewport.addChild(broot);
+  }
+
+  /** Tear down butterfly mode: move bottom layer back into root */
+  private teardownButterfly(scene: BoardScene) {
+    if (!scene.butterflyRoot) return;
+
+    // Move bottom layer back to main root
+    scene.butterflyRoot.removeChild(scene.bottomLayer);
+    scene.root.addChild(scene.bottomLayer);
+
+    // Detach butterfly selection gfx before destroying
+    scene.butterflyRoot.removeChild(this.butterflySelectionGfx);
+    this.butterflySelectionGfx.clear();
+
+    // Remove butterfly container from viewport and destroy (bottomLayer already detached)
+    this.viewport.removeChild(scene.butterflyRoot);
+    scene.butterflyRoot.destroy({ children: true });
+    scene.butterflyRoot = null;
+    scene.butterflyOutline = null;
+  }
+
   /** Convert world coords (viewport space) to scene-local coords */
-  private worldToScene(world: Point): Point {
-    const root = this.activeScene?.root;
-    if (!root) return world;
+  private worldToScene(world: Point, root?: Container): Point {
+    const r = root ?? this.activeScene?.root;
+    if (!r) return world;
 
-    const sx = root.scale.x;
-    const sy = root.scale.y;
-    const theta = root.rotation;
-    const cx = root.pivot.x;
-    const cy = root.pivot.y;
+    const sx = r.scale.x;
+    const sy = r.scale.y;
+    const theta = r.rotation;
+    const cx = r.pivot.x;
+    const cy = r.pivot.y;
 
-    if (theta === 0 && sx === 1 && sy === 1) return world;
-
-    // Inverse: un-translate, un-rotate, un-scale
-    const dx = world.x - cx;
-    const dy = world.y - cy;
+    // Inverse: un-translate (position - pivot offset), un-rotate, un-scale
+    const dx = world.x - r.position.x;
+    const dy = world.y - r.position.y;
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
-    // Inverse rotation
     const rx = dx * cosT + dy * sinT;
     const ry = -dx * sinT + dy * cosT;
-    // Inverse scale
     return { x: cx + rx / sx, y: cy + ry / sy };
   }
 
   /** Convert scene-local coords to world coords (viewport space) */
-  private sceneToWorld(point: Point): Point {
-    const root = this.activeScene?.root;
-    if (!root) return point;
+  private sceneToWorld(point: Point, root?: Container): Point {
+    const r = root ?? this.activeScene?.root;
+    if (!r) return point;
 
-    const sx = root.scale.x;
-    const sy = root.scale.y;
-    const theta = root.rotation;
-    const cx = root.pivot.x;
-    const cy = root.pivot.y;
+    const sx = r.scale.x;
+    const sy = r.scale.y;
+    const theta = r.rotation;
+    const cx = r.pivot.x;
+    const cy = r.pivot.y;
 
-    if (theta === 0 && sx === 1 && sy === 1) return point;
-
-    // Forward: scale, then rotate, then translate
+    // Forward: scale, then rotate, then translate (position - pivot offset)
     const dx = (point.x - cx) * sx;
     const dy = (point.y - cy) * sy;
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
     return {
-      x: cx + dx * cosT - dy * sinT,
-      y: cy + dx * sinT + dy * cosT,
+      x: r.position.x + dx * cosT - dy * sinT,
+      y: r.position.y + dx * sinT + dy * cosT,
     };
   }
 
   // --- Scene cache management ---
 
   private buildScene(board: BoardData): BoardScene {
-    const s = renderSettingsStore.settings;
-
-    const root = new Container();
-    const outlineGfx = new Graphics();
-    const bottomLayer = new Container();
-    const topLayer = new Container();
-    const labels: Text[] = [];
-
-    bottomLayer.cullable = true;
-    topLayer.cullable = true;
-
-    root.addChild(outlineGfx);
-    root.addChild(bottomLayer);
-    root.addChild(topLayer);
-
-    // Outline
-    if (board.outline.length > 1) {
-      outlineGfx.moveTo(board.outline[0].x, board.outline[0].y);
-      for (let i = 1; i < board.outline.length; i++) {
-        outlineGfx.lineTo(board.outline[i].x, board.outline[i].y);
-      }
-      outlineGfx.closePath();
-      outlineGfx.stroke({ width: s.outlineWidth, color: COLORS.outline, alpha: s.outlineAlpha });
-    }
-
-    // Parts
-    for (let pi = 0; pi < board.parts.length; pi++) {
-      const part = board.parts[pi];
-      const layer = part.side === 'bottom' ? bottomLayer : topLayer;
-      const partContainer = new Container();
-      partContainer.cullable = true;
-      partContainer.label = part.name;
-
-      const isTwoPinPart = part.pins.length === 2;
-      const eb = computeEffectiveBounds(part.bounds, part.pins, s);
-
-      // Pins
-      for (let pni = 0; pni < part.pins.length; pni++) {
-        const pin = part.pins[pni];
-        const pinGfx = new Graphics();
-        const color = renderSettingsStore.resolvePinColor(pin.net, pin.side);
-
-        if (isTwoPinPart) {
-          const other = part.pins[1 - pni];
-          if (eb.horiz) {
-            const depth = Math.min(eb.ph, eb.pw * 0.4);
-            const left = pin.position.x < other.position.x;
-            if (left) {
-              pinGfx.rect(eb.px, eb.py, depth, eb.ph);
-            } else {
-              pinGfx.rect(eb.px + eb.pw - depth, eb.py, depth, eb.ph);
-            }
-          } else {
-            const depth = Math.min(eb.pw, eb.ph * 0.4);
-            const top = pin.position.y < other.position.y;
-            if (top) {
-              pinGfx.rect(eb.px, eb.py, eb.pw, depth);
-            } else {
-              pinGfx.rect(eb.px, eb.py + eb.ph - depth, eb.pw, depth);
-            }
-          }
-        } else {
-          const r = computePinRadius(s, pin.radius);
-          pinGfx.circle(pin.position.x, pin.position.y, r);
-        }
-        pinGfx.fill({ color, alpha: s.pinAlpha });
-        pinGfx.cullable = true;
-        partContainer.addChild(pinGfx);
-      }
-
-      // Part outline (skip for single-pin testpoints)
-      if (part.pins.length > 1) {
-        const boundsGfx = new Graphics();
-        boundsGfx.rect(eb.px, eb.py, eb.pw, eb.ph);
-        boundsGfx.stroke({
-          width: s.partBorderWidth,
-          color: part.side === 'bottom' ? COLORS.partBoundsBottom : COLORS.partBoundsTop,
-          alpha: s.partBorderAlpha,
-        });
-        partContainer.addChild(boundsGfx);
-      }
-
-      // Part label (centered via anchor, hidden when too small)
-      if (s.showPartLabels) {
-        let fontSize: number;
-        if (isTwoPinPart) {
-          fontSize = getLabelFontSize(s);
-        } else {
-          const bh = eb.maxY - eb.minY;
-          const targetW = eb.pw * 0.7;
-          fontSize = targetW / (part.name.length * 0.6);
-          fontSize = Math.max(2, Math.min(fontSize, bh * 0.8));
-        }
-        if (fontSize >= s.labelHideThreshold) {
-          const label = new Text({
-            text: part.name,
-            style: new TextStyle({ fontSize, fill: 0xcccccc, fontFamily: 'monospace' }),
-            resolution: 4,
-          });
-          label.anchor.set(0.5, 0.5);
-          label.x = eb.px + eb.pw / 2;
-          label.y = eb.py + eb.ph / 2;
-          label.cullable = true;
-          partContainer.addChild(label);
-          labels.push(label);
-        }
-      }
-
-      layer.addChild(partContainer);
-    }
-
-    return { root, outlineGfx, topLayer, bottomLayer, labels };
+    const graph = buildBoardScene(board, renderSettingsStore.settings);
+    return { ...graph, butterflyRoot: null, butterflyOutline: null };
   }
 
   private getOrBuildScene(board: BoardData): BoardScene {
@@ -371,12 +434,13 @@ export class BoardRenderer {
   }
 
   private activateScene(board: BoardData) {
+    dbg(1, 'activateScene', board.format, board.parts.length, 'parts');
     const scene = this.getOrBuildScene(board);
 
     if (this.activeScene === scene) {
       // Same scene — just update layer visibility + flips
-      scene.topLayer.visible = boardStore.showTop;
-      scene.bottomLayer.visible = boardStore.showBottom;
+      scene.topLayer.visible = boardStore.showTop || boardStore.butterfly;
+      scene.bottomLayer.visible = boardStore.showBottom || boardStore.butterfly;
       this.applyFlips(board, scene);
       return;
     }
@@ -388,6 +452,9 @@ export class BoardRenderer {
     if (this.activeScene) {
       this.activeScene.root.removeChild(this.selectionGfx);
       this.viewport.removeChild(this.activeScene.root);
+      if (this.activeScene.butterflyRoot) {
+        this.viewport.removeChild(this.activeScene.butterflyRoot);
+      }
     }
 
     // Attach new scene + selection overlay (inside root so flips apply to selection too)
@@ -395,8 +462,8 @@ export class BoardRenderer {
     scene.root.addChild(this.selectionGfx);
     this.activeScene = scene;
 
-    scene.topLayer.visible = boardStore.showTop;
-    scene.bottomLayer.visible = boardStore.showBottom;
+    scene.topLayer.visible = boardStore.showTop || boardStore.butterfly;
+    scene.bottomLayer.visible = boardStore.showBottom || boardStore.butterfly;
     this.applyFlips(board, scene);
 
     // Restore viewport position or fit
@@ -406,6 +473,7 @@ export class BoardRenderer {
   private deactivateScene() {
     this.saveViewportState();
     if (this.activeScene) {
+      this.teardownButterfly(this.activeScene);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.viewport.removeChild(this.activeScene.root);
       this.activeScene = null;
@@ -427,9 +495,21 @@ export class BoardRenderer {
     if (this.activeScene) {
       this.activeScene.root.removeChild(this.selectionGfx);
       this.viewport.removeChild(this.activeScene.root);
+      if (this.activeScene.butterflyRoot) {
+        // Move bottomLayer back before destroying
+        this.activeScene.butterflyRoot.removeChild(this.butterflySelectionGfx);
+        this.activeScene.butterflyRoot.removeChild(this.activeScene.bottomLayer);
+        this.viewport.removeChild(this.activeScene.butterflyRoot);
+      }
+      this.butterflySelectionGfx.clear();
     }
 
     for (const [, scene] of this.sceneCache) {
+      if (scene.butterflyRoot) {
+        scene.butterflyRoot.removeChild(scene.bottomLayer);
+        scene.butterflyRoot.destroy({ children: true });
+        scene.butterflyRoot = null;
+      }
       scene.root.destroy({ children: true });
     }
     this.sceneCache.clear();
@@ -440,32 +520,38 @@ export class BoardRenderer {
 
   private onBoardUpdate() {
     if (!this.viewport) return;
-
-    const board = boardStore.board;
-    if (board !== this.board) {
-      if (board) {
-        this.activateScene(board);
-      } else {
-        this.deactivateScene();
+    dbg(2, 'onBoardUpdate');
+    try {
+      const board = boardStore.board;
+      if (board !== this.board) {
+        if (board) {
+          this.activateScene(board);
+        } else {
+          this.deactivateScene();
+        }
+        this.board = board;
+      } else if (board && this.activeScene) {
+        // Same board — update layer visibility + flips
+        this.activeScene.topLayer.visible = boardStore.showTop || boardStore.butterfly;
+        this.activeScene.bottomLayer.visible = boardStore.showBottom || boardStore.butterfly;
+        this.applyFlips(board, this.activeScene);
       }
-      this.board = board;
-    } else if (board && this.activeScene) {
-      // Same board — update layer visibility + flips
-      this.activeScene.topLayer.visible = boardStore.showTop;
-      this.activeScene.bottomLayer.visible = boardStore.showBottom;
-      this.applyFlips(board, this.activeScene);
-    }
 
-    this.renderSelection();
+      this.renderSelection();
 
-    // Handle focus requests (zoom to part)
-    const focus = boardStore.consumeFocusRequest();
-    if (focus) {
-      this.zoomToBounds(focus.bounds);
+      // Handle focus requests (zoom to part)
+      const focus = boardStore.consumeFocusRequest();
+      if (focus) {
+        const focusPart = this.board?.parts[focus.partIndex];
+        const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
+        this.zoomToBounds(focus.bounds, focusRoot);
+      }
+    } catch (err) {
+      console.error('[BoardRenderer] onBoardUpdate crashed:', err);
     }
   }
 
-  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }) {
+  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container) {
     const bw = bounds.maxX - bounds.minX;
     const bh = bounds.maxY - bounds.minY;
     const sw = this.containerEl.clientWidth;
@@ -479,59 +565,74 @@ export class BoardRenderer {
     const center = this.sceneToWorld({
       x: (bounds.minX + bounds.maxX) / 2,
       y: (bounds.minY + bounds.maxY) / 2,
-    });
+    }, root);
     this.viewport.moveCenter(center.x, center.y);
   }
 
   private onSettingsUpdate() {
     if (!this.board) return;
-    // Save viewport, invalidate all scenes, rebuild current
-    this.saveViewportState();
-    this.invalidateAllScenes();
-    this.activateScene(this.board);
-    this.renderSelection();
+    dbg(2, 'onSettingsUpdate');
+    try {
+      // Save viewport, invalidate all scenes, rebuild current
+      this.saveViewportState();
+      this.invalidateAllScenes();
+      this.activateScene(this.board);
+      this.renderSelection();
+    } catch (err) {
+      console.error('[BoardRenderer] onSettingsUpdate crashed:', err);
+    }
   }
 
   // --- Selection rendering (always rebuilt, lightweight) ---
 
   private renderSelection() {
     this.selectionGfx.clear();
+    this.butterflySelectionGfx.clear();
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
     const sel = boardStore.selection;
+    const butterfly = boardStore.butterfly && !!this.activeScene?.butterflyRoot;
+
+    // Pick the right Graphics target for a part (butterfly bottom → butterflySelectionGfx)
+    const gfxFor = (part: { side: string }) =>
+      butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
 
     if (sel.partIndex !== null) {
       const part = this.board.parts[sel.partIndex];
       if (part) {
+        const gfx = gfxFor(part);
         if (part.pins.length === 1) {
-          // 1-pin testpoint: circle selection around the pin
           const pin = part.pins[0];
           const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-          this.selectionGfx.circle(pin.position.x, pin.position.y, r);
+          gfx.circle(pin.position.x, pin.position.y, r);
         } else {
           const eb = computeEffectiveBounds(part.bounds, part.pins, s);
           const sp = s.selectionPadding;
-          this.selectionGfx.rect(
-            eb.px - sp, eb.py - sp,
-            eb.pw + sp * 2, eb.ph + sp * 2
-          );
+          gfx.rect(eb.px - sp, eb.py - sp, eb.pw + sp * 2, eb.ph + sp * 2);
         }
-        this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.partSelected, alpha: 0.9 });
+        gfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+        gfx.stroke({ width: s.selectionWidth, color: COLORS.partSelected, alpha: 0.9 });
       }
     }
 
     if (sel.highlightedNet) {
       const net = this.board.nets.get(sel.highlightedNet);
       if (net) {
+        // Collect net highlights per gfx target so we can batch fill
+        const topHits: (() => void)[] = [];
+        const botHits: (() => void)[] = [];
+
         for (const ref of net.pinIndices) {
           const part = this.board.parts[ref.partIndex];
           const pin = part?.pins[ref.pinIndex];
           if (!pin || !part) continue;
 
-          // Skip pins on hidden layers
-          if (part.side === 'top' && !boardStore.showTop) continue;
-          if (part.side === 'bottom' && !boardStore.showBottom) continue;
+          if (part.side === 'top' && !boardStore.showTop && !butterfly) continue;
+          if (part.side === 'bottom' && !boardStore.showBottom && !butterfly) continue;
+
+          const gfx = gfxFor(part);
+          const hits = gfx === this.butterflySelectionGfx ? botHits : topHits;
 
           if (part.pins.length === 2) {
             const grow = s.netHighlightGrow;
@@ -554,27 +655,50 @@ export class BoardRenderer {
               rw = eb.pw;
               rh = depth;
             }
-            this.selectionGfx.rect(rx - grow, ry - grow, rw + grow * 2, rh + grow * 2);
+            hits.push(() => gfx.rect(rx - grow, ry - grow, rw + grow * 2, rh + grow * 2));
           } else {
             const r = computePinRadius(s, pin.radius) + s.netHighlightGrow;
-            this.selectionGfx.circle(pin.position.x, pin.position.y, r);
+            hits.push(() => gfx.circle(pin.position.x, pin.position.y, r));
           }
         }
-        this.selectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
+
+        for (const fn of topHits) fn();
+        if (topHits.length > 0) {
+          this.selectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
+        }
+        for (const fn of botHits) fn();
+        if (botHits.length > 0) {
+          this.butterflySelectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
+        }
       }
     }
   }
 
   // --- Hit testing ---
 
+  /** Get the root container a part belongs to (different in butterfly mode) */
+  private rootForPart(part: { side: string }): Container | undefined {
+    if (!this.activeScene) return undefined;
+    if (boardStore.butterfly && this.activeScene.butterflyRoot && part.side === 'bottom') {
+      return this.activeScene.butterflyRoot;
+    }
+    return this.activeScene.root;
+  }
+
   /** Find the part (and optionally pin) under a world-space point */
   private hitTest(world: Point): { partIndex: number; pinIndex: number } | null {
+    dbg(2, 'hitTest', world);
     if (!this.board) return null;
 
-    // Convert world coords to scene-local coords (accounts for flips)
-    const local = this.worldToScene(world);
-
     const s = renderSettingsStore.settings;
+    const butterfly = boardStore.butterfly && this.activeScene?.butterflyRoot;
+
+    // In butterfly mode, we need to convert world coords per-part using the correct root.
+    // Pre-compute local coords for top and bottom roots.
+    const localTop = this.worldToScene(world, this.activeScene?.root);
+    const localBot = butterfly
+      ? this.worldToScene(world, this.activeScene!.butterflyRoot!)
+      : localTop;
 
     // First pass: try to hit a specific pin
     let bestDist = Infinity;
@@ -583,9 +707,10 @@ export class BoardRenderer {
 
     for (let pi = 0; pi < this.board.parts.length; pi++) {
       const part = this.board.parts[pi];
-      if (part.side === 'top' && !boardStore.showTop) continue;
-      if (part.side === 'bottom' && !boardStore.showBottom) continue;
+      if (part.side === 'top' && !boardStore.showTop && !boardStore.butterfly) continue;
+      if (part.side === 'bottom' && !boardStore.showBottom && !boardStore.butterfly) continue;
 
+      const local = part.side === 'bottom' ? localBot : localTop;
       const isTwoPin = part.pins.length === 2;
 
       if (isTwoPin) {
@@ -643,9 +768,10 @@ export class BoardRenderer {
     // Second pass: check part bounds
     for (let pi = 0; pi < this.board.parts.length; pi++) {
       const part = this.board.parts[pi];
-      if (part.side === 'top' && !boardStore.showTop) continue;
-      if (part.side === 'bottom' && !boardStore.showBottom) continue;
+      if (part.side === 'top' && !boardStore.showTop && !boardStore.butterfly) continue;
+      if (part.side === 'bottom' && !boardStore.showBottom && !boardStore.butterfly) continue;
 
+      const local = part.side === 'bottom' ? localBot : localTop;
       const eb = computeEffectiveBounds(part.bounds, part.pins, s);
       if (local.x >= eb.px && local.x <= eb.px + eb.pw &&
           local.y >= eb.py && local.y <= eb.py + eb.ph) {
@@ -691,16 +817,18 @@ export class BoardRenderer {
     const b = board?.bounds ?? this.board?.bounds;
     if (!b) return;
     const pad = renderSettingsStore.settings.fitPadding;
-    this.viewport.fit(
-      true,
-      b.maxX - b.minX + pad * 2,
-      b.maxY - b.minY + pad * 2,
-    );
-    // Board center maps to itself regardless of flip (pivot = position = center)
-    this.viewport.moveCenter(
-      (b.minX + b.maxX) / 2,
-      (b.minY + b.maxY) / 2,
-    );
+    const bw = b.maxX - b.minX;
+    const bh = b.maxY - b.minY;
+
+    if (boardStore.butterfly) {
+      // Butterfly shows two boards stacked vertically with 5% gap
+      const gap = bh * 0.05;
+      this.viewport.fit(true, bw + pad * 2, bh * 2 + gap + pad * 2);
+      this.viewport.moveCenter((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+    } else {
+      this.viewport.fit(true, bw + pad * 2, bh + pad * 2);
+      this.viewport.moveCenter((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+    }
   }
 
   destroy() {
