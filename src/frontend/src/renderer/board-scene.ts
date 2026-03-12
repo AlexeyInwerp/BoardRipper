@@ -19,7 +19,27 @@ export const BOARD_COLORS = {
   partBoundsBottom:  0x663333,
   partSelected:      0xffaa00,
   netHighlight:      0xffff44,
+  pin1:              0xcc2222,
 } as const;
+
+/** Info needed to dynamically redraw a part border at different widths */
+export interface BorderEntry {
+  gfx: Graphics;
+  x: number; y: number; w: number; h: number;
+  color: number;
+  alpha: number;
+  /** Last drawn effective width — skip redraw when unchanged */
+  lastWidth: number;
+}
+
+/** Labels bucketed by font size for O(groups) visibility updates instead of O(labels) */
+export interface FontSizeGroup {
+  /** Lower bound of the bucket (2^bucket) — used for threshold check */
+  minSize: number;
+  labels: Text[];
+  /** Cached visibility state — skip iteration when unchanged */
+  visible: boolean;
+}
 
 export interface BoardSceneGraph {
   root:        Container;
@@ -29,6 +49,13 @@ export interface BoardSceneGraph {
   labels:      Text[];
   topLabels:   Text[];
   bottomLabels: Text[];
+  /** Pin number labels, tracked for zoom-based LoD */
+  topPinLabels:    Text[];
+  bottomPinLabels: Text[];
+  /** Part border Graphics entries for dynamic min-width updates */
+  borderEntries: BorderEntry[];
+  /** Labels grouped by font-size bucket for efficient LoD visibility */
+  fontSizeGroups: FontSizeGroup[];
 }
 
 /** Draw the board outline path into a Graphics object */
@@ -45,6 +72,25 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings):
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }
 
+/** Redraw all border entries with an effective minimum width */
+export function updateBorderWidths(entries: BorderEntry[], configuredWidth: number, viewportScale: number): void {
+  const minScreenPx = 1;
+  const effectiveWidth = Math.max(configuredWidth, minScreenPx / viewportScale);
+
+  // All borders share the same effective width — check the first entry to skip redundant redraws.
+  // Use a relative tolerance so minor floating-point drift doesn't trigger full redraws.
+  if (entries.length > 0 && Math.abs(effectiveWidth - entries[0].lastWidth) / Math.max(effectiveWidth, 0.001) < 0.02) {
+    return;
+  }
+
+  for (const e of entries) {
+    e.lastWidth = effectiveWidth;
+    e.gfx.clear();
+    e.gfx.rect(e.x, e.y, e.w, e.h);
+    e.gfx.stroke({ width: effectiveWidth, color: e.color, alpha: e.alpha });
+  }
+}
+
 /**
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
@@ -57,9 +103,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const labels: Text[] = [];
   const topLabels: Text[] = [];
   const bottomLabels: Text[] = [];
+  const topPinLabels: Text[] = [];
+  const bottomPinLabels: Text[] = [];
+  const borderEntries: BorderEntry[] = [];
 
-  bottomLayer.cullable = true;
-  topLayer.cullable    = true;
+  // Skip event system traversal for all board objects — events are handled
+  // manually via viewport hit-testing, so PixiJS doesn't need to walk the tree.
+  root.interactiveChildren = false;
 
   root.addChild(outlineGfx);
   root.addChild(bottomLayer);
@@ -77,47 +127,172 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     partContainer.label   = part.name;
 
     const isTwoPinPart = part.pins.length === 2;
+    const isMultiPin   = part.pins.length > 2;
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
 
     // ── Pins (drawn first) ──────────────────────────────────────────────────
+    // Collect text labels to add after all graphics for z-order
+    const deferredTexts: Text[] = [];
+    // Track pad rectangles for 2-pin net labels (indexed by pin index)
+    const padRects: { rx: number; ry: number; rw: number; rh: number }[] = [];
+
+    // Group pin shapes by color → single Graphics per color (fewer GPU draw calls)
+    const pinColorMap = new Map<number, { shapes: { type: 'rect' | 'circle'; args: number[] }[] }>();
+    const getPinColorBatch = (c: number) => {
+      let batch = pinColorMap.get(c);
+      if (!batch) { batch = { shapes: [] }; pinColorMap.set(c, batch); }
+      return batch;
+    };
+
     for (let pni = 0; pni < part.pins.length; pni++) {
       const pin    = part.pins[pni];
-      const pinGfx = new Graphics();
-      const color  = resolvePinColor(s, pin.net, pin.side);
+      const isPin1 = pni === 0 && isMultiPin;
+      const color  = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
+      const batch  = getPinColorBatch(color);
 
       if (isTwoPinPart) {
         const other = part.pins[1 - pni];
+        let padRx: number, padRy: number, padRw: number, padRh: number;
         if (eb.horiz) {
           const depth = Math.min(eb.ph, eb.pw * 0.4);
           const left  = pin.position.x < other.position.x;
-          if (left) pinGfx.rect(eb.px, eb.py, depth, eb.ph);
-          else      pinGfx.rect(eb.px + eb.pw - depth, eb.py, depth, eb.ph);
+          padRx = left ? eb.px : eb.px + eb.pw - depth;
+          padRy = eb.py; padRw = depth; padRh = eb.ph;
         } else {
           const depth = Math.min(eb.pw, eb.ph * 0.4);
           const top   = pin.position.y < other.position.y;
-          if (top) pinGfx.rect(eb.px, eb.py, eb.pw, depth);
-          else     pinGfx.rect(eb.px, eb.py + eb.ph - depth, eb.pw, depth);
+          padRx = eb.px; padRy = top ? eb.py : eb.py + eb.ph - depth;
+          padRw = eb.pw; padRh = depth;
         }
+        batch.shapes.push({ type: 'rect', args: [padRx, padRy, padRw, padRh] });
+        padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
       } else {
         const r = computePinRadius(s, pin.radius);
-        pinGfx.circle(pin.position.x, pin.position.y, r);
+        batch.shapes.push({ type: 'circle', args: [pin.position.x, pin.position.y, r] });
       }
 
-      pinGfx.fill({ color, alpha: s.pinAlpha });
-      pinGfx.cullable = true;
-      partContainer.addChild(pinGfx);
+      // ── Pin number label (multi-pin only, not 1-pin or 2-pin) ─────────
+      if (isMultiPin && s.showPinNumbers) {
+        const r = computePinRadius(s, pin.radius);
+        const numStr = pin.number || String(pni + 1);
+        const diameter = r * 2;
+        let pinFontSize = (diameter * 0.7) / (Math.max(numStr.length, 3) * 0.6);
+        pinFontSize = Math.min(pinFontSize, diameter * 0.8);
+        if (pinFontSize >= 1) {
+          const pinLabel = new Text({
+            text: numStr,
+            style: new TextStyle({ fontSize: pinFontSize, fill: 0xffffff, fontFamily: 'monospace' }),
+            resolution: 2,
+          });
+          pinLabel.anchor.set(0.5, 0.8);
+          pinLabel.x = pin.position.x;
+          pinLabel.y = pin.position.y;
+          deferredTexts.push(pinLabel);
+          (part.side === 'bottom' ? bottomPinLabels : topPinLabels).push(pinLabel);
+        }
+      }
+
+      // ── Net name label on pin (skip GND — already color-coded) ─────
+      if (pin.net && pin.net !== '(null)' && pin.net !== '' && !pin.net.toUpperCase().includes('GND')) {
+        let netFontSize: number;
+        let nx: number, ny: number;
+        let anchorX = 0.5, anchorY = 0.5;
+
+        if (isTwoPinPart) {
+          const pad = padRects[pni];
+          const fitW = pad.rw * 0.85;
+          const fitH = pad.rh * 0.85;
+          netFontSize = Math.min(fitW / (pin.net.length * 0.6), fitH * 0.8);
+          nx = pad.rx + pad.rw / 2;
+          ny = pad.ry + pad.rh / 2;
+        } else {
+          const r = computePinRadius(s, pin.radius);
+          const diameter = r * 2;
+          netFontSize = diameter * 0.85 / Math.max(pin.net.length * 0.6, 1);
+          netFontSize = Math.min(netFontSize, diameter * 0.85);
+          nx = pin.position.x;
+          ny = pin.position.y;
+          if (isMultiPin && s.showPinNumbers) {
+            anchorY = 0.2;
+          }
+        }
+
+        if (netFontSize >= 1) {
+          const netLabel = new Text({
+            text: pin.net,
+            style: new TextStyle({ fontSize: netFontSize, fill: 0x88ccff, fontFamily: 'monospace' }),
+            resolution: 2,
+          });
+          netLabel.anchor.set(anchorX, anchorY);
+          netLabel.x = nx;
+          netLabel.y = ny;
+          deferredTexts.push(netLabel);
+          (part.side === 'bottom' ? bottomPinLabels : topPinLabels).push(netLabel);
+        }
+      }
+    }
+
+    // Flush batched pin shapes — one Graphics per color
+    for (const [color, batch] of pinColorMap) {
+      const gfx = new Graphics();
+      for (const shape of batch.shapes) {
+        if (shape.type === 'rect') {
+          gfx.rect(shape.args[0], shape.args[1], shape.args[2], shape.args[3]);
+        } else {
+          gfx.circle(shape.args[0], shape.args[1], shape.args[2]);
+        }
+      }
+      gfx.fill({ color, alpha: s.pinAlpha });
+      partContainer.addChild(gfx);
+    }
+
+    // ── Pin 1 triangle marker (multi-pin only) ──────────────────────────
+    if (isMultiPin && part.pins.length > 0) {
+      const pin = part.pins[0];
+      const r = computePinRadius(s, pin.radius);
+      const triSize = r * 0.7;
+      const triGfx = new Graphics();
+      const distLeft   = pin.position.x - eb.px;
+      const distRight  = (eb.px + eb.pw) - pin.position.x;
+      const distTop    = pin.position.y - eb.py;
+      const distBottom = (eb.py + eb.ph) - pin.position.y;
+      const minDist    = Math.min(distLeft, distRight, distTop, distBottom);
+      let tx: number, ty: number, angle: number;
+      if (minDist === distLeft) {
+        tx = eb.px + triSize * 0.3; ty = pin.position.y; angle = Math.PI / 2;
+      } else if (minDist === distRight) {
+        tx = eb.px + eb.pw - triSize * 0.3; ty = pin.position.y; angle = -Math.PI / 2;
+      } else if (minDist === distTop) {
+        tx = pin.position.x; ty = eb.py + triSize * 0.3; angle = Math.PI;
+      } else {
+        tx = pin.position.x; ty = eb.py + eb.ph - triSize * 0.3; angle = 0;
+      }
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const pts = [
+        { x: 0, y: -triSize * 0.6 },
+        { x: -triSize * 0.5, y: triSize * 0.4 },
+        { x:  triSize * 0.5, y: triSize * 0.4 },
+      ];
+      triGfx.moveTo(tx + pts[0].x * cos - pts[0].y * sin, ty + pts[0].x * sin + pts[0].y * cos);
+      triGfx.lineTo(tx + pts[1].x * cos - pts[1].y * sin, ty + pts[1].x * sin + pts[1].y * cos);
+      triGfx.lineTo(tx + pts[2].x * cos - pts[2].y * sin, ty + pts[2].x * sin + pts[2].y * cos);
+      triGfx.closePath();
+      triGfx.fill({ color: BOARD_COLORS.pin1, alpha: 0.9 });
+      partContainer.addChild(triGfx);
     }
 
     // ── Part border (after pins, before label) ──────────────────────────────
     if (part.pins.length > 1) {
       const boundsGfx = new Graphics();
+      const borderColor = part.side === 'bottom' ? BOARD_COLORS.partBoundsBottom : BOARD_COLORS.partBoundsTop;
       boundsGfx.rect(eb.px, eb.py, eb.pw, eb.ph);
       boundsGfx.stroke({
         width: s.partBorderWidth,
-        color: part.side === 'bottom' ? BOARD_COLORS.partBoundsBottom : BOARD_COLORS.partBoundsTop,
+        color: borderColor,
         alpha: s.partBorderAlpha,
       });
       partContainer.addChild(boundsGfx);
+      borderEntries.push({ gfx: boundsGfx, x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, color: borderColor, alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth });
     }
 
     // ── Label (last = always on top within the part) ────────────────────────
@@ -134,21 +309,48 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       if (fontSize >= s.labelHideThreshold) {
         const label = new Text({
           text:  part.name,
-          style: new TextStyle({ fontSize, fill: 0xcccccc, fontFamily: 'monospace' }),
-          resolution: 4,
+          style: new TextStyle({
+            fontSize, fill: 0xcccccc, fontFamily: 'monospace',
+            ...(s.partLabelShadow && { dropShadow: { color: 0x000000, alpha: 0.7, blur: fontSize * 0.6, distance: 0 } }),
+          }),
+          resolution: 2,
         });
         label.anchor.set(0.5, 0.5);
         label.x = eb.px + eb.pw / 2;
         label.y = eb.py + eb.ph / 2;
-        label.cullable = true;
         partContainer.addChild(label);
         labels.push(label);
         (part.side === 'bottom' ? bottomLabels : topLabels).push(label);
       }
     }
 
+    // ── Deferred text (pin numbers + net names) — added last for z-order ──
+    for (const txt of deferredTexts) {
+      partContainer.addChild(txt);
+    }
+
     layer.addChild(partContainer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels };
+  // Build font-size groups: bucket all labels by floor(log2(fontSize)).
+  // This gives ~5-6 groups, enabling O(groups) visibility checks instead of O(labels).
+  const bucketMap = new Map<number, Text[]>();
+  const allLabelArrays = [topLabels, bottomLabels, topPinLabels, bottomPinLabels];
+  for (const arr of allLabelArrays) {
+    for (const lbl of arr) {
+      const fs = lbl.style.fontSize as number;
+      const bucket = Math.floor(Math.log2(Math.max(fs, 1)));
+      let list = bucketMap.get(bucket);
+      if (!list) { list = []; bucketMap.set(bucket, list); }
+      list.push(lbl);
+    }
+  }
+  const fontSizeGroups: FontSizeGroup[] = [];
+  for (const [bucket, lbls] of bucketMap) {
+    fontSizeGroups.push({ minSize: 2 ** bucket, labels: lbls, visible: true });
+  }
+  // Sort ascending so we can early-exit: once a group is visible, all larger groups are too
+  fontSizeGroups.sort((a, b) => a.minSize - b.minSize);
+
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderEntries, fontSizeGroups };
 }

@@ -15,6 +15,7 @@ export interface RenderSettings {
   partBorderAlpha: number;
   partPadding: number;
   showPartLabels: boolean;
+  partLabelShadow: boolean;
   labelSize: LabelSize;
   labelSizeSmall: number;
   labelSizeMedium: number;
@@ -25,6 +26,12 @@ export interface RenderSettings {
   pinMaxRadius: number;
   pinScaleFactor: number;
   pinAlpha: number;
+  showPinNumbers: boolean;
+
+  /** Min rendered font size in screen pixels — labels smaller than this are hidden */
+  labelMinScreenPx: number;
+  /** Min viewport scale to show labels (0 = always visible) */
+  labelZoomHide: number;
 
   selectionWidth: number;
   selectionPadding: number;
@@ -32,7 +39,17 @@ export interface RenderSettings {
   netHighlightGrow: number;
   netHighlightAlpha: number;
 
+  netLineWidth: number;
+  netLineAlpha: number;
+  netLineColor: number;
+  netLineDashed: boolean;
+  netLineDashLength: number;
+  netLinePulse: boolean;
+
   boardFillAlpha: number;
+
+  /** Hide text labels during zoom for better performance on slower machines */
+  hideTextDuringZoom: boolean;
 
   clickThreshold: number;
   fitPadding: number;
@@ -61,6 +78,7 @@ const DEFAULTS: RenderSettings = {
   partBorderAlpha: 0.4,
   partPadding: 4,
   showPartLabels: true,
+  partLabelShadow: false,
   labelSize: 'medium',
   labelSizeSmall: 4,
   labelSizeMedium: 8,
@@ -71,6 +89,9 @@ const DEFAULTS: RenderSettings = {
   pinMaxRadius: 30,
   pinScaleFactor: 1.0,
   pinAlpha: 0.85,
+  showPinNumbers: true,
+  labelMinScreenPx: 3,
+  labelZoomHide: 0,
 
   selectionWidth: 2,
   selectionPadding: 6,
@@ -78,7 +99,16 @@ const DEFAULTS: RenderSettings = {
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
 
+  netLineWidth: 1,
+  netLineAlpha: 0.5,
+  netLineColor: 0xffff44,
+  netLineDashed: true,
+  netLineDashLength: 8,
+  netLinePulse: true,
+
   boardFillAlpha: 0.08,
+
+  hideTextDuringZoom: false,
 
   clickThreshold: 30,
   fitPadding: 50,

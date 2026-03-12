@@ -21,7 +21,31 @@ export interface PdfTextMatch {
   item: PdfTextItem;
 }
 
+export interface PdfBookmark {
+  id: string;
+  page: number;    // 1-based
+  zoom: number;
+  panX: number;
+  panY: number;
+  label: string;   // user-editable, defaults to "p{page}"
+}
+
 type Listener = () => void;
+
+const BOOKMARKS_KEY_PREFIX = 'boardviewer-pdf-bookmarks-';
+
+function loadBookmarks(fileName: string): PdfBookmark[] {
+  try {
+    const raw = localStorage.getItem(BOOKMARKS_KEY_PREFIX + fileName);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveBookmarks(fileName: string, bookmarks: PdfBookmark[]) {
+  try {
+    localStorage.setItem(BOOKMARKS_KEY_PREFIX + fileName, JSON.stringify(bookmarks));
+  } catch { /* ignore quota */ }
+}
 
 class PdfStore {
   private _doc: PDFDocumentProxy | null = null;
@@ -33,6 +57,7 @@ class PdfStore {
   private _matches: PdfTextMatch[] = [];
   private _activeMatchIndex = -1;
   private _loading = false;
+  private _bookmarks: PdfBookmark[] = [];
   private _listeners = new Set<Listener>();
 
   get fileName(): string { return this._fileName; }
@@ -43,6 +68,7 @@ class PdfStore {
   get activeMatchIndex(): number { return this._activeMatchIndex; }
   get isLoaded(): boolean { return this._doc !== null; }
   get loading(): boolean { return this._loading; }
+  get bookmarks(): PdfBookmark[] { return this._bookmarks; }
 
   subscribe(listener: Listener): () => void {
     this._listeners.add(listener);
@@ -74,6 +100,7 @@ class PdfStore {
       this._doc = doc;
       this._pageCount = doc.numPages;
       this._currentPage = 1;
+      this._bookmarks = loadBookmarks(file.name);
 
       // Extract text from all pages
       this._textPages = [];
@@ -177,6 +204,41 @@ class PdfStore {
     return this._matches.filter(m => m.pageIndex === pageIndex);
   }
 
+  // --- Bookmarks ---
+
+  addBookmark(page: number, zoom: number, panX: number, panY: number) {
+    const bm: PdfBookmark = {
+      id: crypto.randomUUID(),
+      page, zoom, panX, panY,
+      label: `p${page}`,
+    };
+    this._bookmarks = [...this._bookmarks, bm];
+    saveBookmarks(this._fileName, this._bookmarks);
+    this.notify();
+  }
+
+  updateBookmark(id: string, page: number, zoom: number, panX: number, panY: number) {
+    this._bookmarks = this._bookmarks.map(b =>
+      b.id === id ? { ...b, page, zoom, panX, panY } : b,
+    );
+    saveBookmarks(this._fileName, this._bookmarks);
+    this.notify();
+  }
+
+  renameBookmark(id: string, label: string) {
+    this._bookmarks = this._bookmarks.map(b =>
+      b.id === id ? { ...b, label: label || `p${b.page}` } : b,
+    );
+    saveBookmarks(this._fileName, this._bookmarks);
+    this.notify();
+  }
+
+  removeBookmark(id: string) {
+    this._bookmarks = this._bookmarks.filter(b => b.id !== id);
+    saveBookmarks(this._fileName, this._bookmarks);
+    this.notify();
+  }
+
   close() {
     if (this._doc) {
       this._doc.destroy();
@@ -189,6 +251,7 @@ class PdfStore {
     this._searchQuery = '';
     this._matches = [];
     this._activeMatchIndex = -1;
+    this._bookmarks = [];
     this.notify();
   }
 }
