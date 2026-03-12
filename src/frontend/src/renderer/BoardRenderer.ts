@@ -1,4 +1,4 @@
-import { Application, Graphics, Container, Text } from 'pixi.js';
+import { Application, Graphics, Container, BitmapText } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point } from '../parsers';
 import { boardStore } from '../store/board-store';
@@ -23,11 +23,11 @@ interface BoardScene {
   outlineGfx: Graphics;
   topLayer: Container;
   bottomLayer: Container;
-  labels: import('pixi.js').Text[];
-  topLabels: import('pixi.js').Text[];
-  bottomLabels: import('pixi.js').Text[];
-  topPinLabels: import('pixi.js').Text[];
-  bottomPinLabels: import('pixi.js').Text[];
+  labels: import('pixi.js').BitmapText[];
+  topLabels: import('pixi.js').BitmapText[];
+  bottomLabels: import('pixi.js').BitmapText[];
+  topPinLabels: import('pixi.js').BitmapText[];
+  bottomPinLabels: import('pixi.js').BitmapText[];
   borderEntries: BorderEntry[];
   fontSizeGroups: import('./board-scene').FontSizeGroup[];
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
@@ -68,17 +68,6 @@ export class BoardRenderer {
 
   // LoD zoom tracking — updated by ticker
   private lastLodScale = -1;
-
-  // Incremental text resolution upgrade — runs after zoom settles
-  private textResTimer: ReturnType<typeof setTimeout> | null = null;
-  private textResQueue: Text[] | null = null;
-  private textResTarget = 2;
-
-  // Idle pre-rendering: multi-pass resolution upgrade (4 → 8 → 16), largest groups first
-  private idlePreRenderGroups: { labels: Text[]; idx: number }[] | null = null;
-  private idlePreRenderTotal = 0;
-  private idlePreRenderTarget = 4;
-  private static readonly IDLE_RES_PASSES = [4, 8, 16];
 
   // Hide-text-during-zoom: detect actual zooming via per-frame scale comparison
   private zoomSettleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -185,8 +174,6 @@ export class BoardRenderer {
       this.prevTickScale = curScale;
 
       if (this.updateLoD()) this.needsRender = true;
-      if (this.processZoomTextRes()) this.needsRender = true;
-      this.processIdlePreRender();
 
       // Net line pulse animation — only when there's an active selection with net lines
       if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
@@ -219,27 +206,8 @@ export class BoardRenderer {
 
     const zoom = Math.round(Math.abs(this.viewport.scale.x) * 100);
     const fps = Math.round(tickerFps);
+    const gpuText = this.needsRender ? '' : ' · gpu idle';
 
-    // Idle pre-render progress (shows current pass target and %)
-    let preRenderText = '';
-    const groups = this.idlePreRenderGroups;
-    if (groups && this.idlePreRenderTotal > 0) {
-      const remaining = groups.reduce((n, g) => n + (g.labels.length - g.idx), 0);
-      const pct = Math.round((1 - remaining / this.idlePreRenderTotal) * 100);
-      preRenderText = ` · pre-render @${this.idlePreRenderTarget}x ${pct}%`;
-    }
-
-    // Zoom text res queue
-    let zoomResText = '';
-    if (this.textResQueue) {
-      zoomResText = ` · sharpening ${this.textResQueue.length}`;
-    }
-
-    // GPU idle indicator
-    const gpuIdle = !this.needsRender && !preRenderText && !zoomResText;
-    const gpuText = gpuIdle ? ' · gpu idle' : '';
-
-    // Scene stats (label + object count)
     let sceneText = '';
     const scene = this.activeScene;
     if (scene) {
@@ -248,7 +216,7 @@ export class BoardRenderer {
       sceneText = ` · ${labelCount} labels`;
     }
 
-    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}${preRenderText}${zoomResText}${gpuText}`;
+    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}${gpuText}`;
   }
 
   /** Called per frame when viewport scale is actively changing (user is zooming) */
@@ -298,17 +266,6 @@ export class BoardRenderer {
     // Min border width: ensure borders are at least 1 screen pixel
     updateBorderWidths(scene.borderEntries, s.partBorderWidth, scale);
 
-    // Schedule incremental text resolution upgrade after zoom settles.
-    this.cancelTextResUpgrade();
-    const dpr = window.devicePixelRatio || 1;
-    const targetRes = Math.min(Math.max(2, Math.ceil(scale * dpr)), 16);
-    if (targetRes > 2) {
-      this.textResTimer = setTimeout(() => {
-        this.textResTimer = null;
-        this.startTextResUpgrade(targetRes);
-      }, 300);
-    }
-
     return true;
   }
 
@@ -328,163 +285,6 @@ export class BoardRenderer {
         for (const lbl of group.labels) lbl.visible = shouldBeVisible;
       }
     }
-  }
-
-  /** Cancel pending zoom-triggered text resolution upgrades (does NOT cancel idle pre-render) */
-  private cancelTextResUpgrade() {
-    if (this.textResTimer) { clearTimeout(this.textResTimer); this.textResTimer = null; }
-    this.textResQueue = null;
-    if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
-    this.textHiddenForZoom = false;
-  }
-
-  /** Begin incremental text resolution upgrade — processes a few labels per tick */
-  private startTextResUpgrade(targetRes: number) {
-    const scene = this.activeScene;
-    if (!scene) return;
-
-    this.textResTarget = targetRes;
-    // Collect only visible labels that need upgrading
-    const queue: Text[] = [];
-    const arrays = [scene.topLabels, scene.topPinLabels, scene.bottomLabels, scene.bottomPinLabels];
-    for (const arr of arrays) {
-      for (const lbl of arr) {
-        if (lbl.visible && lbl.resolution < targetRes) {
-          queue.push(lbl);
-        }
-      }
-    }
-
-    if (queue.length > 0) {
-      // Sort by distance from viewport center — farthest first so .pop() processes nearest first
-      const cx = this.viewport.center.x;
-      const cy = this.viewport.center.y;
-      queue.sort((a, b) => {
-        const da = (a.x - cx) ** 2 + (a.y - cy) ** 2;
-        const db = (b.x - cx) ** 2 + (b.y - cy) ** 2;
-        return db - da;
-      });
-    }
-
-    this.textResQueue = queue.length > 0 ? queue : null;
-  }
-
-  /**
-   * Process zoom-triggered text resolution upgrades.
-   * Returns true if any labels were upgraded (needs re-render to show sharper text).
-   */
-  private processZoomTextRes(): boolean {
-    const queue = this.textResQueue;
-    if (!queue) return false;
-
-    const fps = this.app.ticker.FPS;
-    const BATCH = fps >= 30 ? 30 : 10;
-    const target = this.textResTarget;
-    let processed = 0;
-    while (queue.length > 0 && processed < BATCH) {
-      const lbl = queue.pop()!;
-      if (lbl.visible && lbl.resolution < target) {
-        lbl.resolution = target;
-        processed++;
-      }
-    }
-    if (queue.length === 0) this.textResQueue = null;
-    return processed > 0;
-  }
-
-  /**
-   * Process idle pre-rendering in multiple passes (4 → 8 → 16).
-   * Does NOT trigger a GPU render — textures are prepared silently so zoom is instant.
-   * Higher passes use smaller batches (lower priority) to avoid hurting navigation.
-   * Pauses when FPS < 30.
-   */
-  private processIdlePreRender() {
-    const groups = this.idlePreRenderGroups;
-    if (!groups) return;
-    if (groups.length === 0) {
-      this.idlePreRenderGroups = null;
-      this.advanceIdlePreRenderPass();
-      return;
-    }
-    if (this.app.ticker.FPS < 30) return;
-
-    const target = this.idlePreRenderTarget;
-    // Scale batch size down for higher passes: res:4 → 100, res:8 → 50, res:16 → 25
-    const BATCH = target <= 4 ? 100 : target <= 8 ? 50 : 25;
-    let processed = 0;
-    while (groups.length > 0 && processed < BATCH) {
-      const group = groups[0];
-      while (group.idx < group.labels.length && processed < BATCH) {
-        const lbl = group.labels[group.idx++];
-        if (lbl.resolution < target) {
-          lbl.resolution = target;
-          processed++;
-        }
-      }
-      if (group.idx >= group.labels.length) {
-        groups.shift();
-      }
-    }
-    if (groups.length === 0) {
-      this.advanceIdlePreRenderPass();
-    }
-  }
-
-  /** Move to the next idle pre-render pass (4 → 8 → 16), or finish */
-  private advanceIdlePreRenderPass() {
-    this.idlePreRenderGroups = null;
-    const passes = BoardRenderer.IDLE_RES_PASSES;
-    const nextIdx = passes.indexOf(this.idlePreRenderTarget) + 1;
-    if (nextIdx < passes.length && this.activeScene) {
-      const nextTarget = passes[nextIdx];
-      dbg(1, `idlePreRender: pass ${this.idlePreRenderTarget} complete, starting pass ${nextTarget}`);
-      this.idlePreRenderTarget = nextTarget;
-      this.queueIdlePreRenderPass(nextTarget);
-    } else {
-      dbg(1, 'idlePreRender: all passes complete');
-    }
-  }
-
-  /** Queue labels for a specific resolution pass */
-  private queueIdlePreRenderPass(target: number) {
-    const scene = this.activeScene;
-    if (!scene) return;
-
-    // Higher res passes only upgrade the largest font-size groups to limit memory.
-    // Small pin labels at extreme zoom are handled on-demand by the zoom-triggered path.
-    // res:4 → all groups, res:8 → largest half, res:16 → largest quarter
-    let eligible = [...scene.fontSizeGroups].reverse(); // largest first
-    if (target > 4 && eligible.length > 2) {
-      const limit = target <= 8
-        ? Math.max(2, Math.ceil(eligible.length / 2))
-        : Math.max(2, Math.ceil(eligible.length / 4));
-      eligible = eligible.slice(0, limit);
-    }
-
-    const groups = eligible
-      .filter(g => g.labels.some(l => l.resolution < target))
-      .map(g => ({ labels: g.labels, idx: 0 }));
-
-    if (groups.length === 0) {
-      // Nothing to upgrade at this level — try next pass
-      this.advanceIdlePreRenderPass();
-      return;
-    }
-
-    this.idlePreRenderTotal = groups.reduce((n, g) => n + g.labels.length, 0);
-    dbg(1, `idlePreRender: pass ${target} queued`, this.idlePreRenderTotal, 'labels');
-    this.idlePreRenderGroups = groups;
-  }
-
-  /** Start idle pre-rendering from the first pass (res:4) */
-  private startIdlePreRender() {
-    this.cancelIdlePreRender();
-    this.idlePreRenderTarget = BoardRenderer.IDLE_RES_PASSES[0];
-    this.queueIdlePreRenderPass(this.idlePreRenderTarget);
-  }
-
-  private cancelIdlePreRender() {
-    this.idlePreRenderGroups = null;
   }
 
   // --- Orientation ---
@@ -751,8 +551,6 @@ export class BoardRenderer {
     this.lastLodScale = -1;
     this.updateLoD();
 
-    // Pre-render text at resolution:4 during idle time for crisp zoom
-    this.startIdlePreRender();
     this.needsRender = true;
   }
 
@@ -860,8 +658,10 @@ export class BoardRenderer {
     if (!this.board) return;
     dbg(2, 'onSettingsUpdate');
     try {
+      // Cancel any pending zoom-settle timer (scene is about to be rebuilt)
+      if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
+      this.textHiddenForZoom = false;
       // Save viewport, invalidate all scenes, rebuild current
-      this.cancelTextResUpgrade();
       this.saveViewportState();
       this.invalidateAllScenes();
       this.activateScene(this.board);
@@ -1371,8 +1171,7 @@ export class BoardRenderer {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;
     }
-    this.cancelTextResUpgrade();
-    this.cancelIdlePreRender();
+    if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
     this.resizeObserver?.disconnect();
