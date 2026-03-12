@@ -72,6 +72,12 @@ html, body, #root {
   border-color: var(--accent-hover);
 }
 
+.toolbar-btn-icon {
+  font-size: 18px;
+  padding: 2px 8px;
+  line-height: 1;
+}
+
 .toolbar-separator {
   width: 1px;
   height: 20px;
@@ -390,13 +396,33 @@ html, body, #root {
 }
 
 .settings-section {
-  margin-bottom: 12px;
-  padding-bottom: 8px;
+  margin-bottom: 4px;
   border-bottom: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  transition: background 0.25s;
 }
 
 .settings-section:last-of-type {
   border-bottom: none;
+}
+
+/* Collapsible header */
+.settings-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+
+.settings-section-header:hover {
+  background: rgba(74, 158, 255, 0.06);
 }
 
 .settings-section-title {
@@ -405,7 +431,27 @@ html, body, #root {
   color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 6px;
+}
+
+.settings-section-chevron {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1;
+}
+
+.settings-section-body {
+  padding: 2px 4px 8px;
+}
+
+/* Focus flash animation when navigating from mockup click */
+@keyframes section-focus-flash {
+  0%   { background: transparent; }
+  20%  { background: rgba(74, 158, 255, 0.14); }
+  100% { background: transparent; }
+}
+
+.settings-section-focused {
+  animation: section-focus-flash 1.4s ease;
 }
 
 .settings-row {
@@ -612,8 +658,9 @@ html, body, #root {
 
 /* Settings mockup preview */
 .settings-mockup {
+  position: relative;
   width: 100%;
-  height: 160px;
+  height: 260px;
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -622,8 +669,40 @@ html, body, #root {
 
 .settings-mockup canvas {
   display: block;
-  width: 100%;
-  height: 100%;
+}
+
+.mockup-zoom-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  background: rgba(0,0,0,0.45);
+  padding: 1px 6px;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.mockup-zoom-badge.mockup-zoom-active {
+  opacity: 1;
+  color: #4a9eff;
+}
+
+.mockup-hint {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  background: rgba(0,0,0,0.35);
+  padding: 1px 8px;
+  border-radius: 10px;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* Settings action buttons (Preview / Apply / Cancel) */

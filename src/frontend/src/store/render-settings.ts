@@ -28,8 +28,11 @@ export interface RenderSettings {
 
   selectionWidth: number;
   selectionPadding: number;
+  selectionFillAlpha: number;
   netHighlightGrow: number;
   netHighlightAlpha: number;
+
+  boardFillAlpha: number;
 
   clickThreshold: number;
   fitPadding: number;
@@ -71,8 +74,11 @@ const DEFAULTS: RenderSettings = {
 
   selectionWidth: 2,
   selectionPadding: 6,
+  selectionFillAlpha: 0.07,
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
+
+  boardFillAlpha: 0.08,
 
   clickThreshold: 30,
   fitPadding: 50,

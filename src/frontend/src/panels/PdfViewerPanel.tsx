@@ -14,9 +14,13 @@ export function PdfViewerPanel() {
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
   const scaleRef = useRef(1);
   const viewportHeightRef = useRef(0);
+  const renderTierRef = useRef(1); // resolution multiplier for current render
   const [clickedText, setClickedText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Pan/zoom state (CSS transform on wrapper)
+  // Pan/zoom state — refs are source of truth, state triggers re-render
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
@@ -26,47 +30,69 @@ export function PdfViewerPanel() {
 
   // Reset pan/zoom when page changes
   useEffect(() => {
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    renderTierRef.current = 1;
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }, [currentPage]);
 
-  const renderPage = useCallback(async () => {
+  /** Compute the resolution tier: steps up every 50% of zoom (1, 1.5, 2, 2.5, …) capped at 5 */
+  const computeTier = useCallback((z: number) => {
+    const tier = Math.ceil(z / 0.5) * 0.5;
+    return Math.max(1, Math.min(tier, 5));
+  }, []);
+
+  const renderPage = useCallback(async (tier?: number) => {
     if (!isLoaded || !canvasRef.current || !highlightRef.current || !containerRef.current) return;
 
     renderTaskRef.current?.cancel();
+    setError(null);
 
-    const page = await pdfStore.getPage(currentPage);
-    const container = containerRef.current;
-    const containerWidth = container.clientWidth;
+    const resTier = tier ?? renderTierRef.current;
+    renderTierRef.current = resTier;
 
-    const unscaledViewport = page.getViewport({ scale: 1 });
-    const scale = containerWidth / unscaledViewport.width;
-    scaleRef.current = scale;
-    viewportHeightRef.current = unscaledViewport.height;
-    const viewport = page.getViewport({ scale });
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d')!;
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-
-    const highlight = highlightRef.current;
-    highlight.width = viewport.width;
-    highlight.height = viewport.height;
-    highlight.style.width = `${viewport.width}px`;
-    highlight.style.height = `${viewport.height}px`;
-
-    const task = page.render({ canvasContext: ctx, viewport });
-    renderTaskRef.current = { cancel: () => task.cancel() };
     try {
-      await task.promise;
-    } catch {
-      return;
-    }
+      const page = await pdfStore.getPage(currentPage);
+      const container = containerRef.current;
+      const containerWidth = container.clientWidth;
 
-    drawHighlights();
+      const unscaledViewport = page.getViewport({ scale: 1 });
+      const baseScale = containerWidth / unscaledViewport.width;
+      scaleRef.current = baseScale;
+      viewportHeightRef.current = unscaledViewport.height;
+
+      // Render at higher resolution for sharp zoom
+      const hiresScale = baseScale * resTier;
+      const viewport = page.getViewport({ scale: hiresScale });
+
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d')!;
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      // CSS size stays at base scale — the CSS zoom handles the rest
+      const cssW = containerWidth;
+      const cssH = unscaledViewport.height * baseScale;
+      canvas.style.width = `${cssW}px`;
+      canvas.style.height = `${cssH}px`;
+
+      const highlight = highlightRef.current;
+      highlight.width = viewport.width;
+      highlight.height = viewport.height;
+      highlight.style.width = `${cssW}px`;
+      highlight.style.height = `${cssH}px`;
+
+      const task = page.render({ canvasContext: ctx, viewport });
+      renderTaskRef.current = { cancel: () => task.cancel() };
+      await task.promise;
+
+      drawHighlights();
+    } catch (err) {
+      // Cancelled render tasks throw — that's expected
+      if (err instanceof Error && err.message?.includes('cancel')) return;
+      console.error('[PdfViewerPanel] renderPage failed:', err);
+      setError(String(err));
+    }
   }, [isLoaded, currentPage]);
 
   const drawHighlights = useCallback(() => {
@@ -77,7 +103,7 @@ export function PdfViewerPanel() {
 
     const pageIndex = currentPage - 1;
     const pageMatches = pdfStore.getMatchesForPage(pageIndex);
-    const scale = scaleRef.current;
+    const scale = scaleRef.current * renderTierRef.current;
     const unscaledH = viewportHeightRef.current;
 
     for (let mi = 0; mi < pageMatches.length; mi++) {
@@ -96,15 +122,19 @@ export function PdfViewerPanel() {
     }
   }, [isLoaded, currentPage, matches, activeMatchIndex]);
 
+  // Keep a ref to renderPage so the wheel handler can trigger re-renders
+  const renderPageRef = useRef(renderPage);
+  renderPageRef.current = renderPage;
+
   useEffect(() => { renderPage(); }, [renderPage]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const observer = new ResizeObserver(() => renderPage());
+    const observer = new ResizeObserver(() => renderPageRef.current());
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [renderPage]);
+  }, []);
 
   // Wheel zoom (anchored to cursor, proportional to deltaY — matches board view speed)
   useEffect(() => {
@@ -119,16 +149,25 @@ export function PdfViewerPanel() {
 
       // Proportional zoom matching pixi-viewport wheel({ smooth: 5 }) feel
       const zoomFactor = Math.exp(-e.deltaY * 0.001);
+      const oldZoom = zoomRef.current;
+      const newZoom = Math.max(0.1, Math.min(oldZoom * zoomFactor, 20));
+      const ratio = newZoom / oldZoom;
+      const oldPan = panRef.current;
+      const newPan = {
+        x: mouseX - ratio * (mouseX - oldPan.x),
+        y: mouseY - ratio * (mouseY - oldPan.y),
+      };
 
-      setZoom(prev => {
-        const newZoom = Math.max(0.1, Math.min(prev * zoomFactor, 20));
-        const ratio = newZoom / prev;
-        setPan(p => ({
-          x: mouseX - ratio * (mouseX - p.x),
-          y: mouseY - ratio * (mouseY - p.y),
-        }));
-        return newZoom;
-      });
+      zoomRef.current = newZoom;
+      panRef.current = newPan;
+      setZoom(newZoom);
+      setPan(newPan);
+
+      // Re-render at higher resolution when zoom tier changes
+      const newTier = computeTier(newZoom);
+      if (newTier !== renderTierRef.current) {
+        renderPageRef.current(newTier);
+      }
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
@@ -159,29 +198,26 @@ export function PdfViewerPanel() {
       wasDragRef.current = true;
     }
 
-    setPan(p => ({ x: p.x + dx, y: p.y + dy }));
-  }, []);
-
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
-    const wasDrag = wasDragRef.current;
-    isDraggingRef.current = false;
-    wasDragRef.current = false;
-
-    // If it wasn't a drag, treat as a click for text detection
-    if (!wasDrag && e.button === 0) {
-      handleTextClick(e);
-    }
+    const newPan = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+    panRef.current = newPan;
+    setPan(newPan);
   }, []);
 
   // Text detection on click (not drag)
+  // Uses refs for zoom/pan so it's never stale
   const handleTextClick = useCallback((e: React.MouseEvent) => {
     if (!isLoaded) return;
 
+    const container = containerRef.current;
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    if (!container || !canvas) return;
+
+    // Convert screen coords to canvas pixel coords using known pan/zoom
+    const containerRect = container.getBoundingClientRect();
+    const screenX = e.clientX - containerRect.left;
+    const screenY = e.clientY - containerRect.top;
+    const clickX = (screenX - panRef.current.x) / zoomRef.current;
+    const clickY = (screenY - panRef.current.y) / zoomRef.current;
 
     const scale = scaleRef.current;
     const unscaledH = viewportHeightRef.current;
@@ -217,6 +253,21 @@ export function PdfViewerPanel() {
     }
   }, [isLoaded, currentPage]);
 
+  // Keep a ref to the latest handleTextClick so handleMouseUp never goes stale
+  const handleTextClickRef = useRef(handleTextClick);
+  handleTextClickRef.current = handleTextClick;
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    const wasDrag = wasDragRef.current;
+    isDraggingRef.current = false;
+    wasDragRef.current = false;
+
+    // If it wasn't a drag, treat as a click for text detection
+    if (!wasDrag && e.button === 0) {
+      handleTextClickRef.current(e);
+    }
+  }, []);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     pdfStore.searchText(searchInputRef.current?.value ?? '');
@@ -238,6 +289,14 @@ export function PdfViewerPanel() {
     return (
       <div className="pdf-viewer pdf-empty">
         <span>Loading {fileName}...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="pdf-viewer pdf-empty">
+        <span style={{ color: '#ff6666' }}>PDF error: {error}</span>
       </div>
     );
   }
