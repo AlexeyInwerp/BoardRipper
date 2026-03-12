@@ -38,18 +38,18 @@ export function PdfViewerPanel() {
   }, [currentPage]);
 
   /** Compute the resolution tier: steps up every 50% of zoom (1, 1.5, 2, 2.5, …) capped at 5 */
-  const computeTier = useCallback((z: number) => {
+  const computeTier = (z: number) => {
     const tier = Math.ceil(z / 0.5) * 0.5;
     return Math.max(1, Math.min(tier, 5));
-  }, []);
+  };
 
-  const renderPage = useCallback(async (tier?: number) => {
+  const renderPage = useCallback(async () => {
     if (!isLoaded || !canvasRef.current || !highlightRef.current || !containerRef.current) return;
 
     renderTaskRef.current?.cancel();
     setError(null);
 
-    const resTier = tier ?? renderTierRef.current;
+    const resTier = computeTier(zoomRef.current);
     renderTierRef.current = resTier;
 
     try {
@@ -164,9 +164,8 @@ export function PdfViewerPanel() {
       setPan(newPan);
 
       // Re-render at higher resolution when zoom tier changes
-      const newTier = computeTier(newZoom);
-      if (newTier !== renderTierRef.current) {
-        renderPageRef.current(newTier);
+      if (computeTier(newZoom) !== renderTierRef.current) {
+        renderPageRef.current();
       }
     };
 
