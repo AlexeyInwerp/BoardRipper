@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { pdfStore } from '../store/pdf-store';
-import type { PdfTextMatch } from '../store/pdf-store';
+import type { PdfTextMatch, PdfBookmark } from '../store/pdf-store';
 
 interface PdfSnapshot {
   fileName: string;
@@ -11,6 +11,7 @@ interface PdfSnapshot {
   activeMatchIndex: number;
   isLoaded: boolean;
   loading: boolean;
+  bookmarks: PdfBookmark[];
 }
 
 let cachedSnapshot: PdfSnapshot | null = null;
@@ -30,6 +31,7 @@ function getSnapshot(): PdfSnapshot {
       activeMatchIndex: pdfStore.activeMatchIndex,
       isLoaded: pdfStore.isLoaded,
       loading: pdfStore.loading,
+      bookmarks: pdfStore.bookmarks,
     };
     lastVersion = snapshotVersion;
   }

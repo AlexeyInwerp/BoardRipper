@@ -19,6 +19,7 @@ interface StoreSnapshot {
   rotation: number;
   mirrorX: boolean;
   mirrorY: boolean;
+  showNetLines: boolean;
 }
 
 let cachedSnapshot: StoreSnapshot | null = null;
@@ -45,6 +46,7 @@ function getSnapshot(): StoreSnapshot {
       rotation: boardStore.rotation,
       mirrorX: boardStore.mirrorX,
       mirrorY: boardStore.mirrorY,
+      showNetLines: boardStore.showNetLines,
     };
     lastVersion = snapshotVersion;
   }

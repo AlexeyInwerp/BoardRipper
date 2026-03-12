@@ -18,6 +18,7 @@ import { SearchResultsPanel } from './panels/SearchResultsPanel';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { setDockviewApi } from './store/dockview-api';
+import { PanelAdder } from './components/PanelAdder';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardCanvas: () => <BoardCanvas />,
@@ -44,7 +45,7 @@ function App() {
     api.addPanel({
       id: 'componentInfo',
       component: 'componentInfo',
-      title: 'Component Info',
+      title: 'Info',
       position: { referencePanel: 'board', direction: 'right' },
       initialWidth: 320,
     });
@@ -53,7 +54,7 @@ function App() {
     api.addPanel({
       id: 'netList',
       component: 'netList',
-      title: 'Net List',
+      title: 'Nets',
       position: { referencePanel: 'componentInfo' },
     });
 
@@ -87,6 +88,7 @@ function App() {
           className="dockview-theme-dark"
           onReady={onReady}
           components={components}
+          rightHeaderActionsComponent={PanelAdder}
           disableFloatingGroups={false}
         />
       </div>

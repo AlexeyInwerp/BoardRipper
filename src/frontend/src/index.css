@@ -57,7 +57,7 @@ html, body, #root {
   padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 0.9em;
   white-space: nowrap;
 }
 
@@ -73,8 +73,8 @@ html, body, #root {
 }
 
 .toolbar-btn-icon {
-  font-size: 18px;
-  padding: 2px 8px;
+  font-size: 1.7em;
+  padding: 2px 10px;
   line-height: 1;
 }
 
@@ -90,7 +90,7 @@ html, body, #root {
   color: var(--text-primary);
   padding: 4px 10px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 0.9em;
   width: 240px;
 }
 
@@ -105,7 +105,7 @@ html, body, #root {
 
 .toolbar-filename {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 0.85em;
 }
 
 .toolbar-stats {
@@ -138,7 +138,7 @@ html, body, #root {
   border-right: 1px solid var(--border);
   cursor: pointer;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-secondary);
   min-width: 0;
   max-width: 200px;
@@ -169,7 +169,7 @@ html, body, #root {
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 1.08em;
   line-height: 1;
   cursor: pointer;
   border-radius: 3px;
@@ -198,7 +198,7 @@ html, body, #root {
   border-top: 1px solid var(--border);
   padding: 0 12px;
   gap: 4px;
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -215,7 +215,7 @@ html, body, #root {
   justify-content: center;
   height: 100%;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 1em;
   padding: 20px;
   text-align: center;
 }
@@ -234,7 +234,7 @@ html, body, #root {
 }
 
 .info-header h3 {
-  font-size: 16px;
+  font-size: 1.23em;
   font-weight: 600;
   color: var(--accent);
   margin-bottom: 6px;
@@ -246,7 +246,7 @@ html, body, #root {
 }
 
 .badge {
-  font-size: 10px;
+  font-size: 0.77em;
   padding: 2px 6px;
   border-radius: 3px;
   background: var(--bg-tertiary);
@@ -267,7 +267,7 @@ html, body, #root {
 .pin-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 0.9em;
 }
 
 .pin-table th {
@@ -314,7 +314,7 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 0.85em;
 }
 
 .net-list-container {
@@ -340,12 +340,12 @@ html, body, #root {
 }
 
 .net-name {
-  font-size: 12px;
+  font-size: 0.9em;
   color: var(--text-primary);
 }
 
 .net-count {
-  font-size: 10px;
+  font-size: 0.77em;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   padding: 1px 6px;
@@ -358,7 +358,7 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 0.85em;
 }
 
 .search-results-container {
@@ -385,14 +385,34 @@ html, body, #root {
 }
 
 .result-pins {
-  font-size: 10px;
+  font-size: 0.77em;
   color: var(--text-secondary);
   margin-left: auto;
 }
 
 /* Settings Panel */
 .settings-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-top {
+  flex-shrink: 0;
+  padding: 10px 10px 0;
+}
+
+.settings-scroll {
+  flex: 1;
+  overflow-y: auto;
   padding: 10px;
+}
+
+.settings-footer {
+  display: flex;
+  gap: 6px;
+  padding: 8px 0;
 }
 
 .settings-section {
@@ -426,7 +446,7 @@ html, body, #root {
 }
 
 .settings-section-title {
-  font-size: 11px;
+  font-size: 0.85em;
   font-weight: 600;
   color: var(--accent);
   text-transform: uppercase;
@@ -434,7 +454,7 @@ html, body, #root {
 }
 
 .settings-section-chevron {
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-secondary);
   line-height: 1;
 }
@@ -462,14 +482,14 @@ html, body, #root {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-secondary);
   margin-bottom: 2px;
 }
 
 .settings-value {
   font-family: monospace;
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-primary);
   min-width: 35px;
   text-align: right;
@@ -524,7 +544,7 @@ html, body, #root {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 0.77em;
   cursor: pointer;
   border-radius: 3px;
 }
@@ -570,7 +590,7 @@ html, body, #root {
   border: 1px solid var(--border);
   color: var(--text-primary);
   border-radius: 3px;
-  font-size: 11px;
+  font-size: 0.85em;
   font-family: monospace;
 }
 
@@ -606,7 +626,7 @@ html, body, #root {
   background: none;
   border: 1px solid transparent;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 1.08em;
   line-height: 1;
   cursor: pointer;
   border-radius: 3px;
@@ -634,7 +654,7 @@ html, body, #root {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--accent);
-  font-size: 14px;
+  font-size: 1.08em;
   line-height: 1;
   cursor: pointer;
   border-radius: 3px;
@@ -650,7 +670,7 @@ html, body, #root {
 }
 
 .color-rule-hint {
-  font-size: 9px;
+  font-size: 0.7em;
   color: var(--text-secondary);
   opacity: 0.6;
   margin-top: 4px;
@@ -676,7 +696,7 @@ html, body, #root {
   bottom: 6px;
   right: 8px;
   font-family: monospace;
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-muted, #888);
   background: rgba(0,0,0,0.45);
   padding: 1px 6px;
@@ -696,7 +716,7 @@ html, body, #root {
   bottom: 6px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 10px;
+  font-size: 0.77em;
   color: var(--text-muted, #666);
   background: rgba(0,0,0,0.35);
   padding: 1px 8px;
@@ -707,9 +727,7 @@ html, body, #root {
 
 /* Settings action buttons (Preview / Apply / Cancel) */
 .settings-actions {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
+  display: contents;
 }
 
 .settings-action-btn {
@@ -720,7 +738,7 @@ html, body, #root {
   color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 0.85em;
   transition: background 0.15s, color 0.15s;
 }
 
@@ -759,7 +777,7 @@ html, body, #root {
   color: var(--text-secondary);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 0.85em;
   margin-top: 8px;
 }
 
@@ -767,6 +785,82 @@ html, body, #root {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent-hover);
+}
+
+/* Board HUD overlay (zoom + FPS) */
+.board-hud {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 2px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Panel Adder (+) Button */
+.panel-adder {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-right: 4px;
+}
+
+.panel-adder-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.panel-adder-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.panel-adder-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  z-index: 1000;
+  min-width: 120px;
+  overflow: hidden;
+}
+
+.panel-adder-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-adder-item:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 /* Context Menu */
@@ -783,7 +877,7 @@ html, body, #root {
 
 .context-menu-item {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: 0.9em;
   color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
@@ -818,7 +912,7 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 1em;
 }
 
 .pdf-toolbar {
@@ -832,7 +926,7 @@ html, body, #root {
 }
 
 .pdf-filename {
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -853,7 +947,7 @@ html, body, #root {
   padding: 2px 8px;
   border-radius: 3px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 0.85em;
 }
 
 .pdf-toolbar-btn:hover:not(:disabled) {
@@ -866,11 +960,27 @@ html, body, #root {
   cursor: default;
 }
 
+.pdf-page-input {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  font-family: monospace;
+  text-align: center;
+  width: 32px;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+.pdf-page-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .pdf-page-info {
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--text-secondary);
   font-family: monospace;
-  min-width: 50px;
   text-align: center;
 }
 
@@ -884,7 +994,7 @@ html, body, #root {
   color: var(--text-primary);
   padding: 2px 8px;
   border-radius: 3px;
-  font-size: 11px;
+  font-size: 0.85em;
   width: 160px;
 }
 
@@ -894,7 +1004,7 @@ html, body, #root {
 }
 
 .pdf-match-info {
-  font-size: 10px;
+  font-size: 0.77em;
   color: var(--text-secondary);
   font-family: monospace;
 }
@@ -922,7 +1032,7 @@ html, body, #root {
 }
 
 .pdf-clicked-text {
-  font-size: 11px;
+  font-size: 0.85em;
   color: var(--accent);
   font-family: monospace;
   font-weight: 600;
@@ -933,9 +1043,54 @@ html, body, #root {
 }
 
 .pdf-zoom-info {
-  font-size: 10px;
+  font-size: 0.77em;
   color: var(--text-secondary);
   font-family: monospace;
+}
+
+.pdf-bookmark-add {
+  font-weight: 700;
+  font-size: 1em !important;
+  padding: 0 6px !important;
+  line-height: 1;
+}
+
+.pdf-bookmark-pill {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 1px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.77em;
+  font-family: monospace;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.pdf-bookmark-pill:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.pdf-bookmark-pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.pdf-bookmark-edit {
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  padding: 1px 4px;
+  border-radius: 8px;
+  font-size: 0.77em;
+  font-family: monospace;
+  width: 48px;
+  outline: none;
 }
 
 /* Dockview theme overrides */

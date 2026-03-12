@@ -6,7 +6,7 @@ import { boardStore } from '../store/board-store';
 const DRAG_THRESHOLD = 3;
 
 export function PdfViewerPanel() {
-  const { isLoaded, loading, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex } = usePdfStore();
+  const { isLoaded, loading, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, bookmarks } = usePdfStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -17,6 +17,8 @@ export function PdfViewerPanel() {
   const renderTierRef = useRef(1); // resolution multiplier for current render
   const [clickedText, setClickedText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blinkPhaseRef = useRef(0); // 0 = no blink, >0 = blink countdown
 
   // Pan/zoom state — refs are source of truth, state triggers re-render
   const zoomRef = useRef(1);
@@ -28,8 +30,23 @@ export function PdfViewerPanel() {
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const wasDragRef = useRef(false);
 
-  // Reset pan/zoom when page changes
+  // Night mode (inverted colors)
+  const [nightMode, setNightMode] = useState(false);
+
+  // Bookmark editing state
+  const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState('');
+  const bookmarkClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Skip pan/zoom reset when navigating to a match or bookmark restore
+  const skipResetRef = useRef(false);
+
+  // Reset pan/zoom when page changes (unless navigating to a match)
   useEffect(() => {
+    if (skipResetRef.current) {
+      skipResetRef.current = false;
+      return;
+    }
     zoomRef.current = 1;
     panRef.current = { x: 0, y: 0 };
     renderTierRef.current = 1;
@@ -105,6 +122,7 @@ export function PdfViewerPanel() {
     const pageMatches = pdfStore.getMatchesForPage(pageIndex);
     const scale = scaleRef.current * renderTierRef.current;
     const unscaledH = viewportHeightRef.current;
+    const blinkHide = blinkPhaseRef.current % 2 === 1; // odd phases = hidden
 
     for (let mi = 0; mi < pageMatches.length; mi++) {
       const match = pageMatches[mi];
@@ -117,7 +135,12 @@ export function PdfViewerPanel() {
       const h = fontSize * scale * 1.2;
 
       const isActive = matches.indexOf(match) === activeMatchIndex;
-      hCtx.fillStyle = isActive ? 'rgba(255, 170, 0, 0.4)' : 'rgba(255, 255, 68, 0.3)';
+      if (isActive) {
+        // Blink: alternate between orange and red
+        hCtx.fillStyle = blinkHide ? 'rgba(220, 30, 30, 0.5)' : 'rgba(255, 170, 0, 0.4)';
+      } else {
+        hCtx.fillStyle = 'rgba(255, 255, 68, 0.3)';
+      }
       hCtx.fillRect(x, y, w, h);
     }
   }, [isLoaded, currentPage, matches, activeMatchIndex]);
@@ -125,9 +148,103 @@ export function PdfViewerPanel() {
   // Keep a ref to renderPage so the wheel handler can trigger re-renders
   const renderPageRef = useRef(renderPage);
   renderPageRef.current = renderPage;
+  const drawHighlightsRef = useRef(drawHighlights);
+  drawHighlightsRef.current = drawHighlights;
 
   useEffect(() => { renderPage(); }, [renderPage]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
+
+  // When active match changes: center & zoom to match (~10% of screen), then blink
+  // Uses a ref-based approach to avoid blocking the render pipeline
+  const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
+
+  useEffect(() => {
+    if (activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
+
+    // Signal to skip the page-reset effect (match navigation handles zoom/pan)
+    const match = matches[activeMatchIndex];
+    const matchPage = match.pageIndex + 1;
+    if (matchPage !== currentPage) {
+      skipResetRef.current = true;
+    }
+
+    // Bump the match ID so we can detect stale blinks
+    const matchId = ++pendingMatchRef.current.id;
+    pendingMatchRef.current.index = activeMatchIndex;
+
+    // Defer zoom/pan until after page render is ready (scaleRef populated)
+    const applyZoomAndBlink = () => {
+      if (pendingMatchRef.current.id !== matchId) return; // stale
+      if (!containerRef.current) return;
+
+      const baseScale = scaleRef.current;
+      const unscaledH = viewportHeightRef.current;
+      if (baseScale === 0 || unscaledH === 0) return; // not rendered yet
+
+      const t = match.item.transform;
+      const fontSize = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
+      const mx = t[4] * baseScale;
+      const my = (unscaledH - t[5]) * baseScale - fontSize * baseScale;
+      const mw = match.item.width * baseScale;
+      const mh = fontSize * baseScale * 1.2;
+      const mcx = mx + mw / 2;
+      const mcy = my + mh / 2;
+
+      const container = containerRef.current;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const targetFrac = 0.1;
+      const zoomByW = (cw * targetFrac) / Math.max(mw, 1);
+      const zoomByH = (ch * targetFrac) / Math.max(mh, 1);
+      const newZoom = Math.max(0.5, Math.min(Math.min(zoomByW, zoomByH), 20));
+
+      const newPan = {
+        x: cw / 2 - mcx * newZoom,
+        y: ch / 2 - mcy * newZoom,
+      };
+
+      zoomRef.current = newZoom;
+      panRef.current = newPan;
+      setZoom(newZoom);
+      setPan(newPan);
+
+      if (computeTier(newZoom) !== renderTierRef.current) {
+        renderPageRef.current();
+      }
+
+      // Blink: 6 phases alternating orange/red over ~1.5s (only redraws highlight canvas)
+      if (blinkTimerRef.current) clearTimeout(blinkTimerRef.current);
+      blinkPhaseRef.current = 0;
+      const totalBlinks = 6;
+      const blinkInterval = 250;
+
+      const doBlink = (phase: number) => {
+        if (pendingMatchRef.current.id !== matchId) return; // stale
+        blinkPhaseRef.current = phase;
+        drawHighlightsRef.current();
+        if (phase < totalBlinks) {
+          blinkTimerRef.current = setTimeout(() => doBlink(phase + 1), blinkInterval);
+        } else {
+          blinkPhaseRef.current = 0;
+          drawHighlightsRef.current();
+          blinkTimerRef.current = null;
+        }
+      };
+      doBlink(1);
+    };
+
+    // Use requestAnimationFrame to let the page render first
+    const raf = requestAnimationFrame(applyZoomAndBlink);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      if (blinkTimerRef.current) {
+        clearTimeout(blinkTimerRef.current);
+        blinkTimerRef.current = null;
+      }
+      blinkPhaseRef.current = 0;
+    };
+  }, [activeMatchIndex, matches, currentPage]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -276,6 +393,74 @@ export function PdfViewerPanel() {
     e.preventDefault();
   }, []);
 
+  const handleAddBookmark = useCallback(() => {
+    pdfStore.addBookmark(currentPage, zoomRef.current, panRef.current.x, panRef.current.y);
+  }, [currentPage]);
+
+  const handleBookmarkClick = useCallback((id: string) => {
+    // Single click: navigate to bookmark. Use a timer to distinguish from double-click.
+    if (bookmarkClickTimerRef.current) {
+      clearTimeout(bookmarkClickTimerRef.current);
+      bookmarkClickTimerRef.current = null;
+    }
+    bookmarkClickTimerRef.current = setTimeout(() => {
+      bookmarkClickTimerRef.current = null;
+      const bm = pdfStore.bookmarks.find(b => b.id === id);
+      if (!bm) return;
+      skipResetRef.current = true;
+      pdfStore.goToPage(bm.page);
+      zoomRef.current = bm.zoom;
+      panRef.current = { x: bm.panX, y: bm.panY };
+      setZoom(bm.zoom);
+      setPan({ x: bm.panX, y: bm.panY });
+      if (computeTier(bm.zoom) !== renderTierRef.current) {
+        renderPageRef.current();
+      }
+    }, 250);
+  }, []);
+
+  const handleBookmarkDblClick = useCallback((id: string) => {
+    // Double click: overwrite bookmark with current view
+    if (bookmarkClickTimerRef.current) {
+      clearTimeout(bookmarkClickTimerRef.current);
+      bookmarkClickTimerRef.current = null;
+    }
+    pdfStore.updateBookmark(id, currentPage, zoomRef.current, panRef.current.x, panRef.current.y);
+  }, [currentPage]);
+
+  const handleBookmarkRightClick = useCallback((e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    pdfStore.removeBookmark(id);
+  }, []);
+
+  const handleBookmarkMiddleClick = useCallback((e: React.MouseEvent, id: string) => {
+    // Middle-click or Option+click (Mac) to start editing label
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bm = pdfStore.bookmarks.find(b => b.id === id);
+      if (bm) {
+        setEditingBookmarkId(id);
+        setEditingLabel(bm.label);
+      }
+    }
+  }, []);
+
+  const handleLabelEditSubmit = useCallback((id: string) => {
+    pdfStore.renameBookmark(id, editingLabel.trim());
+    setEditingBookmarkId(null);
+    setEditingLabel('');
+  }, [editingLabel]);
+
+  const handleLabelEditKeyDown = useCallback((e: React.KeyboardEvent, id: string) => {
+    if (e.key === 'Enter') {
+      handleLabelEditSubmit(id);
+    } else if (e.key === 'Escape') {
+      setEditingBookmarkId(null);
+      setEditingLabel('');
+    }
+  }, [handleLabelEditSubmit]);
+
   if (!isLoaded && !loading) {
     return (
       <div className="pdf-viewer pdf-empty">
@@ -313,7 +498,20 @@ export function PdfViewerPanel() {
         >
           &lt;
         </button>
-        <span className="pdf-page-info">{currentPage} / {pageCount}</span>
+        <input
+          className="pdf-page-input"
+          type="text"
+          value={currentPage}
+          onChange={e => {
+            const n = parseInt(e.target.value, 10);
+            if (!isNaN(n)) pdfStore.goToPage(n);
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          onFocus={e => e.target.select()}
+        />
+        <span className="pdf-page-info">/ {pageCount}</span>
         <button
           className="pdf-toolbar-btn"
           onClick={() => pdfStore.goToPage(currentPage + 1)}
@@ -352,7 +550,48 @@ export function PdfViewerPanel() {
           </>
         )}
 
+        <div className="pdf-toolbar-separator" />
+        <button
+          className="pdf-toolbar-btn pdf-bookmark-add"
+          onClick={handleAddBookmark}
+          title="Bookmark current view"
+        >
+          +
+        </button>
+        {bookmarks.map(bm => (
+          editingBookmarkId === bm.id ? (
+            <input
+              key={bm.id}
+              className="pdf-bookmark-edit"
+              value={editingLabel}
+              onChange={e => setEditingLabel(e.target.value)}
+              onKeyDown={e => handleLabelEditKeyDown(e, bm.id)}
+              onBlur={() => handleLabelEditSubmit(bm.id)}
+              autoFocus
+            />
+          ) : (
+            <button
+              key={bm.id}
+              className={`pdf-bookmark-pill${bm.page === currentPage ? ' active' : ''}`}
+              onClick={e => { if (!e.altKey) handleBookmarkClick(bm.id); }}
+              onDoubleClick={() => handleBookmarkDblClick(bm.id)}
+              onContextMenu={e => handleBookmarkRightClick(e, bm.id)}
+              onMouseDown={e => handleBookmarkMiddleClick(e, bm.id)}
+              title={`Page ${bm.page} @ ${Math.round(bm.zoom * 100)}%\nClick: go | Dbl-click: update | Right-click: delete | Opt/Middle-click: rename`}
+            >
+              {bm.label}
+            </button>
+          )
+        ))}
+
         <div className="pdf-toolbar-spacer" />
+        <button
+          className={`pdf-toolbar-btn${nightMode ? ' active' : ''}`}
+          onClick={() => setNightMode(v => !v)}
+          title="Toggle night mode (invert colors)"
+        >
+          Night
+        </button>
         <span className="pdf-zoom-info">{Math.round(zoom * 100)}%</span>
       </div>
 
@@ -364,7 +603,7 @@ export function PdfViewerPanel() {
         onMouseUp={handleMouseUp}
         onMouseLeave={() => { isDraggingRef.current = false; wasDragRef.current = false; }}
         onContextMenu={handleContextMenu}
-        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair' }}
+        style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
       >
         <div
           className="pdf-page-wrapper"

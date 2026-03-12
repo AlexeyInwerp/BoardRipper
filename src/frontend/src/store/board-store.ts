@@ -22,6 +22,7 @@ export interface BoardTab {
   rotation: number;
   mirrorX: boolean;
   mirrorY: boolean;
+  showNetLines: boolean;
 }
 
 export interface FocusRequest {
@@ -56,6 +57,7 @@ class BoardStore {
   get rotation(): number { return this.activeTab?.rotation ?? 0; }
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
+  get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
 
   get selectedPart(): Part | null {
     const tab = this.activeTab;
@@ -111,6 +113,7 @@ class BoardStore {
       rotation: 0,
       mirrorX: false,
       mirrorY: false,
+      showNetLines: false,
     };
 
     this._tabs.push(tab);
@@ -253,6 +256,13 @@ class BoardStore {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ mirrorY: !tab.mirrorY });
+    this.notify();
+  }
+
+  toggleNetLines() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showNetLines: !tab.showNetLines });
     this.notify();
   }
 

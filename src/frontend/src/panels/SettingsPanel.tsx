@@ -4,7 +4,7 @@ import type { RenderSettings, LabelSize, NetColorRule } from '../store/render-se
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 
-type SectionId = MockupSectionId | 'interaction';
+type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -167,7 +167,7 @@ function NetColorRulesSection({ rules, ruleActions }: { rules: NetColorRule[]; r
 
 // ---- Main panel ----
 
-const ALL_SECTIONS: SectionId[] = ['outline', 'parts', 'pins', 'netColors', 'selection', 'interaction'];
+const ALL_SECTIONS: SectionId[] = ['outline', 'parts', 'pins', 'netColors', 'selection', 'netLines', 'interaction', 'performance'];
 
 export function SettingsPanel() {
   const baselineRef = useRef<RenderSettings>(renderSettingsStore.snapshot());
@@ -188,11 +188,14 @@ export function SettingsPanel() {
   const pinsRef = useRef<HTMLDivElement>(null);
   const netColorsRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<HTMLDivElement>(null);
+  const netLinesRef = useRef<HTMLDivElement>(null);
   const interactionRef = useRef<HTMLDivElement>(null);
+  const performanceRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
-    netColors: netColorsRef, selection: selectionRef, interaction: interactionRef,
+    netColors: netColorsRef, selection: selectionRef, netLines: netLinesRef, interaction: interactionRef,
+    performance: performanceRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -279,19 +282,21 @@ export function SettingsPanel() {
 
   return (
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
-      <SettingsMockup settings={draft} onElementClick={focusSection} />
-
-      <div className="settings-actions">
-        <button
-          className={`settings-action-btn ${previewing ? 'active' : ''}`}
-          onClick={handlePreview} disabled={!dirty}
-          title={previewing ? 'Stop preview, revert board to saved' : 'Preview changes on the board'}
-        >
-          {previewing ? 'Stop Preview' : 'Preview'}
-        </button>
-        <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}>Apply</button>
-        <button className="settings-action-btn" onClick={handleCancel} disabled={!dirty}>Cancel</button>
+      <div className="settings-top">
+        <SettingsMockup settings={draft} onElementClick={focusSection} />
+        <div className="settings-footer">
+          <button
+            className={`settings-action-btn ${previewing ? 'active' : ''}`}
+            onClick={handlePreview} disabled={!dirty}
+            title={previewing ? 'Stop preview, revert board to saved' : 'Preview changes on the board'}
+          >
+            {previewing ? 'Stop Preview' : 'Preview'}
+          </button>
+          <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}>Apply</button>
+          <button className="settings-action-btn" onClick={handleCancel} disabled={!dirty}>Cancel</button>
+        </div>
       </div>
+      <div className="settings-scroll">
 
       <CollapsibleSection id="outline" title="Outline" isOpen={openSections.has('outline')}
         onToggle={toggleSection} sectionRef={outlineRef} isFocused={focusedSection === 'outline'}>
@@ -306,7 +311,10 @@ export function SettingsPanel() {
         <Slider label="Border Opacity" value={draft.partBorderAlpha} min={0} max={1} step={0.05} field="partBorderAlpha" onUpdate={updateDraft} />
         <Slider label="Padding" value={draft.partPadding} min={0} max={30} step={1} field="partPadding" onUpdate={updateDraft} />
         <Toggle label="Show Labels" value={draft.showPartLabels} field="showPartLabels" onUpdate={updateDraft} />
+        <Toggle label="Label Shadow" value={draft.partLabelShadow} field="partLabelShadow" onUpdate={updateDraft} />
         <Slider label="Label Hide Threshold" value={draft.labelHideThreshold} min={0} max={10} step={0.5} field="labelHideThreshold" onUpdate={updateDraft} />
+        <Slider label="Min Label Screen Size (px)" value={draft.labelMinScreenPx} min={0} max={10} step={0.5} field="labelMinScreenPx" onUpdate={updateDraft} />
+        <Slider label="Label Zoom Hide" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft} />
         <LabelSizeSelector draft={draft} onUpdate={updateDraft} />
       </CollapsibleSection>
 
@@ -316,6 +324,7 @@ export function SettingsPanel() {
         <Slider label="Max Radius" value={draft.pinMaxRadius} min={5} max={100} step={1} field="pinMaxRadius" onUpdate={updateDraft} />
         <Slider label="Scale Factor" value={draft.pinScaleFactor} min={0} max={3} step={0.1} field="pinScaleFactor" onUpdate={updateDraft} />
         <Slider label="Opacity" value={draft.pinAlpha} min={0} max={1} step={0.05} field="pinAlpha" onUpdate={updateDraft} />
+        <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft} />
       </CollapsibleSection>
 
       <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}
@@ -332,13 +341,28 @@ export function SettingsPanel() {
         <Slider label="Net Highlight Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft} />
       </CollapsibleSection>
 
+      <CollapsibleSection id="netLines" title="Net Lines" isOpen={openSections.has('netLines')}
+        onToggle={toggleSection} sectionRef={netLinesRef} isFocused={focusedSection === 'netLines'}>
+        <Slider label="Line Width" value={draft.netLineWidth} min={0.5} max={5} step={0.5} field="netLineWidth" onUpdate={updateDraft} />
+        <Slider label="Line Opacity" value={draft.netLineAlpha} min={0} max={1} step={0.05} field="netLineAlpha" onUpdate={updateDraft} />
+        <Toggle label="Dashed Line" value={draft.netLineDashed} field="netLineDashed" onUpdate={updateDraft} />
+        <Slider label="Dash Length" value={draft.netLineDashLength} min={2} max={20} step={1} field="netLineDashLength" onUpdate={updateDraft} />
+        <Toggle label="Red Pulse" value={draft.netLinePulse} field="netLinePulse" onUpdate={updateDraft} />
+      </CollapsibleSection>
+
       <CollapsibleSection id="interaction" title="Interaction" isOpen={openSections.has('interaction')}
         onToggle={toggleSection} sectionRef={interactionRef} isFocused={focusedSection === 'interaction'}>
         <Slider label="Click Threshold" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft} />
         <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft} />
       </CollapsibleSection>
 
+      <CollapsibleSection id="performance" title="Performance" isOpen={openSections.has('performance')}
+        onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
+        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft} />
+      </CollapsibleSection>
+
       <button className="settings-reset-btn" onClick={handleReset}>Reset to Defaults</button>
+      </div>
     </div>
   );
 }

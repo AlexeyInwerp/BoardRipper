@@ -1,10 +1,11 @@
-import { Application, Graphics, Container } from 'pixi.js';
+import { Application, Graphics, Container, Text } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
-import type { BoardData, Point, Pin, BBox } from '../parsers';
+import type { BoardData, Point } from '../parsers';
 import { boardStore } from '../store/board-store';
 import { renderSettingsStore, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
-import { buildBoardScene, drawOutline, BOARD_COLORS } from './board-scene';
+import { buildBoardScene, drawOutline, updateBorderWidths, BOARD_COLORS } from './board-scene';
+import type { BorderEntry } from './board-scene';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -25,6 +26,10 @@ interface BoardScene {
   labels: import('pixi.js').Text[];
   topLabels: import('pixi.js').Text[];
   bottomLabels: import('pixi.js').Text[];
+  topPinLabels: import('pixi.js').Text[];
+  bottomPinLabels: import('pixi.js').Text[];
+  borderEntries: BorderEntry[];
+  fontSizeGroups: import('./board-scene').FontSizeGroup[];
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
@@ -40,14 +45,15 @@ interface ViewportState {
 
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
-  private get isTopVisible() { return this.isTopVisible; }
+  private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
   /** Whether bottom layer should be visible (accounts for butterfly mode) */
-  private get isBottomVisible() { return this.isBottomVisible; }
+  private get isBottomVisible() { return boardStore.showBottom || boardStore.butterfly; }
 
   private app: Application;
   private viewport!: Viewport;
   private selectionGfx!: Graphics;
   private butterflySelectionGfx!: Graphics;
+  private netLinesGfx!: Graphics;
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
@@ -55,6 +61,36 @@ export class BoardRenderer {
   private containerEl: HTMLDivElement;
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
+  private hudEl: HTMLDivElement | null = null;
+
+  // On-demand rendering: only render when something changed
+  private needsRender = true;
+
+  // LoD zoom tracking — updated by ticker
+  private lastLodScale = -1;
+
+  // Incremental text resolution upgrade — runs after zoom settles
+  private textResTimer: ReturnType<typeof setTimeout> | null = null;
+  private textResQueue: Text[] | null = null;
+  private textResTarget = 2;
+
+  // Idle pre-rendering: multi-pass resolution upgrade (4 → 8 → 16), largest groups first
+  private idlePreRenderGroups: { labels: Text[]; idx: number }[] | null = null;
+  private idlePreRenderTotal = 0;
+  private idlePreRenderTarget = 4;
+  private static readonly IDLE_RES_PASSES = [4, 8, 16];
+
+  // Hide-text-during-zoom: detect actual zooming via per-frame scale comparison
+  private zoomSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  private textHiddenForZoom = false;
+  private prevTickScale = -1;
+
+  // Selection blink state (triggered by focusPart / PDF reverse search)
+  private selectionBlinkPhase = 0;
+  private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Net line pulse animation phase (0–1, driven by ticker)
+  private netLinePulsePhase = 0;
 
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
   private sceneCache = new Map<BoardData, BoardScene>();
@@ -62,9 +98,6 @@ export class BoardRenderer {
 
   // Viewport state per board: restore pan/zoom on tab switch
   private viewportStates = new Map<BoardData, ViewportState>();
-
-  // Orientation detection cache: true = need Y flip
-  private orientationCache = new Map<BoardData, boolean>();
 
   constructor(container: HTMLDivElement) {
     this.containerEl = container;
@@ -80,9 +113,16 @@ export class BoardRenderer {
       antialias: true,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
+      powerPreference: 'high-performance',
     });
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
+
+    this.app.ticker.maxFPS = 60;
+
+    // Remove the TickerPlugin's auto-render so we control when GPU work happens.
+    // The ticker still fires our callbacks; we call app.render() only when needsRender is set.
+    this.app.ticker.remove(this.app.render, this.app);
 
     this.viewport = new Viewport({
       screenWidth: this.containerEl.clientWidth,
@@ -95,12 +135,17 @@ export class BoardRenderer {
       .pinch()
       .wheel({ smooth: 5 })
       .decelerate({ friction: 0.95 })
-      .clampZoom({ minScale: 0.001, maxScale: 200 });
+      .clampZoom({ minScale: 0.001, maxScale: 10 });
+
+    // Viewport pan/zoom/decelerate → mark dirty so we render
+    this.viewport.on('moved', () => { this.needsRender = true; });
 
     this.app.stage.addChild(this.viewport);
 
     this.selectionGfx = new Graphics();
     this.butterflySelectionGfx = new Graphics();
+    this.netLinesGfx = new Graphics();
+    this.viewport.addChild(this.netLinesGfx);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.viewport.on('clicked', (e: any) => {
@@ -119,118 +164,338 @@ export class BoardRenderer {
     this.resizeObserver = new ResizeObserver(() => {
       this.viewport.resize(this.containerEl.clientWidth, this.containerEl.clientHeight);
       this.app.renderer.resize(this.containerEl.clientWidth, this.containerEl.clientHeight);
+      this.needsRender = true;
     });
     this.resizeObserver.observe(this.containerEl);
+
+    // HUD overlay (zoom + FPS)
+    this.hudEl = document.createElement('div');
+    this.hudEl.className = 'board-hud';
+    this.containerEl.style.position = 'relative';
+    this.containerEl.appendChild(this.hudEl);
+
+    // Combined ticker: LoD updates + net line animation + HUD + on-demand render
+    let hudThrottle = 0;
+    this.app.ticker.add((ticker) => {
+      // Detect active zooming by comparing scale between frames
+      const curScale = Math.abs(this.viewport.scale.x);
+      if (this.prevTickScale >= 0 && curScale !== this.prevTickScale) {
+        this.onZoomFrame();
+      }
+      this.prevTickScale = curScale;
+
+      if (this.updateLoD()) this.needsRender = true;
+      if (this.processZoomTextRes()) this.needsRender = true;
+      this.processIdlePreRender();
+
+      // Net line pulse animation — only when there's an active selection with net lines
+      if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
+        const s = renderSettingsStore.settings;
+        if (s.netLineDashed || s.netLinePulse) {
+          this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
+          this.renderNetLines();
+          this.needsRender = true;
+        }
+      }
+
+      // On-demand GPU render — skip when nothing changed (e.g. idle at high zoom)
+      if (this.needsRender) {
+        this.needsRender = false;
+        this.app.render();
+      }
+
+      // HUD update (DOM only, no GPU cost) — throttle to ~4 updates/sec
+      hudThrottle += ticker.deltaMS;
+      if (hudThrottle >= 250) {
+        hudThrottle = 0;
+        this.updateHud(ticker.FPS);
+      }
+    });
   }
 
-  // --- Orientation detection ---
+  /** Update the HUD overlay with rendering stats */
+  private updateHud(tickerFps: number) {
+    if (!this.hudEl) return;
+
+    const zoom = Math.round(Math.abs(this.viewport.scale.x) * 100);
+    const fps = Math.round(tickerFps);
+
+    // Idle pre-render progress (shows current pass target and %)
+    let preRenderText = '';
+    const groups = this.idlePreRenderGroups;
+    if (groups && this.idlePreRenderTotal > 0) {
+      const remaining = groups.reduce((n, g) => n + (g.labels.length - g.idx), 0);
+      const pct = Math.round((1 - remaining / this.idlePreRenderTotal) * 100);
+      preRenderText = ` · pre-render @${this.idlePreRenderTarget}x ${pct}%`;
+    }
+
+    // Zoom text res queue
+    let zoomResText = '';
+    if (this.textResQueue) {
+      zoomResText = ` · sharpening ${this.textResQueue.length}`;
+    }
+
+    // GPU idle indicator
+    const gpuIdle = !this.needsRender && !preRenderText && !zoomResText;
+    const gpuText = gpuIdle ? ' · gpu idle' : '';
+
+    // Scene stats (label + object count)
+    let sceneText = '';
+    const scene = this.activeScene;
+    if (scene) {
+      const labelCount = scene.topLabels.length + scene.bottomLabels.length
+        + scene.topPinLabels.length + scene.bottomPinLabels.length;
+      sceneText = ` · ${labelCount} labels`;
+    }
+
+    this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}${preRenderText}${zoomResText}${gpuText}`;
+  }
+
+  /** Called per frame when viewport scale is actively changing (user is zooming) */
+  private onZoomFrame() {
+    const s = renderSettingsStore.settings;
+    if (s.hideTextDuringZoom && !this.textHiddenForZoom) {
+      this.textHiddenForZoom = true;
+      const scene = this.activeScene;
+      if (scene) {
+        for (const group of scene.fontSizeGroups) {
+          if (group.visible) {
+            group.visible = false;
+            for (const lbl of group.labels) lbl.visible = false;
+          }
+        }
+      }
+    }
+    // Reset settle timer on every zoom frame
+    if (this.zoomSettleTimer) clearTimeout(this.zoomSettleTimer);
+    this.zoomSettleTimer = setTimeout(() => {
+      this.zoomSettleTimer = null;
+      if (this.textHiddenForZoom) {
+        this.textHiddenForZoom = false;
+        this.applyLabelVisibility();
+        this.needsRender = true;
+      }
+    }, 200);
+  }
+
+  /** Update level-of-detail based on current viewport zoom. Returns true if scale changed. */
+  private updateLoD(): boolean {
+    const scale = Math.abs(this.viewport.scale.x);
+    if (scale === this.lastLodScale) return false;
+    // Skip if scale change is negligible (< 5%) to avoid per-frame work during smooth zoom.
+    if (this.lastLodScale > 0 && Math.abs(scale - this.lastLodScale) / this.lastLodScale < 0.05) return false;
+    this.lastLodScale = scale;
+
+    const scene = this.activeScene;
+    if (!scene) return true;
+    const s = renderSettingsStore.settings;
+
+    // Update label visibility via font-size groups (skip if text is hidden for zoom)
+    if (!this.textHiddenForZoom) {
+      this.applyLabelVisibility();
+    }
+
+    // Min border width: ensure borders are at least 1 screen pixel
+    updateBorderWidths(scene.borderEntries, s.partBorderWidth, scale);
+
+    // Schedule incremental text resolution upgrade after zoom settles.
+    this.cancelTextResUpgrade();
+    const dpr = window.devicePixelRatio || 1;
+    const targetRes = Math.min(Math.max(2, Math.ceil(scale * dpr)), 16);
+    if (targetRes > 2) {
+      this.textResTimer = setTimeout(() => {
+        this.textResTimer = null;
+        this.startTextResUpgrade(targetRes);
+      }, 300);
+    }
+
+    return true;
+  }
+
+  /** Apply label visibility using font-size groups — O(groups) when nothing changes */
+  private applyLabelVisibility() {
+    const scene = this.activeScene;
+    if (!scene) return;
+    const s = renderSettingsStore.settings;
+    const scale = Math.abs(this.viewport.scale.x);
+    const minPx = s.labelMinScreenPx;
+    const zoomOk = s.labelZoomHide <= 0 || scale >= s.labelZoomHide;
+
+    for (const group of scene.fontSizeGroups) {
+      const shouldBeVisible = zoomOk && group.minSize * scale >= minPx;
+      if (shouldBeVisible !== group.visible) {
+        group.visible = shouldBeVisible;
+        for (const lbl of group.labels) lbl.visible = shouldBeVisible;
+      }
+    }
+  }
+
+  /** Cancel pending zoom-triggered text resolution upgrades (does NOT cancel idle pre-render) */
+  private cancelTextResUpgrade() {
+    if (this.textResTimer) { clearTimeout(this.textResTimer); this.textResTimer = null; }
+    this.textResQueue = null;
+    if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
+    this.textHiddenForZoom = false;
+  }
+
+  /** Begin incremental text resolution upgrade — processes a few labels per tick */
+  private startTextResUpgrade(targetRes: number) {
+    const scene = this.activeScene;
+    if (!scene) return;
+
+    this.textResTarget = targetRes;
+    // Collect only visible labels that need upgrading
+    const queue: Text[] = [];
+    const arrays = [scene.topLabels, scene.topPinLabels, scene.bottomLabels, scene.bottomPinLabels];
+    for (const arr of arrays) {
+      for (const lbl of arr) {
+        if (lbl.visible && lbl.resolution < targetRes) {
+          queue.push(lbl);
+        }
+      }
+    }
+
+    if (queue.length > 0) {
+      // Sort by distance from viewport center — farthest first so .pop() processes nearest first
+      const cx = this.viewport.center.x;
+      const cy = this.viewport.center.y;
+      queue.sort((a, b) => {
+        const da = (a.x - cx) ** 2 + (a.y - cy) ** 2;
+        const db = (b.x - cx) ** 2 + (b.y - cy) ** 2;
+        return db - da;
+      });
+    }
+
+    this.textResQueue = queue.length > 0 ? queue : null;
+  }
 
   /**
-   * Detect if the board data needs a Y-axis flip so IC pins ascend counter-clockwise.
-   *
-   * Fallback chain:
-   * 1. Board format info (not available in BVR — reserved for future formats)
-   * 2. Pin-order heuristic on a suitable IC (DIP/QFP/SOP — not BGA)
+   * Process zoom-triggered text resolution upgrades.
+   * Returns true if any labels were upgraded (needs re-render to show sharper text).
    */
-  private needsYFlip(board: BoardData): boolean {
-    const cached = this.orientationCache.get(board);
-    if (cached !== undefined) return cached;
+  private processZoomTextRes(): boolean {
+    const queue = this.textResQueue;
+    if (!queue) return false;
 
-    const result = this.detectOrientation(board);
-    this.orientationCache.set(board, result);
-    return result;
-  }
-
-  private detectOrientation(board: BoardData): boolean {
-    // Collect candidate ICs, scored by suitability
-    const candidates: { pins: Point[]; score: number }[] = [];
-
-    for (const part of board.parts) {
-      const n = part.pins.length;
-      if (n < 4) continue;
-
-      // Sort pins by numeric pin number for correct sequential order
-      const sorted = this.sortPinsByNumber(part.pins);
-      if (!sorted) continue; // Non-numeric pin numbers (likely BGA: A1, B2, etc.)
-
-      const positions = sorted.map(p => p.position);
-      const bb = part.bounds;
-      const bbW = bb.maxX - bb.minX;
-      const bbH = bb.maxY - bb.minY;
-      if (bbW < 0.001 || bbH < 0.001) continue;
-
-      // Filter out BGAs: check if pins fill the interior (grid pattern)
-      // For perimeter ICs (DIP/QFP), pins are only along edges
-      const edgeFrac = this.perimeterFraction(positions, bb);
-      if (edgeFrac < 0.6) continue; // More than 40% interior pins → likely BGA
-
-      // Check that pin polygon area is meaningful relative to bounding box
-      // (shoelace on a grid/zigzag path gives near-zero area)
-      const area = this.shoelaceArea(positions);
-      const bbArea = bbW * bbH;
-      const areaRatio = Math.abs(area) / bbArea;
-      if (areaRatio < 0.1) continue; // Path doesn't enclose a real polygon
-
-      // Score: prefer parts with more pins (more reliable), higher area ratio
-      const score = n * areaRatio;
-      candidates.push({ pins: positions, score });
+    const fps = this.app.ticker.FPS;
+    const BATCH = fps >= 30 ? 30 : 10;
+    const target = this.textResTarget;
+    let processed = 0;
+    while (queue.length > 0 && processed < BATCH) {
+      const lbl = queue.pop()!;
+      if (lbl.visible && lbl.resolution < target) {
+        lbl.resolution = target;
+        processed++;
+      }
     }
-
-    if (candidates.length === 0) return false;
-
-    // Pick the best candidate
-    candidates.sort((a, b) => b.score - a.score);
-    const best = candidates[0];
-    const area = this.shoelaceArea(best.pins);
-
-    // In standard math (Y-up): CCW polygon has positive shoelace area
-    // On screen (Y-down): that same polygon appears CW
-    // We want pins to appear CCW on screen → need Y-flip when area > 0
-    return area > 0;
-  }
-
-  /** Sort pins by numeric pin number. Returns null if any pin number is non-numeric. */
-  private sortPinsByNumber(pins: Pin[]): Pin[] | null {
-    const withNum: { pin: Pin; num: number }[] = [];
-    for (const pin of pins) {
-      const num = parseInt(pin.number, 10);
-      if (isNaN(num)) return null; // Non-numeric → likely BGA (A1, B2, etc.)
-      withNum.push({ pin, num });
-    }
-    withNum.sort((a, b) => a.num - b.num);
-    return withNum.map(w => w.pin);
+    if (queue.length === 0) this.textResQueue = null;
+    return processed > 0;
   }
 
   /**
-   * What fraction of pins lie on the perimeter of the bounding box?
-   * Perimeter ICs (DIP/QFP/SOP) have ~100%; BGAs have much less.
+   * Process idle pre-rendering in multiple passes (4 → 8 → 16).
+   * Does NOT trigger a GPU render — textures are prepared silently so zoom is instant.
+   * Higher passes use smaller batches (lower priority) to avoid hurting navigation.
+   * Pauses when FPS < 30.
    */
-  private perimeterFraction(positions: Point[], bb: BBox): number {
-    const bbW = bb.maxX - bb.minX;
-    const bbH = bb.maxY - bb.minY;
-    // A pin is "on the edge" if it's within 15% of the bounding box dimension from an edge
-    const threshX = bbW * 0.15;
-    const threshY = bbH * 0.15;
-    let edgeCount = 0;
-    for (const p of positions) {
-      const nearLeft = p.x - bb.minX < threshX;
-      const nearRight = bb.maxX - p.x < threshX;
-      const nearTop = p.y - bb.minY < threshY;
-      const nearBottom = bb.maxY - p.y < threshY;
-      if (nearLeft || nearRight || nearTop || nearBottom) edgeCount++;
+  private processIdlePreRender() {
+    const groups = this.idlePreRenderGroups;
+    if (!groups) return;
+    if (groups.length === 0) {
+      this.idlePreRenderGroups = null;
+      this.advanceIdlePreRenderPass();
+      return;
     }
-    return edgeCount / positions.length;
+    if (this.app.ticker.FPS < 30) return;
+
+    const target = this.idlePreRenderTarget;
+    // Scale batch size down for higher passes: res:4 → 100, res:8 → 50, res:16 → 25
+    const BATCH = target <= 4 ? 100 : target <= 8 ? 50 : 25;
+    let processed = 0;
+    while (groups.length > 0 && processed < BATCH) {
+      const group = groups[0];
+      while (group.idx < group.labels.length && processed < BATCH) {
+        const lbl = group.labels[group.idx++];
+        if (lbl.resolution < target) {
+          lbl.resolution = target;
+          processed++;
+        }
+      }
+      if (group.idx >= group.labels.length) {
+        groups.shift();
+      }
+    }
+    if (groups.length === 0) {
+      this.advanceIdlePreRenderPass();
+    }
   }
 
-  /** Signed area via shoelace formula */
-  private shoelaceArea(positions: Point[]): number {
-    let area = 0;
-    for (let i = 0; i < positions.length; i++) {
-      const j = (i + 1) % positions.length;
-      area += positions[i].x * positions[j].y;
-      area -= positions[j].x * positions[i].y;
+  /** Move to the next idle pre-render pass (4 → 8 → 16), or finish */
+  private advanceIdlePreRenderPass() {
+    this.idlePreRenderGroups = null;
+    const passes = BoardRenderer.IDLE_RES_PASSES;
+    const nextIdx = passes.indexOf(this.idlePreRenderTarget) + 1;
+    if (nextIdx < passes.length && this.activeScene) {
+      const nextTarget = passes[nextIdx];
+      dbg(1, `idlePreRender: pass ${this.idlePreRenderTarget} complete, starting pass ${nextTarget}`);
+      this.idlePreRenderTarget = nextTarget;
+      this.queueIdlePreRenderPass(nextTarget);
+    } else {
+      dbg(1, 'idlePreRender: all passes complete');
     }
-    return area;
+  }
+
+  /** Queue labels for a specific resolution pass */
+  private queueIdlePreRenderPass(target: number) {
+    const scene = this.activeScene;
+    if (!scene) return;
+
+    // Higher res passes only upgrade the largest font-size groups to limit memory.
+    // Small pin labels at extreme zoom are handled on-demand by the zoom-triggered path.
+    // res:4 → all groups, res:8 → largest half, res:16 → largest quarter
+    let eligible = [...scene.fontSizeGroups].reverse(); // largest first
+    if (target > 4 && eligible.length > 2) {
+      const limit = target <= 8
+        ? Math.max(2, Math.ceil(eligible.length / 2))
+        : Math.max(2, Math.ceil(eligible.length / 4));
+      eligible = eligible.slice(0, limit);
+    }
+
+    const groups = eligible
+      .filter(g => g.labels.some(l => l.resolution < target))
+      .map(g => ({ labels: g.labels, idx: 0 }));
+
+    if (groups.length === 0) {
+      // Nothing to upgrade at this level — try next pass
+      this.advanceIdlePreRenderPass();
+      return;
+    }
+
+    this.idlePreRenderTotal = groups.reduce((n, g) => n + g.labels.length, 0);
+    dbg(1, `idlePreRender: pass ${target} queued`, this.idlePreRenderTotal, 'labels');
+    this.idlePreRenderGroups = groups;
+  }
+
+  /** Start idle pre-rendering from the first pass (res:4) */
+  private startIdlePreRender() {
+    this.cancelIdlePreRender();
+    this.idlePreRenderTarget = BoardRenderer.IDLE_RES_PASSES[0];
+    this.queueIdlePreRenderPass(this.idlePreRenderTarget);
+  }
+
+  private cancelIdlePreRender() {
+    this.idlePreRenderGroups = null;
+  }
+
+  // --- Orientation ---
+
+  /**
+   * BVR files use Y-up math convention. Screen uses Y-down.
+   * Always flip Y to convert, matching OpenBoardView's CoordToScreen (ty = -1 * ...).
+   * User can toggle Mirror Y for manual override.
+   */
+  private needsYFlip(_board: BoardData): boolean {
+    return true;
   }
 
   // --- Flip management ---
@@ -248,8 +513,20 @@ export class BoardRenderer {
       // Butterfly mode: top above, bottom below — flipped as if hinging on the bottom edge
       this.setupButterfly(board, scene);
 
+      const bw = board.bounds.maxX - board.bounds.minX;
       const bh = board.bounds.maxY - board.bounds.minY;
-      const vgap = bh * 0.05; // 5% gap between the two halves
+
+      // After rotation, compute visual extents to decide separation axis
+      const sinR = Math.abs(Math.sin(rotation));
+      const cosR = Math.abs(Math.cos(rotation));
+      const visualW = bw * cosR + bh * sinR;
+      const visualH = bw * sinR + bh * cosR;
+
+      // Separate along the shorter visual axis (side-by-side when vertical)
+      const separateX = visualH > visualW;
+      const sepDim = separateX ? visualW : visualH;
+      const gap = sepDim * 0.05;
+      const halfSep = sepDim / 2 + gap / 2;
 
       const flipY = autoFlipY !== boardStore.mirrorY;
       const sx = boardStore.mirrorX ? -1 : 1;
@@ -257,47 +534,48 @@ export class BoardRenderer {
       // Bottom: Y inverted relative to top (flipped around bottom edge)
       const botSy = -topSy;
 
-      // Top half: shifted up
+      const dx = separateX ? halfSep : 0;
+      const dy = separateX ? 0 : halfSep;
+
+      // Top half: shifted left/up
       scene.root.pivot.set(cx, cy);
-      scene.root.position.set(cx, cy - bh / 2 - vgap / 2);
+      scene.root.position.set(cx - dx, cy - dy);
       scene.root.rotation = rotation;
       scene.root.scale.set(sx, topSy);
 
-      // Bottom half: shifted down, Y-flipped (hinged on bottom edge)
+      // Bottom half: shifted right/down, Y-flipped
       const broot = scene.butterflyRoot!;
       broot.pivot.set(cx, cy);
-      broot.position.set(cx, cy + bh / 2 + vgap / 2);
+      broot.position.set(cx + dx, cy + dy);
       broot.rotation = rotation;
       broot.scale.set(sx, botSy);
 
-      // Counter-flip labels for readability
-      for (const label of scene.topLabels) {
-        label.rotation = -rotation;
-        label.scale.set(sx, topSy);
+      // Counter-flip labels + pin numbers for readability
+      for (const arr of [scene.topLabels, scene.topPinLabels]) {
+        for (const label of arr) { label.rotation = -rotation; label.scale.set(sx, topSy); }
       }
-      for (const label of scene.bottomLabels) {
-        label.rotation = -rotation;
-        label.scale.set(sx, botSy);
+      for (const arr of [scene.bottomLabels, scene.bottomPinLabels]) {
+        for (const label of arr) { label.rotation = -rotation; label.scale.set(sx, botSy); }
       }
     } else {
       // Normal mode
       this.teardownButterfly(scene);
 
-      const bottomFlipX = boardStore.showBottom && !boardStore.showTop;
-      const flipX = bottomFlipX !== boardStore.mirrorX;
-      const flipY = autoFlipY !== boardStore.mirrorY;
+      // When viewing bottom only, flip Y (like flipping a physical board top-to-bottom)
+      const bottomFlipY = boardStore.showBottom && !boardStore.showTop;
+      const flipX = boardStore.mirrorX;
+      const flipY = autoFlipY !== bottomFlipY !== boardStore.mirrorY;
 
       scene.root.pivot.set(cx, cy);
       scene.root.position.set(cx, cy);
       scene.root.rotation = rotation;
       scene.root.scale.set(flipX ? -1 : 1, flipY ? -1 : 1);
 
-      // Counter-flip labels so text stays readable
+      // Counter-flip labels + pin numbers so text stays readable
       const lsx = flipX ? -1 : 1;
       const lsy = flipY ? -1 : 1;
-      for (const label of scene.labels) {
-        label.rotation = -rotation;
-        label.scale.set(lsx, lsy);
+      for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels]) {
+        for (const label of arr) { label.rotation = -rotation; label.scale.set(lsx, lsy); }
       }
     }
   }
@@ -323,6 +601,10 @@ export class BoardRenderer {
 
     broot.addChild(this.butterflySelectionGfx);
     this.viewport.addChild(broot);
+
+    // Keep net lines on top of butterfly content
+    this.viewport.removeChild(this.netLinesGfx);
+    this.viewport.addChild(this.netLinesGfx);
   }
 
   /** Tear down butterfly mode: move bottom layer back into root */
@@ -433,6 +715,7 @@ export class BoardRenderer {
       scene.topLayer.visible = this.isTopVisible;
       scene.bottomLayer.visible = this.isBottomVisible;
       this.applyFlips(board, scene);
+      this.needsRender = true;
       return;
     }
 
@@ -453,12 +736,24 @@ export class BoardRenderer {
     scene.root.addChild(this.selectionGfx);
     this.activeScene = scene;
 
+    // Keep net lines on top of all scene content
+    this.viewport.removeChild(this.netLinesGfx);
+    this.viewport.addChild(this.netLinesGfx);
+
     scene.topLayer.visible = this.isTopVisible;
     scene.bottomLayer.visible = this.isBottomVisible;
     this.applyFlips(board, scene);
 
     // Restore viewport position or fit
     this.restoreViewportState(board);
+
+    // Force LoD re-evaluation for the new scene
+    this.lastLodScale = -1;
+    this.updateLoD();
+
+    // Pre-render text at resolution:4 during idle time for crisp zoom
+    this.startIdlePreRender();
+    this.needsRender = true;
   }
 
   private deactivateScene() {
@@ -530,26 +825,27 @@ export class BoardRenderer {
 
       this.renderSelection();
 
-      // Handle focus requests (zoom to part)
+      // Handle focus requests (zoom to part + blink selection)
       const focus = boardStore.consumeFocusRequest();
       if (focus) {
         const focusPart = this.board?.parts[focus.partIndex];
         const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
-        this.zoomToBounds(focus.bounds, focusRoot);
+        const pinCount = focusPart?.pins.length ?? 0;
+        this.zoomToBounds(focus.bounds, focusRoot, pinCount > 2 ? 0.6 : 0.05);
+        this.startSelectionBlink();
       }
     } catch (err) {
       console.error('[BoardRenderer] onBoardUpdate crashed:', err);
     }
   }
 
-  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container) {
+  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container, viewFraction = 0.05) {
     const bw = bounds.maxX - bounds.minX;
     const bh = bounds.maxY - bounds.minY;
     const sw = this.containerEl.clientWidth;
     const sh = this.containerEl.clientHeight;
-    // Component should take ~5% of the visible view
     const maxDim = Math.max(bw, bh, 1);
-    const scale = (Math.min(sw, sh) * 0.05) / maxDim;
+    const scale = (Math.min(sw, sh) * viewFraction) / maxDim;
     this.viewport.scale.set(scale, scale);
 
     // Convert scene-local center to world coords for viewport
@@ -565,18 +861,57 @@ export class BoardRenderer {
     dbg(2, 'onSettingsUpdate');
     try {
       // Save viewport, invalidate all scenes, rebuild current
+      this.cancelTextResUpgrade();
       this.saveViewportState();
       this.invalidateAllScenes();
       this.activateScene(this.board);
       this.renderSelection();
+      // Force LoD re-evaluation on next tick (new scene, thresholds may have changed)
+      this.lastLodScale = -1;
     } catch (err) {
       console.error('[BoardRenderer] onSettingsUpdate crashed:', err);
     }
   }
 
+  // --- Selection blink ---
+
+  private startSelectionBlink() {
+    // Clear any existing blink
+    if (this.selectionBlinkTimer) {
+      clearTimeout(this.selectionBlinkTimer);
+      this.selectionBlinkTimer = null;
+    }
+    this.selectionBlinkPhase = 1;
+    this.renderSelection();
+
+    const blinkInterval = 250; // ms per phase
+    const totalPhases = 12;    // 12 × 250ms = 3 seconds
+
+    const tick = (phase: number) => {
+      this.selectionBlinkPhase = phase;
+      this.renderSelection();
+      if (phase < totalPhases) {
+        this.selectionBlinkTimer = setTimeout(() => tick(phase + 1), blinkInterval);
+      } else {
+        this.selectionBlinkPhase = 0;
+        this.selectionBlinkTimer = null;
+        this.renderSelection();
+      }
+    };
+
+    this.selectionBlinkTimer = setTimeout(() => tick(2), blinkInterval);
+  }
+
   // --- Selection rendering (always rebuilt, lightweight) ---
 
   private renderSelection() {
+    this.needsRender = true;
+    // Cancel any in-progress blink from a previous selection
+    if (this.selectionBlinkTimer) {
+      clearTimeout(this.selectionBlinkTimer);
+      this.selectionBlinkTimer = null;
+    }
+    this.selectionBlinkPhase = 0;
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
     if (!this.board) return;
@@ -603,7 +938,10 @@ export class BoardRenderer {
           gfx.rect(eb.px - sp, eb.py - sp, eb.pw + sp * 2, eb.ph + sp * 2);
         }
         gfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
-        gfx.stroke({ width: s.selectionWidth, color: COLORS.partSelected, alpha: 0.9 });
+        // Blink red on odd phases, orange on even (0 = no blink = normal orange)
+        const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
+        const selColor = blinkRed ? 0xcc2222 : COLORS.partSelected;
+        gfx.stroke({ width: s.selectionWidth, color: selColor, alpha: 0.9 });
       }
     }
 
@@ -663,6 +1001,212 @@ export class BoardRenderer {
         }
       }
     }
+
+    this.renderNetLines();
+  }
+
+  // --- Net lines rendering ---
+
+  private renderNetLines() {
+    this.needsRender = true;
+    this.netLinesGfx.clear();
+    if (!this.board || !boardStore.showNetLines) return;
+
+    const sel = boardStore.selection;
+    if (sel.partIndex === null || !sel.highlightedNet) return;
+
+    const net = this.board.nets.get(sel.highlightedNet);
+    if (!net) return;
+
+    const s = renderSettingsStore.settings;
+
+    // Skip GND nets — they connect to too many components to be useful.
+    const netUpper = sel.highlightedNet.toUpperCase();
+    if (netUpper.includes('GND')) return;
+    const selectedPart = this.board.parts[sel.partIndex];
+    if (!selectedPart) return;
+
+    const selectedRoot = this.rootForPart(selectedPart);
+    const selEB = computeEffectiveBounds(selectedPart.bounds, selectedPart.pins, s);
+
+    // If a specific pin is selected, use its position as the line origin (no clipping)
+    const selectedPin = sel.pinIndex !== null ? selectedPart.pins[sel.pinIndex] : null;
+    const selCenterW = selectedPin
+      ? this.sceneToWorld(selectedPin.position, selectedRoot)
+      : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
+
+    // Collect visible target parts
+    const targets: { part: typeof selectedPart; root: Container | undefined }[] = [];
+    const seenParts = new Set<number>();
+    for (const ref of net.pinIndices) {
+      if (ref.partIndex === sel.partIndex) continue;
+      if (seenParts.has(ref.partIndex)) continue;
+      seenParts.add(ref.partIndex);
+      const part = this.board.parts[ref.partIndex];
+      if (!part) continue;
+      if (part.side === 'top' && !this.isTopVisible) continue;
+      if (part.side === 'bottom' && !this.isBottomVisible) continue;
+      targets.push({ part, root: this.rootForPart(part) });
+    }
+
+    const vpScale = Math.abs(this.viewport.scale.x);
+    const lineW = s.netLineWidth / vpScale;
+
+    // Pulse color: oscillate between net line color and red
+    const pulseT = s.netLinePulse ? (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2 : 0;
+    const baseColor = s.netLineColor;
+    const pulseColor = 0xcc2222;
+    const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
+
+    // Dash offset animation (screen pixels converted to world)
+    const dashLen = s.netLineDashLength / vpScale;
+    const dashOffset = s.netLineDashed ? (this.netLinePulsePhase * dashLen * 2) : 0;
+
+    // When many lines converge, fade-in near the origin to reduce clutter
+    const lineCount = targets.length;
+    const useFade = lineCount > 8;
+    // Fade distance: ~60 screen px converted to world
+    const fadeDist = useFade ? 60 / vpScale : 0;
+
+    for (const { part, root } of targets) {
+      const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+      const tgtCenter: Point = { x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2 };
+      const tgtCenterW = this.sceneToWorld(tgtCenter, root);
+
+      // Always clip start to selected part edge (lines never cross the selected part)
+      const start = this.clipToRectEdge(selCenterW, tgtCenterW, selEB, selectedRoot);
+      const end = this.clipToRectEdge(tgtCenterW, selCenterW, eb, root);
+
+      if (useFade) {
+        this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+      } else if (s.netLineDashed) {
+        this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+      } else {
+        this.netLinesGfx.moveTo(start.x, start.y);
+        this.netLinesGfx.lineTo(end.x, end.y);
+        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+      }
+    }
+  }
+
+  /** Clip a ray from `from` toward `to` to the edge of a part's bounding rect, returning world coords */
+  private clipToRectEdge(from: Point, to: Point, eb: { px: number; py: number; pw: number; ph: number }, root?: Container): Point {
+    const tl = this.sceneToWorld({ x: eb.px, y: eb.py }, root);
+    const br = this.sceneToWorld({ x: eb.px + eb.pw, y: eb.py + eb.ph }, root);
+    const minX = Math.min(tl.x, br.x), maxX = Math.max(tl.x, br.x);
+    const minY = Math.min(tl.y, br.y), maxY = Math.max(tl.y, br.y);
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return from;
+
+    // Find intersection with each of the 4 rect edges, pick the one closest to `to` (largest t)
+    let bestT = 0;
+    const corners: Point[] = [
+      { x: minX, y: minY }, { x: maxX, y: minY },
+      { x: maxX, y: maxY }, { x: minX, y: maxY },
+    ];
+    for (let i = 0; i < 4; i++) {
+      const t = this.rayEdgeIntersect(from, to, corners[i], corners[(i + 1) % 4]);
+      if (t !== null && t > bestT) bestT = t;
+    }
+
+    return { x: from.x + dx * bestT, y: from.y + dy * bestT };
+  }
+
+  /** Find parametric t along ray (from→to) where it intersects edge segment (a→b). Returns null if no hit. */
+  private rayEdgeIntersect(from: Point, to: Point, a: Point, b: Point): number | null {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const denom = dx * ey - dy * ex;
+    if (Math.abs(denom) < 1e-10) return null;
+    const t = ((a.x - from.x) * ey - (a.y - from.y) * ex) / denom;
+    const u = ((a.x - from.x) * dy - (a.y - from.y) * dx) / denom;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return t;
+    return null;
+  }
+
+  /** Draw a dashed line between two world-space points */
+  private drawDashedLine(from: Point, to: Point, dashLen: number, dashOffset: number, width: number, color: number, alpha: number) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const totalLen = Math.sqrt(dx * dx + dy * dy);
+    if (totalLen < 0.001) return;
+
+    const ux = dx / totalLen;
+    const uy = dy / totalLen;
+    const gapLen = dashLen;
+    const segLen = dashLen + gapLen;
+
+    // Batch all dash segments, then stroke once
+    let pos = -(dashOffset % segLen);
+    let hasSegments = false;
+    while (pos < totalLen) {
+      const segStart = Math.max(0, pos);
+      const segEnd = Math.min(totalLen, pos + dashLen);
+      if (segEnd > segStart) {
+        this.netLinesGfx.moveTo(from.x + ux * segStart, from.y + uy * segStart);
+        this.netLinesGfx.lineTo(from.x + ux * segEnd, from.y + uy * segEnd);
+        hasSegments = true;
+      }
+      pos += segLen;
+    }
+    if (hasSegments) {
+      this.netLinesGfx.stroke({ width, color, alpha });
+    }
+  }
+
+  /** Draw a net line with alpha fade-in near the start to reduce clutter with many lines */
+  private drawNetLineWithFade(from: Point, to: Point, fadeDist: number, width: number, color: number, alpha: number, dashed: boolean, dashLen: number, dashOffset: number) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const totalLen = Math.sqrt(dx * dx + dy * dy);
+    if (totalLen < 0.001) return;
+
+    const ux = dx / totalLen;
+    const uy = dy / totalLen;
+    const fadeEnd = Math.min(fadeDist, totalLen * 0.4);
+
+    // Draw fade region in 4 steps with increasing alpha
+    const fadeSteps = 4;
+    for (let i = 0; i < fadeSteps; i++) {
+      const t0 = (i / fadeSteps) * fadeEnd;
+      const t1 = ((i + 1) / fadeSteps) * fadeEnd;
+      const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7; // ramp from ~0.18x to ~0.7x alpha
+      const segFrom: Point = { x: from.x + ux * t0, y: from.y + uy * t0 };
+      const segTo: Point = { x: from.x + ux * t1, y: from.y + uy * t1 };
+      if (dashed) {
+        this.drawDashedLine(segFrom, segTo, dashLen, dashOffset + t0, width, color, stepAlpha);
+      } else {
+        this.netLinesGfx.moveTo(segFrom.x, segFrom.y);
+        this.netLinesGfx.lineTo(segTo.x, segTo.y);
+        this.netLinesGfx.stroke({ width, color, alpha: stepAlpha });
+      }
+    }
+
+    // Draw remaining line at full alpha
+    if (fadeEnd < totalLen) {
+      const remainFrom: Point = { x: from.x + ux * fadeEnd, y: from.y + uy * fadeEnd };
+      if (dashed) {
+        this.drawDashedLine(remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
+      } else {
+        this.netLinesGfx.moveTo(remainFrom.x, remainFrom.y);
+        this.netLinesGfx.lineTo(to.x, to.y);
+        this.netLinesGfx.stroke({ width, color, alpha });
+      }
+    }
+  }
+
+  /** Linearly interpolate between two hex colors */
+  private lerpColor(a: number, b: number, t: number): number {
+    const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+    const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+    const r = Math.round(ar + (br - ar) * t);
+    const g = Math.round(ag + (bg - ag) * t);
+    const bl = Math.round(ab + (bb - ab) * t);
+    return (r << 16) | (g << 8) | bl;
   }
 
   // --- Hit testing ---
@@ -823,15 +1367,26 @@ export class BoardRenderer {
   }
 
   destroy() {
+    if (this.selectionBlinkTimer) {
+      clearTimeout(this.selectionBlinkTimer);
+      this.selectionBlinkTimer = null;
+    }
+    this.cancelTextResUpgrade();
+    this.cancelIdlePreRender();
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
     this.resizeObserver?.disconnect();
     if (this.boundContextMenu) {
       this.containerEl.removeEventListener('contextmenu', this.boundContextMenu);
     }
+    if (this.hudEl) {
+      this.hudEl.remove();
+      this.hudEl = null;
+    }
     if (this.initialized) {
       this.invalidateAllScenes();
       this.selectionGfx?.clear();
+      this.netLinesGfx?.clear();
       this.app.destroy(true, { children: true });
     }
   }

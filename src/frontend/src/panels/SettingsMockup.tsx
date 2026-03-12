@@ -114,20 +114,72 @@ function buildSelectionOverlay(gfx: Graphics, s: RenderSettings) {
   gfx.stroke({ width: s.selectionWidth, color: BOARD_COLORS.partSelected, alpha: 0.9 });
 }
 
+// ── Net lines (VCC3V3 connections from U1 to R1 and C1) ──────────────────────
+
+function buildNetLines(gfx: Graphics, s: RenderSettings) {
+  gfx.clear();
+
+  const u1 = MOCK_BOARD.parts[0]; // U1
+  const u1eb = computeEffectiveBounds(u1.bounds, u1.pins, s);
+  const u1cx = u1eb.px + u1eb.pw / 2;
+  const u1cy = u1eb.py + u1eb.ph / 2;
+
+  // VCC3V3 target parts: R1 pin 1, C1 pin 1
+  const targets = [
+    MOCK_BOARD.parts[1], // R1
+    MOCK_BOARD.parts[2], // C1
+  ];
+
+  for (const part of targets) {
+    const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+    const tcx = eb.px + eb.pw / 2;
+    const tcy = eb.py + eb.ph / 2;
+
+    if (s.netLineDashed) {
+      // Simple dashed line
+      const dx = tcx - u1cx, dy = tcy - u1cy;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const dashLen = s.netLineDashLength;
+      const ux = dx / len, uy = dy / len;
+      let pos = 0;
+      let drawing = true;
+      while (pos < len) {
+        const segEnd = Math.min(pos + dashLen, len);
+        if (drawing) {
+          gfx.moveTo(u1cx + ux * pos, u1cy + uy * pos);
+          gfx.lineTo(u1cx + ux * segEnd, u1cy + uy * segEnd);
+        }
+        pos = segEnd;
+        drawing = !drawing;
+      }
+      gfx.stroke({ width: s.netLineWidth, color: s.netLineColor, alpha: s.netLineAlpha });
+    } else {
+      gfx.moveTo(u1cx, u1cy);
+      gfx.lineTo(tcx, tcy);
+      gfx.stroke({ width: s.netLineWidth, color: s.netLineColor, alpha: s.netLineAlpha });
+    }
+  }
+}
+
 // ── Internal state held in a ref (avoids re-renders on every event) ──────────
 
 interface PixiState {
   app:            Application;
   viewport:       Viewport;
   selectionGfx:   Graphics;
+  netLinesGfx:    Graphics;
   sceneRoot:      Container | null;
+  labelsRoot:     Container | null;
   resizeObserver: ResizeObserver;
 }
 
 function fitMockup(viewport: Viewport) {
-  const b   = MOCK_BOARD.bounds;
-  const pad = 20;
-  viewport.fit(true, b.maxX - b.minX + pad * 2, b.maxY - b.minY + pad * 2);
+  const b = MOCK_BOARD.bounds;
+  const bw = b.maxX - b.minX;
+  const bh = b.maxY - b.minY;
+  // Fit to content, then scale to 80%
+  viewport.fit(true, bw, bh);
+  viewport.scale.set(viewport.scale.x * 0.8, viewport.scale.y * 0.8);
   viewport.moveCenter((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
 }
 
@@ -151,17 +203,35 @@ export function SettingsMockup({
 
   // Rebuild PixiJS scene from settings (no viewport reset — preserves user zoom/pan)
   const rebuildScene = useCallback((state: PixiState, s: RenderSettings) => {
-    if (state.sceneRoot) {
-      state.viewport.removeChild(state.sceneRoot);
-      state.sceneRoot.destroy({ children: true });
-      (state as { sceneRoot: Container | null }).sceneRoot = null;
+    const st = state as { sceneRoot: Container | null; labelsRoot: Container | null };
+    if (st.sceneRoot) {
+      state.viewport.removeChild(st.sceneRoot);
+      st.sceneRoot.destroy({ children: true });
+      st.sceneRoot = null;
+    }
+    if (st.labelsRoot) {
+      state.viewport.removeChild(st.labelsRoot);
+      st.labelsRoot.destroy({ children: true });
+      st.labelsRoot = null;
     }
     const graph = buildBoardScene(MOCK_BOARD, s);
+    // Lift labels out of the scene so they render above selection/highlight overlays
+    const labelsRoot = new Container();
+    for (const label of graph.labels) {
+      const wx = label.x, wy = label.y;
+      label.parent.removeChild(label);
+      label.x = wx; label.y = wy;
+      labelsRoot.addChild(label);
+    }
     state.viewport.addChild(graph.root);
-    (state as { sceneRoot: Container | null }).sceneRoot = graph.root;
-    // Keep selection overlay on top
+    st.sceneRoot = graph.root;
+    // Z-order: scene → net lines → selection highlights → labels (shadow covers highlights)
+    state.viewport.addChild(state.netLinesGfx);
+    buildNetLines(state.netLinesGfx, s);
     state.viewport.addChild(state.selectionGfx);
     buildSelectionOverlay(state.selectionGfx, s);
+    state.viewport.addChild(labelsRoot);
+    st.labelsRoot = labelsRoot;
   }, []);
 
   // ── Mount / unmount ─────────────────────────────────────────────────────────
@@ -201,9 +271,10 @@ export function SettingsMockup({
       app.stage.addChild(viewport);
 
       const selectionGfx = new Graphics();
+      const netLinesGfx = new Graphics();
       const state: PixiState = {
-        app, viewport, selectionGfx,
-        sceneRoot: null,
+        app, viewport, selectionGfx, netLinesGfx,
+        sceneRoot: null, labelsRoot: null,
         resizeObserver: null!,
       };
       pixiRef.current = state;
@@ -236,17 +307,27 @@ export function SettingsMockup({
         fitMockup(viewport);
       });
 
-      // Resize observer
+      // Resize observer — also handles initial fit when container gets its real size
+      let hasFitted = false;
       const ro = new ResizeObserver(() => {
-        viewport.resize(el.clientWidth, el.clientHeight);
-        app.renderer.resize(el.clientWidth, el.clientHeight);
+        const w = el.clientWidth, h = el.clientHeight;
+        if (w === 0 || h === 0) return;
+        viewport.resize(w, h);
+        app.renderer.resize(w, h);
+        if (!hasFitted) {
+          hasFitted = true;
+          fitMockup(viewport);
+        }
       });
       ro.observe(el);
       state.resizeObserver = ro;
 
-      // Initial scene + fit
+      // Initial scene + fit (fit may be deferred if container has no size yet)
       rebuildScene(state, settingsRef.current);
-      fitMockup(viewport);
+      if (el.clientWidth > 0 && el.clientHeight > 0) {
+        fitMockup(viewport);
+        hasFitted = true;
+      }
     });
 
     return () => {
@@ -254,7 +335,12 @@ export function SettingsMockup({
       const state = pixiRef.current;
       if (state) {
         state.resizeObserver?.disconnect();
+        state.netLinesGfx.destroy();
         state.selectionGfx.destroy();
+        if (state.labelsRoot) {
+          state.viewport.removeChild(state.labelsRoot);
+          state.labelsRoot.destroy({ children: true });
+        }
         if (state.sceneRoot) {
           state.viewport.removeChild(state.sceneRoot);
           state.sceneRoot.destroy({ children: true });

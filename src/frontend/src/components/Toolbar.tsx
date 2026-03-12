@@ -7,7 +7,7 @@ import { getDockviewApi } from '../store/dockview-api';
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, butterfly, board } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showNetLines } = useBoardStore();
 
   const handleFileOpen = () => {
     fileInputRef.current?.click();
@@ -138,6 +138,16 @@ export function Toolbar() {
         title="Mirror vertical"
       >
         ⇕
+      </button>
+
+      <div className="toolbar-separator" />
+
+      <button
+        onClick={() => boardStore.toggleNetLines()}
+        className={`toolbar-btn ${showNetLines ? 'active' : ''}`}
+        title="Show net connection lines between components"
+      >
+        Net Lines
       </button>
 
       <div className="toolbar-separator" />
