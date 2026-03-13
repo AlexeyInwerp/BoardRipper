@@ -4,6 +4,10 @@
  *
  * All text uses BitmapText with shared glyph atlases for dramatically lower
  * GPU memory and draw calls compared to per-label canvas Text objects.
+ *
+ * Pin drawing uses board-wide color batching: all pins of the same color share
+ * a single Graphics object, reducing GPU draw-call submissions from O(parts × colors)
+ * to O(unique colors) — typically ~10 instead of ~15,000 on a real board.
  */
 import { Graphics, Container, BitmapText, BitmapFont } from 'pixi.js';
 import type { BoardData } from '../parsers';
@@ -65,6 +69,10 @@ export interface BoardSceneGraph {
   borderEntries: BorderEntry[];
   /** Labels grouped by font-size bucket for efficient LoD visibility */
   fontSizeGroups: FontSizeGroup[];
+  /** Global pin Graphics keyed by color — one per unique color per layer.
+   *  Exposed for future incremental updates (e.g. re-coloring a net without full rebuild). */
+  topPinGfx:    Map<number, Graphics>;
+  bottomPinGfx: Map<number, Graphics>;
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
@@ -167,10 +175,25 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   drawOutline(outlineGfx, board, s);
 
+  // ── Global pin batching ──────────────────────────────────────────────────────
+  // One Graphics per (layer, color) for the entire board.
+  // All pin shapes are accumulated first; fill() is called once per Graphics after
+  // the loop — O(unique colors) draw calls instead of O(parts × colors).
+  const topPinGfx    = new Map<number, Graphics>();
+  const bottomPinGfx = new Map<number, Graphics>();
+  const getGlobalPinGfx = (isBottom: boolean, color: number): Graphics => {
+    const map = isBottom ? bottomPinGfx : topPinGfx;
+    let gfx = map.get(color);
+    if (!gfx) { gfx = new Graphics(); map.set(color, gfx); }
+    return gfx;
+  };
+
+  // Part containers are queued and added AFTER global pin Graphics so borders/labels render on top
+  const partQueue: { container: Container; isBottom: boolean }[] = [];
+
   // Parts
   for (let pi = 0; pi < board.parts.length; pi++) {
     const part = board.parts[pi];
-    const layer = part.side === 'bottom' ? bottomLayer : topLayer;
 
     const partContainer = new Container();
     partContainer.cullable = true;
@@ -178,27 +201,21 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     const isTwoPinPart = part.pins.length === 2;
     const isMultiPin   = part.pins.length > 2;
+    const isBottom     = part.side === 'bottom';
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
 
-    // ── Pins (drawn first) ──────────────────────────────────────────────────
-    // Collect text labels to add after all graphics for z-order
+    // ── Pins ─────────────────────────────────────────────────────────────────
+    // Shapes are drawn directly into the board-wide global pin Graphics (by color).
+    // Collect text labels to add to partContainer after all graphics for z-order.
     const deferredTexts: BitmapText[] = [];
     // Track pad rectangles for 2-pin net labels (indexed by pin index)
     const padRects: { rx: number; ry: number; rw: number; rh: number }[] = [];
-
-    // Group pin shapes by color → single Graphics per color (fewer GPU draw calls)
-    const pinColorMap = new Map<number, { shapes: { type: 'rect' | 'circle'; args: number[] }[] }>();
-    const getPinColorBatch = (c: number) => {
-      let batch = pinColorMap.get(c);
-      if (!batch) { batch = { shapes: [] }; pinColorMap.set(c, batch); }
-      return batch;
-    };
 
     for (let pni = 0; pni < part.pins.length; pni++) {
       const pin    = part.pins[pni];
       const isPin1 = pni === 0 && isMultiPin;
       const color  = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
-      const batch  = getPinColorBatch(color);
+      const pinGfx = getGlobalPinGfx(isBottom, color);
 
       if (isTwoPinPart) {
         const other = part.pins[1 - pni];
@@ -214,11 +231,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           padRx = eb.px; padRy = top ? eb.py : eb.py + eb.ph - depth;
           padRw = eb.pw; padRh = depth;
         }
-        batch.shapes.push({ type: 'rect', args: [padRx, padRy, padRw, padRh] });
+        pinGfx.rect(padRx, padRy, padRw, padRh);
         padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
       } else {
         const r = computePinRadius(s, pin.radius);
-        batch.shapes.push({ type: 'circle', args: [pin.position.x, pin.position.y, r] });
+        pinGfx.circle(pin.position.x, pin.position.y, r);
       }
 
       // ── Pin number label (multi-pin only, not 1-pin or 2-pin) ─────────
@@ -280,20 +297,6 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           (part.side === 'bottom' ? bottomPinLabels : topPinLabels).push(netLabel);
         }
       }
-    }
-
-    // Flush batched pin shapes — one Graphics per color
-    for (const [color, batch] of pinColorMap) {
-      const gfx = new Graphics();
-      for (const shape of batch.shapes) {
-        if (shape.type === 'rect') {
-          gfx.rect(shape.args[0], shape.args[1], shape.args[2], shape.args[3]);
-        } else {
-          gfx.circle(shape.args[0], shape.args[1], shape.args[2]);
-        }
-      }
-      gfx.fill({ color, alpha: s.pinAlpha });
-      partContainer.addChild(gfx);
     }
 
     // ── Pin 1 triangle marker (multi-pin only) ──────────────────────────
@@ -378,7 +381,19 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       partContainer.addChild(txt);
     }
 
-    layer.addChild(partContainer);
+    partQueue.push({ container: partContainer, isBottom });
+  }
+
+  // ── Flush global pin Graphics ─────────────────────────────────────────────
+  // Each Graphics has accumulated all shapes of one color; a single fill() call
+  // submits them as one GPU draw — then add to the layer BEFORE partContainers
+  // so borders, triangles, and labels render on top.
+  for (const [color, gfx] of topPinGfx)    { gfx.fill({ color, alpha: s.pinAlpha }); topLayer.addChild(gfx); }
+  for (const [color, gfx] of bottomPinGfx) { gfx.fill({ color, alpha: s.pinAlpha }); bottomLayer.addChild(gfx); }
+
+  // Add part containers (borders + triangle markers + labels) above pins
+  for (const { container, isBottom } of partQueue) {
+    (isBottom ? bottomLayer : topLayer).addChild(container);
   }
 
   // Build font-size groups: bucket all labels by floor(log2(fontSize)).
@@ -401,5 +416,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Sort ascending so we can early-exit: once a group is visible, all larger groups are too
   fontSizeGroups.sort((a, b) => a.minSize - b.minSize);
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderEntries, fontSizeGroups };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderEntries, fontSizeGroups, topPinGfx, bottomPinGfx };
 }
