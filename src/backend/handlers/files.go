@@ -11,6 +11,30 @@ import (
 	"time"
 )
 
+// allowedExtensions is the single source of truth for accepted board file formats.
+// To add a new format, append its lowercase extension here.
+var allowedExtensions = map[string]bool{
+	".bvr": true,
+	".bv":  true,
+	".brd": true,
+	".fz":  true,
+	".cae": true,
+	".cad": true,
+	".pcb": true,
+}
+
+// allowedExtensionList returns a human-readable list for error messages.
+func allowedExtensionList() string {
+	list := ""
+	for ext := range allowedExtensions {
+		if list != "" {
+			list += ", "
+		}
+		list += ext
+	}
+	return list
+}
+
 type FileHandler struct {
 	dataDir string
 }
@@ -38,8 +62,8 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	// Validate file extension
 	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext != ".bvr" && ext != ".bv" {
-		http.Error(w, "Only .bvr and .bv files are supported", http.StatusBadRequest)
+	if !allowedExtensions[ext] {
+		http.Error(w, "Supported formats: "+allowedExtensionList(), http.StatusBadRequest)
 		return
 	}
 
@@ -79,7 +103,7 @@ func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if ext != ".bvr" && ext != ".bv" {
+		if !allowedExtensions[ext] {
 			continue
 		}
 		info, err := entry.Info()

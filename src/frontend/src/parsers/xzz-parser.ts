@@ -1,0 +1,504 @@
+import type { BoardData, Part, Pin, Nail, Point } from './types';
+import { computeBBox, buildNets } from './types';
+
+// =====================================================================
+// Fast DES (FIPS PUB 46-3) — Number-based, precomputed tables
+// Subkeys precomputed with BigInt once at module init; hot path is pure 32-bit ops.
+// =====================================================================
+
+const S_BOXES: ReadonlyArray<ReadonlyArray<number>> = [
+  [14,4,13,1,2,15,11,8,3,10,6,12,5,9,0,7, 0,15,7,4,14,2,13,1,10,6,12,11,9,5,3,8, 4,1,14,8,13,6,2,11,15,12,9,7,3,10,5,0, 15,12,8,2,4,9,1,7,5,11,3,14,10,0,6,13],
+  [15,1,8,14,6,11,3,4,9,7,2,13,12,0,5,10, 3,13,4,7,15,2,8,14,12,0,1,10,6,9,11,5, 0,14,7,11,10,4,13,1,5,8,12,6,9,3,2,15, 13,8,10,1,3,15,4,2,11,6,7,12,0,5,14,9],
+  [10,0,9,14,6,3,15,5,1,13,12,7,11,4,2,8, 13,7,0,9,3,4,6,10,2,8,5,14,12,11,15,1, 13,6,4,9,8,15,3,0,11,1,2,12,5,10,14,7, 1,10,13,0,6,9,8,7,4,15,14,3,11,5,2,12],
+  [7,13,14,3,0,6,9,10,1,2,8,5,11,12,4,15, 13,8,11,5,6,15,0,3,4,7,2,12,1,10,14,9, 10,6,9,0,12,11,7,13,15,1,3,14,5,2,8,4, 3,15,0,6,10,1,13,8,9,4,5,11,12,7,2,14],
+  [2,12,4,1,7,10,11,6,8,5,3,15,13,0,14,9, 14,11,2,12,4,7,13,1,5,0,15,10,3,9,8,6, 4,2,1,11,10,13,7,8,15,9,12,5,6,3,0,14, 11,8,12,7,1,14,2,13,6,15,0,9,10,4,5,3],
+  [12,1,10,15,9,2,6,8,0,13,3,4,14,7,5,11, 10,15,4,2,7,12,9,5,6,1,13,14,0,11,3,8, 9,14,15,5,2,8,12,3,7,0,4,10,1,13,11,6, 4,3,2,12,9,5,15,10,11,14,1,7,6,0,8,13],
+  [4,11,2,14,15,0,8,13,3,12,9,7,5,10,6,1, 13,0,11,7,4,9,1,10,14,3,5,12,2,15,8,6, 1,4,11,13,12,3,7,14,10,15,6,8,0,5,9,2, 6,11,13,8,1,4,10,7,9,5,0,15,14,2,3,12],
+  [13,2,8,4,6,15,11,1,10,9,3,14,5,0,12,7, 1,15,13,8,10,3,7,4,12,5,6,11,0,14,9,2, 7,11,4,1,9,12,14,2,0,6,10,13,15,3,5,8, 2,1,14,7,4,10,8,13,15,12,9,0,3,5,6,11],
+];
+
+const P_TABLE = [16,7,20,21,29,12,28,17,1,15,23,26,5,18,31,10,2,8,24,14,32,27,3,9,19,13,30,6,22,11,4,25];
+
+const IP_TABLE = [
+  58,50,42,34,26,18,10,2, 60,52,44,36,28,20,12,4, 62,54,46,38,30,22,14,6, 64,56,48,40,32,24,16,8,
+  57,49,41,33,25,17, 9,1, 59,51,43,35,27,19,11,3, 61,53,45,37,29,21,13,5, 63,55,47,39,31,23,15,7,
+];
+
+const IP_INV_TABLE = [
+  40, 8,48,16,56,24,64,32, 39,7,47,15,55,23,63,31, 38,6,46,14,54,22,62,30, 37,5,45,13,53,21,61,29,
+  36, 4,44,12,52,20,60,28, 35,3,43,11,51,19,59,27, 34,2,42,10,50,18,58,26, 33,1,41, 9,49,17,57,25,
+];
+
+// Key schedule tables
+const PC1 = [57,49,41,33,25,17,9,1,58,50,42,34,26,18,10,2,59,51,43,35,27,19,11,3,60,52,44,36,63,55,47,39,31,23,15,7,62,54,46,38,30,22,14,6,61,53,45,37,29,21,13,5,28,20,12,4];
+const PC2 = [14,17,11,24,1,5,3,28,15,6,21,10,23,19,12,4,26,8,16,7,27,20,13,2,41,52,31,37,47,55,30,40,51,45,33,48,44,49,39,56,34,53,46,42,50,36,29,32];
+const ITER_SHIFT = [1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1];
+const DES_KEY_BIG = 0xdcfc12ac00000000n;
+
+// ---- precomputed tables (populated once at module init) ----
+
+/** SP[sbox][6-bit-input] = 32-bit output after S-box + P permutation */
+const SP = new Array<Int32Array>(8);
+
+/** IP byte lookup: IP_HI[byteIdx*256 + byteVal] = hi32 contribution */
+const IP_HI  = new Int32Array(8 * 256);
+const IP_LO  = new Int32Array(8 * 256);
+const FP_HI  = new Int32Array(8 * 256); // IP_INV
+const FP_LO  = new Int32Array(8 * 256);
+
+/** Subkeys: [kHi24, kLo24] for each of 16 rounds */
+const SUBKEYS_HI = new Int32Array(16);
+const SUBKEYS_LO = new Int32Array(16);
+
+function buildPermLookup(
+  table: number[], outHi: Int32Array, outLo: Int32Array,
+) {
+  for (let byteIdx = 0; byteIdx < 8; byteIdx++) {
+    for (let val = 0; val < 256; val++) {
+      let hi = 0, lo = 0;
+      for (let bit = 0; bit < 8; bit++) {
+        if ((val >>> (7 - bit)) & 1) {
+          const inputFips = byteIdx * 8 + bit + 1; // 1-indexed FIPS bit position
+          for (let o = 0; o < 64; o++) {
+            if (table[o] === inputFips) {
+              if (o < 32) hi |= 1 << (31 - o);
+              else        lo |= 1 << (63 - o);
+            }
+          }
+        }
+      }
+      outHi[byteIdx * 256 + val] = hi;
+      outLo[byteIdx * 256 + val] = lo;
+    }
+  }
+}
+
+function applyPerm64(
+  hiTbl: Int32Array, loTbl: Int32Array,
+  b0: number, b1: number, b2: number, b3: number,
+  b4: number, b5: number, b6: number, b7: number,
+): [number, number] {
+  return [
+    (hiTbl[b0] | hiTbl[256+b1] | hiTbl[512+b2] | hiTbl[768+b3] |
+     hiTbl[1024+b4] | hiTbl[1280+b5] | hiTbl[1536+b6] | hiTbl[1792+b7]) >>> 0,
+    (loTbl[b0] | loTbl[256+b1] | loTbl[512+b2] | loTbl[768+b3] |
+     loTbl[1024+b4] | loTbl[1280+b5] | loTbl[1536+b6] | loTbl[1792+b7]) >>> 0,
+  ];
+}
+
+/** BigInt permutation used only for key schedule (runs once) */
+function permBig(v: bigint, tbl: number[], nb: number): bigint {
+  let r = 0n;
+  for (let i = 0; i < tbl.length; i++) r = (r << 1n) | ((v >> BigInt(nb - tbl[i])) & 1n);
+  return r;
+}
+
+function init() {
+  // Build IP and IP_INV byte lookup tables
+  buildPermLookup(IP_TABLE,     IP_HI, IP_LO);
+  buildPermLookup(IP_INV_TABLE, FP_HI, FP_LO);
+
+  // Build SP tables (S-box + P permutation combined)
+  for (let j = 0; j < 8; j++) {
+    SP[j] = new Int32Array(64);
+    for (let v = 0; v < 64; v++) {
+      const row  = ((v & 0x20) >> 4) | (v & 1);
+      const col  = (v >> 1) & 0xF;
+      const sval = S_BOXES[j][row * 16 + col];
+      // Place 4-bit S output at bits 31..28-j*4 of a 32-bit value, then apply P
+      let sOut = (sval << (28 - j * 4)) >>> 0;
+      let pOut = 0;
+      for (let i = 0; i < 32; i++) {
+        // Output FIPS bit (i+1) comes from input FIPS bit P_TABLE[i]
+        if ((sOut >>> (32 - P_TABLE[i])) & 1) pOut |= 1 << (31 - i);
+      }
+      SP[j][v] = pOut;
+    }
+  }
+
+  // Compute 16 DES subkeys using BigInt (runs once)
+  const K56 = permBig(DES_KEY_BIG, PC1, 64);
+  let C = K56 >> 28n, D = K56 & 0xFFFFFFFn;
+  for (let i = 0; i < 16; i++) {
+    const sh = BigInt(ITER_SHIFT[i]);
+    C = ((C << sh) | (C >> (28n - sh))) & 0xFFFFFFFn;
+    D = ((D << sh) | (D >> (28n - sh))) & 0xFFFFFFFn;
+    const subkey = permBig((C << 28n) | D, PC2, 56);
+    // Split into hi24 (bits 47-24) and lo24 (bits 23-0)
+    SUBKEYS_HI[i] = Number(subkey >> 24n) & 0xFFFFFF;
+    SUBKEYS_LO[i] = Number(subkey & 0xFFFFFFn);
+  }
+}
+
+// --- run at module load ---
+init();
+
+/** Decrypt buf[off..off+8] in-place using DES with XZZ byte-reversal convention */
+function desDecryptBlock(buf: Uint8Array, off: number): void {
+  // XZZ reads bytes as big-endian 64-bit: buf[off] = MSByte
+  // Apply IP permutation
+  const [L0, R0] = applyPerm64(IP_HI, IP_LO,
+    buf[off], buf[off+1], buf[off+2], buf[off+3],
+    buf[off+4], buf[off+5], buf[off+6], buf[off+7]);
+
+  let L = L0, R = R0;
+
+  // 16 Feistel rounds (decryption: reverse subkey order)
+  for (let i = 0; i < 16; i++) {
+    const kHi = SUBKEYS_HI[15 - i];
+    const kLo = SUBKEYS_LO[15 - i];
+
+    // E expansion groups XOR subkey, then SP lookup
+    const g0 = (((R & 1) << 5) | ((R >>> 27) & 0x1F)) ^ ((kHi >>> 18) & 0x3F);
+    const g1 = ((R >>> 23) & 0x3F)                     ^ ((kHi >>> 12) & 0x3F);
+    const g2 = ((R >>> 19) & 0x3F)                     ^ ((kHi >>>  6) & 0x3F);
+    const g3 = ((R >>> 15) & 0x3F)                     ^ ( kHi         & 0x3F);
+    const g4 = ((R >>> 11) & 0x3F)                     ^ ((kLo >>> 18) & 0x3F);
+    const g5 = ((R >>>  7) & 0x3F)                     ^ ((kLo >>> 12) & 0x3F);
+    const g6 = ((R >>>  3) & 0x3F)                     ^ ((kLo >>>  6) & 0x3F);
+    const g7 = (((R & 0x1F) << 1) | ((R >>> 31) & 1))  ^ ( kLo         & 0x3F);
+
+    const f = (SP[0][g0] ^ SP[1][g1] ^ SP[2][g2] ^ SP[3][g3] ^
+               SP[4][g4] ^ SP[5][g5] ^ SP[6][g6] ^ SP[7][g7]) >>> 0;
+
+    const newR = (L ^ f) >>> 0;
+    L = R;
+    R = newR;
+  }
+
+  // Apply final permutation (IP_INV) on preoutput = R || L
+  const [oHi, oLo] = applyPerm64(FP_HI, FP_LO,
+    (R >>> 24) & 0xFF, (R >>> 16) & 0xFF, (R >>> 8) & 0xFF, R & 0xFF,
+    (L >>> 24) & 0xFF, (L >>> 16) & 0xFF, (L >>> 8) & 0xFF, L & 0xFF);
+
+  buf[off]   = (oHi >>> 24) & 0xFF;
+  buf[off+1] = (oHi >>> 16) & 0xFF;
+  buf[off+2] = (oHi >>>  8) & 0xFF;
+  buf[off+3] =  oHi          & 0xFF;
+  buf[off+4] = (oLo >>> 24) & 0xFF;
+  buf[off+5] = (oLo >>> 16) & 0xFF;
+  buf[off+6] = (oLo >>>  8) & 0xFF;
+  buf[off+7] =  oLo          & 0xFF;
+}
+
+/** Return a decrypted copy of buf */
+function desDecrypt(buf: Uint8Array): Uint8Array {
+  const out = new Uint8Array(buf);
+  for (let off = 0; off + 8 <= out.length; off += 8) desDecryptBlock(out, off);
+  return out;
+}
+
+// =====================================================================
+// XZZ PCB File Parser
+// =====================================================================
+
+const XZZ_SCALE  = 10000;
+const OUTLINE_LAYER = 28;
+
+interface Segment { p1: Point; p2: Point; }
+
+function ru32(d: Uint8Array, o: number): number {
+  return ((d[o] | (d[o+1] << 8) | (d[o+2] << 16) | (d[o+3] << 24)) >>> 0);
+}
+
+function ri32(d: Uint8Array, o: number): number { return ru32(d, o) | 0; }
+
+function rstr(d: Uint8Array, o: number, n: number): string {
+  return new TextDecoder('utf-8', { fatal: false }).decode(d.subarray(o, o + n)).replace(/\0/g, '').trim();
+}
+
+/** Greedy chain: connect line segments into an ordered polygon */
+function chainSegments(segs: Segment[]): Point[] {
+  if (!segs.length) return [];
+  const EPSILON = 1.0;
+  const used = new Uint8Array(segs.length);
+  const chain: Point[] = [{ ...segs[0].p1 }, { ...segs[0].p2 }];
+  used[0] = 1;
+  for (;;) {
+    const last = chain[chain.length - 1];
+    let bi = -1, bd = EPSILON, flip = false;
+    for (let i = 0; i < segs.length; i++) {
+      if (used[i]) continue;
+      const d1 = Math.hypot(last.x - segs[i].p1.x, last.y - segs[i].p1.y);
+      const d2 = Math.hypot(last.x - segs[i].p2.x, last.y - segs[i].p2.y);
+      if (d1 < bd) { bd = d1; bi = i; flip = false; }
+      if (d2 < bd) { bd = d2; bi = i; flip = true; }
+    }
+    if (bi < 0) break;
+    chain.push(flip ? { ...segs[bi].p1 } : { ...segs[bi].p2 });
+    used[bi] = 1;
+  }
+  return chain;
+}
+
+function parseNetBlock(data: Uint8Array): Map<number, string> {
+  const dict = new Map<number, string>();
+  let ptr = 0;
+  while (ptr + 8 <= data.length) {
+    const netSize  = ru32(data, ptr); ptr += 4;
+    const netIndex = ru32(data, ptr); ptr += 4;
+    const nameLen  = netSize - 8;
+    if (nameLen < 0 || ptr + nameLen > data.length) break;
+    const name = rstr(data, ptr, nameLen);
+    ptr += nameLen;
+    if (name) dict.set(netIndex, name);
+  }
+  return dict;
+}
+
+interface PinData { name: string; x: number; y: number; netIndex: number; }
+interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; }
+
+function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
+  const FAIL = { pin: { name: '', x: 0, y: 0, netIndex: 0 }, next: data.length };
+  if (ptr + 4 > data.length) return FAIL;
+  const pinBlockSize = ru32(data, ptr);
+  const pinBlockEnd  = ptr + pinBlockSize + 4;
+  ptr += 4 + 4; // size + unknown
+  if (ptr + 16 > data.length) return { ...FAIL, next: Math.min(pinBlockEnd, data.length) };
+  const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
+  const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
+  ptr += 8; // unknown
+  if (ptr + 4 > data.length) return { pin: { name: '', x, y, netIndex: 0 }, next: Math.min(pinBlockEnd, data.length) };
+  const nameLen = ru32(data, ptr); ptr += 4;
+  const name = (ptr + nameLen <= data.length) ? rstr(data, ptr, nameLen) : '';
+  ptr += nameLen + 32; // unknown
+  const netIndex = (ptr + 4 <= data.length) ? ru32(data, ptr) : 0;
+  return { pin: { name, x, y, netIndex }, next: Math.min(pinBlockEnd, data.length) };
+}
+
+function parsePartBlock(encBuf: Uint8Array): PartData | null {
+  const data = desDecrypt(encBuf);
+  let ptr = 0;
+  if (ptr + 4 > data.length) return null;
+  const partSize = ru32(data, ptr); ptr += 4;
+  ptr += 18; // unknown
+  if (ptr + 4 > data.length) return null;
+  const groupNameSize = ru32(data, ptr); ptr += 4 + groupNameSize;
+
+  if (ptr >= data.length || data[ptr] !== 0x06) return null;
+  ptr += 31; // sub-block type byte (1) + 30 unknown bytes
+  if (ptr + 4 > data.length) return null;
+  const nameLen = ru32(data, ptr); ptr += 4;
+  const partName = (ptr + nameLen <= data.length) ? rstr(data, ptr, nameLen) : '';
+  ptr += nameLen;
+
+  const pins: PinData[] = [];
+  const endPtr = partSize + 4;
+  while (ptr < endPtr && ptr < data.length) {
+    const subType = data[ptr]; ptr += 1;
+    switch (subType) {
+      case 0x01: case 0x05: case 0x06:
+        if (ptr + 4 > data.length) { ptr = endPtr; break; }
+        ptr += ru32(data, ptr) + 4;
+        break;
+      case 0x09: {
+        const { pin, next } = parsePinSubBlock(data, ptr);
+        pins.push(pin);
+        ptr = next;
+        break;
+      }
+      case 0x00: break;
+      default:
+        if (ptr + 4 <= data.length) {
+          const skip = ru32(data, ptr);
+          ptr = (skip > 0 && ptr + 4 + skip <= data.length) ? ptr + 4 + skip : endPtr;
+        } else { ptr = endPtr; }
+        break;
+    }
+  }
+  if (!partName) return null;
+  return { name: partName, side: 'top', pins };
+}
+
+interface TestPadData { x: number; y: number; netIndex: number; }
+
+function parseTestPadBlock(data: Uint8Array): TestPadData | null {
+  if (data.length < 16) return null;
+  let ptr = 4; // skip pad_number
+  const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
+  const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
+  ptr += 8; // inner_diameter + unknown
+  if (ptr + 4 > data.length) return null;
+  const nameLen = ru32(data, ptr); ptr += 4 + nameLen;
+  const netIndex = data.length >= 4 ? ru32(data, data.length - 4) : 0;
+  return { x, y, netIndex };
+}
+
+/** Find the fold axis: the largest gap in outline X coordinates.
+ *  XZZ stores the board unfolded (top and bottom side-by-side).
+ *  Returns the X midpoint of the gap, or NaN if no significant gap is found. */
+function findFoldAxis(segments: Segment[]): number {
+  const xs = new Set<number>();
+  for (const s of segments) {
+    xs.add(Math.round(s.p1.x));
+    xs.add(Math.round(s.p2.x));
+  }
+  if (xs.size < 4) return NaN;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const span = sorted[sorted.length - 1] - sorted[0];
+  let maxGap = 0, foldX = NaN;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i] - sorted[i - 1];
+    if (gap > maxGap) { maxGap = gap; foldX = (sorted[i] + sorted[i - 1]) / 2; }
+  }
+  // Only treat as a fold if the gap is >20% of the total board width
+  return maxGap > span * 0.2 ? foldX : NaN;
+}
+
+export function parseXZZ(buffer: ArrayBuffer): BoardData {
+  let raw = new Uint8Array(buffer);
+
+  // XOR decode: if raw[0x10] != 0, XOR all bytes before the "v6v6555v6v6" marker
+  if (raw.length > 0x10 && raw[0x10] !== 0) {
+    const xorKey = raw[0x10];
+    const markerBytes = [0x76,0x36,0x76,0x36,0x35,0x35,0x35,0x76,0x36,0x76,0x36];
+    let markerPos = raw.length;
+    outer: for (let i = 0; i <= raw.length - markerBytes.length; i++) {
+      for (let j = 0; j < markerBytes.length; j++) {
+        if (raw[i + j] !== markerBytes[j]) continue outer;
+      }
+      markerPos = i;
+      break;
+    }
+    const decoded = new Uint8Array(raw);
+    for (let i = 0; i < markerPos; i++) decoded[i] ^= xorKey;
+    raw = decoded;
+  }
+
+  if (raw.length < 0x30) throw new Error('XZZ: file too short');
+
+  const mainDataOffset = ru32(raw, 0x20);
+  const netDataOffset  = ru32(raw, 0x28);
+  const mainDataStart  = mainDataOffset + 0x20;
+  const netDataStart   = netDataOffset  + 0x20;
+
+  if (mainDataStart + 4 > raw.length || netDataStart + 4 > raw.length) {
+    throw new Error('XZZ: invalid header offsets');
+  }
+
+  // Parse net dictionary
+  const netBlockSize = ru32(raw, netDataStart);
+  const netDict = parseNetBlock(raw.subarray(netDataStart + 4, netDataStart + 4 + netBlockSize));
+
+  // Process main data blocks
+  const mainBlocksSize = ru32(raw, mainDataStart);
+  const mainEnd  = mainDataStart + 4 + mainBlocksSize;
+  let ptr = mainDataStart + 4;
+
+  const segments: Segment[] = [];
+  const partDataList: PartData[] = [];
+  const testPads: TestPadData[] = [];
+
+  while (ptr + 5 <= mainEnd && ptr + 5 <= raw.length) {
+    const blockType = raw[ptr]; ptr += 1;
+    const blockSize = ru32(raw, ptr); ptr += 4;
+    if (ptr + blockSize > raw.length) break;
+    const blockData = raw.subarray(ptr, ptr + blockSize);
+    ptr += blockSize;
+
+    switch (blockType) {
+      case 0x01: { // Arc
+        if (blockData.length < 24 || ru32(blockData, 0) !== OUTLINE_LAYER) break;
+        const cx = ri32(blockData, 4)  / XZZ_SCALE;
+        const cy = ri32(blockData, 8)  / XZZ_SCALE;
+        const r  = Math.abs(ri32(blockData, 12) / XZZ_SCALE);
+        const startDeg = ri32(blockData, 16) / 10;
+        const endDeg   = ri32(blockData, 20) / 10;
+        const sRad = startDeg * Math.PI / 180;
+        const eRad = endDeg   * Math.PI / 180;
+        for (let i = 0; i < 12; i++) {
+          const t0 = sRad + (eRad - sRad) * i / 12;
+          const t1 = sRad + (eRad - sRad) * (i + 1) / 12;
+          segments.push({
+            p1: { x: cx + r * Math.cos(t0), y: cy + r * Math.sin(t0) },
+            p2: { x: cx + r * Math.cos(t1), y: cy + r * Math.sin(t1) },
+          });
+        }
+        break;
+      }
+      case 0x05: { // Line segment
+        if (blockData.length < 20 || ru32(blockData, 0) !== OUTLINE_LAYER) break;
+        segments.push({
+          p1: { x: ri32(blockData, 4)  / XZZ_SCALE, y: ri32(blockData, 8)  / XZZ_SCALE },
+          p2: { x: ri32(blockData, 12) / XZZ_SCALE, y: ri32(blockData, 16) / XZZ_SCALE },
+        });
+        break;
+      }
+      case 0x07: { // Part (DES-encrypted)
+        const pd = parsePartBlock(blockData);
+        if (pd) partDataList.push(pd);
+        break;
+      }
+      case 0x09: { // Test pad
+        const tp = parseTestPadBlock(blockData);
+        if (tp) testPads.push(tp);
+        break;
+      }
+    }
+  }
+
+  // Detect board fold: XZZ stores top and bottom side-by-side (unfolded).
+  // Find the largest gap in outline X values — that's the fold axis.
+  // Parts left of fold → bottom (mirror X); parts right of fold → top.
+  const foldAxis = findFoldAxis(segments);
+  if (isFinite(foldAxis)) {
+    for (const pd of partDataList) {
+      if (pd.pins.length === 0) continue;
+      const cx = pd.pins.reduce((s, p) => s + p.x, 0) / pd.pins.length;
+      if (cx < foldAxis) {
+        pd.side = 'bottom';
+        for (const p of pd.pins) p.x = 2 * foldAxis - p.x;
+      }
+    }
+    // Keep only the top-half (right) outline segments
+    for (let i = segments.length - 1; i >= 0; i--) {
+      if (segments[i].p1.x < foldAxis && segments[i].p2.x < foldAxis) segments.splice(i, 1);
+    }
+  }
+
+  // Normalize coordinates to origin
+  let minX = Infinity, minY = Infinity;
+  for (const s of segments) {
+    if (s.p1.x < minX) minX = s.p1.x; if (s.p1.y < minY) minY = s.p1.y;
+    if (s.p2.x < minX) minX = s.p2.x; if (s.p2.y < minY) minY = s.p2.y;
+  }
+  if (!isFinite(minX)) {
+    for (const pd of partDataList) for (const p of pd.pins) {
+      if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+    }
+  }
+  if (!isFinite(minX)) { minX = 0; minY = 0; }
+
+  for (const s of segments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
+  for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
+  for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
+
+  // Build outline
+  const outline = chainSegments(segments);
+
+  // Build parts
+  const parts: Part[] = [];
+  for (const pd of partDataList) {
+    if (!pd.name) continue;
+    const pins: Pin[] = pd.pins.map((p, i) => {
+      const raw2 = netDict.get(p.netIndex) ?? '';
+      const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
+      return { name: p.name || String(i + 1), number: String(i + 1), position: { x: p.x, y: p.y }, radius: 8, side: pd.side, net };
+    });
+    const pos  = pins.map(p => p.position);
+    const bounds = computeBBox(pos.length > 0 ? pos : [{ x: 0, y: 0 }]);
+    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds });
+  }
+
+  // Build nails from test pads
+  const nails: Nail[] = testPads.map(tp => {
+    const raw2 = netDict.get(tp.netIndex) ?? '';
+    return { position: { x: tp.x, y: tp.y }, side: 'top' as const, net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
+  });
+
+  const allPts: Point[] = [...outline, ...parts.flatMap(p => p.pins.map(pi => pi.position))];
+  const bounds = computeBBox(allPts.length > 0 ? allPts : [{ x: 0, y: 0 }]);
+
+  return { format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds };
+}

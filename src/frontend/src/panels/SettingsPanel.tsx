@@ -23,7 +23,7 @@ function CollapsibleSection({
   children: React.ReactNode;
   isOpen: boolean;
   onToggle: (id: SectionId) => void;
-  sectionRef: React.RefObject<HTMLDivElement>;
+  sectionRef: React.RefObject<HTMLDivElement | null>;
   isFocused: boolean;
 }) {
   return (
@@ -192,7 +192,7 @@ export function SettingsPanel() {
   const interactionRef = useRef<HTMLDivElement>(null);
   const performanceRef = useRef<HTMLDivElement>(null);
 
-  const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement>>>({
+  const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, netLines: netLinesRef, interaction: interactionRef,
     performance: performanceRef,

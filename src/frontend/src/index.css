@@ -99,6 +99,57 @@ html, body, #root {
   border-color: var(--accent);
 }
 
+/* PDF binding picker */
+.toolbar-pdf-bind {
+  position: relative;
+}
+
+.toolbar-btn-pdf {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar-btn-caret {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
+.toolbar-pdf-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 200px;
+  max-width: 360px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.toolbar-pdf-option {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.toolbar-pdf-option:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.toolbar-pdf-option.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .toolbar-spacer {
   flex: 1;
 }
@@ -1007,6 +1058,60 @@ html, body, #root {
   font-size: 0.77em;
   color: var(--text-secondary);
   font-family: monospace;
+}
+
+.pdf-search-wrapper {
+  position: relative;
+}
+
+.pdf-multiterm-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 0.77em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  z-index: 10;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+
+.pdf-gap-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pdf-gap-row label {
+  width: 10px;
+  text-align: right;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.pdf-gap-row input[type="range"] {
+  width: 80px;
+  height: 4px;
+  accent-color: var(--accent);
+}
+
+.pdf-gap-row span {
+  font-family: monospace;
+  font-size: 0.9em;
+  min-width: 30px;
+}
+
+.pdf-multiterm-hint {
+  opacity: 0.7;
+  text-align: center;
+  font-size: 0.9em;
 }
 
 .pdf-canvas-container {

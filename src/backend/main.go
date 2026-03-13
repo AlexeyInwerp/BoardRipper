@@ -45,10 +45,18 @@ func main() {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve the file directly
 		path := filepath.Join(staticDir, r.URL.Path)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		_, statErr := os.Stat(path)
+		if os.IsNotExist(statErr) {
 			// SPA fallback: serve index.html for client-side routing
+			w.Header().Set("Cache-Control", "no-store")
 			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
 			return
+		}
+		// index.html must never be cached; hashed assets can be cached forever
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Cache-Control", "no-store")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		fs.ServeHTTP(w, r)
 	})

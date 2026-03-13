@@ -1,12 +1,12 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { usePdfStore } from '../hooks/usePdfStore';
-import { pdfStore } from '../store/pdf-store';
+import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 
 const DRAG_THRESHOLD = 3;
 
 export function PdfViewerPanel() {
-  const { isLoaded, loading, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, bookmarks } = usePdfStore();
+  const { isLoaded, loading, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, bookmarks } = usePdfStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -99,7 +99,7 @@ export function PdfViewerPanel() {
       highlight.style.width = `${cssW}px`;
       highlight.style.height = `${cssH}px`;
 
-      const task = page.render({ canvasContext: ctx, viewport });
+      const task = page.render({ canvas: canvas, canvasContext: ctx, viewport });
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
 
@@ -124,17 +124,58 @@ export function PdfViewerPanel() {
     const unscaledH = viewportHeightRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1; // odd phases = hidden
 
+    // Read active indices from store (cached Set, stable reference)
+    const activeIndices = pdfStore.activeMatchIndices;
+    // Pre-build set of active match objects for O(1) lookup instead of O(n) indexOf
+    const activeMatchSet = new Set<object>();
+    for (const idx of activeIndices) {
+      if (matches[idx]) activeMatchSet.add(matches[idx]);
+    }
+
+    // Draw gap zone visualization around the active group's anchor match
+    if (isMultiTerm && activeMatchSet.size > 0) {
+      // Find the first match in the active group on this page
+      const activeGroup = pdfStore.matchGroups[pdfStore.activeGroupIndex];
+      if (activeGroup) {
+        const anchorMatch = matches[activeGroup[0]];
+        if (anchorMatch && anchorMatch.pageIndex === pageIndex) {
+          const at = anchorMatch.item.transform;
+          const aFontSize = pdfFontSize(at);
+          const ax = at[4] * scale;
+          const ay = (unscaledH - at[5]) * scale - aFontSize * scale;
+
+          // Horizontal zone: centered on anchor X
+          const xTolPx = aFontSize * multiTermXGap * scale;
+          const zoneX = ax - xTolPx;
+          const zoneW = xTolPx * 2 + anchorMatch.item.width * scale;
+
+          // Vertical zone: from anchor down by Y gap
+          const yGapPx = aFontSize * multiTermYGap * scale;
+          const zoneY = ay;
+          const zoneH = yGapPx * (activeGroup.length);
+
+          hCtx.strokeStyle = 'rgba(100, 200, 255, 0.4)';
+          hCtx.lineWidth = 1;
+          hCtx.setLineDash([4, 4]);
+          hCtx.strokeRect(zoneX, zoneY, zoneW, zoneH);
+          hCtx.fillStyle = 'rgba(100, 200, 255, 0.25)';
+          hCtx.fillRect(zoneX, zoneY, zoneW, zoneH);
+          hCtx.setLineDash([]);
+        }
+      }
+    }
+
     for (let mi = 0; mi < pageMatches.length; mi++) {
       const match = pageMatches[mi];
       const t = match.item.transform;
 
       const x = t[4] * scale;
-      const fontSize = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
+      const fontSize = pdfFontSize(t);
       const y = (unscaledH - t[5]) * scale - fontSize * scale;
       const w = match.item.width * scale;
       const h = fontSize * scale * 1.2;
 
-      const isActive = matches.indexOf(match) === activeMatchIndex;
+      const isActive = activeMatchSet.has(match);
       if (isActive) {
         // Blink: alternate between orange and red
         hCtx.fillStyle = blinkHide ? 'rgba(220, 30, 30, 0.5)' : 'rgba(255, 170, 0, 0.4)';
@@ -143,7 +184,7 @@ export function PdfViewerPanel() {
       }
       hCtx.fillRect(x, y, w, h);
     }
-  }, [isLoaded, currentPage, matches, activeMatchIndex]);
+  }, [isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
 
   // Keep a ref to renderPage so the wheel handler can trigger re-renders
   const renderPageRef = useRef(renderPage);
@@ -182,7 +223,7 @@ export function PdfViewerPanel() {
       if (baseScale === 0 || unscaledH === 0) return; // not rendered yet
 
       const t = match.item.transform;
-      const fontSize = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
+      const fontSize = pdfFontSize(t);
       const mx = t[4] * baseScale;
       const my = (unscaledH - t[5]) * baseScale - fontSize * baseScale;
       const mw = match.item.width * baseScale;
@@ -342,7 +383,7 @@ export function PdfViewerPanel() {
 
     for (const item of items) {
       const t = item.transform;
-      const fontSize = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
+      const fontSize = pdfFontSize(t);
       const x = t[4] * scale;
       const y = (unscaledH - t[5]) * scale - fontSize * scale;
       const w = item.width * scale;
@@ -522,19 +563,48 @@ export function PdfViewerPanel() {
 
         <div className="pdf-toolbar-separator" />
 
-        <form className="pdf-search-form" onSubmit={handleSearch}>
-          <input
-            ref={searchInputRef}
-            type="text"
-            className="pdf-search-input"
-            placeholder="Search in PDF..."
-            defaultValue={searchQuery}
-          />
-        </form>
+        <div className="pdf-search-wrapper">
+          <form className="pdf-search-form" onSubmit={handleSearch}>
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="pdf-search-input"
+              placeholder="Search (multi-term: 10UF 25V 0603)"
+              defaultValue={searchQuery}
+            />
+          </form>
+          {isMultiTerm && (
+            <div className="pdf-multiterm-dropdown">
+              <div className="pdf-gap-row">
+                <label>V</label>
+                <input
+                  type="range" min={0.5} max={20} step={0.5}
+                  defaultValue={multiTermYGap}
+                  onPointerUp={e => pdfStore.setMultiTermYGap(Number((e.target as HTMLInputElement).value))}
+                />
+                <span>{multiTermYGap}x</span>
+              </div>
+              <div className="pdf-gap-row">
+                <label>H</label>
+                <input
+                  type="range" min={0.5} max={20} step={0.5}
+                  defaultValue={multiTermXGap}
+                  onPointerUp={e => pdfStore.setMultiTermXGap(Number((e.target as HTMLInputElement).value))}
+                />
+                <span>{multiTermXGap}x</span>
+              </div>
+              <span className="pdf-multiterm-hint">
+                {matchGroupCount > 0 ? `${matchGroupCount} groups` : 'no matches'}
+              </span>
+            </div>
+          )}
+        </div>
         {matches.length > 0 && (
           <>
             <span className="pdf-match-info">
-              {activeMatchIndex + 1}/{matches.length}
+              {matchGroupCount > 0
+                ? `${activeGroupIndex + 1}/${matchGroupCount}`
+                : `${activeMatchIndex + 1}/${matches.length}`}
             </span>
             <button className="pdf-toolbar-btn" onClick={() => pdfStore.prevMatch()}>&#9650;</button>
             <button className="pdf-toolbar-btn" onClick={() => pdfStore.nextMatch()}>&#9660;</button>

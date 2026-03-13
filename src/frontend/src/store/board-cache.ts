@@ -1,7 +1,7 @@
 import type { BoardData, Net } from '../parsers';
 
 const DB_NAME = 'boardviewer-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 6; // bumped: fixed CAD coordinate scale, added FZ/CAD formats
 const STORE_NAME = 'boards';
 
 interface CachedBoard {
@@ -15,7 +15,7 @@ interface CachedBoard {
 
 // BoardData uses Map which can't be stored in IndexedDB directly
 interface SerializedBoardData {
-  format: 'BVR1' | 'BVR3';
+  format: string;
   outline: BoardData['outline'];
   parts: BoardData['parts'];
   nails: BoardData['nails'];
@@ -56,11 +56,13 @@ class BoardCache {
     if (this.dbPromise) return this.dbPromise;
     this.dbPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (event) => {
         const db = req.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+        // Delete existing store on version upgrade to evict stale cached data.
+        if (event.oldVersion > 0 && db.objectStoreNames.contains(STORE_NAME)) {
+          db.deleteObjectStore(STORE_NAME);
         }
+        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
