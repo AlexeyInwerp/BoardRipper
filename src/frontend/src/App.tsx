@@ -17,6 +17,7 @@ import { NetListPanel } from './panels/NetListPanel';
 import { SearchResultsPanel } from './panels/SearchResultsPanel';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
+import { DebugPanel } from './panels/DebugPanel';
 import { setDockviewApi } from './store/dockview-api';
 import { PanelAdder } from './components/PanelAdder';
 
@@ -27,6 +28,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   searchResults: () => <SearchResultsPanel />,
   settings: () => <SettingsPanel />,
   pdfViewer: () => <PdfViewerPanel />,
+  debug: () => <DebugPanel />,
 };
 
 function App() {
@@ -71,6 +73,14 @@ function App() {
       id: 'settings',
       component: 'settings',
       title: 'Settings',
+      position: { referencePanel: 'componentInfo' },
+    });
+
+    // Debug / log panel (tabbed after settings)
+    api.addPanel({
+      id: 'debug',
+      component: 'debug',
+      title: 'Debug',
       position: { referencePanel: 'componentInfo' },
     });
 

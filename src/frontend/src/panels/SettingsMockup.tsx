@@ -16,8 +16,7 @@
  * Static mockup board: renderer/mockup-data.ts (U1 IC + R1 resistor + C1 capacitor).
  */
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Application, Graphics } from 'pixi.js';
-import type { Container } from 'pixi.js';
+import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { RenderSettings } from '../store/render-settings';
 import { computePinRadius, computeEffectiveBounds } from '../store/render-settings';
@@ -226,12 +225,18 @@ export function SettingsMockup({
       st.labelsRoot.destroy({ children: true });
       st.labelsRoot = null;
     }
-    const graph = buildBoardScene(MOCK_BOARD, s);
+    let graph;
+    try {
+      graph = buildBoardScene(MOCK_BOARD, s);
+    } catch (err) {
+      console.error('[SettingsMockup] buildBoardScene failed:', err);
+      return;
+    }
     // Lift labels out of the scene so they render above selection/highlight overlays
     const labelsRoot = new Container();
     for (const label of graph.labels) {
       const wx = label.x, wy = label.y;
-      label.parent.removeChild(label);
+      label.parent?.removeChild(label);
       label.x = wx; label.y = wy;
       labelsRoot.addChild(label);
     }

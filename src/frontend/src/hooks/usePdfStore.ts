@@ -9,6 +9,11 @@ interface PdfSnapshot {
   searchQuery: string;
   matches: PdfTextMatch[];
   activeMatchIndex: number;
+  matchGroupCount: number;
+  activeGroupIndex: number;
+  isMultiTerm: boolean;
+  multiTermYGap: number;
+  multiTermXGap: number;
   isLoaded: boolean;
   loading: boolean;
   bookmarks: PdfBookmark[];
@@ -29,6 +34,11 @@ function getSnapshot(): PdfSnapshot {
       searchQuery: pdfStore.searchQuery,
       matches: pdfStore.matches,
       activeMatchIndex: pdfStore.activeMatchIndex,
+      matchGroupCount: pdfStore.matchGroups.length,
+      activeGroupIndex: pdfStore.activeGroupIndex,
+      isMultiTerm: pdfStore.isMultiTerm,
+      multiTermYGap: pdfStore.multiTermYGap,
+      multiTermXGap: pdfStore.multiTermXGap,
       isLoaded: pdfStore.isLoaded,
       loading: pdfStore.loading,
       bookmarks: pdfStore.bookmarks,

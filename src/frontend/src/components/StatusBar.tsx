@@ -1,4 +1,5 @@
 import { useBoardStore } from '../hooks/useBoardStore';
+import { getAllExtensions } from '../parsers/registry';
 
 export function StatusBar() {
   const { board, selection, selectedPart, selectedPin } = useBoardStore();
@@ -36,7 +37,7 @@ export function StatusBar() {
           )}
         </>
       ) : (
-        <span>Open a .bvr file to begin</span>
+        <span>Supports {getAllExtensions().join(', ')} formats. Vibecoded by RipperDoc in Claude Opus 4.6</span>
       )}
     </div>
   );

@@ -40,7 +40,7 @@ export interface Net {
 }
 
 export interface BoardData {
-  format: 'BVR1' | 'BVR3';
+  format: string; // format ID from FormatDescriptor.id (e.g. 'BVR1', 'BVR3', 'BRD')
   outline: Point[];
   parts: Part[];
   nails: Nail[];

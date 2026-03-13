@@ -1,11 +1,12 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { contextMenuStore } from '../store/context-menu-store';
+import type { ContextMenuState } from '../store/context-menu-store';
 import { pdfStore } from '../store/pdf-store';
 import { getDockviewApi } from '../store/dockview-api';
 
 let version = 0;
 let lastVer = -1;
-let cached: ReturnType<typeof contextMenuStore.state> | null = null;
+let cached: ContextMenuState | null = null;
 
 contextMenuStore.subscribe(() => { version++; });
 

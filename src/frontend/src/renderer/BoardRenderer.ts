@@ -12,7 +12,7 @@
  *
  * Debug logging: set `window.__BV_DEBUG = 1` (or 2 for verbose) in the browser console.
  */
-import { Application, Graphics, Container, BitmapText } from 'pixi.js';
+import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point } from '../parsers';
 import { boardStore } from '../store/board-store';
@@ -323,6 +323,14 @@ export class BoardRenderer {
     const cx = (board.bounds.minX + board.bounds.maxX) / 2;
     const cy = (board.bounds.minY + board.bounds.maxY) / 2;
 
+    // When the board is rotated 90° or 270°, the visual X and Y axes are swapped
+    // relative to board coordinates. Mirror operations must work in visual/screen
+    // space, so swap mirrorX↔mirrorY when the axes are transposed.
+    const rot90 = Math.round(boardStore.rotation / 90) % 4;
+    const axesSwapped = rot90 === 1 || rot90 === 3;
+    const mirrorX = axesSwapped ? boardStore.mirrorY : boardStore.mirrorX;
+    const mirrorY = axesSwapped ? boardStore.mirrorX : boardStore.mirrorY;
+
     if (butterfly) {
       // Butterfly mode: top above, bottom below — flipped as if hinging on the bottom edge
       this.setupButterfly(board, scene);
@@ -342,11 +350,28 @@ export class BoardRenderer {
       const gap = sepDim * 0.05;
       const halfSep = sepDim / 2 + gap / 2;
 
-      const flipY = autoFlipY !== boardStore.mirrorY;
-      const sx = boardStore.mirrorX ? -1 : 1;
+      const flipY = autoFlipY !== mirrorY;
+      const sx = mirrorX ? -1 : 1;
       const topSy = flipY ? -1 : 1;
-      // Bottom: Y inverted relative to top (flipped around bottom edge)
-      const botSy = -topSy;
+
+      // The bottom half must be mirrored perpendicular to the separation direction
+      // in VISUAL (screen) space so it appears as a physical fold of the board.
+      //
+      // separateX=true  → halves side-by-side → fold axis is vertical  → mirror visual-X
+      // separateX=false → halves stacked      → fold axis is horizontal → mirror visual-Y
+      //
+      // When axes are swapped (rotation 90°/270°): visual-X ↔ board-Y, so:
+      //   mirror visual-X needs board-Y flip  (i.e. botSy = -topSy)
+      //   mirror visual-Y needs board-X flip  (i.e. botSx = -sx)
+      //
+      // When axes are NOT swapped (rotation 0°/180°):
+      //   mirror visual-X needs board-X flip  (i.e. botSx = -sx)
+      //   mirror visual-Y needs board-Y flip  (i.e. botSy = -topSy)
+      //
+      // So: mirror board-X when (separateX XOR axesSwapped), else mirror board-Y.
+      const mirrorBoardX = separateX !== axesSwapped;
+      const botScaleX = mirrorBoardX ? -sx    : sx;
+      const botScaleY = mirrorBoardX ? topSy  : -topSy;
 
       const dx = separateX ? halfSep : 0;
       const dy = separateX ? 0 : halfSep;
@@ -357,19 +382,21 @@ export class BoardRenderer {
       scene.root.rotation = rotation;
       scene.root.scale.set(sx, topSy);
 
-      // Bottom half: shifted right/down, Y-flipped
+      // Bottom half: shifted right/down, mirrored along the fold axis
       const broot = scene.butterflyRoot!;
       broot.pivot.set(cx, cy);
       broot.position.set(cx + dx, cy + dy);
       broot.rotation = rotation;
-      broot.scale.set(sx, botSy);
+      broot.scale.set(botScaleX, botScaleY);
 
-      // Counter-flip labels + pin numbers for readability
+      // Counter-flip labels + pin numbers for readability (handedness-aware)
+      const topLabelRot = -rotation * sx * topSy;
+      const botLabelRot = -rotation * botScaleX * botScaleY;
       for (const arr of [scene.topLabels, scene.topPinLabels]) {
-        for (const label of arr) { label.rotation = -rotation; label.scale.set(sx, topSy); }
+        for (const label of arr) { label.rotation = topLabelRot; label.scale.set(sx, topSy); }
       }
       for (const arr of [scene.bottomLabels, scene.bottomPinLabels]) {
-        for (const label of arr) { label.rotation = -rotation; label.scale.set(sx, botSy); }
+        for (const label of arr) { label.rotation = botLabelRot; label.scale.set(botScaleX, botScaleY); }
       }
     } else {
       // Normal mode
@@ -377,26 +404,37 @@ export class BoardRenderer {
 
       // When viewing bottom only, flip Y (like flipping a physical board top-to-bottom)
       const bottomFlipY = boardStore.showBottom && !boardStore.showTop;
-      const flipX = boardStore.mirrorX;
-      const flipY = autoFlipY !== bottomFlipY !== boardStore.mirrorY;
+      const flipX = mirrorX;
+      const flipY = autoFlipY !== bottomFlipY !== mirrorY;
 
       scene.root.pivot.set(cx, cy);
       scene.root.position.set(cx, cy);
       scene.root.rotation = rotation;
       scene.root.scale.set(flipX ? -1 : 1, flipY ? -1 : 1);
 
-      // Counter-flip labels + pin numbers so text stays readable
+      // Counter-flip labels + pin numbers so text stays readable.
+      // When an odd number of axes are flipped, coordinate handedness reverses and
+      // the counter-rotation sign must flip too: label.rotation = -R * lsx * lsy.
       const lsx = flipX ? -1 : 1;
       const lsy = flipY ? -1 : 1;
+      const labelRot = -rotation * lsx * lsy;
       for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels]) {
-        for (const label of arr) { label.rotation = -rotation; label.scale.set(lsx, lsy); }
+        for (const label of arr) { label.rotation = labelRot; label.scale.set(lsx, lsy); }
       }
     }
   }
 
   /** Set up butterfly mode: move bottom layer into its own root */
   private setupButterfly(board: BoardData, scene: BoardScene) {
-    if (scene.butterflyRoot) { dbg(2, 'setupButterfly: already set up'); return; }
+    if (scene.butterflyRoot) {
+      // Already built — re-attach to viewport if detached (happens after tab switch)
+      if (!scene.butterflyRoot.parent) {
+        this.viewport.addChild(scene.butterflyRoot);
+        this.viewport.removeChild(this.netLinesGfx);
+        this.viewport.addChild(this.netLinesGfx);
+      }
+      return;
+    }
     dbg(1, 'setupButterfly');
 
     // Create butterfly root with a copy of the outline
@@ -425,9 +463,12 @@ export class BoardRenderer {
   private teardownButterfly(scene: BoardScene) {
     if (!scene.butterflyRoot) return;
 
-    // Move bottom layer back to main root
+    // Move bottom layer back to main root, then restore selectionGfx as last child.
+    // addChild() on an existing child moves it to the end — selectionGfx must always
+    // be the last child of scene.root so it renders above pins and borders.
     scene.butterflyRoot.removeChild(scene.bottomLayer);
     scene.root.addChild(scene.bottomLayer);
+    scene.root.addChild(this.selectionGfx);
 
     // Detach butterfly selection gfx before destroying
     scene.butterflyRoot.removeChild(this.butterflySelectionGfx);
@@ -577,15 +618,6 @@ export class BoardRenderer {
       this.activeScene = null;
     }
     this.selectionGfx.clear();
-  }
-
-  /** Remove a board's cached scene (called when tab is closed or settings change) */
-  private invalidateScene(board: BoardData) {
-    const scene = this.sceneCache.get(board);
-    if (scene) {
-      scene.root.destroy({ children: true });
-      this.sceneCache.delete(board);
-    }
   }
 
   private invalidateAllScenes() {

@@ -20,6 +20,8 @@ interface StoreSnapshot {
   mirrorX: boolean;
   mirrorY: boolean;
   showNetLines: boolean;
+  pdfFile: File | null;
+  pdfFileNames: string[];
 }
 
 let cachedSnapshot: StoreSnapshot | null = null;
@@ -47,6 +49,8 @@ function getSnapshot(): StoreSnapshot {
       mirrorX: boardStore.mirrorX,
       mirrorY: boardStore.mirrorY,
       showNetLines: boardStore.showNetLines,
+      pdfFile: boardStore.pdfFile,
+      pdfFileNames: boardStore.pdfFileNames,
     };
     lastVersion = snapshotVersion;
   }

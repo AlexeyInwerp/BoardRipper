@@ -1,6 +1,7 @@
 import type { BoardData, Part, Pin } from '../parsers';
 import { boardCache } from './board-cache';
 import { parseBoardFile } from '../parsers';
+import { logStore } from './log-store';
 
 export type BoardStoreListener = () => void;
 
@@ -23,6 +24,13 @@ export interface BoardTab {
   mirrorX: boolean;
   mirrorY: boolean;
   showNetLines: boolean;
+  pdfFileName: string | null;  // reference into pdfFiles registry
+}
+
+export interface PdfEntry {
+  file: File;
+  /** Board tab IDs this PDF is bound to (empty = unbound) */
+  boundTabIds: Set<number>;
 }
 
 export interface FocusRequest {
@@ -32,16 +40,57 @@ export interface FocusRequest {
 
 const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
 
+/**
+ * Extract a "base name" for matching: strip extension, split on common
+ * delimiters, and return alphanumeric tokens.
+ * "820-02935 051-08286 Rev 5.0.3.pdf" → ["820", "02935", "051", "08286", ...]
+ * "820-02935-05.brd" → ["820", "02935", "05"]
+ */
+function nameTokens(fileName: string): string[] {
+  const base = fileName.replace(/\.[^.]+$/, ''); // strip extension
+  return base.split(/[\s\-_,.]+/).map(t => t.toLowerCase()).filter(t => t.length > 0);
+}
+
+/**
+ * Find the best name match between a source filename and a list of candidates.
+ * Uses token overlap — the candidate sharing the most tokens wins.
+ * Requires at least 1 shared token of length >= 3 (to avoid matching on "v" or "5").
+ */
+function findBestNameMatch(source: string, candidates: string[]): string | null {
+  const srcTokens = nameTokens(source);
+  let bestMatch: string | null = null;
+  let bestScore = 0;
+
+  for (const candidate of candidates) {
+    const candTokens = nameTokens(candidate);
+    let score = 0;
+    let hasSubstantial = false;
+    for (const st of srcTokens) {
+      if (candTokens.includes(st)) {
+        score++;
+        if (st.length >= 3) hasSubstantial = true;
+      }
+    }
+    if (hasSubstantial && score > bestScore) {
+      bestScore = score;
+      bestMatch = candidate;
+    }
+  }
+  return bestMatch;
+}
+
 let nextTabId = 1;
 
 class BoardStore {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
   private _focusRequest: FocusRequest | null = null;
+  private _pdfFiles: Map<string, PdfEntry> = new Map(); // fileName → entry
   private _listeners = new Set<BoardStoreListener>();
 
   get tabs(): BoardTab[] { return this._tabs; }
   get activeTabId(): number | null { return this._activeTabId; }
+  get pdfFiles(): Map<string, PdfEntry> { return this._pdfFiles; }
 
   private get activeTab(): BoardTab | null {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
@@ -58,10 +107,91 @@ class BoardStore {
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
+  /** The PDF File bound to the active board tab (if any) */
+  get pdfFile(): File | null {
+    const name = this.activeTab?.pdfFileName;
+    return name ? (this._pdfFiles.get(name)?.file ?? null) : null;
+  }
+
+  /** All PDF filenames currently loaded */
+  get pdfFileNames(): string[] {
+    return [...this._pdfFiles.keys()];
+  }
+
+  /** Add a PDF to the registry. Does NOT bind it to any tab. */
+  addPdf(file: File) {
+    if (!this._pdfFiles.has(file.name)) {
+      this._pdfFiles.set(file.name, { file, boundTabIds: new Set() });
+    }
+  }
+
+  /** Bind a PDF to the active board tab */
+  bindPdf(pdfFileName: string | null) {
+    const tab = this.activeTab;
+    if (!tab) return;
+
+    // Unbind old
+    if (tab.pdfFileName) {
+      const old = this._pdfFiles.get(tab.pdfFileName);
+      if (old) old.boundTabIds.delete(tab.id);
+    }
+
+    // Bind new
+    tab.pdfFileName = pdfFileName;
+    if (pdfFileName) {
+      const entry = this._pdfFiles.get(pdfFileName);
+      if (entry) entry.boundTabIds.add(tab.id);
+    }
+    this.notify();
+  }
+
+  /** Remove a PDF from the registry and unbind from all tabs */
+  removePdf(pdfFileName: string) {
+    const entry = this._pdfFiles.get(pdfFileName);
+    if (!entry) return;
+    // Unbind from all tabs
+    for (const tab of this._tabs) {
+      if (tab.pdfFileName === pdfFileName) tab.pdfFileName = null;
+    }
+    this._pdfFiles.delete(pdfFileName);
+    this.notify();
+  }
+
+  /** Add PDF and bind to current tab (legacy convenience) */
+  setPdfFile(file: File) {
+    this.addPdf(file);
+    this.bindPdf(file.name);
+  }
+
+  /** Try to auto-bind a PDF to a board tab by partial filename match */
+  autoBindPdf(pdfFileName: string) {
+    const match = findBestNameMatch(pdfFileName, this._tabs.map(t => t.fileName));
+    if (match) {
+      const tab = this._tabs.find(t => t.fileName === match);
+      if (tab && !tab.pdfFileName) {
+        tab.pdfFileName = pdfFileName;
+        const entry = this._pdfFiles.get(pdfFileName);
+        if (entry) entry.boundTabIds.add(tab.id);
+      }
+    }
+  }
+
+  /** Try to auto-bind a board tab to an existing PDF by partial filename match */
+  autoBindBoard(boardFileName: string) {
+    const tab = this._tabs.find(t => t.fileName === boardFileName);
+    if (!tab || tab.pdfFileName) return;
+    const pdfNames = [...this._pdfFiles.keys()];
+    const match = findBestNameMatch(boardFileName, pdfNames);
+    if (match) {
+      tab.pdfFileName = match;
+      const entry = this._pdfFiles.get(match);
+      if (entry) entry.boundTabIds.add(tab.id);
+    }
+  }
 
   get selectedPart(): Part | null {
     const tab = this.activeTab;
-    if (tab?.board && tab.selection.partIndex !== null) {
+    if (tab && tab.board && tab.selection.partIndex !== null) {
       return tab.board.parts[tab.selection.partIndex] ?? null;
     }
     return null;
@@ -70,7 +200,7 @@ class BoardStore {
   get selectedPin(): Pin | null {
     const part = this.selectedPart;
     const tab = this.activeTab;
-    if (part && tab?.selection.pinIndex !== null) {
+    if (part && tab && tab.selection.pinIndex !== null) {
       return part.pins[tab.selection.pinIndex] ?? null;
     }
     return null;
@@ -114,27 +244,56 @@ class BoardStore {
       mirrorX: false,
       mirrorY: false,
       showNetLines: false,
+      pdfFileName: null,
     };
 
     this._tabs.push(tab);
     this._activeTabId = id;
 
-    // Try loading from cache first
-    const cached = await boardCache.get(file.name, file.size, file.lastModified);
-    if (cached) {
-      tab.board = cached;
-      this.notify();
-      return;
+    try {
+      // Try loading from cache first
+      const cached = await boardCache.get(file.name, file.size, file.lastModified);
+      if (cached) {
+        logStore.log('log', `[board-store] Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
+        tab.board = cached;
+        tab.rotation = this.autoRotation(cached);
+        this.autoBindBoard(file.name);
+        this.notify();
+        return;
+      }
+
+      logStore.log('log', `[board-store] Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+      const t0 = performance.now();
+      const buffer = await file.arrayBuffer();
+      const board = await parseBoardFile(buffer, file.name);
+      const elapsed = (performance.now() - t0).toFixed(0);
+      logStore.log('log', `[board-store] Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
+      tab.board = board;
+      tab.rotation = this.autoRotation(board);
+
+      // Cache for fast re-access
+      await boardCache.put(file.name, file.size, file.lastModified, board);
+
+      // Try auto-binding an existing PDF by name match
+      this.autoBindBoard(file.name);
+    } catch (err) {
+      logStore.log('error', `[board-store] Failed to load ${file.name}:`, err);
+      // Remove the placeholder tab on failure
+      const idx = this._tabs.indexOf(tab);
+      if (idx !== -1) this._tabs.splice(idx, 1);
+      if (this._activeTabId === tab.id) {
+        this._activeTabId = this._tabs.length > 0 ? this._tabs[this._tabs.length - 1].id : null;
+      }
     }
 
-    const text = await file.text();
-    const board = parseBoardFile(text);
-    tab.board = board;
-
-    // Cache for fast re-access
-    await boardCache.put(file.name, file.size, file.lastModified, board);
-
     this.notify();
+  }
+
+  /** Return 90 if the board is taller than wide (portrait → rotate to landscape) */
+  private autoRotation(board: BoardData): number {
+    const w = board.bounds.maxX - board.bounds.minX;
+    const h = board.bounds.maxY - board.bounds.minY;
+    return h > w ? 90 : 0;
   }
 
   async loadFiles(files: FileList | File[]) {
@@ -153,6 +312,13 @@ class BoardStore {
   closeTab(tabId: number) {
     const idx = this._tabs.findIndex(t => t.id === tabId);
     if (idx === -1) return;
+
+    // Unbind PDF
+    const tab = this._tabs[idx];
+    if (tab.pdfFileName) {
+      const entry = this._pdfFiles.get(tab.pdfFileName);
+      if (entry) entry.boundTabIds.delete(tab.id);
+    }
 
     this._tabs.splice(idx, 1);
 
