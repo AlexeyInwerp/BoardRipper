@@ -7,15 +7,19 @@ Web-based PCB boardview file viewer. Renders `.bvr` files with GPU-accelerated W
 - **GPU-accelerated rendering** — PixiJS v8 (WebGL), handles 10,000+ components at 60fps
 - **Pan & zoom** — pixi-viewport with mouse wheel, drag, pinch-zoom, deceleration
 - **BVR1 & BVR3 support** — both OpenBoardView formats parsed client-side
+- **Multi-board tabs** — open multiple boards simultaneously, switch between them
 - **Layer toggle** — show/hide top and bottom layers independently
-- **Selection & highlight** — click component or pin to highlight net across the board
+- **Butterfly mode** — side-by-side mirrored view of both board sides
+- **Selection & highlight** — click component or pin to highlight entire net across the board
+- **Net lines** — show connection lines between components sharing a net
 - **Search** — find components and nets by name
+- **Context menu** — right-click to copy name, highlight net, open info panel
 - **Panel system** — Dockview: dockable, floating, and popout-to-new-window panels
   - Component Info (pins list, metadata)
-  - Net List
+  - Net List (searchable, click to highlight)
   - Search Results
-  - PDF Viewer
-  - Settings
+  - PDF Viewer (pan/zoom, text search, bookmarks)
+  - Settings (live preview mockup, per-net color rules, label/pin/outline tuning)
 - **IndexedDB cache** — instant re-open without re-parsing
 - **Docker deploy** — ~15MB scratch-based image for NAS
 
@@ -81,6 +85,7 @@ See [`docs/formats/BVR_FORMAT.md`](docs/formats/BVR_FORMAT.md) for the full form
 | Phase 2: Board Rendering (PixiJS, viewport, layers) | Done |
 | Phase 3: Interaction & Selection (hover, click, search) | Done |
 | Phase 4: Panel System (Dockview, PDF viewer, cache) | Done |
-| Phase 5: Polish (drag-drop, themes) | In Progress |
+| Phase 4+: Multi-board tabs, butterfly mode, net lines, render settings | Done |
+| Phase 5: Polish (drag-drop, themes, recent files) | In Progress |
 
 See [`docs/PLANNING.md`](docs/PLANNING.md) for the full architecture and implementation plan.

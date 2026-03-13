@@ -1,3 +1,17 @@
+/**
+ * Main PixiJS renderer — owns the Application, Viewport, and scene lifecycle.
+ *
+ * Responsibilities:
+ *  - Creates and manages the PixiJS Application + pixi-viewport
+ *  - Delegates scene graph construction to buildBoardScene() (renderer/board-scene.ts)
+ *  - Handles multi-board tabs: builds one BoardScene per tab, switches between them
+ *  - Manages selection state: hover, click, net highlight, selection rect
+ *  - Butterfly mode: renders a mirrored side-by-side copy of the bottom layer
+ *  - Net lines: draws connection lines between components sharing a net
+ *  - Reacts to renderSettingsStore changes and rebuilds the scene as needed
+ *
+ * Debug logging: set `window.__BV_DEBUG = 1` (or 2 for verbose) in the browser console.
+ */
 import { Application, Graphics, Container, BitmapText } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point } from '../parsers';

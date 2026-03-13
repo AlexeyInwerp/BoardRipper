@@ -1,7 +1,19 @@
 /**
- * Settings preview mockup.
- * Uses the SAME PixiJS rendering pipeline (buildBoardScene) as the main board view —
- * visual changes in BoardRenderer automatically reflect here.
+ * Live PixiJS preview for the Settings panel.
+ *
+ * Uses the SAME rendering pipeline (buildBoardScene) as the main board view —
+ * any visual change in board-scene.ts is automatically reflected here.
+ *
+ * Viewport layer order (bottom → top):
+ *   sceneRoot  →  netLinesGfx  →  selectionGfx  →  labelsRoot
+ * Labels are lifted out of the scene and placed above selectionGfx so that
+ * label shadows visually overlay the net-highlight circles beneath them.
+ *
+ * Click-to-navigate: clicking a board element scrolls and highlights the
+ * corresponding settings section in SettingsPanel (via onElementClick).
+ * Hit testing uses computeEffectiveBounds() — the same helper used during rendering.
+ *
+ * Static mockup board: renderer/mockup-data.ts (U1 IC + R1 resistor + C1 capacitor).
  */
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { Application, Graphics } from 'pixi.js';
