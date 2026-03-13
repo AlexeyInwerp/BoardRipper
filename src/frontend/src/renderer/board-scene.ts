@@ -1,14 +1,18 @@
 /**
  * Shared scene-building logic for both the main BoardRenderer and SettingsMockup.
  * Any visual change made here is automatically reflected in both places.
+ *
+ * All text uses BitmapText with shared glyph atlases for dramatically lower
+ * GPU memory and draw calls compared to per-label canvas Text objects.
  */
-import { Graphics, Container, Text, TextStyle } from 'pixi.js';
+import { Graphics, Container, BitmapText, BitmapFont } from 'pixi.js';
 import type { BoardData } from '../parsers';
 import {
   getLabelFontSize,
   computePinRadius,
   computeEffectiveBounds,
   resolvePinColor,
+  quantizeFontSize,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 
@@ -20,7 +24,12 @@ export const BOARD_COLORS = {
   partSelected:      0xffaa00,
   netHighlight:      0xffff44,
   pin1:              0xcc2222,
+  labelPart:         0xcccccc,
+  labelPin:          0xffffff,
+  labelNet:          0x88ccff,
 } as const;
+
+const LABEL_FONT_FAMILY = 'monospace';
 
 /** Info needed to dynamically redraw a part border at different widths */
 export interface BorderEntry {
@@ -36,7 +45,7 @@ export interface BorderEntry {
 export interface FontSizeGroup {
   /** Lower bound of the bucket (2^bucket) — used for threshold check */
   minSize: number;
-  labels: Text[];
+  labels: BitmapText[];
   /** Cached visibility state — skip iteration when unchanged */
   visible: boolean;
 }
@@ -46,16 +55,57 @@ export interface BoardSceneGraph {
   outlineGfx:  Graphics;
   topLayer:    Container;
   bottomLayer: Container;
-  labels:      Text[];
-  topLabels:   Text[];
-  bottomLabels: Text[];
+  labels:      BitmapText[];
+  topLabels:   BitmapText[];
+  bottomLabels: BitmapText[];
   /** Pin number labels, tracked for zoom-based LoD */
-  topPinLabels:    Text[];
-  bottomPinLabels: Text[];
+  topPinLabels:    BitmapText[];
+  bottomPinLabels: BitmapText[];
   /** Part border Graphics entries for dynamic min-width updates */
   borderEntries: BorderEntry[];
   /** Labels grouped by font-size bucket for efficient LoD visibility */
   fontSizeGroups: FontSizeGroup[];
+}
+
+/** PCB character set — covers part names, pin numbers, net names, and common accented chars */
+const PCB_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./+#()[]{}:;,<>!@$%^&*=~|\\?\'"ÄÖÜäöüß';
+
+/** Resolution for pre-installed shadow BitmapFonts (higher = sharper at deep zoom, larger atlas) */
+const SHADOW_FONT_RESOLUTION = 4;
+
+/** Track which shadow fonts have been installed to avoid re-installing */
+const installedShadowFonts = new Set<string>();
+
+/** Uninstall all shadow BitmapFonts and free their GPU atlas textures */
+export function cleanupShadowFonts(): void {
+  for (const name of installedShadowFonts) {
+    try { BitmapFont.uninstall(name); } catch { /* already removed */ }
+  }
+  installedShadowFonts.clear();
+}
+
+/** Install a BitmapFont for part labels with baked drop shadow at a specific quantized size */
+function ensureShadowFont(fontSize: number): string {
+  const name = `board-shadow-${fontSize}`;
+  if (!installedShadowFonts.has(name)) {
+    try {
+      BitmapFont.install({
+        name,
+        style: {
+          fontFamily: LABEL_FONT_FAMILY,
+          fontSize,
+          fill: 0xffffff,
+          dropShadow: { color: 0x000000, alpha: 0.7, blur: fontSize * 0.6, distance: 0 },
+        },
+        chars: PCB_CHARS,
+        resolution: SHADOW_FONT_RESOLUTION,
+      });
+      installedShadowFonts.add(name);
+    } catch {
+      return LABEL_FONT_FAMILY;
+    }
+  }
+  return name;
 }
 
 /** Draw the board outline path into a Graphics object */
@@ -100,11 +150,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const outlineGfx  = new Graphics();
   const bottomLayer = new Container();
   const topLayer    = new Container();
-  const labels: Text[] = [];
-  const topLabels: Text[] = [];
-  const bottomLabels: Text[] = [];
-  const topPinLabels: Text[] = [];
-  const bottomPinLabels: Text[] = [];
+  const labels: BitmapText[] = [];
+  const topLabels: BitmapText[] = [];
+  const bottomLabels: BitmapText[] = [];
+  const topPinLabels: BitmapText[] = [];
+  const bottomPinLabels: BitmapText[] = [];
   const borderEntries: BorderEntry[] = [];
 
   // Skip event system traversal for all board objects — events are handled
@@ -132,7 +182,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     // ── Pins (drawn first) ──────────────────────────────────────────────────
     // Collect text labels to add after all graphics for z-order
-    const deferredTexts: Text[] = [];
+    const deferredTexts: BitmapText[] = [];
     // Track pad rectangles for 2-pin net labels (indexed by pin index)
     const padRects: { rx: number; ry: number; rw: number; rh: number }[] = [];
 
@@ -178,11 +228,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         const diameter = r * 2;
         let pinFontSize = (diameter * 0.7) / (Math.max(numStr.length, 3) * 0.6);
         pinFontSize = Math.min(pinFontSize, diameter * 0.8);
-        if (pinFontSize >= 1) {
-          const pinLabel = new Text({
+        pinFontSize = quantizeFontSize(pinFontSize);
+        if (pinFontSize >= 2) {
+          const pinLabel = new BitmapText({
             text: numStr,
-            style: new TextStyle({ fontSize: pinFontSize, fill: 0xffffff, fontFamily: 'monospace' }),
-            resolution: 2,
+            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: LABEL_FONT_FAMILY },
           });
           pinLabel.anchor.set(0.5, 0.8);
           pinLabel.x = pin.position.x;
@@ -217,11 +267,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           }
         }
 
-        if (netFontSize >= 1) {
-          const netLabel = new Text({
+        netFontSize = quantizeFontSize(netFontSize);
+        if (netFontSize >= 2) {
+          const netLabel = new BitmapText({
             text: pin.net,
-            style: new TextStyle({ fontSize: netFontSize, fill: 0x88ccff, fontFamily: 'monospace' }),
-            resolution: 2,
+            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: LABEL_FONT_FAMILY },
           });
           netLabel.anchor.set(anchorX, anchorY);
           netLabel.x = nx;
@@ -306,14 +356,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         fontSize = targetW / (part.name.length * 0.6);
         fontSize = Math.max(2, Math.min(fontSize, bh * 0.8));
       }
+      fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
-        const label = new Text({
+        const useShadowFont = s.partLabelShadow;
+        const fontFamily = useShadowFont ? ensureShadowFont(fontSize) : LABEL_FONT_FAMILY;
+        const label = new BitmapText({
           text:  part.name,
-          style: new TextStyle({
-            fontSize, fill: 0xcccccc, fontFamily: 'monospace',
-            ...(s.partLabelShadow && { dropShadow: { color: 0x000000, alpha: 0.7, blur: fontSize * 0.6, distance: 0 } }),
-          }),
-          resolution: 2,
+          style: { fontSize, fill: BOARD_COLORS.labelPart, fontFamily },
         });
         label.anchor.set(0.5, 0.5);
         label.x = eb.px + eb.pw / 2;
@@ -334,7 +383,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   // Build font-size groups: bucket all labels by floor(log2(fontSize)).
   // This gives ~5-6 groups, enabling O(groups) visibility checks instead of O(labels).
-  const bucketMap = new Map<number, Text[]>();
+  const bucketMap = new Map<number, BitmapText[]>();
   const allLabelArrays = [topLabels, bottomLabels, topPinLabels, bottomPinLabels];
   for (const arr of allLabelArrays) {
     for (const lbl of arr) {

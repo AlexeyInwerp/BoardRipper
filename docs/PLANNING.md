@@ -78,6 +78,14 @@
 - [x] Make panels detachable/floating
 - [x] IndexedDB cache for fast re-open
 
+### Phase 4+: Extended Features ✅ DONE
+- [x] Multi-board tabs (open multiple .bvr files, switch between them)
+- [x] Butterfly mode (side-by-side mirrored view of both board sides)
+- [x] Net lines (visual connections between components sharing a net)
+- [x] Settings panel with live PixiJS mockup preview
+- [x] Per-net color rules (pattern-based, first-match wins)
+- [x] Context menu (right-click: copy name, highlight net, open panel)
+
 ### Phase 5: Polish (IN PROGRESS)
 - [ ] File drag-and-drop upload
 - [ ] Recent files list
@@ -86,30 +94,39 @@
 
 ### Future
 - [ ] PDF viewer ↔ component binding (click component → jump to PDF location)
-- [ ] Multi-board tabs
 
 ---
 
 ## Rendering Architecture
 
+Scene graph is built by the shared pure function `buildBoardScene(board, settings)` in
+`renderer/board-scene.ts`, used by both `BoardRenderer` and `SettingsMockup`.
+
 ```
 PixiJS Application
-├── Viewport (pixi-viewport)
-│   ├── BoardOutlineGraphics     // Polygon from Layout data
-│   ├── TopLayerContainer        // cullable, toggleable
-│   │   ├── PartsContainer
-│   │   │   └── PartSprite[]     // Bounding boxes
-│   │   └── PinsContainer
-│   │       └── PinSprite[]      // Circles with radius
-│   ├── BottomLayerContainer     // cullable, toggleable
-│   │   ├── PartsContainer
-│   │   └── PinsContainer
-│   └── SelectionOverlay         // Highlight graphics
-└── UIOverlay (HTML/React)
+└── Viewport (pixi-viewport)
+    ├── sceneRoot (Container) — built by buildBoardScene()
+    │   ├── outlineGfx (Graphics)          // Board outline polygon
+    │   ├── bottomLayer (Container, cullable)
+    │   │   └── partContainer[n] (cullable)
+    │   │       ├── pinGfx (Graphics, batched per color)
+    │   │       └── borderGfx (Graphics)
+    │   └── topLayer (Container, cullable)
+    │       └── partContainer[n] (same structure)
+    ├── butterflyRoot (Container | null)   // Mirrored bottom-side for butterfly mode
+    ├── netLinesGfx (Graphics)            // Net connection lines between components
+    ├── selectionGfx (Graphics)           // Selection rect + net highlight circles
+    └── labelsRoot (Container)            // Part name BitmapText labels (above selection)
+
+HTML/React overlay
     ├── Toolbar
-    ├── SearchBar
+    ├── TabBar
     └── StatusBar
 ```
+
+Part labels use **BitmapText** with shared glyph atlases (one atlas per quantized font size),
+keeping GPU draw calls to a minimum. Labels are rendered in a separate top-level container
+so they always appear above the selection/highlight overlay.
 
 ### Performance Strategy
 1. **Static elements** (outline, non-selected pins) → render to texture, redraw only on zoom level change
@@ -208,44 +225,54 @@ Panels can be:
 src/
 ├── frontend/
 │   ├── src/
-│   │   ├── main.tsx                    # Entry point
-│   │   ├── App.tsx                     # Dockview layout root
+│   │   ├── main.tsx                    # React entry point
+│   │   ├── App.tsx                     # Dockview layout root, panel wiring
+│   │   ├── index.css                   # Global styles (dark theme, panel/settings CSS)
 │   │   ├── parsers/
-│   │   │   ├── types.ts               # BoardData interfaces
-│   │   │   ├── bvr1-parser.ts         # BVRAW_FORMAT_1 parser
-│   │   │   ├── bvr3-parser.ts         # BVRAW_FORMAT_3 parser
-│   │   │   └── index.ts               # Auto-detect + parse
+│   │   │   ├── types.ts               # BoardData, Part, Pin, Nail, Point, BBox interfaces
+│   │   │   ├── bvr1-parser.ts         # BVRAW_FORMAT_1 parser (tab-delimited, coords ×1000)
+│   │   │   ├── bvr3-parser.ts         # BVRAW_FORMAT_3 parser (keyword-value, relative pins)
+│   │   │   └── index.ts               # Auto-detect format + re-export all types/helpers
 │   │   ├── renderer/
-│   │   │   ├── BoardRenderer.ts        # PixiJS scene setup
-│   │   │   ├── ViewportManager.ts      # pixi-viewport config
-│   │   │   ├── layers/
-│   │   │   │   ├── OutlineLayer.ts
-│   │   │   │   ├── PartLayer.ts
-│   │   │   │   └── PinLayer.ts
-│   │   │   ├── selection/
-│   │   │   │   ├── SelectionManager.ts
-│   │   │   │   └── SpatialIndex.ts     # Grid-based hit testing
-│   │   │   └── textures/
-│   │   │       └── PinTextures.ts      # Shared pin sprites
-│   │   ├── panels/
-│   │   │   ├── ComponentInfoPanel.tsx
-│   │   │   ├── NetListPanel.tsx
-│   │   │   └── SearchPanel.tsx
+│   │   │   ├── BoardRenderer.ts        # PixiJS Application + Viewport orchestrator;
+│   │   │   │                           #   selection, net highlight, butterfly mode, net lines
+│   │   │   ├── board-scene.ts          # Shared pure scene builder — used by BoardRenderer
+│   │   │   │                           #   and SettingsMockup; BitmapText atlases, BOARD_COLORS
+│   │   │   └── mockup-data.ts          # Static fake board (U1 IC + R1 + C1) for SettingsMockup
 │   │   ├── components/
-│   │   │   ├── Toolbar.tsx
-│   │   │   └── StatusBar.tsx
-│   │   └── hooks/
-│   │       ├── useBoardData.ts
-│   │       └── useSelection.ts
+│   │   │   ├── BoardCanvas.tsx         # React container mounting BoardRenderer
+│   │   │   ├── Toolbar.tsx             # File open, flip, layer toggles, net lines, zoom fit
+│   │   │   ├── StatusBar.tsx           # Part/net/nail counts, selected component info, zoom %
+│   │   │   ├── ContextMenu.tsx         # Right-click menu (copy name, highlight net, panel)
+│   │   │   ├── TabBar.tsx              # Multi-board tab switcher
+│   │   │   └── PanelAdder.tsx          # Button to re-open hidden Dockview panels
+│   │   ├── panels/
+│   │   │   ├── ComponentInfoPanel.tsx  # Selected part metadata + pin list
+│   │   │   ├── NetListPanel.tsx        # All nets (searchable, click to highlight)
+│   │   │   ├── SearchResultsPanel.tsx  # Component/net search results
+│   │   │   ├── PdfViewerPanel.tsx      # PDF viewer (pan/zoom, text search, bookmarks)
+│   │   │   ├── SettingsPanel.tsx       # Render tuning UI (collapsible sections, live preview)
+│   │   │   └── SettingsMockup.tsx      # PixiJS mockup preview — same pipeline as BoardRenderer
+│   │   ├── hooks/
+│   │   │   ├── useBoardStore.ts        # useSyncExternalStore wrapper for board-store
+│   │   │   └── usePdfStore.ts          # useSyncExternalStore wrapper for pdf-store
+│   │   └── store/
+│   │       ├── board-store.ts          # Central board/selection/tabs/search/butterfly state
+│   │       ├── board-cache.ts          # IndexedDB cache (key: fileName:fileSize:lastModified)
+│   │       ├── render-settings.ts      # Visual tuning store (sizes, alphas, net color rules)
+│   │       ├── pdf-store.ts            # PDF viewer state (page, search, bookmarks)
+│   │       ├── context-menu-store.ts   # Right-click context menu state
+│   │       └── dockview-api.ts         # Dockview API reference holder
+│   ├── tests/
+│   │   └── boardviewer.spec.ts         # Playwright E2E smoke tests
 │   ├── package.json
 │   ├── tsconfig.json
-│   └── vite.config.ts
+│   ├── vite.config.ts
+│   └── playwright.config.ts
 ├── backend/
-│   ├── main.go                         # HTTP server
-│   ├── handlers/
-│   │   ├── upload.go
-│   │   └── files.go
-│   └── go.mod
+│   ├── main.go                         # HTTP server (env config, routes, SPA fallback)
+│   └── handlers/
+│       └── files.go                    # Upload, list, get, delete handlers
 ```
 
 ---
