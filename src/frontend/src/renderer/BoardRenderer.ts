@@ -4,7 +4,7 @@ import type { BoardData, Point } from '../parsers';
 import { boardStore } from '../store/board-store';
 import { renderSettingsStore, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
-import { buildBoardScene, drawOutline, updateBorderWidths, BOARD_COLORS } from './board-scene';
+import { buildBoardScene, drawOutline, updateBorderWidths, cleanupShadowFonts, BOARD_COLORS } from './board-scene';
 import type { BorderEntry } from './board-scene';
 
 // Alias for local use — all colour references go through board-scene.ts
@@ -1186,6 +1186,7 @@ export class BoardRenderer {
       this.invalidateAllScenes();
       this.selectionGfx?.clear();
       this.netLinesGfx?.clear();
+      cleanupShadowFonts();
       this.app.destroy(true, { children: true });
     }
   }
