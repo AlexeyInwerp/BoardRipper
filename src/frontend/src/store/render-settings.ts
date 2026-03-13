@@ -116,6 +116,22 @@ const DEFAULTS: RenderSettings = {
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
 };
 
+/** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */
+const FONT_SIZE_STEPS = [2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
+
+/** Snap a continuous font size to the nearest discrete step */
+export function quantizeFontSize(size: number): number {
+  if (size <= FONT_SIZE_STEPS[0]) return FONT_SIZE_STEPS[0];
+  for (let i = 1; i < FONT_SIZE_STEPS.length; i++) {
+    if (size <= FONT_SIZE_STEPS[i]) {
+      const lo = FONT_SIZE_STEPS[i - 1];
+      const hi = FONT_SIZE_STEPS[i];
+      return (size - lo) < (hi - size) ? lo : hi;
+    }
+  }
+  return FONT_SIZE_STEPS[FONT_SIZE_STEPS.length - 1];
+}
+
 /** Compute display radius for a pin. At scaleFactor=0 all pins are pinMinRadius. */
 export function computePinRadius(s: RenderSettings, fileRadius: number): number {
   const base = fileRadius || s.pinMinRadius;

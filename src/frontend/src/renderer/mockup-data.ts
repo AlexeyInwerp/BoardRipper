@@ -1,6 +1,12 @@
 /**
  * Static fake BoardData used by SettingsMockup.
- * Uses buildNets() so the net map is always consistent with the pin list.
+ *
+ * Contains three parts on a 300×180 board:
+ *   U1 — 12-pin IC (3×4 grid, multi-net: VCC3V3, GND, SDA, GPIO0, RESET_N, MOSI, CLK)
+ *   R1 — 2-pin SMD resistor (horizontal, VCC3V3 → RESET_N)
+ *   C1 — 2-pin SMD capacitor (vertical, VCC3V3 → GND)
+ *
+ * Uses buildNets() so the net map stays consistent with the pin list automatically.
  */
 import type { BoardData, Part, Pin } from '../parsers';
 import { buildNets } from '../parsers';
