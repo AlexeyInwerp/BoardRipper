@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { pdfStore } from '../store/pdf-store';
-import { getDockviewApi } from '../store/dockview-api';
+import { getDockviewApi, pdfPanelId } from '../store/dockview-api';
 
 let version = 0;
 let lastVer = -1;
@@ -50,13 +50,11 @@ export function ContextMenu() {
     if (!hasPdf) return;
     pdfStore.searchText(state.componentName);
 
-    // Ensure PDF panel is visible
+    // Activate the PDF panel for the current document
     const api = getDockviewApi();
     if (api) {
-      const panel = api.getPanel('pdfViewer');
-      if (panel) {
-        panel.api.setActive();
-      }
+      const panel = api.getPanel(pdfPanelId(pdfStore.fileName));
+      if (panel) panel.api.setActive();
     }
 
     contextMenuStore.hide();
