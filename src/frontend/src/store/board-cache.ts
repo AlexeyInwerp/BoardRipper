@@ -89,6 +89,20 @@ class BoardCache {
     }
   }
 
+  async clear(): Promise<void> {
+    try {
+      const db = await this.openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const req = tx.objectStore(STORE_NAME).clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      // non-critical
+    }
+  }
+
   async put(fileName: string, fileSize: number, lastModified: number, board: BoardData): Promise<void> {
     try {
       const db = await this.openDB();
