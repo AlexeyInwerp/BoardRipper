@@ -325,25 +325,37 @@ function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   return { x, y, netIndex };
 }
 
-/** Find the fold axis: the largest gap in outline X coordinates.
+interface FoldResult { axis: number; dim: 'x' | 'y'; }
+
+/** Find the fold axis in outline segments.
  *  XZZ stores the board unfolded (top and bottom side-by-side).
- *  Returns the X midpoint of the gap, or NaN if no significant gap is found. */
-function findFoldAxis(segments: Segment[]): number {
-  const xs = new Set<number>();
+ *  Checks both X and Y dimensions; returns whichever has the larger relative gap.
+ *  Returns null if no significant gap (>20% of span) is found in either axis. */
+function findFoldAxis(segments: Segment[]): FoldResult | null {
+  const xs = new Set<number>(), ys = new Set<number>();
   for (const s of segments) {
-    xs.add(Math.round(s.p1.x));
-    xs.add(Math.round(s.p2.x));
+    xs.add(Math.round(s.p1.x)); xs.add(Math.round(s.p2.x));
+    ys.add(Math.round(s.p1.y)); ys.add(Math.round(s.p2.y));
   }
-  if (xs.size < 4) return NaN;
-  const sorted = [...xs].sort((a, b) => a - b);
-  const span = sorted[sorted.length - 1] - sorted[0];
-  let maxGap = 0, foldX = NaN;
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i] - sorted[i - 1];
-    if (gap > maxGap) { maxGap = gap; foldX = (sorted[i] + sorted[i - 1]) / 2; }
+
+  function bestGap(coords: Set<number>): { axis: number; ratio: number } | null {
+    if (coords.size < 4) return null;
+    const sorted = [...coords].sort((a, b) => a - b);
+    const span = sorted[sorted.length - 1] - sorted[0];
+    let maxGap = 0, foldPos = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i] - sorted[i - 1];
+      if (gap > maxGap) { maxGap = gap; foldPos = (sorted[i] + sorted[i - 1]) / 2; }
+    }
+    return maxGap > span * 0.2 ? { axis: foldPos, ratio: maxGap / span } : null;
   }
-  // Only treat as a fold if the gap is >20% of the total board width
-  return maxGap > span * 0.2 ? foldX : NaN;
+
+  const xFold = bestGap(xs);
+  const yFold = bestGap(ys);
+  if (!xFold && !yFold) return null;
+  if (!yFold) return { axis: xFold!.axis, dim: 'x' };
+  if (!xFold) return { axis: yFold.axis, dim: 'y' };
+  return xFold.ratio >= yFold.ratio ? { axis: xFold.axis, dim: 'x' } : { axis: yFold.axis, dim: 'y' };
 }
 
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
@@ -439,21 +451,31 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   }
 
   // Detect board fold: XZZ stores top and bottom side-by-side (unfolded).
-  // Find the largest gap in outline X values — that's the fold axis.
-  // Parts left of fold → bottom (mirror X); parts right of fold → top.
-  const foldAxis = findFoldAxis(segments);
-  if (isFinite(foldAxis)) {
+  // Find the largest gap in outline coords (X or Y) — that's the fold axis.
+  // Parts on the lower-coordinate side → bottom (mirrored); higher-coord side → top.
+  const fold = findFoldAxis(segments);
+  if (fold) {
     for (const pd of partDataList) {
       if (pd.pins.length === 0) continue;
-      const cx = pd.pins.reduce((s, p) => s + p.x, 0) / pd.pins.length;
-      if (cx < foldAxis) {
+      const c = fold.dim === 'x'
+        ? pd.pins.reduce((s, p) => s + p.x, 0) / pd.pins.length
+        : pd.pins.reduce((s, p) => s + p.y, 0) / pd.pins.length;
+      if (c < fold.axis) {
         pd.side = 'bottom';
-        for (const p of pd.pins) p.x = 2 * foldAxis - p.x;
+        if (fold.dim === 'x') {
+          for (const p of pd.pins) p.x = 2 * fold.axis - p.x;
+        } else {
+          for (const p of pd.pins) p.y = 2 * fold.axis - p.y;
+        }
       }
     }
-    // Keep only the top-half (right) outline segments
+    // Keep only the higher-coordinate half of the outline
     for (let i = segments.length - 1; i >= 0; i--) {
-      if (segments[i].p1.x < foldAxis && segments[i].p2.x < foldAxis) segments.splice(i, 1);
+      const s = segments[i];
+      const belowFold = fold.dim === 'x'
+        ? s.p1.x < fold.axis && s.p2.x < fold.axis
+        : s.p1.y < fold.axis && s.p2.y < fold.axis;
+      if (belowFold) segments.splice(i, 1);
     }
   }
 
