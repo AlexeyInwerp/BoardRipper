@@ -1,5 +1,6 @@
 import { useSyncExternalStore, useEffect, useRef } from 'react';
 import { logStore } from '../store/log-store';
+import { boardCache } from '../store/board-cache';
 
 export function DebugPanel() {
   const entries = useSyncExternalStore(
@@ -30,10 +31,17 @@ export function DebugPanel() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderBottom: '1px solid #333', flexShrink: 0 }}>
         <span style={{ color: '#aaa', flexGrow: 1 }}>{entries.length} entries</span>
         <button
+          onClick={() => boardCache.clear().then(() => logStore.log('log', '[cache] Board cache cleared'))}
+          style={{ background: '#333', border: '1px solid #555', color: '#fa0', padding: '2px 8px', cursor: 'pointer', borderRadius: 3, fontSize: 11 }}
+          title="Clear IndexedDB board cache — forces re-parse on next open"
+        >
+          Clear Cache
+        </button>
+        <button
           onClick={() => logStore.clear()}
           style={{ background: '#333', border: '1px solid #555', color: '#ccc', padding: '2px 8px', cursor: 'pointer', borderRadius: 3, fontSize: 11 }}
         >
-          Clear
+          Clear Log
         </button>
       </div>
       <div
