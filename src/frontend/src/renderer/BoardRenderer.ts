@@ -12,14 +12,17 @@
  *
  * Debug logging: set `window.__BV_DEBUG = 1` (or 2 for verbose) in the browser console.
  */
-import { Application, Graphics, Container } from 'pixi.js';
+import { Application, Graphics, Container, BitmapText, Text } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point } from '../parsers';
 import { boardStore } from '../store/board-store';
 import { renderSettingsStore, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
-import { buildBoardScene, drawOutline, updateBorderWidths, cleanupShadowFonts, BOARD_COLORS } from './board-scene';
-import type { BorderEntry } from './board-scene';
+import { viewCommands } from '../store/view-commands';
+import type { PanDirection } from '../store/view-commands';
+import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, cleanupShadowFonts, BOARD_COLORS } from './board-scene';
+import type { BorderBatch } from './board-scene';
+import { logStore } from '../store/log-store';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -42,7 +45,7 @@ interface BoardScene {
   bottomLabels: import('pixi.js').BitmapText[];
   topPinLabels: import('pixi.js').BitmapText[];
   bottomPinLabels: import('pixi.js').BitmapText[];
-  borderEntries: BorderEntry[];
+  borderBatches: BorderBatch[];
   fontSizeGroups: import('./board-scene').FontSizeGroup[];
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
@@ -68,14 +71,33 @@ export class BoardRenderer {
   private selectionGfx!: Graphics;
   private butterflySelectionGfx!: Graphics;
   private netLinesGfx!: Graphics;
+  private debugVertexLabels: Text[] = [];
+  private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeViewCommands: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
   private hudEl: HTMLDivElement | null = null;
+  private selectionOverlayEl: HTMLDivElement | null = null;
+  private perfOverlayEl: HTMLDivElement | null = null;
+  private perfToggleBtn: HTMLButtonElement | null = null;
+  private perfVisible = false;
+
+  // Perf overlay accumulators (reset every ~500ms)
+  private perfSamples = 0;
+  private perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+  private perfDisplay = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+  private perfThrottle = 0;
+
+  // Elevated labels — persistent BitmapText + background Graphics for selected part/pin
+  private elevatedPartLabel: BitmapText | null = null;
+  private elevatedPartBg: Graphics | null = null;
+  private elevatedPinLabel: BitmapText | null = null;
+  private elevatedPinBg: Graphics | null = null;
 
   // On-demand rendering: only render when something changed
   private needsRender = true;
@@ -95,6 +117,14 @@ export class BoardRenderer {
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
 
+  // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
+  // Only recomputed when selection, viewport, or visibility changes.
+  private netLineSegments: { start: Point; end: Point }[] = [];
+  private netLinesDirty = true;
+  /** Extra state tracked for fade logic */
+  private netLineFadeDist = 0;
+  private netLineSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
   private sceneCache = new Map<BoardData, BoardScene>();
   private activeScene: BoardScene | null = null;
@@ -102,13 +132,38 @@ export class BoardRenderer {
   // Viewport state per board: restore pan/zoom on tab switch
   private viewportStates = new Map<BoardData, ViewportState>();
 
-  constructor(container: HTMLDivElement) {
+  /** The board tab ID this renderer is bound to (null = legacy single-renderer mode) */
+  private tabId: number | null = null;
+
+  constructor(container: HTMLDivElement, tabId?: number) {
     this.containerEl = container;
+    this.tabId = tabId ?? null;
     this.app = new Application();
+  }
+
+  /** Pause the renderer (stop ticker, zero CPU cost). Call when panel is hidden. */
+  pause() {
+    this.app.ticker.stop();
+  }
+
+  /** Resume the renderer (restart ticker). Call when panel becomes visible. */
+  resume() {
+    this.app.ticker.start();
+    this.needsRender = true;
+    // Re-sync with container size (may have been 0 while hidden)
+    const w = this.containerEl.clientWidth;
+    const h = this.containerEl.clientHeight;
+    if (w > 0 && h > 0 && this.viewport) {
+      this.viewport.resize(w, h);
+      this.app.renderer.resize(w, h);
+    }
+    // Sync with current store state
+    this.onBoardUpdate();
   }
 
   async init() {
     dbg(1, 'init', this.containerEl.clientWidth, 'x', this.containerEl.clientHeight);
+    try {
     await this.app.init({
       background: COLORS.background,
       width: this.containerEl.clientWidth,
@@ -141,13 +196,26 @@ export class BoardRenderer {
       .clampZoom({ minScale: 0.001, maxScale: 10 });
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
-    this.viewport.on('moved', () => { this.needsRender = true; });
+    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; });
 
     this.app.stage.addChild(this.viewport);
 
     this.selectionGfx = new Graphics();
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
+
+    // Elevated labels for selected part/pin — persistent objects, toggled in renderSelection()
+    const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
+    this.elevatedPartBg = new Graphics();
+    this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
+    this.elevatedPartLabel.anchor.set(0.5, 0.5);
+    this.elevatedPartLabel.visible = false;
+    this.elevatedPartBg.visible = false;
+    this.elevatedPinBg = new Graphics();
+    this.elevatedPinLabel = new BitmapText({ text: '', style: labelStyle });
+    this.elevatedPinLabel.anchor.set(0.5, 0.5);
+    this.elevatedPinLabel.visible = false;
+    this.elevatedPinBg.visible = false;
     this.viewport.addChild(this.netLinesGfx);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -163,10 +231,19 @@ export class BoardRenderer {
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
+    this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
+      if (cmd === 'pan' && this.tabId === boardStore.activeTabId) {
+        this.panView(payload as PanDirection);
+      }
+    });
 
     this.resizeObserver = new ResizeObserver(() => {
-      this.viewport.resize(this.containerEl.clientWidth, this.containerEl.clientHeight);
-      this.app.renderer.resize(this.containerEl.clientWidth, this.containerEl.clientHeight);
+      const w = this.containerEl.clientWidth;
+      const h = this.containerEl.clientHeight;
+      // Skip 0-size resizes (panel hidden by dockview tab switch)
+      if (w === 0 || h === 0) return;
+      this.viewport.resize(w, h);
+      this.app.renderer.resize(w, h);
       this.needsRender = true;
     });
     this.resizeObserver.observe(this.containerEl);
@@ -177,9 +254,38 @@ export class BoardRenderer {
     this.containerEl.style.position = 'relative';
     this.containerEl.appendChild(this.hudEl);
 
+    // Selection overlay (big centered text showing component/net name)
+    this.selectionOverlayEl = document.createElement('div');
+    this.selectionOverlayEl.className = 'board-selection-overlay';
+    this.containerEl.appendChild(this.selectionOverlayEl);
+
+    // Perf overlay (per-phase CPU timings) + toggle button
+    this.perfOverlayEl = document.createElement('div');
+    this.perfOverlayEl.className = 'board-perf-overlay';
+    this.perfOverlayEl.style.display = 'none';
+    this.containerEl.appendChild(this.perfOverlayEl);
+
+    this.perfToggleBtn = document.createElement('button');
+    this.perfToggleBtn.className = 'board-perf-toggle';
+    this.perfToggleBtn.textContent = 'i';
+    this.perfToggleBtn.title = 'Toggle performance overlay';
+    this.perfToggleBtn.addEventListener('click', () => {
+      this.perfVisible = !this.perfVisible;
+      if (!this.perfVisible) {
+        this.perfOverlayEl!.style.display = 'none';
+        this.perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+        this.perfSamples = 0;
+        this.perfThrottle = 0;
+      }
+    });
+    this.containerEl.appendChild(this.perfToggleBtn);
+
     // Combined ticker: LoD updates + net line animation + HUD + on-demand render
     let hudThrottle = 0;
     this.app.ticker.add((ticker) => {
+      const perf = this.perfVisible;
+      const frameStart = perf ? performance.now() : 0;
+
       // Detect active zooming by comparing scale between frames
       const curScale = Math.abs(this.viewport.scale.x);
       if (this.prevTickScale >= 0 && curScale !== this.prevTickScale) {
@@ -187,22 +293,35 @@ export class BoardRenderer {
       }
       this.prevTickScale = curScale;
 
+      let t0 = perf ? performance.now() : 0;
       if (this.updateLoD()) this.needsRender = true;
+      if (perf) this.perfAccum.lod += performance.now() - t0;
 
       // Net line pulse animation — only when there's an active selection with net lines
       if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
         const s = renderSettingsStore.settings;
         if (s.netLineDashed || s.netLinePulse) {
           this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
+          t0 = perf ? performance.now() : 0;
           this.renderNetLines();
+          if (perf) this.perfAccum.netLines += performance.now() - t0;
           this.needsRender = true;
         }
       }
 
+      this.updateDebugVertexLabels();
+
       // On-demand GPU render — skip when nothing changed (e.g. idle at high zoom)
       if (this.needsRender) {
         this.needsRender = false;
+        t0 = perf ? performance.now() : 0;
         this.app.render();
+        if (perf) this.perfAccum.gpuRender += performance.now() - t0;
+      }
+
+      if (perf) {
+        this.perfAccum.frame += performance.now() - frameStart;
+        this.perfSamples++;
       }
 
       // HUD update (DOM only, no GPU cost) — throttle to ~4 updates/sec
@@ -211,7 +330,25 @@ export class BoardRenderer {
         hudThrottle = 0;
         this.updateHud(ticker.FPS);
       }
+
+      // Perf overlay update — flush accumulators every ~500ms
+      if (this.perfVisible) {
+        this.perfThrottle += ticker.deltaMS;
+        if (this.perfThrottle >= 500) {
+          this.flushPerfOverlay();
+          this.perfThrottle = 0;
+        }
+      }
     });
+
+    // Pick up any board data that loaded during async init
+    this.onBoardUpdate();
+    const tabLabel = this.tabId !== null ? ` (tab ${this.tabId})` : '';
+    logStore.log('log', `[renderer] Initialized${tabLabel}: ${this.containerEl.clientWidth}×${this.containerEl.clientHeight}`);
+    } catch (err) {
+      logStore.log('error', '[renderer] init failed:', err);
+      throw err;
+    }
   }
 
   /** Update the HUD overlay with rendering stats */
@@ -233,6 +370,44 @@ export class BoardRenderer {
     this.hudEl.textContent = `${zoom}% · ${fps} fps${sceneText}${gpuText}`;
   }
 
+  /** Flush perf accumulators and update the perf overlay DOM */
+  private flushPerfOverlay() {
+    if (!this.perfOverlayEl || !this.perfVisible) return;
+
+    const n = Math.max(this.perfSamples, 1);
+    this.perfDisplay.lod = this.perfAccum.lod / n;
+    this.perfDisplay.selection = this.perfAccum.selection / n;
+    this.perfDisplay.netLines = this.perfAccum.netLines / n;
+    this.perfDisplay.gpuRender = this.perfAccum.gpuRender / n;
+    this.perfDisplay.frame = this.perfAccum.frame / n;
+
+    // Reset accumulators
+    this.perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+    this.perfSamples = 0;
+
+    // Label sub-counts by type
+    const scene = this.activeScene;
+    let partVis = 0, partTotal = 0, pinVis = 0, pinTotal = 0;
+    if (scene) {
+      for (const lbl of scene.topLabels) { partTotal++; if (lbl.visible) partVis++; }
+      for (const lbl of scene.bottomLabels) { partTotal++; if (lbl.visible) partVis++; }
+      for (const lbl of scene.topPinLabels) { pinTotal++; if (lbl.visible) pinVis++; }
+      for (const lbl of scene.bottomPinLabels) { pinTotal++; if (lbl.visible) pinVis++; }
+    }
+
+    const f = (ms: number) => ms < 0.01 ? '0' : ms.toFixed(2);
+    const d = this.perfDisplay;
+    this.perfOverlayEl.textContent =
+      `frame: ${f(d.frame)}ms` +
+      ` | lod: ${f(d.lod)}ms` +
+      ` | sel: ${f(d.selection)}ms` +
+      ` | net: ${f(d.netLines)}ms` +
+      ` | gpu: ${f(d.gpuRender)}ms` +
+      `\npart labels: ${partVis}/${partTotal}` +
+      ` | pin labels: ${pinVis}/${pinTotal}`;
+    this.perfOverlayEl.style.display = '';
+  }
+
   /** Called per frame when viewport scale is actively changing (user is zooming) */
   private onZoomFrame() {
     const s = renderSettingsStore.settings;
@@ -248,8 +423,12 @@ export class BoardRenderer {
         }
       }
     }
+    // Redraw net lines immediately on every zoom frame
+    this.netLinesDirty = true;
+    this.renderNetLines();
     // Reset settle timer on every zoom frame
     if (this.zoomSettleTimer) clearTimeout(this.zoomSettleTimer);
+    // Text labels restore after a longer settle (200ms)
     this.zoomSettleTimer = setTimeout(() => {
       this.zoomSettleTimer = null;
       if (this.textHiddenForZoom) {
@@ -264,8 +443,9 @@ export class BoardRenderer {
   private updateLoD(): boolean {
     const scale = Math.abs(this.viewport.scale.x);
     if (scale === this.lastLodScale) return false;
-    // Skip if scale change is negligible (< 5%) to avoid per-frame work during smooth zoom.
-    if (this.lastLodScale > 0 && Math.abs(scale - this.lastLodScale) / this.lastLodScale < 0.05) return false;
+    // Skip if scale change is negligible — 10% threshold avoids cascading LoD updates
+    // from viewport deceleration drift (at high zoom, 5% was too loose).
+    if (this.lastLodScale > 0 && Math.abs(scale - this.lastLodScale) / this.lastLodScale < 0.1) return false;
     this.lastLodScale = scale;
 
     const scene = this.activeScene;
@@ -278,7 +458,7 @@ export class BoardRenderer {
     }
 
     // Min border width: ensure borders are at least 1 screen pixel
-    updateBorderWidths(scene.borderEntries, s.partBorderWidth, scale);
+    updateBorderWidths(scene.borderBatches, s.partBorderWidth, scale);
 
     return true;
   }
@@ -402,10 +582,10 @@ export class BoardRenderer {
       // Normal mode
       this.teardownButterfly(scene);
 
-      // When viewing bottom only, flip Y (like flipping a physical board top-to-bottom)
-      const bottomFlipY = boardStore.showBottom && !boardStore.showTop;
-      const flipX = mirrorX;
-      const flipY = autoFlipY !== bottomFlipY !== mirrorY;
+      // When viewing bottom only, mirror X (like physically flipping the board over)
+      const bottomOnly = boardStore.showBottom && !boardStore.showTop;
+      const flipX = bottomOnly !== mirrorX;
+      const flipY = autoFlipY !== mirrorY;
 
       scene.root.pivot.set(cx, cy);
       scene.root.position.set(cx, cy);
@@ -527,8 +707,59 @@ export class BoardRenderer {
   // --- Scene cache management ---
 
   private buildScene(board: BoardData): BoardScene {
-    const graph = buildBoardScene(board, renderSettingsStore.settings);
-    return { ...graph, butterflyRoot: null, butterflyOutline: null };
+    const t0 = performance.now();
+    try {
+      const graph = buildBoardScene(board, renderSettingsStore.settings);
+      const elapsed = (performance.now() - t0).toFixed(0);
+      logStore.log('log', `[renderer] Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
+
+      // Debug vertex overlay for XZZ boards
+      this.clearDebugVertexLabels();
+      if (board.format === 'XZZ') {
+        const positions = drawOutlineDebug(graph.outlineGfx, board);
+        // Group vertices at the same coordinate → one label per unique position
+        const posMap = new Map<string, { p: {x:number;y:number}; indices: number[] }>();
+        positions.forEach((p, i) => {
+          if (isNaN(p.x)) return;
+          const key = `${Math.round(p.x)},${Math.round(p.y)}`;
+          const entry = posMap.get(key);
+          if (entry) { entry.indices.push(i); }
+          else { posMap.set(key, { p, indices: [i] }); }
+        });
+        this.debugVertexPositions = [];
+        for (const { p, indices } of posMap.values()) {
+          this.debugVertexPositions.push(p);
+          const label = indices.join(',');
+          const color = indices.length > 1 ? 0xff6600 : 0xffff00; // orange = duplicates
+          const t = new Text({ text: label, style: { fontSize: 11, fill: color, stroke: { color: 0x000000, width: 2 } } });
+          t.anchor.set(0, 0.5);
+          this.app.stage.addChild(t);
+          this.debugVertexLabels.push(t);
+        }
+      }
+
+      return { ...graph, butterflyRoot: null, butterflyOutline: null };
+    } catch (err) {
+      logStore.log('error', '[renderer] buildBoardScene failed:', err);
+      throw err;
+    }
+  }
+
+  private clearDebugVertexLabels(): void {
+    for (const t of this.debugVertexLabels) t.destroy();
+    this.debugVertexLabels = [];
+    this.debugVertexPositions = [];
+  }
+
+  private updateDebugVertexLabels(): void {
+    if (!this.debugVertexLabels.length || !this.activeScene) return;
+    let li = 0;
+    for (const wp of this.debugVertexPositions) {
+      if (isNaN(wp.x)) continue;
+      const g = this.activeScene.root.toGlobal({ x: wp.x, y: wp.y });
+      this.debugVertexLabels[li].position.set(g.x + 6, g.y);
+      li++;
+    }
   }
 
   private getOrBuildScene(board: BoardData): BoardScene {
@@ -577,9 +808,13 @@ export class BoardRenderer {
     // Save current viewport state before switching
     this.saveViewportState();
 
-    // Detach old scene (selectionGfx lives inside root)
+    // Detach old scene (selectionGfx + elevated labels live inside root)
     if (this.activeScene) {
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.elevatedPartBg!);
+      this.activeScene.root.removeChild(this.elevatedPartLabel!);
+      this.activeScene.root.removeChild(this.elevatedPinBg!);
+      this.activeScene.root.removeChild(this.elevatedPinLabel!);
       this.viewport.removeChild(this.activeScene.root);
       if (this.activeScene.butterflyRoot) {
         this.viewport.removeChild(this.activeScene.butterflyRoot);
@@ -589,6 +824,11 @@ export class BoardRenderer {
     // Attach new scene + selection overlay (inside root so flips apply to selection too)
     this.viewport.addChild(scene.root);
     scene.root.addChild(this.selectionGfx);
+    // Elevated labels render on top of selection highlight
+    scene.root.addChild(this.elevatedPartBg!);
+    scene.root.addChild(this.elevatedPartLabel!);
+    scene.root.addChild(this.elevatedPinBg!);
+    scene.root.addChild(this.elevatedPinLabel!);
     this.activeScene = scene;
 
     // Keep net lines on top of all scene content
@@ -614,6 +854,10 @@ export class BoardRenderer {
     if (this.activeScene) {
       this.teardownButterfly(this.activeScene);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.elevatedPartBg!);
+      this.activeScene.root.removeChild(this.elevatedPartLabel!);
+      this.activeScene.root.removeChild(this.elevatedPinBg!);
+      this.activeScene.root.removeChild(this.elevatedPinLabel!);
       this.viewport.removeChild(this.activeScene.root);
       this.activeScene = null;
     }
@@ -650,6 +894,8 @@ export class BoardRenderer {
 
   private onBoardUpdate() {
     if (!this.viewport) return;
+    // Only react when this renderer's tab is active (skip notifications for other tabs)
+    if (this.tabId !== null && boardStore.activeTabId !== this.tabId) return;
     dbg(2, 'onBoardUpdate');
     try {
       const board = boardStore.board;
@@ -679,7 +925,7 @@ export class BoardRenderer {
         this.startSelectionBlink();
       }
     } catch (err) {
-      console.error('[BoardRenderer] onBoardUpdate crashed:', err);
+      logStore.log('error', '[renderer] onBoardUpdate crashed:', err);
     }
   }
 
@@ -704,8 +950,9 @@ export class BoardRenderer {
     if (!this.board) return;
     dbg(2, 'onSettingsUpdate');
     try {
-      // Cancel any pending zoom-settle timer (scene is about to be rebuilt)
+      // Cancel any pending zoom-settle timers (scene is about to be rebuilt)
       if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
+
       this.textHiddenForZoom = false;
       // Save viewport, invalidate all scenes, rebuild current
       this.saveViewportState();
@@ -715,7 +962,7 @@ export class BoardRenderer {
       // Force LoD re-evaluation on next tick (new scene, thresholds may have changed)
       this.lastLodScale = -1;
     } catch (err) {
-      console.error('[BoardRenderer] onSettingsUpdate crashed:', err);
+      logStore.log('error', '[renderer] onSettingsUpdate crashed:', err);
     }
   }
 
@@ -751,7 +998,11 @@ export class BoardRenderer {
   // --- Selection rendering (always rebuilt, lightweight) ---
 
   private renderSelection() {
+    const perf = this.perfVisible;
+    const selStart = perf ? performance.now() : 0;
+
     this.needsRender = true;
+    this.netLinesDirty = true; // selection changed → recompute net line geometry
     // Cancel any in-progress blink from a previous selection
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
@@ -848,14 +1099,152 @@ export class BoardRenderer {
       }
     }
 
+    // ── Elevated labels for selected part/pin ───────────────────────────────
+    this.updateElevatedLabels(sel, s);
+
+    // ── Selection overlay (big centered text) ─────────────────────────────
+    this.updateSelectionOverlay(sel, s);
+
+    if (perf) this.perfAccum.selection += performance.now() - selStart;
+
+    const nlStart = perf ? performance.now() : 0;
     this.renderNetLines();
+    if (perf) this.perfAccum.netLines += performance.now() - nlStart;
+  }
+
+  /** Draw background-elevated labels for the selected component and/or pin */
+  private updateElevatedLabels(
+    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
+    s: import('../store/render-settings').RenderSettings,
+  ) {
+    const partBg = this.elevatedPartBg!;
+    const partLbl = this.elevatedPartLabel!;
+    const pinBg = this.elevatedPinBg!;
+    const pinLbl = this.elevatedPinLabel!;
+
+    partBg.visible = false;
+    partLbl.visible = false;
+    pinBg.visible = false;
+    pinLbl.visible = false;
+
+    if (!this.board || sel.partIndex === null || !this.activeScene) return;
+    const part = this.board.parts[sel.partIndex];
+    if (!part) return;
+
+    const vpScale = Math.abs(this.viewport.scale.x);
+    const screenFontPx = 18;
+    const fontSize = screenFontPx / vpScale;
+    const pad = 4 / vpScale;
+    const cornerR = 3 / vpScale;
+
+    // Counter-flip: the scene root may be flipped/rotated; labels need to stay readable.
+    const root = this.activeScene.root;
+    const lsx = Math.sign(root.scale.x) || 1;
+    const lsy = Math.sign(root.scale.y) || 1;
+    const labelRot = -root.rotation * lsx * lsy;
+
+    const applyCounterFlip = (lbl: BitmapText) => {
+      lbl.scale.set(lsx, lsy);
+      lbl.rotation = labelRot;
+    };
+
+    const applyCounterFlipGfx = (gfx: Graphics, cx: number, cy: number) => {
+      gfx.position.set(cx, cy);
+      gfx.scale.set(lsx, lsy);
+      gfx.rotation = labelRot;
+    };
+
+    // ── Part label ──
+    if (s.showElevatedPartLabel) {
+      const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+      const cx = eb.px + eb.pw / 2;
+      const cy = eb.py + eb.ph / 2;
+      partLbl.style.fontSize = fontSize;
+      partLbl.text = part.name;
+      partLbl.x = cx;
+      partLbl.y = cy;
+      applyCounterFlip(partLbl);
+      partLbl.visible = true;
+
+      const pBounds = partLbl.getBounds();
+      const pw = pBounds.width / vpScale + pad * 2;
+      const ph = pBounds.height / vpScale + pad * 2;
+      partBg.clear();
+      partBg.roundRect(-pw / 2, -ph / 2, pw, ph, cornerR);
+      partBg.fill({ color: 0x000000, alpha: 0.75 });
+      applyCounterFlipGfx(partBg, cx, cy);
+      partBg.visible = true;
+    }
+
+    // ── Pin label ──
+    if (s.showElevatedPinLabel && sel.pinIndex !== null && sel.pinIndex >= 0) {
+      const pin = part.pins[sel.pinIndex];
+      if (pin) {
+        const pinText = pin.net && pin.net !== '(null)' && pin.net !== ''
+          ? `${pin.number || sel.pinIndex + 1}: ${pin.net}`
+          : (pin.number || String(sel.pinIndex + 1));
+        pinLbl.style.fontSize = fontSize;
+        pinLbl.text = pinText;
+        const cx = pin.position.x;
+        const r = computePinRadius(s, pin.radius);
+        const yOffset = (r + fontSize * 0.8) * lsy;
+        const cy = pin.position.y - yOffset;
+        pinLbl.x = cx;
+        pinLbl.y = cy;
+        applyCounterFlip(pinLbl);
+        pinLbl.visible = true;
+
+        const pnBounds = pinLbl.getBounds();
+        const pnw = pnBounds.width / vpScale + pad * 2;
+        const pnh = pnBounds.height / vpScale + pad * 2;
+        pinBg.clear();
+        pinBg.roundRect(-pnw / 2, -pnh / 2, pnw, pnh, cornerR);
+        pinBg.fill({ color: 0x1a1a2e, alpha: 0.85 });
+        applyCounterFlipGfx(pinBg, cx, cy);
+        pinBg.visible = true;
+      }
+    }
+  }
+
+  /** Update the DOM selection overlay at top-center of the board view */
+  private updateSelectionOverlay(
+    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
+    s: import('../store/render-settings').RenderSettings,
+  ) {
+    if (!this.selectionOverlayEl) return;
+    if (!s.showSelectionOverlay || !this.board || sel.partIndex === null) {
+      this.selectionOverlayEl.style.display = 'none';
+      return;
+    }
+    const part = this.board.parts[sel.partIndex];
+    if (!part) {
+      this.selectionOverlayEl.style.display = 'none';
+      return;
+    }
+
+    let text: string;
+    if (sel.pinIndex !== null) {
+      const pin = part.pins[sel.pinIndex];
+      const pinName = pin?.name ?? `${sel.pinIndex}`;
+      const net = sel.highlightedNet && sel.highlightedNet !== '(null)' && sel.highlightedNet !== ''
+        ? sel.highlightedNet : null;
+      text = net ? `${part.name} → ${pinName} → ${net}` : `${part.name} → ${pinName}`;
+    } else {
+      text = part.name;
+    }
+
+    this.selectionOverlayEl.textContent = text;
+    this.selectionOverlayEl.style.display = '';
   }
 
   // --- Net lines rendering ---
 
-  private renderNetLines() {
-    this.needsRender = true;
-    this.netLinesGfx.clear();
+  /** Recompute cached net line segments (start/end points) when selection or viewport changes */
+  private recomputeNetLineSegments() {
+    this.netLineSegments = [];
+    this.netLineFadeDist = 0;
+    this.netLinesDirty = false;
+
     if (!this.board || !boardStore.showNetLines) return;
 
     const sel = boardStore.selection;
@@ -866,9 +1255,9 @@ export class BoardRenderer {
 
     const s = renderSettingsStore.settings;
 
-    // Skip GND nets — they connect to too many components to be useful.
+    // Skip GND/NC nets — GND connects too many components, NC is not a real net.
     const netUpper = sel.highlightedNet.toUpperCase();
-    if (netUpper.includes('GND')) return;
+    if (netUpper.includes('GND') || netUpper === 'NC' || netUpper === 'N/C' || netUpper === 'NO CONNECT') return;
     const selectedPart = this.board.parts[sel.partIndex];
     if (!selectedPart) return;
 
@@ -882,8 +1271,8 @@ export class BoardRenderer {
       : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
 
     // Collect visible target parts
-    const targets: { part: typeof selectedPart; root: Container | undefined }[] = [];
     const seenParts = new Set<number>();
+    let targetCount = 0;
     for (const ref of net.pinIndices) {
       if (ref.partIndex === sel.partIndex) continue;
       if (seenParts.has(ref.partIndex)) continue;
@@ -892,9 +1281,33 @@ export class BoardRenderer {
       if (!part) continue;
       if (part.side === 'top' && !this.isTopVisible) continue;
       if (part.side === 'bottom' && !this.isBottomVisible) continue;
-      targets.push({ part, root: this.rootForPart(part) });
+
+      const root = this.rootForPart(part);
+      const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+      const tgtCenter: Point = { x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2 };
+      const tgtCenterW = this.sceneToWorld(tgtCenter, root);
+
+      const start = this.clipToRectEdge(selCenterW, tgtCenterW, selEB, selectedRoot);
+      const end = this.clipToRectEdge(tgtCenterW, selCenterW, eb, root);
+      this.netLineSegments.push({ start, end });
+      targetCount++;
     }
 
+    // Fade distance for lines (used when many converge)
+    const vpScale = Math.abs(this.viewport.scale.x);
+    this.netLineFadeDist = targetCount > 8 ? 60 / vpScale : 0;
+  }
+
+  /** Draw cached net line segments with current animation state */
+  private renderNetLines() {
+    this.needsRender = true;
+    this.netLinesGfx.clear();
+
+    // Recompute geometry only when dirty (selection/viewport changed)
+    if (this.netLinesDirty) this.recomputeNetLineSegments();
+    if (this.netLineSegments.length === 0) return;
+
+    const s = renderSettingsStore.settings;
     const vpScale = Math.abs(this.viewport.scale.x);
     const lineW = s.netLineWidth / vpScale;
 
@@ -908,21 +1321,10 @@ export class BoardRenderer {
     const dashLen = s.netLineDashLength / vpScale;
     const dashOffset = s.netLineDashed ? (this.netLinePulsePhase * dashLen * 2) : 0;
 
-    // When many lines converge, fade-in near the origin to reduce clutter
-    const lineCount = targets.length;
-    const useFade = lineCount > 8;
-    // Fade distance: ~60 screen px converted to world
+    const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    for (const { part, root } of targets) {
-      const eb = computeEffectiveBounds(part.bounds, part.pins, s);
-      const tgtCenter: Point = { x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2 };
-      const tgtCenterW = this.sceneToWorld(tgtCenter, root);
-
-      // Always clip start to selected part edge (lines never cross the selected part)
-      const start = this.clipToRectEdge(selCenterW, tgtCenterW, selEB, selectedRoot);
-      const end = this.clipToRectEdge(tgtCenterW, selCenterW, eb, root);
-
+    for (const { start, end } of this.netLineSegments) {
       if (useFade) {
         this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
       } else if (s.netLineDashed) {
@@ -1212,14 +1614,26 @@ export class BoardRenderer {
     }
   }
 
+  private panView(direction: PanDirection) {
+    if (!this.viewport) return;
+    const step = this.viewport.screenWidth * 0.15;
+    const dx = direction === 'left' ? step : direction === 'right' ? -step : 0;
+    const dy = direction === 'up' ? step : direction === 'down' ? -step : 0;
+    this.viewport.position.set(this.viewport.position.x + dx, this.viewport.position.y + dy);
+    this.needsRender = true;
+    this.netLinesDirty = true;
+  }
+
   destroy() {
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;
     }
     if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
+    if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
+    this.unsubscribeViewCommands?.();
     this.resizeObserver?.disconnect();
     if (this.boundContextMenu) {
       this.containerEl.removeEventListener('contextmenu', this.boundContextMenu);

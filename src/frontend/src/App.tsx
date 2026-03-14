@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import {
   DockviewReact,
 } from 'dockview-react';
@@ -7,103 +7,170 @@ import type {
   IDockviewPanelProps,
 } from 'dockview-react';
 import 'dockview-react/dist/styles/dockview.css';
-import { BoardCanvas } from './components/BoardCanvas';
 import { Toolbar } from './components/Toolbar';
-import { TabBar } from './components/TabBar';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
-import { ComponentInfoPanel } from './panels/ComponentInfoPanel';
-import { NetListPanel } from './panels/NetListPanel';
-import { SearchResultsPanel } from './panels/SearchResultsPanel';
+import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DebugPanel } from './panels/DebugPanel';
-import { setDockviewApi } from './store/dockview-api';
-import { PanelAdder } from './components/PanelAdder';
+import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, boardPanelId } from './store/dockview-api';
+import { boardStore } from './store/board-store';
+import { pdfStore } from './store/pdf-store';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { getAllExtensions } from './parsers';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
-  boardCanvas: () => <BoardCanvas />,
-  componentInfo: () => <ComponentInfoPanel />,
-  netList: () => <NetListPanel />,
-  searchResults: () => <SearchResultsPanel />,
+  boardViewer: (props) => <BoardViewerPanel {...props} />,
   settings: () => <SettingsPanel />,
-  pdfViewer: () => <PdfViewerPanel />,
+  pdfViewer: (props) => <PdfViewerPanel {...props} />,
   debug: () => <DebugPanel />,
 };
 
+const BOARD_EXTS = new Set<string>(); // populated lazily
+const PDF_EXT = '.pdf';
+
+function isSupportedFile(name: string): 'board' | 'pdf' | null {
+  if (BOARD_EXTS.size === 0) getAllExtensions().forEach(e => BOARD_EXTS.add(e.toLowerCase()));
+  const ext = ('.' + name.split('.').pop()!).toLowerCase();
+  if (ext === PDF_EXT) return 'pdf';
+  if (BOARD_EXTS.has(ext)) return 'board';
+  return null;
+}
+
 function App() {
+  useKeyboardShortcuts();
+  const [dragOver, setDragOver] = useState(false);
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current++;
+    if (dragCounter.current === 1) setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current--;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragOver(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    const boardFiles: File[] = [];
+    const pdfFiles: File[] = [];
+
+    for (const file of files) {
+      const type = isSupportedFile(file.name);
+      if (type === 'board') boardFiles.push(file);
+      else if (type === 'pdf') pdfFiles.push(file);
+    }
+
+    // Load board files
+    if (boardFiles.length > 0) {
+      await boardStore.loadFiles(boardFiles);
+    }
+
+    // Load PDF files (same flow as Toolbar)
+    if (pdfFiles.length > 0) {
+      for (const file of pdfFiles) {
+        boardStore.addPdf(file);
+        boardStore.autoBindPdf(file.name);
+      }
+
+      const activeTabId = boardStore.activeTabId;
+      const lastFile = pdfFiles[pdfFiles.length - 1];
+      if (activeTabId !== null) {
+        boardStore.addPdfBinding(activeTabId, lastFile.name);
+      }
+
+      for (const file of pdfFiles) {
+        try {
+          await pdfStore.loadFile(file);
+          ensurePdfPanel(file.name);
+        } catch (err) {
+          console.error('[DragDrop] Failed to load PDF:', err);
+        }
+      }
+
+      try {
+        pdfStore.switchTo(lastFile.name);
+        ensurePdfPanel(lastFile.name);
+      } catch (err) {
+        console.error('[DragDrop] Failed to activate PDF:', err);
+      }
+    }
+  }, []);
+
   const onReady = useCallback((event: DockviewReadyEvent) => {
     const api = event.api;
     setDockviewApi(api);
 
-    // Main board canvas panel
-    api.addPanel({
-      id: 'board',
-      component: 'boardCanvas',
-      title: 'Board View',
+    // Wire up board-store callbacks for dockview panel lifecycle
+    boardStore.onTabCreated = (tabId, fileName) => {
+      ensureBoardPanel(tabId, fileName);
+    };
+    boardStore.onTabClosed = (tabId) => {
+      try {
+        const panel = api.getPanel(boardPanelId(tabId));
+        if (panel) api.removePanel(panel);
+      } catch { /* panel already removed */ }
+    };
+
+    // When user closes a board panel via dockview X button, clean up the boardStore tab
+    api.onDidRemovePanel((e) => {
+      if (e.id.startsWith('board-')) {
+        const tabId = parseInt(e.id.slice('board-'.length), 10);
+        if (!isNaN(tabId)) {
+          boardStore.closeTab(tabId);
+        }
+      }
     });
 
-    // Right sidebar - component info
-    api.addPanel({
-      id: 'componentInfo',
-      component: 'componentInfo',
-      title: 'Info',
-      position: { referencePanel: 'board', direction: 'right' },
-      initialWidth: 320,
-    });
-
-    // Right sidebar - net list (tabbed with component info)
-    api.addPanel({
-      id: 'netList',
-      component: 'netList',
-      title: 'Nets',
-      position: { referencePanel: 'componentInfo' },
-    });
-
-    // Right sidebar - search results (tabbed)
-    api.addPanel({
-      id: 'searchResults',
-      component: 'searchResults',
-      title: 'Search',
-      position: { referencePanel: 'componentInfo' },
-    });
-
-    // Settings panel (tabbed with right sidebar)
-    api.addPanel({
-      id: 'settings',
-      component: 'settings',
-      title: 'Settings',
-      position: { referencePanel: 'componentInfo' },
-    });
-
-    // Debug / log panel (tabbed after settings)
-    api.addPanel({
-      id: 'debug',
-      component: 'debug',
-      title: 'Debug',
-      position: { referencePanel: 'componentInfo' },
-    });
-
-    // Activate component info tab by default
-    const compPanel = api.getPanel('componentInfo');
-    compPanel?.api.setActive();
+    // Empty initial view — panels created on demand when files are opened
   }, []);
 
   return (
-    <div className="app-container" data-testid="app">
+    <div
+      className="app-container"
+      data-testid="app"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <Toolbar />
-      <TabBar />
       <div className="dockview-container">
         <DockviewReact
           className="dockview-theme-dark"
           onReady={onReady}
           components={components}
-          rightHeaderActionsComponent={PanelAdder}
           disableFloatingGroups={false}
         />
       </div>
       <StatusBar />
       <ContextMenu />
+      {dragOver && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-content">
+            Drop board or PDF files here
+          </div>
+        </div>
+      )}
     </div>
   );
 }

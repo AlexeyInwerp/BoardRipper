@@ -108,21 +108,19 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
   }
 
   // ---- Format: board outline polygon --------------------------------------
+  // Read all outline vertices as-is — deduplication of consecutive duplicates
+  // happens in drawOutline() at render time.
   const outline: Point[] = [];
   const fmtLines = secs.get('Format') ?? [];
-  let prevX = NaN, prevY = NaN;
   let parsed = 0;
   for (const line of fmtLines) {
     if (nOutline > 0 && parsed >= nOutline) break;
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 2) continue;
-    const x = Number(parts[0]);
-    const y = Number(parts[1]);
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 2) continue;
+    const x = Number(cols[0]);
+    const y = Number(cols[1]);
     if (isNaN(x) || isNaN(y)) continue;
-    if (x !== prevX || y !== prevY) {
-      outline.push({ x, y });
-      prevX = x; prevY = y;
-    }
+    outline.push({ x, y });
     parsed++;
   }
 
@@ -189,7 +187,7 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
         number:   String(j + 1),
         position: { x: pd.x, y: pd.y },
         radius:   8,
-        side:     side === 'both' ? (j % 2 === 0 ? 'top' : 'bottom') : side,
+        side:     side === 'both' ? 'top' : side,
         net:      pd.net,
       });
     }
@@ -217,7 +215,7 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
   }
 
   // ---- Nails / test points ------------------------------------------------
-  // Columns: nail_idx  x  y  <ignored>  net_name
+  // Columns: nail_idx  x  y  side(1=top,else=bottom)  net_name
   const nails: Nail[] = [];
   const nailLines = secs.get('Nails') ?? [];
   let ncount = 0;
@@ -225,11 +223,12 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     if (nNails > 0 && ncount >= nNails) break;
     const cols = line.trim().split(/\s+/);
     if (cols.length < 3) continue;
-    const x   = Number(cols[1]);
-    const y   = Number(cols[2]);
-    const net = cols.length >= 5 ? cols.slice(4).join(' ').trim() : '';
+    const x    = Number(cols[1]);
+    const y    = Number(cols[2]);
+    const side = Number(cols[3]) === 1 ? 'top' : 'bottom' as const;
+    const net  = cols.length >= 5 ? cols.slice(4).join(' ').trim() : '';
     if (!isNaN(x) && !isNaN(y)) {
-      nails.push({ position: { x, y }, side: 'top', net });
+      nails.push({ position: { x, y }, side, net });
     }
     ncount++;
   }

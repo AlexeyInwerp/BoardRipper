@@ -20,7 +20,7 @@ interface StoreSnapshot {
   mirrorX: boolean;
   mirrorY: boolean;
   showNetLines: boolean;
-  pdfFile: File | null;
+  boundPdfFiles: File[];
   pdfFileNames: string[];
 }
 
@@ -49,7 +49,7 @@ function getSnapshot(): StoreSnapshot {
       mirrorX: boardStore.mirrorX,
       mirrorY: boardStore.mirrorY,
       showNetLines: boardStore.showNetLines,
-      pdfFile: boardStore.pdfFile,
+      boundPdfFiles: boardStore.boundPdfFiles,
       pdfFileNames: boardStore.pdfFileNames,
     };
     lastVersion = snapshotVersion;

@@ -1,8 +1,9 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
+import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { getDockviewApi, pdfPanelId } from '../store/dockview-api';
+import { ensurePdfPanel } from '../store/dockview-api';
 
 let version = 0;
 let lastVer = -1;
@@ -43,20 +44,15 @@ export function ContextMenu() {
 
   if (!state.visible) return null;
 
-  const hasPdf = pdfStore.isLoaded;
+  // Get the active board tab's bound PDF names
+  const activeTab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
+  const boundPdfNames = activeTab?.pdfFileNames ?? [];
 
-  const handleSearchInPdf = (e: React.MouseEvent) => {
+  const handleSearchInPdf = (e: React.MouseEvent, pdfFileName: string) => {
     e.stopPropagation();
-    if (!hasPdf) return;
+    pdfStore.switchTo(pdfFileName);
     pdfStore.searchText(state.componentName);
-
-    // Activate the PDF panel for the current document
-    const api = getDockviewApi();
-    if (api) {
-      const panel = api.getPanel(pdfPanelId(pdfStore.fileName));
-      if (panel) panel.api.setActive();
-    }
-
+    ensurePdfPanel(pdfFileName);
     contextMenuStore.hide();
   };
 
@@ -66,12 +62,28 @@ export function ContextMenu() {
       style={{ left: state.screenX, top: state.screenY }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div
-        className={`context-menu-item ${hasPdf ? '' : 'disabled'}`}
-        onClick={handleSearchInPdf}
-      >
-        Search &apos;{state.componentName}&apos; in PDF
-      </div>
+      {boundPdfNames.length === 0 ? (
+        <div className="context-menu-item disabled">
+          Search &apos;{state.componentName}&apos; in PDF (none linked)
+        </div>
+      ) : boundPdfNames.length === 1 ? (
+        <div
+          className="context-menu-item"
+          onClick={(e) => handleSearchInPdf(e, boundPdfNames[0])}
+        >
+          Search &apos;{state.componentName}&apos; in PDF
+        </div>
+      ) : (
+        boundPdfNames.map(name => (
+          <div
+            key={name}
+            className="context-menu-item"
+            onClick={(e) => handleSearchInPdf(e, name)}
+          >
+            Search &apos;{state.componentName}&apos; in {name}
+          </div>
+        ))
+      )}
     </div>
   );
 }

@@ -1,12 +1,54 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import type { IDockviewPanelProps } from 'dockview-react';
 import { usePdfStore } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
+import { useBoardStore } from '../hooks/useBoardStore';
+import { BindLink } from '../components/BindLink';
 
 const DRAG_THRESHOLD = 3;
 
-export function PdfViewerPanel() {
+export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
+  const pdfFileName = props.params.pdfFileName ?? '';
   const { isLoaded, loading, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, bookmarks } = usePdfStore();
+  const { tabs } = useBoardStore();
+
+  // Switch pdfStore to this panel's document on activation
+  useEffect(() => {
+    if (!pdfFileName) return;
+    // Switch immediately on mount
+    pdfStore.switchTo(pdfFileName);
+    // Also switch when this panel becomes active (focused)
+    const disposable = props.api.onDidActiveChange((e) => {
+      if (e.isActive) pdfStore.switchTo(pdfFileName);
+    });
+    return () => disposable.dispose();
+  }, [pdfFileName, props.api]);
+
+  // Only render when this panel's document is the active one
+  const isMyDoc = fileName === pdfFileName;
+
+  // Board binding: which board tabs have this PDF linked
+  const boundBoardTabs = tabs.filter(t => t.pdfFileNames.includes(pdfFileName));
+  const boardTabNames = tabs.map(t => t.fileName);
+
+  const handleBindBoard = (boardFileName: string | null) => {
+    if (boardFileName === null) {
+      for (const tab of boundBoardTabs) {
+        boardStore.removePdfBinding(tab.id, pdfFileName);
+      }
+    } else {
+      // Single-select: unbind from current, bind to selected
+      for (const tab of boundBoardTabs) {
+        boardStore.removePdfBinding(tab.id, pdfFileName);
+      }
+      const target = tabs.find(t => t.fileName === boardFileName);
+      if (target) {
+        boardStore.addPdfBinding(target.id, pdfFileName);
+      }
+    }
+  };
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -14,13 +56,12 @@ export function PdfViewerPanel() {
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
   const scaleRef = useRef(1);
   const viewportHeightRef = useRef(0);
-  const renderTierRef = useRef(1); // resolution multiplier for current render
+  const renderTierRef = useRef(1);
   const [clickedText, setClickedText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const blinkPhaseRef = useRef(0); // 0 = no blink, >0 = blink countdown
+  const blinkPhaseRef = useRef(0);
 
-  // Pan/zoom state — refs are source of truth, state triggers re-render
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -30,18 +71,14 @@ export function PdfViewerPanel() {
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const wasDragRef = useRef(false);
 
-  // Night mode (inverted colors)
   const [nightMode, setNightMode] = useState(false);
 
-  // Bookmark editing state
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
   const bookmarkClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Skip pan/zoom reset when navigating to a match or bookmark restore
   const skipResetRef = useRef(false);
 
-  // Reset pan/zoom when page changes (unless navigating to a match)
   useEffect(() => {
     if (skipResetRef.current) {
       skipResetRef.current = false;
@@ -54,14 +91,13 @@ export function PdfViewerPanel() {
     setPan({ x: 0, y: 0 });
   }, [currentPage]);
 
-  /** Compute the resolution tier: steps up every 50% of zoom (1, 1.5, 2, 2.5, …) capped at 5 */
   const computeTier = (z: number) => {
     const tier = Math.ceil(z / 0.5) * 0.5;
     return Math.max(1, Math.min(tier, 5));
   };
 
   const renderPage = useCallback(async () => {
-    if (!isLoaded || !canvasRef.current || !highlightRef.current || !containerRef.current) return;
+    if (!isMyDoc || !isLoaded || !canvasRef.current || !highlightRef.current || !containerRef.current) return;
 
     renderTaskRef.current?.cancel();
     setError(null);
@@ -79,7 +115,6 @@ export function PdfViewerPanel() {
       scaleRef.current = baseScale;
       viewportHeightRef.current = unscaledViewport.height;
 
-      // Render at higher resolution for sharp zoom
       const hiresScale = baseScale * resTier;
       const viewport = page.getViewport({ scale: hiresScale });
 
@@ -87,7 +122,6 @@ export function PdfViewerPanel() {
       const ctx = canvas.getContext('2d')!;
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      // CSS size stays at base scale — the CSS zoom handles the rest
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
       canvas.style.width = `${cssW}px`;
@@ -105,15 +139,14 @@ export function PdfViewerPanel() {
 
       drawHighlights();
     } catch (err) {
-      // Cancelled render tasks throw — that's expected
       if (err instanceof Error && err.message?.includes('cancel')) return;
       console.error('[PdfViewerPanel] renderPage failed:', err);
       setError(String(err));
     }
-  }, [isLoaded, currentPage]);
+  }, [isMyDoc, isLoaded, currentPage]);
 
   const drawHighlights = useCallback(() => {
-    if (!highlightRef.current || !isLoaded) return;
+    if (!highlightRef.current || !isMyDoc || !isLoaded) return;
     const highlight = highlightRef.current;
     const hCtx = highlight.getContext('2d')!;
     hCtx.clearRect(0, 0, highlight.width, highlight.height);
@@ -122,19 +155,15 @@ export function PdfViewerPanel() {
     const pageMatches = pdfStore.getMatchesForPage(pageIndex);
     const scale = scaleRef.current * renderTierRef.current;
     const unscaledH = viewportHeightRef.current;
-    const blinkHide = blinkPhaseRef.current % 2 === 1; // odd phases = hidden
+    const blinkHide = blinkPhaseRef.current % 2 === 1;
 
-    // Read active indices from store (cached Set, stable reference)
     const activeIndices = pdfStore.activeMatchIndices;
-    // Pre-build set of active match objects for O(1) lookup instead of O(n) indexOf
     const activeMatchSet = new Set<object>();
     for (const idx of activeIndices) {
       if (matches[idx]) activeMatchSet.add(matches[idx]);
     }
 
-    // Draw gap zone visualization around the active group's anchor match
     if (isMultiTerm && activeMatchSet.size > 0) {
-      // Find the first match in the active group on this page
       const activeGroup = pdfStore.matchGroups[pdfStore.activeGroupIndex];
       if (activeGroup) {
         const anchorMatch = matches[activeGroup[0]];
@@ -144,12 +173,10 @@ export function PdfViewerPanel() {
           const ax = at[4] * scale;
           const ay = (unscaledH - at[5]) * scale - aFontSize * scale;
 
-          // Horizontal zone: centered on anchor X
           const xTolPx = aFontSize * multiTermXGap * scale;
           const zoneX = ax - xTolPx;
           const zoneW = xTolPx * 2 + anchorMatch.item.width * scale;
 
-          // Vertical zone: from anchor down by Y gap
           const yGapPx = aFontSize * multiTermYGap * scale;
           const zoneY = ay;
           const zoneH = yGapPx * (activeGroup.length);
@@ -177,16 +204,14 @@ export function PdfViewerPanel() {
 
       const isActive = activeMatchSet.has(match);
       if (isActive) {
-        // Blink: alternate between orange and red
         hCtx.fillStyle = blinkHide ? 'rgba(220, 30, 30, 0.5)' : 'rgba(255, 170, 0, 0.4)';
       } else {
         hCtx.fillStyle = 'rgba(255, 255, 68, 0.3)';
       }
       hCtx.fillRect(x, y, w, h);
     }
-  }, [isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
+  }, [isMyDoc, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
 
-  // Keep a ref to renderPage so the wheel handler can trigger re-renders
   const renderPageRef = useRef(renderPage);
   renderPageRef.current = renderPage;
   const drawHighlightsRef = useRef(drawHighlights);
@@ -195,32 +220,27 @@ export function PdfViewerPanel() {
   useEffect(() => { renderPage(); }, [renderPage]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
 
-  // When active match changes: center & zoom to match (~10% of screen), then blink
-  // Uses a ref-based approach to avoid blocking the render pipeline
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
   useEffect(() => {
-    if (activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
+    if (!isMyDoc || activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
 
-    // Signal to skip the page-reset effect (match navigation handles zoom/pan)
     const match = matches[activeMatchIndex];
     const matchPage = match.pageIndex + 1;
     if (matchPage !== currentPage) {
       skipResetRef.current = true;
     }
 
-    // Bump the match ID so we can detect stale blinks
     const matchId = ++pendingMatchRef.current.id;
     pendingMatchRef.current.index = activeMatchIndex;
 
-    // Defer zoom/pan until after page render is ready (scaleRef populated)
     const applyZoomAndBlink = () => {
-      if (pendingMatchRef.current.id !== matchId) return; // stale
+      if (pendingMatchRef.current.id !== matchId) return;
       if (!containerRef.current) return;
 
       const baseScale = scaleRef.current;
       const unscaledH = viewportHeightRef.current;
-      if (baseScale === 0 || unscaledH === 0) return; // not rendered yet
+      if (baseScale === 0 || unscaledH === 0) return;
 
       const t = match.item.transform;
       const fontSize = pdfFontSize(t);
@@ -253,14 +273,13 @@ export function PdfViewerPanel() {
         renderPageRef.current();
       }
 
-      // Blink: 6 phases alternating orange/red over ~1.5s (only redraws highlight canvas)
       if (blinkTimerRef.current) clearTimeout(blinkTimerRef.current);
       blinkPhaseRef.current = 0;
       const totalBlinks = 6;
       const blinkInterval = 250;
 
       const doBlink = (phase: number) => {
-        if (pendingMatchRef.current.id !== matchId) return; // stale
+        if (pendingMatchRef.current.id !== matchId) return;
         blinkPhaseRef.current = phase;
         drawHighlightsRef.current();
         if (phase < totalBlinks) {
@@ -274,7 +293,6 @@ export function PdfViewerPanel() {
       doBlink(1);
     };
 
-    // Use requestAnimationFrame to let the page render first
     const raf = requestAnimationFrame(applyZoomAndBlink);
 
     return () => {
@@ -285,7 +303,7 @@ export function PdfViewerPanel() {
       }
       blinkPhaseRef.current = 0;
     };
-  }, [activeMatchIndex, matches, currentPage]);
+  }, [isMyDoc, activeMatchIndex, matches, currentPage]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -294,18 +312,19 @@ export function PdfViewerPanel() {
     return () => observer.disconnect();
   }, []);
 
-  // Wheel zoom (anchored to cursor, proportional to deltaY — matches board view speed)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // Ensure this panel's document is active before interacting
+      pdfStore.switchTo(pdfFileName);
+
       const rect = container.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // Proportional zoom matching pixi-viewport wheel({ smooth: 5 }) feel
       const zoomFactor = Math.exp(-e.deltaY * 0.001);
       const oldZoom = zoomRef.current;
       const newZoom = Math.max(0.1, Math.min(oldZoom * zoomFactor, 20));
@@ -321,7 +340,6 @@ export function PdfViewerPanel() {
       setZoom(newZoom);
       setPan(newPan);
 
-      // Re-render at higher resolution when zoom tier changes
       if (computeTier(newZoom) !== renderTierRef.current) {
         renderPageRef.current();
       }
@@ -329,16 +347,16 @@ export function PdfViewerPanel() {
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  }, []);
+  }, [pdfFileName]);
 
-  // Left-click drag to pan (with threshold to distinguish from click)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
+    pdfStore.switchTo(pdfFileName);
     isDraggingRef.current = true;
     wasDragRef.current = false;
     dragStartRef.current = { x: e.clientX, y: e.clientY };
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
-  }, []);
+  }, [pdfFileName]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDraggingRef.current) return;
@@ -347,7 +365,6 @@ export function PdfViewerPanel() {
     const dy = e.clientY - lastMouseRef.current.y;
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
 
-    // Check if we've exceeded drag threshold
     if (!wasDragRef.current) {
       const totalDx = e.clientX - dragStartRef.current.x;
       const totalDy = e.clientY - dragStartRef.current.y;
@@ -360,16 +377,13 @@ export function PdfViewerPanel() {
     setPan(newPan);
   }, []);
 
-  // Text detection on click (not drag)
-  // Uses refs for zoom/pan so it's never stale
   const handleTextClick = useCallback((e: React.MouseEvent) => {
-    if (!isLoaded) return;
+    if (!isMyDoc || !isLoaded) return;
 
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
-    // Convert screen coords to canvas pixel coords using known pan/zoom
     const containerRect = container.getBoundingClientRect();
     const screenX = e.clientX - containerRect.left;
     const screenY = e.clientY - containerRect.top;
@@ -408,9 +422,8 @@ export function PdfViewerPanel() {
         return;
       }
     }
-  }, [isLoaded, currentPage]);
+  }, [isMyDoc, isLoaded, currentPage]);
 
-  // Keep a ref to the latest handleTextClick so handleMouseUp never goes stale
   const handleTextClickRef = useRef(handleTextClick);
   handleTextClickRef.current = handleTextClick;
 
@@ -419,7 +432,6 @@ export function PdfViewerPanel() {
     isDraggingRef.current = false;
     wasDragRef.current = false;
 
-    // If it wasn't a drag, treat as a click for text detection
     if (!wasDrag && e.button === 0) {
       handleTextClickRef.current(e);
     }
@@ -427,6 +439,7 @@ export function PdfViewerPanel() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    pdfStore.switchTo(pdfFileName);
     pdfStore.searchText(searchInputRef.current?.value ?? '');
   };
 
@@ -435,17 +448,18 @@ export function PdfViewerPanel() {
   }, []);
 
   const handleAddBookmark = useCallback(() => {
+    pdfStore.switchTo(pdfFileName);
     pdfStore.addBookmark(currentPage, zoomRef.current, panRef.current.x, panRef.current.y);
-  }, [currentPage]);
+  }, [pdfFileName, currentPage]);
 
   const handleBookmarkClick = useCallback((id: string) => {
-    // Single click: navigate to bookmark. Use a timer to distinguish from double-click.
     if (bookmarkClickTimerRef.current) {
       clearTimeout(bookmarkClickTimerRef.current);
       bookmarkClickTimerRef.current = null;
     }
     bookmarkClickTimerRef.current = setTimeout(() => {
       bookmarkClickTimerRef.current = null;
+      pdfStore.switchTo(pdfFileName);
       const bm = pdfStore.bookmarks.find(b => b.id === id);
       if (!bm) return;
       skipResetRef.current = true;
@@ -458,40 +472,42 @@ export function PdfViewerPanel() {
         renderPageRef.current();
       }
     }, 250);
-  }, []);
+  }, [pdfFileName]);
 
   const handleBookmarkDblClick = useCallback((id: string) => {
-    // Double click: overwrite bookmark with current view
     if (bookmarkClickTimerRef.current) {
       clearTimeout(bookmarkClickTimerRef.current);
       bookmarkClickTimerRef.current = null;
     }
+    pdfStore.switchTo(pdfFileName);
     pdfStore.updateBookmark(id, currentPage, zoomRef.current, panRef.current.x, panRef.current.y);
-  }, [currentPage]);
+  }, [pdfFileName, currentPage]);
 
   const handleBookmarkRightClick = useCallback((e: React.MouseEvent, id: string) => {
     e.preventDefault();
+    pdfStore.switchTo(pdfFileName);
     pdfStore.removeBookmark(id);
-  }, []);
+  }, [pdfFileName]);
 
   const handleBookmarkMiddleClick = useCallback((e: React.MouseEvent, id: string) => {
-    // Middle-click or Option+click (Mac) to start editing label
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       e.preventDefault();
       e.stopPropagation();
+      pdfStore.switchTo(pdfFileName);
       const bm = pdfStore.bookmarks.find(b => b.id === id);
       if (bm) {
         setEditingBookmarkId(id);
         setEditingLabel(bm.label);
       }
     }
-  }, []);
+  }, [pdfFileName]);
 
   const handleLabelEditSubmit = useCallback((id: string) => {
+    pdfStore.switchTo(pdfFileName);
     pdfStore.renameBookmark(id, editingLabel.trim());
     setEditingBookmarkId(null);
     setEditingLabel('');
-  }, [editingLabel]);
+  }, [pdfFileName, editingLabel]);
 
   const handleLabelEditKeyDown = useCallback((e: React.KeyboardEvent, id: string) => {
     if (e.key === 'Enter') {
@@ -501,6 +517,15 @@ export function PdfViewerPanel() {
       setEditingLabel('');
     }
   }, [handleLabelEditSubmit]);
+
+  if (!isMyDoc) {
+    // Not the active pdfStore document — show placeholder
+    return (
+      <div className="pdf-viewer pdf-empty">
+        <span>{pdfFileName || 'No PDF'}</span>
+      </div>
+    );
+  }
 
   if (!isLoaded && !loading) {
     return (
@@ -529,12 +554,23 @@ export function PdfViewerPanel() {
   return (
     <div className="pdf-viewer">
       <div className="pdf-toolbar">
-        <span className="pdf-filename" title={fileName}>{fileName}</span>
+        {boardTabNames.length > 0 && (
+          <BindLink
+            boundNames={boundBoardTabs.map(t => t.fileName)}
+            options={boardTabNames}
+            onToggle={handleBindBoard}
+            title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'No board linked'}
+            singleSelect
+          />
+        )}
+        <span className="pdf-filename" title={boundBoardTabs.length > 0 ? boundBoardTabs.map(t => t.fileName).join(', ') : 'No board linked'}>
+          {boundBoardTabs.length > 0 ? boundBoardTabs.map(t => t.fileName).join(', ') : 'no link'}
+        </span>
         <div className="pdf-toolbar-separator" />
 
         <button
           className="pdf-toolbar-btn"
-          onClick={() => pdfStore.goToPage(currentPage - 1)}
+          onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(currentPage - 1); }}
           disabled={currentPage <= 1}
         >
           &lt;
@@ -545,7 +581,7 @@ export function PdfViewerPanel() {
           value={currentPage}
           onChange={e => {
             const n = parseInt(e.target.value, 10);
-            if (!isNaN(n)) pdfStore.goToPage(n);
+            if (!isNaN(n)) { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(n); }
           }}
           onKeyDown={e => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -555,7 +591,7 @@ export function PdfViewerPanel() {
         <span className="pdf-page-info">/ {pageCount}</span>
         <button
           className="pdf-toolbar-btn"
-          onClick={() => pdfStore.goToPage(currentPage + 1)}
+          onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(currentPage + 1); }}
           disabled={currentPage >= pageCount}
         >
           &gt;
@@ -580,7 +616,7 @@ export function PdfViewerPanel() {
                 <input
                   type="range" min={0.5} max={20} step={0.5}
                   defaultValue={multiTermYGap}
-                  onPointerUp={e => pdfStore.setMultiTermYGap(Number((e.target as HTMLInputElement).value))}
+                  onPointerUp={e => { pdfStore.switchTo(pdfFileName); pdfStore.setMultiTermYGap(Number((e.target as HTMLInputElement).value)); }}
                 />
                 <span>{multiTermYGap}x</span>
               </div>
@@ -589,7 +625,7 @@ export function PdfViewerPanel() {
                 <input
                   type="range" min={0.5} max={20} step={0.5}
                   defaultValue={multiTermXGap}
-                  onPointerUp={e => pdfStore.setMultiTermXGap(Number((e.target as HTMLInputElement).value))}
+                  onPointerUp={e => { pdfStore.switchTo(pdfFileName); pdfStore.setMultiTermXGap(Number((e.target as HTMLInputElement).value)); }}
                 />
                 <span>{multiTermXGap}x</span>
               </div>
@@ -606,8 +642,8 @@ export function PdfViewerPanel() {
                 ? `${activeGroupIndex + 1}/${matchGroupCount}`
                 : `${activeMatchIndex + 1}/${matches.length}`}
             </span>
-            <button className="pdf-toolbar-btn" onClick={() => pdfStore.prevMatch()}>&#9650;</button>
-            <button className="pdf-toolbar-btn" onClick={() => pdfStore.nextMatch()}>&#9660;</button>
+            <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }}>&#9650;</button>
+            <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }}>&#9660;</button>
           </>
         )}
 

@@ -48,6 +48,13 @@ export interface RenderSettings {
 
   boardFillAlpha: number;
 
+  /** Show background-elevated label for selected component */
+  showElevatedPartLabel: boolean;
+  /** Show background-elevated label for selected pin */
+  showElevatedPinLabel: boolean;
+  /** Show big centered selection overlay text at top of board */
+  showSelectionOverlay: boolean;
+
   /** Hide text labels during zoom for better performance on slower machines */
   hideTextDuringZoom: boolean;
 
@@ -107,6 +114,10 @@ const DEFAULTS: RenderSettings = {
   netLinePulse: true,
 
   boardFillAlpha: 0.08,
+
+  showElevatedPartLabel: false,
+  showElevatedPinLabel: true,
+  showSelectionOverlay: true,
 
   hideTextDuringZoom: false,
 

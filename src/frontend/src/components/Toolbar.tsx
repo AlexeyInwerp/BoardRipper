@@ -2,23 +2,21 @@ import { useRef, useEffect } from 'react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { pdfStore } from '../store/pdf-store';
-import { ensurePdfPanel } from '../store/dockview-api';
+import { ensurePdfPanel, ensureUtilityPanel } from '../store/dockview-api';
 import { exportToBVR3, getAllExtensions } from '../parsers';
+import { fileInputRefs } from '../store/file-inputs';
+import { formatShortcut } from '../store/keyboard-shortcuts';
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, butterfly, board, showNetLines, activeTabId, pdfFile } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showNetLines, activeTabId } = useBoardStore();
 
-  // Sync pdfStore with the active board tab's PDF on tab switch (instant, no reload).
   useEffect(() => {
-    if (pdfFile) {
-      pdfStore.switchTo(pdfFile.name);
-      ensurePdfPanel(pdfFile.name);
-    } else {
-      pdfStore.switchTo(null);
-    }
-  }, [activeTabId]); // intentionally omit pdfFile — only run on tab switch
+    fileInputRefs.board = fileInputRef.current;
+    fileInputRefs.pdf = pdfInputRef.current;
+    return () => { fileInputRefs.board = null; fileInputRefs.pdf = null; };
+  }, []);
 
   const handleFileOpen = () => {
     fileInputRef.current?.click();
@@ -49,7 +47,7 @@ export function Toolbar() {
     // Bind the last opened PDF to the active tab (explicit user action overrides)
     const lastFile = files[files.length - 1];
     if (activeTabId !== null) {
-      boardStore.bindPdf(lastFile.name);
+      boardStore.addPdfBinding(activeTabId, lastFile.name);
     }
 
     // Load all PDFs into pdfStore and create panels
@@ -92,10 +90,10 @@ export function Toolbar() {
         onChange={handlePdfChange}
         style={{ display: 'none' }}
       />
-      <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn">
+      <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn" data-tooltip={formatShortcut('openBoard')}>
         Open Board
       </button>
-      <button onClick={handlePdfOpen} className="toolbar-btn">
+      <button onClick={handlePdfOpen} className="toolbar-btn" data-tooltip={formatShortcut('openPdf')}>
         Open PDF
       </button>
 
@@ -104,21 +102,21 @@ export function Toolbar() {
       <button
         onClick={(e) => boardStore.selectTop(e.shiftKey)}
         className={`toolbar-btn ${showTop ? 'active' : ''}`}
-        title="Top layer (Shift+click for both)"
+        data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
       >
         Top
       </button>
       <button
         onClick={(e) => boardStore.selectBottom(e.shiftKey)}
         className={`toolbar-btn ${showBottom ? 'active' : ''}`}
-        title="Bottom layer (Shift+click for both)"
+        data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
       >
         Bottom
       </button>
       <button
         onClick={() => boardStore.toggleButterfly()}
         className={`toolbar-btn ${butterfly ? 'active' : ''}`}
-        title="Butterfly mode: top and bottom side by side"
+        data-tooltip="Side by side"
       >
         Butterfly
       </button>
@@ -128,28 +126,28 @@ export function Toolbar() {
       <button
         onClick={() => boardStore.rotateCCW()}
         className="toolbar-btn toolbar-btn-icon"
-        title="Rotate 90° counter-clockwise"
+        data-tooltip="Rotate CCW"
       >
         ↺
       </button>
       <button
         onClick={() => boardStore.rotateCW()}
         className="toolbar-btn toolbar-btn-icon"
-        title="Rotate 90° clockwise"
+        data-tooltip="Rotate CW"
       >
         ↻
       </button>
       <button
         onClick={() => boardStore.flipHorizontal()}
         className="toolbar-btn toolbar-btn-icon"
-        title="Mirror horizontal"
+        data-tooltip="Mirror H"
       >
         ⇔
       </button>
       <button
         onClick={() => boardStore.flipVertical()}
         className="toolbar-btn toolbar-btn-icon"
-        title="Mirror vertical"
+        data-tooltip="Mirror V"
       >
         ⇕
       </button>
@@ -159,7 +157,7 @@ export function Toolbar() {
       <button
         onClick={() => boardStore.toggleNetLines()}
         className={`toolbar-btn ${showNetLines ? 'active' : ''}`}
-        title="Show net connection lines between components"
+        data-tooltip="Toggle net lines"
       >
         Net Lines
       </button>
@@ -174,6 +172,24 @@ export function Toolbar() {
         data-testid="search-input"
       />
 
+      <div className="toolbar-separator" />
+
+      <button
+        onClick={() => ensureUtilityPanel('settings', 'settings', 'Settings')}
+        className="toolbar-btn toolbar-btn-icon"
+        data-tooltip="Settings"
+      >
+        ⚙
+      </button>
+      <button
+        onClick={() => ensureUtilityPanel('debug', 'debug', 'Debug')}
+        className="toolbar-btn"
+        data-tooltip="Debug log"
+        style={{ fontFamily: 'monospace', fontSize: '0.85em' }}
+      >
+        &gt;_
+      </button>
+
       <div className="toolbar-spacer" />
 
       {board && (
@@ -181,7 +197,7 @@ export function Toolbar() {
           {board.format !== 'BVR3' && (
             <button
               className="toolbar-btn"
-              title={`Save this ${board.format} board as BVR3 for archival`}
+              data-tooltip={`Save this ${board.format} board as BVR3 for archival`}
               onClick={() => {
                 const bvr3 = exportToBVR3(board);
                 const blob = new Blob([bvr3], { type: 'text/plain' });
