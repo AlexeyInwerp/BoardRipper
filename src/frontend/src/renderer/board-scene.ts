@@ -5,11 +5,13 @@
  * All text uses BitmapText with shared glyph atlases for dramatically lower
  * GPU memory and draw calls compared to per-label canvas Text objects.
  *
- * Pin drawing uses board-wide color batching: all pins of the same color share
- * a single Graphics object, reducing GPU draw-call submissions from O(parts × colors)
- * to O(unique colors) — typically ~10 instead of ~15,000 on a real board.
+ * Pin drawing uses spatial grid culling with color batching: the board is divided
+ * into NxN cells (auto-sized by pin count), each containing color-batched Graphics
+ * in a cullable Container. PixiJS skips off-screen cells entirely, and within each
+ * cell pins share one Graphics per color — O(cells × colors) draw calls, with most
+ * cells culled when zoomed in. Pin-1 triangles are batched per-cell likewise.
  */
-import { Graphics, Container, BitmapText, BitmapFont } from 'pixi.js';
+import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
 import type { BoardData } from '../parsers';
 import {
   getLabelFontSize,
@@ -35,10 +37,22 @@ export const BOARD_COLORS = {
 
 const LABEL_FONT_FAMILY = 'monospace';
 
-/** Info needed to dynamically redraw a part border at different widths */
-export interface BorderEntry {
-  gfx: Graphics;
+/** Choose grid resolution based on total pin count — returns 1 (no grid) for small boards */
+function computeGridSize(pinCount: number): number {
+  if (pinCount < 1000) return 1;
+  if (pinCount < 5000) return 4;
+  return 8;
+}
+
+/** Border rectangle data for batched redraw */
+export interface BorderRect {
   x: number; y: number; w: number; h: number;
+}
+
+/** Batched border Graphics per layer — rebuilt on zoom, 2 draw calls instead of 3K */
+export interface BorderBatch {
+  gfx: Graphics;
+  rects: BorderRect[];
   color: number;
   alpha: number;
   /** Last drawn effective width — skip redraw when unchanged */
@@ -65,8 +79,8 @@ export interface BoardSceneGraph {
   /** Pin number labels, tracked for zoom-based LoD */
   topPinLabels:    BitmapText[];
   bottomPinLabels: BitmapText[];
-  /** Part border Graphics entries for dynamic min-width updates */
-  borderEntries: BorderEntry[];
+  /** Batched border Graphics per layer — rebuilt on zoom with minimum-width enforcement */
+  borderBatches: BorderBatch[];
   /** Labels grouped by font-size bucket for efficient LoD visibility */
   fontSizeGroups: FontSizeGroup[];
   /** Global pin Graphics keyed by color — one per unique color per layer.
@@ -130,22 +144,23 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings):
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }
 
-/** Redraw all border entries with an effective minimum width */
-export function updateBorderWidths(entries: BorderEntry[], configuredWidth: number, viewportScale: number): void {
+/** Redraw batched border Graphics with an effective minimum width — 2 draw calls total */
+export function updateBorderWidths(batches: BorderBatch[], configuredWidth: number, viewportScale: number): void {
   const minScreenPx = 1;
   const effectiveWidth = Math.max(configuredWidth, minScreenPx / viewportScale);
 
-  // All borders share the same effective width — check the first entry to skip redundant redraws.
-  // Use a relative tolerance so minor floating-point drift doesn't trigger full redraws.
-  if (entries.length > 0 && Math.abs(effectiveWidth - entries[0].lastWidth) / Math.max(effectiveWidth, 0.001) < 0.02) {
+  // Check first batch to skip redundant redraws (2% relative tolerance).
+  if (batches.length > 0 && Math.abs(effectiveWidth - batches[0].lastWidth) / Math.max(effectiveWidth, 0.001) < 0.02) {
     return;
   }
 
-  for (const e of entries) {
-    e.lastWidth = effectiveWidth;
-    e.gfx.clear();
-    e.gfx.rect(e.x, e.y, e.w, e.h);
-    e.gfx.stroke({ width: effectiveWidth, color: e.color, alpha: e.alpha });
+  for (const batch of batches) {
+    batch.lastWidth = effectiveWidth;
+    batch.gfx.clear();
+    for (const r of batch.rects) {
+      batch.gfx.rect(r.x, r.y, r.w, r.h);
+    }
+    batch.gfx.stroke({ width: effectiveWidth, color: batch.color, alpha: batch.alpha });
   }
 }
 
@@ -163,7 +178,9 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const bottomLabels: BitmapText[] = [];
   const topPinLabels: BitmapText[] = [];
   const bottomPinLabels: BitmapText[] = [];
-  const borderEntries: BorderEntry[] = [];
+  // Batched border Graphics — one per (layer, color), rebuilt on zoom
+  const topBorderBatch: BorderBatch    = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsTop,    alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
+  const bottomBorderBatch: BorderBatch = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsBottom, alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
 
   // Skip event system traversal for all board objects — events are handled
   // manually via viewport hit-testing, so PixiJS doesn't need to walk the tree.
@@ -175,16 +192,56 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   drawOutline(outlineGfx, board, s);
 
-  // ── Global pin batching ──────────────────────────────────────────────────────
-  // One Graphics per (layer, color) for the entire board.
-  // All pin shapes are accumulated first; fill() is called once per Graphics after
-  // the loop — O(unique colors) draw calls instead of O(parts × colors).
-  const topPinGfx    = new Map<number, Graphics>();
-  const bottomPinGfx = new Map<number, Graphics>();
-  const getGlobalPinGfx = (isBottom: boolean, color: number): Graphics => {
-    const map = isBottom ? bottomPinGfx : topPinGfx;
-    let gfx = map.get(color);
-    if (!gfx) { gfx = new Graphics(); map.set(color, gfx); }
+  // ── Spatial grid for pin/triangle culling ────────────────────────────────────
+  // Divide the board into NxN cells. Each cell has its own color-batched pin
+  // Graphics + triangle Graphics inside a cullable Container with explicit
+  // cullArea. PixiJS skips off-screen cells entirely during rendering.
+  // For small boards (gridSize=1) this degrades to the previous flat batching.
+  const totalPins = board.parts.reduce((n, p) => n + p.pins.length, 0);
+  const gridSize  = computeGridSize(totalPins);
+  const bMinX = board.bounds.minX, bMinY = board.bounds.minY;
+  const bW = board.bounds.maxX - bMinX || 1;
+  const bH = board.bounds.maxY - bMinY || 1;
+  const cellW = bW / gridSize, cellH = bH / gridSize;
+
+  interface GridCell {
+    pinGfx: Map<number, Graphics>;
+    triGfx: Graphics | null;
+    container: Container;
+  }
+
+  const makeGrid = (): GridCell[][] => {
+    const cells: GridCell[][] = [];
+    for (let cy = 0; cy < gridSize; cy++) {
+      cells[cy] = [];
+      for (let cx = 0; cx < gridSize; cx++) {
+        const container = new Container();
+        container.cullable = true;
+        container.cullArea = new Rectangle(
+          bMinX + cx * cellW,
+          bMinY + cy * cellH,
+          cellW,
+          cellH,
+        );
+        cells[cy][cx] = { pinGfx: new Map(), triGfx: null, container };
+      }
+    }
+    return cells;
+  };
+
+  const topGrid    = makeGrid();
+  const bottomGrid = makeGrid();
+
+  const posToCell = (x: number, y: number): [number, number] => [
+    Math.min(gridSize - 1, Math.max(0, Math.floor((x - bMinX) / cellW))),
+    Math.min(gridSize - 1, Math.max(0, Math.floor((y - bMinY) / cellH))),
+  ];
+
+  const getGridPinGfx = (isBottom: boolean, color: number, x: number, y: number): Graphics => {
+    const [cx, cy] = posToCell(x, y);
+    const cell = (isBottom ? bottomGrid : topGrid)[cy][cx];
+    let gfx = cell.pinGfx.get(color);
+    if (!gfx) { gfx = new Graphics(); cell.pinGfx.set(color, gfx); }
     return gfx;
   };
 
@@ -214,8 +271,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     for (let pni = 0; pni < part.pins.length; pni++) {
       const pin    = part.pins[pni];
       const isPin1 = pni === 0 && isMultiPin;
-      const color  = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
-      const pinGfx = getGlobalPinGfx(isBottom, color);
+      const color = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
       if (isTwoPinPart) {
         const other = part.pins[1 - pni];
@@ -231,10 +287,12 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           padRx = eb.px; padRy = top ? eb.py : eb.py + eb.ph - depth;
           padRw = eb.pw; padRh = depth;
         }
+        const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
         pinGfx.rect(padRx, padRy, padRw, padRh);
         padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
       } else {
         const r = computePinRadius(s, pin.radius);
+        const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
         pinGfx.circle(pin.position.x, pin.position.y, r);
       }
 
@@ -246,7 +304,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         let pinFontSize = (diameter * 0.7) / (Math.max(numStr.length, 3) * 0.6);
         pinFontSize = Math.min(pinFontSize, diameter * 0.8);
         pinFontSize = quantizeFontSize(pinFontSize);
-        if (pinFontSize >= 2) {
+        if (pinFontSize >= s.labelHideThreshold) {
           const pinLabel = new BitmapText({
             text: numStr,
             style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: LABEL_FONT_FAMILY },
@@ -285,7 +343,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         }
 
         netFontSize = quantizeFontSize(netFontSize);
-        if (netFontSize >= 2) {
+        if (netFontSize >= s.labelHideThreshold) {
           const netLabel = new BitmapText({
             text: pin.net,
             style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: LABEL_FONT_FAMILY },
@@ -300,11 +358,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     }
 
     // ── Pin 1 triangle marker (multi-pin only) ──────────────────────────
+    // Accumulated into the grid cell's triangle Graphics (by layer).
     if (isMultiPin && part.pins.length > 0) {
       const pin = part.pins[0];
       const r = computePinRadius(s, pin.radius);
       const triSize = r * 0.7;
-      const triGfx = new Graphics();
       const distLeft   = pin.position.x - eb.px;
       const distRight  = (eb.px + eb.pw) - pin.position.x;
       const distTop    = pin.position.y - eb.py;
@@ -320,6 +378,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       } else {
         tx = pin.position.x; ty = eb.py + eb.ph - triSize * 0.3; angle = 0;
       }
+      const [cx, cy] = posToCell(tx, ty);
+      const triCell = (isBottom ? bottomGrid : topGrid)[cy][cx];
+      if (!triCell.triGfx) triCell.triGfx = new Graphics();
+      const triGfx = triCell.triGfx;
       const cos = Math.cos(angle), sin = Math.sin(angle);
       const pts = [
         { x: 0, y: -triSize * 0.6 },
@@ -330,22 +392,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       triGfx.lineTo(tx + pts[1].x * cos - pts[1].y * sin, ty + pts[1].x * sin + pts[1].y * cos);
       triGfx.lineTo(tx + pts[2].x * cos - pts[2].y * sin, ty + pts[2].x * sin + pts[2].y * cos);
       triGfx.closePath();
-      triGfx.fill({ color: BOARD_COLORS.pin1, alpha: 0.9 });
-      partContainer.addChild(triGfx);
     }
 
-    // ── Part border (after pins, before label) ──────────────────────────────
+    // ── Part border (accumulated into batched border Graphics) ──────────────
     if (part.pins.length > 1) {
-      const boundsGfx = new Graphics();
-      const borderColor = part.side === 'bottom' ? BOARD_COLORS.partBoundsBottom : BOARD_COLORS.partBoundsTop;
-      boundsGfx.rect(eb.px, eb.py, eb.pw, eb.ph);
-      boundsGfx.stroke({
-        width: s.partBorderWidth,
-        color: borderColor,
-        alpha: s.partBorderAlpha,
-      });
-      partContainer.addChild(boundsGfx);
-      borderEntries.push({ gfx: boundsGfx, x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, color: borderColor, alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth });
+      (isBottom ? bottomBorderBatch : topBorderBatch).rects.push({ x: eb.px, y: eb.py, w: eb.pw, h: eb.ph });
     }
 
     // ── Label (last = always on top within the part) ────────────────────────
@@ -384,14 +435,47 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     partQueue.push({ container: partContainer, isBottom });
   }
 
-  // ── Flush global pin Graphics ─────────────────────────────────────────────
-  // Each Graphics has accumulated all shapes of one color; a single fill() call
-  // submits them as one GPU draw — then add to the layer BEFORE partContainers
-  // so borders, triangles, and labels render on top.
-  for (const [color, gfx] of topPinGfx)    { gfx.fill({ color, alpha: s.pinAlpha }); topLayer.addChild(gfx); }
-  for (const [color, gfx] of bottomPinGfx) { gfx.fill({ color, alpha: s.pinAlpha }); bottomLayer.addChild(gfx); }
+  // ── Flush grid cells ─────────────────────────────────────────────────────
+  // Each grid cell container holds color-batched pin Graphics + triangle Graphics.
+  // fill() finalizes accumulated paths; empty cells are skipped entirely.
+  // Cells are added BEFORE partContainers so borders/labels render on top.
+  const topPinGfx    = new Map<number, Graphics>();
+  const bottomPinGfx = new Map<number, Graphics>();
 
-  // Add part containers (borders + triangle markers + labels) above pins
+  for (const [grid, layer, flatMap] of [
+    [topGrid, topLayer, topPinGfx],
+    [bottomGrid, bottomLayer, bottomPinGfx],
+  ] as [GridCell[][], Container, Map<number, Graphics>][]) {
+    for (let cy = 0; cy < gridSize; cy++) {
+      for (let cx = 0; cx < gridSize; cx++) {
+        const cell = grid[cy][cx];
+        if (cell.pinGfx.size === 0) continue; // skip empty cells
+        for (const [color, gfx] of cell.pinGfx) {
+          gfx.fill({ color, alpha: s.pinAlpha });
+          cell.container.addChild(gfx);
+          // Merge into flat map for backward compat (net re-coloring, SettingsMockup)
+          flatMap.set(color, gfx);
+        }
+        if (cell.triGfx) {
+          cell.triGfx.fill({ color: BOARD_COLORS.pin1, alpha: 0.9 });
+          cell.container.addChild(cell.triGfx);
+        }
+        layer.addChild(cell.container);
+      }
+    }
+  }
+
+  // Flush batched border Graphics — initial draw, will be rebuilt on zoom
+  const borderBatches: BorderBatch[] = [];
+  for (const [batch, layer] of [[topBorderBatch, topLayer], [bottomBorderBatch, bottomLayer]] as [BorderBatch, Container][]) {
+    if (batch.rects.length === 0) continue;
+    for (const r of batch.rects) batch.gfx.rect(r.x, r.y, r.w, r.h);
+    batch.gfx.stroke({ width: s.partBorderWidth, color: batch.color, alpha: batch.alpha });
+    layer.addChild(batch.gfx);
+    borderBatches.push(batch);
+  }
+
+  // Add part containers (labels) above pins, triangles, and borders
   for (const { container, isBottom } of partQueue) {
     (isBottom ? bottomLayer : topLayer).addChild(container);
   }
@@ -416,5 +500,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Sort ascending so we can early-exit: once a group is visible, all larger groups are too
   fontSizeGroups.sort((a, b) => a.minSize - b.minSize);
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderEntries, fontSizeGroups, topPinGfx, bottomPinGfx };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx };
 }

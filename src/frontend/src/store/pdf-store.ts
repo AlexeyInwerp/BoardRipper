@@ -53,45 +53,58 @@ function saveBookmarks(fileName: string, bookmarks: PdfBookmark[]) {
   } catch { /* ignore quota */ }
 }
 
+/** Per-document state kept in memory for instant switching */
+interface PdfDocument {
+  doc: PDFDocumentProxy;
+  fileName: string;
+  pageCount: number;
+  currentPage: number;
+  textPages: PdfTextItem[][];
+  searchQuery: string;
+  matches: PdfTextMatch[];
+  activeMatchIndex: number;
+  matchGroups: number[][];
+  activeGroupIndex: number;
+  activeMatchIndicesCache: Set<number>;
+  matchesByPage: Map<number, PdfTextMatch[]>;
+  bookmarks: PdfBookmark[];
+}
+
 class PdfStore {
-  private _doc: PDFDocumentProxy | null = null;
-  private _fileName = '';
-  private _pageCount = 0;
-  private _currentPage = 1;           // 1-based
-  private _textPages: PdfTextItem[][] = [];
-  private _searchQuery = '';
-  private _matches: PdfTextMatch[] = [];
-  private _activeMatchIndex = -1;
-  /** Multi-term search: groups of match indices that belong together */
-  private _matchGroups: number[][] = [];
-  private _activeGroupIndex = -1;
+  private _documents: Map<string, PdfDocument> = new Map();
+  private _activeFileName: string | null = null;
   /** Vertical distance multiplier for multi-term search (fontSize × this) */
   private _multiTermYGap = 4;
   /** Horizontal tolerance multiplier for multi-term search (fontSize × this) */
   private _multiTermXGap = 3;
-  private _activeMatchIndicesCache: Set<number> = new Set();
-  private _matchesByPage: Map<number, PdfTextMatch[]> = new Map();
   private _loading = false;
-  private _bookmarks: PdfBookmark[] = [];
   private _listeners = new Set<Listener>();
 
-  get fileName(): string { return this._fileName; }
-  get pageCount(): number { return this._pageCount; }
-  get currentPage(): number { return this._currentPage; }
-  get searchQuery(): string { return this._searchQuery; }
-  get matches(): PdfTextMatch[] { return this._matches; }
-  get activeMatchIndex(): number { return this._activeMatchIndex; }
-  get matchGroups(): number[][] { return this._matchGroups; }
-  get activeGroupIndex(): number { return this._activeGroupIndex; }
+  private get _active(): PdfDocument | null {
+    return this._activeFileName ? this._documents.get(this._activeFileName) ?? null : null;
+  }
+
+  get fileName(): string { return this._active?.fileName ?? ''; }
+  get pageCount(): number { return this._active?.pageCount ?? 0; }
+  get currentPage(): number { return this._active?.currentPage ?? 1; }
+  get searchQuery(): string { return this._active?.searchQuery ?? ''; }
+  get matches(): PdfTextMatch[] { return this._active?.matches ?? []; }
+  get activeMatchIndex(): number { return this._active?.activeMatchIndex ?? -1; }
+  get matchGroups(): number[][] { return this._active?.matchGroups ?? []; }
+  get activeGroupIndex(): number { return this._active?.activeGroupIndex ?? -1; }
   get multiTermYGap(): number { return this._multiTermYGap; }
   get multiTermXGap(): number { return this._multiTermXGap; }
-  get isMultiTerm(): boolean { return this._searchQuery.split(/\s+/).filter(t => t.length > 0).length > 1; }
-  get isLoaded(): boolean { return this._doc !== null; }
+  get isMultiTerm(): boolean {
+    const q = this._active?.searchQuery ?? '';
+    return q.split(/\s+/).filter(t => t.length > 0).length > 1;
+  }
+  get isLoaded(): boolean { return this._active?.doc != null; }
   get loading(): boolean { return this._loading; }
-  get bookmarks(): PdfBookmark[] { return this._bookmarks; }
+  get bookmarks(): PdfBookmark[] { return this._active?.bookmarks ?? []; }
+  get activeMatchIndices(): Set<number> { return this._active?.activeMatchIndicesCache ?? new Set(); }
 
-  /** Returns cached set of match indices in the active group */
-  get activeMatchIndices(): Set<number> { return this._activeMatchIndicesCache; }
+  /** All loaded PDF filenames */
+  get loadedFileNames(): string[] { return [...this._documents.keys()]; }
 
   subscribe(listener: Listener): () => void {
     this._listeners.add(listener);
@@ -102,35 +115,33 @@ class PdfStore {
     for (const l of this._listeners) l();
   }
 
+  /** Switch to an already-loaded PDF instantly (no I/O). */
+  switchTo(fileName: string | null) {
+    if (fileName === this._activeFileName) return;
+    if (fileName && !this._documents.has(fileName)) return;
+    this._activeFileName = fileName;
+    this.notify();
+  }
+
+  /** Load a PDF into memory (or switch to it if already loaded). */
   async loadFile(file: File) {
-    // Clean up previous document
-    if (this._doc) {
-      this._doc.destroy();
-      this._doc = null;
+    // Already loaded? Just switch.
+    if (this._documents.has(file.name)) {
+      this._activeFileName = file.name;
+      this.notify();
+      return;
     }
 
     this._loading = true;
-    this._fileName = file.name;
-    this._searchQuery = '';
-    this._matches = [];
-    this._matchGroups = [];
-    this._activeMatchIndex = -1;
-    this._activeGroupIndex = -1;
-    this._activeMatchIndicesCache = new Set();
-    this._matchesByPage = new Map();
+    this._activeFileName = file.name;
     this.notify();
 
     try {
       const buffer = await file.arrayBuffer();
       const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
 
-      this._doc = doc;
-      this._pageCount = doc.numPages;
-      this._currentPage = 1;
-      this._bookmarks = loadBookmarks(file.name);
-
       // Extract text from all pages
-      this._textPages = [];
+      const textPages: PdfTextItem[][] = [];
       for (let i = 1; i <= doc.numPages; i++) {
         const page = await doc.getPage(i);
         const content = await page.getTextContent();
@@ -146,13 +157,29 @@ class PdfStore {
             });
           }
         }
-        this._textPages.push(items);
+        textPages.push(items);
       }
+
+      const pdfDoc: PdfDocument = {
+        doc,
+        fileName: file.name,
+        pageCount: doc.numPages,
+        currentPage: 1,
+        textPages,
+        searchQuery: '',
+        matches: [],
+        activeMatchIndex: -1,
+        matchGroups: [],
+        activeGroupIndex: -1,
+        activeMatchIndicesCache: new Set(),
+        matchesByPage: new Map(),
+        bookmarks: loadBookmarks(file.name),
+      };
+      this._documents.set(file.name, pdfDoc);
+      this._activeFileName = file.name;
     } catch (err) {
       console.error('[PdfStore] loadFile failed:', err);
-      this._doc = null;
-      this._pageCount = 0;
-      this._textPages = [];
+      this._activeFileName = null;
       throw err;
     } finally {
       this._loading = false;
@@ -161,76 +188,81 @@ class PdfStore {
   }
 
   async getPage(pageNum: number): Promise<PDFPageProxy> {
-    if (!this._doc) throw new Error('No PDF loaded');
-    return this._doc.getPage(pageNum);
+    const active = this._active;
+    if (!active) throw new Error('No PDF loaded');
+    return active.doc.getPage(pageNum);
   }
 
   goToPage(n: number) {
-    if (n < 1 || n > this._pageCount) return;
-    if (n === this._currentPage) return;
-    this._currentPage = n;
+    const active = this._active;
+    if (!active) return;
+    if (n < 1 || n > active.pageCount) return;
+    if (n === active.currentPage) return;
+    active.currentPage = n;
     this.notify();
   }
 
   searchText(query: string) {
-    this._searchQuery = query;
-    this._matches = [];
-    this._matchGroups = [];
-    this._activeMatchIndex = -1;
-    this._activeGroupIndex = -1;
+    const active = this._active;
+    if (!active) return;
+
+    active.searchQuery = query;
+    active.matches = [];
+    active.matchGroups = [];
+    active.activeMatchIndex = -1;
+    active.activeGroupIndex = -1;
 
     if (!query) {
-      this._activeMatchIndicesCache = new Set();
-      this._matchesByPage = new Map();
+      active.activeMatchIndicesCache = new Set();
+      active.matchesByPage = new Map();
       this.notify();
       return;
     }
 
-    // Split by whitespace — multiple terms trigger vertical proximity search
     const terms = query.split(/\s+/).filter(t => t.length > 0);
     if (terms.length > 1) {
-      this._searchMultiTerm(terms);
+      this._searchMultiTerm(active, terms);
     } else {
-      this._searchSingleTerm(query);
+      this._searchSingleTerm(active, query);
     }
 
-    // Build per-page index for O(1) lookup in getMatchesForPage
-    this._matchesByPage = new Map();
-    for (const m of this._matches) {
-      let arr = this._matchesByPage.get(m.pageIndex);
-      if (!arr) { arr = []; this._matchesByPage.set(m.pageIndex, arr); }
+    // Build per-page index
+    active.matchesByPage = new Map();
+    for (const m of active.matches) {
+      let arr = active.matchesByPage.get(m.pageIndex);
+      if (!arr) { arr = []; active.matchesByPage.set(m.pageIndex, arr); }
       arr.push(m);
     }
 
-    if (this._matches.length > 0) {
-      this._activeMatchIndex = 0;
-      this._activeGroupIndex = this._matchGroups.length > 0 ? 0 : -1;
-      this._currentPage = this._matches[0].pageIndex + 1;
+    if (active.matches.length > 0) {
+      active.activeMatchIndex = 0;
+      active.activeGroupIndex = active.matchGroups.length > 0 ? 0 : -1;
+      active.currentPage = active.matches[0].pageIndex + 1;
     }
-    this._rebuildActiveIndicesCache();
+    this._rebuildActiveIndicesCache(active);
     this.notify();
   }
 
-  private _rebuildActiveIndicesCache() {
-    if (this._matchGroups.length > 0 && this._activeGroupIndex >= 0) {
-      this._activeMatchIndicesCache = new Set(this._matchGroups[this._activeGroupIndex]);
-    } else if (this._activeMatchIndex >= 0) {
-      this._activeMatchIndicesCache = new Set([this._activeMatchIndex]);
+  private _rebuildActiveIndicesCache(d: PdfDocument) {
+    if (d.matchGroups.length > 0 && d.activeGroupIndex >= 0) {
+      d.activeMatchIndicesCache = new Set(d.matchGroups[d.activeGroupIndex]);
+    } else if (d.activeMatchIndex >= 0) {
+      d.activeMatchIndicesCache = new Set([d.activeMatchIndex]);
     } else {
-      this._activeMatchIndicesCache = new Set();
+      d.activeMatchIndicesCache = new Set();
     }
   }
 
-  private _searchSingleTerm(query: string) {
+  private _searchSingleTerm(d: PdfDocument, query: string) {
     const qLower = query.toLowerCase();
-    for (let pi = 0; pi < this._textPages.length; pi++) {
-      const items = this._textPages[pi];
+    for (let pi = 0; pi < d.textPages.length; pi++) {
+      const items = d.textPages[pi];
       for (let ii = 0; ii < items.length; ii++) {
         const item = items[ii];
         const lower = item.str.toLowerCase();
         let pos = 0;
         while ((pos = lower.indexOf(qLower, pos)) !== -1) {
-          this._matches.push({
+          d.matches.push({
             pageIndex: pi,
             itemIndex: ii,
             charStart: pos,
@@ -243,19 +275,12 @@ class PdfStore {
     }
   }
 
-  /**
-   * Multi-term vertical proximity search.
-   * Finds all occurrences of the first term, then looks for subsequent terms
-   * appearing below (lower Y in PDF coords = visually below) on the same page
-   * within a horizontal tolerance.
-   */
-  private _searchMultiTerm(terms: string[]) {
+  private _searchMultiTerm(d: PdfDocument, terms: string[]) {
     const termsLower = terms.map(t => t.toLowerCase());
 
-    for (let pi = 0; pi < this._textPages.length; pi++) {
-      const items = this._textPages[pi];
+    for (let pi = 0; pi < d.textPages.length; pi++) {
+      const items = d.textPages[pi];
 
-      // Build a lookup: for each term, find all text items containing it
       const termHits: { ii: number; charStart: number; charEnd: number; x: number; y: number; fontSize: number }[][] = [];
       for (const term of termsLower) {
         const hits: typeof termHits[0] = [];
@@ -271,7 +296,7 @@ class PdfStore {
               charStart: pos,
               charEnd: pos + term.length,
               x: t[4],
-              y: t[5],  // PDF Y (increases upward)
+              y: t[5],
               fontSize,
             });
             pos += term.length;
@@ -280,16 +305,13 @@ class PdfStore {
         termHits.push(hits);
       }
 
-      // No matches for any term on this page — skip
       if (termHits.some(h => h.length === 0)) continue;
 
-      // For each hit of the first term, try to find a vertical chain of subsequent terms
       for (const anchor of termHits[0]) {
         const groupIndices: number[] = [];
 
-        // Add the anchor match
-        const anchorIdx = this._matches.length;
-        this._matches.push({
+        const anchorIdx = d.matches.length;
+        d.matches.push({
           pageIndex: pi,
           itemIndex: anchor.ii,
           charStart: anchor.charStart,
@@ -298,25 +320,19 @@ class PdfStore {
         });
         groupIndices.push(anchorIdx);
 
-        // X tolerance: items should be roughly horizontally aligned
         const xTol = anchor.fontSize * this._multiTermXGap;
         let prevY = anchor.y;
-        // Max vertical gap between consecutive terms (in PDF units)
         const maxGap = anchor.fontSize * this._multiTermYGap;
         let chainOk = true;
 
         for (let ti = 1; ti < termsLower.length; ti++) {
-          // Find the best candidate: below previous, horizontally close, closest Y
           let best: typeof termHits[0][0] | null = null;
           let bestDist = Infinity;
 
           for (const hit of termHits[ti]) {
-            // Must be below (lower PDF Y) the previous term
             if (hit.y >= prevY) continue;
-            // Must be horizontally close
             if (Math.abs(hit.x - anchor.x) > xTol) continue;
             const dist = prevY - hit.y;
-            // Must be within max gap
             if (dist > maxGap) continue;
             if (dist < bestDist) {
               bestDist = dist;
@@ -329,8 +345,8 @@ class PdfStore {
             break;
           }
 
-          const matchIdx = this._matches.length;
-          this._matches.push({
+          const matchIdx = d.matches.length;
+          d.matches.push({
             pageIndex: pi,
             itemIndex: best.ii,
             charStart: best.charStart,
@@ -342,10 +358,9 @@ class PdfStore {
         }
 
         if (chainOk) {
-          this._matchGroups.push(groupIndices);
+          d.matchGroups.push(groupIndices);
         } else {
-          // Remove partial matches that didn't form a complete chain
-          this._matches.length = anchorIdx;
+          d.matches.length = anchorIdx;
         }
       }
     }
@@ -355,19 +370,19 @@ class PdfStore {
   prevMatch() { this._stepMatch(-1); }
 
   private _stepMatch(delta: 1 | -1) {
-    if (this._matches.length === 0) return;
-    if (this._matchGroups.length > 0) {
-      this._activeGroupIndex = (this._activeGroupIndex + delta + this._matchGroups.length) % this._matchGroups.length;
-      this._activeMatchIndex = this._matchGroups[this._activeGroupIndex][0];
+    const d = this._active;
+    if (!d || d.matches.length === 0) return;
+    if (d.matchGroups.length > 0) {
+      d.activeGroupIndex = (d.activeGroupIndex + delta + d.matchGroups.length) % d.matchGroups.length;
+      d.activeMatchIndex = d.matchGroups[d.activeGroupIndex][0];
     } else {
-      this._activeMatchIndex = (this._activeMatchIndex + delta + this._matches.length) % this._matches.length;
+      d.activeMatchIndex = (d.activeMatchIndex + delta + d.matches.length) % d.matches.length;
     }
-    this._currentPage = this._matches[this._activeMatchIndex].pageIndex + 1;
-    this._rebuildActiveIndicesCache();
+    d.currentPage = d.matches[d.activeMatchIndex].pageIndex + 1;
+    this._rebuildActiveIndicesCache(d);
     this.notify();
   }
 
-  /** Update gap multipliers and re-run multi-term search */
   setMultiTermYGap(value: number) {
     this._multiTermYGap = value;
     this._rerunMultiTerm();
@@ -379,73 +394,85 @@ class PdfStore {
   }
 
   private _rerunMultiTerm() {
-    if (this.isMultiTerm && this._searchQuery) {
-      this.searchText(this._searchQuery);
+    const query = this._active?.searchQuery;
+    if (query && this.isMultiTerm) {
+      this.searchText(query);
     } else {
       this.notify();
     }
   }
 
   getTextItemsForPage(pageIndex: number): PdfTextItem[] {
-    return this._textPages[pageIndex] ?? [];
+    return this._active?.textPages[pageIndex] ?? [];
   }
 
   getMatchesForPage(pageIndex: number): PdfTextMatch[] {
-    return this._matchesByPage.get(pageIndex) ?? [];
+    return this._active?.matchesByPage.get(pageIndex) ?? [];
   }
 
   // --- Bookmarks ---
 
   addBookmark(page: number, zoom: number, panX: number, panY: number) {
+    const d = this._active;
+    if (!d) return;
     const bm: PdfBookmark = {
       id: crypto.randomUUID(),
       page, zoom, panX, panY,
       label: `p${page}`,
     };
-    this._bookmarks = [...this._bookmarks, bm];
-    saveBookmarks(this._fileName, this._bookmarks);
+    d.bookmarks = [...d.bookmarks, bm];
+    saveBookmarks(d.fileName, d.bookmarks);
     this.notify();
   }
 
   updateBookmark(id: string, page: number, zoom: number, panX: number, panY: number) {
-    this._bookmarks = this._bookmarks.map(b =>
+    const d = this._active;
+    if (!d) return;
+    d.bookmarks = d.bookmarks.map(b =>
       b.id === id ? { ...b, page, zoom, panX, panY } : b,
     );
-    saveBookmarks(this._fileName, this._bookmarks);
+    saveBookmarks(d.fileName, d.bookmarks);
     this.notify();
   }
 
   renameBookmark(id: string, label: string) {
-    this._bookmarks = this._bookmarks.map(b =>
+    const d = this._active;
+    if (!d) return;
+    d.bookmarks = d.bookmarks.map(b =>
       b.id === id ? { ...b, label: label || `p${b.page}` } : b,
     );
-    saveBookmarks(this._fileName, this._bookmarks);
+    saveBookmarks(d.fileName, d.bookmarks);
     this.notify();
   }
 
   removeBookmark(id: string) {
-    this._bookmarks = this._bookmarks.filter(b => b.id !== id);
-    saveBookmarks(this._fileName, this._bookmarks);
+    const d = this._active;
+    if (!d) return;
+    d.bookmarks = d.bookmarks.filter(b => b.id !== id);
+    saveBookmarks(d.fileName, d.bookmarks);
     this.notify();
   }
 
+  /** Close the active document and remove it from memory */
   close() {
-    if (this._doc) {
-      this._doc.destroy();
-      this._doc = null;
+    const d = this._active;
+    if (d) {
+      d.doc.destroy();
+      this._documents.delete(d.fileName);
     }
-    this._fileName = '';
-    this._pageCount = 0;
-    this._currentPage = 1;
-    this._textPages = [];
-    this._searchQuery = '';
-    this._matches = [];
-    this._matchGroups = [];
-    this._activeMatchIndex = -1;
-    this._activeGroupIndex = -1;
-    this._activeMatchIndicesCache = new Set();
-    this._matchesByPage = new Map();
-    this._bookmarks = [];
+    this._activeFileName = null;
+    this.notify();
+  }
+
+  /** Close a specific document by filename */
+  closeFile(fileName: string) {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    d.doc.destroy();
+    this._documents.delete(fileName);
+    if (this._activeFileName === fileName) {
+      this._activeFileName = null;
+    }
     this.notify();
   }
 }
