@@ -59,6 +59,34 @@ html, body, #root {
   cursor: pointer;
   font-size: 0.9em;
   white-space: nowrap;
+  position: relative;
+}
+
+/* Instant custom tooltips via data-tooltip attribute */
+.toolbar [data-tooltip] {
+  position: relative;
+}
+.toolbar [data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 8px;
+  padding: 10px 18px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: 1.6em;
+  line-height: 1.4;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 9999;
+  transition: opacity 0.08s;
+}
+.toolbar [data-tooltip]:hover::after {
+  opacity: 1;
 }
 
 .toolbar-btn:hover {
@@ -97,6 +125,84 @@ html, body, #root {
 .toolbar-search:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Bind link icon + dropdown (shared between board tabs and PDF toolbar) */
+.bind-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.bind-link-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.05em;
+  line-height: 1;
+  padding: 0 3px;
+  color: var(--text-secondary);
+  opacity: 0.45;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.bind-link-btn:hover {
+  opacity: 1;
+  color: var(--accent-hover);
+}
+
+.bind-link-btn.bound {
+  opacity: 0.9;
+  color: var(--accent);
+}
+
+.bind-link-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  max-width: 340px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.bind-link-option {
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 0.85em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.bind-link-option:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.bind-link-option.active {
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--accent-hover);
+}
+
+.bind-link-check {
+  display: inline-block;
+  width: 1.2em;
+  text-align: center;
+  margin-right: 4px;
+  font-size: 0.9em;
+}
+
+.bind-link-clear {
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 /* PDF binding picker */
@@ -546,6 +652,10 @@ html, body, #root {
   text-align: right;
 }
 
+.settings-slider-wrap {
+  position: relative;
+}
+
 .settings-slider {
   width: 100%;
   height: 4px;
@@ -567,6 +677,27 @@ html, body, #root {
 
 .settings-slider::-webkit-slider-thumb:hover {
   background: var(--accent-hover);
+}
+
+.settings-slider-tooltip {
+  position: absolute;
+  top: -22px;
+  transform: translateX(-50%);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-family: monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.settings-slider:active + .settings-slider-tooltip {
+  opacity: 1;
 }
 
 .settings-toggle-row {
@@ -838,19 +969,328 @@ html, body, #root {
   border-color: var(--accent-hover);
 }
 
-/* Board HUD overlay (zoom + FPS) */
+/* Keyboard shortcuts section in Settings */
+.shortcuts-category {
+  margin-bottom: 8px;
+}
+.shortcuts-category-title {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.shortcuts-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 0.85em;
+}
+.shortcuts-label {
+  color: var(--text-primary);
+}
+.shortcuts-key {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+  font-size: 0.85em;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Board HUD overlay (zoom + FPS) — bottom-left */
 .board-hud {
   position: absolute;
-  top: 6px;
+  bottom: 6px;
   left: 8px;
   font-family: monospace;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.25);
   padding: 2px 8px;
   border-radius: 6px;
   pointer-events: none;
   z-index: 10;
+  opacity: 0.5;
+}
+
+/* Board link indicator (shows ∞ when PDFs are linked) */
+/* Board panel root layout */
+.board-panel-root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.board-panel-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* Sidebar toggle group (button + opacity slider) */
+.board-sidebar-toggle-group {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.board-sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(15, 15, 26, 0.8);
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+
+.board-sidebar-toggle:hover {
+  color: var(--text-primary);
+  background: rgba(26, 26, 46, 0.9);
+}
+
+.board-sidebar-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.board-sidebar-slider-wrap {
+  position: relative;
+}
+
+.board-sidebar-opacity-slider {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: 80px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  background: rgba(15, 15, 26, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0;
+  margin: 0;
+}
+
+.board-sidebar-slider-tooltip {
+  position: absolute;
+  right: 34px;
+  transform: translateY(-50%);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-family: monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.board-sidebar-opacity-slider:active + .board-sidebar-slider-tooltip {
+  opacity: 1;
+}
+
+/* Board status indicators (top-left of board panel) */
+.board-status-indicators {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 10;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.board-link-indicator {
+  font-size: 14px;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 2px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.board-netlines-toggle {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(15, 15, 26, 0.8);
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+
+.board-netlines-toggle:hover {
+  color: var(--text-primary);
+  background: rgba(26, 26, 46, 0.9);
+}
+
+.board-netlines-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Board sidebar (overlays right edge of board panel) */
+.board-sidebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 300px;
+  max-width: 50%;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.3);
+}
+
+.board-sidebar-header {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.board-sidebar-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.board-sidebar-tab {
+  flex: 1;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.board-sidebar-tab:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.board-sidebar-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.board-sidebar-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.board-sidebar-close:hover {
+  color: var(--text-primary);
+}
+
+.board-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Selection overlay (big centered component/net name) */
+.board-selection-overlay {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: monospace;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 16px;
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+}
+
+.board-perf-overlay {
+  position: absolute;
+  bottom: 28px;
+  left: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #aaffaa;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 3px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 10;
+  white-space: pre;
+}
+
+.board-perf-toggle {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.5);
+  font-family: serif;
+  font-size: 13px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  z-index: 10;
+}
+.board-perf-toggle:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 /* Panel Adder (+) Button */
@@ -1212,4 +1652,26 @@ html, body, #root {
   --dv-activegroup-hiddenpanel-tab-color: var(--text-secondary);
   --dv-separator-border: var(--border);
   --dv-group-view-background-color: var(--bg-primary);
+}
+
+/* Drop overlay */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 26, 0.85);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drop-overlay-content {
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  padding: 40px 60px;
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
 }

@@ -3,8 +3,9 @@ import { renderSettingsStore } from '../store/render-settings';
 import type { RenderSettings, LabelSize, NetColorRule } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
+import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 
-type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance';
+type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -48,17 +49,23 @@ interface SliderProps {
 }
 
 function Slider({ label, value, min, max, step, field, onUpdate }: SliderProps) {
+  const pct = ((value - min) / (max - min)) * 100;
   return (
     <div className="settings-row">
       <label className="settings-label">
         {label}
         <span className="settings-value">{Number(value.toFixed(2))}</span>
       </label>
-      <input
-        type="range" className="settings-slider"
-        min={min} max={max} step={step} value={value}
-        onChange={(e) => onUpdate({ [field]: parseFloat(e.target.value) })}
-      />
+      <div className="settings-slider-wrap">
+        <input
+          type="range" className="settings-slider"
+          min={min} max={max} step={step} value={value}
+          onChange={(e) => onUpdate({ [field]: parseFloat(e.target.value) })}
+        />
+        <div className="settings-slider-tooltip" style={{ left: `${pct}%` }}>
+          {Number(value.toFixed(2))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -167,7 +174,7 @@ function NetColorRulesSection({ rules, ruleActions }: { rules: NetColorRule[]; r
 
 // ---- Main panel ----
 
-const ALL_SECTIONS: SectionId[] = ['outline', 'parts', 'pins', 'netColors', 'selection', 'netLines', 'interaction', 'performance'];
+const INITIALLY_OPEN: SectionId[] = [];
 
 export function SettingsPanel() {
   const baselineRef = useRef<RenderSettings>(renderSettingsStore.snapshot());
@@ -178,7 +185,7 @@ export function SettingsPanel() {
   previewingRef.current = previewing;
 
   // Collapsible sections
-  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(ALL_SECTIONS));
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(INITIALLY_OPEN));
   const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -191,11 +198,12 @@ export function SettingsPanel() {
   const netLinesRef = useRef<HTMLDivElement>(null);
   const interactionRef = useRef<HTMLDivElement>(null);
   const performanceRef = useRef<HTMLDivElement>(null);
+  const shortcutsRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, netLines: netLinesRef, interaction: interactionRef,
-    performance: performanceRef,
+    performance: performanceRef, shortcuts: shortcutsRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -332,13 +340,16 @@ export function SettingsPanel() {
         <NetColorRulesSection rules={draft.netColorRules} ruleActions={ruleActions} />
       </CollapsibleSection>
 
-      <CollapsibleSection id="selection" title="Selection" isOpen={openSections.has('selection')}
+      <CollapsibleSection id="selection" title="Selection & Overlay" isOpen={openSections.has('selection')}
         onToggle={toggleSection} sectionRef={selectionRef} isFocused={focusedSection === 'selection'}>
         <Slider label="Border Width" value={draft.selectionWidth} min={0.5} max={10} step={0.5} field="selectionWidth" onUpdate={updateDraft} />
         <Slider label="Fill Brightness" value={draft.selectionFillAlpha} min={0} max={0.5} step={0.01} field="selectionFillAlpha" onUpdate={updateDraft} />
         <Slider label="Padding" value={draft.selectionPadding} min={0} max={30} step={1} field="selectionPadding" onUpdate={updateDraft} />
         <Slider label="Net Highlight Grow" value={draft.netHighlightGrow} min={0} max={20} step={0.5} field="netHighlightGrow" onUpdate={updateDraft} />
         <Slider label="Net Highlight Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft} />
+        <Toggle label="Elevated Part Label" value={draft.showElevatedPartLabel} field="showElevatedPartLabel" onUpdate={updateDraft} />
+        <Toggle label="Elevated Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft} />
+        <Toggle label="Selection Overlay (top bar)" value={draft.showSelectionOverlay} field="showSelectionOverlay" onUpdate={updateDraft} />
       </CollapsibleSection>
 
       <CollapsibleSection id="netLines" title="Net Lines" isOpen={openSections.has('netLines')}
@@ -359,6 +370,21 @@ export function SettingsPanel() {
       <CollapsibleSection id="performance" title="Performance" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft} />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
+        onToggle={toggleSection} sectionRef={shortcutsRef} isFocused={focusedSection === 'shortcuts'}>
+        {(['file', 'view', 'navigation'] as const).map(cat => (
+          <div key={cat} className="shortcuts-category">
+            <div className="shortcuts-category-title">{cat[0].toUpperCase() + cat.slice(1)}</div>
+            {shortcuts.filter(s => s.category === cat).map(s => (
+              <div key={s.id} className="shortcuts-row">
+                <span className="shortcuts-label" title={s.description}>{s.label}</span>
+                <kbd className="shortcuts-key">{formatShortcut(s.id)}</kbd>
+              </div>
+            ))}
+          </div>
+        ))}
       </CollapsibleSection>
 
       <button className="settings-reset-btn" onClick={handleReset}>Reset to Defaults</button>

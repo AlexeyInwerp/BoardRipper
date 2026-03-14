@@ -130,18 +130,48 @@ function ensureShadowFont(fontSize: number): string {
   return name;
 }
 
-/** Draw the board outline path into a Graphics object */
+/** Draw the board outline path into a Graphics object.
+ *  Points with NaN coords act as sub-path separators — closePath + moveTo.
+ *  Duplicate consecutive points are skipped to keep the polygon clean.
+ */
 export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings): void {
-  if (board.outline.length <= 1) return;
-  gfx.moveTo(board.outline[0].x, board.outline[0].y);
-  for (let i = 1; i < board.outline.length; i++) {
-    gfx.lineTo(board.outline[i].x, board.outline[i].y);
+  // Filter to valid, deduplicated points; NaN → sub-path break
+  const pts = board.outline;
+  if (pts.length <= 1) return;
+
+  let penDown = false;
+  let prevX = NaN, prevY = NaN;
+  for (const pt of pts) {
+    if (isNaN(pt.x) || isNaN(pt.y)) {
+      if (penDown) { gfx.closePath(); penDown = false; prevX = prevY = NaN; }
+      continue;
+    }
+    // Skip duplicate consecutive points
+    if (pt.x === prevX && pt.y === prevY) continue;
+    if (!penDown) { gfx.moveTo(pt.x, pt.y); penDown = true; }
+    else gfx.lineTo(pt.x, pt.y);
+    prevX = pt.x; prevY = pt.y;
   }
-  gfx.closePath();
+  if (penDown) gfx.closePath();
+
   if (s.boardFillAlpha > 0) {
     gfx.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
   }
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
+}
+
+/** Debug dots at each outline vertex (world space). Returns world positions for screen-space labels. */
+export function drawOutlineDebug(container: Container, board: BoardData): Array<{x: number; y: number}> {
+  const gfx = new Graphics();
+  container.addChild(gfx);
+  const positions: Array<{x: number; y: number}> = [];
+  for (const pt of board.outline) {
+    if (isNaN(pt.x)) { positions.push({x: NaN, y: NaN}); continue; }
+    gfx.circle(pt.x, pt.y, 20);
+    positions.push({x: pt.x, y: pt.y});
+  }
+  gfx.fill({ color: 0xff4444 });
+  return positions;
 }
 
 /** Redraw batched border Graphics with an effective minimum width — 2 draw calls total */
@@ -260,6 +290,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const isMultiPin   = part.pins.length > 2;
     const isBottom     = part.side === 'bottom';
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+
+    // cullable is set above but we intentionally skip cullArea here:
+    // pin/net labels often extend beyond part bounds, so PixiJS must use
+    // actual child bounds for culling. The cost is acceptable because
+    // Container.getBounds() is cached until children change.
 
     // ── Pins ─────────────────────────────────────────────────────────────────
     // Shapes are drawn directly into the board-wide global pin Graphics (by color).

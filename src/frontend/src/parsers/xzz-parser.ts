@@ -1,5 +1,6 @@
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets } from './types';
+import { logStore } from '../store/log-store';
 
 // =====================================================================
 // Fast DES (FIPS PUB 46-3) — Number-based, precomputed tables
@@ -207,16 +208,22 @@ function rstr(d: Uint8Array, o: number, n: number): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(d.subarray(o, o + n)).replace(/\0/g, '').trim();
 }
 
-/** Greedy chain: connect line segments into an ordered polygon */
+/** Greedy chain: connect line segments into a single ordered polygon.
+ *  Always picks the nearest unvisited segment — no distance threshold,
+ *  so the polygon stays continuous even if a few segments are missing.
+ */
 function chainSegments(segs: Segment[]): Point[] {
   if (!segs.length) return [];
-  const EPSILON = 1.0;
   const used = new Uint8Array(segs.length);
-  const chain: Point[] = [{ ...segs[0].p1 }, { ...segs[0].p2 }];
+  const chain: Point[] = [];
+
+  // Start with segment 0
+  chain.push({ ...segs[0].p1 }, { ...segs[0].p2 });
   used[0] = 1;
-  for (;;) {
+
+  for (let step = 1; step < segs.length; step++) {
     const last = chain[chain.length - 1];
-    let bi = -1, bd = EPSILON, flip = false;
+    let bi = -1, bd = Infinity, flip = false;
     for (let i = 0; i < segs.length; i++) {
       if (used[i]) continue;
       const d1 = Math.hypot(last.x - segs[i].p1.x, last.y - segs[i].p1.y);
@@ -225,10 +232,112 @@ function chainSegments(segs: Segment[]): Point[] {
       if (d2 < bd) { bd = d2; bi = i; flip = true; }
     }
     if (bi < 0) break;
+    // Append the far endpoint of the matched segment (near endpoint ≈ last point)
     chain.push(flip ? { ...segs[bi].p1 } : { ...segs[bi].p2 });
     used[bi] = 1;
   }
+
   return chain;
+}
+
+/**
+ * Remove degenerate vertices from outline sub-paths (NaN-separated).
+ * Runs multiple passes until stable:
+ *   - Consecutive duplicates: A, A → A
+ *   - Spurs (back-and-forth): A, B, A → A  (removes B and the returning A)
+ */
+function dedupOutline(pts: Point[]): Point[] {
+  const EPS = 0.5;
+  const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+  let arr = pts;
+  for (let pass = 0; pass < 20; pass++) {
+    const out: Point[] = [];
+    let i = 0;
+    while (i < arr.length) {
+      const pt = arr[i];
+      if (isNaN(pt.x)) {
+        if (out.length && !isNaN(out[out.length - 1].x)) out.push(pt);
+        i++; continue;
+      }
+      const prev = out.length ? out[out.length - 1] : null;
+      const next = i + 1 < arr.length ? arr[i + 1] : null;
+      // Consecutive duplicate
+      if (prev && !isNaN(prev.x) && d(pt, prev) < EPS) { i++; continue; }
+      // Spike tip: prev ≈ next means current pt is the tip of a spur A→B→A
+      if (prev && !isNaN(prev.x) && next && !isNaN(next.x) && d(prev, next) < EPS) {
+        i += 2; continue; // skip tip (pt) and the returning duplicate (next)
+      }
+      out.push(pt);
+      i++;
+    }
+    if (out.length === arr.length) break;
+    arr = out;
+  }
+  return arr;
+}
+
+/**
+ * Split a flat Point[] (with NaN pen-ups) into sub-path arrays.
+ * Returns array of sub-paths, each a contiguous Point[] without NaN.
+ */
+function splitSubPaths(pts: Point[]): Point[][] {
+  const paths: Point[][] = [];
+  let cur: Point[] = [];
+  for (const pt of pts) {
+    if (isNaN(pt.x)) { if (cur.length) { paths.push(cur); cur = []; } }
+    else cur.push(pt);
+  }
+  if (cur.length) paths.push(cur);
+  return paths;
+}
+
+/**
+ * Merge NaN-separated sub-paths into a single path by connecting endpoints.
+ * When a sub-path ends near the start of another, bridge them with a straight
+ * line (no NaN gap). Remaining isolated fragments stay as NaN-separated sub-paths.
+ */
+function mergeSubPaths(pts: Point[]): Point[] {
+  const paths = splitSubPaths(pts);
+  if (paths.length <= 1) return pts;
+
+  const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  // Greedy merge: repeatedly find two paths whose endpoints are closest and join them
+  let merged = true;
+  while (merged && paths.length > 1) {
+    merged = false;
+    let bestDist = Infinity, bi = -1, bj = -1, flipI = false, flipJ = false;
+    for (let i = 0; i < paths.length; i++) {
+      for (let j = i + 1; j < paths.length; j++) {
+        const pi = paths[i], pj = paths[j];
+        const eiEnd  = pi[pi.length - 1], eiStart = pi[0];
+        const ejEnd  = pj[pj.length - 1], ejStart = pj[0];
+        // end-i → start-j
+        const d1 = d(eiEnd,   ejStart); if (d1 < bestDist) { bestDist = d1; bi = i; bj = j; flipI = false; flipJ = false; }
+        // end-i → end-j  (j reversed)
+        const d2 = d(eiEnd,   ejEnd);   if (d2 < bestDist) { bestDist = d2; bi = i; bj = j; flipI = false; flipJ = true; }
+        // start-i → end-j  (i reversed)
+        const d3 = d(eiStart, ejEnd);   if (d3 < bestDist) { bestDist = d3; bi = i; bj = j; flipI = true;  flipJ = false; }
+        // start-i → start-j  (both endpoints: i reversed + j normal)
+        const d4 = d(eiStart, ejStart); if (d4 < bestDist) { bestDist = d4; bi = i; bj = j; flipI = true;  flipJ = true; }
+      }
+    }
+    if (bi < 0) break;
+    const pi = flipI ? [...paths[bi]].reverse() : paths[bi];
+    const pj = flipJ ? [...paths[bj]].reverse() : paths[bj];
+    paths.splice(Math.max(bi, bj), 1);
+    paths.splice(Math.min(bi, bj), 1);
+    paths.push([...pi, ...pj]);
+    merged = true;
+  }
+
+  // Re-assemble with NaN pen-ups between any remaining separate fragments
+  const result: Point[] = [];
+  for (let i = 0; i < paths.length; i++) {
+    if (i > 0) result.push({ x: NaN, y: NaN });
+    result.push(...paths[i]);
+  }
+  return result;
 }
 
 function parseNetBlock(data: Uint8Array): Map<number, string> {
@@ -333,9 +442,7 @@ interface FoldResult { axis: number; dim: 'x' | 'y'; lowerIsBottom: boolean; }
  *  clear void. This is far more reliable than outline coordinates because board
  *  notches/cutouts create false outline gaps that can outrank the real fold gap.
  *
- *  Side determination: test pads (type 0x09) are placed predominantly on the
- *  bottom layer for bed-of-nails testing — whichever half has more test pads is bottom.
- *  Falls back to lower-coord = bottom if test pad signal is weak.
+ *  Side determination: lower coordinate = top side (XZZ uses screen coords, Y down).
  *
  *  Fallback: outline segment coordinates when <8 parts are available.
  */
@@ -378,22 +485,87 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
     yFold = bestGap([...outlineYs]);
   }
 
-  if (!xFold && !yFold) return null;
-  // Prefer Y fold — falls back to X only when no Y gap is found
-  const best = yFold ? { ...yFold, dim: 'y' as const } : { ...xFold!, dim: 'x' as const };
+  // Try to pick a validated gap-based fold axis
+  let detectedDim: 'x' | 'y' | null = null;
+  let detectedAxis = 0;
 
-  // Determine which half is bottom using test pad distribution.
-  // Test pads are placed on the bottom layer for bed-of-nails testing.
-  let lowerIsBottom = true;
+  if (xFold || yFold) {
+    // Prefer Y fold (horizontal line); fall back to X
+    const best = yFold ? { ...yFold, dim: 'y' as const } : { ...xFold!, dim: 'x' as const };
+
+    // Reject if one half has <25% of parts (board notch/hole, not a real fold gap)
+    let passedChecks = true;
+    if (cxs.length >= 8) {
+      const coordValues = best.dim === 'x' ? cxs : cys;
+      const below = coordValues.filter(v => v < best.axis).length;
+      const balance = Math.min(below, coordValues.length - below) / coordValues.length;
+      logStore.log('log', `[XZZ] fold candidate: dim=${best.dim}, axis=${best.axis.toFixed(1)}, ratio=${best.ratio.toFixed(2)}, balance=${balance.toFixed(2)}`);
+      if (balance < 0.25) {
+        logStore.log('warn', '[XZZ] fold candidate rejected: imbalanced split — falling back to default Y fold');
+        passedChecks = false;
+      }
+    }
+
+    // Reject if outline halves have very different extents (not mirror images)
+    if (passedChecks && segments.length >= 4) {
+      let lowerMin = Infinity, lowerMax = -Infinity;
+      let upperMin = Infinity, upperMax = -Infinity;
+      for (const s of segments) {
+        for (const pt of [s.p1, s.p2]) {
+          const v = best.dim === 'x' ? pt.x : pt.y;
+          if (v < best.axis) { lowerMin = Math.min(lowerMin, v); lowerMax = Math.max(lowerMax, v); }
+          else               { upperMin = Math.min(upperMin, v); upperMax = Math.max(upperMax, v); }
+        }
+      }
+      if (isFinite(lowerMin) && isFinite(upperMin)) {
+        const lw = lowerMax - lowerMin, uw = upperMax - upperMin;
+        const outlineBalance = lw > 0 && uw > 0 ? Math.min(lw, uw) / Math.max(lw, uw) : 0;
+        logStore.log('log', `[XZZ] outline half-widths: lower=${lw.toFixed(0)}, upper=${uw.toFixed(0)}, balance=${outlineBalance.toFixed(2)}`);
+        if (outlineBalance < 0.5) {
+          logStore.log('warn', '[XZZ] fold candidate rejected: outline halves asymmetric — falling back to default Y fold');
+          passedChecks = false;
+        }
+      }
+    }
+
+    if (passedChecks) {
+      detectedDim = best.dim;
+      detectedAxis = best.axis;
+    }
+  }
+
+  // Default fold: X axis (horizontal fold line, dim='y') at Y midpoint.
+  // Almost all .PCB boards are butterfly layouts; fall back when gap detection fails.
+  let dim: 'x' | 'y';
+  let axis: number;
+  if (detectedDim !== null) {
+    dim = detectedDim;
+    axis = detectedAxis;
+  } else if (cys.length >= 2) {
+    dim = 'y';
+    axis = (Math.min(...cys) + Math.max(...cys)) / 2;
+    logStore.log('log', `[XZZ] no gap detected — defaulting to Y fold at axis=${axis.toFixed(0)}`);
+  } else if (segments.length >= 2) {
+    dim = 'y';
+    const ys = segments.flatMap(s => [s.p1.y, s.p2.y]);
+    axis = (Math.min(...ys) + Math.max(...ys)) / 2;
+    logStore.log('log', `[XZZ] no gap detected — defaulting to Y fold (outline) at axis=${axis.toFixed(0)}`);
+  } else {
+    return null;
+  }
+
+  // Last-resort tie-breaker: test pad distribution hints at which half is bottom.
+  // Default: lower coordinate = top (XZZ screen coords, Y increases downward).
+  let lowerIsBottom = false;
   if (testPads.length >= 5) {
-    const lowerPads  = testPads.filter(tp => (best.dim === 'x' ? tp.x : tp.y) < best.axis).length;
+    const lowerPads  = testPads.filter(tp => (dim === 'x' ? tp.x : tp.y) < axis).length;
     const higherPads = testPads.length - lowerPads;
     if (higherPads > lowerPads * 1.5) lowerIsBottom = false;
     else if (lowerPads > higherPads * 1.5) lowerIsBottom = true;
   }
 
-  console.log(`[XZZ] fold: dim=${best.dim}, axis=${best.axis.toFixed(1)}, ratio=${best.ratio.toFixed(2)}, lowerIsBottom=${lowerIsBottom}, testPads=${testPads.length}`);
-  return { axis: best.axis, dim: best.dim, lowerIsBottom };
+  logStore.log('log', `[XZZ] fold: dim=${dim}, axis=${axis.toFixed(1)}, lowerIsBottom=${lowerIsBottom}, gap=${detectedDim !== null}, testPads=${testPads.length}`);
+  return { axis, dim, lowerIsBottom };
 }
 
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
@@ -506,17 +678,50 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         }
       }
     }
-    // Keep only the "top" half of the outline (discard the bottom half)
+    // Keep only the "top" half of the outline (discard the duplicate bottom half).
+    // Use the outline's own geometric midpoint as the cut — not the part-centroid
+    // fold axis, which may be biased if parts are unevenly distributed.
+    const outlineVals = segments.flatMap(s => fold.dim === 'x'
+      ? [s.p1.x, s.p2.x] : [s.p1.y, s.p2.y]);
+    const outlineMid = outlineVals.length > 0
+      ? (Math.min(...outlineVals) + Math.max(...outlineVals)) / 2
+      : fold.axis;
+    const segsBefore = segments.length;
+    const inBottom = (v: number) => fold.lowerIsBottom ? v < outlineMid : v > outlineMid;
+    let removed = 0, clipped = 0;
     for (let i = segments.length - 1; i >= 0; i--) {
       const s = segments[i];
       const v1 = fold.dim === 'x' ? s.p1.x : s.p1.y;
       const v2 = fold.dim === 'x' ? s.p2.x : s.p2.y;
-      const inBottomHalf = fold.lowerIsBottom
-        ? v1 < fold.axis && v2 < fold.axis
-        : v1 > fold.axis && v2 > fold.axis;
-      if (inBottomHalf) segments.splice(i, 1);
+      if (inBottom(v1) && inBottom(v2)) {
+        segments.splice(i, 1); removed++;
+      } else if (inBottom(v1) !== inBottom(v2)) {
+        const t = (outlineMid - v1) / (v2 - v1);
+        const cx = s.p1.x + t * (s.p2.x - s.p1.x);
+        const cy = s.p1.y + t * (s.p2.y - s.p1.y);
+        if (inBottom(v1)) { s.p1.x = cx; s.p1.y = cy; }
+        else               { s.p2.x = cx; s.p2.y = cy; }
+        clipped++;
+      }
     }
+    // Collect the cut endpoints (clipped to outlineMid) and add a closing segment
+    // along the fold axis so the polygon is properly sealed after the cut.
+    if (clipped > 0) {
+      const eps = 0.5;
+      const cutPts: Point[] = [];
+      for (const s of segments) {
+        const v1 = fold.dim === 'x' ? s.p1.x : s.p1.y;
+        const v2 = fold.dim === 'x' ? s.p2.x : s.p2.y;
+        if (Math.abs(v1 - outlineMid) < eps) cutPts.push({ ...s.p1 });
+        if (Math.abs(v2 - outlineMid) < eps) cutPts.push({ ...s.p2 });
+      }
+      if (cutPts.length === 2) {
+        segments.push({ p1: cutPts[0], p2: cutPts[1] });
+      }
+    }
+    logStore.log('log', `[XZZ] outline split: dim=${fold.dim}, outlineMid=${outlineMid.toFixed(3)} (partAxis=${fold.axis.toFixed(3)}), before=${segsBefore}, removed=${removed}, clipped=${clipped}, after=${segments.length} (expected~${Math.round(segsBefore/2)})`);
   }
+
 
   // Normalize coordinates to origin
   let minX = Infinity, minY = Infinity;
@@ -535,7 +740,8 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
 
-  // Build outline
+  // Build outline — chain segments into a continuous path.
+  // Sub-paths separated by NaN pen-ups are kept as-is; drawOutline handles them.
   const outline = chainSegments(segments);
 
   // Build parts

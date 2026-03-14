@@ -8,14 +8,15 @@ import { ensurePdfPanel } from '../store/dockview-api';
 export function TabBar() {
   const { tabs, activeTabId, pdfFileNames } = useBoardStore();
 
-  const handleBindPdf = useCallback((tabId: number, pdfFileName: string | null) => {
-    boardStore.bindPdfToTab(tabId, pdfFileName);
-    if (tabId === activeTabId) {
-      if (pdfFileName) {
+  const handleTogglePdf = useCallback((tabId: number, pdfFileName: string | null) => {
+    if (pdfFileName === null) {
+      boardStore.clearPdfBindings(tabId);
+      if (tabId === activeTabId) pdfStore.switchTo(null);
+    } else {
+      boardStore.togglePdfBinding(tabId, pdfFileName);
+      if (tabId === activeTabId) {
         pdfStore.switchTo(pdfFileName);
         ensurePdfPanel(pdfFileName);
-      } else {
-        pdfStore.switchTo(null);
       }
     }
   }, [activeTabId]);
@@ -32,10 +33,10 @@ export function TabBar() {
         >
           {pdfFileNames.length > 0 && (
             <BindLink
-              boundName={tab.pdfFileName}
+              boundNames={tab.pdfFileNames}
               options={pdfFileNames}
-              onBind={(name) => handleBindPdf(tab.id, name)}
-              title={tab.pdfFileName ? `PDF: ${tab.pdfFileName}` : 'No PDF linked'}
+              onToggle={(name) => handleTogglePdf(tab.id, name)}
+              title={tab.pdfFileNames.length > 0 ? `PDFs: ${tab.pdfFileNames.join(', ')}` : 'No PDF linked'}
             />
           )}
           <span className="tab-name" title={tab.fileName}>

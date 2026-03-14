@@ -24,7 +24,7 @@ export interface BoardTab {
   mirrorX: boolean;
   mirrorY: boolean;
   showNetLines: boolean;
-  pdfFileName: string | null;  // reference into pdfFiles registry
+  pdfFileNames: string[];  // references into pdfFiles registry (1:N)
 }
 
 export interface PdfEntry {
@@ -40,22 +40,11 @@ export interface FocusRequest {
 
 const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
 
-/**
- * Extract a "base name" for matching: strip extension, split on common
- * delimiters, and return alphanumeric tokens.
- * "820-02935 051-08286 Rev 5.0.3.pdf" → ["820", "02935", "051", "08286", ...]
- * "820-02935-05.brd" → ["820", "02935", "05"]
- */
 function nameTokens(fileName: string): string[] {
-  const base = fileName.replace(/\.[^.]+$/, ''); // strip extension
+  const base = fileName.replace(/\.[^.]+$/, '');
   return base.split(/[\s\-_,.]+/).map(t => t.toLowerCase()).filter(t => t.length > 0);
 }
 
-/**
- * Find the best name match between a source filename and a list of candidates.
- * Uses token overlap — the candidate sharing the most tokens wins.
- * Requires at least 1 shared token of length >= 3 (to avoid matching on "v" or "5").
- */
 function findBestNameMatch(source: string, candidates: string[]): string | null {
   const srcTokens = nameTokens(source);
   let bestMatch: string | null = null;
@@ -85,8 +74,12 @@ class BoardStore {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
   private _focusRequest: FocusRequest | null = null;
-  private _pdfFiles: Map<string, PdfEntry> = new Map(); // fileName → entry
+  private _pdfFiles: Map<string, PdfEntry> = new Map();
   private _listeners = new Set<BoardStoreListener>();
+  /** Callback fired when a new board tab is created (tabId, fileName) */
+  onTabCreated: ((tabId: number, fileName: string) => void) | null = null;
+  /** Callback fired when a board tab is closed (tabId) */
+  onTabClosed: ((tabId: number) => void) | null = null;
 
   get tabs(): BoardTab[] { return this._tabs; }
   get activeTabId(): number | null { return this._activeTabId; }
@@ -107,10 +100,13 @@ class BoardStore {
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
-  /** The PDF File bound to the active board tab (if any) */
-  get pdfFile(): File | null {
-    const name = this.activeTab?.pdfFileName;
-    return name ? (this._pdfFiles.get(name)?.file ?? null) : null;
+
+  /** All PDF Files bound to the active board tab */
+  get boundPdfFiles(): File[] {
+    const names = this.activeTab?.pdfFileNames ?? [];
+    return names
+      .map(n => this._pdfFiles.get(n)?.file)
+      .filter((f): f is File => f != null);
   }
 
   /** All PDF filenames currently loaded */
@@ -125,42 +121,71 @@ class BoardStore {
     }
   }
 
-  /** Bind a PDF to the active board tab */
-  bindPdf(pdfFileName: string | null) {
+  /** Add a PDF binding to the active board tab (appends, doesn't replace) */
+  bindPdf(pdfFileName: string) {
     const tab = this.activeTab;
     if (!tab) return;
+    this.addPdfBinding(tab.id, pdfFileName);
+  }
 
-    // Unbind old
-    if (tab.pdfFileName) {
-      const old = this._pdfFiles.get(tab.pdfFileName);
-      if (old) old.boundTabIds.delete(tab.id);
-    }
+  /** Add a PDF binding to a specific board tab (appends if not already bound) */
+  addPdfBinding(tabId: number, pdfFileName: string) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    if (tab.pdfFileNames.includes(pdfFileName)) return; // already bound
 
-    // Bind new
-    tab.pdfFileName = pdfFileName;
-    if (pdfFileName) {
-      const entry = this._pdfFiles.get(pdfFileName);
-      if (entry) entry.boundTabIds.add(tab.id);
-    }
+    tab.pdfFileNames.push(pdfFileName);
+    const entry = this._pdfFiles.get(pdfFileName);
+    if (entry) entry.boundTabIds.add(tab.id);
     this.notify();
+  }
+
+  /** Remove a specific PDF binding from a board tab */
+  removePdfBinding(tabId: number, pdfFileName: string) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    const idx = tab.pdfFileNames.indexOf(pdfFileName);
+    if (idx === -1) return;
+
+    tab.pdfFileNames.splice(idx, 1);
+    const entry = this._pdfFiles.get(pdfFileName);
+    if (entry) entry.boundTabIds.delete(tab.id);
+    this.notify();
+  }
+
+  /** Clear all PDF bindings from a board tab */
+  clearPdfBindings(tabId: number) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    for (const name of tab.pdfFileNames) {
+      const entry = this._pdfFiles.get(name);
+      if (entry) entry.boundTabIds.delete(tab.id);
+    }
+    tab.pdfFileNames = [];
+    this.notify();
+  }
+
+  /** Toggle a PDF binding on a board tab (add if missing, remove if present) */
+  togglePdfBinding(tabId: number, pdfFileName: string) {
+    const tab = this._tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    if (tab.pdfFileNames.includes(pdfFileName)) {
+      this.removePdfBinding(tabId, pdfFileName);
+    } else {
+      this.addPdfBinding(tabId, pdfFileName);
+    }
   }
 
   /** Remove a PDF from the registry and unbind from all tabs */
   removePdf(pdfFileName: string) {
     const entry = this._pdfFiles.get(pdfFileName);
     if (!entry) return;
-    // Unbind from all tabs
     for (const tab of this._tabs) {
-      if (tab.pdfFileName === pdfFileName) tab.pdfFileName = null;
+      const idx = tab.pdfFileNames.indexOf(pdfFileName);
+      if (idx !== -1) tab.pdfFileNames.splice(idx, 1);
     }
     this._pdfFiles.delete(pdfFileName);
     this.notify();
-  }
-
-  /** Add PDF and bind to current tab (legacy convenience) */
-  setPdfFile(file: File) {
-    this.addPdf(file);
-    this.bindPdf(file.name);
   }
 
   /** Try to auto-bind a PDF to a board tab by partial filename match */
@@ -168,8 +193,8 @@ class BoardStore {
     const match = findBestNameMatch(pdfFileName, this._tabs.map(t => t.fileName));
     if (match) {
       const tab = this._tabs.find(t => t.fileName === match);
-      if (tab && !tab.pdfFileName) {
-        tab.pdfFileName = pdfFileName;
+      if (tab && !tab.pdfFileNames.includes(pdfFileName)) {
+        tab.pdfFileNames.push(pdfFileName);
         const entry = this._pdfFiles.get(pdfFileName);
         if (entry) entry.boundTabIds.add(tab.id);
       }
@@ -179,11 +204,11 @@ class BoardStore {
   /** Try to auto-bind a board tab to an existing PDF by partial filename match */
   autoBindBoard(boardFileName: string) {
     const tab = this._tabs.find(t => t.fileName === boardFileName);
-    if (!tab || tab.pdfFileName) return;
+    if (!tab) return;
     const pdfNames = [...this._pdfFiles.keys()];
     const match = findBestNameMatch(boardFileName, pdfNames);
-    if (match) {
-      tab.pdfFileName = match;
+    if (match && !tab.pdfFileNames.includes(match)) {
+      tab.pdfFileNames.push(match);
       const entry = this._pdfFiles.get(match);
       if (entry) entry.boundTabIds.add(tab.id);
     }
@@ -222,7 +247,6 @@ class BoardStore {
   }
 
   async loadFile(file: File) {
-    // Check if already open — switch to that tab
     const existing = this._tabs.find(t => t.fileName === file.name);
     if (existing) {
       this._activeTabId = existing.id;
@@ -244,14 +268,14 @@ class BoardStore {
       mirrorX: false,
       mirrorY: false,
       showNetLines: false,
-      pdfFileName: null,
+      pdfFileNames: [],
     };
 
     this._tabs.push(tab);
     this._activeTabId = id;
+    this.onTabCreated?.(id, file.name);
 
     try {
-      // Try loading from cache first
       const cached = await boardCache.get(file.name, file.size, file.lastModified);
       if (cached) {
         logStore.log('log', `[board-store] Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
@@ -271,14 +295,11 @@ class BoardStore {
       tab.board = board;
       tab.rotation = this.autoRotation(board);
 
-      // Cache for fast re-access
       await boardCache.put(file.name, file.size, file.lastModified, board);
 
-      // Try auto-binding an existing PDF by name match
       this.autoBindBoard(file.name);
     } catch (err) {
       logStore.log('error', `[board-store] Failed to load ${file.name}:`, err);
-      // Remove the placeholder tab on failure
       const idx = this._tabs.indexOf(tab);
       if (idx !== -1) this._tabs.splice(idx, 1);
       if (this._activeTabId === tab.id) {
@@ -289,7 +310,6 @@ class BoardStore {
     this.notify();
   }
 
-  /** Return 90 if the board is taller than wide (portrait → rotate to landscape) */
   private autoRotation(board: BoardData): number {
     const w = board.bounds.maxX - board.bounds.minX;
     const h = board.bounds.maxY - board.bounds.minY;
@@ -313,17 +333,17 @@ class BoardStore {
     const idx = this._tabs.findIndex(t => t.id === tabId);
     if (idx === -1) return;
 
-    // Unbind PDF
+    // Unbind all PDFs
     const tab = this._tabs[idx];
-    if (tab.pdfFileName) {
-      const entry = this._pdfFiles.get(tab.pdfFileName);
+    for (const name of tab.pdfFileNames) {
+      const entry = this._pdfFiles.get(name);
       if (entry) entry.boundTabIds.delete(tab.id);
     }
 
     this._tabs.splice(idx, 1);
+    this.onTabClosed?.(tabId);
 
     if (this._activeTabId === tabId) {
-      // Switch to nearest tab
       if (this._tabs.length > 0) {
         const newIdx = Math.min(idx, this._tabs.length - 1);
         this._activeTabId = this._tabs[newIdx].id;
@@ -360,7 +380,6 @@ class BoardStore {
     this.notify();
   }
 
-  /** Switch to top view, or shift-click to show both */
   selectTop(both = false) {
     const tab = this.activeTab;
     if (!tab) return;
@@ -372,7 +391,6 @@ class BoardStore {
     this.notify();
   }
 
-  /** Switch to bottom view, or shift-click to show both */
   selectBottom(both = false) {
     const tab = this.activeTab;
     if (!tab) return;
@@ -384,7 +402,6 @@ class BoardStore {
     this.notify();
   }
 
-  /** Toggle butterfly mode: show top and bottom side by side */
   toggleButterfly() {
     const tab = this.activeTab;
     if (!tab) return;
@@ -447,7 +464,6 @@ class BoardStore {
     );
   }
 
-  /** Focus request — consumed by the renderer to zoom to a part */
   get focusRequest(): FocusRequest | null { return this._focusRequest; }
 
   consumeFocusRequest(): FocusRequest | null {
@@ -456,7 +472,6 @@ class BoardStore {
     return req;
   }
 
-  /** Select a part by name and request the renderer to zoom to it */
   focusPart(name: string) {
     const tab = this.activeTab;
     if (!tab?.board) return;

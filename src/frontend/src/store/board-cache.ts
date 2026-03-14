@@ -1,7 +1,7 @@
 import type { BoardData, Net } from '../parsers';
 
 const DB_NAME = 'boardviewer-cache';
-const DB_VERSION = 6; // bumped: fixed CAD coordinate scale, added FZ/CAD formats
+const DB_VERSION = 19; // bumped: XZZ outline sub-path merging
 const STORE_NAME = 'boards';
 
 interface CachedBoard {
