@@ -240,106 +240,6 @@ function chainSegments(segs: Segment[]): Point[] {
   return chain;
 }
 
-/**
- * Remove degenerate vertices from outline sub-paths (NaN-separated).
- * Runs multiple passes until stable:
- *   - Consecutive duplicates: A, A → A
- *   - Spurs (back-and-forth): A, B, A → A  (removes B and the returning A)
- */
-function dedupOutline(pts: Point[]): Point[] {
-  const EPS = 0.5;
-  const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-  let arr = pts;
-  for (let pass = 0; pass < 20; pass++) {
-    const out: Point[] = [];
-    let i = 0;
-    while (i < arr.length) {
-      const pt = arr[i];
-      if (isNaN(pt.x)) {
-        if (out.length && !isNaN(out[out.length - 1].x)) out.push(pt);
-        i++; continue;
-      }
-      const prev = out.length ? out[out.length - 1] : null;
-      const next = i + 1 < arr.length ? arr[i + 1] : null;
-      // Consecutive duplicate
-      if (prev && !isNaN(prev.x) && d(pt, prev) < EPS) { i++; continue; }
-      // Spike tip: prev ≈ next means current pt is the tip of a spur A→B→A
-      if (prev && !isNaN(prev.x) && next && !isNaN(next.x) && d(prev, next) < EPS) {
-        i += 2; continue; // skip tip (pt) and the returning duplicate (next)
-      }
-      out.push(pt);
-      i++;
-    }
-    if (out.length === arr.length) break;
-    arr = out;
-  }
-  return arr;
-}
-
-/**
- * Split a flat Point[] (with NaN pen-ups) into sub-path arrays.
- * Returns array of sub-paths, each a contiguous Point[] without NaN.
- */
-function splitSubPaths(pts: Point[]): Point[][] {
-  const paths: Point[][] = [];
-  let cur: Point[] = [];
-  for (const pt of pts) {
-    if (isNaN(pt.x)) { if (cur.length) { paths.push(cur); cur = []; } }
-    else cur.push(pt);
-  }
-  if (cur.length) paths.push(cur);
-  return paths;
-}
-
-/**
- * Merge NaN-separated sub-paths into a single path by connecting endpoints.
- * When a sub-path ends near the start of another, bridge them with a straight
- * line (no NaN gap). Remaining isolated fragments stay as NaN-separated sub-paths.
- */
-function mergeSubPaths(pts: Point[]): Point[] {
-  const paths = splitSubPaths(pts);
-  if (paths.length <= 1) return pts;
-
-  const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-
-  // Greedy merge: repeatedly find two paths whose endpoints are closest and join them
-  let merged = true;
-  while (merged && paths.length > 1) {
-    merged = false;
-    let bestDist = Infinity, bi = -1, bj = -1, flipI = false, flipJ = false;
-    for (let i = 0; i < paths.length; i++) {
-      for (let j = i + 1; j < paths.length; j++) {
-        const pi = paths[i], pj = paths[j];
-        const eiEnd  = pi[pi.length - 1], eiStart = pi[0];
-        const ejEnd  = pj[pj.length - 1], ejStart = pj[0];
-        // end-i → start-j
-        const d1 = d(eiEnd,   ejStart); if (d1 < bestDist) { bestDist = d1; bi = i; bj = j; flipI = false; flipJ = false; }
-        // end-i → end-j  (j reversed)
-        const d2 = d(eiEnd,   ejEnd);   if (d2 < bestDist) { bestDist = d2; bi = i; bj = j; flipI = false; flipJ = true; }
-        // start-i → end-j  (i reversed)
-        const d3 = d(eiStart, ejEnd);   if (d3 < bestDist) { bestDist = d3; bi = i; bj = j; flipI = true;  flipJ = false; }
-        // start-i → start-j  (both endpoints: i reversed + j normal)
-        const d4 = d(eiStart, ejStart); if (d4 < bestDist) { bestDist = d4; bi = i; bj = j; flipI = true;  flipJ = true; }
-      }
-    }
-    if (bi < 0) break;
-    const pi = flipI ? [...paths[bi]].reverse() : paths[bi];
-    const pj = flipJ ? [...paths[bj]].reverse() : paths[bj];
-    paths.splice(Math.max(bi, bj), 1);
-    paths.splice(Math.min(bi, bj), 1);
-    paths.push([...pi, ...pj]);
-    merged = true;
-  }
-
-  // Re-assemble with NaN pen-ups between any remaining separate fragments
-  const result: Point[] = [];
-  for (let i = 0; i < paths.length; i++) {
-    if (i > 0) result.push({ x: NaN, y: NaN });
-    result.push(...paths[i]);
-  }
-  return result;
-}
-
 function parseNetBlock(data: Uint8Array): Map<number, string> {
   const dict = new Map<number, string>();
   let ptr = 0;
@@ -721,7 +621,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     }
     logStore.log('log', `[XZZ] outline split: dim=${fold.dim}, outlineMid=${outlineMid.toFixed(3)} (partAxis=${fold.axis.toFixed(3)}), before=${segsBefore}, removed=${removed}, clipped=${clipped}, after=${segments.length} (expected~${Math.round(segsBefore/2)})`);
   }
-
 
   // Normalize coordinates to origin
   let minX = Infinity, minY = Infinity;

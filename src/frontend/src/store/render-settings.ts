@@ -150,11 +150,6 @@ export function computePinRadius(s: RenderSettings, fileRadius: number): number 
   return Math.min(s.pinMaxRadius, Math.max(s.pinMinRadius, r));
 }
 
-/** 2-pin parts have no padding — pads fill the outline exactly */
-export function computePartPadding(): number {
-  return 0;
-}
-
 /**
  * Compute effective padding for a multi-pin part so the outline clears all pins.
  * Uses the largest rendered pin radius in the part.
@@ -202,8 +197,9 @@ export function computeEffectiveBounds(
     }
   }
 
+  // 2-pin parts have no padding — pads fill the outline exactly
   const pad = isTwoPin
-    ? computePartPadding()
+    ? 0
     : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
 
   const bw = maxX - minX;
