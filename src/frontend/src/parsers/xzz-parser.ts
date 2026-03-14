@@ -379,7 +379,8 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
   }
 
   if (!xFold && !yFold) return null;
-  const best = (!yFold || (xFold && xFold.ratio >= yFold.ratio)) ? { ...xFold!, dim: 'x' as const } : { ...yFold!, dim: 'y' as const };
+  // Prefer Y fold — falls back to X only when no Y gap is found
+  const best = yFold ? { ...yFold, dim: 'y' as const } : { ...xFold!, dim: 'x' as const };
 
   // Determine which half is bottom using test pad distribution.
   // Test pads are placed on the bottom layer for bed-of-nails testing.
