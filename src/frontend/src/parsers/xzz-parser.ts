@@ -325,23 +325,26 @@ function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   return { x, y, netIndex };
 }
 
-interface FoldResult { axis: number; dim: 'x' | 'y'; }
+interface FoldResult { axis: number; dim: 'x' | 'y'; lowerIsBottom: boolean; }
 
-/** Find the fold axis in outline segments.
- *  XZZ stores the board unfolded (top and bottom side-by-side).
- *  Checks both X and Y dimensions; returns whichever has the larger relative gap.
- *  Returns null if no significant gap (>20% of span) is found in either axis. */
-function findFoldAxis(segments: Segment[]): FoldResult | null {
-  const xs = new Set<number>(), ys = new Set<number>();
-  for (const s of segments) {
-    xs.add(Math.round(s.p1.x)); xs.add(Math.round(s.p2.x));
-    ys.add(Math.round(s.p1.y)); ys.add(Math.round(s.p2.y));
-  }
-
-  function bestGap(coords: Set<number>): { axis: number; ratio: number } | null {
-    if (coords.size < 4) return null;
-    const sorted = [...coords].sort((a, b) => a - b);
+/** Find the fold axis in XZZ butterfly layout.
+ *
+ *  Primary signal: part centroid distribution — two dense clusters separated by a
+ *  clear void. This is far more reliable than outline coordinates because board
+ *  notches/cutouts create false outline gaps that can outrank the real fold gap.
+ *
+ *  Side determination: test pads (type 0x09) are placed predominantly on the
+ *  bottom layer for bed-of-nails testing — whichever half has more test pads is bottom.
+ *  Falls back to lower-coord = bottom if test pad signal is weak.
+ *
+ *  Fallback: outline segment coordinates when <8 parts are available.
+ */
+function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadData[]): FoldResult | null {
+  function bestGap(values: number[]): { axis: number; ratio: number } | null {
+    if (values.length < 4) return null;
+    const sorted = [...values].sort((a, b) => a - b);
     const span = sorted[sorted.length - 1] - sorted[0];
+    if (span === 0) return null;
     let maxGap = 0, foldPos = 0;
     for (let i = 1; i < sorted.length; i++) {
       const gap = sorted[i] - sorted[i - 1];
@@ -350,12 +353,46 @@ function findFoldAxis(segments: Segment[]): FoldResult | null {
     return maxGap > span * 0.2 ? { axis: foldPos, ratio: maxGap / span } : null;
   }
 
-  const xFold = bestGap(xs);
-  const yFold = bestGap(ys);
+  // Primary: part centroid clusters (unaffected by board notches/holes)
+  let xFold: ReturnType<typeof bestGap> = null;
+  let yFold: ReturnType<typeof bestGap> = null;
+  const cxs: number[] = [], cys: number[] = [];
+  for (const pd of parts) {
+    if (pd.pins.length === 0) continue;
+    cxs.push(Math.round(pd.pins.reduce((s, p) => s + p.x, 0) / pd.pins.length));
+    cys.push(Math.round(pd.pins.reduce((s, p) => s + p.y, 0) / pd.pins.length));
+  }
+  if (cxs.length >= 8) {
+    xFold = bestGap(cxs);
+    yFold = bestGap(cys);
+  }
+
+  // Fallback: outline segment coordinates
+  if (!xFold && !yFold) {
+    const outlineXs = new Set<number>(), outlineYs = new Set<number>();
+    for (const s of segments) {
+      outlineXs.add(Math.round(s.p1.x)); outlineXs.add(Math.round(s.p2.x));
+      outlineYs.add(Math.round(s.p1.y)); outlineYs.add(Math.round(s.p2.y));
+    }
+    xFold = bestGap([...outlineXs]);
+    yFold = bestGap([...outlineYs]);
+  }
+
   if (!xFold && !yFold) return null;
-  if (!yFold) return { axis: xFold!.axis, dim: 'x' };
-  if (!xFold) return { axis: yFold.axis, dim: 'y' };
-  return xFold.ratio >= yFold.ratio ? { axis: xFold.axis, dim: 'x' } : { axis: yFold.axis, dim: 'y' };
+  const best = (!yFold || (xFold && xFold.ratio >= yFold.ratio)) ? { ...xFold!, dim: 'x' as const } : { ...yFold!, dim: 'y' as const };
+
+  // Determine which half is bottom using test pad distribution.
+  // Test pads are placed on the bottom layer for bed-of-nails testing.
+  let lowerIsBottom = true;
+  if (testPads.length >= 5) {
+    const lowerPads  = testPads.filter(tp => (best.dim === 'x' ? tp.x : tp.y) < best.axis).length;
+    const higherPads = testPads.length - lowerPads;
+    if (higherPads > lowerPads * 1.5) lowerIsBottom = false;
+    else if (lowerPads > higherPads * 1.5) lowerIsBottom = true;
+  }
+
+  console.log(`[XZZ] fold: dim=${best.dim}, axis=${best.axis.toFixed(1)}, ratio=${best.ratio.toFixed(2)}, lowerIsBottom=${lowerIsBottom}, testPads=${testPads.length}`);
+  return { axis: best.axis, dim: best.dim, lowerIsBottom };
 }
 
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
@@ -451,16 +488,15 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   }
 
   // Detect board fold: XZZ stores top and bottom side-by-side (unfolded).
-  // Find the largest gap in outline coords (X or Y) — that's the fold axis.
-  // Parts on the lower-coordinate side → bottom (mirrored); higher-coord side → top.
-  const fold = findFoldAxis(segments);
+  const fold = findFoldAxis(segments, partDataList, testPads);
   if (fold) {
     for (const pd of partDataList) {
       if (pd.pins.length === 0) continue;
       const c = fold.dim === 'x'
         ? pd.pins.reduce((s, p) => s + p.x, 0) / pd.pins.length
         : pd.pins.reduce((s, p) => s + p.y, 0) / pd.pins.length;
-      if (c < fold.axis) {
+      const isBottom = fold.lowerIsBottom ? c < fold.axis : c > fold.axis;
+      if (isBottom) {
         pd.side = 'bottom';
         if (fold.dim === 'x') {
           for (const p of pd.pins) p.x = 2 * fold.axis - p.x;
@@ -469,13 +505,15 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         }
       }
     }
-    // Keep only the higher-coordinate half of the outline
+    // Keep only the "top" half of the outline (discard the bottom half)
     for (let i = segments.length - 1; i >= 0; i--) {
       const s = segments[i];
-      const belowFold = fold.dim === 'x'
-        ? s.p1.x < fold.axis && s.p2.x < fold.axis
-        : s.p1.y < fold.axis && s.p2.y < fold.axis;
-      if (belowFold) segments.splice(i, 1);
+      const v1 = fold.dim === 'x' ? s.p1.x : s.p1.y;
+      const v2 = fold.dim === 'x' ? s.p2.x : s.p2.y;
+      const inBottomHalf = fold.lowerIsBottom
+        ? v1 < fold.axis && v2 < fold.axis
+        : v1 > fold.axis && v2 > fold.axis;
+      if (inBottomHalf) segments.splice(i, 1);
     }
   }
 
