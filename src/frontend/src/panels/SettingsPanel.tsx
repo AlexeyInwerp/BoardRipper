@@ -383,6 +383,7 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft} />
         <Toggle label="[Debug] Show Pad Vertices" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft} />
+        <Toggle label="[Debug] Label Size Colors" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft} />
       </CollapsibleSection>
 
       <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}

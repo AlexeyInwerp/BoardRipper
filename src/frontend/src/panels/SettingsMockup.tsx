@@ -227,7 +227,7 @@ export function SettingsMockup({
     }
     let graph;
     try {
-      graph = buildBoardScene(MOCK_BOARD, s);
+      graph = buildBoardScene(MOCK_BOARD, { ...s, showLabelSizeDebug: false, showPadVertices: false });
     } catch (err) {
       console.error('[SettingsMockup] buildBoardScene failed:', err);
       return;
