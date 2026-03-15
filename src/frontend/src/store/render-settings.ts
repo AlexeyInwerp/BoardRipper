@@ -25,6 +25,8 @@ export interface RenderSettings {
   pinMinRadius: number;
   pinMaxRadius: number;
   pinScaleFactor: number;
+  /** Minimum body size (mils) in the narrow dimension for 2-pin parts. 0 = disabled. */
+  partMinBodyMils: number;
   pinAlpha: number;
   showPinNumbers: boolean;
 
@@ -58,6 +60,9 @@ export interface RenderSettings {
   /** Hide text labels during zoom for better performance on slower machines */
   hideTextDuringZoom: boolean;
 
+  /** Debug: draw a crosshair at each pin's exact file coordinates */
+  showPadVertices: boolean;
+
   clickThreshold: number;
   fitPadding: number;
 
@@ -77,7 +82,7 @@ const DEFAULT_NET_COLOR_RULES: NetColorRule[] = [
   { id: 'pp',   pattern: 'PP',   color: '#dd6633', enabled: true },
 ];
 
-const DEFAULTS: RenderSettings = {
+export const DEFAULTS: RenderSettings = {
   outlineWidth: 3,
   outlineAlpha: 0.8,
 
@@ -95,6 +100,7 @@ const DEFAULTS: RenderSettings = {
   pinMinRadius: 3,
   pinMaxRadius: 30,
   pinScaleFactor: 1.0,
+  partMinBodyMils: 0,
   pinAlpha: 0.85,
   showPinNumbers: true,
   labelMinScreenPx: 3,
@@ -119,7 +125,9 @@ const DEFAULTS: RenderSettings = {
   showElevatedPinLabel: true,
   showSelectionOverlay: true,
 
-  hideTextDuringZoom: false,
+  hideTextDuringZoom: true,
+
+  showPadVertices: false,
 
   clickThreshold: 30,
   fitPadding: 50,
@@ -184,7 +192,7 @@ export function computeEffectiveBounds(
     const p1 = pins[1].position;
     horiz = Math.abs(p0.x - p1.x) >= Math.abs(p0.y - p1.y);
     const dist = Math.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2);
-    const inflate = dist * 0.35;
+    const inflate = Math.max(dist * 0.35, s.partMinBodyMils);
     if (horiz && maxY - minY < inflate) {
       const cy = (minY + maxY) / 2;
       minY = cy - inflate / 2;
@@ -210,6 +218,85 @@ export function computeEffectiveBounds(
     pw: bw + pad * 2, ph: bh + pad * 2,
     horiz,
   };
+}
+
+/**
+ * Detect if a multi-pin part's pins are arranged diagonally and compute an
+ * oriented bounding box (OBB) if so. Returns 4 corner points or null.
+ *
+ * Detection: ≥20 pins, and ≥5 consecutive pins with both dx and dy nonzero
+ * and consistent sign (all moving in the same diagonal direction).
+ */
+export function computeDiagonalOBB(
+  pins: { position: { x: number; y: number }; radius?: number }[],
+  s: RenderSettings,
+): [number, number][] | null {
+  if (pins.length < 20) return null;
+
+  // Find longest run of consecutive pins with consistent diagonal deltas
+  let bestRun = 0, bestStart = 0;
+  let runLen = 0, runStart = 0;
+  let lastSignX = 0, lastSignY = 0;
+
+  for (let i = 1; i < pins.length; i++) {
+    const dx = pins[i].position.x - pins[i - 1].position.x;
+    const dy = pins[i].position.y - pins[i - 1].position.y;
+    const sx = Math.sign(dx), sy = Math.sign(dy);
+    // Both axes must move, and direction must be consistent with the run
+    if (sx !== 0 && sy !== 0 && (runLen === 0 || (sx === lastSignX && sy === lastSignY))) {
+      if (runLen === 0) runStart = i - 1;
+      runLen++;
+      lastSignX = sx; lastSignY = sy;
+    } else {
+      if (runLen > bestRun) { bestRun = runLen; bestStart = runStart; }
+      runLen = 0;
+    }
+  }
+  if (runLen > bestRun) { bestRun = runLen; bestStart = runStart; }
+
+  if (bestRun < 5) return null;
+
+  // Compute principal axis from the diagonal run
+  const p0 = pins[bestStart].position;
+  const pN = pins[bestStart + bestRun].position;
+  const axisX = pN.x - p0.x;
+  const axisY = pN.y - p0.y;
+  const axisLen = Math.hypot(axisX, axisY);
+  if (axisLen < 1) return null;
+
+  // Unit vectors: along axis and perpendicular
+  const ux = axisX / axisLen, uy = axisY / axisLen;
+  const vx = -uy, vy = ux; // perpendicular
+
+  // Project ALL pins onto the axis coordinate system
+  const cx = (pins[0].position.x + pins[pins.length - 1].position.x) / 2;
+  const cy = (pins[0].position.y + pins[pins.length - 1].position.y) / 2;
+
+  let minU = Infinity, maxU = -Infinity;
+  let minV = Infinity, maxV = -Infinity;
+  for (const pin of pins) {
+    const dx = pin.position.x - cx;
+    const dy = pin.position.y - cy;
+    const u = dx * ux + dy * uy;
+    const v = dx * vx + dy * vy;
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
+
+  // Pad the OBB
+  const pad = computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
+  minU -= pad; maxU += pad;
+  minV -= pad; maxV += pad;
+
+  // Convert back to world-space corners
+  return [
+    [cx + minU * ux + minV * vx, cy + minU * uy + minV * vy],
+    [cx + maxU * ux + minV * vx, cy + maxU * uy + minV * vy],
+    [cx + maxU * ux + maxV * vx, cy + maxU * uy + maxV * vy],
+    [cx + minU * ux + maxV * vx, cy + minU * uy + maxV * vy],
+  ];
 }
 
 /** Resolve pin color from a settings object (not necessarily the live one) */

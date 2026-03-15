@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react';
+import React, { useEffect, useSyncExternalStore } from 'react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
@@ -48,13 +48,44 @@ export function ContextMenu() {
   const activeTab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
   const boundPdfNames = activeTab?.pdfFileNames ?? [];
 
-  const handleSearchInPdf = (e: React.MouseEvent, pdfFileName: string) => {
+  const doSearch = (e: React.MouseEvent, pdfFileName: string, query: string) => {
     e.stopPropagation();
     pdfStore.switchTo(pdfFileName);
-    pdfStore.searchText(state.componentName);
+    pdfStore.searchText(query);
     ensurePdfPanel(pdfFileName);
     contextMenuStore.hide();
   };
+
+  // @ syntax: PIN@CHIP — "find pin F11 at chip UF400", whole-page co-occurrence
+  const chipPinQuery = state.pinId ? `${state.pinId}@${state.componentName}` : null;
+  const netName = state.netName;
+
+  const renderItems = (pdfFileName: string, pdfLabel: string) => (
+    <>
+      {chipPinQuery && (
+        <div
+          className="context-menu-item"
+          onClick={(e) => doSearch(e, pdfFileName, chipPinQuery)}
+        >
+          Search &apos;{chipPinQuery}&apos;{pdfLabel}
+        </div>
+      )}
+      <div
+        className="context-menu-item"
+        onClick={(e) => doSearch(e, pdfFileName, state.componentName)}
+      >
+        Search &apos;{state.componentName}&apos;{pdfLabel}
+      </div>
+      {netName && (
+        <div
+          className="context-menu-item"
+          onClick={(e) => doSearch(e, pdfFileName, netName)}
+        >
+          Search net &apos;{netName}&apos;{pdfLabel}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div
@@ -67,21 +98,12 @@ export function ContextMenu() {
           Search &apos;{state.componentName}&apos; in PDF (none linked)
         </div>
       ) : boundPdfNames.length === 1 ? (
-        <div
-          className="context-menu-item"
-          onClick={(e) => handleSearchInPdf(e, boundPdfNames[0])}
-        >
-          Search &apos;{state.componentName}&apos; in PDF
-        </div>
+        renderItems(boundPdfNames[0], ' in PDF')
       ) : (
         boundPdfNames.map(name => (
-          <div
-            key={name}
-            className="context-menu-item"
-            onClick={(e) => handleSearchInPdf(e, name)}
-          >
-            Search &apos;{state.componentName}&apos; in {name}
-          </div>
+          <React.Fragment key={name}>
+            {renderItems(name, ` in ${name}`)}
+          </React.Fragment>
         ))
       )}
     </div>
