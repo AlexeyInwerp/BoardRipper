@@ -62,6 +62,8 @@ export interface RenderSettings {
 
   /** Debug: draw a crosshair at each pin's exact file coordinates */
   showPadVertices: boolean;
+  /** Debug: color part labels by font-size tier (blue=small, yellow=medium, green=large) */
+  showLabelSizeDebug: boolean;
 
   clickThreshold: number;
   fitPadding: number;
@@ -128,6 +130,7 @@ export const DEFAULTS: RenderSettings = {
   hideTextDuringZoom: true,
 
   showPadVertices: false,
+  showLabelSizeDebug: false,
 
   clickThreshold: 30,
   fitPadding: 50,

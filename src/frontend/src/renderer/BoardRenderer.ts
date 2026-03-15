@@ -1005,11 +1005,17 @@ export class BoardRenderer {
   }
 
   private invalidateAllScenes() {
-    // Detach selectionGfx from active scene before destroying
+    // Detach all overlay objects from active scene before destroying — these
+    // objects are persistent (reused across rebuilds) and must not be destroyed
+    // when scene.root.destroy({ children: true }) is called below.
     if (this.activeScene) {
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.elevatedPartBg!);
+      this.activeScene.root.removeChild(this.elevatedPartLabel!);
+      this.activeScene.root.removeChild(this.elevatedPinBg!);
+      this.activeScene.root.removeChild(this.elevatedPinLabel!);
       this.viewport.removeChild(this.activeScene.root);
       if (this.activeScene.butterflyRoot) {
         // Move bottomLayer back before destroying

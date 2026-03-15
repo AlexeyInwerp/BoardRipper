@@ -487,11 +487,20 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       }
       fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
-        const useShadowFont = s.partLabelShadow;
-        const fontFamily = useShadowFont ? ensureShadowFont(fontSize) : LABEL_FONT_FAMILY;
+        let labelColor = BOARD_COLORS.labelPart;
+        let fontFamily = LABEL_FONT_FAMILY;
+        if (s.showLabelSizeDebug) {
+          const qs = quantizeFontSize(s.labelSizeSmall);
+          const qm = quantizeFontSize(s.labelSizeMedium);
+          labelColor = fontSize <= qs ? 0x4499ff   // blue  = small tier
+                     : fontSize <= qm ? 0xffcc00   // yellow = medium tier
+                     :                  0x44ff88;  // green  = large tier
+        } else if (s.partLabelShadow) {
+          fontFamily = ensureShadowFont(fontSize);
+        }
         const label = new BitmapText({
           text:  part.name,
-          style: { fontSize, fill: BOARD_COLORS.labelPart, fontFamily },
+          style: { fontSize, fill: labelColor, fontFamily },
         });
         label.anchor.set(0.5, 0.5);
         label.x = eb.px + eb.pw / 2;
