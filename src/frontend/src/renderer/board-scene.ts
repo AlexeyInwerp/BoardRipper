@@ -477,12 +477,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     if (s.showPartLabels) {
       let fontSize: number;
       if (isTwoPinPart) {
-        // Scale to center-body area (between the two pads) for large parts;
-        // floor at settings font size so tiny parts always have a readable label.
-        const centerW = eb.horiz ? eb.pw - 2 * padDepth : eb.pw;
-        const centerH = eb.horiz ? eb.ph : eb.ph - 2 * padDepth;
-        const fromCenter = Math.min(centerW * 0.85 / (part.name.length * 0.6), centerH * 0.85);
-        fontSize = Math.max(getLabelFontSize(s), fromCenter);
+        // Horizontal: text is always rendered horizontally so size to full part width.
+        // Vertical:   text spans the narrow width, height limited to center-body gap.
+        // Floor at settings font size so tiny parts always have a readable label.
+        const fitW = eb.pw;
+        const fitH = eb.horiz ? eb.ph : eb.ph - 2 * padDepth;
+        const fromBounds = Math.min(fitW * 0.85 / (part.name.length * 0.6), fitH * 0.85);
+        fontSize = Math.max(getLabelFontSize(s), fromBounds);
       } else {
         const targetW = eb.pw * 0.7;
         fontSize = targetW / (part.name.length * 0.6);
