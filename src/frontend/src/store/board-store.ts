@@ -24,6 +24,7 @@ export interface BoardTab {
   mirrorX: boolean;
   mirrorY: boolean;
   showNetLines: boolean;
+  showNetDim: boolean;
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
 }
 
@@ -100,6 +101,7 @@ class BoardStore {
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
+  get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
 
   /** All PDF Files bound to the active board tab */
   get boundPdfFiles(): File[] {
@@ -188,16 +190,14 @@ class BoardStore {
     this.notify();
   }
 
-  /** Try to auto-bind a PDF to a board tab by partial filename match */
+  /** Bind a newly-opened PDF: name-match first, fall back to the active tab */
   autoBindPdf(pdfFileName: string) {
-    const match = findBestNameMatch(pdfFileName, this._tabs.map(t => t.fileName));
-    if (match) {
-      const tab = this._tabs.find(t => t.fileName === match);
-      if (tab && !tab.pdfFileNames.includes(pdfFileName)) {
-        tab.pdfFileNames.push(pdfFileName);
-        const entry = this._pdfFiles.get(pdfFileName);
-        if (entry) entry.boundTabIds.add(tab.id);
-      }
+    const matchName = findBestNameMatch(pdfFileName, this._tabs.map(t => t.fileName));
+    const tab = (matchName && this._tabs.find(t => t.fileName === matchName)) ?? this.activeTab;
+    if (tab && !tab.pdfFileNames.includes(pdfFileName)) {
+      tab.pdfFileNames.push(pdfFileName);
+      const entry = this._pdfFiles.get(pdfFileName);
+      if (entry) entry.boundTabIds.add(tab.id);
     }
   }
 
@@ -268,6 +268,7 @@ class BoardStore {
       mirrorX: false,
       mirrorY: false,
       showNetLines: false,
+      showNetDim: true,
       pdfFileNames: [],
     };
 
@@ -428,6 +429,14 @@ class BoardStore {
     this.notify();
   }
 
+  /** Set arbitrary rotation in degrees (from trackpad gesture or other free input). */
+  setRotationFree(degrees: number) {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ rotation: ((degrees % 360) + 360) % 360 });
+    this.notify();
+  }
+
   flipHorizontal() {
     const tab = this.activeTab;
     if (!tab) return;
@@ -449,6 +458,13 @@ class BoardStore {
     this.notify();
   }
 
+  toggleNetDim() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showNetDim: !tab.showNetDim });
+    this.notify();
+  }
+
   setSearch(query: string) {
     this.updateActiveTab({ searchQuery: query });
     this.notify();
@@ -462,6 +478,22 @@ class BoardStore {
       p.name.toLowerCase().includes(q) ||
       p.pins.some(pin => pin.net.toLowerCase().includes(q))
     );
+  }
+
+  /** Part indices matching the current search query (for renderer highlighting). */
+  get searchResultIndices(): Set<number> {
+    const tab = this.activeTab;
+    if (!tab?.board || !tab.searchQuery) return new Set();
+    const q = tab.searchQuery.toLowerCase();
+    const indices = new Set<number>();
+    for (let i = 0; i < tab.board.parts.length; i++) {
+      const p = tab.board.parts[i];
+      if (p.name.toLowerCase().includes(q) ||
+          p.pins.some(pin => pin.net.toLowerCase().includes(q))) {
+        indices.add(i);
+      }
+    }
+    return indices;
   }
 
   get focusRequest(): FocusRequest | null { return this._focusRequest; }
@@ -480,6 +512,16 @@ class BoardStore {
     if (idx < 0) return;
 
     const part = tab.board.parts[idx];
+
+    // If the part is on the other side and we're not in butterfly mode, flip to it
+    if (!tab.butterfly) {
+      if (part.side === 'top' && !tab.showTop) {
+        this.updateActiveTab({ showTop: true, showBottom: false });
+      } else if (part.side === 'bottom' && !tab.showBottom) {
+        this.updateActiveTab({ showTop: false, showBottom: true });
+      }
+    }
+
     this.updateActiveTab({
       selection: { partIndex: idx, pinIndex: null, highlightedNet: null },
     });

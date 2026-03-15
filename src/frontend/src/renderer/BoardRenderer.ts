@@ -15,13 +15,15 @@
 import { Application, Graphics, Container, BitmapText, Text } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point } from '../parsers';
+import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
-import { renderSettingsStore, computePinRadius, computeEffectiveBounds } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
-import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, cleanupShadowFonts, BOARD_COLORS } from './board-scene';
+import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS } from './board-scene';
 import type { BorderBatch } from './board-scene';
+import { getFormat } from '../parsers/registry';
 import { logStore } from '../store/log-store';
 
 // Alias for local use — all colour references go through board-scene.ts
@@ -47,6 +49,9 @@ interface BoardScene {
   bottomPinLabels: import('pixi.js').BitmapText[];
   borderBatches: BorderBatch[];
   fontSizeGroups: import('./board-scene').FontSizeGroup[];
+  /** Flat containers for pin/net labels only — toggling .visible hides them in O(1) during zoom */
+  topPinLabelsLayer: Container;
+  bottomPinLabelsLayer: Container;
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
@@ -69,6 +74,9 @@ export class BoardRenderer {
   private app: Application;
   private viewport!: Viewport;
   private selectionGfx!: Graphics;
+  private netDimGfx!: Graphics;
+  /** Container for part-name labels drawn above the net-dim overlay */
+  private netLabelLayer!: Container;
   private butterflySelectionGfx!: Graphics;
   private netLinesGfx!: Graphics;
   private debugVertexLabels: Text[] = [];
@@ -85,6 +93,7 @@ export class BoardRenderer {
   private selectionOverlayEl: HTMLDivElement | null = null;
   private perfOverlayEl: HTMLDivElement | null = null;
   private perfToggleBtn: HTMLButtonElement | null = null;
+  private perfToggleBtnHandler: (() => void) | null = null;
   private perfVisible = false;
 
   // Perf overlay accumulators (reset every ~500ms)
@@ -117,6 +126,13 @@ export class BoardRenderer {
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
 
+  // Animated zoom state
+  private zoomAnim: {
+    fromX: number; fromY: number; fromScaleX: number; fromScaleY: number;
+    toX: number; toY: number; toScaleX: number; toScaleY: number;
+    elapsed: number; duration: number;
+  } | null = null;
+
   // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
   // Only recomputed when selection, viewport, or visibility changes.
   private netLineSegments: { start: Point; end: Point }[] = [];
@@ -128,6 +144,21 @@ export class BoardRenderer {
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
   private sceneCache = new Map<BoardData, BoardScene>();
   private activeScene: BoardScene | null = null;
+
+  // Cached label counts for perf overlay — updated by applyLabelVisibility, not by iterating every 500ms
+  private labelCounts = { partVis: 0, partTotal: 0, pinVis: 0, pinTotal: 0 };
+
+  // Trackpad rotation gesture state
+  private gestureStartRotation = 0;
+  private boundGestureStart: ((e: Event) => void) | null = null;
+  private boundGestureChange: ((e: Event) => void) | null = null;
+
+  // applyFlips cache — skip O(N) label loop when transform params are unchanged
+  private lastFlipParams: {
+    butterfly: boolean;
+    topRot: number; topSx: number; topSy: number;
+    botRot: number; botSx: number; botSy: number;
+  } | null = null;
 
   // Viewport state per board: restore pan/zoom on tab switch
   private viewportStates = new Map<BoardData, ViewportState>();
@@ -143,16 +174,22 @@ export class BoardRenderer {
 
   /** Pause the renderer (stop ticker, zero CPU cost). Call when panel is hidden. */
   pause() {
+    dbg(1, 'pause', 'tab=' + this.tabId);
     this.app.ticker.stop();
   }
 
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
   resume() {
+    const w = this.containerEl.clientWidth;
+    const h = this.containerEl.clientHeight;
+    dbg(1, 'resume', 'tab=' + this.tabId, 'size=' + w + 'x' + h,
+      'activeTabId=' + boardStore.activeTabId,
+      'board=' + (this.board ? this.board.format : 'null'),
+      'scene=' + (this.activeScene ? 'yes' : 'null'),
+      'initialized=' + this.initialized);
     this.app.ticker.start();
     this.needsRender = true;
     // Re-sync with container size (may have been 0 while hidden)
-    const w = this.containerEl.clientWidth;
-    const h = this.containerEl.clientHeight;
     if (w > 0 && h > 0 && this.viewport) {
       this.viewport.resize(w, h);
       this.app.renderer.resize(w, h);
@@ -201,6 +238,8 @@ export class BoardRenderer {
     this.app.stage.addChild(this.viewport);
 
     this.selectionGfx = new Graphics();
+    this.netDimGfx = new Graphics();
+    this.netLabelLayer = new Container();
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
 
@@ -228,6 +267,19 @@ export class BoardRenderer {
       this.handleRightClick(e);
     };
     this.containerEl.addEventListener('contextmenu', this.boundContextMenu);
+
+    // Mac trackpad rotation gesture — gesturestart/gesturechange are Safari/Chrome on macOS
+    this.boundGestureStart = (e: Event) => {
+      e.preventDefault();
+      this.gestureStartRotation = boardStore.rotation;
+    };
+    this.boundGestureChange = (e: Event) => {
+      e.preventDefault();
+      const rotation = (e as unknown as { rotation: number }).rotation;
+      boardStore.setRotationFree(this.gestureStartRotation - rotation);
+    };
+    this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
+    this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
@@ -269,7 +321,7 @@ export class BoardRenderer {
     this.perfToggleBtn.className = 'board-perf-toggle';
     this.perfToggleBtn.textContent = 'i';
     this.perfToggleBtn.title = 'Toggle performance overlay';
-    this.perfToggleBtn.addEventListener('click', () => {
+    this.perfToggleBtnHandler = () => {
       this.perfVisible = !this.perfVisible;
       if (!this.perfVisible) {
         this.perfOverlayEl!.style.display = 'none';
@@ -277,7 +329,8 @@ export class BoardRenderer {
         this.perfSamples = 0;
         this.perfThrottle = 0;
       }
-    });
+    };
+    this.perfToggleBtn.addEventListener('click', this.perfToggleBtnHandler);
     this.containerEl.appendChild(this.perfToggleBtn);
 
     // Combined ticker: LoD updates + net line animation + HUD + on-demand render
@@ -285,6 +338,23 @@ export class BoardRenderer {
     this.app.ticker.add((ticker) => {
       const perf = this.perfVisible;
       const frameStart = perf ? performance.now() : 0;
+
+      // Drive animated zoom
+      if (this.zoomAnim) {
+        const a = this.zoomAnim;
+        a.elapsed += ticker.deltaMS;
+        const t = Math.min(a.elapsed / a.duration, 1);
+        const e = this.easeOutCubic(t);
+        const sx = a.fromScaleX + (a.toScaleX - a.fromScaleX) * e;
+        const sy = a.fromScaleY + (a.toScaleY - a.fromScaleY) * e;
+        const px = a.fromX + (a.toX - a.fromX) * e;
+        const py = a.fromY + (a.toY - a.fromY) * e;
+        this.viewport.scale.set(sx, sy);
+        this.viewport.position.set(px, py);
+        this.needsRender = true;
+        this.netLinesDirty = true;
+        if (t >= 1) this.zoomAnim = null;
+      }
 
       // Detect active zooming by comparing scale between frames
       const curScale = Math.abs(this.viewport.scale.x);
@@ -296,6 +366,11 @@ export class BoardRenderer {
       let t0 = perf ? performance.now() : 0;
       if (this.updateLoD()) this.needsRender = true;
       if (perf) this.perfAccum.lod += performance.now() - t0;
+
+      // Smooth net-dim fade on every frame (updateLoD has a 10% threshold)
+      if (boardStore.selection.highlightedNet) {
+        this.updateNetDimAlpha(curScale);
+      }
 
       // Net line pulse animation — only when there's an active selection with net lines
       if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
@@ -385,15 +460,8 @@ export class BoardRenderer {
     this.perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
     this.perfSamples = 0;
 
-    // Label sub-counts by type
-    const scene = this.activeScene;
-    let partVis = 0, partTotal = 0, pinVis = 0, pinTotal = 0;
-    if (scene) {
-      for (const lbl of scene.topLabels) { partTotal++; if (lbl.visible) partVis++; }
-      for (const lbl of scene.bottomLabels) { partTotal++; if (lbl.visible) partVis++; }
-      for (const lbl of scene.topPinLabels) { pinTotal++; if (lbl.visible) pinVis++; }
-      for (const lbl of scene.bottomPinLabels) { pinTotal++; if (lbl.visible) pinVis++; }
-    }
+    // Label sub-counts from cache — maintained by applyLabelVisibility(), zero per-label work here
+    const { partVis, partTotal, pinVis, pinTotal } = this.labelCounts;
 
     const f = (ms: number) => ms < 0.01 ? '0' : ms.toFixed(2);
     const d = this.perfDisplay;
@@ -411,16 +479,13 @@ export class BoardRenderer {
   /** Called per frame when viewport scale is actively changing (user is zooming) */
   private onZoomFrame() {
     const s = renderSettingsStore.settings;
+    // Hide all labels on first zoom frame — O(1) container toggle, no per-label iteration
     if (s.hideTextDuringZoom && !this.textHiddenForZoom) {
       this.textHiddenForZoom = true;
       const scene = this.activeScene;
       if (scene) {
-        for (const group of scene.fontSizeGroups) {
-          if (group.visible) {
-            group.visible = false;
-            for (const lbl of group.labels) lbl.visible = false;
-          }
-        }
+        scene.topPinLabelsLayer.visible = false;
+        scene.bottomPinLabelsLayer.visible = false;
       }
     }
     // Redraw net lines immediately on every zoom frame
@@ -428,15 +493,21 @@ export class BoardRenderer {
     this.renderNetLines();
     // Reset settle timer on every zoom frame
     if (this.zoomSettleTimer) clearTimeout(this.zoomSettleTimer);
-    // Text labels restore after a longer settle (200ms)
+    // Restore labels after zoom settles (~2 frames idle)
     this.zoomSettleTimer = setTimeout(() => {
       this.zoomSettleTimer = null;
       if (this.textHiddenForZoom) {
         this.textHiddenForZoom = false;
+        // Apply LoD (updates per-label visible) while container is still hidden — no flash
         this.applyLabelVisibility();
+        const scene = this.activeScene;
+        if (scene) {
+          scene.topPinLabelsLayer.visible = true;
+          scene.bottomPinLabelsLayer.visible = true;
+        }
         this.needsRender = true;
       }
-    }, 200);
+    }, 32);
   }
 
   /** Update level-of-detail based on current viewport zoom. Returns true if scale changed. */
@@ -460,10 +531,34 @@ export class BoardRenderer {
     // Min border width: ensure borders are at least 1 screen pixel
     updateBorderWidths(scene.borderBatches, s.partBorderWidth, scale);
 
+    // Fade net-dim overlay when zoomed in past 150% of fit level
+    this.updateNetDimAlpha(scale);
+
     return true;
   }
 
-  /** Apply label visibility using font-size groups — O(groups) when nothing changes */
+  /** Compute relative zoom (1.0 = fit view) and fade the net-dim overlay. */
+  private updateNetDimAlpha(absScale: number) {
+    if (!this.board || !boardStore.showNetDim) return;
+    const b = this.board.bounds;
+    const bw = b.maxX - b.minX;
+    const bh = b.maxY - b.minY;
+    if (bw <= 0 || bh <= 0) return;
+    const vw = this.viewport.screenWidth;
+    const vh = this.viewport.screenHeight;
+    const fitScale = Math.min(vw / bw, vh / bh);
+    const relZoom = absScale / fitScale;
+    // Fade: 100% → full dim, 150% → zero dim
+    const dimAlpha = Math.max(0, Math.min(1, (1.5 - relZoom) / 0.5));
+    if (this.netDimGfx.alpha !== dimAlpha) {
+      this.netDimGfx.alpha = dimAlpha;
+      this.netLabelLayer.alpha = dimAlpha;
+      this.needsRender = true;
+    }
+  }
+
+  /** Apply label visibility using font-size groups — O(groups) when nothing changes.
+   *  Also keeps labelCounts cache in sync so flushPerfOverlay() never iterates labels. */
   private applyLabelVisibility() {
     const scene = this.activeScene;
     if (!scene) return;
@@ -472,13 +567,26 @@ export class BoardRenderer {
     const minPx = s.labelMinScreenPx;
     const zoomOk = s.labelZoomHide <= 0 || scale >= s.labelZoomHide;
 
+    let changed = false;
     for (const group of scene.fontSizeGroups) {
       const shouldBeVisible = zoomOk && group.minSize * scale >= minPx;
       if (shouldBeVisible !== group.visible) {
         group.visible = shouldBeVisible;
         for (const lbl of group.labels) lbl.visible = shouldBeVisible;
+        changed = true;
       }
     }
+    if (changed) this.rebuildLabelCounts(scene);
+  }
+
+  /** Rebuild cached label counts from scratch — called once after scene switch or visibility change */
+  private rebuildLabelCounts(scene: BoardScene) {
+    let partVis = 0, partTotal = 0, pinVis = 0, pinTotal = 0;
+    for (const lbl of scene.topLabels)    { partTotal++; if (lbl.visible) partVis++; }
+    for (const lbl of scene.bottomLabels) { partTotal++; if (lbl.visible) partVis++; }
+    for (const lbl of scene.topPinLabels)    { pinTotal++; if (lbl.visible) pinVis++; }
+    for (const lbl of scene.bottomPinLabels) { pinTotal++; if (lbl.visible) pinVis++; }
+    this.labelCounts = { partVis, partTotal, pinVis, pinTotal };
   }
 
   // --- Orientation ---
@@ -488,8 +596,8 @@ export class BoardRenderer {
    * Always flip Y to convert, matching OpenBoardView's CoordToScreen (ty = -1 * ...).
    * User can toggle Mirror Y for manual override.
    */
-  private needsYFlip(_board: BoardData): boolean {
-    return true;
+  private needsYFlip(board: BoardData): boolean {
+    return getFormat(board.format)?.flipY ?? false;
   }
 
   // --- Flip management ---
@@ -524,8 +632,9 @@ export class BoardRenderer {
       const visualW = bw * cosR + bh * sinR;
       const visualH = bw * sinR + bh * cosR;
 
-      // Separate along the shorter visual axis (side-by-side when vertical)
-      const separateX = visualH > visualW;
+      // Separate along the shorter visual axis (side-by-side when vertical);
+      // equal dimensions: default to side-by-side
+      const separateX = visualH >= visualW;
       const sepDim = separateX ? visualW : visualH;
       const gap = sepDim * 0.05;
       const halfSep = sepDim / 2 + gap / 2;
@@ -572,20 +681,29 @@ export class BoardRenderer {
       // Counter-flip labels + pin numbers for readability (handedness-aware)
       const topLabelRot = -rotation * sx * topSy;
       const botLabelRot = -rotation * botScaleX * botScaleY;
-      for (const arr of [scene.topLabels, scene.topPinLabels]) {
-        for (const label of arr) { label.rotation = topLabelRot; label.scale.set(sx, topSy); }
-      }
-      for (const arr of [scene.bottomLabels, scene.bottomPinLabels]) {
-        for (const label of arr) { label.rotation = botLabelRot; label.scale.set(botScaleX, botScaleY); }
+      const fp = this.lastFlipParams;
+      if (!fp || !fp.butterfly ||
+          fp.topRot !== topLabelRot || fp.topSx !== sx || fp.topSy !== topSy ||
+          fp.botRot !== botLabelRot || fp.botSx !== botScaleX || fp.botSy !== botScaleY) {
+        for (const arr of [scene.topLabels, scene.topPinLabels]) {
+          for (const label of arr) { label.rotation = topLabelRot; label.scale.set(sx, topSy); }
+        }
+        for (const arr of [scene.bottomLabels, scene.bottomPinLabels]) {
+          for (const label of arr) { label.rotation = botLabelRot; label.scale.set(botScaleX, botScaleY); }
+        }
+        this.lastFlipParams = { butterfly: true, topRot: topLabelRot, topSx: sx, topSy, botRot: botLabelRot, botSx: botScaleX, botSy: botScaleY };
       }
     } else {
       // Normal mode
       this.teardownButterfly(scene);
 
-      // When viewing bottom only, mirror X (like physically flipping the board over)
+      // When viewing bottom only, mirror X (like physically flipping the board
+      // over a vertical axis). Also invert Y to match the physical flip — this
+      // replicates OpenBoardView's FlipBoard(m_flipVertically=true) behaviour:
+      // negate dx (X mirror in CoordToScreen) + Rotate(2) → net effect is Y mirror.
       const bottomOnly = boardStore.showBottom && !boardStore.showTop;
       const flipX = bottomOnly !== mirrorX;
-      const flipY = autoFlipY !== mirrorY;
+      const flipY = (autoFlipY !== mirrorY) !== bottomOnly;
 
       scene.root.pivot.set(cx, cy);
       scene.root.position.set(cx, cy);
@@ -598,8 +716,13 @@ export class BoardRenderer {
       const lsx = flipX ? -1 : 1;
       const lsy = flipY ? -1 : 1;
       const labelRot = -rotation * lsx * lsy;
-      for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels]) {
-        for (const label of arr) { label.rotation = labelRot; label.scale.set(lsx, lsy); }
+      const fp2 = this.lastFlipParams;
+      if (!fp2 || fp2.butterfly ||
+          fp2.topRot !== labelRot || fp2.topSx !== lsx || fp2.topSy !== lsy) {
+        for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels]) {
+          for (const label of arr) { label.rotation = labelRot; label.scale.set(lsx, lsy); }
+        }
+        this.lastFlipParams = { butterfly: false, topRot: labelRot, topSx: lsx, topSy: lsy, botRot: 0, botSx: 1, botSy: 1 };
       }
     }
   }
@@ -648,6 +771,8 @@ export class BoardRenderer {
     // be the last child of scene.root so it renders above pins and borders.
     scene.butterflyRoot.removeChild(scene.bottomLayer);
     scene.root.addChild(scene.bottomLayer);
+    scene.root.addChild(this.netDimGfx);
+    scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
 
     // Detach butterfly selection gfx before destroying
@@ -798,18 +923,22 @@ export class BoardRenderer {
 
     if (this.activeScene === scene) {
       // Same scene — just update layer visibility + flips
+      dbg(1, 'activateScene: same scene, updating flips');
       scene.topLayer.visible = this.isTopVisible;
       scene.bottomLayer.visible = this.isBottomVisible;
       this.applyFlips(board, scene);
       this.needsRender = true;
       return;
     }
+    dbg(1, 'activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
 
     // Save current viewport state before switching
     this.saveViewportState();
 
-    // Detach old scene (selectionGfx + elevated labels live inside root)
+    // Detach old scene (netDimGfx + selectionGfx + elevated labels live inside root)
     if (this.activeScene) {
+      this.activeScene.root.removeChild(this.netDimGfx);
+      this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
@@ -823,13 +952,20 @@ export class BoardRenderer {
 
     // Attach new scene + selection overlay (inside root so flips apply to selection too)
     this.viewport.addChild(scene.root);
+    scene.root.addChild(this.netDimGfx);
+    scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
     // Elevated labels render on top of selection highlight
-    scene.root.addChild(this.elevatedPartBg!);
-    scene.root.addChild(this.elevatedPartLabel!);
     scene.root.addChild(this.elevatedPinBg!);
     scene.root.addChild(this.elevatedPinLabel!);
+    scene.root.addChild(this.elevatedPartBg!);
+    scene.root.addChild(this.elevatedPartLabel!);
     this.activeScene = scene;
+    this.lastFlipParams = null; // force full label transform on first applyFlips for this scene
+    // Ensure label layers are visible (may have been hidden by zoom on a different tab)
+    scene.topPinLabelsLayer.visible = !this.textHiddenForZoom;
+    scene.bottomPinLabelsLayer.visible = !this.textHiddenForZoom;
+    this.rebuildLabelCounts(scene);
 
     // Keep net lines on top of all scene content
     this.viewport.removeChild(this.netLinesGfx);
@@ -853,6 +989,8 @@ export class BoardRenderer {
     this.saveViewportState();
     if (this.activeScene) {
       this.teardownButterfly(this.activeScene);
+      this.activeScene.root.removeChild(this.netDimGfx);
+      this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
@@ -861,12 +999,16 @@ export class BoardRenderer {
       this.viewport.removeChild(this.activeScene.root);
       this.activeScene = null;
     }
+    this.netDimGfx.clear();
+    this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
   }
 
   private invalidateAllScenes() {
     // Detach selectionGfx from active scene before destroying
     if (this.activeScene) {
+      this.activeScene.root.removeChild(this.netDimGfx);
+      this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.viewport.removeChild(this.activeScene.root);
       if (this.activeScene.butterflyRoot) {
@@ -893,13 +1035,25 @@ export class BoardRenderer {
   // --- Event handlers ---
 
   private onBoardUpdate() {
-    if (!this.viewport) return;
+    if (!this.viewport) {
+      dbg(1, 'onBoardUpdate SKIP: no viewport', 'tab=' + this.tabId);
+      return;
+    }
     // Only react when this renderer's tab is active (skip notifications for other tabs)
-    if (this.tabId !== null && boardStore.activeTabId !== this.tabId) return;
-    dbg(2, 'onBoardUpdate');
+    if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
+      dbg(2, 'onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
+      return;
+    }
+    dbg(1, 'onBoardUpdate', 'tab=' + this.tabId,
+      'board=' + (boardStore.board ? boardStore.board.format + '/' + boardStore.board.parts.length : 'null'),
+      'prev=' + (this.board ? this.board.format + '/' + this.board.parts.length : 'null'),
+      'same=' + (boardStore.board === this.board),
+      'scene=' + (this.activeScene ? 'yes' : 'null'),
+      'tickerStarted=' + this.app.ticker.started);
     try {
       const board = boardStore.board;
       if (board !== this.board) {
+        dbg(1, 'onBoardUpdate: board changed', board ? 'activating' : 'deactivating');
         if (board) {
           this.activateScene(board);
         } else {
@@ -915,13 +1069,12 @@ export class BoardRenderer {
 
       this.renderSelection();
 
-      // Handle focus requests (zoom to part + blink selection)
+      // Handle focus requests (animated zoom to part + blink selection)
       const focus = boardStore.consumeFocusRequest();
       if (focus) {
         const focusPart = this.board?.parts[focus.partIndex];
         const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
-        const pinCount = focusPart?.pins.length ?? 0;
-        this.zoomToBounds(focus.bounds, focusRoot, pinCount > 2 ? 0.6 : 0.05);
+        this.zoomToBounds(focus.bounds, focusRoot, 0.25);
         this.startSelectionBlink();
       }
     } catch (err) {
@@ -929,21 +1082,53 @@ export class BoardRenderer {
     }
   }
 
-  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container, viewFraction = 0.05) {
+  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container, viewFraction = 0.25) {
     const bw = bounds.maxX - bounds.minX;
     const bh = bounds.maxY - bounds.minY;
     const sw = this.containerEl.clientWidth;
     const sh = this.containerEl.clientHeight;
+    if (sw === 0 || sh === 0) return;
+
+    // Target scale magnitude — part should fill ~viewFraction of the smaller screen dimension
     const maxDim = Math.max(bw, bh, 1);
-    const scale = (Math.min(sw, sh) * viewFraction) / maxDim;
-    this.viewport.scale.set(scale, scale);
+    const targetMag = (Math.min(sw, sh) * viewFraction) / maxDim;
+
+    // Preserve sign of current scale (negative = flipped)
+    const signX = this.viewport.scale.x < 0 ? -1 : 1;
+    const signY = this.viewport.scale.y < 0 ? -1 : 1;
+    const toScaleX = signX * targetMag;
+    const toScaleY = signY * targetMag;
 
     // Convert scene-local center to world coords for viewport
     const center = this.sceneToWorld({
       x: (bounds.minX + bounds.maxX) / 2,
       y: (bounds.minY + bounds.maxY) / 2,
     }, root);
-    this.viewport.moveCenter(center.x, center.y);
+
+    // Target viewport position: moveCenter(cx, cy) does position = -cx*scale + screen/2
+    const toPosX = -center.x * toScaleX + sw / 2;
+    const toPosY = -center.y * toScaleY + sh / 2;
+
+    this.zoomAnim = {
+      fromX: this.viewport.position.x,
+      fromY: this.viewport.position.y,
+      fromScaleX: this.viewport.scale.x,
+      fromScaleY: this.viewport.scale.y,
+      toX: toPosX,
+      toY: toPosY,
+      toScaleX,
+      toScaleY,
+      elapsed: 0,
+      duration: 400,
+    };
+
+    // Ensure ticker is running for the animation
+    if (!this.app.ticker.started) this.app.ticker.start();
+  }
+
+  /** Ease-out cubic: fast start, smooth deceleration */
+  private easeOutCubic(t: number): number {
+    return 1 - Math.pow(1 - t, 3);
   }
 
   private onSettingsUpdate() {
@@ -990,6 +1175,8 @@ export class BoardRenderer {
         this.selectionBlinkTimer = null;
         this.renderSelection();
       }
+      // Flush to GPU even if ticker is paused (e.g. panel inactive during search focus)
+      if (!this.app.ticker.started) this.app.render();
     };
 
     this.selectionBlinkTimer = setTimeout(() => tick(2), blinkInterval);
@@ -1009,6 +1196,8 @@ export class BoardRenderer {
       this.selectionBlinkTimer = null;
     }
     this.selectionBlinkPhase = 0;
+    this.netDimGfx.clear();
+    this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
     if (!this.board) return;
@@ -1020,6 +1209,41 @@ export class BoardRenderer {
     // Pick the right Graphics target for a part (butterfly bottom → butterflySelectionGfx)
     const gfxFor = (part: { side: string }) =>
       butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
+
+    // ── Highlight all search results ──
+    const searchIndices = boardStore.searchResultIndices;
+    if (searchIndices.size > 0) {
+      const topSearchOutlines: (() => void)[] = [];
+      const botSearchOutlines: (() => void)[] = [];
+      for (const idx of searchIndices) {
+        if (idx === sel.partIndex) continue; // selected part drawn separately
+        const part = this.board.parts[idx];
+        if (!part) continue;
+        if (part.side === 'top' && !this.isTopVisible) continue;
+        if (part.side === 'bottom' && !this.isBottomVisible) continue;
+        const gfx = gfxFor(part);
+        const outlines = gfx === this.butterflySelectionGfx ? botSearchOutlines : topSearchOutlines;
+        if (part.pins.length === 1) {
+          const pin = part.pins[0];
+          const r = computePinRadius(s, pin.radius) + s.selectionPadding;
+          outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+        } else {
+          const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+          const sp = s.selectionPadding;
+          outlines.push(() => gfx.rect(eb.px - sp, eb.py - sp, eb.pw + sp * 2, eb.ph + sp * 2));
+        }
+      }
+      for (const fn of topSearchOutlines) fn();
+      if (topSearchOutlines.length > 0) {
+        this.selectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha * 0.5 });
+        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: 0x44aaff, alpha: 0.5 });
+      }
+      for (const fn of botSearchOutlines) fn();
+      if (botSearchOutlines.length > 0) {
+        this.butterflySelectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha * 0.5 });
+        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: 0x44aaff, alpha: 0.5 });
+      }
+    }
 
     if (sel.partIndex !== null) {
       const part = this.board.parts[sel.partIndex];
@@ -1045,9 +1269,89 @@ export class BoardRenderer {
     if (sel.highlightedNet) {
       const net = this.board.nets.get(sel.highlightedNet);
       if (net) {
-        // Collect net highlights per gfx target so we can batch fill
-        const topHits: (() => void)[] = [];
-        const botHits: (() => void)[] = [];
+        // ── Dim the entire board (if enabled) ────────────────────────────────
+        if (boardStore.showNetDim) {
+          const b = this.board.bounds;
+          const bw = b.maxX - b.minX;
+          const bh = b.maxY - b.minY;
+          // Use a massive rect (10× board size) to cover butterfly mode, zoom, and pan
+          const pad = Math.max(bw, bh) * 5;
+          const cx = (b.minX + b.maxX) / 2;
+          const cy = (b.minY + b.maxY) / 2;
+          this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
+          this.netDimGfx.fill({ color: 0x000000, alpha: 0.5 });
+        }
+
+        const showDim = boardStore.showNetDim;
+
+        // ── Highlight parts containing net pins (selection-style outlines) ──
+        const seenParts = new Set<number>();
+        const topPartOutlines: (() => void)[] = [];
+        const botPartOutlines: (() => void)[] = [];
+
+        for (const ref of net.pinIndices) {
+          if (seenParts.has(ref.partIndex)) continue;
+          seenParts.add(ref.partIndex);
+          const part = this.board.parts[ref.partIndex];
+          if (!part) continue;
+          if (part.side === 'top' && !this.isTopVisible) continue;
+          if (part.side === 'bottom' && !this.isBottomVisible) continue;
+
+          const gfx = gfxFor(part);
+          const outlines = gfx === this.butterflySelectionGfx ? botPartOutlines : topPartOutlines;
+
+          if (part.pins.length === 1) {
+            const pin = part.pins[0];
+            const r = computePinRadius(s, pin.radius) + s.selectionPadding;
+            outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+          } else {
+            const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+            const sp = s.selectionPadding;
+            outlines.push(() => gfx.rect(eb.px - sp, eb.py - sp, eb.pw + sp * 2, eb.ph + sp * 2));
+          }
+        }
+
+        for (const fn of topPartOutlines) fn();
+        if (topPartOutlines.length > 0) {
+          this.selectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+          this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
+        }
+        for (const fn of botPartOutlines) fn();
+        if (botPartOutlines.length > 0) {
+          this.butterflySelectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+          this.butterflySelectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
+        }
+
+        // ── Re-draw affected part name labels above the dim overlay ─────────
+        if (showDim && this.activeScene) {
+          const affectedPartNames = new Set<string>();
+          for (const pi of seenParts) {
+            const p = this.board.parts[pi];
+            if (p) affectedPartNames.add(p.name);
+          }
+          for (const srcLabel of this.activeScene.labels) {
+            if (!srcLabel.visible || !affectedPartNames.has(srcLabel.text)) continue;
+            const clone = new BitmapText({
+              text: srcLabel.text,
+              style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
+            });
+            clone.anchor.set(0.5, 0.5);
+            clone.x = srcLabel.x;
+            clone.y = srcLabel.y;
+            clone.rotation = srcLabel.rotation;
+            clone.scale.copyFrom(srcLabel.scale);
+            this.netLabelLayer.addChild(clone);
+          }
+        }
+
+        // ── Re-draw highlighted pins on top of dim with full brightness ────
+        // Group per gfx target and per color for batched fills
+        const topByColor = new Map<number, (() => void)[]>();
+        const botByColor = new Map<number, (() => void)[]>();
+
+        // Also collect yellow highlight shapes (existing behavior)
+        const topHighlights: (() => void)[] = [];
+        const botHighlights: (() => void)[] = [];
 
         for (const ref of net.pinIndices) {
           const part = this.board.parts[ref.partIndex];
@@ -1058,7 +1362,12 @@ export class BoardRenderer {
           if (part.side === 'bottom' && !this.isBottomVisible) continue;
 
           const gfx = gfxFor(part);
-          const hits = gfx === this.butterflySelectionGfx ? botHits : topHits;
+          const isBotGfx = gfx === this.butterflySelectionGfx;
+          const highlights = isBotGfx ? botHighlights : topHighlights;
+
+          // Resolve the pin's actual color
+          const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
+          const pinColor = isPin1 ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
           if (part.pins.length === 2) {
             const grow = s.netHighlightGrow;
@@ -1081,19 +1390,46 @@ export class BoardRenderer {
               rw = eb.pw;
               rh = depth;
             }
-            hits.push(() => gfx.rect(rx - grow, ry - grow, rw + grow * 2, rh + grow * 2));
+            // Bright re-draw of the pin pad (only needed when dimming)
+            if (showDim) {
+              const colorMap = isBotGfx ? botByColor : topByColor;
+              let arr = colorMap.get(pinColor);
+              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
+              arr.push(() => gfx.rect(rx, ry, rw, rh));
+            }
+            // Yellow highlight (slightly larger)
+            highlights.push(() => gfx.rect(rx - grow, ry - grow, rw + grow * 2, rh + grow * 2));
           } else {
-            const r = computePinRadius(s, pin.radius) + s.netHighlightGrow;
-            hits.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+            const r = computePinRadius(s, pin.radius);
+            // Bright re-draw of the pin circle (only needed when dimming)
+            if (showDim) {
+              const colorMap = isBotGfx ? botByColor : topByColor;
+              let arr = colorMap.get(pinColor);
+              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
+              arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+            }
+            // Yellow highlight (slightly larger)
+            highlights.push(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
           }
         }
 
-        for (const fn of topHits) fn();
-        if (topHits.length > 0) {
+        // Draw bright pins per color (full alpha, above the dim overlay)
+        for (const [color, fns] of topByColor) {
+          for (const fn of fns) fn();
+          this.selectionGfx.fill({ color, alpha: 1.0 });
+        }
+        for (const [color, fns] of botByColor) {
+          for (const fn of fns) fn();
+          this.butterflySelectionGfx.fill({ color, alpha: 1.0 });
+        }
+
+        // Yellow highlight glow on top
+        for (const fn of topHighlights) fn();
+        if (topHighlights.length > 0) {
           this.selectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
         }
-        for (const fn of botHits) fn();
-        if (botHits.length > 0) {
+        for (const fn of botHighlights) fn();
+        if (botHighlights.length > 0) {
           this.butterflySelectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
         }
       }
@@ -1180,9 +1516,10 @@ export class BoardRenderer {
     if (s.showElevatedPinLabel && sel.pinIndex !== null && sel.pinIndex >= 0) {
       const pin = part.pins[sel.pinIndex];
       if (pin) {
+        const pinId = pinDisplayId(pin, sel.pinIndex);
         const pinText = pin.net && pin.net !== '(null)' && pin.net !== ''
-          ? `${pin.number || sel.pinIndex + 1}: ${pin.net}`
-          : (pin.number || String(sel.pinIndex + 1));
+          ? `${pinId}: ${pin.net}`
+          : pinId;
         pinLbl.style.fontSize = fontSize;
         pinLbl.text = pinText;
         const cx = pin.position.x;
@@ -1270,26 +1607,42 @@ export class BoardRenderer {
       ? this.sceneToWorld(selectedPin.position, selectedRoot)
       : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
 
-    // Collect visible target parts
-    const seenParts = new Set<number>();
-    let targetCount = 0;
+    // Group net pin indices by target part
+    const partNetPins = new Map<number, number[]>();
     for (const ref of net.pinIndices) {
       if (ref.partIndex === sel.partIndex) continue;
-      if (seenParts.has(ref.partIndex)) continue;
-      seenParts.add(ref.partIndex);
-      const part = this.board.parts[ref.partIndex];
+      let arr = partNetPins.get(ref.partIndex);
+      if (!arr) { arr = []; partNetPins.set(ref.partIndex, arr); }
+      arr.push(ref.pinIndex);
+    }
+
+    // Collect visible target parts — anchor line to closest net pin
+    let targetCount = 0;
+    for (const [partIndex, pinIndices] of partNetPins) {
+      const part = this.board.parts[partIndex];
       if (!part) continue;
       if (part.side === 'top' && !this.isTopVisible) continue;
       if (part.side === 'bottom' && !this.isBottomVisible) continue;
 
       const root = this.rootForPart(part);
-      const eb = computeEffectiveBounds(part.bounds, part.pins, s);
-      const tgtCenter: Point = { x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2 };
-      const tgtCenterW = this.sceneToWorld(tgtCenter, root);
 
-      const start = this.clipToRectEdge(selCenterW, tgtCenterW, selEB, selectedRoot);
-      const end = this.clipToRectEdge(tgtCenterW, selCenterW, eb, root);
-      this.netLineSegments.push({ start, end });
+      // Find the net pin closest to the selection origin
+      let bestPin: Point | null = null;
+      let bestDist = Infinity;
+      for (const pi of pinIndices) {
+        const pin = part.pins[pi];
+        if (!pin) continue;
+        const pw = this.sceneToWorld(pin.position, root);
+        const dx = pw.x - selCenterW.x;
+        const dy = pw.y - selCenterW.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; bestPin = pw; }
+      }
+
+      if (bestPin) {
+        const start = this.clipToRectEdge(selCenterW, bestPin, selEB, selectedRoot);
+        this.netLineSegments.push({ start, end: bestPin });
+      }
       targetCount++;
     }
 
@@ -1591,7 +1944,10 @@ export class BoardRenderer {
     if (hit) {
       const part = this.board.parts[hit.partIndex];
       if (part) {
-        contextMenuStore.show(e.clientX, e.clientY, part.name);
+        const pin = hit.pinIndex >= 0 ? part.pins[hit.pinIndex] : null;
+        const pinId = pin ? pinDisplayId(pin, hit.pinIndex) : null;
+        const netName = pin?.net || null;
+        contextMenuStore.show(e.clientX, e.clientY, part.name, pinId, netName);
       }
     }
   }
@@ -1638,15 +1994,38 @@ export class BoardRenderer {
     if (this.boundContextMenu) {
       this.containerEl.removeEventListener('contextmenu', this.boundContextMenu);
     }
+    if (this.boundGestureStart) {
+      this.containerEl.removeEventListener('gesturestart', this.boundGestureStart);
+      this.boundGestureStart = null;
+    }
+    if (this.boundGestureChange) {
+      this.containerEl.removeEventListener('gesturechange', this.boundGestureChange);
+      this.boundGestureChange = null;
+    }
+    if (this.perfToggleBtn && this.perfToggleBtnHandler) {
+      this.perfToggleBtn.removeEventListener('click', this.perfToggleBtnHandler);
+      this.perfToggleBtnHandler = null;
+    }
     if (this.hudEl) {
       this.hudEl.remove();
       this.hudEl = null;
     }
+    this.selectionOverlayEl?.parentElement?.removeChild(this.selectionOverlayEl);
+    this.selectionOverlayEl = null;
+    this.perfOverlayEl?.parentElement?.removeChild(this.perfOverlayEl);
+    this.perfOverlayEl = null;
+    this.perfToggleBtn?.parentElement?.removeChild(this.perfToggleBtn);
+    this.perfToggleBtn = null;
     if (this.initialized) {
       this.invalidateAllScenes();
+      this.netDimGfx?.clear();
+      this.netLabelLayer?.removeChildren();
       this.selectionGfx?.clear();
       this.netLinesGfx?.clear();
-      cleanupShadowFonts();
+      // NOTE: do NOT call cleanupShadowFonts() here — installedShadowFonts and the
+      // PixiJS BitmapFont registry are module-level globals shared across all renderer
+      // instances. Destroying one tab's renderer must not evict fonts still in use by
+      // other tabs. Fonts are freed automatically on page unload.
       this.app.destroy(true, { children: true });
     }
   }

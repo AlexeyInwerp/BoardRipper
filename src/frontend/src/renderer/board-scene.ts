@@ -13,10 +13,12 @@
  */
 import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
 import type { BoardData } from '../parsers';
+import { pinDisplayId } from '../parsers/types';
 import {
   getLabelFontSize,
   computePinRadius,
   computeEffectiveBounds,
+  computeDiagonalOBB,
   resolvePinColor,
   quantizeFontSize,
 } from '../store/render-settings';
@@ -47,6 +49,8 @@ function computeGridSize(pinCount: number): number {
 /** Border rectangle data for batched redraw */
 export interface BorderRect {
   x: number; y: number; w: number; h: number;
+  /** If set, draw this polygon instead of the axis-aligned rect (for diagonal parts) */
+  poly?: [number, number][];
 }
 
 /** Batched border Graphics per layer — rebuilt on zoom, 2 draw calls instead of 3K */
@@ -87,6 +91,10 @@ export interface BoardSceneGraph {
    *  Exposed for future incremental updates (e.g. re-coloring a net without full rebuild). */
   topPinGfx:    Map<number, Graphics>;
   bottomPinGfx: Map<number, Graphics>;
+  /** Flat containers holding only pin number + net name labels.
+   *  Toggling .visible hides/shows them in O(1) during zoom. Part name labels stay in partContainers. */
+  topPinLabelsLayer:    Container;
+  bottomPinLabelsLayer: Container;
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
@@ -188,7 +196,13 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
     batch.lastWidth = effectiveWidth;
     batch.gfx.clear();
     for (const r of batch.rects) {
-      batch.gfx.rect(r.x, r.y, r.w, r.h);
+      if (r.poly) {
+        batch.gfx.moveTo(r.poly[0][0], r.poly[0][1]);
+        for (let i = 1; i < r.poly.length; i++) batch.gfx.lineTo(r.poly[i][0], r.poly[i][1]);
+        batch.gfx.closePath();
+      } else {
+        batch.gfx.rect(r.x, r.y, r.w, r.h);
+      }
     }
     batch.gfx.stroke({ width: effectiveWidth, color: batch.color, alpha: batch.alpha });
   }
@@ -208,6 +222,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const bottomLabels: BitmapText[] = [];
   const topPinLabels: BitmapText[] = [];
   const bottomPinLabels: BitmapText[] = [];
+  // Flat containers for pin number + net name labels only.
+  // Toggling .visible hides them in O(1) during zoom; part name labels stay in partContainers.
+  const topPinLabelsLayer    = new Container();
+  const bottomPinLabelsLayer = new Container();
   // Batched border Graphics — one per (layer, color), rebuilt on zoom
   const topBorderBatch: BorderBatch    = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsTop,    alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
   const bottomBorderBatch: BorderBatch = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsBottom, alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
@@ -291,10 +309,14 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const isBottom     = part.side === 'bottom';
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
 
-    // cullable is set above but we intentionally skip cullArea here:
-    // pin/net labels often extend beyond part bounds, so PixiJS must use
-    // actual child bounds for culling. The cost is acceptable because
-    // Container.getBounds() is cached until children change.
+    // Explicit cullArea avoids PixiJS calling getBounds() on every child each frame.
+    // Pad generously (2× pinMaxRadius) so net-name labels that extend beyond part
+    // bounds are never accidentally clipped.
+    const cullPad = s.pinMaxRadius * 2;
+    partContainer.cullArea = new Rectangle(
+      eb.px - cullPad, eb.py - cullPad,
+      eb.pw + cullPad * 2, eb.ph + cullPad * 2,
+    );
 
     // ── Pins ─────────────────────────────────────────────────────────────────
     // Shapes are drawn directly into the board-wide global pin Graphics (by color).
@@ -303,24 +325,24 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     // Track pad rectangles for 2-pin net labels (indexed by pin index)
     const padRects: { rx: number; ry: number; rw: number; rh: number }[] = [];
 
+    // Pre-compute pad depth for 2-pin parts (used in pin loop and border drawing)
+    const padDepth = isTwoPinPart
+      ? (eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4))
+      : 0;
+
     for (let pni = 0; pni < part.pins.length; pni++) {
       const pin    = part.pins[pni];
       const isPin1 = pni === 0 && isMultiPin;
       const color = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
       if (isTwoPinPart) {
-        const other = part.pins[1 - pni];
         let padRx: number, padRy: number, padRw: number, padRh: number;
         if (eb.horiz) {
-          const depth = Math.min(eb.ph, eb.pw * 0.4);
-          const left  = pin.position.x < other.position.x;
-          padRx = left ? eb.px : eb.px + eb.pw - depth;
-          padRy = eb.py; padRw = depth; padRh = eb.ph;
+          padRx = pin.position.x - padDepth / 2;
+          padRy = eb.py; padRw = padDepth; padRh = eb.ph;
         } else {
-          const depth = Math.min(eb.pw, eb.ph * 0.4);
-          const top   = pin.position.y < other.position.y;
-          padRx = eb.px; padRy = top ? eb.py : eb.py + eb.ph - depth;
-          padRw = eb.pw; padRh = depth;
+          padRx = eb.px; padRy = pin.position.y - padDepth / 2;
+          padRw = eb.pw; padRh = padDepth;
         }
         const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
         pinGfx.rect(padRx, padRy, padRw, padRh);
@@ -334,7 +356,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // ── Pin number label (multi-pin only, not 1-pin or 2-pin) ─────────
       if (isMultiPin && s.showPinNumbers) {
         const r = computePinRadius(s, pin.radius);
-        const numStr = pin.number || String(pni + 1);
+        const numStr = pinDisplayId(pin, pni);
         const diameter = r * 2;
         let pinFontSize = (diameter * 0.7) / (Math.max(numStr.length, 3) * 0.6);
         pinFontSize = Math.min(pinFontSize, diameter * 0.8);
@@ -431,19 +453,37 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     // ── Part border (accumulated into batched border Graphics) ──────────────
     if (part.pins.length > 1) {
-      (isBottom ? bottomBorderBatch : topBorderBatch).rects.push({ x: eb.px, y: eb.py, w: eb.pw, h: eb.ph });
+      let borderRect: BorderRect;
+      if (isTwoPinPart) {
+        // Expand border to encompass pads centered on pin vertices
+        const bx = eb.horiz ? eb.px - padDepth / 2 : eb.px;
+        const by = eb.horiz ? eb.py : eb.py - padDepth / 2;
+        const bw = eb.horiz ? eb.pw + padDepth : eb.pw;
+        const bh = eb.horiz ? eb.ph : eb.ph + padDepth;
+        borderRect = { x: bx, y: by, w: bw, h: bh };
+      } else {
+        const obb = computeDiagonalOBB(part.pins, s);
+        borderRect = obb
+          ? { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, poly: obb }
+          : { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };
+      }
+      (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
     }
 
     // ── Label (last = always on top within the part) ────────────────────────
     if (s.showPartLabels) {
       let fontSize: number;
       if (isTwoPinPart) {
-        fontSize = getLabelFontSize(s);
+        // Scale to center-body area (between the two pads) for large parts;
+        // floor at settings font size so tiny parts always have a readable label.
+        const centerW = eb.horiz ? eb.pw - 2 * padDepth : eb.pw;
+        const centerH = eb.horiz ? eb.ph : eb.ph - 2 * padDepth;
+        const fromCenter = Math.min(centerW * 0.85 / (part.name.length * 0.6), centerH * 0.85);
+        fontSize = Math.max(getLabelFontSize(s), fromCenter);
       } else {
-        const bh      = eb.maxY - eb.minY;
         const targetW = eb.pw * 0.7;
         fontSize = targetW / (part.name.length * 0.6);
-        fontSize = Math.max(2, Math.min(fontSize, bh * 0.8));
+        fontSize = Math.max(getLabelFontSize(s), Math.min(fontSize, eb.ph * 0.8));
       }
       fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
@@ -458,13 +498,14 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         label.y = eb.py + eb.ph / 2;
         partContainer.addChild(label);
         labels.push(label);
-        (part.side === 'bottom' ? bottomLabels : topLabels).push(label);
+        (isBottom ? bottomLabels : topLabels).push(label);
       }
     }
 
-    // ── Deferred text (pin numbers + net names) — added last for z-order ──
+    // ── Deferred text (pin numbers + net names) — flat layer for O(1) zoom-hide ──
+    const pinLayer = isBottom ? bottomPinLabelsLayer : topPinLabelsLayer;
     for (const txt of deferredTexts) {
-      partContainer.addChild(txt);
+      pinLayer.addChild(txt);
     }
 
     partQueue.push({ container: partContainer, isBottom });
@@ -510,10 +551,14 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     borderBatches.push(batch);
   }
 
-  // Add part containers (labels) above pins, triangles, and borders
+  // Add part containers above pins, triangles, and borders
   for (const { container, isBottom } of partQueue) {
     (isBottom ? bottomLayer : topLayer).addChild(container);
   }
+
+  // Pin label layers sit on top — toggling visible hides pin/net labels in O(1) during zoom
+  topLayer.addChild(topPinLabelsLayer);
+  bottomLayer.addChild(bottomPinLabelsLayer);
 
   // Build font-size groups: bucket all labels by floor(log2(fontSize)).
   // This gives ~5-6 groups, enabling O(groups) visibility checks instead of O(labels).
@@ -535,5 +580,21 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Sort ascending so we can early-exit: once a group is visible, all larger groups are too
   fontSizeGroups.sort((a, b) => a.minSize - b.minSize);
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx };
+  // ── Debug: pad vertex crosshairs ─────────────────────────────────────────
+  const padVertexGfx = new Graphics();
+  if (s.showPadVertices) {
+    const ARM = 6; // crosshair arm length in mils
+    padVertexGfx.setStrokeStyle({ width: 1.5, color: 0xff00ff });
+    for (const part of board.parts) {
+      for (const pin of part.pins) {
+        const { x, y } = pin.position;
+        padVertexGfx.moveTo(x - ARM, y).lineTo(x + ARM, y);
+        padVertexGfx.moveTo(x, y - ARM).lineTo(x, y + ARM);
+      }
+    }
+    padVertexGfx.stroke();
+  }
+  root.addChild(padVertexGfx);
+
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topPinLabelsLayer, bottomPinLabelsLayer };
 }

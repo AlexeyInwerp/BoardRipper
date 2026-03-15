@@ -96,7 +96,11 @@ class PdfStore {
   get multiTermXGap(): number { return this._multiTermXGap; }
   get isMultiTerm(): boolean {
     const q = this._active?.searchQuery ?? '';
-    return q.split(/\s+/).filter(t => t.length > 0).length > 1;
+    return !q.includes('@') && q.split(/\s+/).filter(t => t.length > 0).length > 1;
+  }
+  /** True when query uses TERM1@TERM2 whole-page co-occurrence syntax */
+  get isAtSyntax(): boolean {
+    return (this._active?.searchQuery ?? '').includes('@');
   }
   get isLoaded(): boolean { return this._active?.doc != null; }
   get loading(): boolean { return this._loading; }
@@ -219,11 +223,15 @@ class PdfStore {
       return;
     }
 
-    const terms = query.split(/\s+/).filter(t => t.length > 0);
-    if (terms.length > 1) {
-      this._searchMultiTerm(active, terms);
+    if (query.includes('@')) {
+      this._searchAtSyntax(active, query.split('@').map(t => t.trim()).filter(t => t.length > 0));
     } else {
-      this._searchSingleTerm(active, query);
+      const terms = query.split(/\s+/).filter(t => t.length > 0);
+      if (terms.length > 1) {
+        this._searchMultiTerm(active, terms);
+      } else {
+        this._searchSingleTerm(active, query);
+      }
     }
 
     // Build per-page index
@@ -250,6 +258,39 @@ class PdfStore {
       d.activeMatchIndicesCache = new Set([d.activeMatchIndex]);
     } else {
       d.activeMatchIndicesCache = new Set();
+    }
+  }
+
+  /** TERM1@TERM2 syntax: whole-page co-occurrence, one group per page where all terms appear.
+   *  No proximity window — any position on the page counts. Zoom fits all terms in view. */
+  private _searchAtSyntax(d: PdfDocument, terms: string[]) {
+    if (terms.length === 0) return;
+    const termsLower = terms.map(t => t.toLowerCase());
+
+    for (let pi = 0; pi < d.textPages.length; pi++) {
+      const items = d.textPages[pi];
+      const pageMatches: PdfTextMatch[] = [];
+      let allFound = true;
+
+      for (const term of termsLower) {
+        let found = false;
+        for (let ii = 0; ii < items.length; ii++) {
+          const lower = items[ii].str.toLowerCase();
+          const pos = lower.indexOf(term);
+          if (pos !== -1) {
+            pageMatches.push({ pageIndex: pi, itemIndex: ii, charStart: pos, charEnd: pos + term.length, item: items[ii] });
+            found = true;
+            break; // first occurrence per term per page
+          }
+        }
+        if (!found) { allFound = false; break; }
+      }
+
+      if (allFound && pageMatches.length === terms.length) {
+        const groupIndices: number[] = [];
+        for (const m of pageMatches) { groupIndices.push(d.matches.length); d.matches.push(m); }
+        d.matchGroups.push(groupIndices);
+      }
     }
   }
 

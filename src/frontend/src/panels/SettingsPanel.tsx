@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef, useMemo } from 'react';
-import { renderSettingsStore } from '../store/render-settings';
+import { renderSettingsStore, DEFAULTS } from '../store/render-settings';
 import type { RenderSettings, LabelSize, NetColorRule } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
+import { getAllFormats } from '../parsers/registry';
 
-type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts';
+type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -49,7 +50,10 @@ interface SliderProps {
 }
 
 function Slider({ label, value, min, max, step, field, onUpdate }: SliderProps) {
+  const [dragging, setDragging] = useState(false);
+  const defaultValue = DEFAULTS[field] as number;
   const pct = ((value - min) / (max - min)) * 100;
+  const isModified = Math.abs(value - defaultValue) > step * 0.5;
   return (
     <div className="settings-row">
       <label className="settings-label">
@@ -61,9 +65,15 @@ function Slider({ label, value, min, max, step, field, onUpdate }: SliderProps) 
           type="range" className="settings-slider"
           min={min} max={max} step={step} value={value}
           onChange={(e) => onUpdate({ [field]: parseFloat(e.target.value) })}
+          onPointerDown={() => setDragging(true)}
+          onPointerUp={() => setDragging(false)}
+          onDoubleClick={() => onUpdate({ [field]: defaultValue })}
         />
         <div className="settings-slider-tooltip" style={{ left: `${pct}%` }}>
-          {Number(value.toFixed(2))}
+          {dragging
+            ? <span className="settings-slider-reset-hint">dbl-click to reset{isModified ? ` (${Number(defaultValue.toFixed(2))})` : ''}</span>
+            : Number(value.toFixed(2))
+          }
         </div>
       </div>
     </div>
@@ -199,11 +209,12 @@ export function SettingsPanel() {
   const interactionRef = useRef<HTMLDivElement>(null);
   const performanceRef = useRef<HTMLDivElement>(null);
   const shortcutsRef = useRef<HTMLDivElement>(null);
+  const formatsRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, netLines: netLinesRef, interaction: interactionRef,
-    performance: performanceRef, shortcuts: shortcutsRef,
+    performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -331,6 +342,7 @@ export function SettingsPanel() {
         <Slider label="Min Radius" value={draft.pinMinRadius} min={1} max={20} step={0.5} field="pinMinRadius" onUpdate={updateDraft} />
         <Slider label="Max Radius" value={draft.pinMaxRadius} min={5} max={100} step={1} field="pinMaxRadius" onUpdate={updateDraft} />
         <Slider label="Scale Factor" value={draft.pinScaleFactor} min={0} max={3} step={0.1} field="pinScaleFactor" onUpdate={updateDraft} />
+        <Slider label="Min Part Size (mils)" value={draft.partMinBodyMils} min={0} max={60} step={1} field="partMinBodyMils" onUpdate={updateDraft} />
         <Slider label="Opacity" value={draft.pinAlpha} min={0} max={1} step={0.05} field="pinAlpha" onUpdate={updateDraft} />
         <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft} />
       </CollapsibleSection>
@@ -370,6 +382,29 @@ export function SettingsPanel() {
       <CollapsibleSection id="performance" title="Performance" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft} />
+        <Toggle label="[Debug] Show Pad Vertices" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft} />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}
+        onToggle={toggleSection} sectionRef={formatsRef} isFocused={focusedSection === 'formats'}>
+        <table className="formats-table">
+          <thead>
+            <tr>
+              <th>Format</th>
+              <th>Extensions</th>
+              <th>Flip Y</th>
+            </tr>
+          </thead>
+          <tbody>
+            {getAllFormats().map(fmt => (
+              <tr key={fmt.id}>
+                <td title={fmt.description}>{fmt.name}</td>
+                <td>{fmt.extensions.join(', ')}</td>
+                <td>{fmt.flipY ? 'Yes' : 'No'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </CollapsibleSection>
 
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
