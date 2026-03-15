@@ -116,7 +116,7 @@ export function cleanupShadowFonts(): void {
 
 /** Install a BitmapFont for part labels with baked drop shadow at a specific quantized size */
 function ensureShadowFont(fontSize: number): string {
-  const name = `board-shadow-${fontSize}`;
+  const name = `board-shadow-${fontSize}-v2`;
   if (!installedShadowFonts.has(name)) {
     try {
       BitmapFont.install({
@@ -125,13 +125,16 @@ function ensureShadowFont(fontSize: number): string {
           fontFamily: LABEL_FONT_FAMILY,
           fontSize,
           fill: 0xffffff,
-          dropShadow: { color: 0x000000, alpha: 0.7, blur: fontSize * 0.6, distance: 0 },
+          // distance:0 keeps shadow centered (no offset). blur ~0.35× gives a tight
+          // dark halo without overflowing the atlas glyph tile.
+          dropShadow: { color: 0x000000, alpha: 0.85, blur: fontSize * 0.35, distance: 0 },
         },
         chars: PCB_CHARS,
         resolution: SHADOW_FONT_RESOLUTION,
       });
       installedShadowFonts.add(name);
-    } catch {
+    } catch (err) {
+      console.warn('[board-scene] BitmapFont shadow install failed:', err);
       return LABEL_FONT_FAMILY;
     }
   }
