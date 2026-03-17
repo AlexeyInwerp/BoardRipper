@@ -101,6 +101,8 @@ export class BoardRenderer {
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
   private tooltipEl: HTMLDivElement | null = null;
+  private tooltipNetSpan: HTMLSpanElement | null = null;
+  private tooltipDetailSpan: HTMLSpanElement | null = null;
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
   private boundHideTooltip: (() => void) | null = null;
@@ -315,6 +317,11 @@ export class BoardRenderer {
     // Hover tooltip — listens directly on the PixiJS canvas (the actual event target)
     this.tooltipEl = document.createElement('div');
     this.tooltipEl.className = 'pin-net-tooltip';
+    this.tooltipNetSpan = document.createElement('span');
+    this.tooltipNetSpan.className = 'pnt-net';
+    this.tooltipDetailSpan = document.createElement('span');
+    this.tooltipDetailSpan.className = 'pnt-detail';
+    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     this.boundHover = (e: PointerEvent) => this.handleHover(e);
@@ -2042,10 +2049,14 @@ export class BoardRenderer {
     if (!el) return;
 
     const hasNet = info.net && info.net !== '(null)';
-    el.innerHTML = [
-      hasNet ? `<span class="pnt-net">${info.net}</span>` : '',
-      `<span class="pnt-detail">${info.part} · pin ${info.pin}</span>`,
-    ].filter(Boolean).join('');
+    // Reuse pre-created spans — avoids DOM allocation + forced reflow on every mousemove
+    if (this.tooltipNetSpan) {
+      this.tooltipNetSpan.textContent = hasNet ? info.net : '';
+      this.tooltipNetSpan.style.display = hasNet ? '' : 'none';
+    }
+    if (this.tooltipDetailSpan) {
+      this.tooltipDetailSpan.textContent = `${info.part} · pin ${info.pin}`;
+    }
 
     el.style.display = 'block';
     el.style.left = '0';
@@ -2146,6 +2157,8 @@ export class BoardRenderer {
     this.boundHideTooltip = null;
     this.tooltipEl?.remove();
     this.tooltipEl = null;
+    this.tooltipNetSpan = null;
+    this.tooltipDetailSpan = null;
     if (this.boundGestureStart) {
       this.containerEl.removeEventListener('gesturestart', this.boundGestureStart);
       this.boundGestureStart = null;

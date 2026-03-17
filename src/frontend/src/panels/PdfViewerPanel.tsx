@@ -10,6 +10,7 @@ import { logStore } from '../store/log-store';
 
 const DRAG_THRESHOLD = 3;
 const LINE_HEIGHT_RATIO = 1.2;
+const NIGHT_MODE_KEY = 'boardviewer-pdf-nightmode';
 
 /** Compute a text item's bounding rect in canvas-space given the viewport transform and scale */
 function textItemRect(
@@ -100,7 +101,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const wasDragRef = useRef(false);
 
-  const [nightMode, setNightMode] = useState(false);
+  const [nightMode, setNightMode] = useState(() => {
+    try { return localStorage.getItem(NIGHT_MODE_KEY) === '1'; } catch { return false; }
+  });
   const [debugTextBoxes, setDebugTextBoxes] = useState(false);
 
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
@@ -813,7 +816,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </button>
         <button
           className={`pdf-toolbar-btn${nightMode ? ' active' : ''}`}
-          onClick={() => setNightMode(v => !v)}
+          onClick={() => setNightMode(v => {
+            const next = !v;
+            try { localStorage.setItem(NIGHT_MODE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+            return next;
+          })}
           title="Toggle night mode (invert colors)"
         >
           Night
