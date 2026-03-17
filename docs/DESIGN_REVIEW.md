@@ -1,4 +1,4 @@
-# Boardviewer — Design Review Suggestions
+# BoardRipper — Design Review Suggestions
 
 > Generated 2026-03-13. Not prioritised — items are observations and opportunities, not bugs.
 

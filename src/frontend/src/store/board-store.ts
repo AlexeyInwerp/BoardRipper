@@ -1,6 +1,6 @@
 import type { BoardData, Part, Pin } from '../parsers';
 import { boardCache } from './board-cache';
-import { parseBoardFile } from '../parsers';
+import { parseBoardFile, getFormat } from '../parsers';
 import { logStore } from './log-store';
 
 export type BoardStoreListener = () => void;
@@ -63,7 +63,7 @@ function findBestNameMatch(source: string, candidates: string[]): string | null 
 let nextTabId = 1;
 
 /* ── Persistent view preferences ── */
-const VIEW_PREFS_KEY = 'boardviewer-view-prefs';
+const VIEW_PREFS_KEY = 'boardripper-view-prefs';
 
 interface ViewPrefs {
   showNetLines: boolean;
@@ -99,6 +99,11 @@ class BoardStore {
   get tabs(): BoardTab[] { return this._tabs; }
   get activeTabId(): number | null { return this._activeTabId; }
   get pdfFiles(): Map<string, PdfEntry> { return this._pdfFiles; }
+
+  /** Look up a specific tab by id (for per-panel sidebar use). */
+  getTab(tabId: number): BoardTab | null {
+    return this._tabs.find(t => t.id === tabId) ?? null;
+  }
 
   private get activeTab(): BoardTab | null {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
@@ -302,6 +307,10 @@ class BoardStore {
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
+        if (getFormat(cached.format)?.swapSides) {
+          tab.showTop = false;
+          tab.showBottom = true;
+        }
         this.autoBindBoard(file.name);
         this.notify();
         return;
@@ -315,6 +324,10 @@ class BoardStore {
       logStore.log('log', `[board-store] Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
       tab.board = board;
       tab.rotation = this.autoRotation(board);
+      if (getFormat(board.format)?.swapSides) {
+        tab.showTop = false;
+        tab.showBottom = true;
+      }
 
       await boardCache.put(file.name, file.size, file.lastModified, board);
 
@@ -557,6 +570,17 @@ class BoardStore {
   get searchResultIndices(): Set<number> {
     this._recomputeSearch();
     return this._cachedSearchIndices;
+  }
+
+  /** Compute search results for a specific tab (used by per-panel sidebars). */
+  searchForTab(tabId: number): Part[] {
+    const tab = this.getTab(tabId);
+    if (!tab?.board || !tab.searchQuery) return [];
+    const ql = tab.searchQuery.toLowerCase();
+    return tab.board.parts.filter(p =>
+      p.name.toLowerCase().includes(ql) ||
+      p.pins.some(pin => pin.net.toLowerCase().includes(ql))
+    );
   }
 
   get focusRequest(): FocusRequest | null { return this._focusRequest; }

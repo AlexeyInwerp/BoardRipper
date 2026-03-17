@@ -1,6 +1,6 @@
 import type { BoardData, Net } from '../parsers';
 
-const DB_NAME = 'boardviewer-cache';
+const DB_NAME = 'boardripper-cache';
 const DB_VERSION = 20; // bumped: add pdf-text store
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';

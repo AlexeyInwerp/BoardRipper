@@ -11,7 +11,7 @@ export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loading, metadataTree, donorOnlyFilter,
-    searchResults, searchQuery, modelTree, backendAvailable,
+    autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
 
@@ -32,20 +32,22 @@ export function LibraryPanel() {
       if (file.file_type === 'board') {
         await boardStore.loadFiles([fileObj]);
 
-        // Fetch bindings and auto-load bound PDFs
-        const detail = await databankStore.fetchFileDetail(file.id);
-        if (detail?.bindings) {
-          for (const binding of detail.bindings) {
-            try {
-              const pdfFile = files.find(f => f.id === binding.pdf_file_id);
-              if (!pdfFile) continue;
-              const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
-              boardStore.addPdf(pdfObj);
-              boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
-              await pdfStore.loadFile(pdfObj);
-              ensurePdfPanel(pdfObj.name);
-            } catch (err) {
-              console.error('[Library] Failed to load bound PDF:', err);
+        // Fetch bindings and auto-load bound PDFs (if enabled)
+        if (autoPdf) {
+          const detail = await databankStore.fetchFileDetail(file.id);
+          if (detail?.bindings) {
+            for (const binding of detail.bindings) {
+              try {
+                const pdfFile = files.find(f => f.id === binding.pdf_file_id);
+                if (!pdfFile) continue;
+                const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
+                boardStore.addPdf(pdfObj);
+                boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
+                await pdfStore.loadFile(pdfObj);
+                ensurePdfPanel(pdfObj.name);
+              } catch (err) {
+                console.error('[Library] Failed to load bound PDF:', err);
+              }
             }
           }
         }
@@ -58,7 +60,7 @@ export function LibraryPanel() {
     } catch (err) {
       console.error('[Library] Failed to open file:', err);
     }
-  }, [files]);
+  }, [files, autoPdf]);
 
   const handleSelectFile = useCallback((file: DatabankFile) => {
     databankStore.selectFile(file.id);
@@ -110,6 +112,14 @@ export function LibraryPanel() {
           </button>
         </div>
         <div className="library-actions">
+          <label className="library-donor-filter">
+            <input
+              type="checkbox"
+              checked={autoPdf}
+              onChange={(e) => databankStore.setAutoPdf(e.target.checked)}
+            />
+            Auto PDF
+          </label>
           <label className="library-donor-filter">
             <input
               type="checkbox"

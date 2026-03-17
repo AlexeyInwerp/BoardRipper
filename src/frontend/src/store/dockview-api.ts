@@ -134,11 +134,14 @@ export function ensureUtilityPanel(id: string, component: string, title: string)
     if (existing) {
       existing.api.setActive();
     } else {
+      // Find the rightmost group to place the utility panel as a tab next to existing panels
+      const panels = api.panels;
+      const ref = panels.length > 0 ? panels[panels.length - 1] : undefined;
       api.addPanel({
         id,
         component,
         title,
-        floating: { width: 400, height: 500 },
+        position: ref ? { referencePanel: ref.id, direction: 'within' } : undefined,
       });
     }
   } catch (err) {

@@ -1,4 +1,4 @@
-module boardviewer
+module boardripper
 
 go 1.22
 

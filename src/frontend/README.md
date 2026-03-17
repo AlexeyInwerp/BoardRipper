@@ -1,4 +1,4 @@
-# Boardviewer — Frontend
+# BoardRipper — Frontend
 
 React + TypeScript + Vite SPA for viewing PCB boardview files.
 
@@ -37,4 +37,4 @@ Parsers are pure functions: `(text: string) => BoardData`. See `src/parsers/`.
 
 ## Caching
 
-Parsed `BoardData` is stored in IndexedDB (`boardviewer-cache`) keyed by `fileName:fileSize:lastModified` for fast re-open without re-parsing.
+Parsed `BoardData` is stored in IndexedDB (`boardripper-cache`) keyed by `fileName:fileSize:lastModified` for fast re-open without re-parsing.

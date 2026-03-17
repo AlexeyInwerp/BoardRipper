@@ -15,7 +15,7 @@ import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DebugPanel } from './panels/DebugPanel';
 import { LibraryPanel } from './panels/LibraryPanel';
-import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, boardPanelId } from './store/dockview-api';
+import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, ensureLibraryPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { pdfStore } from './store/pdf-store';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -150,7 +150,8 @@ function App() {
       }
     });
 
-    // Empty initial view — panels created on demand when files are opened
+    // Auto-open Library as the first (leftmost) panel on page load
+    ensureLibraryPanel();
   }, []);
 
   return (

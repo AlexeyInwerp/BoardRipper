@@ -1,4 +1,4 @@
-# Boardviewer — Architecture & Implementation Plan
+# BoardRipper — Architecture & Implementation Plan
 
 ## Stack Overview
 
@@ -264,7 +264,7 @@ src/
 │   │       ├── context-menu-store.ts   # Right-click context menu state
 │   │       └── dockview-api.ts         # Dockview API reference holder
 │   ├── tests/
-│   │   └── boardviewer.spec.ts         # Playwright E2E smoke tests
+│   │   └── boardripper.spec.ts         # Playwright E2E smoke tests
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── vite.config.ts
@@ -307,7 +307,7 @@ ENTRYPOINT ["/server"]
 ```yaml
 # docker-compose.yml
 services:
-  boardviewer:
+  boardripper:
     build: .
     ports:
       - "8080:8080"

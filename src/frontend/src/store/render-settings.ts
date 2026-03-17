@@ -435,7 +435,26 @@ export function resolvePinColor(settings: RenderSettings, netName: string, side:
 
 export type RenderSettingsListener = () => void;
 
-const STORAGE_KEY = 'boardviewer-render-settings';
+const STORAGE_KEY = 'boardripper-render-settings';
+const CUSTOM_DEFAULTS_KEY = 'boardripper-custom-defaults';
+
+function loadCustomDefaults(): RenderSettings | null {
+  try {
+    const raw = localStorage.getItem(CUSTOM_DEFAULTS_KEY);
+    if (raw) return JSON.parse(raw) as RenderSettings;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveCustomDefaults(s: RenderSettings) {
+  try {
+    localStorage.setItem(CUSTOM_DEFAULTS_KEY, JSON.stringify(s));
+  } catch { /* ignore quota errors */ }
+}
+
+function clearCustomDefaults() {
+  try { localStorage.removeItem(CUSTOM_DEFAULTS_KEY); } catch { /* ignore */ }
+}
 
 function loadFromStorage(): RenderSettings {
   try {
@@ -478,7 +497,19 @@ class RenderSettingsStore {
   }
 
   get defaults(): RenderSettings {
-    return structuredClone(DEFAULTS);
+    return structuredClone(loadCustomDefaults() ?? DEFAULTS);
+  }
+
+  get hasCustomDefaults(): boolean {
+    return loadCustomDefaults() !== null;
+  }
+
+  saveAsDefaults(s: RenderSettings) {
+    saveCustomDefaults(s);
+  }
+
+  clearCustomDefaults() {
+    clearCustomDefaults();
   }
 
   subscribe(listener: RenderSettingsListener): () => void {
@@ -509,6 +540,14 @@ class RenderSettingsStore {
   }
 
   reset() {
+    this._settings = structuredClone(loadCustomDefaults() ?? DEFAULTS);
+    saveToStorage(this._settings);
+    this.notify();
+  }
+
+  /** Reset to compile-time defaults, ignoring custom defaults */
+  resetToFactory() {
+    clearCustomDefaults();
     this._settings = structuredClone(DEFAULTS);
     saveToStorage(this._settings);
     this.notify();

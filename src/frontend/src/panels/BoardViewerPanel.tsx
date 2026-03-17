@@ -205,6 +205,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         requestedTab={sidebarTab}
         onTabApplied={() => setSidebarTab(null)}
         opacity={sidebarOpacity}
+        tabId={tabId!}
       />
     </div>
   );

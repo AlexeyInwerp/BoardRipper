@@ -101,6 +101,7 @@ class DatabankStore {
   private _searchResults: SearchResult[] = [];
   private _searchQuery = '';
   private _donorOnlyFilter = false;
+  private _autoPdf = (() => { try { return localStorage.getItem('boardripper-library-autopdf') !== '0'; } catch { return true; } })();
   private _viewMode: ViewMode = 'model';
   private _selectedFileId: number | null = null;
   private _selectedFileDetail: FileDetail | null = null;
@@ -114,6 +115,7 @@ class DatabankStore {
   get searchResults() { return this._searchResults; }
   get searchQuery() { return this._searchQuery; }
   get donorOnlyFilter() { return this._donorOnlyFilter; }
+  get autoPdf() { return this._autoPdf; }
   get viewMode() { return this._viewMode; }
   get selectedFileId() { return this._selectedFileId; }
   get selectedFileDetail() { return this._selectedFileDetail; }
@@ -410,6 +412,12 @@ class DatabankStore {
 
   setDonorOnlyFilter(v: boolean) {
     this._donorOnlyFilter = v;
+    this.notify();
+  }
+
+  setAutoPdf(v: boolean) {
+    this._autoPdf = v;
+    try { localStorage.setItem('boardripper-library-autopdf', v ? '1' : '0'); } catch { /* ignore */ }
     this.notify();
   }
 

@@ -591,7 +591,7 @@ test.describe('Comprehensive Board Tests', () => {
     await expect(netLinesBtn).toHaveClass(/active/);
 
     // Verify localStorage was set
-    const stored = await page.evaluate(() => localStorage.getItem('boardviewer-view-prefs'));
+    const stored = await page.evaluate(() => localStorage.getItem('boardripper-view-prefs'));
     expect(stored).toBeTruthy();
     const prefs = JSON.parse(stored!);
     expect(prefs.showNetLines).toBe(true);
@@ -606,7 +606,7 @@ test.describe('Comprehensive Board Tests', () => {
 
     // Pre-seed localStorage with showNetLines=true
     await page.evaluate(() => {
-      localStorage.setItem('boardviewer-view-prefs', JSON.stringify({ showNetLines: true, showNetDim: true, showHoverInfo: true }));
+      localStorage.setItem('boardripper-view-prefs', JSON.stringify({ showNetLines: true, showNetDim: true, showHoverInfo: true }));
     });
 
     await loadBoard(page, TEST_BVR1);
@@ -640,7 +640,7 @@ test.describe('Comprehensive Board Tests', () => {
       await page.waitForTimeout(200);
 
       // Verify localStorage was set
-      const val = await page.evaluate(() => localStorage.getItem('boardviewer-pdf-nightmode'));
+      const val = await page.evaluate(() => localStorage.getItem('boardripper-pdf-nightmode'));
       expect(val).toBe('1');
     }
   });

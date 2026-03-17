@@ -66,6 +66,30 @@ export const shortcuts: Shortcut[] = [
     description: 'Toggle between top and bottom layer',
   },
   {
+    id: 'rotateCW',
+    label: 'Rotate CW',
+    category: 'view',
+    key: 'ArrowRight',
+    mod: true,
+    description: 'Rotate the board 90° clockwise',
+  },
+  {
+    id: 'rotateCCW',
+    label: 'Rotate CCW',
+    category: 'view',
+    key: 'ArrowLeft',
+    mod: true,
+    description: 'Rotate the board 90° counter-clockwise',
+  },
+  {
+    id: 'mirrorBoard',
+    label: 'Mirror Board',
+    category: 'view',
+    key: 'ArrowUp',
+    mod: true,
+    description: 'Mirror the board horizontally',
+  },
+  {
     id: 'panLeft',
     label: 'Pan Left',
     category: 'view',
@@ -104,8 +128,6 @@ export const shortcuts: Shortcut[] = [
     label: 'PDF Next Page',
     category: 'navigation',
     key: 'PageDown',
-    altKey: 'ArrowDown',
-    altMod: true,
     description: 'Go to the next PDF page',
   },
   {
@@ -113,8 +135,6 @@ export const shortcuts: Shortcut[] = [
     label: 'PDF Previous Page',
     category: 'navigation',
     key: 'PageUp',
-    altKey: 'ArrowUp',
-    altMod: true,
     description: 'Go to the previous PDF page',
   },
 ];

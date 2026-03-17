@@ -11,6 +11,7 @@ export const BRDFormat: FormatDescriptor = {
   description: 'Binary-obfuscated boardview format used in Apple/Mac board repair. Bit-rotation encoding, 6 named sections.',
   docUrl: 'docs/formats/BRD_FORMAT.md',
   flipY: true,
+  swapSides: true,
 
   detect(header) {
     if (header.length < 4) return false;

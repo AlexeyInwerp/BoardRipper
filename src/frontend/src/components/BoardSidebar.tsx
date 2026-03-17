@@ -7,13 +7,15 @@ type SidebarTab = 'info' | 'nets' | 'search';
 interface BoardSidebarProps {
   visible: boolean;
   onClose: () => void;
+  /** The board tab this sidebar belongs to */
+  tabId: number;
   /** One-shot tab switch request (cleared after applying) */
   requestedTab?: SidebarTab | null;
   onTabApplied?: () => void;
   opacity?: number;
 }
 
-export function BoardSidebar({ visible, onClose, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
+export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
   const [activeTab, setActiveTab] = useState<SidebarTab>('info');
 
   // Apply external tab request (one-shot: clear after applying)
@@ -52,16 +54,21 @@ export function BoardSidebar({ visible, onClose, requestedTab, onTabApplied, opa
         </button>
       </div>
       <div className="board-sidebar-content">
-        {activeTab === 'info' && <InfoTab />}
-        {activeTab === 'nets' && <NetsTab />}
-        {activeTab === 'search' && <SearchTab />}
+        {activeTab === 'info' && <InfoTab tabId={tabId} />}
+        {activeTab === 'nets' && <NetsTab tabId={tabId} />}
+        {activeTab === 'search' && <SearchTab tabId={tabId} />}
       </div>
     </div>
   );
 }
 
-function InfoTab() {
-  const { selectedPart, selection, board } = useBoardStore();
+function InfoTab({ tabId }: { tabId: number }) {
+  // Subscribe to store changes but read from the specific tab
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  const board = tab?.board ?? null;
+  const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
+  const selectedPart = board && selection.partIndex !== null ? board.parts[selection.partIndex] : null;
 
   if (!board) return <div className="panel-empty">No board loaded</div>;
   if (!selectedPart) return <div className="panel-empty">Click a component to inspect</div>;
@@ -121,8 +128,12 @@ function InfoTab() {
   );
 }
 
-function NetsTab() {
-  const { board, selection, searchQuery } = useBoardStore();
+function NetsTab({ tabId }: { tabId: number }) {
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  const board = tab?.board ?? null;
+  const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
+  const searchQuery = tab?.searchQuery ?? '';
 
   if (!board) return <div className="panel-empty">No board loaded</div>;
 
@@ -156,8 +167,12 @@ function NetsTab() {
   );
 }
 
-function SearchTab() {
-  const { board, searchResults, searchQuery } = useBoardStore();
+function SearchTab({ tabId }: { tabId: number }) {
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  const board = tab?.board ?? null;
+  const searchQuery = tab?.searchQuery ?? '';
+  const searchResults = boardStore.searchForTab(tabId);
 
   if (!board) return <div className="panel-empty">No board loaded</div>;
   if (!searchQuery) return <div className="panel-empty">Type in the search bar to find components</div>;
