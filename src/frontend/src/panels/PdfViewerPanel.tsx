@@ -5,12 +5,30 @@ import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
+import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
+import { logStore } from '../store/log-store';
 
 const DRAG_THRESHOLD = 3;
+const LINE_HEIGHT_RATIO = 1.2;
+
+/** Compute a text item's bounding rect in canvas-space given the viewport transform and scale */
+function textItemRect(
+  transform: number[], width: number, vpT: number[], scale: number,
+): { x: number; y: number; w: number; h: number } {
+  const fontSize = pdfFontSize(transform);
+  const vx = vpT[0] * transform[4] + vpT[2] * transform[5] + vpT[4];
+  const vy = vpT[1] * transform[4] + vpT[3] * transform[5] + vpT[5];
+  return {
+    x: vx * scale,
+    y: vy * scale - fontSize * scale,
+    w: width * scale,
+    h: fontSize * scale * LINE_HEIGHT_RATIO,
+  };
+}
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, loading, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, bookmarks } = usePdfStore();
+  const { isLoaded, loading, textExtracting, textExtractProgress, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks } = usePdfStore();
   const { tabs } = useBoardStore();
 
   // Switch pdfStore to this panel's document on activation
@@ -20,7 +38,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     pdfStore.switchTo(pdfFileName);
     // Also switch when this panel becomes active (focused)
     const disposable = props.api.onDidActiveChange((e) => {
-      if (e.isActive) pdfStore.switchTo(pdfFileName);
+      logStore.log('log', `[pdf] onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
+      if (e.isActive) {
+        pdfStore.switchTo(pdfFileName);
+        // Activate linked board panel so it follows the PDF tab
+        const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
+        logStore.log('log', `[pdf] linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
+        if (linkedTab) {
+          const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
+          logStore.log('log', `[pdf] activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
+        }
+      }
     });
     return () => disposable.dispose();
   }, [pdfFileName, props.api]);
@@ -57,6 +85,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const scaleRef = useRef(1);
   const viewportHeightRef = useRef(0);
   const renderTierRef = useRef(1);
+  const viewportTransformRef = useRef<number[]>([1, 0, 0, -1, 0, 0]);
   const [clickedText, setClickedText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,12 +101,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const wasDragRef = useRef(false);
 
   const [nightMode, setNightMode] = useState(false);
+  const [debugTextBoxes, setDebugTextBoxes] = useState(false);
 
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
   const bookmarkClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const skipResetRef = useRef(false);
+
+  // When this panel is not the active document (another PDF is active), clear the
+  // cached render scale so the framing logic retries after renderPage() completes
+  // with fresh dimensions when this panel becomes active again.
+  useEffect(() => {
+    if (!isMyDoc) {
+      scaleRef.current = 0;
+      viewportHeightRef.current = 0;
+    }
+  }, [isMyDoc]);
 
   useEffect(() => {
     if (skipResetRef.current) {
@@ -96,29 +136,41 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return Math.max(1, Math.min(tier, 5));
   };
 
+  const renderIdRef = useRef(0);
+
   const renderPage = useCallback(async () => {
-    if (!isMyDoc || !isLoaded || !canvasRef.current || !highlightRef.current || !containerRef.current) return;
+    if (!isMyDoc || !isLoaded) return;
 
     renderTaskRef.current?.cancel();
     setError(null);
 
+    const renderId = ++renderIdRef.current;
     const resTier = computeTier(zoomRef.current);
     renderTierRef.current = resTier;
 
     try {
       const page = await pdfStore.getPage(currentPage);
+      if (renderIdRef.current !== renderId) return; // superseded
+
+      // Re-check refs after async — component may have unmounted or switched
       const container = containerRef.current;
+      const canvas = canvasRef.current;
+      const highlight = highlightRef.current;
+      if (!container || !canvas || !highlight) return;
       const containerWidth = container.clientWidth;
+
+      // Container not laid out yet — skip, ResizeObserver will re-trigger
+      if (containerWidth === 0) return;
 
       const unscaledViewport = page.getViewport({ scale: 1 });
       const baseScale = containerWidth / unscaledViewport.width;
       scaleRef.current = baseScale;
       viewportHeightRef.current = unscaledViewport.height;
+      viewportTransformRef.current = unscaledViewport.transform;
 
       const hiresScale = baseScale * resTier;
       const viewport = page.getViewport({ scale: hiresScale });
 
-      const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d')!;
       canvas.width = viewport.width;
       canvas.height = viewport.height;
@@ -127,7 +179,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
 
-      const highlight = highlightRef.current;
       highlight.width = viewport.width;
       highlight.height = viewport.height;
       highlight.style.width = `${cssW}px`;
@@ -137,9 +188,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
 
-      drawHighlights();
+      if (renderIdRef.current !== renderId) return; // superseded during render
+      drawHighlightsRef.current();
     } catch (err) {
-      if (err instanceof Error && err.message?.includes('cancel')) return;
+      if (err instanceof Error && err.message?.includes('cancel')) {
+        // Cancelled by a newer renderPage call — the newer call handles it
+        return;
+      }
       console.error('[PdfViewerPanel] renderPage failed:', err);
       setError(String(err));
     }
@@ -154,7 +209,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const pageIndex = currentPage - 1;
     const pageMatches = pdfStore.getMatchesForPage(pageIndex);
     const scale = scaleRef.current * renderTierRef.current;
-    const unscaledH = viewportHeightRef.current;
+    const vpT = viewportTransformRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1;
 
     const activeIndices = pdfStore.activeMatchIndices;
@@ -168,17 +223,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (activeGroup) {
         const anchorMatch = matches[activeGroup[0]];
         if (anchorMatch && anchorMatch.pageIndex === pageIndex) {
-          const at = anchorMatch.item.transform;
-          const aFontSize = pdfFontSize(at);
-          const ax = at[4] * scale;
-          const ay = (unscaledH - at[5]) * scale - aFontSize * scale;
+          const aRect = textItemRect(anchorMatch.item.transform, anchorMatch.item.width, vpT, scale);
+          const aFontSize = pdfFontSize(anchorMatch.item.transform);
 
           const xTolPx = aFontSize * multiTermXGap * scale;
-          const zoneX = ax - xTolPx;
-          const zoneW = xTolPx * 2 + anchorMatch.item.width * scale;
+          const zoneX = aRect.x - xTolPx;
+          const zoneW = xTolPx * 2 + aRect.w;
 
           const yGapPx = aFontSize * multiTermYGap * scale;
-          const zoneY = ay;
+          const zoneY = aRect.y;
           const zoneH = yGapPx * (activeGroup.length);
 
           hCtx.strokeStyle = 'rgba(100, 200, 255, 0.4)';
@@ -194,13 +247,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     for (let mi = 0; mi < pageMatches.length; mi++) {
       const match = pageMatches[mi];
-      const t = match.item.transform;
-
-      const x = t[4] * scale;
-      const fontSize = pdfFontSize(t);
-      const y = (unscaledH - t[5]) * scale - fontSize * scale;
-      const w = match.item.width * scale;
-      const h = fontSize * scale * 1.2;
+      const { x, y, w, h } = textItemRect(match.item.transform, match.item.width, vpT, scale);
 
       const isActive = activeMatchSet.has(match);
       if (isActive) {
@@ -210,7 +257,50 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       hCtx.fillRect(x, y, w, h);
     }
-  }, [isMyDoc, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
+
+    // --- DEBUG: draw bounding boxes on ALL text items ---
+    if (debugTextBoxes) {
+      const dbgUnscaledH = viewportHeightRef.current;
+      const allItems = pdfStore.getTextItemsForPage(pageIndex);
+      for (let i = 0; i < allItems.length; i++) {
+        const item = allItems[i];
+        const t = item.transform;
+        const fontSize = pdfFontSize(t);
+
+        // OLD method (red) — manual Y flip, breaks on rotated pages
+        const oldX = t[4] * scale;
+        const oldY = (dbgUnscaledH - t[5]) * scale - fontSize * scale;
+        hCtx.strokeStyle = 'rgba(255, 50, 50, 0.5)';
+        hCtx.lineWidth = 1;
+        hCtx.strokeRect(oldX, oldY, item.width * scale, fontSize * scale * LINE_HEIGHT_RATIO);
+
+        // NEW method (green) — viewport transform, handles any rotation
+        const r = textItemRect(t, item.width, vpT, scale);
+        hCtx.strokeStyle = 'rgba(50, 255, 50, 0.6)';
+        hCtx.lineWidth = 1;
+        hCtx.strokeRect(r.x, r.y, r.w, r.h);
+
+        if (i < 40) {
+          hCtx.font = `${10 * renderTierRef.current}px monospace`;
+          hCtx.fillStyle = 'rgba(50, 255, 50, 0.9)';
+          hCtx.fillText(`${i}:"${item.str.slice(0, 12)}"`, r.x, r.y - 2);
+          hCtx.fillStyle = 'rgba(255, 50, 50, 0.7)';
+          hCtx.fillText(`${i}`, oldX, oldY - 2);
+        }
+      }
+
+      const lx = 10 * renderTierRef.current;
+      const ly = 20 * renderTierRef.current;
+      const lfs = 14 * renderTierRef.current;
+      hCtx.font = `bold ${lfs}px monospace`;
+      hCtx.fillStyle = 'rgba(255, 50, 50, 0.9)';
+      hCtx.fillText('RED = old (manual Y-flip)', lx, ly);
+      hCtx.fillStyle = 'rgba(50, 255, 50, 0.9)';
+      hCtx.fillText('GREEN = new (viewport transform)', lx, ly + lfs + 4);
+      hCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      hCtx.fillText(`vpT=[${vpT.map(v => v.toFixed(1)).join(', ')}]  rot=${vpT[0] === 1 && vpT[3] === -1 ? 'NO' : 'YES'}`, lx, ly + (lfs + 4) * 2);
+    }
+  }, [isMyDoc, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, debugTextBoxes]);
 
   const renderPageRef = useRef(renderPage);
   renderPageRef.current = renderPage;
@@ -234,30 +324,55 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const matchId = ++pendingMatchRef.current.id;
     pendingMatchRef.current.index = activeMatchIndex;
 
+    let scaleRetries = 0;
     const applyZoomAndBlink = () => {
       if (pendingMatchRef.current.id !== matchId) return;
       if (!containerRef.current) return;
 
       const baseScale = scaleRef.current;
       const unscaledH = viewportHeightRef.current;
-      if (baseScale === 0 || unscaledH === 0) return;
+      if (baseScale === 0 || unscaledH === 0) {
+        if (scaleRetries++ < 5) {
+          // renderPage() hasn't completed yet — retry once it does
+          setTimeout(() => {
+            if (pendingMatchRef.current.id === matchId) applyZoomAndBlink();
+          }, 100);
+        }
+        return;
+      }
 
-      const t = match.item.transform;
-      const fontSize = pdfFontSize(t);
-      const mx = t[4] * baseScale;
-      const my = (unscaledH - t[5]) * baseScale - fontSize * baseScale;
-      const mw = match.item.width * baseScale;
-      const mh = fontSize * baseScale * 1.2;
-      const mcx = mx + mw / 2;
-      const mcy = my + mh / 2;
+      // For multi-term / @ groups, zoom to fit all group members; otherwise zoom to single match
+      const activeGroup = (isMultiTerm || isAtSyntax) ? pdfStore.matchGroups[pdfStore.activeGroupIndex] : null;
+      const groupMatches = activeGroup
+        ? activeGroup.map(i => matches[i]).filter(Boolean)
+        : [match];
+
+      const vpT = viewportTransformRef.current;
+      let gx1 = Infinity, gy1 = Infinity, gx2 = -Infinity, gy2 = -Infinity;
+      for (const m of groupMatches) {
+        const r = textItemRect(m.item.transform, m.item.width, vpT, baseScale);
+        const mx0 = r.x;
+        const my0 = r.y;
+        const mx1 = r.x + r.w;
+        const my1 = r.y + r.h;
+        if (mx0 < gx1) gx1 = mx0;
+        if (my0 < gy1) gy1 = my0;
+        if (mx1 > gx2) gx2 = mx1;
+        if (my1 > gy2) gy2 = my1;
+      }
+      const mcx = (gx1 + gx2) / 2;
+      const mcy = (gy1 + gy2) / 2;
+      const groupW = Math.max(gx2 - gx1, 1);
+      const groupH = Math.max(gy2 - gy1, 1);
 
       const container = containerRef.current;
       const cw = container.clientWidth;
       const ch = container.clientHeight;
-      const targetFrac = 0.1;
-      const zoomByW = (cw * targetFrac) / Math.max(mw, 1);
-      const zoomByH = (ch * targetFrac) / Math.max(mh, 1);
-      const newZoom = Math.max(0.5, Math.min(Math.min(zoomByW, zoomByH), 20));
+      // Match should occupy ~20% of viewport, capped at 3× zoom
+      const targetFraction = 0.2;
+      const zoomByW = (cw * targetFraction) / groupW;
+      const zoomByH = (ch * targetFraction) / groupH;
+      const newZoom = Math.max(0.5, Math.min(Math.min(zoomByW, zoomByH), 3));
 
       const newPan = {
         x: cw / 2 - mcx * newZoom,
@@ -347,7 +462,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  }, [pdfFileName]);
+  // isMyDoc: re-attach when this panel regains its document (container remounts)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfFileName, isMyDoc]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -391,17 +508,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const clickY = (screenY - panRef.current.y) / zoomRef.current;
 
     const scale = scaleRef.current;
-    const unscaledH = viewportHeightRef.current;
+    const vpT = viewportTransformRef.current;
     const pageIndex = currentPage - 1;
     const items = pdfStore.getTextItemsForPage(pageIndex);
 
     for (const item of items) {
-      const t = item.transform;
-      const fontSize = pdfFontSize(t);
-      const x = t[4] * scale;
-      const y = (unscaledH - t[5]) * scale - fontSize * scale;
-      const w = item.width * scale;
-      const h = fontSize * scale * 1.2;
+      const { x, y, w, h } = textItemRect(item.transform, item.width, vpT, scale);
 
       if (clickX >= x && clickX <= x + w && clickY >= y && clickY <= y + h) {
         const charWidth = w / item.str.length;
@@ -692,6 +804,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
         <div className="pdf-toolbar-spacer" />
         <button
+          className={`pdf-toolbar-btn${debugTextBoxes ? ' active' : ''}`}
+          onClick={() => setDebugTextBoxes(v => !v)}
+          title="Debug: show text bounding boxes (RED=old manual flip, GREEN=new viewport transform)"
+          style={debugTextBoxes ? { color: '#0f0' } : undefined}
+        >
+          DbgTxt
+        </button>
+        <button
           className={`pdf-toolbar-btn${nightMode ? ' active' : ''}`}
           onClick={() => setNightMode(v => !v)}
           title="Toggle night mode (invert colors)"
@@ -700,6 +820,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </button>
         <span className="pdf-zoom-info">{Math.round(zoom * 100)}%</span>
       </div>
+
+      {textExtracting && (
+        <div className="pdf-text-extract-bar" title={`Indexing text: ${Math.round(textExtractProgress * 100)}%`}>
+          <div className="pdf-text-extract-fill" style={{ width: `${textExtractProgress * 100}%` }} />
+        </div>
+      )}
 
       <div
         className="pdf-canvas-container"
