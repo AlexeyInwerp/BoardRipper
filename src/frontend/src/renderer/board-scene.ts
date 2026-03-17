@@ -21,6 +21,8 @@ import {
   computeDiagonalOBB,
   resolvePinColor,
   quantizeFontSize,
+  resolvePartTypeOverride,
+  applyBodyShapeOverride,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 
@@ -72,6 +74,13 @@ export interface FontSizeGroup {
   visible: boolean;
 }
 
+/** Pin/net labels bucketed by font size — same idea as FontSizeGroup but items can be Container wrappers */
+export interface PinFontSizeGroup {
+  minSize: number;
+  items: Container[];
+  visible: boolean;
+}
+
 export interface BoardSceneGraph {
   root:        Container;
   outlineGfx:  Graphics;
@@ -80,9 +89,9 @@ export interface BoardSceneGraph {
   labels:      BitmapText[];
   topLabels:   BitmapText[];
   bottomLabels: BitmapText[];
-  /** Pin number labels, tracked for zoom-based LoD */
-  topPinLabels:    BitmapText[];
-  bottomPinLabels: BitmapText[];
+  /** Pin number labels (and net-name wrappers), tracked for zoom-based LoD */
+  topPinLabels:    Container[];
+  bottomPinLabels: Container[];
   /** Batched border Graphics per layer — rebuilt on zoom with minimum-width enforcement */
   borderBatches: BorderBatch[];
   /** Labels grouped by font-size bucket for efficient LoD visibility */
@@ -91,32 +100,94 @@ export interface BoardSceneGraph {
    *  Exposed for future incremental updates (e.g. re-coloring a net without full rebuild). */
   topPinGfx:    Map<number, Graphics>;
   bottomPinGfx: Map<number, Graphics>;
-  /** Flat containers holding only pin number + net name labels.
-   *  Toggling .visible hides/shows them in O(1) during zoom. Part name labels stay in partContainers. */
-  topPinLabelsLayer:    Container;
-  bottomPinLabelsLayer: Container;
+  /** Group A: pin numbers + net names on circle/1-pin parts */
+  topCircleLabelLayer:    Container;
+  bottomCircleLabelLayer: Container;
+  /** Group B: net names inside 2-pin part pads */
+  topTwoPinNetLayer:    Container;
+  bottomTwoPinNetLayer: Container;
+  /** Font-size groups for Group A (circle/1-pin pin labels) — progressive zoom visibility */
+  circleFontSizeGroups: PinFontSizeGroup[];
+  /** Font-size groups for Group B (2-pin net labels) — progressive zoom visibility */
+  twoPinFontSizeGroups: PinFontSizeGroup[];
+  /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. Only set when < Infinity. */
+  pinRadiusClamp: Map<number, number>;
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
 const PCB_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./+#()[]{}:;,<>!@$%^&*=~|\\?\'"ÄÖÜäöüß';
 
-/** Resolution for pre-installed shadow BitmapFonts (higher = sharper at deep zoom, larger atlas) */
-const SHADOW_FONT_RESOLUTION = 4;
+/** Resolution for pre-installed BitmapFonts (higher = sharper at deep zoom, larger atlas) */
+const BITMAP_FONT_RESOLUTION = 8;
 
-/** Track which shadow fonts have been installed to avoid re-installing */
+/** Track which fonts have been installed to avoid re-installing */
 const installedShadowFonts = new Set<string>();
+const installedPinFonts = new Set<string>();
 
-/** Uninstall all shadow BitmapFonts and free their GPU atlas textures */
+/** Uninstall all managed BitmapFonts and free their GPU atlas textures */
 export function cleanupShadowFonts(): void {
   for (const name of installedShadowFonts) {
     try { BitmapFont.uninstall(name); } catch { /* already removed */ }
   }
   installedShadowFonts.clear();
+  for (const name of installedPinFonts) {
+    try { BitmapFont.uninstall(name); } catch { /* already removed */ }
+  }
+  installedPinFonts.clear();
+}
+
+/** Install (once) a plain BitmapFont atlas for pin number labels at a specific quantized size */
+function ensurePinFont(fontSize: number): string {
+  const name = `board-pin-${fontSize}`;
+  if (!installedPinFonts.has(name)) {
+    try {
+      BitmapFont.install({
+        name,
+        style: { fontFamily: LABEL_FONT_FAMILY, fontSize, fill: 0xffffff },
+        chars: PCB_CHARS,
+        resolution: BITMAP_FONT_RESOLUTION,
+      });
+      installedPinFonts.add(name);
+    } catch {
+      return LABEL_FONT_FAMILY;
+    }
+  }
+  return name;
+}
+
+
+/**
+ * Accumulate a background block behind a label into a batched Graphics object.
+ * Flush the batch with `bgGfx.fill({ color, alpha })` after all labels are processed.
+ * Uses estimated monospace character dimensions (0.55 × fontSize wide, 1.1 × fontSize tall).
+ * @param bgGfx  Accumulated Graphics object (shared per layer)
+ * @param cx/cy  Label anchor position in world space
+ * @param anchorX/Y  BitmapText anchor (0–1 normalised)
+ * @param fontSize  Quantized font size in mils
+ * @param charCount  Number of characters in the text
+ * @param pad  Extra padding around the text rectangle
+ */
+export function accumulateLabelBg(
+  bgGfx: Graphics,
+  cx: number, cy: number,
+  anchorX: number, anchorY: number,
+  fontSize: number,
+  charCount: number,
+  pad: number,
+): void {
+  const estW = fontSize * charCount * 0.55;
+  const estH = fontSize * 1.1;
+  bgGfx.rect(
+    cx - anchorX * estW - pad,
+    cy - anchorY * estH - pad,
+    estW + pad * 2,
+    estH + pad * 2,
+  );
 }
 
 /** Install a BitmapFont for part labels with baked drop shadow at a specific quantized size */
 function ensureShadowFont(fontSize: number): string {
-  const name = `board-shadow-${fontSize}-v2`;
+  const name = `board-shadow-${fontSize}-v3`;
   if (!installedShadowFonts.has(name)) {
     try {
       BitmapFont.install({
@@ -130,7 +201,7 @@ function ensureShadowFont(fontSize: number): string {
           dropShadow: { color: 0x000000, alpha: 0.85, blur: fontSize * 0.35, distance: 0 },
         },
         chars: PCB_CHARS,
-        resolution: SHADOW_FONT_RESOLUTION,
+        resolution: BITMAP_FONT_RESOLUTION,
       });
       installedShadowFonts.add(name);
     } catch (err) {
@@ -223,12 +294,26 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const labels: BitmapText[] = [];
   const topLabels: BitmapText[] = [];
   const bottomLabels: BitmapText[] = [];
-  const topPinLabels: BitmapText[] = [];
-  const bottomPinLabels: BitmapText[] = [];
-  // Flat containers for pin number + net name labels only.
-  // Toggling .visible hides them in O(1) during zoom; part name labels stay in partContainers.
-  const topPinLabelsLayer    = new Container();
-  const bottomPinLabelsLayer = new Container();
+  const topPinLabels: Container[] = [];
+  const bottomPinLabels: Container[] = [];
+  // Group A: pin numbers + net names on circle/1-pin parts (smallest text, highest zoom threshold).
+  const topCircleLabelLayer    = new Container();
+  const bottomCircleLabelLayer = new Container();
+  // Group B: net names inside 2-pin part pads (medium zoom threshold).
+  const topTwoPinNetLayer    = new Container();
+  const bottomTwoPinNetLayer = new Container();
+  // Background plates for pin labels are attached as children of each BitmapText
+  // (not a shared Graphics) so they inherit the per-label counter-rotation from applyFlips.
+  // Component-type fill Graphics — one Graphics per color, same batching pattern as pins.
+  // A single Graphics with multiple fill() calls of different colors doesn't work reliably
+  // in PixiJS v8 (all paths may get the last color). Use Map<color, Graphics> instead.
+  const topFillMap    = new Map<number, Graphics>();
+  const bottomFillMap = new Map<number, Graphics>();
+  // NC (no-connect) pins are drawn as outline-only circles — no fill, single Graphics per side.
+  const topNcPinGfx    = new Graphics();
+  const bottomNcPinGfx = new Graphics();
+  // Background plates for pin net-name labels — one batched Graphics per layer,
+  // added at index 0 of topPinLabelsLayer so it renders behind all BitmapTexts.
   // Batched border Graphics — one per (layer, color), rebuilt on zoom
   const topBorderBatch: BorderBatch    = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsTop,    alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
   const bottomBorderBatch: BorderBatch = { gfx: new Graphics(), rects: [], color: BOARD_COLORS.partBoundsBottom, alpha: s.partBorderAlpha, lastWidth: s.partBorderWidth };
@@ -298,10 +383,15 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   // Part containers are queued and added AFTER global pin Graphics so borders/labels render on top
   const partQueue: { container: Container; isBottom: boolean }[] = [];
+  const pinRadiusClamp = new Map<number, number>();
 
   // Parts
   for (let pi = 0; pi < board.parts.length; pi++) {
     const part = board.parts[pi];
+
+    // Resolve per-type override — prefix match, longest key wins (e.g. 'FB' beats 'F' for FB1)
+    const override = resolvePartTypeOverride(part.name, s);
+    if (override?.hidden) continue;
 
     const partContainer = new Container();
     partContainer.cullable = true;
@@ -311,6 +401,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const isMultiPin   = part.pins.length > 2;
     const isBottom     = part.side === 'bottom';
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+
+    applyBodyShapeOverride(eb, override, isTwoPinPart);
 
     // Explicit cullArea avoids PixiJS calling getBounds() on every child each frame.
     // Pad generously (2× pinMaxRadius) so net-name labels that extend beyond part
@@ -323,8 +415,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     // ── Pins ─────────────────────────────────────────────────────────────────
     // Shapes are drawn directly into the board-wide global pin Graphics (by color).
-    // Collect text labels to add to partContainer after all graphics for z-order.
-    const deferredTexts: BitmapText[] = [];
+    // Group A labels (circle/single-pin) and Group B labels (2-pin net names) go to separate layers.
+    const deferredCircleNumTexts: BitmapText[] = [];  // Group A — pin numbers (flushed first → below)
+    const deferredCircleNetTexts: Container[] = [];   // Group A — net names  (flushed last  → on top)
+    const deferredTwoPinTexts: Container[] = [];      // Group B
     // Track pad rectangles for 2-pin net labels (indexed by pin index)
     const padRects: { rx: number; ry: number; rw: number; rh: number }[] = [];
 
@@ -333,10 +427,58 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       ? (eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4))
       : 0;
 
+    // Auto-clamp pin radius for dense parts (e.g. BGA) so pins don't overlap.
+    // Finds minimum distance between any two pins and caps radius at 45% of that.
+    let maxNonOverlapRadius = Infinity;
+    let minPinSpacing = Infinity; // sqrt of minDist2, used for row grouping below
+    if (isMultiPin) {
+      let minDist2 = Infinity;
+      for (let i = 0; i < part.pins.length; i++) {
+        for (let j = i + 1; j < part.pins.length; j++) {
+          const dx = part.pins[i].position.x - part.pins[j].position.x;
+          const dy = part.pins[i].position.y - part.pins[j].position.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > 0 && d2 < minDist2) minDist2 = d2;
+        }
+      }
+      if (minDist2 < Infinity) {
+        minPinSpacing = Math.sqrt(minDist2);
+        maxNonOverlapRadius = minPinSpacing * 0.45;
+        pinRadiusClamp.set(pi, maxNonOverlapRadius);
+      }
+    }
+
+    // Pre-compute per-pin column index for BGA alternating label layout.
+    // Groups pins into horizontal rows by Y proximity (within 50% of min pin spacing),
+    // then assigns a 0-based column index by sorting each row by X.
+    // This gives the correct "left-to-right position within the row" regardless of
+    // sequential pin numbering order.
+    const pinColIndex: number[] = new Array(part.pins.length).fill(0);
+    if (isMultiPin && s.showPinNumbers && minPinSpacing < Infinity) {
+      // Map rowKey → list of pin indices in that row
+      const rowMap = new Map<number, number[]>();
+      for (let i = 0; i < part.pins.length; i++) {
+        const rowKey = Math.round(part.pins[i].position.y / minPinSpacing);
+        const row = rowMap.get(rowKey);
+        if (row) row.push(i); else rowMap.set(rowKey, [i]);
+      }
+      // Within each row, sort by X and assign column index
+      for (const indices of rowMap.values()) {
+        indices.sort((a, b) => part.pins[a].position.x - part.pins[b].position.x);
+        for (let col = 0; col < indices.length; col++) {
+          pinColIndex[indices[col]] = col;
+        }
+      }
+    }
+
     for (let pni = 0; pni < part.pins.length; pni++) {
       const pin    = part.pins[pni];
       const isPin1 = pni === 0 && isMultiPin;
+      // Compute netUpper early — needed for both NC drawing routing and label suppression.
+      const netUpper = pin.net?.toUpperCase() ?? '';
+      const isNcPin  = netUpper === 'NC';
       const color = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
+      const ncGfx = isBottom ? bottomNcPinGfx : topNcPinGfx;
 
       if (isTwoPinPart) {
         let padRx: number, padRy: number, padRw: number, padRh: number;
@@ -347,38 +489,82 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           padRx = eb.px; padRy = pin.position.y - padDepth / 2;
           padRw = eb.pw; padRh = padDepth;
         }
-        const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
-        pinGfx.rect(padRx, padRy, padRw, padRh);
-        padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+        const padShape = override?.padShape ?? 'natural';
+        if (isNcPin) {
+          if (padShape === 'round') {
+            const pr = Math.min(padRw, padRh) / 2;
+            ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+          } else {
+            ncGfx.rect(padRx, padRy, padRw, padRh);
+            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+          }
+        } else {
+          const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
+          if (padShape === 'round') {
+            const pr = Math.min(padRw, padRh) / 2;
+            pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+          } else if (padShape === 'square') {
+            const side = Math.min(padRw, padRh);
+            const sx = padRx + padRw / 2 - side / 2;
+            const sy = padRy + padRh / 2 - side / 2;
+            pinGfx.rect(sx, sy, side, side);
+            padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
+          } else {
+            pinGfx.rect(padRx, padRy, padRw, padRh);
+            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+          }
+        }
       } else {
-        const r = computePinRadius(s, pin.radius);
-        const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
-        pinGfx.circle(pin.position.x, pin.position.y, r);
+        const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+        const padShape = override?.padShape ?? 'natural';
+        if (isNcPin) {
+          if (padShape === 'square') ncGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
+          else                       ncGfx.circle(pin.position.x, pin.position.y, r);
+        } else {
+          const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
+          if (padShape === 'square') pinGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
+          else                       pinGfx.circle(pin.position.x, pin.position.y, r);
+        }
       }
+
+      // Whether this pin has a displayable net name (GND/NC suppressed — already color-coded)
+      const hasNet = !!(pin.net && pin.net !== '(null)' && pin.net !== '' && !netUpper.includes('GND') && netUpper !== 'NC');
+      // BGA alternating: when both pin number and net name are shown on a multi-pin part,
+      // alternate their vertical positions by pin index so adjacent pins' labels interleave.
+      const bgaAlternate = isMultiPin && s.showPinNumbers && hasNet;
 
       // ── Pin number label (multi-pin only, not 1-pin or 2-pin) ─────────
       if (isMultiPin && s.showPinNumbers) {
-        const r = computePinRadius(s, pin.radius);
+        const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
         const numStr = pinDisplayId(pin, pni);
         const diameter = r * 2;
-        let pinFontSize = (diameter * 0.7) / (Math.max(numStr.length, 3) * 0.6);
-        pinFontSize = Math.min(pinFontSize, diameter * 0.8);
+        let pinFontSize = (diameter * 0.55) / (Math.max(numStr.length, 3) * 0.6);
+        pinFontSize = Math.min(pinFontSize, diameter * 0.65);
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
+          // BGA alternating: even column → number above pin center, odd → below.
+          // anchor 1.0 = text bottom at y; anchor 0.0 = text top at y.
+          // A ±r*0.25 y-offset creates a clear gap between pin number and net name.
+          const even = pinColIndex[pni] % 2 === 0;
+          const numAnchorY = bgaAlternate ? (even ? 1.0 : 0.0) : 0.8;
+          const bgaGap     = r * s.bgaLabelGapFactor;
+          const numYOff    = bgaAlternate ? (even ? -bgaGap : bgaGap) : 0;
           const pinLabel = new BitmapText({
             text: numStr,
-            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: LABEL_FONT_FAMILY },
+            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: ensurePinFont(pinFontSize) },
           });
-          pinLabel.anchor.set(0.5, 0.8);
+          pinLabel.anchor.set(0.5, numAnchorY);
           pinLabel.x = pin.position.x;
-          pinLabel.y = pin.position.y;
-          deferredTexts.push(pinLabel);
-          (part.side === 'bottom' ? bottomPinLabels : topPinLabels).push(pinLabel);
+          pinLabel.y = pin.position.y + numYOff;
+          deferredCircleNumTexts.push(pinLabel);
+          (isBottom ? bottomPinLabels : topPinLabels).push(pinLabel);
         }
       }
 
       // ── Net name label on pin (skip GND — already color-coded) ─────
-      if (pin.net && pin.net !== '(null)' && pin.net !== '' && !pin.net.toUpperCase().includes('GND')) {
+      if (hasNet) {
         let netFontSize: number;
         let nx: number, ny: number;
         let anchorX = 0.5, anchorY = 0.5;
@@ -391,28 +577,80 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           nx = pad.rx + pad.rw / 2;
           ny = pad.ry + pad.rh / 2;
         } else {
-          const r = computePinRadius(s, pin.radius);
+          const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
           const diameter = r * 2;
-          netFontSize = diameter * 0.85 / Math.max(pin.net.length * 0.6, 1);
+          // Use max(len, 3) so short names like "NC" don't get oversized — mirrors pin number formula.
+          netFontSize = diameter * 0.85 / (Math.max(pin.net.length, 3) * 0.6);
           netFontSize = Math.min(netFontSize, diameter * 0.85);
           nx = pin.position.x;
           ny = pin.position.y;
-          if (isMultiPin && s.showPinNumbers) {
-            anchorY = 0.2;
+          if (bgaAlternate) {
+            // BGA alternating: mirror of pin number — even column → net below pin center, odd → above.
+            // anchor 0.0 = text top at y; anchor 1.0 = text bottom at y.
+            const even = pinColIndex[pni] % 2 === 0;
+            anchorY = even ? 0.0 : 1.0;
+            ny += even ? r * s.bgaLabelGapFactor : -(r * s.bgaLabelGapFactor);
+          } else if (isMultiPin && s.showPinNumbers) {
+            anchorY = 0.05; // standard offset when pin number also shown
           }
         }
 
+        // Floor: user's active label-size setting keeps net names legible even on tiny pins.
+        // For BGA, also cap at pin diameter so text doesn't spill beyond the circle.
+        const netFloor = isTwoPinPart
+          ? getLabelFontSize(s)
+          : Math.min(getLabelFontSize(s), maxNonOverlapRadius * 2 * 0.85);
+        netFontSize = Math.max(netFontSize, netFloor);
         netFontSize = quantizeFontSize(netFontSize);
         if (netFontSize >= s.labelHideThreshold) {
           const netLabel = new BitmapText({
             text: pin.net,
-            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: LABEL_FONT_FAMILY },
+            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: ensureShadowFont(netFontSize) },
           });
           netLabel.anchor.set(anchorX, anchorY);
           netLabel.x = nx;
           netLabel.y = ny;
-          deferredTexts.push(netLabel);
-          (part.side === 'bottom' ? bottomPinLabels : topPinLabels).push(netLabel);
+          const bgPad = Math.max(1, netFontSize * 0.12);
+          if (isTwoPinPart) {
+            if (s.twoPinNetLabelBg) {
+              // Container wrapper: bg (index 0) renders behind netLabel (index 1).
+              const estW = netFontSize * pin.net.length * 0.55;
+              const estH = netFontSize * 1.1;
+              const bg = new Graphics();
+              bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
+              bg.fill({ color: 0x000000, alpha: 0.6 });
+              netLabel.x = 0; netLabel.y = 0;
+              const wrapper = new Container();
+              wrapper.x = nx; wrapper.y = ny;
+              wrapper.addChild(bg);
+              wrapper.addChild(netLabel);
+              deferredTwoPinTexts.push(wrapper);
+              (isBottom ? bottomPinLabels : topPinLabels).push(wrapper);
+            } else {
+              deferredTwoPinTexts.push(netLabel);
+              (isBottom ? bottomPinLabels : topPinLabels).push(netLabel);
+            }
+          } else {
+            if (s.pinNetLabelBg) {
+              // Cap background width to 3× pin diameter; Container wrapper keeps bg behind text.
+              const pinR = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+              const estW = Math.min(netFontSize * pin.net.length * 0.55, pinR * 6);
+              const estH = netFontSize * 1.1;
+              const bg = new Graphics();
+              bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
+              bg.fill({ color: 0x000000, alpha: 0.6 });
+              netLabel.x = 0; netLabel.y = 0;
+              const wrapper = new Container();
+              wrapper.x = nx; wrapper.y = ny;
+              wrapper.addChild(bg);
+              wrapper.addChild(netLabel);
+              deferredCircleNetTexts.push(wrapper);
+              (isBottom ? bottomPinLabels : topPinLabels).push(wrapper);
+            } else {
+              deferredCircleNetTexts.push(netLabel);
+              (isBottom ? bottomPinLabels : topPinLabels).push(netLabel);
+            }
+          }
         }
       }
     }
@@ -421,7 +659,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     // Accumulated into the grid cell's triangle Graphics (by layer).
     if (isMultiPin && part.pins.length > 0) {
       const pin = part.pins[0];
-      const r = computePinRadius(s, pin.radius);
+      const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
       const triSize = r * 0.7;
       const distLeft   = pin.position.x - eb.px;
       const distRight  = (eb.px + eb.pw) - pin.position.x;
@@ -454,9 +692,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       triGfx.closePath();
     }
 
-    // ── Part border (accumulated into batched border Graphics) ──────────────
+    // ── Part border + optional component-type fill ───────────────────────────
     if (part.pins.length > 1) {
       let borderRect: BorderRect;
+      let fillX: number, fillY: number, fillW: number, fillH: number;
       if (isTwoPinPart) {
         // Expand border to encompass pads centered on pin vertices
         const bx = eb.horiz ? eb.px - padDepth / 2 : eb.px;
@@ -464,13 +703,23 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         const bw = eb.horiz ? eb.pw + padDepth : eb.pw;
         const bh = eb.horiz ? eb.ph : eb.ph + padDepth;
         borderRect = { x: bx, y: by, w: bw, h: bh };
+        fillX = bx; fillY = by; fillW = bw; fillH = bh;
       } else {
         const obb = computeDiagonalOBB(part.pins, s);
         borderRect = obb
           ? { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, poly: obb }
           : { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };
+        fillX = eb.px; fillY = eb.py; fillW = eb.pw; fillH = eb.ph;
       }
       (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
+
+      if (s.showComponentColors && override?.color) {
+        const fillColor = parseInt(override.color.replace('#', ''), 16);
+        const map = isBottom ? bottomFillMap : topFillMap;
+        let gfx = map.get(fillColor);
+        if (!gfx) { gfx = new Graphics(); map.set(fillColor, gfx); }
+        gfx.rect(fillX, fillY, fillW, fillH);
+      }
     }
 
     // ── Label (last = always on top within the part) ────────────────────────
@@ -491,7 +740,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       }
       fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
-        let labelColor = BOARD_COLORS.labelPart;
+        let labelColor: number = BOARD_COLORS.labelPart;
         let fontFamily = LABEL_FONT_FAMILY;
         if (s.showLabelSizeDebug) {
           const qs = quantizeFontSize(s.labelSizeSmall);
@@ -515,13 +764,29 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       }
     }
 
-    // ── Deferred text (pin numbers + net names) — flat layer for O(1) zoom-hide ──
-    const pinLayer = isBottom ? bottomPinLabelsLayer : topPinLabelsLayer;
-    for (const txt of deferredTexts) {
-      pinLayer.addChild(txt);
+    // ── Deferred text — route to the correct label layer ──────────────────
+    // Pin numbers first (lower z), net names second (render on top).
+    for (const txt of deferredCircleNumTexts) {
+      (isBottom ? bottomCircleLabelLayer : topCircleLabelLayer).addChild(txt);
+    }
+    for (const txt of deferredCircleNetTexts) {
+      (isBottom ? bottomCircleLabelLayer : topCircleLabelLayer).addChild(txt);
+    }
+    for (const txt of deferredTwoPinTexts) {
+      (isBottom ? bottomTwoPinNetLayer : topTwoPinNetLayer).addChild(txt);
     }
 
     partQueue.push({ container: partContainer, isBottom });
+  }
+
+  // Flush component-type fills — one Graphics per color, added before grid cells (fills under pins)
+  for (const [color, gfx] of topFillMap) {
+    gfx.fill({ color, alpha: s.componentFillAlpha });
+    topLayer.addChild(gfx);
+  }
+  for (const [color, gfx] of bottomFillMap) {
+    gfx.fill({ color, alpha: s.componentFillAlpha });
+    bottomLayer.addChild(gfx);
   }
 
   // ── Flush grid cells ─────────────────────────────────────────────────────
@@ -554,6 +819,12 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     }
   }
 
+  // Flush NC (no-connect) pin outlines — stroke-only, no fill.
+  for (const [ncGfx, layer] of [[topNcPinGfx, topLayer], [bottomNcPinGfx, bottomLayer]] as [Graphics, Container][]) {
+    ncGfx.stroke({ width: 1.5, color: 0x555555, alpha: s.pinAlpha });
+    layer.addChild(ncGfx);
+  }
+
   // Flush batched border Graphics — initial draw, will be rebuilt on zoom
   const borderBatches: BorderBatch[] = [];
   for (const [batch, layer] of [[topBorderBatch, topLayer], [bottomBorderBatch, bottomLayer]] as [BorderBatch, Container][]) {
@@ -569,14 +840,18 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     (isBottom ? bottomLayer : topLayer).addChild(container);
   }
 
-  // Pin label layers sit on top — toggling visible hides pin/net labels in O(1) during zoom
-  topLayer.addChild(topPinLabelsLayer);
-  bottomLayer.addChild(bottomPinLabelsLayer);
+
+  // Background plates are now children of individual BitmapText labels (see creation above).
+  // Group B (2-pin net names) added below Group A (circle labels) — Group A is smallest/densest.
+  topLayer.addChild(topTwoPinNetLayer);
+  topLayer.addChild(topCircleLabelLayer);
+  bottomLayer.addChild(bottomTwoPinNetLayer);
+  bottomLayer.addChild(bottomCircleLabelLayer);
 
   // Build font-size groups: bucket all labels by floor(log2(fontSize)).
   // This gives ~5-6 groups, enabling O(groups) visibility checks instead of O(labels).
   const bucketMap = new Map<number, BitmapText[]>();
-  const allLabelArrays = [topLabels, bottomLabels, topPinLabels, bottomPinLabels];
+  const allLabelArrays = [topLabels, bottomLabels]; // pin labels managed separately by pin-size threshold
   for (const arr of allLabelArrays) {
     for (const lbl of arr) {
       const fs = lbl.style.fontSize as number;
@@ -592,6 +867,36 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   }
   // Sort ascending so we can early-exit: once a group is visible, all larger groups are too
   fontSizeGroups.sort((a, b) => a.minSize - b.minSize);
+
+  // Build font-size groups for pin labels (Group A: circle, Group B: 2-pin).
+  // Items are either BitmapText or Container wrappers — extract fontSize from the BitmapText child.
+  const pinFontSize = (item: Container): number => {
+    if (item instanceof BitmapText) return item.style.fontSize as number;
+    // Container wrapper: bg at [0], BitmapText at [1]
+    const child = item.children[1];
+    return child instanceof BitmapText ? (child.style.fontSize as number) : 1;
+  };
+  const buildPinGroups = (items: Container[]): PinFontSizeGroup[] => {
+    const map = new Map<number, Container[]>();
+    for (const item of items) {
+      const bucket = Math.floor(Math.log2(Math.max(pinFontSize(item), 1)));
+      let list = map.get(bucket);
+      if (!list) { list = []; map.set(bucket, list); }
+      list.push(item);
+    }
+    const groups: PinFontSizeGroup[] = [];
+    for (const [bucket, grp] of map) {
+      groups.push({ minSize: 2 ** bucket, items: grp, visible: true });
+    }
+    groups.sort((a, b) => a.minSize - b.minSize);
+    return groups;
+  };
+  // Circle labels = pin numbers + net names on multi-pin parts
+  const allCircleItems: Container[] = [...topCircleLabelLayer.children, ...bottomCircleLabelLayer.children];
+  const circleFontSizeGroups = buildPinGroups(allCircleItems);
+  // 2-pin net labels
+  const allTwoPinItems: Container[] = [...topTwoPinNetLayer.children, ...bottomTwoPinNetLayer.children];
+  const twoPinFontSizeGroups = buildPinGroups(allTwoPinItems);
 
   // ── Debug: pad vertex crosshairs ─────────────────────────────────────────
   const padVertexGfx = new Graphics();
@@ -609,5 +914,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   }
   root.addChild(padVertexGfx);
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topPinLabelsLayer, bottomPinLabelsLayer };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp };
 }
