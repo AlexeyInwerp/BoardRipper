@@ -1,7 +1,7 @@
-# Boardviewer — Project Configuration
+# BoardRipper — Project Configuration
 
 ## Project Overview
-PCB Board Viewer — web-based application for viewing and inspecting PCB boardview files. Hosted via Docker on NAS.
+BoardRipper — web-based PCB boardview file viewer and inspector. Hosted via Docker on NAS.
 
 ## Tech Stack
 - **Rendering:** PixiJS v8 (WebGL) + pixi-viewport v6 (pan/zoom/culling/deceleration)
@@ -48,6 +48,8 @@ Boardviewer/
 - Go backend chosen for minimal Docker footprint and single-binary deployment
 - All BVR parsing happens client-side in TypeScript (no server dependency for rendering)
 - `useSyncExternalStore` for reactive stores — getSnapshot must return a stable cached reference
+- **NEVER call `app.destroy()` on PixiJS v8 Applications** — `destroy()` triggers `GlobalResourceRegistry.clear()` which corrupts the module-level `batchPool` in `Batcher.mjs`, permanently breaking ALL other Application instances with `_DefaultBatcher2.break: Cannot read properties of null`. Instead, just remove the canvas from DOM and let GC reclaim the Application + WebGL context. See `BoardRenderer.teardownForReinit()`.
+- PDF panels use per-document state via `usePdfDoc(fileName)` hook, allowing multiple PDFs to render side-by-side. The singleton `pdfStore` tracks an "active" doc for mutations but each panel reads its own doc's state independently.
 
 ## Conventions
 - TypeScript strict mode

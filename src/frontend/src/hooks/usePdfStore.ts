@@ -61,3 +61,55 @@ function subscribe(cb: () => void) {
 export function usePdfStore() {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
+
+/** Per-document snapshot — allows a panel to render even when not the active doc. */
+export interface PdfDocSnapshot {
+  isLoaded: boolean;
+  pageCount: number;
+  currentPage: number;
+  searchQuery: string;
+  matches: PdfTextMatch[];
+  activeMatchIndex: number;
+  matchGroupCount: number;
+  activeGroupIndex: number;
+  isMultiTerm: boolean;
+  isAtSyntax: boolean;
+  multiTermYGap: number;
+  multiTermXGap: number;
+  textExtracting: boolean;
+  textExtractProgress: number;
+  bookmarks: PdfBookmark[];
+}
+
+// Per-document snapshot cache: fileName → { version, snapshot }
+const docSnapshots = new Map<string, { version: number; snapshot: PdfDocSnapshot }>();
+
+function getDocSnapshot(fileName: string): PdfDocSnapshot {
+  const cached = docSnapshots.get(fileName);
+  if (cached && cached.version === snapshotVersion) return cached.snapshot;
+
+  const snapshot: PdfDocSnapshot = {
+    isLoaded: pdfStore.isDocLoaded(fileName),
+    pageCount: pdfStore.getDocPageCount(fileName),
+    currentPage: pdfStore.getDocCurrentPage(fileName),
+    searchQuery: pdfStore.getDocSearchQuery(fileName),
+    matches: pdfStore.getDocMatches(fileName),
+    activeMatchIndex: pdfStore.getDocActiveMatchIndex(fileName),
+    matchGroupCount: pdfStore.getDocMatchGroups(fileName).length,
+    activeGroupIndex: pdfStore.getDocActiveGroupIndex(fileName),
+    isMultiTerm: pdfStore.isDocMultiTerm(fileName),
+    isAtSyntax: pdfStore.isDocAtSyntax(fileName),
+    multiTermYGap: pdfStore.multiTermYGap,
+    multiTermXGap: pdfStore.multiTermXGap,
+    textExtracting: pdfStore.getDocTextExtracting(fileName),
+    textExtractProgress: pdfStore.getDocTextExtractProgress(fileName),
+    bookmarks: pdfStore.getDocBookmarks(fileName),
+  };
+  docSnapshots.set(fileName, { version: snapshotVersion, snapshot });
+  return snapshot;
+}
+
+/** Hook that returns per-document state — panel renders regardless of which doc is "active". */
+export function usePdfDoc(fileName: string): PdfDocSnapshot {
+  return useSyncExternalStore(subscribe, () => getDocSnapshot(fileName));
+}

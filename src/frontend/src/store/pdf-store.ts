@@ -39,7 +39,7 @@ export interface PdfBookmark {
 
 type Listener = () => void;
 
-const BOOKMARKS_KEY_PREFIX = 'boardviewer-pdf-bookmarks-';
+const BOOKMARKS_KEY_PREFIX = 'boardripper-pdf-bookmarks-';
 
 function loadBookmarks(fileName: string): PdfBookmark[] {
   try {
@@ -123,6 +123,34 @@ class PdfStore {
 
   /** All loaded PDF filenames */
   get loadedFileNames(): string[] { return [...this._documents.keys()]; }
+
+  /** Per-document accessors — allow panels to render without being the "active" doc */
+  getDocPageCount(fileName: string): number { return this._documents.get(fileName)?.pageCount ?? 0; }
+  getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }
+  getDocSearchQuery(fileName: string): string { return this._documents.get(fileName)?.searchQuery ?? ''; }
+  getDocMatches(fileName: string): PdfTextMatch[] { return this._documents.get(fileName)?.matches ?? []; }
+  getDocActiveMatchIndex(fileName: string): number { return this._documents.get(fileName)?.activeMatchIndex ?? -1; }
+  getDocMatchGroups(fileName: string): number[][] { return this._documents.get(fileName)?.matchGroups ?? []; }
+  getDocActiveGroupIndex(fileName: string): number { return this._documents.get(fileName)?.activeGroupIndex ?? -1; }
+  getDocBookmarks(fileName: string): PdfBookmark[] { return this._documents.get(fileName)?.bookmarks ?? []; }
+  getDocActiveMatchIndices(fileName: string): Set<number> { return this._documents.get(fileName)?.activeMatchIndicesCache ?? new Set(); }
+  isDocLoaded(fileName: string): boolean { return this._documents.has(fileName); }
+  isDocMultiTerm(fileName: string): boolean {
+    const q = this._documents.get(fileName)?.searchQuery ?? '';
+    return !q.includes('@') && q.split(/\s+/).filter(t => t.length > 0).length > 1;
+  }
+  isDocAtSyntax(fileName: string): boolean {
+    return (this._documents.get(fileName)?.searchQuery ?? '').includes('@');
+  }
+  getDocTextExtracting(fileName: string): boolean {
+    const d = this._documents.get(fileName);
+    return d != null && d.textPages.length < d.pageCount;
+  }
+  getDocTextExtractProgress(fileName: string): number {
+    const d = this._documents.get(fileName);
+    if (!d || d.pageCount === 0) return 1;
+    return d.textPages.length / d.pageCount;
+  }
 
   subscribe(listener: Listener): () => void {
     this._listeners.add(listener);
@@ -243,6 +271,13 @@ class PdfStore {
     const active = this._active;
     if (!active) throw new Error('No PDF loaded');
     return active.doc.getPage(pageNum);
+  }
+
+  /** Get a page from a specific document (does not require it to be active). */
+  async getPageFor(fileName: string, pageNum: number): Promise<PDFPageProxy> {
+    const d = this._documents.get(fileName);
+    if (!d) throw new Error(`PDF not loaded: ${fileName}`);
+    return d.doc.getPage(pageNum);
   }
 
   goToPage(n: number) {
@@ -497,6 +532,14 @@ class PdfStore {
 
   getMatchesForPage(pageIndex: number): PdfTextMatch[] {
     return this._active?.matchesByPage.get(pageIndex) ?? [];
+  }
+
+  getDocTextItemsForPage(fileName: string, pageIndex: number): PdfTextItem[] {
+    return this._documents.get(fileName)?.textPages[pageIndex] ?? [];
+  }
+
+  getDocMatchesForPage(fileName: string, pageIndex: number): PdfTextMatch[] {
+    return this._documents.get(fileName)?.matchesByPage.get(pageIndex) ?? [];
   }
 
   // --- Bookmarks ---
