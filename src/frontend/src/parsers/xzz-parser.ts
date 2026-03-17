@@ -615,8 +615,22 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (Math.abs(v1 - outlineMid) < eps) cutPts.push({ ...s.p1 });
         if (Math.abs(v2 - outlineMid) < eps) cutPts.push({ ...s.p2 });
       }
-      if (cutPts.length === 2) {
-        segments.push({ p1: cutPts[0], p2: cutPts[1] });
+      // Deduplicate cut-points within eps, then pick the two farthest apart.
+      const uniqueCuts: Point[] = [];
+      for (const cp of cutPts) {
+        if (!uniqueCuts.some(u => Math.hypot(cp.x - u.x, cp.y - u.y) < eps)) {
+          uniqueCuts.push(cp);
+        }
+      }
+      if (uniqueCuts.length >= 2) {
+        let bestDist = -1, bestA = uniqueCuts[0], bestB = uniqueCuts[1];
+        for (let _i = 0; _i < uniqueCuts.length - 1; _i++) {
+          for (let _j = _i + 1; _j < uniqueCuts.length; _j++) {
+            const d = Math.hypot(uniqueCuts[_i].x - uniqueCuts[_j].x, uniqueCuts[_i].y - uniqueCuts[_j].y);
+            if (d > bestDist) { bestDist = d; bestA = uniqueCuts[_i]; bestB = uniqueCuts[_j]; }
+          }
+        }
+        segments.push({ p1: bestA, p2: bestB });
       }
     }
     logStore.log('log', `[XZZ] outline split: dim=${fold.dim}, outlineMid=${outlineMid.toFixed(3)} (partAxis=${fold.axis.toFixed(3)}), before=${segsBefore}, removed=${removed}, clipped=${clipped}, after=${segments.length} (expected~${Math.round(segsBefore/2)})`);
@@ -633,6 +647,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
     }
   }
+  // Note: isFinite(NaN) === false, so !isFinite also covers NaN — no separate isNaN check needed.
   if (!isFinite(minX)) { minX = 0; minY = 0; }
 
   for (const s of segments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }

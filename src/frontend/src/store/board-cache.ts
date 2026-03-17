@@ -1,8 +1,9 @@
 import type { BoardData, Net } from '../parsers';
 
 const DB_NAME = 'boardviewer-cache';
-const DB_VERSION = 19; // bumped: XZZ outline sub-path merging
-const STORE_NAME = 'boards';
+const DB_VERSION = 20; // bumped: add pdf-text store
+const BOARD_STORE = 'boards';
+const PDF_TEXT_STORE = 'pdf-text';
 
 interface CachedBoard {
   key: string;
@@ -27,6 +28,7 @@ function makeCacheKey(name: string, size: number, modified: number): string {
   return `${name}:${size}:${modified}`;
 }
 
+
 function serialize(board: BoardData): SerializedBoardData {
   return {
     format: board.format,
@@ -38,19 +40,31 @@ function serialize(board: BoardData): SerializedBoardData {
   };
 }
 
-function deserialize(data: SerializedBoardData): BoardData {
-  return {
-    format: data.format,
-    outline: data.outline,
-    parts: data.parts,
-    nails: data.nails,
-    nets: new Map(data.nets),
-    bounds: data.bounds,
-  };
+function deserialize(data: SerializedBoardData): BoardData | null {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.parts)) {
+    return null;
+  }
+  try {
+    return {
+      format: data.format,
+      outline: data.outline,
+      parts: data.parts,
+      nails: data.nails,
+      nets: new Map(data.nets),
+      bounds: data.bounds,
+    };
+  } catch {
+    return null;
+  }
 }
 
 class BoardCache {
   private dbPromise: Promise<IDBDatabase> | null = null;
+
+  /** Expose key construction for use by the board store */
+  makeCacheKey(name: string, size: number, modified: number): string {
+    return makeCacheKey(name, size, modified);
+  }
 
   private openDB(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise;
@@ -58,11 +72,15 @@ class BoardCache {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = (event) => {
         const db = req.result;
-        // Delete existing store on version upgrade to evict stale cached data.
-        if (event.oldVersion > 0 && db.objectStoreNames.contains(STORE_NAME)) {
-          db.deleteObjectStore(STORE_NAME);
+        // Delete existing stores on version upgrade to evict stale cached data.
+        if (event.oldVersion > 0 && db.objectStoreNames.contains(BOARD_STORE)) {
+          db.deleteObjectStore(BOARD_STORE);
         }
-        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+        if (event.oldVersion > 0 && db.objectStoreNames.contains(PDF_TEXT_STORE)) {
+          db.deleteObjectStore(PDF_TEXT_STORE);
+        }
+        db.createObjectStore(BOARD_STORE, { keyPath: 'key' });
+        db.createObjectStore(PDF_TEXT_STORE, { keyPath: 'key' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -75,12 +93,13 @@ class BoardCache {
       const db = await this.openDB();
       const key = makeCacheKey(fileName, fileSize, lastModified);
       return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const store = tx.objectStore(STORE_NAME);
+        const tx = db.transaction(BOARD_STORE, 'readonly');
+        const store = tx.objectStore(BOARD_STORE);
         const req = store.get(key);
         req.onsuccess = () => {
           const result = req.result as CachedBoard | undefined;
           resolve(result ? deserialize(result.data) : null);
+          // deserialize returns null on schema mismatch — caller falls back to re-parsing
         };
         req.onerror = () => reject(req.error);
       });
@@ -89,12 +108,26 @@ class BoardCache {
     }
   }
 
+  async deleteEntry(key: string): Promise<void> {
+    try {
+      const db = await this.openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(BOARD_STORE, 'readwrite');
+        const req = tx.objectStore(BOARD_STORE).delete(key);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      // non-critical
+    }
+  }
+
   async clear(): Promise<void> {
     try {
       const db = await this.openDB();
       return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const req = tx.objectStore(STORE_NAME).clear();
+        const tx = db.transaction(BOARD_STORE, 'readwrite');
+        const req = tx.objectStore(BOARD_STORE).clear();
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
       });
@@ -116,8 +149,8 @@ class BoardCache {
         data: serialize(board),
       };
       return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
+        const tx = db.transaction(BOARD_STORE, 'readwrite');
+        const store = tx.objectStore(BOARD_STORE);
         const req = store.put(entry);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
@@ -125,6 +158,37 @@ class BoardCache {
     } catch {
       // Cache failure is non-critical
     }
+  }
+
+  // ── PDF text cache ─────────────────────────────────────────────────
+
+  async getPdfText(fileName: string, fileSize: number, lastModified: number): Promise<{ str: string; transform: number[]; width: number; height: number }[][] | null> {
+    try {
+      const db = await this.openDB();
+      const key = makeCacheKey(fileName, fileSize, lastModified);
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_TEXT_STORE, 'readonly');
+        const req = tx.objectStore(PDF_TEXT_STORE).get(key);
+        req.onsuccess = () => {
+          const result = req.result as { key: string; textPages: { str: string; transform: number[]; width: number; height: number }[][] } | undefined;
+          resolve(result?.textPages ?? null);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch { return null; }
+  }
+
+  async putPdfText(fileName: string, fileSize: number, lastModified: number, textPages: { str: string; transform: number[]; width: number; height: number }[][]): Promise<void> {
+    try {
+      const db = await this.openDB();
+      const key = makeCacheKey(fileName, fileSize, lastModified);
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_TEXT_STORE, 'readwrite');
+        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, textPages });
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch { /* non-critical */ }
   }
 }
 

@@ -22,6 +22,9 @@ export interface FormatDescriptor {
   /** Optional link to the format spec in docs/formats/. */
   docUrl?: string;
 
+  /** Whether the Y axis needs flipping for correct screen display. Default: false. */
+  flipY?: boolean;
+
   /**
    * Content-based format detection.
    * Receives the first 512 bytes (or fewer if the file is smaller).
@@ -67,9 +70,14 @@ export function getAllExtensions(): string[] {
   return [...new Set(_formats.flatMap(f => f.extensions))];
 }
 
+/** Extract the lowercased file extension including the dot (e.g. '.bvr'). */
+export function getFileExtension(fileName: string): string {
+  return ('.' + (fileName.split('.').pop() ?? '')).toLowerCase();
+}
+
 /** Fallback: match a format by file extension when content detection fails. */
 export function detectByExtension(fileName: string): FormatDescriptor | null {
-  const ext = ('.' + fileName.split('.').pop()!).toLowerCase();
+  const ext = getFileExtension(fileName);
   for (const fmt of _formats) {
     if (fmt.extensions.includes(ext)) return fmt;
   }

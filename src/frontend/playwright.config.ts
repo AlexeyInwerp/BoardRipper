@@ -12,7 +12,7 @@ export default defineConfig({
   webServer: {
     command: 'npx vite --port 5174 --strictPort',
     port: 5174,
-    reuseExistingServer: false,
+    reuseExistingServer: true,
     timeout: 15000,
   },
 });

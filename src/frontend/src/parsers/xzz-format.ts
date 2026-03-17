@@ -10,6 +10,7 @@ export const XZZFormat: FormatDescriptor = {
   extensions: ['.pcb'],
   description: 'XZZ encrypted boardview format. Main data blocks are DES-encrypted (key: 0xdcfc12ac). Header may be XOR-obfuscated.',
   docUrl: 'docs/formats/XZZ_FORMAT.md',
+  flipY: true,
 
   detect(header) {
     if (header.length < 6) return false;

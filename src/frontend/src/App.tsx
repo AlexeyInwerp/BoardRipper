@@ -14,25 +14,31 @@ import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DebugPanel } from './panels/DebugPanel';
+import { LibraryPanel } from './panels/LibraryPanel';
 import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { pdfStore } from './store/pdf-store';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { getAllExtensions } from './parsers';
+import { getAllExtensions, getFileExtension } from './parsers';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
   settings: () => <SettingsPanel />,
   pdfViewer: (props) => <PdfViewerPanel {...props} />,
   debug: () => <DebugPanel />,
+  library: () => <LibraryPanel />,
 };
 
 const BOARD_EXTS = new Set<string>(); // populated lazily
 const PDF_EXT = '.pdf';
 
+function isFileDrag(e: React.DragEvent): boolean {
+  return e.dataTransfer.types.includes('Files');
+}
+
 function isSupportedFile(name: string): 'board' | 'pdf' | null {
   if (BOARD_EXTS.size === 0) getAllExtensions().forEach(e => BOARD_EXTS.add(e.toLowerCase()));
-  const ext = ('.' + name.split('.').pop()!).toLowerCase();
+  const ext = getFileExtension(name);
   if (ext === PDF_EXT) return 'pdf';
   if (BOARD_EXTS.has(ext)) return 'board';
   return null;
@@ -45,12 +51,14 @@ function App() {
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    if (!isFileDrag(e)) return;
     dragCounter.current++;
     if (dragCounter.current === 1) setDragOver(true);
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    if (!isFileDrag(e)) return;
     dragCounter.current--;
     if (dragCounter.current <= 0) {
       dragCounter.current = 0;
@@ -59,6 +67,7 @@ function App() {
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   }, []);

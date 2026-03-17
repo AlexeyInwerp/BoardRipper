@@ -4,12 +4,15 @@ import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BoardSidebar } from '../components/BoardSidebar';
+import { pdfPanelId, isLinkActivating, activateLinkedPanel } from '../store/dockview-api';
+import { pdfStore } from '../store/pdf-store';
+import { logStore } from '../store/log-store';
 
 export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: number }>) {
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
-  const { tabs, searchQuery, activeTabId, showNetLines } = useBoardStore();
+  const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo } = useBoardStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'info' | 'nets' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
@@ -64,14 +67,35 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   useEffect(() => {
     if (tabId == null) return;
 
-    boardStore.switchTab(tabId);
+    // Guard: only set active tab if this panel is currently active in dockview.
+    // React mounts panels asynchronously — without this check, a newly-created panel
+    // can overwrite boardStore.activeTabId even after the user has already switched
+    // back to a different board tab.
+    if (props.api.isActive) {
+      boardStore.switchTab(tabId);
+    }
 
     const disposable = props.api.onDidActiveChange((e) => {
+      logStore.log('log', `[panel] onDidActiveChange tab=${tabId} isActive=${e.isActive} linkActivating=${isLinkActivating()} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
         boardStore.switchTab(tabId);
         rendererRef.current?.resume();
-      } else {
+        // Activate linked PDF panel so it follows the board tab
+        const tab = boardStore.tabs.find(t => t.id === tabId);
+        if (tab && tab.pdfFileNames.length > 0) {
+          const pdfName = tab.pdfFileNames[0];
+          activateLinkedPanel(pdfPanelId(pdfName), () => pdfStore.switchTo(pdfName));
+        }
+      } else if (!isLinkActivating() || boardStore.activeTabId !== tabId) {
+        // Pause when this panel loses focus. Two conditions cover all cases:
+        // - !isLinkActivating(): normal tab switch — no PDF cross-activation in progress.
+        // - activeTabId !== tabId: board store already moved to another tab, so this
+        //   renderer must stop even if isActive=false fired inside a link-activation
+        //   sequence (which would set _linkActivating=true and block the first condition).
+        logStore.log('log', `[panel] pausing renderer tab=${tabId}`);
         rendererRef.current?.pause();
+      } else {
+        logStore.log('log', `[panel] SKIP pause tab=${tabId} (linkActivating=${isLinkActivating()} storeActive=${boardStore.activeTabId})`);
       }
     });
 
@@ -146,6 +170,27 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
             ∞{linkedPdfs.length > 1 ? ` ${linkedPdfs.length}` : ''}
           </div>
         )}
+        <button
+          className="board-netlines-toggle"
+          onClick={() => rendererRef.current?.restartRender()}
+          title="Restart renderer (force scene rebuild)"
+        >
+          ↺
+        </button>
+        <button
+          className={`board-netlines-toggle ${showHoverInfo ? 'active' : ''}`}
+          onClick={() => boardStore.toggleHoverInfo()}
+          title={showHoverInfo ? 'Hover info: ON' : 'Hover info: OFF'}
+        >
+          ⊙
+        </button>
+        <button
+          className={`board-netlines-toggle ${showNetDim ? 'active' : ''}`}
+          onClick={() => boardStore.toggleNetDim()}
+          title={showNetDim ? 'Selection dimming: ON' : 'Selection dimming: OFF'}
+        >
+          ◐
+        </button>
         <button
           className={`board-netlines-toggle ${showNetLines ? 'active' : ''}`}
           onClick={() => boardStore.toggleNetLines()}

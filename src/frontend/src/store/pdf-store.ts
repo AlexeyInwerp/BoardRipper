@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { boardCache } from './board-cache';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -57,6 +58,8 @@ function saveBookmarks(fileName: string, bookmarks: PdfBookmark[]) {
 interface PdfDocument {
   doc: PDFDocumentProxy;
   fileName: string;
+  fileSize: number;
+  fileLastModified: number;
   pageCount: number;
   currentPage: number;
   textPages: PdfTextItem[][];
@@ -104,6 +107,17 @@ class PdfStore {
   }
   get isLoaded(): boolean { return this._active?.doc != null; }
   get loading(): boolean { return this._loading; }
+  /** True while background text extraction is still running (search may return partial results). */
+  get textExtracting(): boolean {
+    const d = this._active;
+    return d != null && d.textPages.length < d.pageCount;
+  }
+  /** Text extraction progress 0–1 for the active document. */
+  get textExtractProgress(): number {
+    const d = this._active;
+    if (!d || d.pageCount === 0) return 1;
+    return d.textPages.length / d.pageCount;
+  }
   get bookmarks(): PdfBookmark[] { return this._active?.bookmarks ?? []; }
   get activeMatchIndices(): Set<number> { return this._active?.activeMatchIndicesCache ?? new Set(); }
 
@@ -144,10 +158,59 @@ class PdfStore {
       const buffer = await file.arrayBuffer();
       const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
 
-      // Extract text from all pages
-      const textPages: PdfTextItem[][] = [];
-      for (let i = 1; i <= doc.numPages; i++) {
-        const page = await doc.getPage(i);
+      // Make the document available immediately — text is extracted in the background.
+      const pdfDoc: PdfDocument = {
+        doc,
+        fileName: file.name,
+        fileSize: file.size,
+        fileLastModified: file.lastModified,
+        pageCount: doc.numPages,
+        currentPage: 1,
+        textPages: [],
+        searchQuery: '',
+        matches: [],
+        activeMatchIndex: -1,
+        matchGroups: [],
+        activeGroupIndex: -1,
+        activeMatchIndicesCache: new Set(),
+        matchesByPage: new Map(),
+        bookmarks: loadBookmarks(file.name),
+      };
+      this._documents.set(file.name, pdfDoc);
+      this._activeFileName = file.name;
+      this._loading = false;
+      this.notify();
+
+      // Extract text from all pages in the background so search becomes available.
+      // The viewer can render pages immediately without waiting for this.
+      this._extractText(pdfDoc);
+    } catch (err) {
+      console.error('[PdfStore] loadFile failed:', err);
+      this._activeFileName = null;
+      this._loading = false;
+      this.notify();
+      throw err;
+    }
+  }
+
+  /** Background text extraction — tries IndexedDB cache first, then extracts from PDF. */
+  private async _extractText(pdfDoc: PdfDocument) {
+    // Try cache first.
+    try {
+      const cached = await boardCache.getPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified);
+      if (cached && cached.length === pdfDoc.pageCount) {
+        pdfDoc.textPages = cached;
+        this.notify();
+        return;
+      }
+    } catch { /* cache miss — fall through to extraction */ }
+
+    // Extract from PDF, notifying periodically for the progress bar.
+    try {
+      const NOTIFY_INTERVAL = 5; // update UI every N pages
+      for (let i = 1; i <= pdfDoc.pageCount; i++) {
+        if (!this._documents.has(pdfDoc.fileName)) return; // closed
+        const page = await pdfDoc.doc.getPage(i);
         const content = await page.getTextContent();
         const items: PdfTextItem[] = [];
         for (const item of content.items) {
@@ -161,33 +224,18 @@ class PdfStore {
             });
           }
         }
-        textPages.push(items);
+        pdfDoc.textPages.push(items);
+        if (i % NOTIFY_INTERVAL === 0) this.notify(); // progress update
       }
-
-      const pdfDoc: PdfDocument = {
-        doc,
-        fileName: file.name,
-        pageCount: doc.numPages,
-        currentPage: 1,
-        textPages,
-        searchQuery: '',
-        matches: [],
-        activeMatchIndex: -1,
-        matchGroups: [],
-        activeGroupIndex: -1,
-        activeMatchIndicesCache: new Set(),
-        matchesByPage: new Map(),
-        bookmarks: loadBookmarks(file.name),
-      };
-      this._documents.set(file.name, pdfDoc);
-      this._activeFileName = file.name;
     } catch (err) {
-      console.error('[PdfStore] loadFile failed:', err);
-      this._activeFileName = null;
-      throw err;
-    } finally {
-      this._loading = false;
-      this.notify();
+      console.error('[PdfStore] text extraction failed:', err);
+    }
+
+    this.notify();
+
+    // Persist to IndexedDB for next time.
+    if (pdfDoc.textPages.length === pdfDoc.pageCount) {
+      boardCache.putPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified, pdfDoc.textPages).catch(() => {});
     }
   }
 

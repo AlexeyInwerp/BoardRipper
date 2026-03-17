@@ -11,8 +11,8 @@ export const BVR1Format: FormatDescriptor = {
   docUrl: 'docs/formats/BVR_FORMAT.md',
 
   detect(header) {
-    const text = decoder.decode(header.slice(0, 20));
-    return text.trimStart().startsWith('BVRAW_FORMAT_1');
+    const text = decoder.decode(header.slice(0, 50));
+    return text.includes('BVRAW_FORMAT_1');
   },
 
   parse(buffer) {

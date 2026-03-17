@@ -15,6 +15,8 @@ export interface BoardTab {
   id: number;
   fileName: string;
   board: BoardData | null;
+  /** Cache key used to load this board (empty string if loaded fresh from file) */
+  cacheKey: string;
   selection: SelectionState;
   showTop: boolean;
   showBottom: boolean;
@@ -25,6 +27,7 @@ export interface BoardTab {
   mirrorY: boolean;
   showNetLines: boolean;
   showNetDim: boolean;
+  showHoverInfo: boolean;
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
 }
 
@@ -41,32 +44,20 @@ export interface FocusRequest {
 
 const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
 
-function nameTokens(fileName: string): string[] {
-  const base = fileName.replace(/\.[^.]+$/, '');
-  return base.split(/[\s\-_,.]+/).map(t => t.toLowerCase()).filter(t => t.length > 0);
+/** Extract a "820-XXXXX" board code (5 digits) from a file name, or null if absent. */
+function extract820Code(fileName: string): string | null {
+  const m = fileName.match(/820-(\d{5})/i);
+  return m ? m[1] : null;
 }
 
 function findBestNameMatch(source: string, candidates: string[]): string | null {
-  const srcTokens = nameTokens(source);
-  let bestMatch: string | null = null;
-  let bestScore = 0;
-
-  for (const candidate of candidates) {
-    const candTokens = nameTokens(candidate);
-    let score = 0;
-    let hasSubstantial = false;
-    for (const st of srcTokens) {
-      if (candTokens.includes(st)) {
-        score++;
-        if (st.length >= 3) hasSubstantial = true;
-      }
-    }
-    if (hasSubstantial && score > bestScore) {
-      bestScore = score;
-      bestMatch = candidate;
-    }
+  const srcCode = extract820Code(source);
+  if (srcCode !== null) {
+    // Strict mode: only bind when the 820-XXXXX code matches exactly.
+    return candidates.find(c => extract820Code(c) === srcCode) ?? null;
   }
-  return bestMatch;
+  // No 820-XXXXX pattern — do not auto-bind.
+  return null;
 }
 
 let nextTabId = 1;
@@ -102,6 +93,7 @@ class BoardStore {
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
+  get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
 
   /** All PDF Files bound to the active board tab */
   get boundPdfFiles(): File[] {
@@ -269,11 +261,14 @@ class BoardStore {
       mirrorY: false,
       showNetLines: false,
       showNetDim: true,
+      showHoverInfo: true,
       pdfFileNames: [],
+      cacheKey: '',
     };
 
     this._tabs.push(tab);
     this._activeTabId = id;
+    this.notify(); // notify immediately so renderers know the active tab changed
     this.onTabCreated?.(id, file.name);
 
     try {
@@ -281,6 +276,7 @@ class BoardStore {
       if (cached) {
         logStore.log('log', `[board-store] Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
         tab.board = cached;
+        tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
         this.autoBindBoard(file.name);
         this.notify();
@@ -320,6 +316,15 @@ class BoardStore {
   async loadFiles(files: FileList | File[]) {
     for (const file of files) {
       await this.loadFile(file);
+    }
+  }
+
+  /** Evict the cache entry for the given board data (call after a scene build failure). */
+  evictCacheForBoard(board: BoardData): void {
+    const tab = this._tabs.find(t => t.board === board);
+    if (tab?.cacheKey) {
+      boardCache.deleteEntry(tab.cacheKey);
+      tab.cacheKey = '';
     }
   }
 
@@ -462,6 +467,13 @@ class BoardStore {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showNetDim: !tab.showNetDim });
+    this.notify();
+  }
+
+  toggleHoverInfo() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showHoverInfo: !tab.showHoverInfo });
     this.notify();
   }
 

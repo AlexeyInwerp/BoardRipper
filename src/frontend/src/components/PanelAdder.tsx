@@ -21,8 +21,9 @@ export function PanelAdder({ containerApi, group }: IDockviewHeaderActionsProps)
         (p) => !containerApi.getPanel(p.id)
       );
       setHidden(prev => {
-        const ids = missing.map(m => m.id).join(',');
-        const prevIds = prev.map(m => m.id).join(',');
+        // Use sorted JSON comparison to avoid false matches if a panel ID contains a comma
+        const ids = JSON.stringify(missing.map(m => m.id).sort());
+        const prevIds = JSON.stringify(prev.map(m => m.id).sort());
         return ids === prevIds ? prev : missing;
       });
     };

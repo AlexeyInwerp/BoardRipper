@@ -19,12 +19,11 @@ export function SearchResultsPanel() {
       </div>
       <div className="search-results-container">
         {searchResults.map((part) => {
-          const partIndex = board.parts.indexOf(part);
           return (
             <div
               key={part.name}
               className="search-result-item"
-              onClick={() => boardStore.selectPart(partIndex)}
+              onClick={() => boardStore.focusPart(part.name)}
             >
               <span className="result-name">{part.name}</span>
               <span className={`badge badge-${part.side}`}>{part.side}</span>

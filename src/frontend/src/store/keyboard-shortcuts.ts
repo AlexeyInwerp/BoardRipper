@@ -48,6 +48,14 @@ export const shortcuts: Shortcut[] = [
     mod: true,
     description: 'Open a PDF schematic',
   },
+  {
+    id: 'focusSearch',
+    label: 'Find Component',
+    category: 'file',
+    key: 'f',
+    mod: true,
+    description: 'Focus the search bar',
+  },
 
   // --- View ---
   {

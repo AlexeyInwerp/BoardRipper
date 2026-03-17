@@ -3,7 +3,7 @@ import { computeBBox, buildNets } from './types';
 
 export function parseBVR3(text: string): BoardData {
   const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== 'BVRAW_FORMAT_3') {
+  if (!lines[0]?.includes('BVRAW_FORMAT_3')) {
     throw new Error('Not a valid BVR3 file: missing BVRAW_FORMAT_3 header');
   }
 
@@ -55,7 +55,7 @@ export function parseBVR3(text: string): BoardData {
         break;
       case 'PART_SIDE':
         if (currentPart) {
-          currentPart.side = value === 'T' ? 'top' : value === 'B' ? 'bottom' : 'both';
+          currentPart.side = value === 'T' ? 'bottom' : value === 'B' ? 'top' : 'both';
         }
         break;
       case 'PART_ORIGIN':
@@ -104,7 +104,7 @@ export function parseBVR3(text: string): BoardData {
         break;
       case 'PIN_SIDE':
         if (currentPin) {
-          currentPin.side = value === 'T' ? 'top' : 'bottom';
+          currentPin.side = value === 'T' ? 'bottom' : 'top';
         }
         break;
       case 'PIN_ORIGIN':
@@ -125,10 +125,17 @@ export function parseBVR3(text: string): BoardData {
         break;
       case 'PIN_END':
         if (currentPin && currentPart) {
+          const pinPos = currentPin.position || currentPart.origin;
+          if (!currentPin.position && currentPart.origin.x === 0 && currentPart.origin.y === 0) {
+            console.warn(
+              `[BVR3] Part "${currentPart.name}" pin "${currentPin.number || currentPin.name || '?'}": ` +
+              'both PIN_ORIGIN and PART_ORIGIN absent — falling back to {0, 0}'
+            );
+          }
           currentPart.pins.push({
             name: currentPin.name || '',
             number: currentPin.number || '',
-            position: currentPin.position || currentPart.origin,
+            position: pinPos,
             radius: currentPin.radius || 25,
             side: currentPin.side || 'top',
             net: currentPin.net || '',

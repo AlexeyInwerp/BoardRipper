@@ -12,10 +12,13 @@ interface PdfSnapshot {
   matchGroupCount: number;
   activeGroupIndex: number;
   isMultiTerm: boolean;
+  isAtSyntax: boolean;
   multiTermYGap: number;
   multiTermXGap: number;
   isLoaded: boolean;
   loading: boolean;
+  textExtracting: boolean;
+  textExtractProgress: number;
   bookmarks: PdfBookmark[];
 }
 
@@ -37,10 +40,13 @@ function getSnapshot(): PdfSnapshot {
       matchGroupCount: pdfStore.matchGroups.length,
       activeGroupIndex: pdfStore.activeGroupIndex,
       isMultiTerm: pdfStore.isMultiTerm,
+      isAtSyntax: pdfStore.isAtSyntax,
       multiTermYGap: pdfStore.multiTermYGap,
       multiTermXGap: pdfStore.multiTermXGap,
       isLoaded: pdfStore.isLoaded,
       loading: pdfStore.loading,
+      textExtracting: pdfStore.textExtracting,
+      textExtractProgress: pdfStore.textExtractProgress,
       bookmarks: pdfStore.bookmarks,
     };
     lastVersion = snapshotVersion;

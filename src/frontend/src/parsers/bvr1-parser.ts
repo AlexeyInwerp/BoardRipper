@@ -3,7 +3,7 @@ import { computeBBox, buildNets } from './types';
 
 export function parseBVR1(text: string): BoardData {
   const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== 'BVRAW_FORMAT_1') {
+  if (!lines[0]?.includes('BVRAW_FORMAT_1')) {
     throw new Error('Not a valid BVR1 file: missing BVRAW_FORMAT_1 header');
   }
 
@@ -43,7 +43,7 @@ export function parseBVR1(text: string): BoardData {
         const x = parseFloat(fields[4]) * 1000;
         const y = parseFloat(fields[5]) * 1000;
         const netName = fields[7];
-        const side: 'top' | 'bottom' = location === '(T)' ? 'top' : 'bottom';
+        const side: 'top' | 'bottom' = location === '(T)' ? 'bottom' : 'top';
 
         const pin: Pin = {
           name: pinName,
@@ -74,7 +74,7 @@ export function parseBVR1(text: string): BoardData {
         if (fields.length < 8) break;
         const x = parseFloat(fields[1]) * 1000;
         const y = parseFloat(fields[2]) * 1000;
-        const side: 'top' | 'bottom' = fields[5] === '(T)' ? 'top' : 'bottom';
+        const side: 'top' | 'bottom' = fields[5] === '(T)' ? 'bottom' : 'top';
         const netName = fields[7];
         nails.push({ position: { x, y }, side, net: netName });
         break;

@@ -48,6 +48,11 @@ export interface BoardData {
   bounds: BBox;
 }
 
+/** Display ID for a pin: prefer name, then number, then 1-based index fallback. */
+export function pinDisplayId(pin: Pin, index: number): string {
+  return pin.name || pin.number || String(index + 1);
+}
+
 export function computeBBox(points: Point[]): BBox {
   if (points.length === 0) {
     return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
