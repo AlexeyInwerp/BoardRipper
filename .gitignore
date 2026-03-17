@@ -23,3 +23,13 @@ data/
 .idea/
 *.suo
 *.sw?
+
+# Desktop (Electron) build artifacts
+desktop/node_modules/
+desktop/out/
+desktop/out-legacy/
+desktop/webapp/
+
+# Samples — binary/test data
+samples/
+samples/.previews/

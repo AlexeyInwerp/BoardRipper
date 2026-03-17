@@ -1,0 +1,15 @@
+{
+  "name": "boardviewer",
+  "version": "1.0.0",
+  "description": "PCB Board Viewer — standalone desktop app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "node build-mac.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "@electron/universal": "^3.0.2",
+    "electron": "^35.1.5"
+  }
+}
