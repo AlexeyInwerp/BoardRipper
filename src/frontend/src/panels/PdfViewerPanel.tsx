@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
-import { usePdfStore } from '../hooks/usePdfStore';
+import { usePdfDoc } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -10,7 +10,7 @@ import { logStore } from '../store/log-store';
 
 const DRAG_THRESHOLD = 3;
 const LINE_HEIGHT_RATIO = 1.2;
-const NIGHT_MODE_KEY = 'boardviewer-pdf-nightmode';
+const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 
 /** Compute a text item's bounding rect in canvas-space given the viewport transform and scale */
 function textItemRect(
@@ -29,14 +29,12 @@ function textItemRect(
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, loading, textExtracting, textExtractProgress, fileName, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks } = usePdfStore();
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
 
-  // Switch pdfStore to this panel's document on activation
+  // Switch pdfStore to this panel's document on activation (for mutations)
   useEffect(() => {
     if (!pdfFileName) return;
-    // Switch immediately on mount
-    pdfStore.switchTo(pdfFileName);
     // Also switch when this panel becomes active (focused)
     const disposable = props.api.onDidActiveChange((e) => {
       logStore.log('log', `[pdf] onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
@@ -53,9 +51,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     });
     return () => disposable.dispose();
   }, [pdfFileName, props.api]);
-
-  // Only render when this panel's document is the active one
-  const isMyDoc = fileName === pdfFileName;
 
   // Board binding: which board tabs have this PDF linked
   const boundBoardTabs = tabs.filter(t => t.pdfFileNames.includes(pdfFileName));
@@ -112,15 +107,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const skipResetRef = useRef(false);
 
-  // When this panel is not the active document (another PDF is active), clear the
-  // cached render scale so the framing logic retries after renderPage() completes
-  // with fresh dimensions when this panel becomes active again.
+  // Reset scale refs when document is unloaded so framing re-runs on next load
   useEffect(() => {
-    if (!isMyDoc) {
-      scaleRef.current = 0;
-      viewportHeightRef.current = 0;
-    }
-  }, [isMyDoc]);
+    if (!isLoaded) { scaleRef.current = 0; viewportHeightRef.current = 0; }
+  }, [isLoaded]);
 
   useEffect(() => {
     if (skipResetRef.current) {
@@ -142,7 +132,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderIdRef = useRef(0);
 
   const renderPage = useCallback(async () => {
-    if (!isMyDoc || !isLoaded) return;
+    if (!isLoaded || !isLoaded) return;
 
     renderTaskRef.current?.cancel();
     setError(null);
@@ -152,7 +142,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     renderTierRef.current = resTier;
 
     try {
-      const page = await pdfStore.getPage(currentPage);
+      const page = await pdfStore.getPageFor(pdfFileName, currentPage);
       if (renderIdRef.current !== renderId) return; // superseded
 
       // Re-check refs after async — component may have unmounted or switched
@@ -201,28 +191,28 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       console.error('[PdfViewerPanel] renderPage failed:', err);
       setError(String(err));
     }
-  }, [isMyDoc, isLoaded, currentPage]);
+  }, [pdfFileName, isLoaded, currentPage]);
 
   const drawHighlights = useCallback(() => {
-    if (!highlightRef.current || !isMyDoc || !isLoaded) return;
+    if (!highlightRef.current || !isLoaded || !isLoaded) return;
     const highlight = highlightRef.current;
     const hCtx = highlight.getContext('2d')!;
     hCtx.clearRect(0, 0, highlight.width, highlight.height);
 
     const pageIndex = currentPage - 1;
-    const pageMatches = pdfStore.getMatchesForPage(pageIndex);
+    const pageMatches = pdfStore.getDocMatchesForPage(pdfFileName, pageIndex);
     const scale = scaleRef.current * renderTierRef.current;
     const vpT = viewportTransformRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1;
 
-    const activeIndices = pdfStore.activeMatchIndices;
+    const activeIndices = pdfStore.getDocActiveMatchIndices(pdfFileName);
     const activeMatchSet = new Set<object>();
     for (const idx of activeIndices) {
       if (matches[idx]) activeMatchSet.add(matches[idx]);
     }
 
     if (isMultiTerm && activeMatchSet.size > 0) {
-      const activeGroup = pdfStore.matchGroups[pdfStore.activeGroupIndex];
+      const activeGroup = pdfStore.getDocMatchGroups(pdfFileName)[pdfStore.getDocActiveGroupIndex(pdfFileName)];
       if (activeGroup) {
         const anchorMatch = matches[activeGroup[0]];
         if (anchorMatch && anchorMatch.pageIndex === pageIndex) {
@@ -264,7 +254,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // --- DEBUG: draw bounding boxes on ALL text items ---
     if (debugTextBoxes) {
       const dbgUnscaledH = viewportHeightRef.current;
-      const allItems = pdfStore.getTextItemsForPage(pageIndex);
+      const allItems = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
       for (let i = 0; i < allItems.length; i++) {
         const item = allItems[i];
         const t = item.transform;
@@ -303,7 +293,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       hCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
       hCtx.fillText(`vpT=[${vpT.map(v => v.toFixed(1)).join(', ')}]  rot=${vpT[0] === 1 && vpT[3] === -1 ? 'NO' : 'YES'}`, lx, ly + (lfs + 4) * 2);
     }
-  }, [isMyDoc, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, debugTextBoxes]);
+  }, [pdfFileName, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, debugTextBoxes]);
 
   const renderPageRef = useRef(renderPage);
   renderPageRef.current = renderPage;
@@ -316,7 +306,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
   useEffect(() => {
-    if (!isMyDoc || activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
+    if (!isLoaded || activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
 
     const match = matches[activeMatchIndex];
     const matchPage = match.pageIndex + 1;
@@ -345,7 +335,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
 
       // For multi-term / @ groups, zoom to fit all group members; otherwise zoom to single match
-      const activeGroup = (isMultiTerm || isAtSyntax) ? pdfStore.matchGroups[pdfStore.activeGroupIndex] : null;
+      const activeGroup = (isMultiTerm || isAtSyntax) ? pdfStore.getDocMatchGroups(pdfFileName)[pdfStore.getDocActiveGroupIndex(pdfFileName)] : null;
       const groupMatches = activeGroup
         ? activeGroup.map(i => matches[i]).filter(Boolean)
         : [match];
@@ -421,7 +411,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       blinkPhaseRef.current = 0;
     };
-  }, [isMyDoc, activeMatchIndex, matches, currentPage]);
+  }, [isLoaded, activeMatchIndex, matches, currentPage]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -465,9 +455,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  // isMyDoc: re-attach when this panel regains its document (container remounts)
+  // isLoaded: re-attach when this panel regains its document (container remounts)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfFileName, isMyDoc]);
+  }, [pdfFileName, isLoaded]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -498,7 +488,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, []);
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
-    if (!isMyDoc || !isLoaded) return;
+    if (!isLoaded || !isLoaded) return;
 
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -513,7 +503,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const scale = scaleRef.current;
     const vpT = viewportTransformRef.current;
     const pageIndex = currentPage - 1;
-    const items = pdfStore.getTextItemsForPage(pageIndex);
+    const items = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
 
     for (const item of items) {
       const { x, y, w, h } = textItemRect(item.transform, item.width, vpT, scale);
@@ -537,7 +527,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         return;
       }
     }
-  }, [isMyDoc, isLoaded, currentPage]);
+  }, [pdfFileName, isLoaded, currentPage]);
 
   const handleTextClickRef = useRef(handleTextClick);
   handleTextClickRef.current = handleTextClick;
@@ -633,27 +623,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, [handleLabelEditSubmit]);
 
-  if (!isMyDoc) {
-    // Not the active pdfStore document — show placeholder
+  if (!isLoaded) {
     return (
       <div className="pdf-viewer pdf-empty">
-        <span>{pdfFileName || 'No PDF'}</span>
-      </div>
-    );
-  }
-
-  if (!isLoaded && !loading) {
-    return (
-      <div className="pdf-viewer pdf-empty">
-        <span>No PDF loaded. Use &quot;Open PDF&quot; in the toolbar.</span>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="pdf-viewer pdf-empty">
-        <span>Loading {fileName}...</span>
+        <span>{pdfFileName ? `Loading ${pdfFileName}...` : 'No PDF loaded.'}</span>
       </div>
     );
   }
@@ -722,6 +695,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               className="pdf-search-input"
               placeholder="Search (multi-term: 10UF 25V 0603)"
               defaultValue={searchQuery}
+              onKeyDown={(e) => {
+                if (matches.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                  e.preventDefault();
+                  pdfStore.switchTo(pdfFileName);
+                  if (e.key === 'ArrowDown') pdfStore.nextMatch();
+                  else pdfStore.prevMatch();
+                }
+              }}
             />
           </form>
           {isMultiTerm && (

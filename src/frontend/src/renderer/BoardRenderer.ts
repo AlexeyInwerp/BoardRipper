@@ -52,9 +52,11 @@ interface BoardScene {
   /** Group A: pin numbers + net names on circle/1-pin parts */
   topCircleLabelLayer: Container;
   bottomCircleLabelLayer: Container;
+  circleFontSizeGroups: import('./board-scene').PinFontSizeGroup[];
   /** Group B: net names on 2-pin parts */
   topTwoPinNetLayer: Container;
   bottomTwoPinNetLayer: Container;
+  twoPinFontSizeGroups: import('./board-scene').PinFontSizeGroup[];
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. */
   pinRadiusClamp: Map<number, number>;
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
@@ -162,8 +164,20 @@ export class BoardRenderer {
   private sceneCache = new Map<BoardData, BoardScene>();
   private activeScene: BoardScene | null = null;
 
+  // WebGL context loss recovery
+  private contextLost = false;
+  private destroyed = false;
+  private reinitializing = false;
+
   // Cached label counts for perf overlay — updated by applyLabelVisibility, not by iterating every 500ms
   private labelCounts = { partVis: 0, partTotal: 0, pinVis: 0, pinTotal: 0 };
+
+  // HUD update throttle — shared across init/reinit ticker
+  private hudThrottle = 0;
+
+  // WebGL context loss handler refs (for cleanup in destroy)
+  private boundContextLost: ((e: Event) => void) | null = null;
+  private boundContextRestored: (() => void) | null = null;
 
   // Trackpad rotation gesture state
   private gestureStartRotation = 0;
@@ -189,6 +203,96 @@ export class BoardRenderer {
     this.app = new Application();
   }
 
+  /** Safely stop the ticker — app or ticker may be null/destroyed. */
+  private stopTicker() {
+    try { this.app?.ticker?.stop(); } catch { /* context may be lost */ }
+  }
+
+  /** Shared ticker callback — used by both init() and reinitApp(). */
+  private onTick = (ticker: import('pixi.js').Ticker) => {
+    const perf = this.perfVisible;
+    const frameStart = perf ? performance.now() : 0;
+
+    // Drive animated zoom
+    if (this.zoomAnim) {
+      const a = this.zoomAnim;
+      a.elapsed += ticker.deltaMS;
+      const t = Math.min(a.elapsed / a.duration, 1);
+      const e = this.easeOutCubic(t);
+      this.viewport.scale.set(
+        a.fromScaleX + (a.toScaleX - a.fromScaleX) * e,
+        a.fromScaleY + (a.toScaleY - a.fromScaleY) * e,
+      );
+      this.viewport.position.set(
+        a.fromX + (a.toX - a.fromX) * e,
+        a.fromY + (a.toY - a.fromY) * e,
+      );
+      this.needsRender = true;
+      this.netLinesDirty = true;
+      if (t >= 1) this.zoomAnim = null;
+    }
+
+    // Detect active zooming by comparing scale between frames
+    const curScale = Math.abs(this.viewport.scale.x);
+    if (this.prevTickScale >= 0 && curScale !== this.prevTickScale) {
+      this.onZoomFrame();
+    }
+    this.prevTickScale = curScale;
+
+    let t0 = perf ? performance.now() : 0;
+    if (this.updateLoD()) this.needsRender = true;
+    if (perf) this.perfAccum.lod += performance.now() - t0;
+
+    // Net line pulse animation — only when there's an active selection with net lines
+    if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
+      const s = renderSettingsStore.settings;
+      if (s.netLineDashed || s.netLinePulse) {
+        this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
+        t0 = perf ? performance.now() : 0;
+        this.renderNetLines();
+        if (perf) this.perfAccum.netLines += performance.now() - t0;
+        this.needsRender = true;
+      }
+    }
+
+    this.updateDebugVertexLabels();
+
+    // On-demand GPU render — skip when nothing changed (e.g. idle at high zoom)
+    // Also skip if WebGL context was lost — PixiJS internals are corrupted
+    if (this.needsRender && !this.contextLost) {
+      this.needsRender = false;
+      t0 = perf ? performance.now() : 0;
+      try {
+        this.app.render();
+      } catch (err) {
+        this.handleRenderCrash(err);
+        return;
+      }
+      if (perf) this.perfAccum.gpuRender += performance.now() - t0;
+    }
+
+    if (perf) {
+      this.perfAccum.frame += performance.now() - frameStart;
+      this.perfSamples++;
+    }
+
+    // HUD update (DOM only, no GPU cost) — throttle to ~4 updates/sec
+    this.hudThrottle += ticker.deltaMS;
+    if (this.hudThrottle >= 250) {
+      this.hudThrottle = 0;
+      this.updateHud(ticker.FPS);
+    }
+
+    // Perf overlay update — flush accumulators every ~500ms
+    if (this.perfVisible) {
+      this.perfThrottle += ticker.deltaMS;
+      if (this.perfThrottle >= 500) {
+        this.flushPerfOverlay();
+        this.perfThrottle = 0;
+      }
+    }
+  };
+
   /** Pause the renderer (stop ticker, zero CPU cost). Call when panel is hidden. */
   pause() {
     dbg(1, 'pause', 'tab=' + this.tabId);
@@ -197,11 +301,71 @@ export class BoardRenderer {
     } else {
       logStore.log('log', `[renderer] pause tab=${this.tabId} storeActive=${boardStore.activeTabId}`);
     }
-    this.app.ticker.stop();
+    // Just stop the ticker — do NOT destroy the Application.
+    // PixiJS v8 uses module-level batch pools that get permanently corrupted
+    // by app.destroy(), making all future Applications crash with
+    // "_DefaultBatcher2.break: Cannot read properties of null (reading 'clear')".
+    this.stopTicker();
+  }
+
+  /**
+   * Tear down the scene and canvas without calling app.destroy().
+   *
+   * PixiJS v8's app.destroy() triggers GlobalResourceRegistry.clear() which
+   * destroys the module-level batchPool shared by ALL Application instances.
+   * This permanently corrupts rendering for every other renderer on the page.
+   * Instead, we just remove the canvas from the DOM, clear scenes, and let GC
+   * reclaim GPU resources when the Application becomes unreferenced.
+   */
+  private teardownForReinit() {
+    dbg(1, 'teardownForReinit', 'tab=' + this.tabId);
+
+    // Save viewport state
+    if (this.board && this.viewport) {
+      try {
+        this.viewportStates.set(this.board, {
+          x: this.viewport.x,
+          y: this.viewport.y,
+          scaleX: this.viewport.scale.x,
+          scaleY: this.viewport.scale.y,
+        });
+      } catch { /* viewport may be in bad state */ }
+    }
+
+    // Stop the ticker first so no more callbacks fire during teardown
+    this.stopTicker();
+
+    // Evict scene cache (GPU objects will be invalid after new app)
+    try { this.invalidateAllScenes(); } catch (e) { console.warn('[BoardRenderer] teardown invalidateAllScenes error:', e); }
+    this.activeScene = null;
+    this.sceneCache.clear();
+
+    // Remove canvas event listeners and canvas from DOM
+    try {
+      const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
+      if (canvas && this.boundHover) {
+        canvas.removeEventListener('pointermove', this.boundHover);
+        canvas.removeEventListener('pointerleave', this.boundHideTooltip!);
+      }
+      canvas?.parentElement?.removeChild(canvas);
+    } catch (e) { console.warn('[BoardRenderer] teardown canvas cleanup error:', e); }
+
+    // Do NOT call app.destroy() — it corrupts the global batch pool.
+    // The old Application and its WebGL context will be GC'd.
+    logStore.log('log', `[renderer] teardownForReinit tab=${this.tabId} — old app released (no destroy)`);
   }
 
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
   resume() {
+    if (this.destroyed) return;
+    dbg(1, 'resume', 'tab=' + this.tabId, 'contextLost=' + this.contextLost, 'board=' + (this.board ? this.board.format : 'null'));
+    // GPU was released (pause/context loss) — need full re-init
+    if (this.contextLost) {
+      logStore.log('log', `[renderer] resume → reinitApp tab=${this.tabId}`);
+      this.reinitApp();
+      return;
+    }
+
     const w = this.containerEl.clientWidth;
     const h = this.containerEl.clientHeight;
     dbg(1, 'resume', 'tab=' + this.tabId, 'size=' + w + 'x' + h,
@@ -219,12 +383,31 @@ export class BoardRenderer {
     }
     // Sync with current store state
     this.onBoardUpdate();
+
+    // If the container had 0 dimensions (dockview hasn't shown it yet), schedule
+    // a deferred sync so the first render uses correct viewport size.
+    if ((w === 0 || h === 0) && this.viewport) {
+      requestAnimationFrame(() => {
+        if (!this.app.ticker.started) return; // paused again before callback
+        const dw = this.containerEl.clientWidth;
+        const dh = this.containerEl.clientHeight;
+        if (dw > 0 && dh > 0) {
+          dbg(1, 'resume deferred resize', dw, 'x', dh);
+          this.viewport.resize(dw, dh);
+          this.app.renderer.resize(dw, dh);
+          this.needsRender = true;
+          this.onBoardUpdate();
+        }
+      });
+    }
   }
 
   /** Force a full scene re-activation — use the restart button to recover a broken render. */
   restartRender() {
-    logStore.log('log', `[renderer] restartRender tab=${this.tabId} initialized=${this.initialized} ticker=${this.app.ticker.started} board=${this.board ? this.board.format : 'null'}`);
+    logStore.log('log', `[renderer] restartRender tab=${this.tabId} initialized=${this.initialized} contextLost=${this.contextLost} board=${this.board ? this.board.format : 'null'}`);
     if (!this.initialized) return;
+    // Clear the contextLost flag so rendering can resume
+    this.contextLost = false;
     // Use renderer's own board reference (works even if boardStore active tab is wrong)
     const board = this.board ?? boardStore.tabs.find(t => t.id === this.tabId)?.board ?? null;
     if (!board) {
@@ -242,6 +425,171 @@ export class BoardRenderer {
       this.app.ticker.start();
     }
     this.needsRender = true;
+  }
+
+  /**
+   * Handle a crash during app.render() — typically caused by WebGL context loss
+   * or PixiJS v8 batch pool corruption.
+   *
+   * We do NOT call app.destroy() here because that corrupts the global batch pool
+   * and makes ALL renderers crash. Instead we just stop the ticker and let the user
+   * use the "Restart Render" button (restartRender) which rebuilds the scene without
+   * destroying the Application.
+   */
+  private handleRenderCrash(err: unknown) {
+    if (this.contextLost) return; // already handled
+    this.contextLost = true;
+    logStore.log('error', `[renderer] render crash tab=${this.tabId} — ticker stopped, use Restart Render to recover:`, err);
+    this.stopTicker();
+  }
+
+  /** Install WebGL context loss/restore handlers on a canvas element. */
+  private installContextLossHandlers(canvas: HTMLCanvasElement) {
+    // Remove previous handlers if any (reinitApp creates a new canvas)
+    this.removeContextLossHandlers();
+
+    this.boundContextLost = (e: Event) => {
+      e.preventDefault();
+      if (this.destroyed) return;
+      this.contextLost = true;
+      logStore.log('warn', `[renderer] WebGL context lost tab=${this.tabId} — will recover on resume`);
+      this.stopTicker();
+    };
+    this.boundContextRestored = () => {
+      logStore.log('log', `[renderer] WebGL context restored event tab=${this.tabId} — deferring recovery to resume()`);
+    };
+    canvas.addEventListener('webglcontextlost', this.boundContextLost);
+    canvas.addEventListener('webglcontextrestored', this.boundContextRestored);
+  }
+
+  /** Remove context loss handlers from the current canvas. */
+  private removeContextLossHandlers() {
+    const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
+    if (canvas && this.boundContextLost) {
+      canvas.removeEventListener('webglcontextlost', this.boundContextLost);
+      canvas.removeEventListener('webglcontextrestored', this.boundContextRestored!);
+    }
+    this.boundContextLost = null;
+    this.boundContextRestored = null;
+  }
+
+  /**
+   * Full re-initialization after GPU release or WebGL context loss.
+   * Creates a fresh PixiJS Application, preserving subscriptions, DOM overlays,
+   * and board data. Called by resume() when contextLost is true.
+   */
+  private async reinitApp() {
+    dbg(1, 'reinitApp ENTER', 'tab=' + this.tabId, 'contextLost=' + this.contextLost, 'board=' + (this.board ? this.board.format : 'null'));
+    if (this.destroyed) return;
+    if (this.reinitializing) {
+      dbg(1, 'reinitApp SKIPPED (already reinitializing)', 'tab=' + this.tabId);
+      return;
+    }
+    this.reinitializing = true;
+    logStore.log('log', `[renderer] reinitApp START tab=${this.tabId} board=${this.board ? this.board.format + '/' + this.board.parts.length + 'parts' : 'null'}`);
+
+    const savedBoard = this.board;
+
+    // Tear down old app's scene/canvas without calling app.destroy()
+    this.teardownForReinit();
+    this.contextLost = false;
+
+    // --- Create fresh Application ---
+    logStore.log('log', `[renderer] reinitApp: creating new Application tab=${this.tabId}`);
+    this.app = new Application();
+    try {
+      await this.app.init({
+        background: COLORS.background,
+        width: this.containerEl.clientWidth || 1,
+        height: this.containerEl.clientHeight || 1,
+        antialias: true,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        powerPreference: 'high-performance',
+      });
+      dbg(1, 'reinitApp app.init DONE', 'tab=' + this.tabId, 'size=' + this.containerEl.clientWidth + 'x' + this.containerEl.clientHeight);
+      logStore.log('log', `[renderer] reinitApp: new app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
+    } catch (err) {
+      logStore.log('error', `[renderer] reinitApp: app.init FAILED tab=${this.tabId}:`, err);
+      this.reinitializing = false;
+      return;
+    }
+
+    this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
+    this.app.ticker.maxFPS = 60;
+    this.app.ticker.remove(this.app.render, this.app);
+
+    // --- Recreate Viewport ---
+    this.viewport = new Viewport({
+      screenWidth: this.containerEl.clientWidth || 1,
+      screenHeight: this.containerEl.clientHeight || 1,
+      events: this.app.renderer.events,
+    });
+    this.viewport.drag().pinch().wheel({ smooth: 5 }).decelerate({ friction: 0.95 })
+      .clampZoom({ minScale: 0.001, maxScale: 10 });
+    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.viewport.on('clicked', (e: any) => { this.handleClick(e.world as Point); });
+    this.app.stage.addChild(this.viewport);
+
+    // --- Recreate overlay Graphics (old ones were destroyed with the old app) ---
+    this.selectionGfx = new Graphics();
+    this.netDimGfx = new Graphics();
+    this.netLabelLayer = new Container();
+    this.butterflySelectionGfx = new Graphics();
+    this.netLinesGfx = new Graphics();
+    this.viewport.addChild(this.netLinesGfx);
+
+    const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
+    this.elevatedPartBg = new Graphics();
+    this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
+    this.elevatedPartLabel.anchor.set(0.5, 0.5);
+    this.elevatedPartLabel.visible = false;
+    this.elevatedPartBg.visible = false;
+    this.elevatedPinBg = new Graphics();
+    this.elevatedPinLabel = new BitmapText({ text: '', style: labelStyle });
+    this.elevatedPinLabel.anchor.set(0.5, 0.5);
+    this.elevatedPinLabel.visible = false;
+    this.elevatedPinBg.visible = false;
+
+    // --- Reinstall canvas event listeners ---
+    const newCanvas = this.app.renderer.canvas as HTMLCanvasElement;
+    this.tooltipCanvas = newCanvas;
+    if (this.boundHover) {
+      newCanvas.addEventListener('pointermove', this.boundHover);
+      newCanvas.addEventListener('pointerleave', this.boundHideTooltip!);
+    }
+    this.installContextLossHandlers(newCanvas);
+
+    // Reinstall shared ticker callback
+    this.hudThrottle = 0;
+    this.app.ticker.add(this.onTick);
+
+    // --- Reset state and rebuild scene ---
+    logStore.log('log', `[renderer] reinitApp: resetting state & rebuilding scene tab=${this.tabId}`);
+    this.lastLodScale = -1;
+    this.prevTickScale = -1;
+    this.lastFlipParams = null;
+    this.netLinesDirty = true;
+    this.needsRender = true;
+
+    if (savedBoard) {
+      logStore.log('log', `[renderer] reinitApp: activateScene for ${savedBoard.format}/${savedBoard.parts.length}parts tab=${this.tabId}`);
+      this.activateScene(savedBoard);
+      this.board = savedBoard;
+    } else {
+      logStore.log('warn', `[renderer] reinitApp: no saved board — nothing to rebuild tab=${this.tabId}`);
+    }
+
+    this.initialized = true;
+    this.app.ticker.start();
+    this.reinitializing = false;
+
+    // Sync with current store state (applies layer visibility, selection, etc.)
+    this.onBoardUpdate();
+
+    dbg(1, 'reinitApp COMPLETE', 'tab=' + this.tabId, 'board=' + (savedBoard ? savedBoard.format : 'null'), 'scene=' + (this.activeScene ? 'yes' : 'null'));
+    logStore.log('log', `[renderer] reinitApp COMPLETE tab=${this.tabId} board=${savedBoard ? savedBoard.format : 'null'} tickerStarted=${this.app.ticker.started} scene=${this.activeScene ? 'yes' : 'null'}`);
   }
 
   async init() {
@@ -329,6 +677,9 @@ export class BoardRenderer {
     this.tooltipCanvas.addEventListener('pointermove', this.boundHover);
     this.tooltipCanvas.addEventListener('pointerleave', this.boundHideTooltip);
 
+    // WebGL context loss recovery — browser may reclaim context when canvas is hidden
+    this.installContextLossHandlers(this.app.renderer.canvas as HTMLCanvasElement);
+
     // Mac trackpad rotation gesture — gesturestart/gesturechange are Safari/Chrome on macOS
     this.boundGestureStart = (e: Event) => {
       e.preventDefault();
@@ -395,83 +746,8 @@ export class BoardRenderer {
     this.containerEl.appendChild(this.perfToggleBtn);
 
     // Combined ticker: LoD updates + net line animation + HUD + on-demand render
-    let hudThrottle = 0;
-    this.app.ticker.add((ticker) => {
-      const perf = this.perfVisible;
-      const frameStart = perf ? performance.now() : 0;
-
-      // Drive animated zoom
-      if (this.zoomAnim) {
-        const a = this.zoomAnim;
-        a.elapsed += ticker.deltaMS;
-        const t = Math.min(a.elapsed / a.duration, 1);
-        const e = this.easeOutCubic(t);
-        const sx = a.fromScaleX + (a.toScaleX - a.fromScaleX) * e;
-        const sy = a.fromScaleY + (a.toScaleY - a.fromScaleY) * e;
-        const px = a.fromX + (a.toX - a.fromX) * e;
-        const py = a.fromY + (a.toY - a.fromY) * e;
-        this.viewport.scale.set(sx, sy);
-        this.viewport.position.set(px, py);
-        this.needsRender = true;
-        this.netLinesDirty = true;
-        if (t >= 1) this.zoomAnim = null;
-      }
-
-      // Detect active zooming by comparing scale between frames
-      const curScale = Math.abs(this.viewport.scale.x);
-      if (this.prevTickScale >= 0 && curScale !== this.prevTickScale) {
-        this.onZoomFrame();
-      }
-      this.prevTickScale = curScale;
-
-      let t0 = perf ? performance.now() : 0;
-      if (this.updateLoD()) this.needsRender = true;
-      if (perf) this.perfAccum.lod += performance.now() - t0;
-
-
-      // Net line pulse animation — only when there's an active selection with net lines
-      if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
-        const s = renderSettingsStore.settings;
-        if (s.netLineDashed || s.netLinePulse) {
-          this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
-          t0 = perf ? performance.now() : 0;
-          this.renderNetLines();
-          if (perf) this.perfAccum.netLines += performance.now() - t0;
-          this.needsRender = true;
-        }
-      }
-
-      this.updateDebugVertexLabels();
-
-      // On-demand GPU render — skip when nothing changed (e.g. idle at high zoom)
-      if (this.needsRender) {
-        this.needsRender = false;
-        t0 = perf ? performance.now() : 0;
-        this.app.render();
-        if (perf) this.perfAccum.gpuRender += performance.now() - t0;
-      }
-
-      if (perf) {
-        this.perfAccum.frame += performance.now() - frameStart;
-        this.perfSamples++;
-      }
-
-      // HUD update (DOM only, no GPU cost) — throttle to ~4 updates/sec
-      hudThrottle += ticker.deltaMS;
-      if (hudThrottle >= 250) {
-        hudThrottle = 0;
-        this.updateHud(ticker.FPS);
-      }
-
-      // Perf overlay update — flush accumulators every ~500ms
-      if (this.perfVisible) {
-        this.perfThrottle += ticker.deltaMS;
-        if (this.perfThrottle >= 500) {
-          this.flushPerfOverlay();
-          this.perfThrottle = 0;
-        }
-      }
-    });
+    this.hudThrottle = 0;
+    this.app.ticker.add(this.onTick);
 
     // Pick up any board data that loaded during async init
     this.onBoardUpdate();
@@ -1119,6 +1395,10 @@ export class BoardRenderer {
   // --- Event handlers ---
 
   private onBoardUpdate() {
+    if (this.contextLost || this.reinitializing) {
+      dbg(1, 'onBoardUpdate SKIP: gpu released/reinitializing', 'tab=' + this.tabId);
+      return;
+    }
     if (!this.viewport) {
       dbg(1, 'onBoardUpdate SKIP: no viewport', 'tab=' + this.tabId);
       return;
@@ -1148,6 +1428,13 @@ export class BoardRenderer {
           this.deactivateScene();
         }
         this.board = board;
+      } else if (board && !this.activeScene) {
+        // Same board but scene was lost (e.g. settings update while paused failed
+        // to rebuild, or invalidateAllScenes ran without a successful activateScene).
+        // Re-activate to recover from blank render.
+        dbg(1, 'onBoardUpdate: recovering lost scene');
+        logStore.log('log', `[renderer] onBoardUpdate tab=${this.tabId} recovering lost scene for ${board.format}/${board.parts.length}`);
+        this.activateScene(board);
       } else if (board && this.activeScene) {
         // Same board — update layer visibility + flips
         this.activeScene.topLayer.visible = this.isTopVisible;
@@ -1220,7 +1507,7 @@ export class BoardRenderer {
   }
 
   private onSettingsUpdate() {
-    if (!this.board) return;
+    if (!this.board || this.contextLost || this.reinitializing) return;
     dbg(2, 'onSettingsUpdate');
     try {
       // Cancel any pending zoom-settle timers (scene is about to be rebuilt)
@@ -1235,7 +1522,10 @@ export class BoardRenderer {
       // Force LoD re-evaluation on next tick (new scene, thresholds may have changed)
       this.lastLodScale = -1;
     } catch (err) {
-      logStore.log('error', '[renderer] onSettingsUpdate crashed:', err);
+      logStore.log('error', `[renderer] onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
+      // activeScene may be null after invalidateAllScenes + failed activateScene.
+      // The next onBoardUpdate (on resume or tab switch) will detect the missing
+      // scene and re-activate it via the "recovering lost scene" path.
     }
   }
 
@@ -1264,7 +1554,9 @@ export class BoardRenderer {
         this.renderSelection();
       }
       // Flush to GPU even if ticker is paused (e.g. panel inactive during search focus)
-      if (!this.app.ticker.started) this.app.render();
+      if (!this.app.ticker.started && !this.contextLost) {
+        try { this.app.render(); } catch (err) { this.handleRenderCrash(err); }
+      }
     };
 
     this.selectionBlinkTimer = setTimeout(() => tick(2), blinkInterval);
@@ -2135,6 +2427,7 @@ export class BoardRenderer {
   }
 
   destroy() {
+    this.destroyed = true;
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;
@@ -2182,16 +2475,22 @@ export class BoardRenderer {
     this.perfToggleBtn?.parentElement?.removeChild(this.perfToggleBtn);
     this.perfToggleBtn = null;
     if (this.initialized) {
-      this.invalidateAllScenes();
-      this.netDimGfx?.clear();
-      this.netLabelLayer?.removeChildren();
-      this.selectionGfx?.clear();
-      this.netLinesGfx?.clear();
-      // NOTE: do NOT call cleanupShadowFonts() here — installedShadowFonts and the
-      // PixiJS BitmapFont registry are module-level globals shared across all renderer
-      // instances. Destroying one tab's renderer must not evict fonts still in use by
-      // other tabs. Fonts are freed automatically on page unload.
-      this.app.destroy(true, { children: true });
+      // Clean up scene objects
+      try { this.invalidateAllScenes(); } catch { /* ignore */ }
+      try { this.netDimGfx?.clear(); } catch { /* ignore */ }
+      try { this.netLabelLayer?.removeChildren(); } catch { /* ignore */ }
+      try { this.selectionGfx?.clear(); } catch { /* ignore */ }
+      try { this.netLinesGfx?.clear(); } catch { /* ignore */ }
+      this.stopTicker();
     }
+    // Remove context loss listeners before discarding the canvas
+    this.removeContextLossHandlers();
+    // Do NOT call app.destroy() — it triggers GlobalResourceRegistry.clear()
+    // which corrupts the module-level batchPool shared by ALL PixiJS Applications.
+    // Just remove the canvas from DOM and let GC reclaim the Application + WebGL context.
+    try {
+      const canvas = this.containerEl.querySelector('canvas');
+      canvas?.parentElement?.removeChild(canvas);
+    } catch { /* ignore */ }
   }
 }
