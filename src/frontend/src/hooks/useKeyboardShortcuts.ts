@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { shortcuts, matchesShortcut } from '../store/keyboard-shortcuts';
+import { shortcuts, matchesShortcut, getShortcut } from '../store/keyboard-shortcuts';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { viewCommands } from '../store/view-commands';
@@ -12,6 +12,15 @@ import { fileInputRefs } from '../store/file-inputs';
 export function useKeyboardShortcuts() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Cmd/Ctrl+F → focus search bar (works from anywhere, including inputs)
+      const focusSearch = getShortcut('focusSearch');
+      if (focusSearch && matchesShortcut(e, focusSearch) && fileInputRefs.search) {
+        e.preventDefault();
+        fileInputRefs.search.focus();
+        fileInputRefs.search.select();
+        return;
+      }
+
       // Don't intercept when typing in inputs/textareas
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -32,15 +41,12 @@ export function useKeyboardShortcuts() {
             return;
 
           case 'flipBoard': {
-            const { showTop, showBottom, butterfly } = boardStore;
-            if (butterfly) return;
-            if (showTop && showBottom) return;
             e.preventDefault();
-            if (showTop) {
-              boardStore.selectBottom();
-            } else {
-              boardStore.selectTop();
-            }
+            const { showTop, showBottom, butterfly } = boardStore;
+            if (butterfly || (showTop && showBottom)) return;
+            if (showTop) boardStore.selectBottom();
+            else boardStore.selectTop();
+            boardStore.flipHorizontal();
             return;
           }
 

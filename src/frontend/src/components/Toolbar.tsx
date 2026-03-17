@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { pdfStore } from '../store/pdf-store';
-import { ensurePdfPanel, ensureUtilityPanel } from '../store/dockview-api';
+import { ensurePdfPanel, ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
 import { exportToBVR3, getAllExtensions } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
@@ -89,6 +89,7 @@ export function Toolbar() {
         multiple
         onChange={handlePdfChange}
         style={{ display: 'none' }}
+        data-testid="pdf-input"
       />
       <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn" data-tooltip={formatShortcut('openBoard')}>
         Open Board
@@ -169,11 +170,19 @@ export function Toolbar() {
         placeholder="Search component or net..."
         className="toolbar-search"
         onChange={(e) => boardStore.setSearch(e.target.value)}
+        ref={(el) => { fileInputRefs.search = el; }}
         data-testid="search-input"
       />
 
       <div className="toolbar-separator" />
 
+      <button
+        onClick={() => ensureLibraryPanel()}
+        className="toolbar-btn"
+        data-tooltip="Board library / databank"
+      >
+        Library
+      </button>
       <button
         onClick={() => ensureUtilityPanel('settings', 'settings', 'Settings')}
         className="toolbar-btn toolbar-btn-icon"

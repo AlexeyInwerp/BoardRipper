@@ -8,6 +8,7 @@ export const CADFormat: FormatDescriptor = {
   name: 'GenCAD (PCB Interchange)',
   extensions: ['.cad'],
   description: 'GenCAD 1.4 text-based PCB interchange format. Sections: $SHAPES, $COMPONENTS, $SIGNALS.',
+  flipY: true,
 
   detect(header) {
     const text = decoder.decode(header).trimStart();

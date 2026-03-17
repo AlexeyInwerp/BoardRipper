@@ -90,6 +90,12 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// allAllowedExtensions includes both board and PDF extensions for listing.
+var allAllowedExtensions = map[string]bool{
+	".bvr": true, ".bv": true, ".brd": true, ".fz": true,
+	".cae": true, ".cad": true, ".pcb": true, ".pdf": true,
+}
+
 func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(h.dataDir)
 	if err != nil {
@@ -138,6 +144,47 @@ func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
+	http.ServeFile(w, r, filePath)
+}
+
+// GetByPath serves files from subdirectories within dataDir.
+// The path is taken from the full URL after /api/files/path/.
+func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
+	// Extract the path portion after /api/files/path/
+	relPath := r.PathValue("path")
+	if relPath == "" {
+		http.Error(w, "Missing file path", http.StatusBadRequest)
+		return
+	}
+
+	// Prevent directory traversal: clean the path and reject anything with ..
+	relPath = filepath.Clean(relPath)
+	if strings.Contains(relPath, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	filePath := filepath.Join(h.dataDir, relPath)
+
+	info, err := os.Stat(filePath)
+	if os.IsNotExist(err) || (info != nil && info.IsDir()) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	safeName := filepath.Base(relPath)
+	ext := strings.ToLower(filepath.Ext(safeName))
+
+	// Determine content type
+	contentType := "application/octet-stream"
+	if ext == ".pdf" {
+		contentType = "application/pdf"
+	} else if allowedExtensions[ext] {
+		contentType = "text/plain; charset=utf-8"
+	}
+
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
 	http.ServeFile(w, r, filePath)
 }

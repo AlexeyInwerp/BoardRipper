@@ -20,6 +20,8 @@ interface StoreSnapshot {
   mirrorX: boolean;
   mirrorY: boolean;
   showNetLines: boolean;
+  showNetDim: boolean;
+  showHoverInfo: boolean;
   boundPdfFiles: File[];
   pdfFileNames: string[];
 }
@@ -49,6 +51,8 @@ function getSnapshot(): StoreSnapshot {
       mirrorX: boardStore.mirrorX,
       mirrorY: boardStore.mirrorY,
       showNetLines: boardStore.showNetLines,
+      showNetDim: boardStore.showNetDim,
+      showHoverInfo: boardStore.showHoverInfo,
       boundPdfFiles: boardStore.boundPdfFiles,
       pdfFileNames: boardStore.pdfFileNames,
     };

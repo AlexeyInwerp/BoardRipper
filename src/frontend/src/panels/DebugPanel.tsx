@@ -27,19 +27,19 @@ export function DebugPanel() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: 'monospace', fontSize: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderBottom: '1px solid #333', flexShrink: 0 }}>
-        <span style={{ color: '#aaa', flexGrow: 1 }}>{entries.length} entries</span>
+    <div className="debug-panel-root">
+      <div className="debug-panel-toolbar">
+        <span className="debug-panel-count">{entries.length} entries</span>
         <button
           onClick={() => boardCache.clear().then(() => logStore.log('log', '[cache] Board cache cleared'))}
-          style={{ background: '#333', border: '1px solid #555', color: '#fa0', padding: '2px 8px', cursor: 'pointer', borderRadius: 3, fontSize: 11 }}
+          className="debug-panel-btn debug-panel-btn-warn"
           title="Clear IndexedDB board cache — forces re-parse on next open"
         >
           Clear Cache
         </button>
         <button
           onClick={() => logStore.clear()}
-          style={{ background: '#333', border: '1px solid #555', color: '#ccc', padding: '2px 8px', cursor: 'pointer', borderRadius: 3, fontSize: 11 }}
+          className="debug-panel-btn debug-panel-btn-muted"
         >
           Clear Log
         </button>
@@ -47,35 +47,21 @@ export function DebugPanel() {
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}
+        className="debug-panel-log"
       >
         {entries.length === 0 && (
-          <div style={{ color: '#555', padding: '8px 12px' }}>No log entries yet. Open a board file to see output.</div>
+          <div className="debug-panel-empty">No log entries yet. Open a board file to see output.</div>
         )}
         {entries.map(e => (
           <div
             key={e.id}
-            style={{
-              display: 'flex',
-              gap: 8,
-              padding: '1px 8px',
-              lineHeight: '18px',
-              color: e.level === 'error' ? '#f88' : e.level === 'warn' ? '#fd9' : '#ccc',
-              background: e.level === 'error' ? 'rgba(255,80,80,0.07)' : 'transparent',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-            }}
+            className={`debug-log-entry${e.level === 'error' ? ' debug-log-entry-error' : ''} debug-log-text-${e.level}`}
           >
-            <span style={{ color: '#555', flexShrink: 0 }}>{e.time}</span>
-            <span style={{
-              flexShrink: 0,
-              width: 36,
-              color: e.level === 'error' ? '#f55' : e.level === 'warn' ? '#fa0' : '#666',
-              fontWeight: e.level !== 'log' ? 600 : 400,
-            }}>
+            <span className="debug-log-time">{e.time}</span>
+            <span className={`debug-log-level debug-log-level-${e.level}`}>
               {e.level.toUpperCase()}
             </span>
-            <span style={{ flex: 1 }}>{e.message}</span>
+            <span className="debug-log-message">{e.message}</span>
           </div>
         ))}
         <div ref={bottomRef} />

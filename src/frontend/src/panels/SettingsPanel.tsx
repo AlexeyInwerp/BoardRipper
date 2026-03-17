@@ -1,12 +1,12 @@
 import { useState, useCallback, useRef, useMemo } from 'react';
 import { renderSettingsStore, DEFAULTS } from '../store/render-settings';
-import type { RenderSettings, LabelSize, NetColorRule } from '../store/render-settings';
+import type { RenderSettings, LabelSize, NetColorRule, PartTypeOverride, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { getAllFormats } from '../parsers/registry';
 
-type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats';
+type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -46,16 +46,16 @@ function CollapsibleSection({
 
 interface SliderProps {
   label: string; value: number; min: number; max: number; step: number;
-  field: keyof RenderSettings; onUpdate: DraftUpdater;
+  field: keyof RenderSettings; onUpdate: DraftUpdater; title?: string;
 }
 
-function Slider({ label, value, min, max, step, field, onUpdate }: SliderProps) {
+function Slider({ label, value, min, max, step, field, onUpdate, title }: SliderProps) {
   const [dragging, setDragging] = useState(false);
   const defaultValue = DEFAULTS[field] as number;
   const pct = ((value - min) / (max - min)) * 100;
   const isModified = Math.abs(value - defaultValue) > step * 0.5;
   return (
-    <div className="settings-row">
+    <div className="settings-row" title={title}>
       <label className="settings-label">
         {label}
         <span className="settings-value">{Number(value.toFixed(2))}</span>
@@ -81,12 +81,12 @@ function Slider({ label, value, min, max, step, field, onUpdate }: SliderProps) 
 }
 
 interface ToggleProps {
-  label: string; value: boolean; field: keyof RenderSettings; onUpdate: DraftUpdater;
+  label: string; value: boolean; field: keyof RenderSettings; onUpdate: DraftUpdater; title?: string;
 }
 
-function Toggle({ label, value, field, onUpdate }: ToggleProps) {
+function Toggle({ label, value, field, onUpdate, title }: ToggleProps) {
   return (
-    <div className="settings-row settings-toggle-row">
+    <div className="settings-row settings-toggle-row" title={title}>
       <label className="settings-label">{label}</label>
       <input type="checkbox" checked={value} onChange={(e) => onUpdate({ [field]: e.target.checked })} />
     </div>
@@ -182,6 +182,102 @@ function NetColorRulesSection({ rules, ruleActions }: { rules: NetColorRule[]; r
   );
 }
 
+// ---- Part type overrides ----
+
+type OverrideActions = {
+  update: (key: string, o: PartTypeOverride) => void;
+  rename: (oldKey: string, newKey: string) => void;
+  remove: (key: string) => void;
+  add: () => void;
+};
+
+const EMPTY_OVERRIDE: PartTypeOverride = { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '' };
+
+const PAD_SHAPES: PadShape[]  = ['natural', 'round', 'square'];
+const BODY_SHAPES: BodyShape[] = ['natural', 'rect', 'square'];
+
+function OverrideRow({ rowKey, override: o, actions }: { rowKey: string; override: PartTypeOverride; actions: OverrideActions }) {
+  const [editKey, setEditKey] = useState(rowKey);
+
+  // Keep local edit key in sync if parent renames it externally
+  const prevKeyRef = useRef(rowKey);
+  if (prevKeyRef.current !== rowKey) { prevKeyRef.current = rowKey; setEditKey(rowKey); }
+
+  const commitRename = () => {
+    const trimmed = editKey.trim().toUpperCase();
+    if (!trimmed) { setEditKey(rowKey); return; }
+    if (trimmed !== rowKey) actions.rename(rowKey, trimmed);
+  };
+
+  return (
+    <div className="part-type-override-row">
+      <input
+        className="pto-key-input"
+        value={editKey}
+        onChange={e => setEditKey(e.target.value.toUpperCase())}
+        onBlur={commitRename}
+        onKeyDown={e => e.key === 'Enter' && commitRename()}
+        title="Prefix mask (e.g. R, FB, SW)"
+        maxLength={8}
+      />
+      <div className="pto-col-pad settings-btn-group">
+        {PAD_SHAPES.map(shape => (
+          <button key={shape}
+            className={`settings-btn-option${o.padShape === shape ? ' active' : ''}`}
+            onClick={() => actions.update(rowKey, { ...o, padShape: shape })}
+            title={shape}
+          >
+            {shape === 'natural' ? '~' : shape === 'round' ? '●' : '■'}
+          </button>
+        ))}
+      </div>
+      <div className="pto-col-body settings-btn-group">
+        {BODY_SHAPES.map(shape => (
+          <button key={shape}
+            className={`settings-btn-option${o.bodyShape === shape ? ' active' : ''}`}
+            onClick={() => actions.update(rowKey, { ...o, bodyShape: shape })}
+            title={shape}
+          >
+            {shape === 'natural' ? '~' : shape === 'rect' ? '▭' : '□'}
+          </button>
+        ))}
+      </div>
+      <span className="pto-col-color">
+        <input type="color" className="pto-color-input"
+          value={o.color || '#000000'}
+          onChange={e => actions.update(rowKey, { ...o, color: e.target.value })}
+        />
+      </span>
+      <span className="pto-col-hide">
+        <input type="checkbox" checked={o.hidden}
+          onChange={e => actions.update(rowKey, { ...o, hidden: e.target.checked })}
+        />
+      </span>
+      <button className="pto-remove-btn" onClick={() => actions.remove(rowKey)} title="Remove">×</button>
+    </div>
+  );
+}
+
+function PartTypeOverridesSection({ overrides, actions }: { overrides: Record<string, PartTypeOverride>; actions: OverrideActions }) {
+  return (
+    <div className="part-type-overrides">
+      <div className="part-type-overrides-header">
+        <span>Mask</span>
+        <span>Pads</span>
+        <span>Body</span>
+        <span>Fill</span>
+        <span>Hide</span>
+        <span></span>
+      </div>
+      {Object.entries(overrides).map(([key, o]) => (
+        <OverrideRow key={key} rowKey={key} override={o} actions={actions} />
+      ))}
+      <button className="color-rule-add-btn pto-add-btn" onClick={actions.add} title="Add override">+</button>
+      <div className="color-rule-hint">Prefix match, longest wins (e.g. FB beats F for FB1).</div>
+    </div>
+  );
+}
+
 // ---- Main panel ----
 
 const INITIALLY_OPEN: SectionId[] = [];
@@ -210,11 +306,13 @@ export function SettingsPanel() {
   const performanceRef = useRef<HTMLDivElement>(null);
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const formatsRef = useRef<HTMLDivElement>(null);
+  const partTypeOverridesRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, netLines: netLinesRef, interaction: interactionRef,
     performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
+    partTypeOverrides: partTypeOverridesRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -271,6 +369,48 @@ export function SettingsPanel() {
     },
   }), []);
 
+  const overrideActions: OverrideActions = useMemo(() => ({
+    update(key, o) {
+      setDraft(prev => {
+        const next = { ...prev, partTypeOverrides: { ...prev.partTypeOverrides, [key]: o } };
+        if (previewingRef.current) renderSettingsStore.applySettings(next);
+        return next;
+      });
+      setDirty(true);
+    },
+    rename(oldKey, newKey) {
+      setDraft(prev => {
+        const entries = Object.entries(prev.partTypeOverrides);
+        const idx = entries.findIndex(([k]) => k === oldKey);
+        if (idx === -1 || prev.partTypeOverrides[newKey]) return prev;
+        entries[idx] = [newKey, entries[idx][1]];
+        const next = { ...prev, partTypeOverrides: Object.fromEntries(entries) };
+        if (previewingRef.current) renderSettingsStore.applySettings(next);
+        return next;
+      });
+      setDirty(true);
+    },
+    remove(key) {
+      setDraft(prev => {
+        const { [key]: _, ...rest } = prev.partTypeOverrides;
+        const next = { ...prev, partTypeOverrides: rest };
+        if (previewingRef.current) renderSettingsStore.applySettings(next);
+        return next;
+      });
+      setDirty(true);
+    },
+    add() {
+      setDraft(prev => {
+        let key = 'NEW'; let i = 1;
+        while (prev.partTypeOverrides[key]) key = `NEW${i++}`;
+        const next = { ...prev, partTypeOverrides: { ...prev.partTypeOverrides, [key]: { ...EMPTY_OVERRIDE } } };
+        if (previewingRef.current) renderSettingsStore.applySettings(next);
+        return next;
+      });
+      setDirty(true);
+    },
+  }), []);
+
   const handleApply = () => {
     renderSettingsStore.applySettings(draft);
     baselineRef.current = structuredClone(draft);
@@ -317,34 +457,70 @@ export function SettingsPanel() {
       </div>
       <div className="settings-scroll">
 
-      <CollapsibleSection id="outline" title="Outline" isOpen={openSections.has('outline')}
+      <CollapsibleSection id="outline" title="Board Outline" isOpen={openSections.has('outline')}
         onToggle={toggleSection} sectionRef={outlineRef} isFocused={focusedSection === 'outline'}>
-        <Slider label="Width" value={draft.outlineWidth} min={0.5} max={20} step={0.5} field="outlineWidth" onUpdate={updateDraft} />
-        <Slider label="Opacity" value={draft.outlineAlpha} min={0} max={1} step={0.05} field="outlineAlpha" onUpdate={updateDraft} />
-        <Slider label="Board Fill" value={draft.boardFillAlpha} min={0} max={0.5} step={0.01} field="boardFillAlpha" onUpdate={updateDraft} />
+        <Slider label="Stroke Width" value={draft.outlineWidth} min={0.5} max={20} step={0.5} field="outlineWidth" onUpdate={updateDraft}
+          title="Thickness of the PCB board outline stroke (mils)" />
+        <Slider label="Stroke Opacity" value={draft.outlineAlpha} min={0} max={1} step={0.05} field="outlineAlpha" onUpdate={updateDraft}
+          title="Transparency of the board outline. 0 = invisible, 1 = fully opaque" />
+        <Slider label="Board Fill" value={draft.boardFillAlpha} min={0} max={0.5} step={0.01} field="boardFillAlpha" onUpdate={updateDraft}
+          title="Semi-transparent fill inside the board outline. Helps distinguish the PCB area from the background" />
       </CollapsibleSection>
 
-      <CollapsibleSection id="parts" title="Parts" isOpen={openSections.has('parts')}
+      <CollapsibleSection id="parts" title="Parts / Components" isOpen={openSections.has('parts')}
         onToggle={toggleSection} sectionRef={partsRef} isFocused={focusedSection === 'parts'}>
-        <Slider label="Border Width" value={draft.partBorderWidth} min={0.1} max={10} step={0.1} field="partBorderWidth" onUpdate={updateDraft} />
-        <Slider label="Border Opacity" value={draft.partBorderAlpha} min={0} max={1} step={0.05} field="partBorderAlpha" onUpdate={updateDraft} />
-        <Slider label="Padding" value={draft.partPadding} min={0} max={30} step={1} field="partPadding" onUpdate={updateDraft} />
-        <Toggle label="Show Labels" value={draft.showPartLabels} field="showPartLabels" onUpdate={updateDraft} />
-        <Toggle label="Label Shadow" value={draft.partLabelShadow} field="partLabelShadow" onUpdate={updateDraft} />
-        <Slider label="Label Hide Threshold" value={draft.labelHideThreshold} min={0} max={10} step={0.5} field="labelHideThreshold" onUpdate={updateDraft} />
-        <Slider label="Min Label Screen Size (px)" value={draft.labelMinScreenPx} min={0} max={10} step={0.5} field="labelMinScreenPx" onUpdate={updateDraft} />
-        <Slider label="Label Zoom Hide" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft} />
+        <Slider label="Border Width" value={draft.partBorderWidth} min={0.1} max={10} step={0.1} field="partBorderWidth" onUpdate={updateDraft}
+          title="Thickness of component border outlines (mils). Always at least 1px on screen regardless of zoom" />
+        <Slider label="Border Opacity" value={draft.partBorderAlpha} min={0} max={1} step={0.05} field="partBorderAlpha" onUpdate={updateDraft}
+          title="Transparency of component border outlines. 0 = invisible, 1 = fully opaque" />
+        <Slider label="Padding" value={draft.partPadding} min={0} max={30} step={1} field="partPadding" onUpdate={updateDraft}
+          title="Extra space (mils) between component pins and the part border. Larger = more room around the IC/chip outline" />
+        <Slider label="2-Pin Min Body (mils)" value={draft.partMinBodyMils} min={0} max={60} step={1} field="partMinBodyMils" onUpdate={updateDraft}
+          title="Minimum body width for 2-pin parts (resistors, capacitors) in mils. Inflates narrow parts so they're easier to see and click. 0 = use file data as-is" />
+        <Toggle label="Component Type Colors" value={draft.showComponentColors} field="showComponentColors" onUpdate={updateDraft}
+          title="Fill component bodies with colors based on their type prefix (R = resistor, C = capacitor, U = IC, etc.). Colors are configured in Part Type Overrides" />
+        <Slider label="Type Fill Opacity" value={draft.componentFillAlpha} min={0} max={1} step={0.05} field="componentFillAlpha" onUpdate={updateDraft}
+          title="Transparency of the component type color fills. 0 = invisible, 1 = fully opaque" />
+        <Toggle label="Show Part Labels" value={draft.showPartLabels} field="showPartLabels" onUpdate={updateDraft}
+          title="Display component reference designators (e.g. U1, R100, C42) centered on each part" />
+        <Toggle label="Label Drop Shadow" value={draft.partLabelShadow} field="partLabelShadow" onUpdate={updateDraft}
+          title="Add a dark shadow halo behind part labels for better readability against colored or busy backgrounds" />
+        <Slider label="Label Min Size (mils)" value={draft.labelHideThreshold} min={0} max={10} step={0.5} field="labelHideThreshold" onUpdate={updateDraft}
+          title="Minimum font size in mils — labels whose computed font size falls below this are hidden entirely. Reduces clutter from tiny illegible text on small parts" />
+        <Slider label="Label Min Screen px" value={draft.labelMinScreenPx} min={0} max={10} step={0.5} field="labelMinScreenPx" onUpdate={updateDraft}
+          title="Minimum rendered label size in screen pixels. Labels smaller than this at the current zoom level are hidden. Works alongside Label Min Size (mils)" />
+        <Slider label="Label Zoom Threshold" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft}
+          title="Minimum viewport zoom scale to show labels. 0 = always visible. Higher values hide all labels when zoomed out, showing only at closer zoom levels" />
         <LabelSizeSelector draft={draft} onUpdate={updateDraft} />
       </CollapsibleSection>
 
       <CollapsibleSection id="pins" title="Pins / Pads" isOpen={openSections.has('pins')}
         onToggle={toggleSection} sectionRef={pinsRef} isFocused={focusedSection === 'pins'}>
-        <Slider label="Min Radius" value={draft.pinMinRadius} min={1} max={20} step={0.5} field="pinMinRadius" onUpdate={updateDraft} />
-        <Slider label="Max Radius" value={draft.pinMaxRadius} min={5} max={100} step={1} field="pinMaxRadius" onUpdate={updateDraft} />
-        <Slider label="Scale Factor" value={draft.pinScaleFactor} min={0} max={3} step={0.1} field="pinScaleFactor" onUpdate={updateDraft} />
-        <Slider label="Min Part Size (mils)" value={draft.partMinBodyMils} min={0} max={60} step={1} field="partMinBodyMils" onUpdate={updateDraft} />
-        <Slider label="Opacity" value={draft.pinAlpha} min={0} max={1} step={0.05} field="pinAlpha" onUpdate={updateDraft} />
-        <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft} />
+        <Slider label="Min Radius" value={draft.pinMinRadius} min={1} max={20} step={0.5} field="pinMinRadius" onUpdate={updateDraft}
+          title="Minimum pin circle radius (mils). All pins are rendered at least this size. Also the base size when Scale Factor = 0" />
+        <Slider label="Max Radius" value={draft.pinMaxRadius} min={5} max={100} step={1} field="pinMaxRadius" onUpdate={updateDraft}
+          title="Maximum pin circle radius (mils). Caps the visual size of large pins. On dense parts (BGA), pins are auto-clamped smaller to avoid overlap" />
+        <Slider label="Scale Factor" value={draft.pinScaleFactor} min={0} max={3} step={0.1} field="pinScaleFactor" onUpdate={updateDraft}
+          title="How much the file-specified pin radius affects rendered size. 0 = all pins identical (Min Radius). 1 = proportional to file data. >1 = exaggerated differences" />
+        <Slider label="Fill Opacity" value={draft.pinAlpha} min={0} max={1} step={0.05} field="pinAlpha" onUpdate={updateDraft}
+          title="Fill transparency of pin circles and rectangular pads. 0 = invisible, 1 = fully opaque" />
+        <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft}
+          title="Display pin number/name labels inside pin circles on multi-pin components (ICs, connectors). On BGA parts, numbers and net names alternate vertically to reduce overlap" />
+        <Slider label="Pin Label Min Screen px" value={draft.circleLabelMinScreenPx} min={0} max={20} step={0.5} field="circleLabelMinScreenPx" onUpdate={updateDraft}
+          title="Minimum screen pixel size for pin number and net name labels on multi-pin (circle) parts. Higher = need more zoom to see these labels. Controls when the pin detail layer appears" />
+        <Slider label="2-Pin Label Min Screen px" value={draft.twoPinLabelMinScreenPx} min={0} max={20} step={0.5} field="twoPinLabelMinScreenPx" onUpdate={updateDraft}
+          title="Minimum screen pixel size for net name labels on 2-pin parts (resistors, capacitors). These appear inside the rectangular pads. Higher = need more zoom" />
+        <Toggle label="Pin Label Background" value={draft.pinNetLabelBg} field="pinNetLabelBg" onUpdate={updateDraft}
+          title="Draw a dark background plate behind net name labels on circle pins. Improves readability when labels overflow beyond the pin area" />
+        <Toggle label="2-Pin Label Background" value={draft.twoPinNetLabelBg} field="twoPinNetLabelBg" onUpdate={updateDraft}
+          title="Draw a dark background plate behind net name labels on 2-pin rectangular pads" />
+        <Slider label="BGA Label Gap" value={draft.bgaLabelGapFactor} min={0} max={1} step={0.05} field="bgaLabelGapFactor" onUpdate={updateDraft}
+          title="Vertical offset between pin number and net name labels on dense BGA parts, as a fraction of pin radius. On BGAs, pin numbers and net names alternate above/below the pin center to avoid overlap. Larger = more vertical separation" />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="partTypeOverrides" title="Part Type Overrides" isOpen={openSections.has('partTypeOverrides')}
+        onToggle={toggleSection} sectionRef={partTypeOverridesRef} isFocused={focusedSection === 'partTypeOverrides'}>
+        <PartTypeOverridesSection overrides={draft.partTypeOverrides} actions={overrideActions} />
       </CollapsibleSection>
 
       <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}
@@ -352,38 +528,56 @@ export function SettingsPanel() {
         <NetColorRulesSection rules={draft.netColorRules} ruleActions={ruleActions} />
       </CollapsibleSection>
 
-      <CollapsibleSection id="selection" title="Selection & Overlay" isOpen={openSections.has('selection')}
+      <CollapsibleSection id="selection" title="Selection & Highlight" isOpen={openSections.has('selection')}
         onToggle={toggleSection} sectionRef={selectionRef} isFocused={focusedSection === 'selection'}>
-        <Slider label="Border Width" value={draft.selectionWidth} min={0.5} max={10} step={0.5} field="selectionWidth" onUpdate={updateDraft} />
-        <Slider label="Fill Brightness" value={draft.selectionFillAlpha} min={0} max={0.5} step={0.01} field="selectionFillAlpha" onUpdate={updateDraft} />
-        <Slider label="Padding" value={draft.selectionPadding} min={0} max={30} step={1} field="selectionPadding" onUpdate={updateDraft} />
-        <Slider label="Net Highlight Grow" value={draft.netHighlightGrow} min={0} max={20} step={0.5} field="netHighlightGrow" onUpdate={updateDraft} />
-        <Slider label="Net Highlight Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft} />
-        <Toggle label="Elevated Part Label" value={draft.showElevatedPartLabel} field="showElevatedPartLabel" onUpdate={updateDraft} />
-        <Toggle label="Elevated Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft} />
-        <Toggle label="Selection Overlay (top bar)" value={draft.showSelectionOverlay} field="showSelectionOverlay" onUpdate={updateDraft} />
+        <Slider label="Selection Border" value={draft.selectionWidth} min={0.5} max={10} step={0.5} field="selectionWidth" onUpdate={updateDraft}
+          title="Thickness of the yellow selection highlight outline around the selected component (mils)" />
+        <Slider label="Selection Fill" value={draft.selectionFillAlpha} min={0} max={0.5} step={0.01} field="selectionFillAlpha" onUpdate={updateDraft}
+          title="Brightness of the semi-transparent fill inside the selected component outline. 0 = no fill, higher = brighter" />
+        <Slider label="Selection Padding" value={draft.selectionPadding} min={0} max={30} step={1} field="selectionPadding" onUpdate={updateDraft}
+          title="Extra space (mils) around pins when drawing the selection highlight outline. Larger = selection box extends further beyond the component" />
+        <Slider label="Net Highlight Ring" value={draft.netHighlightGrow} min={0} max={20} step={0.5} field="netHighlightGrow" onUpdate={updateDraft}
+          title="How much larger (mils) the yellow net highlight circle is compared to the pin circle. Creates a visible ring around each pin in the selected net" />
+        <Slider label="Dim Overlay Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft}
+          title="Opacity of the dark overlay applied to all non-highlighted pins when a net is selected. Higher = stronger dimming of unrelated pins" />
+        <Toggle label="Floating Part Label" value={draft.showElevatedPartLabel} field="showElevatedPartLabel" onUpdate={updateDraft}
+          title="Show a large background-backed label above the selected component with its reference designator (e.g. U1)" />
+        <Toggle label="Floating Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft}
+          title="Show a background-backed label above the selected pin with its pin number and net name" />
+        <Toggle label="Top Bar Overlay" value={draft.showSelectionOverlay} field="showSelectionOverlay" onUpdate={updateDraft}
+          title="Show selected component and pin info in a text overlay bar at the top of the board viewport" />
       </CollapsibleSection>
 
       <CollapsibleSection id="netLines" title="Net Lines" isOpen={openSections.has('netLines')}
         onToggle={toggleSection} sectionRef={netLinesRef} isFocused={focusedSection === 'netLines'}>
-        <Slider label="Line Width" value={draft.netLineWidth} min={0.5} max={5} step={0.5} field="netLineWidth" onUpdate={updateDraft} />
-        <Slider label="Line Opacity" value={draft.netLineAlpha} min={0} max={1} step={0.05} field="netLineAlpha" onUpdate={updateDraft} />
-        <Toggle label="Dashed Line" value={draft.netLineDashed} field="netLineDashed" onUpdate={updateDraft} />
-        <Slider label="Dash Length" value={draft.netLineDashLength} min={2} max={20} step={1} field="netLineDashLength" onUpdate={updateDraft} />
-        <Toggle label="Red Pulse" value={draft.netLinePulse} field="netLinePulse" onUpdate={updateDraft} />
+        <Slider label="Line Width" value={draft.netLineWidth} min={0.5} max={5} step={0.5} field="netLineWidth" onUpdate={updateDraft}
+          title="Thickness of the connection lines drawn between pins of the same net when a net is selected" />
+        <Slider label="Line Opacity" value={draft.netLineAlpha} min={0} max={1} step={0.05} field="netLineAlpha" onUpdate={updateDraft}
+          title="Transparency of net connection lines. 0 = invisible, 1 = fully opaque" />
+        <Toggle label="Dashed Lines" value={draft.netLineDashed} field="netLineDashed" onUpdate={updateDraft}
+          title="Draw net connection lines as dashed instead of solid. Easier to distinguish from board traces" />
+        <Slider label="Dash Length" value={draft.netLineDashLength} min={2} max={20} step={1} field="netLineDashLength" onUpdate={updateDraft}
+          title="Length of each dash segment (screen pixels) in the dashed net line pattern" />
+        <Toggle label="Pulse Animation" value={draft.netLinePulse} field="netLinePulse" onUpdate={updateDraft}
+          title="Animate net lines with a red traveling pulse effect, making the connection path easier to follow across the board" />
       </CollapsibleSection>
 
       <CollapsibleSection id="interaction" title="Interaction" isOpen={openSections.has('interaction')}
         onToggle={toggleSection} sectionRef={interactionRef} isFocused={focusedSection === 'interaction'}>
-        <Slider label="Click Threshold" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft} />
-        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft} />
+        <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft}
+          title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
+        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft}
+          title="Extra padding (screen pixels) added when fitting the board or a component to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
       </CollapsibleSection>
 
-      <CollapsibleSection id="performance" title="Performance" isOpen={openSections.has('performance')}
+      <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
-        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft} />
-        <Toggle label="[Debug] Show Pad Vertices" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft} />
-        <Toggle label="[Debug] Label Size Colors" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft} />
+        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft}
+          title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
+        <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft}
+          title="Draw magenta crosshair markers at each pin's exact coordinate from the board file. Useful for verifying parser accuracy" />
+        <Toggle label="[Debug] Label Size Tiers" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft}
+          title="Color part labels by their computed font-size tier: blue = small, yellow = medium, green = large. Useful for tuning the Small/Medium/Large size thresholds" />
       </CollapsibleSection>
 
       <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}

@@ -5,4 +5,5 @@
 export const fileInputRefs = {
   board: null as HTMLInputElement | null,
   pdf: null as HTMLInputElement | null,
+  search: null as HTMLInputElement | null,
 };

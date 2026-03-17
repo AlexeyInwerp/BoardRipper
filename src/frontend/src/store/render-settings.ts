@@ -1,5 +1,25 @@
 export type LabelSize = 'small' | 'medium' | 'large';
 
+/** Pad shape override — applies to pin pads within a part type */
+export type PadShape = 'natural' | 'round' | 'square';
+
+/**
+ * Body/outline shape override for a part type.
+ * natural = follow board data bounds
+ * rect    = clamp aspect ratio to 2:1 (inflates the narrow axis)
+ * square  = force 1:1 (inflates smaller axis to match larger)
+ */
+export type BodyShape = 'natural' | 'rect' | 'square';
+
+/** Per-component-type rendering overrides (keyed by first letter of part name) */
+export interface PartTypeOverride {
+  padShape: PadShape;
+  bodyShape: BodyShape;
+  hidden: boolean;
+  /** Fill color as CSS hex string (e.g. '#7a7a7a'). Empty = no fill. */
+  color: string;
+}
+
 export interface NetColorRule {
   id: string;
   pattern: string;
@@ -60,15 +80,43 @@ export interface RenderSettings {
   /** Hide text labels during zoom for better performance on slower machines */
   hideTextDuringZoom: boolean;
 
+  /**
+   * Min screen pixels (pinMinRadius * scale) for Group A labels to appear
+   * (pin numbers + net names on circle/1-pin parts). Higher = needs more zoom.
+   */
+  circleLabelMinScreenPx: number;
+  /**
+   * Min screen pixels threshold for Group B labels (net names on 2-pin parts).
+   * 0 = always visible when part labels are visible.
+   */
+  twoPinLabelMinScreenPx: number;
+  /** Draw a background block behind Group A net-name labels (circle pins) */
+  pinNetLabelBg: boolean;
+  /** Draw a background block behind Group B net-name labels (2-pin pads) */
+  twoPinNetLabelBg: boolean;
+  /**
+   * BGA label gap: multiplier on pin radius that separates the pin number
+   * and net name text when BGA alternating layout is active.
+   * Higher = more vertical distance between the two labels. Default 0.25.
+   */
+  bgaLabelGapFactor: number;
+
   /** Debug: draw a crosshair at each pin's exact file coordinates */
   showPadVertices: boolean;
   /** Debug: color part labels by font-size tier (blue=small, yellow=medium, green=large) */
   showLabelSizeDebug: boolean;
+  /** Color part body fills by component type prefix (R/C/L/U/Q/D/J) */
+  showComponentColors: boolean;
+  /** Opacity of component type fill overlays */
+  componentFillAlpha: number;
 
   clickThreshold: number;
   fitPadding: number;
 
   netColorRules: NetColorRule[];
+
+  /** Per-type rendering overrides, keyed by uppercase first letter (e.g. 'L', 'R', 'C') */
+  partTypeOverrides: Record<string, PartTypeOverride>;
 }
 
 /** Return the active label font size for the selected tier. */
@@ -123,19 +171,37 @@ export const DEFAULTS: RenderSettings = {
 
   boardFillAlpha: 0.08,
 
-  showElevatedPartLabel: false,
+  showElevatedPartLabel: true,
   showElevatedPinLabel: true,
   showSelectionOverlay: true,
 
   hideTextDuringZoom: true,
 
+  circleLabelMinScreenPx: 3,
+  twoPinLabelMinScreenPx: 6,
+  pinNetLabelBg: false,
+  twoPinNetLabelBg: false,
+  bgaLabelGapFactor: 0.15,
+
   showPadVertices: false,
   showLabelSizeDebug: false,
+  showComponentColors: true,
+  componentFillAlpha: 0.55,
 
   clickThreshold: 30,
   fitPadding: 50,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
+
+  partTypeOverrides: {
+    R: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#222222' },
+    C: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#9a5a35' },
+    L: { padShape: 'natural', bodyShape: 'square',  hidden: false, color: '#7a7a7a' },
+    U: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#5a2090' },
+    Q: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#0d6b55' },
+    D: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#2255aa' },
+    J: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#2a5080' },
+  },
 };
 
 /** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */
@@ -302,6 +368,58 @@ export function computeDiagonalOBB(
   ];
 }
 
+/** Resolve the matching part-type override for a part name (prefix match, longest key wins) */
+export function resolvePartTypeOverride(partName: string, s: RenderSettings): PartTypeOverride | undefined {
+  const upper = partName.toUpperCase();
+  let best: PartTypeOverride | undefined;
+  let bestLen = 0;
+  for (const [key, ov] of Object.entries(s.partTypeOverrides)) {
+    if (key && upper.startsWith(key.toUpperCase()) && key.length > bestLen) {
+      bestLen = key.length; best = ov;
+    }
+  }
+  return best;
+}
+
+/**
+ * Apply bodyShape override in-place to EffectiveBounds.
+ * Only affects 2-pin parts (isTwoPin must be true).
+ */
+export function applyBodyShapeOverride(eb: EffectiveBounds, override: PartTypeOverride | undefined, isTwoPin: boolean): void {
+  if (!isTwoPin || !override?.bodyShape || override.bodyShape === 'natural') return;
+  const cx = eb.px + eb.pw / 2;
+  const cy = eb.py + eb.ph / 2;
+  const wide = Math.max(eb.pw, eb.ph);
+  const narrow = Math.min(eb.pw, eb.ph);
+  const newNarrow = override.bodyShape === 'square' ? wide : Math.max(narrow, wide / 2);
+  if (eb.pw >= eb.ph) { eb.py = cy - newNarrow / 2; eb.ph = newNarrow; }
+  else                 { eb.px = cx - newNarrow / 2; eb.pw = newNarrow; }
+}
+
+/**
+ * Compute the final rendered body rect for a part.
+ * Applies bodyShape override and 2-pin pad expansion (the visible border rect).
+ * Use this for selection highlights and hit-testing.
+ */
+export function computePartRenderBounds(
+  part: { name: string; bounds: { minX: number; minY: number; maxX: number; maxY: number }; pins: { position: { x: number; y: number }; radius?: number }[] },
+  s: RenderSettings,
+): { px: number; py: number; pw: number; ph: number } {
+  const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+  const isTwoPin = part.pins.length === 2;
+  applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), isTwoPin);
+  if (isTwoPin) {
+    const d = eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4);
+    return {
+      px: eb.horiz ? eb.px - d / 2 : eb.px,
+      py: eb.horiz ? eb.py : eb.py - d / 2,
+      pw: eb.horiz ? eb.pw + d : eb.pw,
+      ph: eb.horiz ? eb.ph : eb.ph + d,
+    };
+  }
+  return { px: eb.px, py: eb.py, pw: eb.pw, ph: eb.ph };
+}
+
 /** Resolve pin color from a settings object (not necessarily the live one) */
 export function resolvePinColor(settings: RenderSettings, netName: string, side: 'top' | 'bottom'): number {
   if (netName) {
@@ -324,8 +442,22 @@ function loadFromStorage(): RenderSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Merge with defaults so new fields get default values
-      return { ...structuredClone(DEFAULTS), ...parsed };
+      // Shallow merge so new top-level fields get defaults
+      const result: RenderSettings = { ...structuredClone(DEFAULTS), ...parsed };
+      // Deep-merge partTypeOverrides: new default entries and new per-entry fields
+      // survive even when old stored data pre-dates them.
+      const mergedOverrides: Record<string, PartTypeOverride> = structuredClone(DEFAULTS.partTypeOverrides);
+      for (const [key, stored] of Object.entries(parsed.partTypeOverrides ?? {})) {
+        mergedOverrides[key] = { ...(mergedOverrides[key] ?? {} as PartTypeOverride), ...(stored as PartTypeOverride) };
+      }
+      result.partTypeOverrides = mergedOverrides;
+      // Migration: if componentFillAlpha is absent, stored settings pre-date component
+      // coloring. Reset showComponentColors to true so fills are visible after upgrade.
+      if (!('componentFillAlpha' in parsed)) {
+        result.showComponentColors = true;
+        result.componentFillAlpha = DEFAULTS.componentFillAlpha;
+      }
+      return result;
     }
   } catch { /* ignore corrupt data */ }
   return structuredClone(DEFAULTS);
