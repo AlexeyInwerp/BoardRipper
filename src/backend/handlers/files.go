@@ -109,7 +109,7 @@ func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if !allowedExtensions[ext] {
+		if !allAllowedExtensions[ext] {
 			continue
 		}
 		info, err := entry.Info()

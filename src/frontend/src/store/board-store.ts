@@ -62,6 +62,29 @@ function findBestNameMatch(source: string, candidates: string[]): string | null 
 
 let nextTabId = 1;
 
+/* ── Persistent view preferences ── */
+const VIEW_PREFS_KEY = 'boardviewer-view-prefs';
+
+interface ViewPrefs {
+  showNetLines: boolean;
+  showNetDim: boolean;
+  showHoverInfo: boolean;
+}
+
+const DEFAULT_VIEW_PREFS: ViewPrefs = { showNetLines: false, showNetDim: true, showHoverInfo: true };
+
+function loadViewPrefs(): ViewPrefs {
+  try {
+    const raw = localStorage.getItem(VIEW_PREFS_KEY);
+    if (raw) return { ...DEFAULT_VIEW_PREFS, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return { ...DEFAULT_VIEW_PREFS };
+}
+
+function saveViewPrefs(p: ViewPrefs) {
+  try { localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+}
+
 class BoardStore {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
@@ -247,6 +270,7 @@ class BoardStore {
     }
 
     const id = nextTabId++;
+    const vp = loadViewPrefs();
     const tab: BoardTab = {
       id,
       fileName: file.name,
@@ -259,9 +283,9 @@ class BoardStore {
       rotation: 0,
       mirrorX: false,
       mirrorY: false,
-      showNetLines: false,
-      showNetDim: true,
-      showHoverInfo: true,
+      showNetLines: vp.showNetLines,
+      showNetDim: vp.showNetDim,
+      showHoverInfo: vp.showHoverInfo,
       pdfFileNames: [],
       cacheKey: '',
     };
@@ -456,10 +480,17 @@ class BoardStore {
     this.notify();
   }
 
+  private _saveCurrentViewPrefs() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    saveViewPrefs({ showNetLines: tab.showNetLines, showNetDim: tab.showNetDim, showHoverInfo: tab.showHoverInfo });
+  }
+
   toggleNetLines() {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showNetLines: !tab.showNetLines });
+    this._saveCurrentViewPrefs();
     this.notify();
   }
 
@@ -467,6 +498,7 @@ class BoardStore {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showNetDim: !tab.showNetDim });
+    this._saveCurrentViewPrefs();
     this.notify();
   }
 
@@ -474,6 +506,7 @@ class BoardStore {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showHoverInfo: !tab.showHoverInfo });
+    this._saveCurrentViewPrefs();
     this.notify();
   }
 
@@ -482,30 +515,48 @@ class BoardStore {
     this.notify();
   }
 
-  get searchResults(): Part[] {
+  // Cached search results — recomputed only when query or board changes
+  private _cachedSearchQuery = '';
+  private _cachedSearchBoard: BoardData | null = null;
+  private _cachedSearchResults: Part[] = [];
+  private _cachedSearchIndices: Set<number> = new Set();
+
+  private _recomputeSearch() {
     const tab = this.activeTab;
-    if (!tab?.board || !tab.searchQuery) return [];
-    const q = tab.searchQuery.toLowerCase();
-    return tab.board.parts.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      p.pins.some(pin => pin.net.toLowerCase().includes(q))
-    );
+    const q = tab?.searchQuery ?? '';
+    const board = tab?.board ?? null;
+    if (q === this._cachedSearchQuery && board === this._cachedSearchBoard) return;
+    this._cachedSearchQuery = q;
+    this._cachedSearchBoard = board;
+    if (!board || !q) {
+      this._cachedSearchResults = [];
+      this._cachedSearchIndices = new Set();
+      return;
+    }
+    const ql = q.toLowerCase();
+    const results: Part[] = [];
+    const indices = new Set<number>();
+    for (let i = 0; i < board.parts.length; i++) {
+      const p = board.parts[i];
+      if (p.name.toLowerCase().includes(ql) ||
+          p.pins.some(pin => pin.net.toLowerCase().includes(ql))) {
+        results.push(p);
+        indices.add(i);
+      }
+    }
+    this._cachedSearchResults = results;
+    this._cachedSearchIndices = indices;
+  }
+
+  get searchResults(): Part[] {
+    this._recomputeSearch();
+    return this._cachedSearchResults;
   }
 
   /** Part indices matching the current search query (for renderer highlighting). */
   get searchResultIndices(): Set<number> {
-    const tab = this.activeTab;
-    if (!tab?.board || !tab.searchQuery) return new Set();
-    const q = tab.searchQuery.toLowerCase();
-    const indices = new Set<number>();
-    for (let i = 0; i < tab.board.parts.length; i++) {
-      const p = tab.board.parts[i];
-      if (p.name.toLowerCase().includes(q) ||
-          p.pins.some(pin => pin.net.toLowerCase().includes(q))) {
-        indices.add(i);
-      }
-    }
-    return indices;
+    this._recomputeSearch();
+    return this._cachedSearchIndices;
   }
 
   get focusRequest(): FocusRequest | null { return this._focusRequest; }

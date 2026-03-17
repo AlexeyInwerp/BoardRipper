@@ -428,15 +428,19 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       : 0;
 
     // Auto-clamp pin radius for dense parts (e.g. BGA) so pins don't overlap.
-    // Finds minimum distance between any two pins and caps radius at 45% of that.
+    // Uses sorted-axis approach: O(N log N) instead of O(N²) for finding
+    // minimum pin-to-pin distance. Sort by X, then only check neighbors
+    // whose X-gap is smaller than the current best distance.
     let maxNonOverlapRadius = Infinity;
     let minPinSpacing = Infinity; // sqrt of minDist2, used for row grouping below
     if (isMultiPin) {
+      const sorted = part.pins.slice().sort((a, b) => a.position.x - b.position.x);
       let minDist2 = Infinity;
-      for (let i = 0; i < part.pins.length; i++) {
-        for (let j = i + 1; j < part.pins.length; j++) {
-          const dx = part.pins[i].position.x - part.pins[j].position.x;
-          const dy = part.pins[i].position.y - part.pins[j].position.y;
+      for (let i = 0; i < sorted.length; i++) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const dx = sorted[j].position.x - sorted[i].position.x;
+          if (dx * dx >= minDist2) break; // sorted by X — all further j are worse
+          const dy = sorted[j].position.y - sorted[i].position.y;
           const d2 = dx * dx + dy * dy;
           if (d2 > 0 && d2 < minDist2) minDist2 = d2;
         }
