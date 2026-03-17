@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"boardviewer/databank"
-	"boardviewer/handlers"
+	"boardripper/databank"
+	"boardripper/handlers"
 )
 
 func main() {
@@ -105,7 +105,7 @@ func main() {
 		fs.ServeHTTP(w, r)
 	})
 
-	log.Printf("Boardviewer server starting on :%s", port)
+	log.Printf("BoardRipper server starting on :%s", port)
 	log.Printf("Static files: %s", staticDir)
 	log.Printf("Data directory: %s", dataDir)
 

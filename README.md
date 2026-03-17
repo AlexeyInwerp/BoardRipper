@@ -1,4 +1,4 @@
-# Boardviewer
+# BoardRipper
 
 Web-based PCB boardview file viewer. Renders `.bvr` files with GPU-accelerated WebGL, hosted via Docker on a NAS.
 
@@ -61,7 +61,7 @@ go run .          # http://localhost:8080
 ```yaml
 # docker-compose.yml
 services:
-  boardviewer:
+  boardripper:
     build: .
     ports:
       - "8080:8080"

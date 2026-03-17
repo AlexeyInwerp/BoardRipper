@@ -41,7 +41,7 @@ if (existsSync(OUT_DIR)) rmSync(OUT_DIR, { recursive: true });
 const packager = (await import('@electron/packager')).default;
 const [appPath] = await packager({
   dir: DESKTOP,
-  name: 'Boardviewer Legacy',
+  name: 'BoardRipper Legacy',
   platform: 'darwin',
   arch: 'x64',
   electronVersion: ELECTRON_VERSION,
@@ -50,7 +50,7 @@ const [appPath] = await packager({
   icon: existsSync(path.join(DESKTOP, 'icon.icns'))
     ? path.join(DESKTOP, 'icon.icns')
     : undefined,
-  appBundleId: 'com.boardviewer.app',
+  appBundleId: 'com.boardripper.app',
   appVersion: '1.0.0',
   ignore: [
     /^\/out($|\/)/,
@@ -63,16 +63,16 @@ const [appPath] = await packager({
 });
 
 // Create a zip for safe distribution (avoids App Translocation on macOS 10.15+)
-const zipName = 'Boardviewer-Legacy-macOS-x64.zip';
+const zipName = 'BoardRipper-Legacy-macOS-x64.zip';
 const zipPath = path.join(OUT_DIR, zipName);
 console.log(`\n--- Creating ${zipName} ---`);
 execSync(
-  `cd "${appPath}" && ditto -c -k --sequesterRsrc --keepParent "Boardviewer Legacy.app" "${zipPath}"`,
+  `cd "${appPath}" && ditto -c -k --sequesterRsrc --keepParent "BoardRipper Legacy.app" "${zipPath}"`,
   { stdio: 'inherit' },
 );
 
 console.log(`\n✅  Done!`);
-console.log(`    App:  ${appPath}/Boardviewer Legacy.app`);
+console.log(`    App:  ${appPath}/BoardRipper Legacy.app`);
 console.log(`    Zip:  ${zipPath}`);
 console.log(`\n    Supports: macOS 10.15 Catalina and later (Intel x64)`);
 console.log(`    Distribute the .zip — unzipping clears quarantine and avoids App Translocation.`);

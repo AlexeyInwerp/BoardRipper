@@ -1,10 +1,10 @@
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { renderSettingsStore, DEFAULTS } from '../store/render-settings';
 import type { RenderSettings, LabelSize, NetColorRule, PartTypeOverride, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
-import { getAllFormats } from '../parsers/registry';
+import { getAllFormats, setFormatOverride } from '../parsers/registry';
 
 type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides';
 
@@ -278,6 +278,50 @@ function PartTypeOverridesSection({ overrides, actions }: { overrides: Record<st
   );
 }
 
+// ---- Format settings table ----
+
+function FormatSettingsTable() {
+  const [, forceUpdate] = useState(0);
+  const formats = getAllFormats();
+
+  const toggle = (id: string, key: 'flipY' | 'swapSides', current: boolean) => {
+    setFormatOverride(id, key, !current);
+    forceUpdate(n => n + 1);
+  };
+
+  return (
+    <>
+      <table className="formats-table">
+        <thead>
+          <tr>
+            <th>Format</th>
+            <th>Extensions</th>
+            <th>Flip Y</th>
+            <th>Swap Sides</th>
+          </tr>
+        </thead>
+        <tbody>
+          {formats.map(fmt => (
+            <tr key={fmt.id}>
+              <td title={fmt.description}>{fmt.name}</td>
+              <td>{fmt.extensions.join(', ')}</td>
+              <td>
+                <input type="checkbox" checked={fmt.flipY ?? false}
+                  onChange={() => toggle(fmt.id, 'flipY', fmt.flipY ?? false)} />
+              </td>
+              <td>
+                <input type="checkbox" checked={fmt.swapSides ?? false}
+                  onChange={() => toggle(fmt.id, 'swapSides', fmt.swapSides ?? false)} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="color-rule-hint">Changes apply to newly opened boards. Reload a board to see the effect.</div>
+    </>
+  );
+}
+
 // ---- Main panel ----
 
 const INITIALLY_OPEN: SectionId[] = [];
@@ -287,8 +331,18 @@ export function SettingsPanel() {
   const [draft, setDraft] = useState<RenderSettings>(() => renderSettingsStore.snapshot());
   const [previewing, setPreviewing] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [shiftHeld, setShiftHeld] = useState(false);
   const previewingRef = useRef(previewing);
   previewingRef.current = previewing;
+
+  // Track Shift key for "Save as Default" button label
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true); };
+    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false); };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, []);
 
   // Collapsible sections
   const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(INITIALLY_OPEN));
@@ -411,8 +465,11 @@ export function SettingsPanel() {
     },
   }), []);
 
-  const handleApply = () => {
+  const handleApply = (e: React.MouseEvent) => {
     renderSettingsStore.applySettings(draft);
+    if (e.shiftKey) {
+      renderSettingsStore.saveAsDefaults(draft);
+    }
     baselineRef.current = structuredClone(draft);
     setDirty(false); setPreviewing(false);
   };
@@ -451,7 +508,9 @@ export function SettingsPanel() {
           >
             {previewing ? 'Stop Preview' : 'Preview'}
           </button>
-          <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}>Apply</button>
+          <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}
+            title={shiftHeld ? 'Apply and save as new defaults' : 'Apply changes'}
+          >{shiftHeld ? 'Save as Default' : 'Apply'}</button>
           <button className="settings-action-btn" onClick={handleCancel} disabled={!dirty}>Cancel</button>
         </div>
       </div>
@@ -582,24 +641,7 @@ export function SettingsPanel() {
 
       <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}
         onToggle={toggleSection} sectionRef={formatsRef} isFocused={focusedSection === 'formats'}>
-        <table className="formats-table">
-          <thead>
-            <tr>
-              <th>Format</th>
-              <th>Extensions</th>
-              <th>Flip Y</th>
-            </tr>
-          </thead>
-          <tbody>
-            {getAllFormats().map(fmt => (
-              <tr key={fmt.id}>
-                <td title={fmt.description}>{fmt.name}</td>
-                <td>{fmt.extensions.join(', ')}</td>
-                <td>{fmt.flipY ? 'Yes' : 'No'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <FormatSettingsTable />
       </CollapsibleSection>
 
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
@@ -617,7 +659,18 @@ export function SettingsPanel() {
         ))}
       </CollapsibleSection>
 
-      <button className="settings-reset-btn" onClick={handleReset}>Reset to Defaults</button>
+      <button className="settings-reset-btn" onClick={(e) => {
+        if (e.shiftKey) {
+          renderSettingsStore.resetToFactory();
+          setDraft(renderSettingsStore.snapshot());
+          setDirty(true);
+          if (previewing) renderSettingsStore.applySettings(renderSettingsStore.snapshot());
+        } else {
+          handleReset();
+        }
+      }} title={shiftHeld ? 'Reset to factory defaults and clear custom defaults' : 'Reset to defaults'}>
+        {shiftHeld ? 'Factory Reset' : 'Reset to Defaults'}
+      </button>
       </div>
     </div>
   );

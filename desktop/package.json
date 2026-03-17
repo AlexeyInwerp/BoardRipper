@@ -1,7 +1,7 @@
 {
-  "name": "boardviewer",
+  "name": "boardripper",
   "version": "1.0.0",
-  "description": "PCB Board Viewer — standalone desktop app",
+  "description": "BoardRipper — standalone desktop app",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

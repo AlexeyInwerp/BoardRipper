@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build script: produces Boardviewer.app for macOS.
+ * Build script: produces BoardRipper.app for macOS.
  *
  * Steps:
  *  1. Build the Vite frontend (production)
@@ -48,14 +48,14 @@ const packager = (await import('@electron/packager')).default;
 
 const commonOpts = {
   dir: DESKTOP,
-  name: 'Boardviewer',
+  name: 'BoardRipper',
   platform: 'darwin',
   out: OUT_DIR,
   overwrite: true,
   icon: existsSync(path.join(DESKTOP, 'icon.icns'))
     ? path.join(DESKTOP, 'icon.icns')
     : undefined,
-  appBundleId: 'com.boardviewer.app',
+  appBundleId: 'com.boardripper.app',
   appVersion: '1.0.0',
   ignore: [
     /^\/out($|\/)/,
@@ -78,14 +78,14 @@ if (requestedArch === 'universal') {
 
   // Merge into universal binary
   const { makeUniversalApp } = await import('@electron/universal');
-  const universalDir = path.join(OUT_DIR, 'Boardviewer-darwin-universal');
+  const universalDir = path.join(OUT_DIR, 'BoardRipper-darwin-universal');
   mkdirSync(universalDir, { recursive: true });
-  const universalAppPath = path.join(universalDir, 'Boardviewer.app');
+  const universalAppPath = path.join(universalDir, 'BoardRipper.app');
 
   console.log('\n--- Merging into universal binary ---');
   await makeUniversalApp({
-    x64AppPath: path.join(x64Path, 'Boardviewer.app'),
-    arm64AppPath: path.join(arm64Path, 'Boardviewer.app'),
+    x64AppPath: path.join(x64Path, 'BoardRipper.app'),
+    arm64AppPath: path.join(arm64Path, 'BoardRipper.app'),
     outAppPath: universalAppPath,
     force: true,
   });
@@ -101,5 +101,5 @@ if (requestedArch === 'universal') {
   const [appPath] = await packager({ ...commonOpts, arch: requestedArch });
 
   console.log(`\n✅  Done! App bundle at:\n    ${appPath}`);
-  console.log(`\n    To run:  open "${appPath}/Boardviewer.app"`);
+  console.log(`\n    To run:  open "${appPath}/BoardRipper.app"`);
 }

@@ -50,6 +50,19 @@ export function useKeyboardShortcuts() {
             return;
           }
 
+          case 'rotateCW':
+            e.preventDefault();
+            boardStore.rotateCW();
+            return;
+          case 'rotateCCW':
+            e.preventDefault();
+            boardStore.rotateCCW();
+            return;
+          case 'mirrorBoard':
+            e.preventDefault();
+            boardStore.flipHorizontal();
+            return;
+
           case 'panLeft':
             e.preventDefault();
             viewCommands.pan('left');

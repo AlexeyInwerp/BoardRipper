@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"boardviewer/databank"
+	"boardripper/databank"
 )
 
 // DatabankHandler serves all /api/databank/* endpoints.

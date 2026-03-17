@@ -12,7 +12,7 @@ function createWindow() {
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    title: 'Boardviewer',
+    title: 'BoardRipper',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -91,6 +91,13 @@ export function Toolbar() {
         style={{ display: 'none' }}
         data-testid="pdf-input"
       />
+      <button
+        onClick={() => ensureLibraryPanel()}
+        className="toolbar-btn toolbar-btn-icon"
+        data-tooltip="Board library / databank"
+      >
+        &#x2261;
+      </button>
       <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn" data-tooltip={formatShortcut('openBoard')}>
         Open Board
       </button>
@@ -176,13 +183,6 @@ export function Toolbar() {
 
       <div className="toolbar-separator" />
 
-      <button
-        onClick={() => ensureLibraryPanel()}
-        className="toolbar-btn"
-        data-tooltip="Board library / databank"
-      >
-        Library
-      </button>
       <button
         onClick={() => ensureUtilityPanel('settings', 'settings', 'Settings')}
         className="toolbar-btn toolbar-btn-icon"

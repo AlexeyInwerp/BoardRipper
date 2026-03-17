@@ -9,6 +9,7 @@ interface DatabankSnapshot {
   searchResults: SearchResult[];
   searchQuery: string;
   donorOnlyFilter: boolean;
+  autoPdf: boolean;
   viewMode: ViewMode;
   selectedFileId: number | null;
   selectedFileDetail: FileDetail | null;
@@ -33,6 +34,7 @@ function getSnapshot(): DatabankSnapshot {
       searchResults: databankStore.searchResults,
       searchQuery: databankStore.searchQuery,
       donorOnlyFilter: databankStore.donorOnlyFilter,
+      autoPdf: databankStore.autoPdf,
       viewMode: databankStore.viewMode,
       selectedFileId: databankStore.selectedFileId,
       selectedFileDetail: databankStore.selectedFileDetail,
