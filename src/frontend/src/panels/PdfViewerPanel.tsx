@@ -7,12 +7,20 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
 import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
 import { logStore } from '../store/log-store';
+import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
+import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
+import { extractPageGlyphs, clearFontCache } from '../pdf/glyph-extractor';
+import { drawGlyphBoxes, drawGlyphOutlines } from '../pdf/glyph-overlay';
+import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
+import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
 
 const DRAG_THRESHOLD = 3;
 const LINE_HEIGHT_RATIO = 1.2;
 const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
+const CLEAN_FILTER = 'contrast(3)';
+const MAX_CANVAS_DIM = 8192;
 
-/** Compute a text item's bounding rect in canvas-space given the viewport transform and scale */
+/** Compute a text item's bounding rect in canvas-space */
 function textItemRect(
   transform: number[], width: number, vpT: number[], scale: number,
 ): { x: number; y: number; w: number; h: number } {
@@ -27,9 +35,14 @@ function textItemRect(
   };
 }
 
+/** Apply CSS transform directly to a DOM element — bypasses React for smooth 60fps pan/zoom */
+function applyTransform(el: HTMLElement | null, x: number, y: number, s: number) {
+  if (el) el.style.transform = `translate(${x}px,${y}px) scale(${s})`;
+}
+
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
 
   // Switch pdfStore to this panel's document on activation (for mutations)
@@ -76,6 +89,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
   const scaleRef = useRef(1);
@@ -87,25 +101,57 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blinkPhaseRef = useRef(0);
 
+  // Pan/zoom live in refs for 60fps DOM updates; React state only for toolbar display
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoomDisplay, setZoomDisplay] = useState(1);
+  const zoomDisplayRafRef = useRef(0);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const wasDragRef = useRef(false);
+  const tierDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [nightMode, setNightMode] = useState(() => {
     try { return localStorage.getItem(NIGHT_MODE_KEY) === '1'; } catch { return false; }
   });
-  const [debugTextBoxes, setDebugTextBoxes] = useState(false);
 
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
+  const [glyphDebug, setGlyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
+  const [glyphMenuOpen, setGlyphMenuOpen] = useState(false);
+  const [fontDataLoaded, setFontDataLoaded] = useState(false);
+  const [glyphLoading, setGlyphLoading] = useState(false);
+  const glyphCanvasRef = useRef<HTMLCanvasElement>(null);
+  const pageGlyphDataRef = useRef<PageGlyphData | null>(null);
+  const glyphMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isGlyphActive = glyphDebug.overlayMode !== 'off' || glyphDebug.simplifyEnabled || glyphDebug.replaceEnabled;
+  const isGlyphComposite = glyphDebug.simplifyEnabled || glyphDebug.replaceEnabled;
+
   const bookmarkClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const skipResetRef = useRef(false);
+
+  /** Push zoom/pan refs to DOM + throttled React state for toolbar */
+  const syncTransform = useCallback(() => {
+    applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current);
+    if (!zoomDisplayRafRef.current) {
+      zoomDisplayRafRef.current = requestAnimationFrame(() => {
+        zoomDisplayRafRef.current = 0;
+        setZoomDisplay(zoomRef.current);
+      });
+    }
+  }, []);
+
+  /** Schedule a re-render at exact zoom resolution once zoom settles (debounced 150ms) */
+  const scheduleTierRender = useCallback(() => {
+    if (tierDebounceRef.current) clearTimeout(tierDebounceRef.current);
+    tierDebounceRef.current = setTimeout(() => {
+      tierDebounceRef.current = null;
+      renderPageRef.current();
+    }, 150);
+  }, []);
 
   // Reset scale refs when document is unloaded so framing re-runs on next load
   useEffect(() => {
@@ -120,39 +166,33 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     zoomRef.current = 1;
     panRef.current = { x: 0, y: 0 };
     renderTierRef.current = 1;
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, [currentPage]);
-
-  const computeTier = (z: number) => {
-    const tier = Math.ceil(z / 0.5) * 0.5;
-    return Math.max(1, Math.min(tier, 5));
-  };
+    syncTransform();
+  }, [currentPage, syncTransform]);
 
   const renderIdRef = useRef(0);
 
   const renderPage = useCallback(async () => {
-    if (!isLoaded || !isLoaded) return;
+    if (!isLoaded) return;
 
     renderTaskRef.current?.cancel();
     setError(null);
 
     const renderId = ++renderIdRef.current;
-    const resTier = computeTier(zoomRef.current);
+    // Render at exact zoom level for pixel-perfect text at any magnification
+    const resTier = Math.max(1, zoomRef.current);
     renderTierRef.current = resTier;
+    const t0 = performance.now();
 
     try {
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
       if (renderIdRef.current !== renderId) return; // superseded
+      const tPage = performance.now();
 
-      // Re-check refs after async — component may have unmounted or switched
       const container = containerRef.current;
       const canvas = canvasRef.current;
       const highlight = highlightRef.current;
       if (!container || !canvas || !highlight) return;
       const containerWidth = container.clientWidth;
-
-      // Container not laid out yet — skip, ResizeObserver will re-trigger
       if (containerWidth === 0) return;
 
       const unscaledViewport = page.getViewport({ scale: 1 });
@@ -161,28 +201,59 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       viewportHeightRef.current = unscaledViewport.height;
       viewportTransformRef.current = unscaledViewport.transform;
 
-      const hiresScale = baseScale * resTier;
+      // Render at exact zoom resolution, capped to GPU texture limits
+      let hiresScale = baseScale * resTier;
+      const rawW = unscaledViewport.width * hiresScale;
+      const rawH = unscaledViewport.height * hiresScale;
+      if (rawW > MAX_CANVAS_DIM || rawH > MAX_CANVAS_DIM) {
+        hiresScale *= Math.min(MAX_CANVAS_DIM / rawW, MAX_CANVAS_DIM / rawH);
+      }
       const viewport = page.getViewport({ scale: hiresScale });
 
-      const ctx = canvas.getContext('2d')!;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
+
+      // Render to offscreen buffer, then blit — prevents blink on resize
+      const offscreen = document.createElement('canvas');
+      offscreen.width = viewport.width;
+      offscreen.height = viewport.height;
+      const offCtx = offscreen.getContext('2d')!;
+
+      const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'print' });
+      renderTaskRef.current = { cancel: () => task.cancel() };
+      await task.promise;
+
+      if (renderIdRef.current !== renderId) return;
+      const tRender = performance.now();
+
+      // Blit to visible canvas
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
+      const ctx = canvas.getContext('2d')!;
+      if (cleanMode) ctx.filter = CLEAN_FILTER;
+      ctx.drawImage(offscreen, 0, 0);
+      if (cleanMode) ctx.filter = 'none';
+      const tCopy = performance.now();
 
       highlight.width = viewport.width;
       highlight.height = viewport.height;
       highlight.style.width = `${cssW}px`;
       highlight.style.height = `${cssH}px`;
 
-      const task = page.render({ canvas: canvas, canvasContext: ctx, viewport });
-      renderTaskRef.current = { cancel: () => task.cancel() };
-      await task.promise;
-
-      if (renderIdRef.current !== renderId) return; // superseded during render
       drawHighlightsRef.current();
+
+      const metrics = {
+        file: pdfFileName, page: currentPage, tier: resTier, clean: cleanMode,
+        canvasW: viewport.width, canvasH: viewport.height,
+        getPageMs: Math.round(tPage - t0),
+        renderMs: Math.round(tRender - tPage),
+        copyMs: Math.round(tCopy - tRender),
+        totalMs: Math.round(tCopy - t0),
+      };
+      console.log(`[pdf-perf] ${JSON.stringify(metrics)}`);
+      window.dispatchEvent(new CustomEvent('pdf-render-perf', { detail: metrics }));
     } catch (err) {
       if (err instanceof Error && err.message?.includes('cancel')) {
         // Cancelled by a newer renderPage call — the newer call handles it
@@ -191,17 +262,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       console.error('[PdfViewerPanel] renderPage failed:', err);
       setError(String(err));
     }
-  }, [pdfFileName, isLoaded, currentPage]);
+  }, [pdfFileName, isLoaded, currentPage, cleanMode]);
 
   const drawHighlights = useCallback(() => {
-    if (!highlightRef.current || !isLoaded || !isLoaded) return;
+    if (!highlightRef.current || !isLoaded) return;
     const highlight = highlightRef.current;
     const hCtx = highlight.getContext('2d')!;
     hCtx.clearRect(0, 0, highlight.width, highlight.height);
 
     const pageIndex = currentPage - 1;
     const pageMatches = pdfStore.getDocMatchesForPage(pdfFileName, pageIndex);
-    const scale = scaleRef.current * renderTierRef.current;
+    const scale = scaleRef.current * renderTierRef.current ;
     const vpT = viewportTransformRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1;
 
@@ -251,49 +322,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       hCtx.fillRect(x, y, w, h);
     }
 
-    // --- DEBUG: draw bounding boxes on ALL text items ---
-    if (debugTextBoxes) {
-      const dbgUnscaledH = viewportHeightRef.current;
-      const allItems = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
-      for (let i = 0; i < allItems.length; i++) {
-        const item = allItems[i];
-        const t = item.transform;
-        const fontSize = pdfFontSize(t);
-
-        // OLD method (red) — manual Y flip, breaks on rotated pages
-        const oldX = t[4] * scale;
-        const oldY = (dbgUnscaledH - t[5]) * scale - fontSize * scale;
-        hCtx.strokeStyle = 'rgba(255, 50, 50, 0.5)';
-        hCtx.lineWidth = 1;
-        hCtx.strokeRect(oldX, oldY, item.width * scale, fontSize * scale * LINE_HEIGHT_RATIO);
-
-        // NEW method (green) — viewport transform, handles any rotation
-        const r = textItemRect(t, item.width, vpT, scale);
-        hCtx.strokeStyle = 'rgba(50, 255, 50, 0.6)';
-        hCtx.lineWidth = 1;
-        hCtx.strokeRect(r.x, r.y, r.w, r.h);
-
-        if (i < 40) {
-          hCtx.font = `${10 * renderTierRef.current}px monospace`;
-          hCtx.fillStyle = 'rgba(50, 255, 50, 0.9)';
-          hCtx.fillText(`${i}:"${item.str.slice(0, 12)}"`, r.x, r.y - 2);
-          hCtx.fillStyle = 'rgba(255, 50, 50, 0.7)';
-          hCtx.fillText(`${i}`, oldX, oldY - 2);
-        }
-      }
-
-      const lx = 10 * renderTierRef.current;
-      const ly = 20 * renderTierRef.current;
-      const lfs = 14 * renderTierRef.current;
-      hCtx.font = `bold ${lfs}px monospace`;
-      hCtx.fillStyle = 'rgba(255, 50, 50, 0.9)';
-      hCtx.fillText('RED = old (manual Y-flip)', lx, ly);
-      hCtx.fillStyle = 'rgba(50, 255, 50, 0.9)';
-      hCtx.fillText('GREEN = new (viewport transform)', lx, ly + lfs + 4);
-      hCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      hCtx.fillText(`vpT=[${vpT.map(v => v.toFixed(1)).join(', ')}]  rot=${vpT[0] === 1 && vpT[3] === -1 ? 'NO' : 'YES'}`, lx, ly + (lfs + 4) * 2);
-    }
-  }, [pdfFileName, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap, debugTextBoxes]);
+  }, [pdfFileName, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
 
   const renderPageRef = useRef(renderPage);
   renderPageRef.current = renderPage;
@@ -374,12 +403,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       zoomRef.current = newZoom;
       panRef.current = newPan;
-      setZoom(newZoom);
-      setPan(newPan);
+      syncTransform();
 
-      if (computeTier(newZoom) !== renderTierRef.current) {
-        renderPageRef.current();
-      }
+      renderPageRef.current();
 
       if (blinkTimerRef.current) clearTimeout(blinkTimerRef.current);
       blinkPhaseRef.current = 0;
@@ -413,12 +439,110 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
   }, [isLoaded, activeMatchIndex, matches, currentPage]);
 
+  // Apply initial transform + re-sync after page change
+  useEffect(() => { syncTransform(); }, [syncTransform, currentPage]);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver(() => renderPageRef.current());
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  // Reload PDF with fontExtraProperties when glyph debug is first activated
+  useEffect(() => {
+    if (!isGlyphActive || fontDataLoaded || !isLoaded) return;
+    let cancelled = false;
+    (async () => {
+      setGlyphLoading(true);
+      try {
+        await pdfStore.reloadWithFontData(pdfFileName);
+        if (!cancelled) {
+          setFontDataLoaded(true);
+          renderPageRef.current();
+        }
+      } catch (err) {
+        console.error('[PdfViewerPanel] reloadWithFontData failed:', err);
+      } finally {
+        if (!cancelled) setGlyphLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isGlyphActive, fontDataLoaded, isLoaded, pdfFileName]);
+
+  // Extract glyphs and render debug/optimization overlay
+  useEffect(() => {
+    if (!isGlyphActive || !fontDataLoaded || !isLoaded) {
+      const gc = glyphCanvasRef.current;
+      if (gc) {
+        const gCtx = gc.getContext('2d');
+        if (gCtx) gCtx.clearRect(0, 0, gc.width, gc.height);
+      }
+      pageGlyphDataRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setGlyphLoading(true);
+      try {
+        const page = await pdfStore.getPageFor(pdfFileName, currentPage);
+        const doc = pdfStore.getDocProxy(pdfFileName);
+        if (!doc || cancelled) return;
+        const pageIndex = currentPage - 1;
+        const textItems = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
+        const pageData = await extractPageGlyphs(page, doc, textItems, pageIndex);
+        if (cancelled) return;
+        pageGlyphDataRef.current = pageData;
+
+        const gc = glyphCanvasRef.current;
+        const pdfCanvas = canvasRef.current;
+        if (!gc || !pdfCanvas) return;
+        gc.width = pdfCanvas.width;
+        gc.height = pdfCanvas.height;
+        gc.style.width = pdfCanvas.style.width;
+        gc.style.height = pdfCanvas.style.height;
+
+        const gCtx = gc.getContext('2d')!;
+        gCtx.clearRect(0, 0, gc.width, gc.height);
+
+        // For simplify/replace: blit PDF canvas onto overlay first, then modify
+        if (isGlyphComposite) {
+          gCtx.drawImage(pdfCanvas, 0, 0);
+        }
+
+        const vpT = viewportTransformRef.current;
+        const renderScale = scaleRef.current * renderTierRef.current;
+
+        if (glyphDebug.overlayMode === 'boxes') {
+          drawGlyphBoxes(gCtx, pageData, vpT, renderScale);
+        } else if (glyphDebug.overlayMode === 'outlines') {
+          drawGlyphOutlines(gCtx, pageData, vpT, renderScale);
+        }
+
+        if (glyphDebug.simplifyEnabled) {
+          drawSimplifiedGlyphs(gCtx, pageData, vpT, renderScale, glyphDebug.simplifyTolerance);
+        } else if (glyphDebug.replaceEnabled) {
+          drawMonospaceReplacement(gCtx, pageData, vpT, renderScale, glyphDebug.replaceFont);
+        }
+      } catch (err) {
+        console.error('[PdfViewerPanel] glyph overlay failed:', err);
+      } finally {
+        if (!cancelled) setGlyphLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, pdfFileName, currentPage, glyphDebug]);
+
+  // Clean up font cache on unmount
+  useEffect(() => {
+    return () => {
+      const doc = pdfStore.getDocProxy(pdfFileName);
+      clearFontCache(doc?.fingerprints[0] ?? undefined);
+      pageGlyphDataRef.current = null;
+    };
+  }, [pdfFileName]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -445,19 +569,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       zoomRef.current = newZoom;
       panRef.current = newPan;
-      setZoom(newZoom);
-      setPan(newPan);
-
-      if (computeTier(newZoom) !== renderTierRef.current) {
-        renderPageRef.current();
-      }
+      syncTransform();
+      scheduleTierRender();
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  // isLoaded: re-attach when this panel regains its document (container remounts)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfFileName, isLoaded]);
+  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -482,13 +601,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       wasDragRef.current = true;
     }
 
-    const newPan = { x: panRef.current.x + dx, y: panRef.current.y + dy };
-    panRef.current = newPan;
-    setPan(newPan);
-  }, []);
+    panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+    syncTransform();
+  }, [syncTransform]);
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
-    if (!isLoaded || !isLoaded) return;
+    if (!isLoaded) return;
 
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -571,11 +689,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       pdfStore.goToPage(bm.page);
       zoomRef.current = bm.zoom;
       panRef.current = { x: bm.panX, y: bm.panY };
-      setZoom(bm.zoom);
-      setPan({ x: bm.panX, y: bm.panY });
-      if (computeTier(bm.zoom) !== renderTierRef.current) {
-        renderPageRef.current();
-      }
+      syncTransform();
+      renderPageRef.current();
     }, 250);
   }, [pdfFileName]);
 
@@ -786,14 +901,94 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           )
         ))}
 
+        <div className="pdf-glyph-debug-wrapper">
+          <button
+            className={`pdf-glyph-debug-btn${isGlyphActive ? ' active' : ''}`}
+            onClick={() => setGlyphMenuOpen(v => !v)}
+            title="Glyph debug & optimization"
+          >
+            Glyphs
+          </button>
+          {glyphMenuOpen && (
+            <div
+              className="pdf-glyph-debug-menu"
+              onMouseEnter={() => { if (glyphMenuTimerRef.current) { clearTimeout(glyphMenuTimerRef.current); glyphMenuTimerRef.current = null; } }}
+              onMouseLeave={() => { glyphMenuTimerRef.current = setTimeout(() => setGlyphMenuOpen(false), 300); }}
+            >
+              {(['off', 'boxes', 'outlines'] as const).map(mode => (
+                <label key={mode}>
+                  <input
+                    type="radio"
+                    name="glyphOverlay"
+                    checked={glyphDebug.overlayMode === mode}
+                    onChange={() => setGlyphDebug(s => ({ ...s, overlayMode: mode }))}
+                  />
+                  {mode === 'off' ? 'Off' : mode === 'boxes' ? 'Show Boxes' : 'Show Outlines'}
+                </label>
+              ))}
+              <hr />
+              <label>
+                <input
+                  type="checkbox"
+                  checked={glyphDebug.simplifyEnabled}
+                  onChange={() => setGlyphDebug(s => ({
+                    ...s,
+                    simplifyEnabled: !s.simplifyEnabled,
+                    replaceEnabled: !s.simplifyEnabled ? false : s.replaceEnabled,
+                  }))}
+                />
+                Simplify Glyphs
+              </label>
+              {glyphDebug.simplifyEnabled && (
+                <div className="pdf-glyph-slider-row">
+                  <span>Tol</span>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={5}
+                    step={0.1}
+                    value={glyphDebug.simplifyTolerance}
+                    onChange={e => setGlyphDebug(s => ({ ...s, simplifyTolerance: Number(e.target.value) }))}
+                  />
+                  <span>{glyphDebug.simplifyTolerance.toFixed(1)}</span>
+                </div>
+              )}
+              <label>
+                <input
+                  type="checkbox"
+                  checked={glyphDebug.replaceEnabled}
+                  onChange={() => setGlyphDebug(s => ({
+                    ...s,
+                    replaceEnabled: !s.replaceEnabled,
+                    simplifyEnabled: !s.replaceEnabled ? false : s.simplifyEnabled,
+                  }))}
+                />
+                Monospace Replace
+              </label>
+              {glyphDebug.replaceEnabled && (
+                <div className="pdf-glyph-slider-row">
+                  <span>Font</span>
+                  <select
+                    value={glyphDebug.replaceFont}
+                    onChange={e => setGlyphDebug(s => ({ ...s, replaceFont: e.target.value }))}
+                  >
+                    <option value="Courier New">Courier New</option>
+                    <option value="Courier">Courier</option>
+                    <option value="monospace">monospace</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="pdf-toolbar-spacer" />
         <button
-          className={`pdf-toolbar-btn${debugTextBoxes ? ' active' : ''}`}
-          onClick={() => setDebugTextBoxes(v => !v)}
-          title="Debug: show text bounding boxes (RED=old manual flip, GREEN=new viewport transform)"
-          style={debugTextBoxes ? { color: '#0f0' } : undefined}
+          className={`pdf-toolbar-btn${cleanMode ? ' active' : ''}`}
+          onClick={() => pdfStore.toggleClean(pdfFileName, !cleanMode)}
+          title="Strip watermark images from PDF (removes tiled overlays)"
         >
-          DbgTxt
+          Clean
         </button>
         <button
           className={`pdf-toolbar-btn${nightMode ? ' active' : ''}`}
@@ -806,7 +1001,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         >
           Night
         </button>
-        <span className="pdf-zoom-info">{Math.round(zoom * 100)}%</span>
+        <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
       </div>
 
       {textExtracting && (
@@ -825,15 +1020,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         onContextMenu={handleContextMenu}
         style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
       >
+        {glyphLoading && <div className="pdf-glyph-loading">Parsing fonts...</div>}
         <div
+          ref={wrapperRef}
           className="pdf-page-wrapper"
-          style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            transformOrigin: '0 0',
-          }}
+          style={{ transformOrigin: '0 0', willChange: 'transform' }}
         >
-          <canvas ref={canvasRef} />
+          <canvas ref={canvasRef} style={isGlyphComposite && !glyphLoading ? { visibility: 'hidden' } : undefined} />
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
+          <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
         </div>
       </div>
     </div>
