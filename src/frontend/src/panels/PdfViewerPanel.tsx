@@ -471,8 +471,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [isGlyphActive, fontDataLoaded, isLoaded, pdfFileName]);
 
   // Extract glyphs and render debug/optimization overlay
+  // Skip when cleanMode or nightMode is active — filters would not apply to replacement text
+  const isFiltered = cleanMode || nightMode;
   useEffect(() => {
-    if (!isGlyphActive || !fontDataLoaded || !isLoaded) {
+    if (!isGlyphActive || !fontDataLoaded || !isLoaded || isFiltered) {
       const gc = glyphCanvasRef.current;
       if (gc) {
         const gCtx = gc.getContext('2d');
@@ -533,7 +535,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     })();
 
     return () => { cancelled = true; };
-  }, [isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, pdfFileName, currentPage, glyphDebug]);
+  }, [isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, isFiltered, pdfFileName, currentPage, glyphDebug]);
 
   // Clean up font cache on unmount
   useEffect(() => {
