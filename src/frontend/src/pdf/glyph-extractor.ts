@@ -2,7 +2,7 @@
 
 import opentype from 'opentype.js';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
-import type { FontCacheEntry, GlyphPathData, TextItemGlyphData, PageGlyphData } from './glyph-types';
+import type { FontCacheEntry, GlyphPathData, PageGlyphData } from './glyph-types';
 import type { PdfTextItem } from '../store/pdf-store';
 
 /** Module-level font cache: "docFingerprint:fontName" → parsed Font */
