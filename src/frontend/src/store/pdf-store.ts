@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -13,6 +14,7 @@ export interface PdfTextItem {
   transform: number[];
   width: number;
   height: number;
+  fontName: string;
 }
 
 /** Extract font size from a PDF text transform matrix */
@@ -54,12 +56,159 @@ function saveBookmarks(fileName: string, bookmarks: PdfBookmark[]) {
   } catch { /* ignore quota */ }
 }
 
+/** A parsed q/Q block tree node */
+interface QBlock { items: (string | QBlock)[]; }
+
+/** Check if a q/Q block tree contains ONLY watermark-related operators */
+function isWatermarkOnly(block: QBlock, names: Set<string>): boolean {
+  for (const item of block.items) {
+    if (typeof item !== 'string') {
+      if (!isWatermarkOnly(item, names)) return false;
+      continue;
+    }
+    const t = item.trim();
+    if (!t) continue;
+    // Watermark Do → allowed only if it's a known watermark image
+    const doMatch = t.match(/^\/(\w+)\s+Do$/);
+    if (doMatch) { if (!names.has(doMatch[1])) return false; continue; }
+    // Transform, graphics state, clipping setup → neutral (allowed in watermark blocks)
+    if (/^[\d.\s-]+cm$/.test(t)) continue;
+    if (/^\/\w+\s+gs$/.test(t)) continue;
+    if (/^[\d.\s-]+re$/.test(t)) continue;
+    if (t === 'W n' || t === 'W' || t === 'n') continue;
+    // Anything else (text, stroke, fill, non-watermark Do) → real content
+    return false;
+  }
+  return true;
+}
+
+/** Emit non-watermark content from a parsed block tree */
+function emitClean(block: QBlock, names: Set<string>, out: string[]): void {
+  for (const item of block.items) {
+    if (typeof item !== 'string') {
+      if (!isWatermarkOnly(item, names)) {
+        out.push('q');
+        emitClean(item, names, out);
+        out.push('Q');
+      }
+    } else {
+      out.push(item);
+    }
+  }
+}
+
+/**
+ * Strip small tiled watermark images from a PDF.
+ * 1. Identifies image XObjects < maxDim px (the watermark letter tiles)
+ * 2. Removes them from Resources/XObject
+ * 3. Parses the content stream into a q/Q block tree and strips any subtree
+ *    that contains only watermark Do/cm/gs/clip ops — eliminates ~96% of
+ *    the stream for heavily watermarked files
+ */
+async function stripWatermarkImages(buffer: ArrayBuffer, maxDim = 50): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+  const pages = doc.getPages();
+  let totalRemoved = 0;
+
+  for (const page of pages) {
+    const resources = page.node.get(PDFName.of('Resources'));
+    if (!(resources instanceof PDFDict)) continue;
+
+    const xObjectRef = resources.get(PDFName.of('XObject'));
+    const xObject = (xObjectRef instanceof PDFRef
+      ? doc.context.lookup(xObjectRef)
+      : xObjectRef) as PDFDict | undefined;
+    if (!(xObject instanceof PDFDict)) continue;
+
+    // 1. Find small watermark image names
+    const watermarkNames = new Set<string>();
+    for (const [name, ref] of xObject.entries()) {
+      const obj = ref instanceof PDFRef ? doc.context.lookup(ref) : ref;
+      if (!(obj instanceof PDFStream)) continue;
+      const subtype = obj.dict.get(PDFName.of('Subtype'));
+      if (!subtype || subtype.toString() !== '/Image') continue;
+      const w = obj.dict.get(PDFName.of('Width'));
+      const h = obj.dict.get(PDFName.of('Height'));
+      if (w instanceof PDFNumber && h instanceof PDFNumber &&
+          w.asNumber() < maxDim && h.asNumber() < maxDim) {
+        watermarkNames.add(name.toString().slice(1)); // "/Im0" → "Im0"
+        xObject.delete(name);
+      }
+    }
+    if (watermarkNames.size === 0) continue;
+    totalRemoved += watermarkNames.size;
+
+    // 2. Strip watermark operator blocks from content stream(s)
+    const contentsRef = page.node.get(PDFName.of('Contents'));
+    if (!contentsRef) continue;
+    const contentsObj = contentsRef instanceof PDFRef
+      ? doc.context.lookup(contentsRef)
+      : contentsRef;
+
+    const streamRefs: PDFRef[] = [];
+    if (contentsObj instanceof PDFArray) {
+      for (let i = 0; i < contentsObj.size(); i++) {
+        const r = contentsObj.get(i);
+        if (r instanceof PDFRef) streamRefs.push(r);
+      }
+    } else if (contentsRef instanceof PDFRef) {
+      streamRefs.push(contentsRef);
+    }
+
+    for (const ref of streamRefs) {
+      const stream = doc.context.lookup(ref);
+      if (!(stream instanceof PDFRawStream)) continue;
+
+      const decoded = decodePDFRawStream(stream);
+      const bytes = decoded.decode();
+      const text = new TextDecoder('latin1').decode(bytes);
+
+      // Parse into q/Q block tree
+      const root: QBlock = { items: [] };
+      const stack: QBlock[] = [root];
+      for (const line of text.split('\n')) {
+        const t = line.trim();
+        if (t === 'q') {
+          const child: QBlock = { items: [] };
+          stack[stack.length - 1].items.push(child);
+          stack.push(child);
+        } else if (t === 'Q') {
+          if (stack.length > 1) stack.pop();
+        } else {
+          stack[stack.length - 1].items.push(line);
+        }
+      }
+
+      // Emit only non-watermark blocks
+      const out: string[] = [];
+      emitClean(root, watermarkNames, out);
+      const cleaned = out.join('\n');
+
+      if (cleaned.length >= text.length) continue;
+
+      const cleanedBytes = new TextEncoder().encode(cleaned);
+      const newStream = doc.context.stream(cleanedBytes);
+      doc.context.assign(ref, newStream);
+
+      console.log(`[PdfStore] Content stream: ${text.length} → ${cleaned.length} bytes (−${Math.round((1 - cleaned.length / text.length) * 100)}%)`);
+    }
+  }
+
+  if (totalRemoved > 0) {
+    console.log(`[PdfStore] Stripped ${totalRemoved} watermark image XObject(s)`);
+  }
+  return doc.save();
+}
+
 /** Per-document state kept in memory for instant switching */
 interface PdfDocument {
   doc: PDFDocumentProxy;
   fileName: string;
   fileSize: number;
   fileLastModified: number;
+  originalBuffer: ArrayBuffer;
+  strippedDoc: PDFDocumentProxy | null;
+  cleanMode: boolean;
   pageCount: number;
   currentPage: number;
   textPages: PdfTextItem[][];
@@ -184,7 +333,9 @@ class PdfStore {
 
     try {
       const buffer = await file.arrayBuffer();
-      const doc = await pdfjsLib.getDocument({ data: buffer }).promise;
+      // Copy buffer before passing to pdf.js — getDocument() transfers/detaches the original
+      const bufferCopy = buffer.slice(0);
+      const doc = await pdfjsLib.getDocument({ data: bufferCopy }).promise;
 
       // Make the document available immediately — text is extracted in the background.
       const pdfDoc: PdfDocument = {
@@ -192,6 +343,9 @@ class PdfStore {
         fileName: file.name,
         fileSize: file.size,
         fileLastModified: file.lastModified,
+        originalBuffer: buffer,
+        strippedDoc: null,
+        cleanMode: false,
         pageCount: doc.numPages,
         currentPage: 1,
         textPages: [],
@@ -249,6 +403,7 @@ class PdfStore {
               transform: ti.transform,
               width: ti.width,
               height: ti.height,
+              fontName: (ti as any).fontName ?? '',
             });
           }
         }
@@ -267,17 +422,80 @@ class PdfStore {
     }
   }
 
+  /** Return the effective PDFDocumentProxy (stripped if clean mode is on). */
+  private _effectiveDoc(d: PdfDocument): PDFDocumentProxy {
+    return (d.cleanMode && d.strippedDoc) ? d.strippedDoc : d.doc;
+  }
+
   async getPage(pageNum: number): Promise<PDFPageProxy> {
     const active = this._active;
     if (!active) throw new Error('No PDF loaded');
-    return active.doc.getPage(pageNum);
+    return this._effectiveDoc(active).getPage(pageNum);
   }
 
   /** Get a page from a specific document (does not require it to be active). */
   async getPageFor(fileName: string, pageNum: number): Promise<PDFPageProxy> {
     const d = this._documents.get(fileName);
     if (!d) throw new Error(`PDF not loaded: ${fileName}`);
-    return d.doc.getPage(pageNum);
+    return this._effectiveDoc(d).getPage(pageNum);
+  }
+
+  /** Reload a PDF with fontExtraProperties enabled (for glyph debug). Returns the new doc proxy. */
+  async reloadWithFontData(fileName: string): Promise<PDFDocumentProxy | null> {
+    const pdfDoc = this._documents.get(fileName);
+    if (!pdfDoc) return null;
+    const buffer = pdfDoc.originalBuffer.slice(0);
+    const oldDoc = pdfDoc.doc;
+    const doc = await pdfjsLib.getDocument({
+      data: buffer,
+      fontExtraProperties: true,
+    }).promise;
+    pdfDoc.doc = doc;
+    // Clean up old proxy (safe — only tears down worker connection)
+    oldDoc.destroy().catch(() => {});
+    this.notify();
+    return doc;
+  }
+
+  /** Get the effective PDFDocumentProxy for a loaded document. */
+  getDocProxy(fileName: string): PDFDocumentProxy | null {
+    const d = this._documents.get(fileName);
+    return d ? (d.cleanMode && d.strippedDoc ? d.strippedDoc : d.doc) : null;
+  }
+
+  /** Toggle clean mode: strip small watermark images from the PDF data. */
+  async toggleClean(fileName: string, enabled: boolean) {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    d.cleanMode = enabled;
+
+    if (enabled && !d.strippedDoc) {
+      const t0 = performance.now();
+      try {
+        const stripped = await stripWatermarkImages(d.originalBuffer);
+        const tStrip = performance.now();
+        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped }).promise;
+        const tLoad = performance.now();
+        const metrics = {
+          file: fileName,
+          stripMs: Math.round(tStrip - t0),
+          reloadMs: Math.round(tLoad - tStrip),
+          totalMs: Math.round(tLoad - t0),
+          origSize: d.originalBuffer.byteLength,
+          strippedSize: stripped.byteLength,
+        };
+        console.log(`[pdf-strip-perf] ${JSON.stringify(metrics)}`);
+      } catch (err) {
+        console.error('[PdfStore] stripWatermarkImages failed:', err);
+        d.cleanMode = false;
+      }
+    }
+
+    this.notify();
+  }
+
+  isDocClean(fileName: string): boolean {
+    return this._documents.get(fileName)?.cleanMode ?? false;
   }
 
   goToPage(n: number) {
@@ -590,6 +808,7 @@ class PdfStore {
     const d = this._active;
     if (d) {
       d.doc.destroy();
+      d.strippedDoc?.destroy();
       this._documents.delete(d.fileName);
     }
     this._activeFileName = null;
@@ -601,6 +820,7 @@ class PdfStore {
     const d = this._documents.get(fileName);
     if (!d) return;
     d.doc.destroy();
+    d.strippedDoc?.destroy();
     this._documents.delete(fileName);
     if (this._activeFileName === fileName) {
       this._activeFileName = null;
