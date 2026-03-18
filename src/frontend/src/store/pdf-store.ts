@@ -381,7 +381,10 @@ class PdfStore {
     try {
       const cached = await boardCache.getPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified);
       if (cached && cached.length === pdfDoc.pageCount) {
-        pdfDoc.textPages = cached;
+        // Ensure cached items have fontName (may be missing from older caches)
+        pdfDoc.textPages = cached.map(page =>
+          page.map(item => ({ ...item, fontName: (item as any).fontName ?? '' }))
+        );
         this.notify();
         return;
       }

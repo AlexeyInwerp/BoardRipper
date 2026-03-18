@@ -133,8 +133,8 @@ export function drawGlyphOutlines(
         }
       }
 
-      const hasQuad = cmds.some(c => c.type === 'Q');
-      const hasCubic = cmds.some(c => c.type === 'C');
+      const hasQuad = cmds.some((c: any) => c.type === 'Q');
+      const hasCubic = cmds.some((c: any) => c.type === 'C');
       ctx.strokeStyle = hasCubic ? 'rgba(255, 160, 0, 0.8)' : hasQuad ? 'rgba(80, 160, 255, 0.8)' : 'rgba(200, 200, 200, 0.6)';
       ctx.lineWidth = 1;
       ctx.stroke();
