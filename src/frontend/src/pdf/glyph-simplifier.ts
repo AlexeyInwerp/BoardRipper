@@ -28,9 +28,15 @@ export function drawSimplifiedGlyphs(
     const pxPerUnit = totalAdvance > 0 ? rect.w / totalAdvance : 0;
     const fontScale = (fontSize * scale) / item.unitsPerEm;
 
-    // Cover original text with white
+    // Clip to exact text item bounds — prevents white bleed into neighbors
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+    ctx.clip();
+
+    // Cover original text with white within clipped region
     ctx.fillStyle = '#fff';
-    ctx.fillRect(rect.x - 1, rect.y - 1, rect.w + 2, rect.h + 2);
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
     let cursorX = rect.x;
     const baselineY = rect.y + rect.h;
@@ -101,6 +107,8 @@ export function drawSimplifiedGlyphs(
 
       cursorX += glyph.advanceWidth * pxPerUnit || 8;
     }
+
+    ctx.restore(); // pop clip
   }
 
   ctx.restore();
