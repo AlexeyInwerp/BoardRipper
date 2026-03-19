@@ -49,18 +49,35 @@ export function toggleSidebar(): void {
   if (!group) return;
 
   if (_sidebarCollapsed) {
-    // Expand: restore previous width
+    // Expand: restore constraints and previous width
+    group.api.setConstraints({ minimumWidth: 100 });
     const restoreWidth = _sidebarWidthBeforeCollapse || Math.round(api.width / 3);
     group.api.setSize({ width: restoreWidth });
     _sidebarCollapsed = false;
   } else {
-    // Collapse: save current width, shrink to ~1% of total width
+    // Collapse: save current width, allow 0 minimum, then hide completely
     _sidebarWidthBeforeCollapse = group.api.width;
-    const minWidth = Math.max(Math.round(api.width * 0.01), 4);
-    group.api.setSize({ width: minWidth });
+    group.api.setConstraints({ minimumWidth: 0 });
+    group.api.setSize({ width: 0 });
     _sidebarCollapsed = true;
+
+    // Equalize remaining groups so they split the space evenly
+    requestAnimationFrame(() => equalizeContentGroups());
   }
   _sidebarListeners.forEach(fn => fn());
+}
+
+/** Distribute equal widths across all non-sidebar groups */
+function equalizeContentGroups(): void {
+  const api = _api;
+  if (!api) return;
+  const sidebarGroup = getSidebarGroup();
+  const contentGroups = api.groups.filter(g => g !== sidebarGroup);
+  if (contentGroups.length < 2) return;
+  const perGroup = Math.floor(api.width / contentGroups.length);
+  for (const g of contentGroups) {
+    g.api.setSize({ width: perGroup });
+  }
 }
 
 /** Set sidebar to 1/3 width of the dockview container */
@@ -69,10 +86,12 @@ export function setSidebarInitialWidth(): void {
   if (!api) return;
   const group = getSidebarGroup();
   if (!group) return;
-  // Use requestAnimationFrame to ensure layout is settled
+  // Use requestAnimationFrame to ensure layout is settled, then notify listeners
   requestAnimationFrame(() => {
     const targetWidth = Math.round(api.width / 3);
     group.api.setSize({ width: targetWidth });
+    // Notify so the toggle button repositions to the sidebar's right edge
+    _sidebarListeners.forEach(fn => fn());
   });
 }
 

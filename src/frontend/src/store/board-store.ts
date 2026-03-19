@@ -300,8 +300,7 @@ class BoardStore {
 
     this._tabs.push(tab);
     this._activeTabId = id;
-    this.notify(); // notify immediately so renderers know the active tab changed
-    this.onTabCreated?.(id, file.name);
+    this.notify(); // notify immediately so existing renderers know the active tab changed
 
     try {
       const cached = await boardCache.get(file.name, file.size, file.lastModified);
@@ -315,6 +314,8 @@ class BoardStore {
           tab.showBottom = true;
         }
         this.autoBindBoard(file.name);
+        // Create panel AFTER board + rotation are ready so the renderer sees correct state
+        this.onTabCreated?.(id, file.name);
         this.notify();
         return;
       }
@@ -360,6 +361,8 @@ class BoardStore {
       }
     }
 
+    // Create panel AFTER board + rotation are ready so the renderer sees correct state
+    this.onTabCreated?.(id, file.name);
     this.notify();
   }
 
