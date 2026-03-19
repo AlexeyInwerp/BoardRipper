@@ -50,20 +50,21 @@ function App() {
   const dragCounter = useRef(0);
   const sidebarCollapsed = useSyncExternalStore(onSidebarChange, isSidebarCollapsed);
   const [sidebarLeft, setSidebarLeft] = useState(0);
-  const dockviewRef = useRef<HTMLDivElement>(null);
 
   // Track sidebar group width to position the toggle button at its right edge
   useEffect(() => {
-    const el = dockviewRef.current;
-    if (!el) return;
     const update = () => setSidebarLeft(getSidebarWidth());
-    // Poll via ResizeObserver on the dockview container (catches all group resizes)
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    // Also update when sidebar state changes
+    // Poll sidebar width — dockview doesn't expose group resize events,
+    // so we check periodically (lightweight: just reads one property)
+    let lastWidth = -1;
+    const poll = setInterval(() => {
+      const w = getSidebarWidth();
+      if (w !== lastWidth) { lastWidth = w; setSidebarLeft(w); }
+    }, 200);
+    // Also update immediately when sidebar state changes (toggle)
     const unsub = onSidebarChange(update);
     update();
-    return () => { ro.disconnect(); unsub(); };
+    return () => { clearInterval(poll); unsub(); };
   }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -198,7 +199,7 @@ function App() {
         >
           {sidebarCollapsed ? '\u25B6' : '\u25C0'}
         </button>
-        <div className="dockview-container" ref={dockviewRef}>
+        <div className="dockview-container">
           <DockviewReact
             className="dockview-theme-dark"
             onReady={onReady}

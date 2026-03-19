@@ -370,23 +370,34 @@ html, body, #root {
   width: 16px;
   height: 48px;
   background: var(--bg-tertiary);
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent);
   border-left: none;
   border-radius: 0 4px 4px 0;
-  color: var(--text-secondary);
+  color: var(--accent);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 9px;
   padding: 0;
-  opacity: 0.6;
-  transition: opacity 0.15s;
+  opacity: 0.85;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
 }
 .sidebar-toggle:hover {
   opacity: 1;
-  color: var(--text-primary);
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
   background: var(--bg-secondary);
+}
+.sidebar-toggle.collapsed {
+  border-color: var(--border);
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+.sidebar-toggle.collapsed:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
 }
 
 /* StatusBar */
