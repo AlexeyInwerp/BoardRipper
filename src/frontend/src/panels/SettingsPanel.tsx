@@ -6,6 +6,8 @@ import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { getAllFormats, setFormatOverride } from '../parsers/registry';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useDatabank } from '../hooks/useDatabank';
+import { databankStore } from '../store/databank-store';
 
 /** Context that provides per-field override info to Slider/Toggle children */
 interface OverrideCtx {
@@ -26,7 +28,7 @@ function useOverride(field: keyof RenderSettings) {
   return { isOverride, resetValue: gv as number & boolean };
 }
 
-type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides';
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides' | 'server';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -347,6 +349,71 @@ function FormatSettingsTable() {
   );
 }
 
+// ---- Library folder setting (Docker mode) ----
+
+function LibraryFolderSetting() {
+  const { libraryPath, electronMode, backendAvailable } = useDatabank();
+  const [editing, setEditing] = useState(false);
+  const [inputVal, setInputVal] = useState(libraryPath ?? '');
+  const [saving, setSaving] = useState(false);
+
+  // Don't show in Electron mode (has its own folder picker)
+  if (electronMode) return null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    const ok = await databankStore.setLibraryDir(inputVal.trim());
+    setSaving(false);
+    if (ok) {
+      setEditing(false);
+      // Trigger rescan with new library dir
+      databankStore.triggerScan();
+    }
+  };
+
+  if (!backendAvailable) {
+    return (
+      <div className="color-rule-hint">Backend not available. Start the Docker container to configure the library folder.</div>
+    );
+  }
+
+  return (
+    <div className="settings-library-folder">
+      <div className="color-rule-hint" style={{ marginBottom: 6 }}>
+        Path inside the container to scan for board/PDF files. Mount a NAS folder with <code>docker -v /host/path:/library</code>.
+      </div>
+      {editing ? (
+        <div className="settings-library-edit">
+          <input
+            type="text"
+            className="settings-library-input"
+            value={inputVal}
+            onChange={e => setInputVal(e.target.value)}
+            placeholder="/library"
+            autoFocus
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false); }}
+          />
+          <button className="settings-action-btn settings-apply-btn" onClick={handleSave} disabled={saving}>
+            {saving ? '...' : 'Save'}
+          </button>
+          <button className="settings-action-btn" onClick={() => setEditing(false)}>Cancel</button>
+        </div>
+      ) : (
+        <div className="settings-row settings-toggle-row">
+          <label className="settings-label">Library Folder</label>
+          <span
+            className="settings-library-path"
+            onClick={() => { setInputVal(libraryPath ?? '/library'); setEditing(true); }}
+            title="Click to edit"
+          >
+            {libraryPath || <em>Not configured</em>}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Main panel ----
 
 const INITIALLY_OPEN: SectionId[] = [];
@@ -402,12 +469,13 @@ export function SettingsPanel() {
   const formatsRef = useRef<HTMLDivElement>(null);
   const partTypeOverridesRef = useRef<HTMLDivElement>(null);
   const zoomLodRef = useRef<HTMLDivElement>(null);
+  const serverRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, interaction: interactionRef,
     performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
-    partTypeOverrides: partTypeOverridesRef,
+    partTypeOverrides: partTypeOverridesRef, server: serverRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -726,6 +794,11 @@ export function SettingsPanel() {
       <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}
         onToggle={toggleSection} sectionRef={formatsRef} isFocused={focusedSection === 'formats'}>
         <FormatSettingsTable />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="server" title="Server / Library" isOpen={openSections.has('server')}
+        onToggle={toggleSection} sectionRef={serverRef} isFocused={focusedSection === 'server'}>
+        <LibraryFolderSetting />
       </CollapsibleSection>
 
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}

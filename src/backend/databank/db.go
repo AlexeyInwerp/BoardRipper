@@ -53,7 +53,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.conn
 }
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -72,6 +72,11 @@ func (db *DB) migrate() error {
 	if ver < 1 {
 		if err := db.migrateV1(); err != nil {
 			return fmt.Errorf("v1: %w", err)
+		}
+	}
+	if ver < 2 {
+		if err := db.migrateV2(); err != nil {
+			return fmt.Errorf("v2: %w", err)
 		}
 	}
 
@@ -145,6 +150,36 @@ func (db *DB) migrateV1() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (db *DB) migrateV2() error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS config (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 2); err != nil {
 		return err
 	}
 
@@ -486,4 +521,51 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// --- Config key-value store ---
+
+// GetConfig returns a config value by key, or empty string if not set.
+func (db *DB) GetConfig(key string) (string, error) {
+	var val string
+	err := db.conn.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return val, err
+}
+
+// SetConfig upserts a config value. Pass empty string to delete.
+func (db *DB) SetConfig(key, value string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if value == "" {
+		_, err := db.conn.Exec(`DELETE FROM config WHERE key = ?`, key)
+		return err
+	}
+	_, err := db.conn.Exec(
+		`INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	return err
+}
+
+// AllConfig returns all config key-value pairs.
+func (db *DB) AllConfig() (map[string]string, error) {
+	rows, err := db.conn.Query(`SELECT key, value FROM config`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		result[k] = v
+	}
+	return result, rows.Err()
 }

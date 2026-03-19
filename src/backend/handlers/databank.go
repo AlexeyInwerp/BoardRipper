@@ -290,6 +290,51 @@ func (h *DatabankHandler) Search(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(results)
 }
 
+// GetConfig returns all config values, enriched with runtime info.
+// GET /api/config — returns config as JSON object.
+// Includes "_scan_root" (effective scan directory) for the frontend.
+func (h *DatabankHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	all, err := h.db.AllConfig()
+	if err != nil {
+		http.Error(w, "Failed to read config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Include effective scan root so frontend knows where files are coming from
+	all["_scan_root"] = h.scanner.ScanRoot()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(all)
+}
+
+// SetConfig updates a single config key.
+// PUT /api/config — body: {"key": "...", "value": "..."}
+func (h *DatabankHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Key == "" {
+		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.SetConfig(req.Key, req.Value); err != nil {
+		http.Error(w, "Failed to set config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// If library_dir changed, update scanner's scan root
+	if req.Key == "library_dir" {
+		h.scanner.SetLibraryDir(req.Value)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 // UploadText accepts client-extracted (pdfjs) text to replace Go-extracted text.
 // Body: { "pages": { "1": "page 1 text", "2": "page 2 text", ... } }
 func (h *DatabankHandler) UploadText(w http.ResponseWriter, r *http.Request) {

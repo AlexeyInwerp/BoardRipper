@@ -26,6 +26,20 @@ export function useKeyboardShortcuts() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.target as HTMLElement)?.isContentEditable) return;
 
+      // Arrow keys navigate PDF search results when matches exist
+      if (pdfStore.matches.length > 0 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          pdfStore.nextMatch();
+          return;
+        }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          pdfStore.prevMatch();
+          return;
+        }
+      }
+
       for (const shortcut of shortcuts) {
         if (!matchesShortcut(e, shortcut)) continue;
 
@@ -46,7 +60,6 @@ export function useKeyboardShortcuts() {
             if (butterfly || (showTop && showBottom)) return;
             if (showTop) boardStore.selectBottom();
             else boardStore.selectTop();
-            boardStore.flipHorizontal();
             return;
           }
 

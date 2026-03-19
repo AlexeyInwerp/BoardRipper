@@ -1,4 +1,4 @@
-import type { DockviewApi } from 'dockview-react';
+import type { DockviewApi, IDockviewGroupPanel } from 'dockview-react';
 
 let _api: DockviewApi | null = null;
 
@@ -6,6 +6,75 @@ let _api: DockviewApi | null = null;
 let _linkActivating = false;
 export function isLinkActivating(): boolean { return _linkActivating; }
 export function setLinkActivating(v: boolean): void { _linkActivating = v; }
+
+// --- Sidebar (pinnable left panel group) ---
+/** IDs of panel types that belong in the sidebar */
+const SIDEBAR_PANEL_IDS = new Set(['library', 'settings', 'debug']);
+let _sidebarCollapsed = false;
+let _sidebarWidthBeforeCollapse = 0;
+/** Listeners notified when sidebar collapse state changes */
+const _sidebarListeners = new Set<() => void>();
+
+export function isSidebarCollapsed(): boolean { return _sidebarCollapsed; }
+export function onSidebarChange(fn: () => void): () => void {
+  _sidebarListeners.add(fn);
+  return () => { _sidebarListeners.delete(fn); };
+}
+
+/** Get the current pixel width of the sidebar group (for positioning the toggle button) */
+export function getSidebarWidth(): number {
+  const group = getSidebarGroup();
+  if (!group) return 0;
+  return group.api.width;
+}
+
+/** Get or create the sidebar group, returning it */
+function getSidebarGroup(): IDockviewGroupPanel | undefined {
+  const api = _api;
+  if (!api) return undefined;
+  // The sidebar group is the group containing the 'library' panel (first sidebar panel created)
+  const libraryPanel = api.getPanel('library');
+  if (libraryPanel) return libraryPanel.group;
+  // Or find any sidebar panel's group
+  for (const p of api.panels) {
+    if (SIDEBAR_PANEL_IDS.has(p.id)) return p.group;
+  }
+  return undefined;
+}
+
+export function toggleSidebar(): void {
+  const api = _api;
+  if (!api) return;
+  const group = getSidebarGroup();
+  if (!group) return;
+
+  if (_sidebarCollapsed) {
+    // Expand: restore previous width
+    const restoreWidth = _sidebarWidthBeforeCollapse || Math.round(api.width / 3);
+    group.api.setSize({ width: restoreWidth });
+    _sidebarCollapsed = false;
+  } else {
+    // Collapse: save current width, shrink to ~1% of total width
+    _sidebarWidthBeforeCollapse = group.api.width;
+    const minWidth = Math.max(Math.round(api.width * 0.01), 4);
+    group.api.setSize({ width: minWidth });
+    _sidebarCollapsed = true;
+  }
+  _sidebarListeners.forEach(fn => fn());
+}
+
+/** Set sidebar to 1/3 width of the dockview container */
+export function setSidebarInitialWidth(): void {
+  const api = _api;
+  if (!api) return;
+  const group = getSidebarGroup();
+  if (!group) return;
+  // Use requestAnimationFrame to ensure layout is settled
+  requestAnimationFrame(() => {
+    const targetWidth = Math.round(api.width / 3);
+    group.api.setSize({ width: targetWidth });
+  });
+}
 
 export function setDockviewApi(api: DockviewApi) {
   _api = api;
@@ -36,7 +105,12 @@ export function ensureBoardPanel(tabId: number, fileName: string): void {
         params: { boardTabId: tabId },
         position: existingBoard
           ? { referencePanel: existingBoard.id }
-          : undefined,
+          : (() => {
+              // Place to the right of the library panel (not as a tab inside it)
+              const library = api.getPanel('library');
+              if (library) return { referencePanel: library.id, direction: 'right' as const };
+              return undefined;
+            })(),
       });
     }
   } catch (err) {
@@ -120,6 +194,8 @@ export function ensureLibraryPanel(): void {
           ? { referencePanel: anyPanel.id, direction: 'left' }
           : undefined,
       });
+      // Set sidebar to 1/3 width after layout settles
+      setSidebarInitialWidth();
     }
   } catch (err) {
     console.error('[dockview] Failed to open library panel:', err);
@@ -133,17 +209,32 @@ export function ensureUtilityPanel(id: string, component: string, title: string)
     const existing = api.getPanel(id);
     if (existing) {
       existing.api.setActive();
-    } else {
-      // Find the rightmost group to place the utility panel as a tab next to existing panels
-      const panels = api.panels;
-      const ref = panels.length > 0 ? panels[panels.length - 1] : undefined;
+      return;
+    }
+
+    // Route utility panels (settings, debug) into the sidebar group as tabs
+    const sidebarGroup = getSidebarGroup();
+    if (sidebarGroup) {
+      // Find any panel in the sidebar group to use as a reference for 'within' placement
+      const sidebarPanel = api.panels.find(p => p.group === sidebarGroup);
       api.addPanel({
         id,
         component,
         title,
-        position: ref ? { referencePanel: ref.id, direction: 'within' } : undefined,
+        position: sidebarPanel
+          ? { referencePanel: sidebarPanel.id, direction: 'within' }
+          : undefined,
       });
+
+      // If sidebar was collapsed, expand it so user sees the new panel
+      if (_sidebarCollapsed) {
+        toggleSidebar();
+      }
+      return;
     }
+
+    // Fallback: no sidebar exists yet, place standalone
+    api.addPanel({ id, component, title });
   } catch (err) {
     console.error(`[dockview] Failed to open ${id} panel:`, err);
   }

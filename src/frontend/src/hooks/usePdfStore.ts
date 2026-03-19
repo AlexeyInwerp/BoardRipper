@@ -79,6 +79,7 @@ export interface PdfDocSnapshot {
   textExtracting: boolean;
   textExtractProgress: number;
   bookmarks: PdfBookmark[];
+  cleanMode: boolean;
 }
 
 // Per-document snapshot cache: fileName → { version, snapshot }
@@ -104,6 +105,7 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     textExtracting: pdfStore.getDocTextExtracting(fileName),
     textExtractProgress: pdfStore.getDocTextExtractProgress(fileName),
     bookmarks: pdfStore.getDocBookmarks(fileName),
+    cleanMode: pdfStore.isDocClean(fileName),
   };
   docSnapshots.set(fileName, { version: snapshotVersion, snapshot });
   return snapshot;

@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,6 +10,15 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+func formatSize(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%dB", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1fKB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
+}
 
 // ScanStatus reports the current state of a scan operation.
 type ScanStatus struct {
@@ -24,16 +34,53 @@ type ScanStatus struct {
 
 // Scanner walks DATA_DIR and syncs findings with the database.
 type Scanner struct {
-	db      *DB
-	dataDir string
+	db         *DB
+	dataDir    string
+	libraryDir string // optional separate library directory
 
 	mu     sync.Mutex
 	status ScanStatus
 }
 
 // NewScanner creates a scanner for the given data directory.
-func NewScanner(db *DB, dataDir string) *Scanner {
-	return &Scanner{db: db, dataDir: dataDir}
+// envLibraryDir is the LIBRARY_DIR env default (e.g. "/library" in Docker, "" in dev).
+// A persisted DB config value takes precedence over the env default.
+func NewScanner(db *DB, dataDir string, envLibraryDir string) *Scanner {
+	s := &Scanner{db: db, dataDir: dataDir}
+
+	// Priority: DB config > env var > none
+	if dir, err := db.GetConfig("library_dir"); err == nil && dir != "" {
+		s.libraryDir = dir
+		log.Printf("Scanner: library_dir from config: %s", dir)
+	} else if envLibraryDir != "" {
+		s.libraryDir = envLibraryDir
+		log.Printf("Scanner: library_dir from LIBRARY_DIR env: %s", envLibraryDir)
+	}
+	return s
+}
+
+// SetLibraryDir updates the library directory used for scanning.
+func (s *Scanner) SetLibraryDir(dir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.libraryDir = dir
+	log.Printf("Scanner: library_dir set to: %q", dir)
+}
+
+// ScanRoot returns the directory that the scanner will walk.
+// If a library_dir is configured and exists, it's used; otherwise dataDir.
+func (s *Scanner) ScanRoot() string {
+	s.mu.Lock()
+	dir := s.libraryDir
+	s.mu.Unlock()
+
+	if dir != "" {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+		log.Printf("Scanner: library_dir %q not accessible, falling back to dataDir", dir)
+	}
+	return s.dataDir
 }
 
 // Status returns the current scan status.
@@ -67,7 +114,10 @@ func (s *Scanner) Scan() ScanStatus {
 	}
 	var diskFiles []diskFile
 
-	err := filepath.Walk(s.dataDir, func(path string, info os.FileInfo, err error) error {
+	scanRoot := s.ScanRoot()
+	log.Printf("Scanner: scanning %s", scanRoot)
+
+	err := filepath.Walk(scanRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip errors
 		}
@@ -82,7 +132,7 @@ func (s *Scanner) Scan() ScanStatus {
 			return nil
 		}
 
-		relPath, _ := filepath.Rel(s.dataDir, path)
+		relPath, _ := filepath.Rel(scanRoot, path)
 		// Normalize to forward slashes for cross-platform consistency
 		relPath = filepath.ToSlash(relPath)
 
@@ -98,6 +148,21 @@ func (s *Scanner) Scan() ScanStatus {
 	}
 
 	total = int64(len(diskFiles))
+	// Log file type breakdown
+	typeCounts := make(map[string]int)
+	for _, df := range diskFiles {
+		ft := FileTypeFromExt(df.relPath)
+		if ft == "" {
+			ft = "other"
+		}
+		typeCounts[ft]++
+	}
+	parts := make([]string, 0, len(typeCounts))
+	for ft, c := range typeCounts {
+		parts = append(parts, fmt.Sprintf("%d %s", c, ft))
+	}
+	log.Printf("Scanner: found %d files (%s)", total, strings.Join(parts, ", "))
+
 	s.mu.Lock()
 	s.status.Total = total
 	s.mu.Unlock()
@@ -160,6 +225,7 @@ func (s *Scanner) Scan() ScanStatus {
 				atomic.AddInt64(&errors, 1)
 				continue
 			}
+			log.Printf("Scanner: + %s [%s] %s", df.relPath, fileType, formatSize(df.size))
 			atomic.AddInt64(&added, 1)
 		}
 	}

@@ -172,6 +172,13 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         )}
         <button
           className="board-netlines-toggle"
+          onClick={() => rendererRef.current?.fitToBoard()}
+          title="Zoom to fit board"
+        >
+          ⊞
+        </button>
+        <button
+          className="board-netlines-toggle"
           onClick={() => rendererRef.current?.restartRender()}
           title="Restart renderer (force scene rebuild)"
         >

@@ -74,11 +74,13 @@ export const COMPLEXITY = {
 const LINE_HEIGHT_RATIO = 1.2;
 
 /** Compute a text item's bounding rect in canvas-space.
- *  Shared utility — same logic as textItemRect in PdfViewerPanel. */
+ *  Shared utility — same logic as textItemRect in PdfViewerPanel.
+ *  @param heightRatio — defaults to 1.2 (line height). Use 1.0 for tight glyph clip rects. */
 export function itemRect(
   item: { transform: number[]; width: number },
   vpT: number[],
   scale: number,
+  heightRatio = LINE_HEIGHT_RATIO,
 ): { x: number; y: number; w: number; h: number } {
   const fontSize = pdfFontSize(item.transform);
   const vx = vpT[0] * item.transform[4] + vpT[2] * item.transform[5] + vpT[4];
@@ -87,6 +89,6 @@ export function itemRect(
     x: vx * scale,
     y: vy * scale - fontSize * scale,
     w: item.width * scale,
-    h: fontSize * scale * LINE_HEIGHT_RATIO,
+    h: fontSize * scale * heightRatio,
   };
 }

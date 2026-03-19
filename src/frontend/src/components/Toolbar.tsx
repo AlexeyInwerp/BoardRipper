@@ -10,7 +10,7 @@ import { formatShortcut } from '../store/keyboard-shortcuts';
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, butterfly, board, showNetLines, activeTabId } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showNetLines, activeTabId, flipAxis } = useBoardStore();
 
   useEffect(() => {
     fileInputRefs.board = fileInputRef.current;
@@ -113,6 +113,14 @@ export function Toolbar() {
         data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
       >
         Top
+      </button>
+      <button
+        onClick={() => boardStore.toggleFlipAxis()}
+        className="toolbar-btn toolbar-btn-icon"
+        data-tooltip={`Flip axis: ${flipAxis.toUpperCase()}`}
+        style={{ fontSize: '0.75em', padding: '0 4px', minWidth: 0 }}
+      >
+        {flipAxis === 'x' ? '⇅' : '⇄'}
       </button>
       <button
         onClick={(e) => boardStore.selectBottom(e.shiftKey)}

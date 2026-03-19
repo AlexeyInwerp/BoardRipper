@@ -79,10 +79,76 @@ function parseSections(text: string): Map<string, string[]> {
 
 /** Parse flags byte (col1 of Pins1) into component side. */
 function parseSideFlags(flags: number): 'top' | 'bottom' | 'both' {
-  // bit 0: present on top copper,  bit 1: present on bottom copper
-  const top    = (flags & 1) !== 0;
-  const bottom = (flags & 2) !== 0;
-  return top && bottom ? 'both' : bottom ? 'bottom' : 'top';
+  // OpenBoardView convention: flag 1/4-7 → top, flag 2/8+ → bottom
+  if (flags === 1 || (flags >= 4 && flags < 8)) return 'top';
+  if (flags === 2 || flags >= 8) return 'bottom';
+  return 'both';
+}
+
+function flipSide(s: 'top' | 'bottom' | 'both'): 'top' | 'bottom' | 'both' {
+  return s === 'top' ? 'bottom' : s === 'bottom' ? 'top' : 'both';
+}
+
+/**
+ * Detect whether the file's side flags are inverted relative to physical reality.
+ * BRD files from different tools use opposite conventions for the flags field.
+ *
+ * Primary signal: ICs (U*, PU*) are overwhelmingly placed on the component/top
+ * side, so whichever flag-side has more total IC pins is the true top.
+ *
+ * Secondary signal: when IC counts are close (< 2:1 ratio), test point
+ * distribution is used as a tiebreaker. Test points (1-pin parts) are
+ * predominantly placed on the bottom side of real PCBs.
+ */
+function detectSideInversion(
+  partNames: string[],
+  partFlags: number[],
+  partCumPins: number[],
+): boolean {
+  let topIcPins = 0, bottomIcPins = 0;
+  let topTestPoints = 0, bottomTestPoints = 0;
+
+  for (let i = 0; i < partNames.length; i++) {
+    const name = partNames[i].toUpperCase();
+    const pinCount = partCumPins[i] - (i > 0 ? partCumPins[i - 1] : 0);
+    const side = parseSideFlags(partFlags[i]);
+
+    // 1-pin parts are test points — track separately, exclude from IC analysis
+    if (pinCount === 1) {
+      if (side === 'top') topTestPoints++;
+      else if (side === 'bottom') bottomTestPoints++;
+      continue;
+    }
+
+    if (!/^P?U[A-Z0-9]/.test(name)) continue;
+    if (side === 'top') topIcPins += pinCount;
+    else if (side === 'bottom') bottomIcPins += pinCount;
+  }
+
+  const icTotal = topIcPins + bottomIcPins;
+  const icMax = Math.max(topIcPins, bottomIcPins);
+  const icInverted = bottomIcPins > topIcPins;
+
+  // Strong IC signal (≥ 2:1 ratio) — trust it directly
+  if (icTotal > 0 && icMax >= icTotal * 0.66) {
+    return icInverted;
+  }
+
+  // IC signal is weak or absent — use test point distribution as tiebreaker.
+  // Domain knowledge: most test points sit on the bottom side.
+  const tpTotal = topTestPoints + bottomTestPoints;
+  if (tpTotal > 10) {
+    const tpInverted = topTestPoints > bottomTestPoints; // majority flagged "top" → likely actually bottom → inverted
+    // If IC signal exists but is close, test points break the tie
+    if (icTotal > 0) {
+      return tpInverted;
+    }
+    // No ICs at all — rely on test points alone
+    return tpInverted;
+  }
+
+  // Fallback: use whatever IC signal we have, or no inversion
+  return icInverted;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +230,11 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     p2count++;
   }
 
+  // ---- Detect side inversion ------------------------------------------------
+  // BRD files from different tools use opposite flag conventions.
+  // Auto-detect by checking which flag-side has more IC pins.
+  const inverted = detectSideInversion(partNames, partFlags, partCumPins);
+
   // ---- Assemble parts and pins --------------------------------------------
   // Group pin data by partIdx, then join with Pins1 catalogue.
   const pinsByPart = new Map<number, typeof pinData>();
@@ -176,7 +247,8 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
   const parts: Part[] = [];
   for (let i = 0; i < partNames.length; i++) {
     const partIdx = i + 1; // 1-based index matching Pins2 col3
-    const side    = parseSideFlags(partFlags[i]);
+    const rawSide = parseSideFlags(partFlags[i]);
+    const side    = inverted ? flipSide(rawSide) : rawSide;
     const pins: Pin[] = [];
 
     const pdata = pinsByPart.get(partIdx) ?? [];
@@ -225,7 +297,8 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     if (cols.length < 3) continue;
     const x    = Number(cols[1]);
     const y    = Number(cols[2]);
-    const side = Number(cols[3]) === 1 ? 'top' : 'bottom' as const;
+    const rawSide = Number(cols[3]) === 1 ? 'top' : 'bottom' as const;
+    const side = inverted ? flipSide(rawSide) as 'top' | 'bottom' : rawSide;
     const net  = cols.length >= 5 ? cols.slice(4).join(' ').trim() : '';
     if (!isNaN(x) && !isNaN(y)) {
       nails.push({ position: { x, y }, side, net });

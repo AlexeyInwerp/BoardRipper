@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="eyeGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ffcc"/>
+      <stop offset="50%" stop-color="#00e5ff"/>
+      <stop offset="100%" stop-color="#00ffcc"/>
+    </linearGradient>
+    <linearGradient id="irisGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff003c"/>
+      <stop offset="50%" stop-color="#ff2266"/>
+      <stop offset="100%" stop-color="#cc0033"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glowStrong">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="64" fill="url(#bg)"/>
+
+  <!-- Circuit traces (PCB aesthetic) -->
+  <g stroke="#00ffcc" stroke-width="1.5" opacity="0.15" fill="none">
+    <path d="M50,256 H140 L160,236 H200"/>
+    <path d="M462,256 H372 L352,276 H312"/>
+    <path d="M256,50 V130 L236,150 V190"/>
+    <path d="M256,462 V382 L276,362 V322"/>
+    <path d="M80,160 H120 L140,180 H180"/>
+    <path d="M432,352 H392 L372,332 H332"/>
+    <!-- Pads -->
+    <circle cx="50" cy="256" r="4" fill="#00ffcc"/>
+    <circle cx="462" cy="256" r="4" fill="#00ffcc"/>
+    <circle cx="256" cy="50" r="4" fill="#00ffcc"/>
+    <circle cx="256" cy="462" r="4" fill="#00ffcc"/>
+    <circle cx="80" cy="160" r="3" fill="#00ffcc"/>
+    <circle cx="432" cy="352" r="3" fill="#00ffcc"/>
+  </g>
+
+  <!-- Eye outer shape (almond) -->
+  <g filter="url(#glow)">
+    <path d="M96,256 Q176,156 256,156 Q336,156 416,256 Q336,356 256,356 Q176,356 96,256 Z"
+          fill="none" stroke="url(#eyeGlow)" stroke-width="3.5" opacity="0.9"/>
+  </g>
+
+  <!-- Eye fill (dark interior) -->
+  <path d="M96,256 Q176,156 256,156 Q336,156 416,256 Q336,356 256,356 Q176,356 96,256 Z"
+        fill="#0a0a0a" opacity="0.85"/>
+
+  <!-- Iris outer ring -->
+  <circle cx="256" cy="256" r="72" fill="none" stroke="#ff003c" stroke-width="2" opacity="0.6" filter="url(#glow)"/>
+
+  <!-- Iris fill -->
+  <circle cx="256" cy="256" r="68" fill="url(#irisGrad)" opacity="0.8"/>
+
+  <!-- Iris inner ring detail -->
+  <circle cx="256" cy="256" r="50" fill="none" stroke="#ff5577" stroke-width="1" opacity="0.4"/>
+
+  <!-- Pupil -->
+  <circle cx="256" cy="256" r="28" fill="#0a0a0a"/>
+
+  <!-- Pupil highlight (cyber) -->
+  <circle cx="244" cy="244" r="8" fill="#ffffff" opacity="0.7"/>
+  <circle cx="268" cy="252" r="4" fill="#ffffff" opacity="0.4"/>
+
+  <!-- Scan lines across iris (tech detail) -->
+  <g stroke="#00ffcc" stroke-width="0.8" opacity="0.25">
+    <line x1="188" y1="240" x2="324" y2="240"/>
+    <line x1="192" y1="256" x2="320" y2="256"/>
+    <line x1="188" y1="272" x2="324" y2="272"/>
+  </g>
+
+  <!-- Crosshair markers -->
+  <g stroke="#00ffcc" stroke-width="1.5" opacity="0.4" filter="url(#glow)">
+    <!-- Left -->
+    <line x1="108" y1="256" x2="148" y2="256"/>
+    <!-- Right -->
+    <line x1="364" y1="256" x2="404" y2="256"/>
+    <!-- Top -->
+    <line x1="256" y1="168" x2="256" y2="198"/>
+    <!-- Bottom -->
+    <line x1="256" y1="314" x2="256" y2="344"/>
+  </g>
+
+  <!-- Corner brackets (HUD frame) -->
+  <g stroke="#00ffcc" stroke-width="2" opacity="0.3" fill="none">
+    <!-- Top-left -->
+    <path d="M100,120 L100,100 L120,100"/>
+    <!-- Top-right -->
+    <path d="M412,100 L432,100 L432,120"/>
+    <!-- Bottom-left -->
+    <path d="M100,392 L100,412 L120,412"/>
+    <!-- Bottom-right -->
+    <path d="M412,412 L432,412 L432,392"/>
+  </g>
+</svg>

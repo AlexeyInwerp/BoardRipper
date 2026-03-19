@@ -349,10 +349,44 @@ html, body, #root {
   background: rgba(204, 68, 68, 0.15);
 }
 
-/* Dockview container */
-.dockview-container {
+/* Dockview wrapper (positions the sidebar toggle above dockview) */
+.dockview-wrapper {
   flex: 1;
   overflow: hidden;
+  position: relative;
+}
+.dockview-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Sidebar toggle button — above dockview's stacking context */
+.sidebar-toggle {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10000;
+  width: 16px;
+  height: 48px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.sidebar-toggle:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
 }
 
 /* StatusBar */
@@ -1053,6 +1087,42 @@ html, body, #root {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent-hover);
+}
+
+/* Library folder setting */
+.settings-library-edit {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.settings-library-input {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 12px;
+}
+.settings-library-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.settings-library-path {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.settings-library-path:hover {
+  background: var(--bg-tertiary);
+}
+.settings-library-path em {
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 /* Keyboard shortcuts section in Settings */
@@ -2826,22 +2896,41 @@ html, body, #root {
   font-size: 0.8em;
 }
 
+/* PDF Corrector flyout */
+.pdf-corrector-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.pdf-corrector-btn {
+  font-size: 14px !important;
+  padding: 1px 5px !important;
+  line-height: 1;
+}
+.pdf-corrector-btn.has-active {
+  color: #f80;
+  border-color: #f80;
+}
+.pdf-corrector-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  animation: corrector-slide-in 0.15s ease-out;
+}
+@keyframes corrector-slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.pdf-night-btn {
+  font-size: 14px !important;
+  padding: 1px 5px !important;
+  line-height: 1;
+}
+
 /* Glyph debug dropdown */
 .pdf-glyph-debug-wrapper {
   position: relative;
-}
-.pdf-glyph-debug-btn {
-  background: transparent;
-  border: 1px solid #555;
-  color: #ccc;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  border-radius: 3px;
-}
-.pdf-glyph-debug-btn.active {
-  border-color: #f80;
-  color: #f80;
 }
 .pdf-glyph-debug-menu {
   position: absolute;
@@ -2891,6 +2980,16 @@ html, body, #root {
   font-size: 11px;
   padding: 1px 4px;
   border-radius: 3px;
+}
+.pdf-glyph-summary {
+  font-size: 10px;
+  color: #999;
+  line-height: 1.4;
+}
+.pdf-clean-slider {
+  width: 100px;
+  height: 10px;
+  cursor: pointer;
 }
 .pdf-glyph-overlay-canvas {
   position: absolute;
