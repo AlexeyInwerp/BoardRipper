@@ -17,7 +17,7 @@ import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
-import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
@@ -183,6 +183,12 @@ export class BoardRenderer {
   private gestureStartRotation = 0;
   private boundGestureStart: ((e: Event) => void) | null = null;
   private boundGestureChange: ((e: Event) => void) | null = null;
+
+  // Pending fit-to-board: when set, the ResizeObserver will re-fit after layout stabilises.
+  // This covers the case where fitToBoard() is called before a PDF panel opens and
+  // shrinks the board panel — the resize triggers a deferred re-fit.
+  private _pendingFit = false;
+  private _pendingFitTimer: ReturnType<typeof setTimeout> | null = null;
 
   // applyFlips cache — skip O(N) label loop when transform params are unchanged
   private lastFlipParams: {
@@ -533,22 +539,31 @@ export class BoardRenderer {
     this.app.stage.addChild(this.viewport);
 
     // --- Recreate overlay Graphics (old ones were destroyed with the old app) ---
+    // zIndex values must match init() — see comments there for the full layering map.
     this.selectionGfx = new Graphics();
+    this.selectionGfx.zIndex = 30;
     this.netDimGfx = new Graphics();
+    this.netDimGfx.zIndex = 10;
     this.netLabelLayer = new Container();
+    this.netLabelLayer.zIndex = 20;
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
     this.viewport.addChild(this.netLinesGfx);
 
+    // Recreate elevated labels (see init() for detailed comments)
     const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
+    this.elevatedPartBg.zIndex = 100;
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPartLabel.anchor.set(0.5, 0.5);
+    this.elevatedPartLabel.zIndex = 101;
     this.elevatedPartLabel.visible = false;
     this.elevatedPartBg.visible = false;
     this.elevatedPinBg = new Graphics();
+    this.elevatedPinBg.zIndex = 102;
     this.elevatedPinLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPinLabel.anchor.set(0.5, 0.5);
+    this.elevatedPinLabel.zIndex = 103;
     this.elevatedPinLabel.visible = false;
     this.elevatedPinBg.visible = false;
 
@@ -628,25 +643,41 @@ export class BoardRenderer {
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
     this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; });
-
     this.app.stage.addChild(this.viewport);
 
+    // Overlay objects live inside scene.root (sortableChildren=true).
+    // zIndex values define the render order — higher = rendered later = on top.
+    //   0        board content (outline, layers, pins, labels) — default zIndex
+    //   10       netDimGfx          — dim/fade non-selected nets
+    //   20       netLabelLayer      — net name labels at pin positions
+    //   30       selectionGfx       — yellow highlight rectangles around selected parts/pins
+    //   100-103  elevated labels    — part/pin name badges, always topmost
     this.selectionGfx = new Graphics();
+    this.selectionGfx.zIndex = 30;
     this.netDimGfx = new Graphics();
+    this.netDimGfx.zIndex = 10;
     this.netLabelLayer = new Container();
+    this.netLabelLayer.zIndex = 20;
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
 
-    // Elevated labels for selected part/pin — persistent objects, toggled in renderSelection()
+    // Elevated labels for selected part/pin — persistent objects reused across
+    // scene switches. Visibility is toggled in updateElevatedLabels() each frame.
+    // High zIndex ensures they render above all board content (pins, borders,
+    // selection highlight) regardless of child insertion order.
     const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
+    this.elevatedPartBg.zIndex = 100;
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPartLabel.anchor.set(0.5, 0.5);
+    this.elevatedPartLabel.zIndex = 101;
     this.elevatedPartLabel.visible = false;
     this.elevatedPartBg.visible = false;
     this.elevatedPinBg = new Graphics();
+    this.elevatedPinBg.zIndex = 102;
     this.elevatedPinLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPinLabel.anchor.set(0.5, 0.5);
+    this.elevatedPinLabel.zIndex = 103;
     this.elevatedPinLabel.visible = false;
     this.elevatedPinBg.visible = false;
     this.viewport.addChild(this.netLinesGfx);
@@ -709,6 +740,20 @@ export class BoardRenderer {
       this.viewport.resize(w, h);
       this.app.renderer.resize(w, h);
       this.needsRender = true;
+
+      // When a fit-to-board is pending (e.g. initial load), re-fit after each
+      // resize. Debounce so we only fit once the layout has stabilised (e.g.
+      // after a PDF panel finishes opening and the board panel stops resizing).
+      if (this._pendingFit) {
+        if (this._pendingFitTimer) clearTimeout(this._pendingFitTimer);
+        this._pendingFitTimer = setTimeout(() => {
+          this._pendingFitTimer = null;
+          if (this._pendingFit && !this.destroyed) {
+            this._pendingFit = false;
+            this.fitToBoard();
+          }
+        }, 150);
+      }
     });
     this.resizeObserver.observe(this.containerEl);
 
@@ -1037,13 +1082,14 @@ export class BoardRenderer {
       // Normal mode
       this.teardownButterfly(scene);
 
-      // When viewing bottom only, mirror X (like physically flipping the board
-      // over a vertical axis). Also invert Y to match the physical flip — this
-      // replicates OpenBoardView's FlipBoard(m_flipVertically=true) behaviour:
-      // negate dx (X mirror in CoordToScreen) + Rotate(2) → net effect is Y mirror.
-      const bottomOnly = boardStore.showBottom && !boardStore.showTop;
-      const flipX = bottomOnly !== mirrorX;
-      const flipY = (autoFlipY !== mirrorY) !== bottomOnly;
+      // When viewing bottom-only, auto-mirror to simulate physically flipping
+      // the board over. flipAxis controls the hinge: 'x' flips around horizontal
+      // axis (top-to-bottom), 'y' flips around vertical axis (left-to-right).
+      const viewingBottom = !boardStore.showTop && boardStore.showBottom;
+      const flipAroundY = viewingBottom && boardStore.flipAxis === 'y';
+      const flipAroundX = viewingBottom && boardStore.flipAxis === 'x';
+      const flipX = mirrorX !== flipAroundY;
+      const flipY = (autoFlipY !== mirrorY) !== flipAroundX;
 
       scene.root.pivot.set(cx, cy);
       scene.root.position.set(cx, cy);
@@ -1261,6 +1307,9 @@ export class BoardRenderer {
       this.viewport.position.set(state.x, state.y);
     } else {
       this.fitToBoard(board);
+      // Mark pending so ResizeObserver re-fits after layout settles (e.g.
+      // a PDF panel opening shrinks this panel after initial fitToBoard).
+      this._pendingFit = true;
     }
   }
 
@@ -1298,12 +1347,17 @@ export class BoardRenderer {
       }
     }
 
-    // Attach new scene + selection overlay (inside root so flips apply to selection too)
+    // Attach new scene + overlay objects inside root (so board flips apply to them too).
+    // Render order is controlled by zIndex (root.sortableChildren=true), not addChild order:
+    //   zIndex 0:       board content (outline, layers, pins, labels)
+    //   zIndex 10:      netDimGfx (dim non-selected nets)
+    //   zIndex 20:      netLabelLayer (net name labels)
+    //   zIndex 30:      selectionGfx (yellow highlight)
+    //   zIndex 100-103: elevated selection labels (always topmost)
     this.viewport.addChild(scene.root);
     scene.root.addChild(this.netDimGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
-    // Elevated labels render on top of selection highlight
     scene.root.addChild(this.elevatedPinBg!);
     scene.root.addChild(this.elevatedPinLabel!);
     scene.root.addChild(this.elevatedPartBg!);
@@ -1408,6 +1462,8 @@ export class BoardRenderer {
       dbg(2, 'onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
+    // Notify settings store which board is active so per-board overrides take effect
+    renderSettingsStore.setActiveBoard(boardStore.fileName);
     dbg(1, 'onBoardUpdate', 'tab=' + this.tabId,
       'board=' + (boardStore.board ? boardStore.board.format + '/' + boardStore.board.parts.length : 'null'),
       'prev=' + (this.board ? this.board.format + '/' + this.board.parts.length : 'null'),
@@ -1590,6 +1646,29 @@ export class BoardRenderer {
     const gfxFor = (part: { side: string }) =>
       butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
 
+    // Draw part outline as OBB polygon (diagonal) or AABB rect, with selection padding
+    const drawPartOutline = (gfx: Graphics, part: typeof this.board.parts[0], sp: number) => {
+      const poly = computePartRenderPoly(part, s);
+      if (poly) {
+        const cx = poly.reduce((sum, p) => sum + p[0], 0) / poly.length;
+        const cy = poly.reduce((sum, p) => sum + p[1], 0) / poly.length;
+        gfx.moveTo(
+          poly[0][0] + Math.sign(poly[0][0] - cx) * sp,
+          poly[0][1] + Math.sign(poly[0][1] - cy) * sp,
+        );
+        for (let i = 1; i < poly.length; i++) {
+          gfx.lineTo(
+            poly[i][0] + Math.sign(poly[i][0] - cx) * sp,
+            poly[i][1] + Math.sign(poly[i][1] - cy) * sp,
+          );
+        }
+        gfx.closePath();
+      } else {
+        const rb = computePartRenderBounds(part, s);
+        gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
+      }
+    };
+
     // ── Highlight all search results ──
     const searchIndices = boardStore.searchResultIndices;
     if (searchIndices.size > 0) {
@@ -1606,9 +1685,7 @@ export class BoardRenderer {
           const r = computePinRadius(s, pin.radius) + s.selectionPadding;
           outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
         } else {
-          const rb = computePartRenderBounds(part, s);
-          const sp = s.selectionPadding;
-          outlines.push(() => gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2));
+          outlines.push(() => drawPartOutline(gfx, part, s.selectionPadding));
         }
       }
       for (const fn of topSearchOutlines) fn();
@@ -1632,9 +1709,7 @@ export class BoardRenderer {
           const r = computePinRadius(s, pin.radius) + s.selectionPadding;
           gfx.circle(pin.position.x, pin.position.y, r);
         } else {
-          const rb = computePartRenderBounds(part, s);
-          const sp = s.selectionPadding;
-          gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
+          drawPartOutline(gfx, part, s.selectionPadding);
         }
         gfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
         // Blink red on odd phases, orange on even (0 = no blink = normal orange)
@@ -1681,9 +1756,7 @@ export class BoardRenderer {
             const r = computePinRadius(s, pin.radius) + s.selectionPadding;
             outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
           } else {
-            const rb = computePartRenderBounds(part, s);
-            const sp = s.selectionPadding;
-            outlines.push(() => gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2));
+            outlines.push(() => drawPartOutline(gfx, part, s.selectionPadding));
           }
         }
 
@@ -1744,7 +1817,7 @@ export class BoardRenderer {
 
           // Resolve the pin's actual color
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
-          const pinColor = isPin1 ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
+          const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
           if (part.pins.length === 2) {
             const grow = s.netHighlightGrow;
@@ -1823,7 +1896,26 @@ export class BoardRenderer {
     if (perf) this.perfAccum.netLines += performance.now() - nlStart;
   }
 
-  /** Draw background-elevated labels for the selected component and/or pin */
+  /**
+   * Elevated selection labels — floating name badges for the selected part and pin.
+   *
+   * These are the primary visual feedback for the current selection and must render
+   * on top of ALL board content. They use zIndex 100-103 on scene.root (which has
+   * sortableChildren=true) so they overlap pins, borders, and the selection highlight.
+   *
+   * Architecture:
+   *   - 4 persistent PixiJS objects: partBg + partLbl, pinBg + pinLbl
+   *   - Created once in init(), reused across scene switches (never destroyed mid-session)
+   *   - Attached to scene.root so they follow board flips/rotations
+   *   - Counter-flip transform keeps text readable when the board is flipped/rotated
+   *
+   * Customisation points (for manual editing):
+   *   - screenFontPx: label font size in screen pixels (constant across zoom levels)
+   *   - pad / cornerR: background padding and corner radius
+   *   - partBg fill: color 0x000000, alpha 0.75 (dark semi-transparent)
+   *   - pinBg fill: color 0x1a1a2e, alpha 0.85 (dark blue semi-transparent)
+   *   - Pin label placement: tries above pin first, flips below if overlapping part label
+   */
   private updateElevatedLabels(
     sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
     s: import('../store/render-settings').RenderSettings,
@@ -1833,6 +1925,7 @@ export class BoardRenderer {
     const pinBg = this.elevatedPinBg!;
     const pinLbl = this.elevatedPinLabel!;
 
+    // Hide all labels by default — early returns leave them hidden
     partBg.visible = false;
     partLbl.visible = false;
     pinBg.visible = false;
@@ -1842,17 +1935,19 @@ export class BoardRenderer {
     const part = this.board.parts[sel.partIndex];
     if (!part) return;
 
+    // Font size is constant in screen pixels — divide by viewport scale to get world units
     const vpScale = Math.abs(this.viewport.scale.x);
-    const screenFontPx = 18;
+    const screenFontPx = 18;                       // ← change this to resize labels
     const fontSize = screenFontPx / vpScale;
-    const pad = 4 / vpScale;
-    const cornerR = 3 / vpScale;
+    const pad = 4 / vpScale;                        // ← background padding around text
+    const cornerR = 3 / vpScale;                    // ← background corner radius
 
-    // Counter-flip: the scene root may be flipped/rotated; labels need to stay readable.
+    // Counter-flip: scene root may be flipped (scale.x or scale.y negative) or rotated.
+    // Labels must stay upright and readable, so we invert the root's transform on each label.
     const root = this.activeScene.root;
-    const lsx = Math.sign(root.scale.x) || 1;
-    const lsy = Math.sign(root.scale.y) || 1;
-    const labelRot = -root.rotation * lsx * lsy;
+    const lsx = Math.sign(root.scale.x) || 1;       // -1 when horizontally flipped
+    const lsy = Math.sign(root.scale.y) || 1;       // -1 when vertically flipped
+    const labelRot = -root.rotation * lsx * lsy;     // cancel root rotation
 
     const applyCounterFlip = (lbl: BitmapText) => {
       lbl.scale.set(lsx, lsy);
@@ -1865,12 +1960,12 @@ export class BoardRenderer {
       gfx.rotation = labelRot;
     };
 
-    // ── Part label ──
+    // ── Part label: centered on the part's bounding box ──
     let partLabelCx = 0, partLabelCy = 0, partLabelHW = 0, partLabelHH = 0;
     if (s.showElevatedPartLabel) {
       const rb = computePartRenderBounds(part, s);
-      partLabelCx = rb.px + rb.pw / 2;
-      partLabelCy = rb.py + rb.ph / 2;
+      partLabelCx = rb.px + rb.pw / 2;              // center X of part bounds
+      partLabelCy = rb.py + rb.ph / 2;              // center Y of part bounds
       partLbl.style.fontSize = fontSize;
       partLbl.text = part.name;
       partLbl.x = partLabelCx;
@@ -1885,12 +1980,12 @@ export class BoardRenderer {
       partLabelHH = ph / 2;
       partBg.clear();
       partBg.roundRect(-pw / 2, -ph / 2, pw, ph, cornerR);
-      partBg.fill({ color: 0x000000, alpha: 0.75 });
+      partBg.fill({ color: 0x000000, alpha: 0.75 }); // ← part badge color
       applyCounterFlipGfx(partBg, partLabelCx, partLabelCy);
       partBg.visible = true;
     }
 
-    // ── Pin label ──
+    // ── Pin label: positioned above (or below) the selected pin ──
     if (s.showElevatedPinLabel && sel.pinIndex !== null && sel.pinIndex >= 0) {
       const pin = part.pins[sel.pinIndex];
       if (pin) {
@@ -1927,27 +2022,27 @@ export class BoardRenderer {
         const pnh = pnBounds.height / vpScale + pad * 2;
         pinBg.clear();
         pinBg.roundRect(-pnw / 2, -pnh / 2, pnw, pnh, cornerR);
-        pinBg.fill({ color: 0x1a1a2e, alpha: 0.85 });
+        pinBg.fill({ color: 0x1a1a2e, alpha: 0.85 }); // ← pin badge color
         applyCounterFlipGfx(pinBg, cx, cy);
         pinBg.visible = true;
       }
     }
 
-    // Z-reorder: the active label (pin when pin selected, part otherwise) must be topmost.
-    // addChild on an existing child moves it to the end — O(1), no allocation.
-    const scene = this.activeScene!;
+    // Z-priority swap: when a pin is selected, its label should render above the
+    // part label. When only a part is selected, reverse the order.
+    // scene.root.sortableChildren=true uses zIndex for ordering.
     if (sel.pinIndex !== null && sel.pinIndex >= 0) {
-      // Pin selected → pin net name on very top
-      scene.root.addChild(partBg);
-      scene.root.addChild(partLbl);
-      scene.root.addChild(pinBg);
-      scene.root.addChild(pinLbl);
+      // Pin selected → pin badge on very top (zIndex 102/103 > 100/101)
+      partBg.zIndex = 100;
+      partLbl.zIndex = 101;
+      pinBg.zIndex = 102;
+      pinLbl.zIndex = 103;
     } else {
-      // Only part selected → part name on very top
-      scene.root.addChild(pinBg);
-      scene.root.addChild(pinLbl);
-      scene.root.addChild(partBg);
-      scene.root.addChild(partLbl);
+      // Only part selected → part badge on very top
+      pinBg.zIndex = 100;
+      pinLbl.zIndex = 101;
+      partBg.zIndex = 102;
+      partLbl.zIndex = 103;
     }
   }
 
@@ -2401,19 +2496,40 @@ export class BoardRenderer {
   fitToBoard(board?: BoardData) {
     const b = board?.bounds ?? this.board?.bounds;
     if (!b) return;
+
+    // Sync viewport dimensions to current container size — the container may have
+    // been resized (e.g. dockview panel split) since the viewport was created.
+    const cw = this.containerEl.clientWidth;
+    const ch = this.containerEl.clientHeight;
+    if (cw > 0 && ch > 0) {
+      this.viewport.resize(cw, ch);
+      this.app.renderer.resize(cw, ch);
+    }
+
     const pad = renderSettingsStore.settings.fitPadding;
     const bw = b.maxX - b.minX;
     const bh = b.maxY - b.minY;
 
     if (boardStore.butterfly) {
-      // Butterfly shows two boards stacked vertically with 5% gap
-      const gap = bh * 0.05;
-      this.viewport.fit(true, bw + pad * 2, bh * 2 + gap + pad * 2);
-      this.viewport.moveCenter((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+      // Butterfly separates along the shorter visual axis (mirrors applyFlips logic).
+      const rotation = boardStore.rotation * Math.PI / 180;
+      const sinR = Math.abs(Math.sin(rotation));
+      const cosR = Math.abs(Math.cos(rotation));
+      const visualW = bw * cosR + bh * sinR;
+      const visualH = bw * sinR + bh * cosR;
+      const separateX = visualH >= visualW;
+      const sepDim = separateX ? visualW : visualH;
+      const gap = sepDim * 0.05;
+      // Double the dimension along the separation axis
+      const fitW = separateX ? bw * 2 + gap + pad * 2 : bw + pad * 2;
+      const fitH = separateX ? bh + pad * 2 : bh * 2 + gap + pad * 2;
+      this.viewport.fit(false, fitW, fitH);
     } else {
-      this.viewport.fit(true, bw + pad * 2, bh + pad * 2);
-      this.viewport.moveCenter((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+      this.viewport.fit(false, bw + pad * 2, bh + pad * 2);
     }
+    this.viewport.moveCenter((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2);
+    this.needsRender = true;
+    if (!this.app.ticker.started) this.app.ticker.start();
   }
 
   private panView(direction: PanDirection) {
@@ -2434,6 +2550,7 @@ export class BoardRenderer {
     }
     if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
+    if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
     this.unsubscribeViewCommands?.();

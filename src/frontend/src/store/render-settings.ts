@@ -49,6 +49,8 @@ export interface RenderSettings {
   partMinBodyMils: number;
   pinAlpha: number;
   showPinNumbers: boolean;
+  /** Show pin-1 marker (red color + triangle indicator) on multi-pin parts */
+  showPin1Marker: boolean;
 
   /** Min rendered font size in screen pixels — labels smaller than this are hidden */
   labelMinScreenPx: number;
@@ -153,6 +155,7 @@ export const DEFAULTS: RenderSettings = {
   partMinBodyMils: 0,
   pinAlpha: 0.85,
   showPinNumbers: true,
+  showPin1Marker: true,
   labelMinScreenPx: 3,
   labelZoomHide: 0,
 
@@ -240,7 +243,7 @@ export function computeMultiPinPadding(s: RenderSettings, pinRadii: number[]): n
   return s.partPadding + maxR;
 }
 
-/** Inflate flat bounds for 2-pin parts and return padded outline rect */
+/** Inflate flat bounds for small parts (≤4 pins) and return padded outline rect */
 export interface EffectiveBounds {
   minX: number; minY: number; maxX: number; maxY: number;
   px: number; py: number; pw: number; ph: number;
@@ -254,11 +257,12 @@ export function computeEffectiveBounds(
 ): EffectiveBounds {
   let { minX, minY, maxX, maxY } = bounds;
   let horiz = false;
-  const isTwoPin = pins.length === 2;
+  const isSmallPart = pins.length <= 4;
 
-  if (isTwoPin) {
+  if (isSmallPart && pins.length >= 2) {
+    // Determine orientation from the two most distant pins
     const p0 = pins[0].position;
-    const p1 = pins[1].position;
+    const p1 = pins[pins.length - 1].position;
     horiz = Math.abs(p0.x - p1.x) >= Math.abs(p0.y - p1.y);
     const dist = Math.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2);
     const inflate = Math.max(dist * 0.35, s.partMinBodyMils);
@@ -274,8 +278,8 @@ export function computeEffectiveBounds(
     }
   }
 
-  // 2-pin parts have no padding — pads fill the outline exactly
-  const pad = isTwoPin
+  // Small parts (≤4 pins) have no padding — pads fill the outline exactly
+  const pad = isSmallPart
     ? 0
     : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
 
@@ -368,6 +372,14 @@ export function computeDiagonalOBB(
   ];
 }
 
+/** Convenience wrapper: compute OBB polygon for a part, or null if axis-aligned. */
+export function computePartRenderPoly(
+  part: { pins: { position: { x: number; y: number }; radius?: number }[] },
+  s: RenderSettings,
+): [number, number][] | null {
+  return computeDiagonalOBB(part.pins, s);
+}
+
 /** Resolve the matching part-type override for a part name (prefix match, longest key wins) */
 export function resolvePartTypeOverride(partName: string, s: RenderSettings): PartTypeOverride | undefined {
   const upper = partName.toUpperCase();
@@ -383,10 +395,10 @@ export function resolvePartTypeOverride(partName: string, s: RenderSettings): Pa
 
 /**
  * Apply bodyShape override in-place to EffectiveBounds.
- * Only affects 2-pin parts (isTwoPin must be true).
+ * Only affects small parts (≤4 pins) where isSmallPart is true.
  */
-export function applyBodyShapeOverride(eb: EffectiveBounds, override: PartTypeOverride | undefined, isTwoPin: boolean): void {
-  if (!isTwoPin || !override?.bodyShape || override.bodyShape === 'natural') return;
+export function applyBodyShapeOverride(eb: EffectiveBounds, override: PartTypeOverride | undefined, isSmallPart: boolean): void {
+  if (!isSmallPart || !override?.bodyShape || override.bodyShape === 'natural') return;
   const cx = eb.px + eb.pw / 2;
   const cy = eb.py + eb.ph / 2;
   const wide = Math.max(eb.pw, eb.ph);
@@ -406,9 +418,9 @@ export function computePartRenderBounds(
   s: RenderSettings,
 ): { px: number; py: number; pw: number; ph: number } {
   const eb = computeEffectiveBounds(part.bounds, part.pins, s);
-  const isTwoPin = part.pins.length === 2;
-  applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), isTwoPin);
-  if (isTwoPin) {
+  const isSmallPart = part.pins.length <= 4;
+  applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), isSmallPart);
+  if (part.pins.length === 2) {
     const d = eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4);
     return {
       px: eb.horiz ? eb.px - d / 2 : eb.px,
@@ -436,46 +448,38 @@ export function resolvePinColor(settings: RenderSettings, netName: string, side:
 export type RenderSettingsListener = () => void;
 
 const STORAGE_KEY = 'boardripper-render-settings';
-const CUSTOM_DEFAULTS_KEY = 'boardripper-custom-defaults';
+const BOARD_OVERRIDES_KEY = 'boardripper-board-overrides';
 
-function loadCustomDefaults(): RenderSettings | null {
+// ── Per-board overrides persistence ──────────────────────────────────────
+
+function loadBoardOverridesMap(): Record<string, Partial<RenderSettings>> {
   try {
-    const raw = localStorage.getItem(CUSTOM_DEFAULTS_KEY);
-    if (raw) return JSON.parse(raw) as RenderSettings;
+    const raw = localStorage.getItem(BOARD_OVERRIDES_KEY);
+    if (raw) return JSON.parse(raw);
   } catch { /* ignore */ }
-  return null;
+  return {};
 }
 
-function saveCustomDefaults(s: RenderSettings) {
+function saveBoardOverridesMap(m: Record<string, Partial<RenderSettings>>) {
   try {
-    localStorage.setItem(CUSTOM_DEFAULTS_KEY, JSON.stringify(s));
+    localStorage.setItem(BOARD_OVERRIDES_KEY, JSON.stringify(m));
   } catch { /* ignore quota errors */ }
 }
 
-function clearCustomDefaults() {
-  try { localStorage.removeItem(CUSTOM_DEFAULTS_KEY); } catch { /* ignore */ }
-}
+// ── Global settings persistence ──────────────────────────────────────────
 
 function loadFromStorage(): RenderSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Shallow merge so new top-level fields get defaults
       const result: RenderSettings = { ...structuredClone(DEFAULTS), ...parsed };
-      // Deep-merge partTypeOverrides: new default entries and new per-entry fields
-      // survive even when old stored data pre-dates them.
+      // Deep-merge partTypeOverrides so new default entries survive old stored data.
       const mergedOverrides: Record<string, PartTypeOverride> = structuredClone(DEFAULTS.partTypeOverrides);
       for (const [key, stored] of Object.entries(parsed.partTypeOverrides ?? {})) {
         mergedOverrides[key] = { ...(mergedOverrides[key] ?? {} as PartTypeOverride), ...(stored as PartTypeOverride) };
       }
       result.partTypeOverrides = mergedOverrides;
-      // Migration: if componentFillAlpha is absent, stored settings pre-date component
-      // coloring. Reset showComponentColors to true so fills are visible after upgrade.
-      if (!('componentFillAlpha' in parsed)) {
-        result.showComponentColors = true;
-        result.componentFillAlpha = DEFAULTS.componentFillAlpha;
-      }
       return result;
     }
   } catch { /* ignore corrupt data */ }
@@ -488,28 +492,65 @@ function saveToStorage(s: RenderSettings) {
   } catch { /* ignore quota errors */ }
 }
 
+/** Merge global settings with sparse board overrides → effective settings */
+function mergeSettings(global: RenderSettings, overrides: Partial<RenderSettings>): RenderSettings {
+  if (!overrides || Object.keys(overrides).length === 0) return global;
+  const merged = { ...global, ...overrides };
+  // Deep-merge partTypeOverrides when both sides have them
+  if (overrides.partTypeOverrides) {
+    const base: Record<string, PartTypeOverride> = structuredClone(global.partTypeOverrides);
+    for (const [key, ov] of Object.entries(overrides.partTypeOverrides)) {
+      base[key] = { ...(base[key] ?? {} as PartTypeOverride), ...ov };
+    }
+    merged.partTypeOverrides = base;
+  }
+  // Deep-merge netColorRules: board overrides replace entirely (not merged per-rule)
+  return merged;
+}
+
+/**
+ * Compute the sparse diff: only keys where `edited` differs from `base`.
+ * Returns an empty object when they are identical.
+ */
+export function computeOverrides(base: RenderSettings, edited: RenderSettings): Partial<RenderSettings> {
+  const diff: Record<string, unknown> = {};
+  for (const key of Object.keys(base) as (keyof RenderSettings)[]) {
+    const bv = base[key];
+    const ev = edited[key];
+    if (typeof bv === 'object') {
+      if (JSON.stringify(bv) !== JSON.stringify(ev)) diff[key] = structuredClone(ev);
+    } else if (bv !== ev) {
+      diff[key] = ev;
+    }
+  }
+  return diff as Partial<RenderSettings>;
+}
+
 class RenderSettingsStore {
-  private _settings: RenderSettings = loadFromStorage();
+  private _global: RenderSettings = loadFromStorage();
+  private _boardOverrides: Record<string, Partial<RenderSettings>> = loadBoardOverridesMap();
+  private _activeBoard: string = '';
+  private _effective: RenderSettings = this._global;
   private _listeners = new Set<RenderSettingsListener>();
 
+  private recomputeEffective() {
+    const ov = this._activeBoard ? (this._boardOverrides[this._activeBoard] ?? {}) : {};
+    this._effective = mergeSettings(this._global, ov);
+  }
+
+  /** Effective settings (global + active board overrides merged) */
   get settings(): RenderSettings {
-    return this._settings;
+    return this._effective;
   }
 
-  get defaults(): RenderSettings {
-    return structuredClone(loadCustomDefaults() ?? DEFAULTS);
+  /** Raw global settings (no board overrides) */
+  get globalSettings(): RenderSettings {
+    return this._global;
   }
 
-  get hasCustomDefaults(): boolean {
-    return loadCustomDefaults() !== null;
-  }
-
-  saveAsDefaults(s: RenderSettings) {
-    saveCustomDefaults(s);
-  }
-
-  clearCustomDefaults() {
-    clearCustomDefaults();
+  /** The currently active board fileName (empty = none) */
+  get activeBoard(): string {
+    return this._activeBoard;
   }
 
   subscribe(listener: RenderSettingsListener): () => void {
@@ -521,41 +562,143 @@ class RenderSettingsStore {
     for (const l of this._listeners) l();
   }
 
-  /** Take a snapshot of current settings (for cancel/revert) */
+  /** Set the active board fileName — recomputes effective settings and notifies */
+  setActiveBoard(fileName: string) {
+    if (this._activeBoard === fileName) return;
+    this._activeBoard = fileName;
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** Take a snapshot of effective settings */
   snapshot(): RenderSettings {
-    return structuredClone(this._settings);
+    return structuredClone(this._effective);
   }
 
-  /** Apply a full settings object (used by Apply/Preview/Cancel) */
+  /** Take a snapshot of global settings (ignoring board overrides) */
+  globalSnapshot(): RenderSettings {
+    return structuredClone(this._global);
+  }
+
+  // ── Global settings mutations ──────────────────────────────────────────
+
+  /** Apply full global settings */
+  applyGlobal(settings: RenderSettings) {
+    this._global = structuredClone(settings);
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** Reset global settings to compile-time defaults */
+  resetGlobal() {
+    this._global = structuredClone(DEFAULTS);
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  // ── Per-board override mutations ───────────────────────────────────────
+
+  /** Get the sparse overrides for a board (empty object if none) */
+  getBoardOverrides(fileName: string): Partial<RenderSettings> {
+    return this._boardOverrides[fileName] ?? {};
+  }
+
+  /** Whether a board has any overrides stored */
+  hasBoardOverrides(fileName: string): boolean {
+    const ov = this._boardOverrides[fileName];
+    return !!ov && Object.keys(ov).length > 0;
+  }
+
+  /** Set sparse overrides for a board. Empty object = clear all overrides. */
+  setBoardOverrides(fileName: string, overrides: Partial<RenderSettings>) {
+    if (Object.keys(overrides).length === 0) {
+      delete this._boardOverrides[fileName];
+    } else {
+      this._boardOverrides[fileName] = structuredClone(overrides);
+    }
+    saveBoardOverridesMap(this._boardOverrides);
+    if (fileName === this._activeBoard) {
+      this.recomputeEffective();
+      this.notify();
+    }
+  }
+
+  /** Clear all overrides for a board (revert to global) */
+  clearBoardOverrides(fileName: string) {
+    if (!this._boardOverrides[fileName]) return;
+    delete this._boardOverrides[fileName];
+    saveBoardOverridesMap(this._boardOverrides);
+    if (fileName === this._activeBoard) {
+      this.recomputeEffective();
+      this.notify();
+    }
+  }
+
+  // ── Legacy compat (used by preview/cancel flow) ────────────────────────
+
+  /** Apply effective settings directly (for preview mode) */
   applySettings(settings: RenderSettings) {
-    this._settings = structuredClone(settings);
-    saveToStorage(this._settings);
-    this.notify();
-  }
-
-  update(partial: Partial<RenderSettings>) {
-    this._settings = { ...this._settings, ...partial };
-    saveToStorage(this._settings);
-    this.notify();
-  }
-
-  reset() {
-    this._settings = structuredClone(loadCustomDefaults() ?? DEFAULTS);
-    saveToStorage(this._settings);
-    this.notify();
-  }
-
-  /** Reset to compile-time defaults, ignoring custom defaults */
-  resetToFactory() {
-    clearCustomDefaults();
-    this._settings = structuredClone(DEFAULTS);
-    saveToStorage(this._settings);
+    this._effective = structuredClone(settings);
+    // Don't persist to global or overrides — preview is temporary
     this.notify();
   }
 
   resolvePinColor(netName: string, side: 'top' | 'bottom'): number {
-    return resolvePinColor(this._settings, netName, side);
+    return resolvePinColor(this._effective, netName, side);
   }
 }
 
 export const renderSettingsStore = new RenderSettingsStore();
+
+// ── Dev utility: export current settings as DEFAULTS constant ─────────────
+
+/**
+ * Generate a TypeScript `DEFAULTS` constant from the current global settings.
+ * Run in browser console: `exportSettingsAsDefaults()` — copy the output and
+ * paste it into render-settings.ts to update the compile-time defaults.
+ */
+export function exportSettingsAsDefaults(): string {
+  const s = renderSettingsStore.globalSettings;
+  const lines: string[] = ['export const DEFAULTS: RenderSettings = {'];
+
+  for (const [key, val] of Object.entries(s)) {
+    if (key === 'netColorRules' || key === 'partTypeOverrides') continue;
+    if (typeof val === 'string') {
+      lines.push(`  ${key}: '${val}',`);
+    } else if (typeof val === 'number' && key.toLowerCase().includes('color') && val > 255) {
+      lines.push(`  ${key}: 0x${val.toString(16).padStart(6, '0')},`);
+    } else {
+      lines.push(`  ${key}: ${JSON.stringify(val)},`);
+    }
+  }
+
+  // netColorRules
+  lines.push('');
+  lines.push('  netColorRules: [');
+  for (const r of s.netColorRules) {
+    lines.push(`    { id: '${r.id}', pattern: '${r.pattern}', color: '${r.color}', enabled: ${r.enabled} },`);
+  }
+  lines.push('  ],');
+
+  // partTypeOverrides
+  lines.push('');
+  lines.push('  partTypeOverrides: {');
+  for (const [key, ov] of Object.entries(s.partTypeOverrides)) {
+    lines.push(`    ${key}: { padShape: '${ov.padShape}', bodyShape: '${ov.bodyShape}', hidden: ${ov.hidden}, color: '${ov.color}' },`);
+  }
+  lines.push('  },');
+  lines.push('};');
+
+  const result = lines.join('\n');
+  // eslint-disable-next-line no-console
+  console.log(result);
+  return result;
+}
+
+// Expose on window for console access in dev
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).exportSettingsAsDefaults = exportSettingsAsDefaults;
+}
