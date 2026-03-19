@@ -322,6 +322,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // manually via viewport hit-testing, so PixiJS doesn't need to walk the tree.
   root.interactiveChildren = false;
 
+  // Enable zIndex-based sorting so overlay objects (selection, elevated labels)
+  // can use zIndex to guarantee render order regardless of addChild sequence.
+  root.sortableChildren = true;
+
   root.addChild(outlineGfx);
   root.addChild(bottomLayer);
   root.addChild(topLayer);
@@ -398,11 +402,12 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     partContainer.label   = part.name;
 
     const isTwoPinPart = part.pins.length === 2;
+    const isSmallPart  = part.pins.length <= 4;
     const isMultiPin   = part.pins.length > 2;
     const isBottom     = part.side === 'bottom';
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
 
-    applyBodyShapeOverride(eb, override, isTwoPinPart);
+    applyBodyShapeOverride(eb, override, isSmallPart);
 
     // Explicit cullArea avoids PixiJS calling getBounds() on every child each frame.
     // Pad generously (2× pinMaxRadius) so net-name labels that extend beyond part
@@ -481,7 +486,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // Compute netUpper early — needed for both NC drawing routing and label suppression.
       const netUpper = pin.net?.toUpperCase() ?? '';
       const isNcPin  = netUpper === 'NC';
-      const color = isPin1 ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
+      const color = (isPin1 && s.showPin1Marker) ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
       const ncGfx = isBottom ? bottomNcPinGfx : topNcPinGfx;
 
       if (isTwoPinPart) {
@@ -539,30 +544,61 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // alternate their vertical positions by pin index so adjacent pins' labels interleave.
       const bgaAlternate = isMultiPin && s.showPinNumbers && hasNet;
 
-      // ── Pin number label (multi-pin only, not 1-pin or 2-pin) ─────────
-      if (isMultiPin && s.showPinNumbers) {
-        const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+      // Whether 2-pin parts show pin numbers (two-level layout like BGA)
+      const twoPinShowNum = false;
+      // Whether this 2-pin pad uses two-level layout (pin number + net name stacked)
+      const twoPinTwoLevel = twoPinShowNum && hasNet;
+
+      // ── Pin number label ──────────────────────────────────────────────
+      // Multi-pin (BGA/IC): always shown when showPinNumbers is on.
+      // 2-pin: shown when showTwoPinNumbers is on — sized to fit the pad rectangle.
+      if ((isMultiPin && s.showPinNumbers) || twoPinShowNum) {
         const numStr = pinDisplayId(pin, pni);
-        const diameter = r * 2;
-        let pinFontSize = (diameter * 0.55) / (Math.max(numStr.length, 3) * 0.6);
-        pinFontSize = Math.min(pinFontSize, diameter * 0.65);
+        let pinFontSize: number;
+        let pinX: number, pinY: number;
+        let numAnchorY = 0.5;
+
+        if (isTwoPinPart) {
+          // 2-pin: fit pin number inside the pad rectangle.
+          // When two-level, use the top half; otherwise center in the full pad.
+          const pad = padRects[pni];
+          const fitW = pad.rw * 0.85;
+          const fitH = twoPinTwoLevel ? (pad.rh * 0.45) : (pad.rh * 0.85);
+          pinFontSize = Math.min(fitW / (Math.max(numStr.length, 2) * 0.6), fitH * 0.8);
+          pinFontSize = Math.max(pinFontSize, getLabelFontSize(s));
+          pinX = pad.rx + pad.rw / 2;
+          pinY = twoPinTwoLevel
+            ? pad.ry + pad.rh * 0.25   // top quarter of pad
+            : pad.ry + pad.rh / 2;     // center of pad
+        } else {
+          // Multi-pin (BGA/IC): size to pin circle diameter
+          const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+          const diameter = r * 2;
+          pinFontSize = (diameter * 0.55) / (Math.max(numStr.length, 3) * 0.6);
+          pinFontSize = Math.min(pinFontSize, diameter * 0.65);
+          pinX = pin.position.x;
+          pinY = pin.position.y;
+          // BGA alternating: even column → number above pin center, odd → below.
+          const even = pinColIndex[pni] % 2 === 0;
+          numAnchorY = bgaAlternate ? (even ? 1.0 : 0.0) : 0.8;
+          const bgaGap = r * s.bgaLabelGapFactor;
+          pinY += bgaAlternate ? (even ? -bgaGap : bgaGap) : 0;
+        }
+
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
-          // BGA alternating: even column → number above pin center, odd → below.
-          // anchor 1.0 = text bottom at y; anchor 0.0 = text top at y.
-          // A ±r*0.25 y-offset creates a clear gap between pin number and net name.
-          const even = pinColIndex[pni] % 2 === 0;
-          const numAnchorY = bgaAlternate ? (even ? 1.0 : 0.0) : 0.8;
-          const bgaGap     = r * s.bgaLabelGapFactor;
-          const numYOff    = bgaAlternate ? (even ? -bgaGap : bgaGap) : 0;
           const pinLabel = new BitmapText({
             text: numStr,
             style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: ensurePinFont(pinFontSize) },
           });
           pinLabel.anchor.set(0.5, numAnchorY);
-          pinLabel.x = pin.position.x;
-          pinLabel.y = pin.position.y + numYOff;
-          deferredCircleNumTexts.push(pinLabel);
+          pinLabel.x = pinX;
+          pinLabel.y = pinY;
+          if (isTwoPinPart) {
+            deferredTwoPinTexts.push(pinLabel);
+          } else {
+            deferredCircleNumTexts.push(pinLabel);
+          }
           (isBottom ? bottomPinLabels : topPinLabels).push(pinLabel);
         }
       }
@@ -574,12 +610,15 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         let anchorX = 0.5, anchorY = 0.5;
 
         if (isTwoPinPart) {
+          // 2-pin: fit net name inside pad. When two-level, use the bottom half.
           const pad = padRects[pni];
           const fitW = pad.rw * 0.85;
-          const fitH = pad.rh * 0.85;
+          const fitH = twoPinTwoLevel ? (pad.rh * 0.45) : (pad.rh * 0.85);
           netFontSize = Math.min(fitW / (pin.net.length * 0.6), fitH * 0.8);
           nx = pad.rx + pad.rw / 2;
-          ny = pad.ry + pad.rh / 2;
+          ny = twoPinTwoLevel
+            ? pad.ry + pad.rh * 0.75   // bottom quarter of pad
+            : pad.ry + pad.rh / 2;     // center of pad
         } else {
           const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
           const diameter = r * 2;
@@ -661,7 +700,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     // ── Pin 1 triangle marker (multi-pin only) ──────────────────────────
     // Accumulated into the grid cell's triangle Graphics (by layer).
-    if (isMultiPin && part.pins.length > 0) {
+    if (s.showPin1Marker && isMultiPin && part.pins.length > 0) {
       const pin = part.pins[0];
       const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
       const triSize = r * 0.7;
@@ -700,6 +739,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     if (part.pins.length > 1) {
       let borderRect: BorderRect;
       let fillX: number, fillY: number, fillW: number, fillH: number;
+      let fillPoly: [number, number][] | null = null;
       if (isTwoPinPart) {
         // Expand border to encompass pads centered on pin vertices
         const bx = eb.horiz ? eb.px - padDepth / 2 : eb.px;
@@ -714,6 +754,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           ? { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, poly: obb }
           : { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };
         fillX = eb.px; fillY = eb.py; fillW = eb.pw; fillH = eb.ph;
+        fillPoly = obb ?? null;
       }
       (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
 
@@ -722,7 +763,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         const map = isBottom ? bottomFillMap : topFillMap;
         let gfx = map.get(fillColor);
         if (!gfx) { gfx = new Graphics(); map.set(fillColor, gfx); }
-        gfx.rect(fillX, fillY, fillW, fillH);
+        if (fillPoly) {
+          gfx.moveTo(fillPoly[0][0], fillPoly[0][1]);
+          for (let i = 1; i < fillPoly.length; i++) gfx.lineTo(fillPoly[i][0], fillPoly[i][1]);
+          gfx.closePath();
+        } else {
+          gfx.rect(fillX, fillY, fillW, fillH);
+        }
       }
     }
 
@@ -833,7 +880,15 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const borderBatches: BorderBatch[] = [];
   for (const [batch, layer] of [[topBorderBatch, topLayer], [bottomBorderBatch, bottomLayer]] as [BorderBatch, Container][]) {
     if (batch.rects.length === 0) continue;
-    for (const r of batch.rects) batch.gfx.rect(r.x, r.y, r.w, r.h);
+    for (const r of batch.rects) {
+      if (r.poly) {
+        batch.gfx.moveTo(r.poly[0][0], r.poly[0][1]);
+        for (let i = 1; i < r.poly.length; i++) batch.gfx.lineTo(r.poly[i][0], r.poly[i][1]);
+        batch.gfx.closePath();
+      } else {
+        batch.gfx.rect(r.x, r.y, r.w, r.h);
+      }
+    }
     batch.gfx.stroke({ width: s.partBorderWidth, color: batch.color, alpha: batch.alpha });
     layer.addChild(batch.gfx);
     borderBatches.push(batch);

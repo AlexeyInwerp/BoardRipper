@@ -1,12 +1,32 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import { renderSettingsStore, DEFAULTS } from '../store/render-settings';
+import { useState, useCallback, useRef, useMemo, useEffect, createContext, useContext } from 'react';
+import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import type { RenderSettings, LabelSize, NetColorRule, PartTypeOverride, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { getAllFormats, setFormatOverride } from '../parsers/registry';
+import { useBoardStore } from '../hooks/useBoardStore';
 
-type SectionId = MockupSectionId | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides';
+/** Context that provides per-field override info to Slider/Toggle children */
+interface OverrideCtx {
+  isBoardMode: boolean;
+  globalSettings: RenderSettings;
+  draft: RenderSettings;
+}
+const OverrideContext = createContext<OverrideCtx | null>(null);
+
+function useOverride(field: keyof RenderSettings) {
+  const ctx = useContext(OverrideContext);
+  if (!ctx || !ctx.isBoardMode) return { isOverride: false, resetValue: undefined };
+  const gv = ctx.globalSettings[field];
+  const dv = ctx.draft[field];
+  const isOverride = typeof gv === 'object'
+    ? JSON.stringify(gv) !== JSON.stringify(dv)
+    : gv !== dv;
+  return { isOverride, resetValue: gv as number & boolean };
+}
+
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -51,18 +71,19 @@ interface SliderProps {
 
 function Slider({ label, value, min, max, step, field, onUpdate, title }: SliderProps) {
   const [dragging, setDragging] = useState(false);
-  const defaultValue = DEFAULTS[field] as number;
+  const { isOverride, resetValue: ovReset } = useOverride(field);
+  const defaultValue = ovReset ?? DEFAULTS[field] as number;
   const pct = ((value - min) / (max - min)) * 100;
   const isModified = Math.abs(value - defaultValue) > step * 0.5;
   return (
-    <div className="settings-row" title={title}>
+    <div className={`settings-row${isOverride ? ' settings-override' : ''}`} title={title}>
       <label className="settings-label">
         {label}
         <span className="settings-value">{Number(value.toFixed(2))}</span>
       </label>
       <div className="settings-slider-wrap">
         <input
-          type="range" className="settings-slider"
+          type="range" className={`settings-slider${isOverride ? ' slider-override' : ''}`}
           min={min} max={max} step={step} value={value}
           onChange={(e) => onUpdate({ [field]: parseFloat(e.target.value) })}
           onPointerDown={() => setDragging(true)}
@@ -85,10 +106,14 @@ interface ToggleProps {
 }
 
 function Toggle({ label, value, field, onUpdate, title }: ToggleProps) {
+  const { isOverride, resetValue: ovReset } = useOverride(field);
   return (
-    <div className="settings-row settings-toggle-row" title={title}>
+    <div className={`settings-row settings-toggle-row${isOverride ? ' settings-override' : ''}`} title={title}>
       <label className="settings-label">{label}</label>
-      <input type="checkbox" checked={value} onChange={(e) => onUpdate({ [field]: e.target.checked })} />
+      <input type="checkbox" checked={value}
+        onChange={(e) => onUpdate({ [field]: e.target.checked })}
+        onDoubleClick={() => { const rv = ovReset ?? DEFAULTS[field] as boolean; onUpdate({ [field]: rv }); }}
+      />
     </div>
   );
 }
@@ -326,23 +351,38 @@ function FormatSettingsTable() {
 
 const INITIALLY_OPEN: SectionId[] = [];
 
+type SettingsMode = 'global' | 'board';
+
 export function SettingsPanel() {
-  const baselineRef = useRef<RenderSettings>(renderSettingsStore.snapshot());
-  const [draft, setDraft] = useState<RenderSettings>(() => renderSettingsStore.snapshot());
+  const { fileName: activeFileName } = useBoardStore();
+  const hasBoard = !!activeFileName;
+
+  // Mode: global settings vs per-board overrides
+  const [mode, setMode] = useState<SettingsMode>('global');
+  // Force mode to global when no board is open
+  const effectiveMode = hasBoard ? mode : 'global';
+  const isBoardMode = effectiveMode === 'board';
+
+  const baselineRef = useRef<RenderSettings>(
+    isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot()
+  );
+  const [draft, setDraft] = useState<RenderSettings>(() =>
+    isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot()
+  );
   const [previewing, setPreviewing] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [shiftHeld, setShiftHeld] = useState(false);
   const previewingRef = useRef(previewing);
   previewingRef.current = previewing;
 
-  // Track Shift key for "Save as Default" button label
+  // Reset draft/baseline when mode changes
   useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true); };
-    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false); };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, []);
+    const snap = isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot();
+    baselineRef.current = structuredClone(snap);
+    setDraft(structuredClone(snap));
+    setDirty(false);
+    if (previewing) { renderSettingsStore.applySettings(snap); setPreviewing(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveMode, activeFileName]);
 
   // Collapsible sections
   const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(INITIALLY_OPEN));
@@ -361,10 +401,11 @@ export function SettingsPanel() {
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const formatsRef = useRef<HTMLDivElement>(null);
   const partTypeOverridesRef = useRef<HTMLDivElement>(null);
+  const zoomLodRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
-    netColors: netColorsRef, selection: selectionRef, netLines: netLinesRef, interaction: interactionRef,
+    netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, interaction: interactionRef,
     performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
     partTypeOverrides: partTypeOverridesRef,
   });
@@ -465,10 +506,14 @@ export function SettingsPanel() {
     },
   }), []);
 
-  const handleApply = (e: React.MouseEvent) => {
-    renderSettingsStore.applySettings(draft);
-    if (e.shiftKey) {
-      renderSettingsStore.saveAsDefaults(draft);
+  const handleApply = () => {
+    if (isBoardMode) {
+      // Compute sparse diff against global and store as board overrides
+      const global = renderSettingsStore.globalSettings;
+      const overrides = computeOverrides(global, draft);
+      renderSettingsStore.setBoardOverrides(activeFileName, overrides);
+    } else {
+      renderSettingsStore.applyGlobal(draft);
     }
     baselineRef.current = structuredClone(draft);
     setDirty(false); setPreviewing(false);
@@ -488,17 +533,50 @@ export function SettingsPanel() {
     }
   };
   const handleReset = () => {
-    const defaults = renderSettingsStore.defaults;
-    setDraft(defaults);
-    setDirty(true);
-    if (previewing) renderSettingsStore.applySettings(defaults);
+    if (isBoardMode) {
+      // Reset to global (clear all board overrides)
+      const global = renderSettingsStore.globalSnapshot();
+      setDraft(global);
+      setDirty(true);
+      if (previewing) renderSettingsStore.applySettings(global);
+    } else {
+      const defaults = structuredClone(DEFAULTS);
+      setDraft(defaults);
+      setDirty(true);
+      if (previewing) renderSettingsStore.applySettings(defaults);
+    }
   };
+
+  const overrideCtx = useMemo<OverrideCtx>(() => ({
+    isBoardMode,
+    globalSettings: renderSettingsStore.globalSettings,
+    draft,
+  }), [isBoardMode, draft]);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
+        {/* ── Mode switch: Global vs Board ── */}
+        <div className="settings-mode-switch">
+          <button
+            className={`settings-mode-btn${effectiveMode === 'global' ? ' active' : ''}`}
+            onClick={() => setMode('global')}
+          >Global</button>
+          <button
+            className={`settings-mode-btn${effectiveMode === 'board' ? ' active' : ''}`}
+            onClick={() => setMode('board')}
+            disabled={!hasBoard}
+            title={hasBoard ? `Board overrides for ${activeFileName}` : 'Open a board to edit per-board settings'}
+          >Board</button>
+        </div>
+        <div className="settings-mode-hint">
+          {isBoardMode
+            ? <>Overrides for <strong>{activeFileName}</strong> &middot; <span className="settings-override-legend">yellow</span> = overridden</>
+            : 'Changes apply to all boards'}
+        </div>
+
         <SettingsMockup settings={draft} onElementClick={focusSection} />
         <div className="settings-footer">
           <button
@@ -508,12 +586,11 @@ export function SettingsPanel() {
           >
             {previewing ? 'Stop Preview' : 'Preview'}
           </button>
-          <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}
-            title={shiftHeld ? 'Apply and save as new defaults' : 'Apply changes'}
-          >{shiftHeld ? 'Save as Default' : 'Apply'}</button>
+          <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}>Apply</button>
           <button className="settings-action-btn" onClick={handleCancel} disabled={!dirty}>Cancel</button>
         </div>
       </div>
+      <OverrideContext.Provider value={overrideCtx}>
       <div className="settings-scroll">
 
       <CollapsibleSection id="outline" title="Board Outline" isOpen={openSections.has('outline')}
@@ -544,12 +621,6 @@ export function SettingsPanel() {
           title="Display component reference designators (e.g. U1, R100, C42) centered on each part" />
         <Toggle label="Label Drop Shadow" value={draft.partLabelShadow} field="partLabelShadow" onUpdate={updateDraft}
           title="Add a dark shadow halo behind part labels for better readability against colored or busy backgrounds" />
-        <Slider label="Label Min Size (mils)" value={draft.labelHideThreshold} min={0} max={10} step={0.5} field="labelHideThreshold" onUpdate={updateDraft}
-          title="Minimum font size in mils — labels whose computed font size falls below this are hidden entirely. Reduces clutter from tiny illegible text on small parts" />
-        <Slider label="Label Min Screen px" value={draft.labelMinScreenPx} min={0} max={10} step={0.5} field="labelMinScreenPx" onUpdate={updateDraft}
-          title="Minimum rendered label size in screen pixels. Labels smaller than this at the current zoom level are hidden. Works alongside Label Min Size (mils)" />
-        <Slider label="Label Zoom Threshold" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft}
-          title="Minimum viewport zoom scale to show labels. 0 = always visible. Higher values hide all labels when zoomed out, showing only at closer zoom levels" />
         <LabelSizeSelector draft={draft} onUpdate={updateDraft} />
       </CollapsibleSection>
 
@@ -565,16 +636,29 @@ export function SettingsPanel() {
           title="Fill transparency of pin circles and rectangular pads. 0 = invisible, 1 = fully opaque" />
         <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft}
           title="Display pin number/name labels inside pin circles on multi-pin components (ICs, connectors). On BGA parts, numbers and net names alternate vertically to reduce overlap" />
-        <Slider label="Pin Label Min Screen px" value={draft.circleLabelMinScreenPx} min={0} max={20} step={0.5} field="circleLabelMinScreenPx" onUpdate={updateDraft}
-          title="Minimum screen pixel size for pin number and net name labels on multi-pin (circle) parts. Higher = need more zoom to see these labels. Controls when the pin detail layer appears" />
-        <Slider label="2-Pin Label Min Screen px" value={draft.twoPinLabelMinScreenPx} min={0} max={20} step={0.5} field="twoPinLabelMinScreenPx" onUpdate={updateDraft}
-          title="Minimum screen pixel size for net name labels on 2-pin parts (resistors, capacitors). These appear inside the rectangular pads. Higher = need more zoom" />
+        <Toggle label="Pin 1 Marker" value={draft.showPin1Marker} field="showPin1Marker" onUpdate={updateDraft}
+          title="Highlight pin 1 with red color and a triangle indicator on multi-pin parts" />
         <Toggle label="Pin Label Background" value={draft.pinNetLabelBg} field="pinNetLabelBg" onUpdate={updateDraft}
           title="Draw a dark background plate behind net name labels on circle pins. Improves readability when labels overflow beyond the pin area" />
         <Toggle label="2-Pin Label Background" value={draft.twoPinNetLabelBg} field="twoPinNetLabelBg" onUpdate={updateDraft}
           title="Draw a dark background plate behind net name labels on 2-pin rectangular pads" />
         <Slider label="BGA Label Gap" value={draft.bgaLabelGapFactor} min={0} max={1} step={0.05} field="bgaLabelGapFactor" onUpdate={updateDraft}
           title="Vertical offset between pin number and net name labels on dense BGA parts, as a fraction of pin radius. On BGAs, pin numbers and net names alternate above/below the pin center to avoid overlap. Larger = more vertical separation" />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="zoomLod" title="Zoom Level of Detail" isOpen={openSections.has('zoomLod')}
+        onToggle={toggleSection} sectionRef={zoomLodRef} isFocused={focusedSection === 'zoomLod'}>
+        <div className="color-rule-hint" style={{ marginBottom: 6 }}>Controls when text labels appear/disappear as you zoom. Higher = must zoom in more. At 100% zoom: 1 mil = 1 screen pixel.</div>
+        <Slider label="Part Labels" value={draft.labelMinScreenPx} min={0} max={50} step={1} field="labelMinScreenPx" onUpdate={updateDraft}
+          title="Part name labels (R1, U1, C42) appear when they reach this many screen pixels. At 100% zoom a medium (8 mil) label = 8px. Set to 10 to hide them below 125% zoom." />
+        <Slider label="Pin Labels" value={draft.circleLabelMinScreenPx} min={0} max={50} step={1} field="circleLabelMinScreenPx" onUpdate={updateDraft}
+          title="Pin numbers and net names on ICs/BGAs appear when they reach this many screen pixels. At 100% zoom a 6-mil pin label = 6px." />
+        <Slider label="2-Pin Net Names" value={draft.twoPinLabelMinScreenPx} min={0} max={50} step={1} field="twoPinLabelMinScreenPx" onUpdate={updateDraft}
+          title="Net names on resistors/capacitors (2-pin parts) appear when they reach this many screen pixels." />
+        <Slider label="Label Cull (mils)" value={draft.labelHideThreshold} min={0} max={20} step={0.5} field="labelHideThreshold" onUpdate={updateDraft}
+          title="Labels smaller than this (in board mils) are permanently removed from the scene — never drawn at any zoom. Saves GPU memory on dense boards." />
+        <Slider label="Global Zoom Floor" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft}
+          title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
       </CollapsibleSection>
 
       <CollapsibleSection id="partTypeOverrides" title="Part Type Overrides" isOpen={openSections.has('partTypeOverrides')}
@@ -659,19 +743,12 @@ export function SettingsPanel() {
         ))}
       </CollapsibleSection>
 
-      <button className="settings-reset-btn" onClick={(e) => {
-        if (e.shiftKey) {
-          renderSettingsStore.resetToFactory();
-          setDraft(renderSettingsStore.snapshot());
-          setDirty(true);
-          if (previewing) renderSettingsStore.applySettings(renderSettingsStore.snapshot());
-        } else {
-          handleReset();
-        }
-      }} title={shiftHeld ? 'Reset to factory defaults and clear custom defaults' : 'Reset to defaults'}>
-        {shiftHeld ? 'Factory Reset' : 'Reset to Defaults'}
+      <button className="settings-reset-btn" onClick={handleReset}
+        title={isBoardMode ? 'Clear all board overrides — revert to global settings' : 'Reset all settings to defaults'}>
+        {isBoardMode ? 'Reset to Global' : 'Reset to Defaults'}
       </button>
       </div>
+      </OverrideContext.Provider>
     </div>
   );
 }
