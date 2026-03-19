@@ -35,8 +35,12 @@ func allowedExtensionList() string {
 	return list
 }
 
+// ScanRootFunc returns the current scan root directory.
+type ScanRootFunc func() string
+
 type FileHandler struct {
-	dataDir string
+	dataDir     string
+	scanRootFn  ScanRootFunc // returns the active scan root (may differ from dataDir if library_dir is set)
 }
 
 type FileInfo struct {
@@ -45,8 +49,8 @@ type FileInfo struct {
 	Modified time.Time `json:"modified"`
 }
 
-func NewFileHandler(dataDir string) *FileHandler {
-	return &FileHandler{dataDir: dataDir}
+func NewFileHandler(dataDir string, scanRootFn ScanRootFunc) *FileHandler {
+	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn}
 }
 
 func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -165,9 +169,14 @@ func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(h.dataDir, relPath)
-
+	// Check scan root first (may be library_dir), then fall back to dataDir
+	filePath := filepath.Join(h.scanRootFn(), relPath)
 	info, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
+		// Try dataDir as fallback
+		filePath = filepath.Join(h.dataDir, relPath)
+		info, err = os.Stat(filePath)
+	}
 	if os.IsNotExist(err) || (info != nil && info.IsDir()) {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return

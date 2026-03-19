@@ -40,7 +40,9 @@ func main() {
 	defer db.Close()
 
 	// Create scanner and PDF extractor
-	scanner := databank.NewScanner(db, dataDir)
+	// LIBRARY_DIR env sets the default scan root (Docker: /library, dev: unset)
+	libraryDir := os.Getenv("LIBRARY_DIR")
+	scanner := databank.NewScanner(db, dataDir, libraryDir)
 	extractor := databank.NewPdfExtractor(db, dataDir)
 
 	// Run initial scan + PDF text extraction in background
@@ -60,7 +62,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// File API routes (existing)
-	fileHandler := handlers.NewFileHandler(dataDir)
+	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot)
 	mux.HandleFunc("POST /api/upload", fileHandler.Upload)
 	mux.HandleFunc("GET /api/files", fileHandler.List)
 	mux.HandleFunc("GET /api/files/{name}", fileHandler.Get)
@@ -83,6 +85,10 @@ func main() {
 	mux.HandleFunc("PUT /api/databank/files/{id}/text", dbHandler.UploadText)
 	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)
 	mux.HandleFunc("PUT /api/databank/preview/{id}", dbHandler.PreviewPut)
+
+	// Config API routes
+	mux.HandleFunc("GET /api/config", dbHandler.GetConfig)
+	mux.HandleFunc("PUT /api/config", dbHandler.SetConfig)
 
 	// Serve static frontend files
 	fs := http.FileServer(http.Dir(staticDir))
@@ -108,6 +114,7 @@ func main() {
 	log.Printf("BoardRipper server starting on :%s", port)
 	log.Printf("Static files: %s", staticDir)
 	log.Printf("Data directory: %s", dataDir)
+	log.Printf("Library scan root: %s", scanner.ScanRoot())
 
 	addr := fmt.Sprintf(":%s", port)
 	if err := http.ListenAndServe(addr, mux); err != nil {

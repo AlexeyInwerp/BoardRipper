@@ -17,6 +17,10 @@ interface DatabankSnapshot {
   backendAvailable: boolean;
   metadataTree: MetadataGroup[];
   modelTree: ModelGroup[];
+  libraryPath: string | null;
+  electronMode: boolean;
+  verboseScan: boolean;
+  showPreviews: boolean;
 }
 
 let cachedSnapshot: DatabankSnapshot | null = null;
@@ -42,6 +46,10 @@ function getSnapshot(): DatabankSnapshot {
       backendAvailable: databankStore.backendAvailable,
       metadataTree: databankStore.metadataTree,
       modelTree: databankStore.modelTree,
+      libraryPath: databankStore.libraryPath,
+      electronMode: databankStore.electronMode,
+      verboseScan: databankStore.verboseScan,
+      showPreviews: databankStore.showPreviews,
     };
     lastVersion = snapshotVersion;
   }

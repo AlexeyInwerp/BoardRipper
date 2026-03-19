@@ -385,23 +385,30 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
     yFold = bestGap([...outlineYs]);
   }
 
-  // Try to pick a validated gap-based fold axis
+  // Try to pick a validated gap-based fold axis.
+  // Rank candidates by gap ratio (strongest gap wins) and try both before giving up.
   let detectedDim: 'x' | 'y' | null = null;
   let detectedAxis = 0;
 
-  if (xFold || yFold) {
-    // Prefer Y fold (horizontal line); fall back to X
-    const best = yFold ? { ...yFold, dim: 'y' as const } : { ...xFold!, dim: 'x' as const };
+  const candidates: Array<{ dim: 'x' | 'y'; axis: number; ratio: number }> = [];
+  if (xFold) candidates.push({ dim: 'x', axis: xFold.axis, ratio: xFold.ratio });
+  if (yFold) candidates.push({ dim: 'y', axis: yFold.axis, ratio: yFold.ratio });
+  // Sort by gap ratio descending — strongest gap first
+  candidates.sort((a, b) => b.ratio - a.ratio);
 
-    // Reject if one half has <25% of parts (board notch/hole, not a real fold gap)
+  for (const cand of candidates) {
     let passedChecks = true;
+
+    // Reject if one half has <15% of parts (board notch/hole, not a real fold gap).
+    // Use a lenient threshold — butterfly boards can have very uneven part counts
+    // (e.g. most ICs on top, only test points on bottom).
     if (cxs.length >= 8) {
-      const coordValues = best.dim === 'x' ? cxs : cys;
-      const below = coordValues.filter(v => v < best.axis).length;
+      const coordValues = cand.dim === 'x' ? cxs : cys;
+      const below = coordValues.filter(v => v < cand.axis).length;
       const balance = Math.min(below, coordValues.length - below) / coordValues.length;
-      logStore.log('log', `[XZZ] fold candidate: dim=${best.dim}, axis=${best.axis.toFixed(1)}, ratio=${best.ratio.toFixed(2)}, balance=${balance.toFixed(2)}`);
-      if (balance < 0.25) {
-        logStore.log('warn', '[XZZ] fold candidate rejected: imbalanced split — falling back to default Y fold');
+      logStore.log('log', `[XZZ] fold candidate: dim=${cand.dim}, axis=${cand.axis.toFixed(1)}, ratio=${cand.ratio.toFixed(2)}, balance=${balance.toFixed(2)}`);
+      if (balance < 0.15) {
+        logStore.log('warn', `[XZZ] fold candidate dim=${cand.dim} rejected: imbalanced split (${balance.toFixed(2)} < 0.15)`);
         passedChecks = false;
       }
     }
@@ -412,25 +419,26 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
       let upperMin = Infinity, upperMax = -Infinity;
       for (const s of segments) {
         for (const pt of [s.p1, s.p2]) {
-          const v = best.dim === 'x' ? pt.x : pt.y;
-          if (v < best.axis) { lowerMin = Math.min(lowerMin, v); lowerMax = Math.max(lowerMax, v); }
+          const v = cand.dim === 'x' ? pt.x : pt.y;
+          if (v < cand.axis) { lowerMin = Math.min(lowerMin, v); lowerMax = Math.max(lowerMax, v); }
           else               { upperMin = Math.min(upperMin, v); upperMax = Math.max(upperMax, v); }
         }
       }
       if (isFinite(lowerMin) && isFinite(upperMin)) {
         const lw = lowerMax - lowerMin, uw = upperMax - upperMin;
         const outlineBalance = lw > 0 && uw > 0 ? Math.min(lw, uw) / Math.max(lw, uw) : 0;
-        logStore.log('log', `[XZZ] outline half-widths: lower=${lw.toFixed(0)}, upper=${uw.toFixed(0)}, balance=${outlineBalance.toFixed(2)}`);
-        if (outlineBalance < 0.5) {
-          logStore.log('warn', '[XZZ] fold candidate rejected: outline halves asymmetric — falling back to default Y fold');
+        logStore.log('log', `[XZZ] outline half-widths (dim=${cand.dim}): lower=${lw.toFixed(0)}, upper=${uw.toFixed(0)}, balance=${outlineBalance.toFixed(2)}`);
+        if (outlineBalance < 0.4) {
+          logStore.log('warn', `[XZZ] fold candidate dim=${cand.dim} rejected: outline halves asymmetric (${outlineBalance.toFixed(2)} < 0.40)`);
           passedChecks = false;
         }
       }
     }
 
     if (passedChecks) {
-      detectedDim = best.dim;
-      detectedAxis = best.axis;
+      detectedDim = cand.dim;
+      detectedAxis = cand.axis;
+      break; // accept the first candidate that passes
     }
   }
 
@@ -665,7 +673,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     const pins: Pin[] = pd.pins.map((p, i) => {
       const raw2 = netDict.get(p.netIndex) ?? '';
       const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
-      return { name: p.name || String(i + 1), number: String(i + 1), position: { x: p.x, y: p.y }, radius: 8, side: pd.side, net };
+      return { name: '', number: String(i + 1), position: { x: p.x, y: p.y }, radius: 8, side: pd.side, net };
     });
     const pos  = pins.map(p => p.position);
     const bounds = computeBBox(pos.length > 0 ? pos : [{ x: 0, y: 0 }]);

@@ -4,7 +4,7 @@ import { databankStore } from '../store/databank-store';
 import type { DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup } from '../store/databank-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { ensurePdfPanel } from '../store/dockview-api';
+import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
 
 export function LibraryPanel() {
@@ -12,13 +12,19 @@ export function LibraryPanel() {
     files, folderTree, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loading, metadataTree, donorOnlyFilter,
     autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
+    libraryPath, electronMode, verboseScan, showPreviews,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
 
   // Load data on mount
   useEffect(() => {
-    databankStore.fetchFiles();
-    databankStore.fetchTree();
+    if (typeof window !== 'undefined' && window.electronAPI?.scanLibrary) {
+      databankStore.initElectron();
+    } else {
+      databankStore.loadConfig();
+      databankStore.fetchFiles();
+      databankStore.fetchTree();
+    }
   }, []);
 
   const handleScan = useCallback(() => {
@@ -48,6 +54,11 @@ export function LibraryPanel() {
               } catch (err) {
                 console.error('[Library] Failed to load bound PDF:', err);
               }
+            }
+            // Re-activate the board panel so auto-loaded PDFs don't steal focus
+            const activeTab = boardStore.activeTabId;
+            if (activeTab != null) {
+              ensureBoardPanel(activeTab, fileObj.name);
             }
           }
         }
@@ -112,7 +123,7 @@ export function LibraryPanel() {
           </button>
         </div>
         <div className="library-actions">
-          <label className="library-donor-filter">
+          <label className="library-donor-filter" title="Auto-load bound PDFs when opening a board">
             <input
               type="checkbox"
               checked={autoPdf}
@@ -120,13 +131,29 @@ export function LibraryPanel() {
             />
             Auto PDF
           </label>
-          <label className="library-donor-filter">
+          <label className="library-donor-filter" title="Show PDF thumbnail previews in file list">
+            <input
+              type="checkbox"
+              checked={showPreviews}
+              onChange={(e) => databankStore.setShowPreviews(e.target.checked)}
+            />
+            Previews
+          </label>
+          <label className="library-donor-filter" title="Show only donor pool boards">
             <input
               type="checkbox"
               checked={donorOnlyFilter}
               onChange={(e) => databankStore.setDonorOnlyFilter(e.target.checked)}
             />
             Donor
+          </label>
+          <label className="library-donor-filter" title="Show detailed scan results per folder">
+            <input
+              type="checkbox"
+              checked={verboseScan}
+              onChange={(e) => databankStore.setVerboseScan(e.target.checked)}
+            />
+            Verbose
           </label>
           <button
             className="library-scan-btn"
@@ -143,7 +170,14 @@ export function LibraryPanel() {
         {boardCount} boards, {pdfCount} PDFs
         {scanStatus && !scanStatus.running && scanStatus.duration_ms > 0 && (
           <span className="library-scan-result">
-            {' '}— last scan: +{scanStatus.added} -{scanStatus.deleted} ({scanStatus.duration_ms}ms)
+            {verboseScan
+              ? ` — scan: +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} err:${scanStatus.errors} (${scanStatus.scanned}/${scanStatus.total} files, ${scanStatus.duration_ms}ms)`
+              : ` — last scan: +${scanStatus.added} -${scanStatus.deleted} (${scanStatus.duration_ms}ms)`}
+          </span>
+        )}
+        {scanStatus?.running && verboseScan && (
+          <span className="library-scan-result">
+            {' '}— scanning: {scanStatus.scanned}/{scanStatus.total}...
           </span>
         )}
       </div>
@@ -184,8 +218,25 @@ export function LibraryPanel() {
         )}
       </div>
 
-      {/* Backend warning */}
-      {!backendAvailable && (
+      {/* Electron library folder picker */}
+      {electronMode && (
+        <div className="library-folder-bar">
+          <button
+            className="library-folder-btn"
+            onClick={() => databankStore.selectLibraryFolder()}
+          >
+            {libraryPath ? 'Change Folder' : 'Set Library Folder'}
+          </button>
+          {libraryPath && (
+            <span className="library-folder-path" title={libraryPath}>
+              {libraryPath.length > 40 ? '...' + libraryPath.slice(-37) : libraryPath}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Backend warning (web mode only) */}
+      {!electronMode && !backendAvailable && (
         <div className="library-backend-warn">
           Backend unavailable — start Docker or run the Go server on :8080
         </div>
@@ -750,6 +801,7 @@ function FileRow({ file, selected, indent, showPreview, onSelect, onOpen, onTogg
 }) {
   const icon = file.file_type === 'board' ? 'B' : 'P';
   const iconClass = file.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf';
+  const previewEnabled = showPreview && databankStore.showPreviews;
 
   return (
     <div
@@ -759,7 +811,7 @@ function FileRow({ file, selected, indent, showPreview, onSelect, onOpen, onTogg
       onDoubleClick={() => onOpen(file)}
       title={`${file.filename}\n${file.path}\n${formatSize(file.size)}`}
     >
-      {showPreview && <PreviewThumbnail file={file} />}
+      {previewEnabled && <PreviewThumbnail file={file} />}
       <span className={`library-file-icon ${iconClass}`}>{icon}</span>
       <span className="library-file-name">{file.filename}</span>
       {file.donor_pool && (

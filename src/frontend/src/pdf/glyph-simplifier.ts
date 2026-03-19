@@ -6,9 +6,16 @@ import { sampleQuadratic, sampleCubic, rdpSimplify } from './bezier-utils';
 import type { Point } from './bezier-utils';
 import { pdfFontSize } from '../store/pdf-store';
 
+export interface SimplifyStats {
+  totalBefore: number;
+  totalAfter: number;
+  glyphCount: number;
+}
+
 /**
  * Render simplified glyph outlines on a canvas that already has the PDF blit.
  * Covers original text with white, then draws simplified polyline glyphs.
+ * Returns vertex reduction stats.
  */
 export function drawSimplifiedGlyphs(
   ctx: CanvasRenderingContext2D,
@@ -16,14 +23,15 @@ export function drawSimplifiedGlyphs(
   vpT: number[],
   scale: number,
   epsilon: number,
-) {
+): SimplifyStats {
+  const stats: SimplifyStats = { totalBefore: 0, totalAfter: 0, glyphCount: 0 };
   ctx.save();
 
   for (const item of pageData.items) {
     if (item.isType3 || !item.glyphs) continue;
 
     const fontSize = pdfFontSize(item.transform);
-    const rect = itemRect(item, vpT, scale);
+    const rect = itemRect(item, vpT, scale, 1.0);
     const totalAdvance = item.glyphs.reduce((s, g) => s + g.advanceWidth, 0);
     const pxPerUnit = totalAdvance > 0 ? rect.w / totalAdvance : 0;
     const fontScale = (fontSize * scale) / item.unitsPerEm;
@@ -92,9 +100,12 @@ export function drawSimplifiedGlyphs(
       if (current.length > 0) contours.push(current);
 
       // Simplify each contour and render as filled polyline
+      stats.glyphCount++;
       ctx.beginPath();
       for (const contour of contours) {
+        stats.totalBefore += contour.length;
         const simplified = rdpSimplify(contour, epsilon);
+        stats.totalAfter += simplified.length;
         if (simplified.length < 2) continue;
         ctx.moveTo(simplified[0].x, simplified[0].y);
         for (let i = 1; i < simplified.length; i++) {
@@ -112,4 +123,5 @@ export function drawSimplifiedGlyphs(
   }
 
   ctx.restore();
+  return stats;
 }

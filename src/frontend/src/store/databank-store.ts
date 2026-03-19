@@ -1,5 +1,10 @@
 import { lookupBoard } from './apple-boards';
 
+/** Are we running inside Electron with library APIs available? */
+export function isElectron(): boolean {
+  return typeof window !== 'undefined' && !!window.electronAPI?.scanLibrary;
+}
+
 export type DatabankListener = () => void;
 
 export interface DatabankFile {
@@ -102,12 +107,16 @@ class DatabankStore {
   private _searchQuery = '';
   private _donorOnlyFilter = false;
   private _autoPdf = (() => { try { return localStorage.getItem('boardripper-library-autopdf') !== '0'; } catch { return true; } })();
+  private _verboseScan = (() => { try { return localStorage.getItem('boardripper-library-verbose') === '1'; } catch { return false; } })();
+  private _showPreviews = (() => { try { return localStorage.getItem('boardripper-library-previews') === '1'; } catch { return false; } })();
   private _viewMode: ViewMode = 'model';
   private _selectedFileId: number | null = null;
   private _selectedFileDetail: FileDetail | null = null;
   private _loading = false;
   private _backendAvailable = true; // assume yes until first failure
   private _listeners = new Set<DatabankListener>();
+  private _libraryPath: string | null = null;
+  private _electronMode = false;
 
   get files() { return this._files; }
   get folderTree() { return this._folderTree; }
@@ -116,11 +125,15 @@ class DatabankStore {
   get searchQuery() { return this._searchQuery; }
   get donorOnlyFilter() { return this._donorOnlyFilter; }
   get autoPdf() { return this._autoPdf; }
+  get verboseScan() { return this._verboseScan; }
+  get showPreviews() { return this._showPreviews; }
   get viewMode() { return this._viewMode; }
   get selectedFileId() { return this._selectedFileId; }
   get selectedFileDetail() { return this._selectedFileDetail; }
   get loading() { return this._loading; }
   get backendAvailable() { return this._backendAvailable; }
+  get libraryPath() { return this._libraryPath; }
+  get electronMode() { return this._electronMode; }
 
   get metadataTree(): MetadataGroup[] {
     const mfrMap = new Map<string, Map<string, DatabankFile[]>>();
@@ -250,13 +263,23 @@ class DatabankStore {
   async fetchFiles(): Promise<void> {
     this._loading = true;
     this.notify();
-    const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
-    if (data) this._files = data;
+
+    if (isElectron()) {
+      await this._electronScan();
+    } else {
+      const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
+      if (data) this._files = data;
+    }
+
     this._loading = false;
     this.notify();
   }
 
   async fetchTree(): Promise<void> {
+    if (isElectron()) {
+      // Tree is built during _electronScan
+      return;
+    }
     const data = await this.apiFetch<FolderNode>('/api/databank/tree');
     if (data) {
       this._folderTree = data;
@@ -286,13 +309,23 @@ class DatabankStore {
   async triggerScan(): Promise<void> {
     this._scanStatus = { running: true, scanned: 0, total: 0, added: 0, updated: 0, deleted: 0, errors: 0, duration_ms: 0 };
     this.notify();
-    const data = await this.apiFetch<ScanStatus>('/api/databank/scan', { method: 'POST' });
-    if (data) {
-      this._scanStatus = data;
-      await this.fetchFiles();
-      await this.fetchTree();
+
+    if (isElectron()) {
+      await this._electronScan();
+      this._scanStatus = {
+        running: false, scanned: this._files.length, total: this._files.length,
+        added: this._files.length, updated: 0, deleted: 0, errors: 0,
+        duration_ms: 0,
+      };
     } else {
-      this._scanStatus = null;
+      const data = await this.apiFetch<ScanStatus>('/api/databank/scan', { method: 'POST' });
+      if (data) {
+        this._scanStatus = data;
+        await this.fetchFiles();
+        await this.fetchTree();
+      } else {
+        this._scanStatus = null;
+      }
     }
     this.notify();
   }
@@ -421,6 +454,18 @@ class DatabankStore {
     this.notify();
   }
 
+  setVerboseScan(v: boolean) {
+    this._verboseScan = v;
+    try { localStorage.setItem('boardripper-library-verbose', v ? '1' : '0'); } catch { /* ignore */ }
+    this.notify();
+  }
+
+  setShowPreviews(v: boolean) {
+    this._showPreviews = v;
+    try { localStorage.setItem('boardripper-library-previews', v ? '1' : '0'); } catch { /* ignore */ }
+    this.notify();
+  }
+
   selectFile(id: number | null) {
     this._selectedFileId = id;
     if (id === null) this._selectedFileDetail = null;
@@ -429,10 +474,86 @@ class DatabankStore {
 
   /** Fetch a file's ArrayBuffer from the backend for opening in the viewer */
   async fetchFileBuffer(file: DatabankFile): Promise<File> {
+    if (isElectron()) {
+      const result = await window.electronAPI!.readLibraryFile(file.path);
+      return new File([result.buffer], result.name, { lastModified: result.lastModified });
+    }
     const res = await fetch(`/api/files/path/${encodeURIComponent(file.path)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const buffer = await res.arrayBuffer();
     return new File([buffer], file.filename, { lastModified: file.mod_time * 1000 });
+  }
+
+  // ── Electron-mode methods ──
+
+  /** Initialize Electron mode: load persisted library path */
+  async initElectron(): Promise<void> {
+    if (!isElectron()) return;
+    this._electronMode = true;
+    this._libraryPath = await window.electronAPI!.getLibraryPath();
+    this.notify();
+    if (this._libraryPath) {
+      await this._electronScan();
+    }
+  }
+
+  /** Open native folder picker and set the library folder */
+  async selectLibraryFolder(): Promise<string | null> {
+    if (!isElectron()) return null;
+    const folderPath = await window.electronAPI!.selectLibraryFolder();
+    if (folderPath) {
+      this._libraryPath = folderPath;
+      this.notify();
+      await this._electronScan();
+    }
+    return folderPath;
+  }
+
+  // ── Docker/web config methods ──
+
+  /** Load config from backend — picks up library_dir and effective scan root */
+  async loadConfig(): Promise<void> {
+    if (isElectron()) return;
+    const cfg = await this.apiFetch<Record<string, string>>('/api/config');
+    if (cfg) {
+      // Use explicit library_dir config, or the effective _scan_root from env/fallback
+      this._libraryPath = cfg.library_dir || cfg._scan_root || null;
+      this.notify();
+    }
+  }
+
+  /** Set the library folder path on the backend (Docker mode) */
+  async setLibraryDir(dir: string): Promise<boolean> {
+    if (isElectron()) return false;
+    const res = await this.apiFetch<{ status: string }>('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'library_dir', value: dir }),
+    });
+    if (res) {
+      this._libraryPath = dir || null;
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
+  /** Scan the library folder via Electron IPC */
+  private async _electronScan(): Promise<void> {
+    if (!isElectron()) return;
+    const result = await window.electronAPI!.scanLibrary();
+    if (result.error) {
+      console.warn('[Databank] Electron scan error:', result.error);
+      return;
+    }
+    this._files = result.files;
+    this._folderTree = result.tree;
+    this._scanStatus = {
+      running: false, scanned: result.files.length, total: result.files.length,
+      added: result.files.length, updated: 0, deleted: 0, errors: 0,
+      duration_ms: result.duration_ms,
+    };
+    this.notify();
   }
 }
 

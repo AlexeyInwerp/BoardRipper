@@ -19,6 +19,7 @@ interface StoreSnapshot {
   rotation: number;
   mirrorX: boolean;
   mirrorY: boolean;
+  flipAxis: 'x' | 'y';
   showNetLines: boolean;
   showNetDim: boolean;
   showHoverInfo: boolean;
@@ -50,6 +51,7 @@ function getSnapshot(): StoreSnapshot {
       rotation: boardStore.rotation,
       mirrorX: boardStore.mirrorX,
       mirrorY: boardStore.mirrorY,
+      flipAxis: boardStore.flipAxis,
       showNetLines: boardStore.showNetLines,
       showNetDim: boardStore.showNetDim,
       showHoverInfo: boardStore.showHoverInfo,

@@ -28,8 +28,18 @@ data/
 desktop/node_modules/
 desktop/out/
 desktop/out-legacy/
+desktop/out-win/
 desktop/webapp/
 
 # Samples — binary/test data
 samples/
 samples/.previews/
+
+# Claude worktrees
+.claude/worktrees/
+
+# Test results (root level)
+test-results/
+
+# Deploy credentials
+deploy.conf

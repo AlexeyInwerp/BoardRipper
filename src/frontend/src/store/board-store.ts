@@ -25,6 +25,7 @@ export interface BoardTab {
   rotation: number;
   mirrorX: boolean;
   mirrorY: boolean;
+  flipAxis: 'x' | 'y';
   showNetLines: boolean;
   showNetDim: boolean;
   showHoverInfo: boolean;
@@ -119,6 +120,7 @@ class BoardStore {
   get rotation(): number { return this.activeTab?.rotation ?? 0; }
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
+  get flipAxis(): 'x' | 'y' { return this.activeTab?.flipAxis ?? 'x'; }
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -288,6 +290,7 @@ class BoardStore {
       rotation: 0,
       mirrorX: false,
       mirrorY: false,
+      flipAxis: 'x',
       showNetLines: vp.showNetLines,
       showNetDim: vp.showNetDim,
       showHoverInfo: vp.showHoverInfo,
@@ -322,9 +325,25 @@ class BoardStore {
       const board = await parseBoardFile(buffer, file.name);
       const elapsed = (performance.now() - t0).toFixed(0);
       logStore.log('log', `[board-store] Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
+
+      // Log side detection summary
+      const fmt = getFormat(board.format);
+      const topParts = board.parts.filter(p => p.side === 'top').length;
+      const botParts = board.parts.filter(p => p.side === 'bottom').length;
+      const topNails = board.nails.filter(n => n.side === 'top').length;
+      const botNails = board.nails.filter(n => n.side === 'bottom').length;
+      const topTP = board.parts.filter(p => p.side === 'top' && p.pins.length === 1).length;
+      const botTP = board.parts.filter(p => p.side === 'bottom' && p.pins.length === 1).length;
+      logStore.log('log',
+        `[board-store] Side detection: top=${topParts} parts/${topNails} nails, bottom=${botParts} parts/${botNails} nails` +
+        (topTP + botTP > 0 ? `, testpoints=${topTP}T/${botTP}B` : '') +
+        (fmt?.flipY ? ', flipY=ON' : '') +
+        (fmt?.swapSides ? ', swapSides=ON' : ''),
+      );
+
       tab.board = board;
       tab.rotation = this.autoRotation(board);
-      if (getFormat(board.format)?.swapSides) {
+      if (fmt?.swapSides) {
         tab.showTop = false;
         tab.showBottom = true;
       }
@@ -490,6 +509,13 @@ class BoardStore {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ mirrorY: !tab.mirrorY });
+    this.notify();
+  }
+
+  toggleFlipAxis() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ flipAxis: tab.flipAxis === 'x' ? 'y' : 'x' });
     this.notify();
   }
 

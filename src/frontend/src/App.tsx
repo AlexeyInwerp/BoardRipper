@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useState, useRef, useEffect, useSyncExternalStore } from 'react';
 import {
   DockviewReact,
 } from 'dockview-react';
@@ -15,7 +15,7 @@ import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DebugPanel } from './panels/DebugPanel';
 import { LibraryPanel } from './panels/LibraryPanel';
-import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, ensureLibraryPanel, boardPanelId } from './store/dockview-api';
+import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, ensureLibraryPanel, boardPanelId, toggleSidebar, isSidebarCollapsed, onSidebarChange, getSidebarWidth } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { pdfStore } from './store/pdf-store';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -48,6 +48,23 @@ function App() {
   useKeyboardShortcuts();
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
+  const sidebarCollapsed = useSyncExternalStore(onSidebarChange, isSidebarCollapsed);
+  const [sidebarLeft, setSidebarLeft] = useState(0);
+  const dockviewRef = useRef<HTMLDivElement>(null);
+
+  // Track sidebar group width to position the toggle button at its right edge
+  useEffect(() => {
+    const el = dockviewRef.current;
+    if (!el) return;
+    const update = () => setSidebarLeft(getSidebarWidth());
+    // Poll via ResizeObserver on the dockview container (catches all group resizes)
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    // Also update when sidebar state changes
+    const unsub = onSidebarChange(update);
+    update();
+    return () => { ro.disconnect(); unsub(); };
+  }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -122,6 +139,14 @@ function App() {
       } catch (err) {
         console.error('[DragDrop] Failed to activate PDF:', err);
       }
+
+      // Re-activate the board panel so PDFs don't steal focus
+      if (boardFiles.length > 0) {
+        const activeTab = boardStore.activeTabId;
+        if (activeTab != null) {
+          ensureBoardPanel(activeTab, boardFiles[boardFiles.length - 1].name);
+        }
+      }
     }
   }, []);
 
@@ -164,13 +189,23 @@ function App() {
       onDrop={handleDrop}
     >
       <Toolbar />
-      <div className="dockview-container">
-        <DockviewReact
-          className="dockview-theme-dark"
-          onReady={onReady}
-          components={components}
-          disableFloatingGroups={false}
-        />
+      <div className="dockview-wrapper">
+        <button
+          className={`sidebar-toggle${sidebarCollapsed ? ' collapsed' : ''}`}
+          style={{ left: sidebarLeft }}
+          onClick={toggleSidebar}
+          title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+        >
+          {sidebarCollapsed ? '\u25B6' : '\u25C0'}
+        </button>
+        <div className="dockview-container" ref={dockviewRef}>
+          <DockviewReact
+            className="dockview-theme-dark"
+            onReady={onReady}
+            components={components}
+            disableFloatingGroups={false}
+          />
+        </div>
       </div>
       <StatusBar />
       <ContextMenu />

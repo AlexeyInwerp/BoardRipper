@@ -25,7 +25,7 @@ export function drawMonospaceReplacement(
     // Skip items that have no replaceable characters
     if (!REPLACEABLE.test(item.str)) continue;
 
-    const rect = itemRect(item, vpT, scale);
+    const rect = itemRect(item, vpT, scale, 1.0);
     const fontSize = pdfFontSize(item.transform);
     const pxSize = fontSize * scale;
 

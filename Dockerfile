@@ -21,5 +21,6 @@ COPY --from=frontend /app/frontend/dist /static
 EXPOSE 8080
 ENV STATIC_DIR=/static
 ENV DATA_DIR=/data
+ENV LIBRARY_DIR=/library
 ENV PORT=8080
 ENTRYPOINT ["/server"]
