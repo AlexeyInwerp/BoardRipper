@@ -66,6 +66,8 @@ interface BoardScene {
   traceLayerContainers: Container[];
   /** Via/drill hole overlay container */
   viaLayer: Container | null;
+  /** Via labels — tracked for counter-rotation on board flip */
+  viaLabels: import('pixi.js').BitmapText[];
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
@@ -1091,7 +1093,7 @@ export class BoardRenderer {
       if (!fp || !fp.butterfly ||
           fp.topRot !== topLabelRot || fp.topSx !== sx || fp.topSy !== topSy ||
           fp.botRot !== botLabelRot || fp.botSx !== botScaleX || fp.botSy !== botScaleY) {
-        for (const arr of [scene.topLabels, scene.topPinLabels]) {
+        for (const arr of [scene.topLabels, scene.topPinLabels, scene.viaLabels]) {
           for (const label of arr) { label.rotation = topLabelRot; label.scale.set(sx, topSy); }
         }
         for (const arr of [scene.bottomLabels, scene.bottomPinLabels]) {
@@ -1126,7 +1128,7 @@ export class BoardRenderer {
       const fp2 = this.lastFlipParams;
       if (!fp2 || fp2.butterfly ||
           fp2.topRot !== labelRot || fp2.topSx !== lsx || fp2.topSy !== lsy) {
-        for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels]) {
+        for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels, scene.viaLabels]) {
           for (const label of arr) { label.rotation = labelRot; label.scale.set(lsx, lsy); }
         }
         this.lastFlipParams = { butterfly: false, topRot: labelRot, topSx: lsx, topSy: lsy, botRot: 0, botSx: 1, botSy: 1 };

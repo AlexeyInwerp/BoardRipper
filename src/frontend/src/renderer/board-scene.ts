@@ -120,6 +120,8 @@ export interface BoardSceneGraph {
   traceLayerContainers: Container[];
   /** Via/drill hole overlay container — toggled by showVias */
   viaLayer: Container | null;
+  /** Via labels — tracked for counter-rotation on board flip */
+  viaLabels: BitmapText[];
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
@@ -1084,8 +1086,9 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   // ── Via / drill hole markers ───────────────────────────────────────────────
   // Rendered as crosshair + annular ring + black center hole.
-  // Layer label text shows connected layers on hover/zoom.
+  // Static size (not scaled by drill diameter). Label shows actual connected layers.
   let viaLayer: Container | null = null;
+  const viaLabels: BitmapText[] = [];
   if (board.vias && board.vias.length > 0 && isMultiLayer) {
     viaLayer = new Container();
     viaLayer.label = 'vias';
@@ -1093,47 +1096,76 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const viaCenterGfx = new Graphics();
     const VIA_COLOR = 0xcccccc;
     const VIA_HOLE_COLOR = 0x111111;
+    const VIA_OUTER_R = 6;   // static outer radius (mils)
+    const VIA_INNER_R = 2;   // static hole radius (mils)
+    const VIA_ARM = 8;       // static crosshair arm length (mils)
 
-    // Short layer labels for overlay (e.g. "T-B" for top-to-bottom, "1-12" for all)
+    // Short layer labels for overlay
     const layerShortNames = board.layerNames
       ? board.layerNames.map((n, i) => {
-          if (n.includes('TOP')) return 'T';
-          if (n.includes('BOTTOM') || n.includes('BOT')) return 'B';
+          const upper = n.toUpperCase();
+          if (upper.includes('TOP')) return 'T';
+          if (upper.includes('BOTTOM') || upper.includes('BOT')) return 'B';
           return String(i + 1);
         })
       : [];
 
+    // Build net → set of layer indices from trace data for actual connectivity
+    const netLayers = new Map<string, Set<number>>();
+    if (board.traces) {
+      for (const t of board.traces) {
+        if (t.net && t.layer != null) {
+          let set = netLayers.get(t.net);
+          if (!set) { set = new Set(); netLayers.set(t.net, set); }
+          set.add(t.layer);
+        }
+      }
+    }
+
+    const viaFontSize = quantizeFontSize(4);
+
     for (const via of board.vias) {
       const { x, y } = via.position;
-      const outerR = Math.max(via.diameter * 0.8, 6);
-      const innerR = Math.max(via.diameter * 0.3, 2);
-      const armLen = outerR * 1.4;
 
       // Crosshair arms
-      viaGfx.moveTo(x - armLen, y).lineTo(x + armLen, y);
-      viaGfx.moveTo(x, y - armLen).lineTo(x, y + armLen);
+      viaGfx.moveTo(x - VIA_ARM, y).lineTo(x + VIA_ARM, y);
+      viaGfx.moveTo(x, y - VIA_ARM).lineTo(x, y + VIA_ARM);
 
       // Annular ring (outer circle)
-      viaGfx.circle(x, y, outerR);
+      viaGfx.circle(x, y, VIA_OUTER_R);
 
       // Black hole center
-      viaCenterGfx.circle(x, y, innerR);
+      viaCenterGfx.circle(x, y, VIA_INNER_R);
 
-      // Layer connectivity label
-      if (layerShortNames.length > 0 && via.layers.length > 0) {
-        const fromLayer = layerShortNames[via.layers[0]] ?? '?';
-        const toLayer = layerShortNames[via.layers[via.layers.length - 1]] ?? '?';
-        const labelStr = fromLayer === toLayer ? fromLayer : `${fromLayer}-${toLayer}`;
-        const fontSize = Math.max(outerR * 0.9, 4);
-        const qfs = quantizeFontSize(fontSize);
+      // Layer connectivity label — use actual layers from trace data
+      if (layerShortNames.length > 0) {
+        const actualLayers = via.net ? netLayers.get(via.net) : null;
+        let labelStr: string;
+        if (actualLayers && actualLayers.size >= 2) {
+          // Sort layer indices and show min-max range
+          const sorted = [...actualLayers].sort((a, b) => a - b);
+          const from = layerShortNames[sorted[0]] ?? '?';
+          const to = layerShortNames[sorted[sorted.length - 1]] ?? '?';
+          labelStr = `${from}-${to}`;
+        } else if (actualLayers && actualLayers.size === 1) {
+          const idx = [...actualLayers][0];
+          labelStr = layerShortNames[idx] ?? '?';
+        } else {
+          // Fallback: through-hole (all layers)
+          const from = layerShortNames[0] ?? '?';
+          const to = layerShortNames[layerShortNames.length - 1] ?? '?';
+          labelStr = `${from}-${to}`;
+        }
+
         const label = new BitmapText({
           text: labelStr,
-          style: { fontSize: qfs, fill: 0xffcc44, fontFamily: ensurePinFont(qfs) },
+          style: { fontSize: viaFontSize, fill: 0xffcc44, fontFamily: ensurePinFont(viaFontSize) },
         });
         label.anchor.set(0.5, 0);
         label.x = x;
-        label.y = y + armLen + 1;
+        label.y = y + VIA_ARM + 1;
         viaLayer.addChild(label);
+        viaLabels.push(label);
       }
     }
 
@@ -1144,5 +1176,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels };
 }
