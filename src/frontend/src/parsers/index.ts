@@ -6,6 +6,7 @@ import { BRDFormat } from './brd-format';
 import { FZFormat } from './fz-format';
 import { CADFormat } from './cad-format';
 import { XZZFormat } from './xzz-format';
+import { TVWFormat } from './tvw-format';
 
 // Register all known formats in detection-priority order.
 // Content-based detection runs in this order; the first match wins.
@@ -15,8 +16,9 @@ registerFormat(BRDFormat);
 registerFormat(FZFormat);
 registerFormat(CADFormat);
 registerFormat(XZZFormat);
+registerFormat(TVWFormat);
 
-export type { BoardData, Part, Pin, Net, Point, BBox } from './types';
+export type { BoardData, Part, Pin, Net, Point, BBox, Trace, Via } from './types';
 export { computeBBox, buildNets } from './types';
 export type { FormatDescriptor, FormatId } from './registry';
 export { getFormat, getAllFormats, getAllExtensions, getFileExtension, setFormatOverride, getFormatOverrides } from './registry';

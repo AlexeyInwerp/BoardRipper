@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { boardStore } from '../store/board-store';
 import type { BoardData, Part, Pin } from '../parsers';
 import type { SelectionState, BoardTab } from '../store/board-store';
+import type { LayerState } from '../store/layer-store';
 
 interface StoreSnapshot {
   board: BoardData | null;
@@ -23,6 +24,11 @@ interface StoreSnapshot {
   showNetLines: boolean;
   showNetDim: boolean;
   showHoverInfo: boolean;
+  followPdf: boolean;
+  showTraces: boolean;
+  showComponents: boolean;
+  showVias: boolean;
+  layerStates: LayerState[];
   boundPdfFiles: File[];
   pdfFileNames: string[];
 }
@@ -55,6 +61,11 @@ function getSnapshot(): StoreSnapshot {
       showNetLines: boardStore.showNetLines,
       showNetDim: boardStore.showNetDim,
       showHoverInfo: boardStore.showHoverInfo,
+      followPdf: boardStore.followPdf,
+      showTraces: boardStore.showTraces,
+      showComponents: boardStore.showComponents,
+      showVias: boardStore.showVias,
+      layerStates: boardStore.layerStates,
       boundPdfFiles: boardStore.boundPdfFiles,
       pdfFileNames: boardStore.pdfFileNames,
     };

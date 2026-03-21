@@ -14,9 +14,10 @@
  */
 import { Application, Graphics, Container, BitmapText, Text } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
-import type { BoardData, Point } from '../parsers';
+import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
+import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
@@ -59,6 +60,12 @@ interface BoardScene {
   twoPinFontSizeGroups: import('./board-scene').PinFontSizeGroup[];
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. */
   pinRadiusClamp: Map<number, number>;
+  /** PCB trace lines container — toggled by showTraces */
+  traceLayer: Container | null;
+  /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
+  traceLayerContainers: Container[];
+  /** Via/drill hole overlay container */
+  viaLayer: Container | null;
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
@@ -190,6 +197,10 @@ export class BoardRenderer {
   private _pendingFit = false;
   private _pendingFitTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // PDF follow mode: debounce viewport movement before searching PDF
+  private followDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastFollowQuery = '';
+
   // applyFlips cache — skip O(N) label loop when transform params are unchanged
   private lastFlipParams: {
     butterfly: boolean;
@@ -307,6 +318,8 @@ export class BoardRenderer {
     } else {
       logStore.log('log', `[renderer] pause tab=${this.tabId} storeActive=${boardStore.activeTabId}`);
     }
+    // Cancel pending follow-PDF debounce
+    if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     // Just stop the ticker — do NOT destroy the Application.
     // PixiJS v8 uses module-level batch pools that get permanently corrupted
     // by app.destroy(), making all future Applications crash with
@@ -531,9 +544,8 @@ export class BoardRenderer {
       screenHeight: this.containerEl.clientHeight || 1,
       events: this.app.renderer.events,
     });
-    this.viewport.drag().pinch().wheel({ smooth: 5 }).decelerate({ friction: 0.95 })
-      .clampZoom({ minScale: 0.001, maxScale: 10 });
-    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; });
+    this.applyViewportPlugins();
+    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.viewport.on('clicked', (e: any) => { this.handleClick(e.world as Point); });
     this.app.stage.addChild(this.viewport);
@@ -634,15 +646,10 @@ export class BoardRenderer {
       events: this.app.renderer.events,
     });
 
-    this.viewport
-      .drag()
-      .pinch()
-      .wheel({ smooth: 5 })
-      .decelerate({ friction: 0.95 })
-      .clampZoom({ minScale: 0.001, maxScale: 10 });
+    this.applyViewportPlugins();
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
-    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; });
+    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
     this.app.stage.addChild(this.viewport);
 
     // Overlay objects live inside scene.root (sortableChildren=true).
@@ -985,6 +992,20 @@ export class BoardRenderer {
     return getFormat(board.format)?.flipY ?? false;
   }
 
+  /** Apply per-layer trace and component visibility based on boardStore.layerStates */
+  private applyLayerVisibility(scene: BoardScene) {
+    const { layerStates, showTraces, showVias } = boardStore;
+    // Trace layer master toggle
+    if (scene.traceLayer) scene.traceLayer.visible = showTraces;
+    // Per-layer trace containers
+    for (let i = 0; i < scene.traceLayerContainers.length; i++) {
+      const c = scene.traceLayerContainers[i];
+      if (c) c.visible = showTraces && (i < layerStates.length ? layerStates[i].visible : true);
+    }
+    // Via overlay
+    if (scene.viaLayer) scene.viaLayer.visible = showVias;
+  }
+
   // --- Flip management ---
 
   /** Apply orientation, view flips, user rotation and mirror to the scene root */
@@ -1229,9 +1250,9 @@ export class BoardRenderer {
       const elapsed = (performance.now() - t0).toFixed(0);
       logStore.log('log', `[renderer] Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
-      // Debug vertex overlay for XZZ boards
+      // Debug vertex overlay (toggled in settings)
       this.clearDebugVertexLabels();
-      if (board.format === 'XZZ') {
+      if (renderSettingsStore.settings.showVertexNumbers) {
         const positions = drawOutlineDebug(graph.outlineGfx, board);
         // Group vertices at the same coordinate → one label per unique position
         const posMap = new Map<string, { p: {x:number;y:number}; indices: number[] }>();
@@ -1323,6 +1344,7 @@ export class BoardRenderer {
       dbg(1, 'activateScene: same scene, updating flips');
       scene.topLayer.visible = this.isTopVisible;
       scene.bottomLayer.visible = this.isBottomVisible;
+      this.applyLayerVisibility(scene);
       this.applyFlips(board, scene);
       this.needsRender = true;
       return;
@@ -1380,6 +1402,7 @@ export class BoardRenderer {
 
     scene.topLayer.visible = this.isTopVisible;
     scene.bottomLayer.visible = this.isBottomVisible;
+    this.applyLayerVisibility(scene);
     this.applyFlips(board, scene);
 
     // Restore viewport position or fit
@@ -1477,6 +1500,7 @@ export class BoardRenderer {
     try {
       const board = boardStore.board;
       if (board !== this.board) {
+        this.lastFollowQuery = '';
         dbg(1, 'onBoardUpdate: board changed', board ? 'activating' : 'deactivating');
         if (board) {
           this.activateScene(board);
@@ -1495,10 +1519,18 @@ export class BoardRenderer {
         // Same board — update layer visibility + flips
         this.activeScene.topLayer.visible = this.isTopVisible;
         this.activeScene.bottomLayer.visible = this.isBottomVisible;
+        this.applyLayerVisibility(this.activeScene);
         this.applyFlips(board, this.activeScene);
       }
 
       this.renderSelection();
+
+      // PDF follow mode: search for selected component
+      if (boardStore.followPdf && boardStore.selection.partIndex !== null) {
+        const followPart = this.board?.parts[boardStore.selection.partIndex];
+        logStore.log('log', `[follow] selection trigger: partIndex=${boardStore.selection.partIndex} part=${followPart?.name ?? 'null'}`);
+        if (followPart) this.triggerFollowPdf(followPart);
+      }
 
       // Handle focus requests (animated zoom to part + blink selection)
       const focus = boardStore.consumeFocusRequest();
@@ -1562,6 +1594,125 @@ export class BoardRenderer {
     return 1 - Math.pow(1 - t, 3);
   }
 
+  // ── PDF Follow Mode ───────────────────────────────────────────────────
+
+  /**
+   * Find the visible part with the most pins (>2) closest to the viewport center.
+   * Returns the Part or null if nothing qualifies.
+   */
+  private findLargestPartNearCenter(): Part | null {
+    if (!this.board || !this.viewport) return null;
+
+    // Viewport center in scene coords
+    const centerWorld = this.viewport.toWorld(
+      this.viewport.screenWidth / 2,
+      this.viewport.screenHeight / 2,
+    );
+    const centerScene = this.worldToScene(centerWorld);
+
+    // Visible radius in scene coords (~60% of half-diagonal)
+    const cornerWorld = this.viewport.toWorld(0, 0);
+    const cornerScene = this.worldToScene(cornerWorld);
+    const visibleRadius = Math.sqrt(
+      (centerScene.x - cornerScene.x) ** 2 +
+      (centerScene.y - cornerScene.y) ** 2,
+    );
+    const searchRadius = visibleRadius * 0.6;
+
+    let bestPart: Part | null = null;
+    let bestScore = -1;
+
+    for (let i = 0; i < this.board.parts.length; i++) {
+      const part = this.board.parts[i];
+      if (!this.isPartVisible(part)) continue;
+      if (part.pins.length <= 2) continue;
+
+      const cx = (part.bounds.minX + part.bounds.maxX) / 2;
+      const cy = (part.bounds.minY + part.bounds.maxY) / 2;
+      const dist = Math.sqrt((cx - centerScene.x) ** 2 + (cy - centerScene.y) ** 2);
+      if (dist > searchRadius) continue;
+
+      const score = part.pins.length * (1 - dist / searchRadius);
+      if (score > bestScore) {
+        bestScore = score;
+        bestPart = part;
+      }
+    }
+
+    return bestPart;
+  }
+
+  /** Build a search query and trigger PDF text search for the given part. */
+  private triggerFollowPdf(part: Part): void {
+    const tab = boardStore.tabs.find(t => t.id === this.tabId);
+    const pdfNames = tab?.pdfFileNames ?? [];
+    if (pdfNames.length === 0) return;
+
+    // Collect unique non-trivial net names, excluding common rails and power nets
+    const nets = new Set<string>();
+    for (const pin of part.pins) {
+      if (!pin.net || pin.net === '(null)') continue;
+      const upper = pin.net.toUpperCase();
+      // Skip ground, power rails, and generic bus nets
+      if (upper === 'GND' || upper === 'VCC' || upper === 'VDD' || upper === 'VSS' ||
+          upper.startsWith('PP') || upper === 'VBAT' || upper === 'VBUS' ||
+          upper === 'V5S' || upper === 'V3S' || upper === '5V' || upper === '3V3' ||
+          upper === '12V' || upper === '1V8' || upper === '1V05') continue;
+      nets.add(pin.net);
+      if (nets.size >= 3) break; // limit to 3 distinctive nets
+    }
+
+    // Use @-syntax: net@component (find net on same page as component)
+    const query = nets.size > 0
+      ? [[...nets][0], part.name].join('@')
+      : part.name;
+
+    if (query === this.lastFollowQuery) {
+      logStore.log('log', `[follow] skip duplicate query: "${query}"`);
+      return;
+    }
+    this.lastFollowQuery = query;
+
+    logStore.log('log', `[follow] triggerFollowPdf: query="${query}" pdf="${pdfNames[0]}"`);
+    pdfStore.switchTo(pdfNames[0]);
+    pdfStore.navigateToText(query);
+  }
+
+  /** Schedule a debounced follow-PDF lookup after viewport movement settles. */
+  private scheduleFollowDebounce(): void {
+    if (!boardStore.followPdf) return;
+    if (this.followDebounceTimer) clearTimeout(this.followDebounceTimer);
+    this.followDebounceTimer = setTimeout(() => {
+      this.followDebounceTimer = null;
+      if (!boardStore.followPdf) return;
+      if (boardStore.selection.partIndex !== null) {
+        const selName = this.board?.parts[boardStore.selection.partIndex]?.name ?? '?';
+        logStore.log('log', `[follow] debounce skip: component selected: ${selName} (partIndex=${boardStore.selection.partIndex})`);
+        return;
+      }
+      const part = this.findLargestPartNearCenter();
+      logStore.log('log', `[follow] debounce fired: centerPart=${part?.name ?? 'none'} pins=${part?.pins.length ?? 0}`);
+      if (part) this.triggerFollowPdf(part);
+    }, 500);
+  }
+
+  /** (Re)configure viewport drag/pinch/wheel/decelerate plugins from current settings. */
+  private applyViewportPlugins(): void {
+    const s = renderSettingsStore.settings;
+    // Remove existing plugins so we can re-add with new options
+    for (const name of ['drag', 'pinch', 'wheel', 'decelerate', 'clamp-zoom'] as const) {
+      this.viewport.plugins.remove(name);
+    }
+    this.viewport
+      .drag({})
+      .pinch()
+      .wheel({ smooth: s.wheelSmooth })
+      .clampZoom({ minScale: 0.001, maxScale: 10 });
+    if (!s.disableInertia) {
+      this.viewport.decelerate({ friction: 0.95 });
+    }
+  }
+
   private onSettingsUpdate() {
     if (!this.board || this.contextLost || this.reinitializing) return;
     dbg(2, 'onSettingsUpdate');
@@ -1570,6 +1721,8 @@ export class BoardRenderer {
       if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
 
       this.textHiddenForZoom = false;
+      // Update viewport interaction plugins
+      this.applyViewportPlugins();
       // Save viewport, invalidate all scenes, rebuild current
       this.saveViewportState();
       this.invalidateAllScenes();
@@ -1879,6 +2032,22 @@ export class BoardRenderer {
         for (const fn of botHighlights) fn();
         if (botHighlights.length > 0) {
           this.butterflySelectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
+        }
+
+        // ── Highlight PCB traces belonging to the selected net ──────────
+        if (this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
+          const netName = sel.highlightedNet!;
+          let hasTraceHighlight = false;
+          for (const t of this.board.traces) {
+            if (t.net === netName) {
+              this.selectionGfx.moveTo(t.start.x, t.start.y);
+              this.selectionGfx.lineTo(t.end.x, t.end.y);
+              hasTraceHighlight = true;
+            }
+          }
+          if (hasTraceHighlight) {
+            this.selectionGfx.stroke({ width: 3, color: COLORS.netHighlight, alpha: 0.9, join: 'round', cap: 'round' });
+          }
         }
       }
     }
@@ -2606,7 +2775,10 @@ export class BoardRenderer {
     // which corrupts the module-level batchPool shared by ALL PixiJS Applications.
     // Just remove the canvas from DOM and let GC reclaim the Application + WebGL context.
     try {
-      const canvas = this.containerEl.querySelector('canvas');
+      // Use this renderer's own canvas reference — NOT querySelector('canvas')
+      // which would grab the first canvas in the container and could remove
+      // a different renderer's canvas during React StrictMode double-mount.
+      const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
       canvas?.parentElement?.removeChild(canvas);
     } catch { /* ignore */ }
   }

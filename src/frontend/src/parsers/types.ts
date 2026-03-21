@@ -26,6 +26,8 @@ export interface Part {
   origin: Point;
   pins: Pin[];
   bounds: BBox;
+  /** Layer index for multi-layer boards (0-based). Undefined = single-layer. */
+  layer?: number;
 }
 
 export interface Nail {
@@ -39,6 +41,24 @@ export interface Net {
   pinIndices: Array<{ partIndex: number; pinIndex: number }>;
 }
 
+export interface Trace {
+  start: Point;
+  end: Point;
+  width: number;
+  net: string;
+  /** Layer index for multi-layer boards (0-based). Undefined = single-layer. */
+  layer?: number;
+}
+
+export interface Via {
+  position: Point;
+  /** Drill diameter in mils */
+  diameter: number;
+  net: string;
+  /** Connected layer indices (0-based). Empty = through-hole (all layers). */
+  layers: number[];
+}
+
 export interface BoardData {
   format: string; // format ID from FormatDescriptor.id (e.g. 'BVR1', 'BVR3', 'BRD')
   outline: Point[];
@@ -46,6 +66,11 @@ export interface BoardData {
   nails: Nail[];
   nets: Map<string, Net>;
   bounds: BBox;
+  traces?: Trace[];
+  /** Via/drill holes for multi-layer boards */
+  vias?: Via[];
+  /** Layer names for multi-layer formats (e.g. TVW butterfly columns). Index = column. */
+  layerNames?: string[];
 }
 
 /** Display ID for a pin: prefer name, then number, then 1-based index fallback. */

@@ -1350,6 +1350,12 @@ html, body, #root {
   border-color: var(--accent);
 }
 
+.board-netlines-toggle:disabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
 /* Board sidebar (overlays right edge of board panel) */
 .board-sidebar {
   position: absolute;
@@ -1427,6 +1433,130 @@ html, body, #root {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+
+/* Layer list panel */
+.layer-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.layer-header-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.layer-toggle-all {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.layer-toggle-all:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.layer-toggle-all.off {
+  opacity: 0.5;
+}
+
+.layer-list-container {
+  padding: 4px 0;
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: default;
+}
+
+.layer-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.layer-item.layer-hidden {
+  opacity: 0.4;
+}
+
+.layer-visibility {
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.layer-visibility.on {
+  color: var(--accent);
+}
+
+.layer-visibility.off {
+  color: var(--text-secondary);
+}
+
+.layer-color-picker {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.layer-color-picker::-webkit-color-swatch-wrapper {
+  padding: 1px;
+}
+
+.layer-color-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.layer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-item.layer-net-active {
+  background: rgba(255, 255, 68, 0.06);
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
+.layer-item.layer-blink {
+  animation: layer-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes layer-blink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 
 /* Pin hover info panel */
@@ -2116,6 +2246,35 @@ html, body, #root {
   cursor: default;
 }
 
+.library-scan-stop {
+  color: var(--red, #e55);
+  border-color: var(--red, #e55);
+}
+
+.library-scan-stop:hover {
+  background: var(--red, #e55);
+  color: #fff;
+}
+
+.library-indexing {
+  color: var(--accent);
+  animation: library-pulse 1.5s ease-in-out infinite;
+}
+
+.library-indexing-file {
+  color: var(--text-secondary);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+@keyframes library-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .library-stats {
   padding: 4px 8px;
   color: var(--text-secondary);
@@ -2502,6 +2661,21 @@ html, body, #root {
 
 .library-search-input:focus {
   border-color: var(--accent);
+}
+
+.library-pdf-search-toggle {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.library-pdf-search-toggle input {
+  margin: 0;
 }
 
 .library-search-btn {
