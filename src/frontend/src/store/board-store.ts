@@ -2,6 +2,8 @@ import type { BoardData, Part, Pin } from '../parsers';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
 import { logStore } from './log-store';
+import { createLayerStates } from './layer-store';
+import type { LayerState } from './layer-store';
 
 export type BoardStoreListener = () => void;
 
@@ -29,6 +31,12 @@ export interface BoardTab {
   showNetLines: boolean;
   showNetDim: boolean;
   showHoverInfo: boolean;
+  followPdf: boolean;
+  showTraces: boolean;
+  showComponents: boolean;
+  showVias: boolean;
+  /** Per-layer visibility and color state (multi-layer boards only) */
+  layerStates: LayerState[];
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
 }
 
@@ -70,9 +78,10 @@ interface ViewPrefs {
   showNetLines: boolean;
   showNetDim: boolean;
   showHoverInfo: boolean;
+  followPdf: boolean;
 }
 
-const DEFAULT_VIEW_PREFS: ViewPrefs = { showNetLines: false, showNetDim: true, showHoverInfo: true };
+const DEFAULT_VIEW_PREFS: ViewPrefs = { showNetLines: false, showNetDim: true, showHoverInfo: true, followPdf: false };
 
 function loadViewPrefs(): ViewPrefs {
   try {
@@ -122,8 +131,13 @@ class BoardStore {
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get flipAxis(): 'x' | 'y' { return this.activeTab?.flipAxis ?? 'x'; }
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
+  get showTraces(): boolean { return this.activeTab?.showTraces ?? true; }
+  get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
+  get showVias(): boolean { return this.activeTab?.showVias ?? true; }
+  get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
+  get followPdf(): boolean { return this.activeTab?.followPdf ?? false; }
 
   /** All PDF Files bound to the active board tab */
   get boundPdfFiles(): File[] {
@@ -294,6 +308,11 @@ class BoardStore {
       showNetLines: vp.showNetLines,
       showNetDim: vp.showNetDim,
       showHoverInfo: vp.showHoverInfo,
+      followPdf: vp.followPdf,
+      showTraces: true,
+      showComponents: true,
+      showVias: true,
+      layerStates: [],
       pdfFileNames: [],
       cacheKey: '',
     };
@@ -309,6 +328,7 @@ class BoardStore {
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
+        if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
         if (getFormat(cached.format)?.swapSides) {
           tab.showTop = false;
           tab.showBottom = true;
@@ -344,6 +364,7 @@ class BoardStore {
 
       tab.board = board;
       tab.rotation = this.autoRotation(board);
+      if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames);
       if (fmt?.swapSides) {
         tab.showTop = false;
         tab.showBottom = true;
@@ -525,7 +546,7 @@ class BoardStore {
   private _saveCurrentViewPrefs() {
     const tab = this.activeTab;
     if (!tab) return;
-    saveViewPrefs({ showNetLines: tab.showNetLines, showNetDim: tab.showNetDim, showHoverInfo: tab.showHoverInfo });
+    saveViewPrefs({ showNetLines: tab.showNetLines, showNetDim: tab.showNetDim, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
   toggleNetLines() {
@@ -533,6 +554,55 @@ class BoardStore {
     if (!tab) return;
     this.updateActiveTab({ showNetLines: !tab.showNetLines });
     this._saveCurrentViewPrefs();
+    this.notify();
+  }
+
+  toggleTraces() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showTraces: !tab.showTraces });
+    this.notify();
+  }
+
+  toggleComponents() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showComponents: !tab.showComponents });
+    this.notify();
+  }
+
+  toggleVias() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showVias: !tab.showVias });
+    this.notify();
+  }
+
+  toggleLayer(layerIndex: number) {
+    const tab = this.activeTab;
+    if (!tab || layerIndex < 0 || layerIndex >= tab.layerStates.length) return;
+    const states = [...tab.layerStates];
+    states[layerIndex] = { ...states[layerIndex], visible: !states[layerIndex].visible };
+    this.updateActiveTab({ layerStates: states });
+    this.notify();
+  }
+
+  /** Toggle all trace layers on or off. If any are visible, turn all off; otherwise all on. */
+  toggleAllLayers() {
+    const tab = this.activeTab;
+    if (!tab || tab.layerStates.length === 0) return;
+    const anyVisible = tab.layerStates.some(l => l.visible);
+    const states = tab.layerStates.map(l => ({ ...l, visible: !anyVisible }));
+    this.updateActiveTab({ layerStates: states });
+    this.notify();
+  }
+
+  setLayerColor(layerIndex: number, color: number) {
+    const tab = this.activeTab;
+    if (!tab || layerIndex < 0 || layerIndex >= tab.layerStates.length) return;
+    const states = [...tab.layerStates];
+    states[layerIndex] = { ...states[layerIndex], color };
+    this.updateActiveTab({ layerStates: states });
     this.notify();
   }
 
@@ -548,6 +618,14 @@ class BoardStore {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showHoverInfo: !tab.showHoverInfo });
+    this._saveCurrentViewPrefs();
+    this.notify();
+  }
+
+  toggleFollowPdf() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ followPdf: !tab.followPdf });
     this._saveCurrentViewPrefs();
     this.notify();
   }

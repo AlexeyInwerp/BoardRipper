@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
+import { colorToHex, hexToColor } from '../store/layer-store';
 
-type SidebarTab = 'info' | 'nets' | 'search';
+type SidebarTab = 'layers' | 'info' | 'nets' | 'search';
 
 interface BoardSidebarProps {
   visible: boolean;
@@ -16,7 +17,9 @@ interface BoardSidebarProps {
 }
 
 export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
-  const [activeTab, setActiveTab] = useState<SidebarTab>('info');
+  const { layerStates } = useBoardStore();
+  const hasLayers = layerStates.length > 0;
+  const [activeTab, setActiveTab] = useState<SidebarTab>(hasLayers ? 'layers' : 'info');
 
   // Apply external tab request (one-shot: clear after applying)
   if (requestedTab && requestedTab !== activeTab) {
@@ -30,6 +33,14 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
     <div className="board-sidebar" style={{ opacity }}>
       <div className="board-sidebar-header">
         <div className="board-sidebar-tabs">
+          {hasLayers && (
+            <button
+              className={`board-sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
+              onClick={() => setActiveTab('layers')}
+            >
+              Layers
+            </button>
+          )}
           <button
             className={`board-sidebar-tab ${activeTab === 'info' ? 'active' : ''}`}
             onClick={() => setActiveTab('info')}
@@ -54,9 +65,93 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
         </button>
       </div>
       <div className="board-sidebar-content">
+        {activeTab === 'layers' && <LayersTab />}
         {activeTab === 'info' && <InfoTab tabId={tabId} />}
         {activeTab === 'nets' && <NetsTab tabId={tabId} />}
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
+      </div>
+    </div>
+  );
+}
+
+function LayersTab() {
+  const { layerStates, showComponents, showVias, board, selection } = useBoardStore();
+
+  // Compute which layers have traces for the currently highlighted net
+  const highlightedLayers = useMemo(() => {
+    const set = new Set<number>();
+    if (selection.highlightedNet && board?.traces) {
+      for (const t of board.traces) {
+        if (t.net === selection.highlightedNet && t.layer != null) {
+          set.add(t.layer);
+        }
+      }
+    }
+    return set;
+  }, [selection.highlightedNet, board?.traces]);
+
+  return (
+    <div className="panel-content layer-list" data-testid="layer-list">
+      <div className="layer-list-header">
+        <span>{layerStates.length} layers</span>
+        <div className="layer-header-buttons">
+          <button
+            className={`layer-toggle-all ${layerStates.every(l => l.visible) ? '' : 'off'}`}
+            onClick={() => boardStore.toggleAllLayers()}
+            title={layerStates.some(l => l.visible) ? 'Hide all trace layers' : 'Show all trace layers'}
+          >
+            {layerStates.some(l => l.visible) ? '◉ Traces' : '○ Traces'}
+          </button>
+          {board?.vias && board.vias.length > 0 && (
+            <button
+              className={`layer-toggle-all ${showVias ? '' : 'off'}`}
+              onClick={() => boardStore.toggleVias()}
+              title={showVias ? 'Hide vias' : 'Show vias'}
+            >
+              {showVias ? '◉ Vias' : '○ Vias'}
+            </button>
+          )}
+          <button
+            className={`layer-toggle-all ${showComponents ? '' : 'off'}`}
+            onClick={() => boardStore.toggleComponents()}
+            title={showComponents ? 'Hide all components' : 'Show all components'}
+          >
+            {showComponents ? '◉ Components' : '○ Components'}
+          </button>
+        </div>
+      </div>
+      <div className="layer-list-container">
+        {layerStates.map((layer, idx) => {
+          const hasNet = highlightedLayers.has(idx);
+          const blinkHidden = hasNet && !layer.visible;
+          return (
+            <div
+              key={idx}
+              className={[
+                'layer-item',
+                layer.visible ? '' : 'layer-hidden',
+                hasNet ? 'layer-net-active' : '',
+                blinkHidden ? 'layer-blink' : '',
+              ].join(' ')}
+            >
+              <button
+                className={`layer-visibility ${layer.visible ? 'on' : 'off'}`}
+                onClick={() => boardStore.toggleLayer(idx)}
+                title={layer.visible ? 'Hide layer' : 'Show layer'}
+              >
+                {layer.visible ? '●' : '○'}
+              </button>
+              <input
+                type="color"
+                className="layer-color-picker"
+                value={colorToHex(layer.color)}
+                onChange={(e) => boardStore.setLayerColor(idx, hexToColor(e.target.value))}
+                title="Change layer color"
+              />
+              <span className="layer-name">{layer.name}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
-import type { BoardData, Net } from '../parsers';
+import type { BoardData, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 20; // bumped: add pdf-text store
+const DB_VERSION = 21; // bumped: cache traces, vias, layerNames
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 
@@ -22,6 +22,9 @@ interface SerializedBoardData {
   nails: BoardData['nails'];
   nets: Array<[string, Net]>;
   bounds: BoardData['bounds'];
+  traces?: Trace[];
+  vias?: Via[];
+  layerNames?: string[];
 }
 
 function makeCacheKey(name: string, size: number, modified: number): string {
@@ -37,6 +40,9 @@ function serialize(board: BoardData): SerializedBoardData {
     nails: board.nails,
     nets: Array.from(board.nets.entries()),
     bounds: board.bounds,
+    traces: board.traces,
+    vias: board.vias,
+    layerNames: board.layerNames,
   };
 }
 
@@ -52,6 +58,9 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       nails: data.nails,
       nets: new Map(data.nets),
       bounds: data.bounds,
+      traces: data.traces,
+      vias: data.vias,
+      layerNames: data.layerNames,
     };
   } catch {
     return null;

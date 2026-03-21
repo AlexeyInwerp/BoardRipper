@@ -17,6 +17,7 @@ import { pinDisplayId } from '../parsers/types';
 import {
   getLabelFontSize,
   computePinRadius,
+  computeMultiPinPadding,
   computeEffectiveBounds,
   computeDiagonalOBB,
   resolvePinColor,
@@ -25,6 +26,7 @@ import {
   applyBodyShapeOverride,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
+import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 
 export const BOARD_COLORS = {
   background:        0x1a1a2e,
@@ -112,6 +114,12 @@ export interface BoardSceneGraph {
   twoPinFontSizeGroups: PinFontSizeGroup[];
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. Only set when < Infinity. */
   pinRadiusClamp: Map<number, number>;
+  /** PCB trace lines container — toggled by showTraces */
+  traceLayer: Container | null;
+  /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
+  traceLayerContainers: Container[];
+  /** Via/drill hole overlay container — toggled by showVias */
+  viaLayer: Container | null;
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
@@ -327,6 +335,76 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.sortableChildren = true;
 
   root.addChild(outlineGfx);
+
+  // PCB traces — drawn behind components, after outline.
+  // Multi-layer: per-layer trace containers (each gets its own color from layerStates).
+  // Single-layer: single traceLayer container with default red color.
+  let traceLayer: Container | null = null;
+  const traceLayerContainers: Container[] = [];
+  const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
+
+  if (board.traces && board.traces.length > 0) {
+    if (isMultiLayer) {
+      // Group traces by layer index → per-layer containers
+      const byLayer = new Map<number, typeof board.traces>();
+      for (const t of board.traces) {
+        const li = t.layer ?? 0;
+        let arr = byLayer.get(li);
+        if (!arr) { arr = []; byLayer.set(li, arr); }
+        arr.push(t);
+      }
+      traceLayer = new Container();
+      for (const [layerIdx, layerTraces] of byLayer) {
+        const layerContainer = new Container();
+        layerContainer.label = `trace-layer-${layerIdx}`;
+        const gfx = new Graphics();
+        // Group by width for batched strokes
+        const byWidth = new Map<number, typeof layerTraces>();
+        for (const t of layerTraces) {
+          let arr = byWidth.get(t.width);
+          if (!arr) { arr = []; byWidth.set(t.width, arr); }
+          arr.push(t);
+        }
+        // Use palette color for this layer
+        const layerColor = board.layerNames && layerIdx < board.layerNames.length
+          ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
+          : 0xcc3333;
+        for (const [width, traces] of byWidth) {
+          for (const t of traces) {
+            gfx.moveTo(t.start.x, t.start.y);
+            gfx.lineTo(t.end.x, t.end.y);
+          }
+          gfx.stroke({ width, color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
+        }
+        layerContainer.addChild(gfx);
+        traceLayer.addChild(layerContainer);
+        // Ensure array is big enough
+        while (traceLayerContainers.length <= layerIdx) traceLayerContainers.push(null!);
+        traceLayerContainers[layerIdx] = layerContainer;
+      }
+      root.addChild(traceLayer);
+    } else {
+      // Single-layer: one container with default red
+      traceLayer = new Container();
+      const traceGfx = new Graphics();
+      const byWidth = new Map<number, typeof board.traces>();
+      for (const t of board.traces) {
+        let arr = byWidth.get(t.width);
+        if (!arr) { arr = []; byWidth.set(t.width, arr); }
+        arr.push(t);
+      }
+      for (const [width, traces] of byWidth) {
+        for (const t of traces) {
+          traceGfx.moveTo(t.start.x, t.start.y);
+          traceGfx.lineTo(t.end.x, t.end.y);
+        }
+        traceGfx.stroke({ width, color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
+      }
+      traceLayer.addChild(traceGfx);
+      root.addChild(traceLayer);
+    }
+  }
+
   root.addChild(bottomLayer);
   root.addChild(topLayer);
 
@@ -454,6 +532,21 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         minPinSpacing = Math.sqrt(minDist2);
         maxNonOverlapRadius = minPinSpacing * 0.45;
         pinRadiusClamp.set(pi, maxNonOverlapRadius);
+        // Shrink eb bounds if overlap clamp reduces effective pin radius.
+        // Original padding used unclamped maxR; re-pad with clamped maxR so
+        // border outline matches drawn pin extents.
+        let maxDrawnR = s.pinMinRadius;
+        for (const pin of part.pins) {
+          const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+          if (r > maxDrawnR) maxDrawnR = r;
+        }
+        const clampedPad = s.partPadding + maxDrawnR;
+        const origPad = computeMultiPinPadding(s, part.pins.map(p => p.radius ?? 0));
+        const shrink = origPad - clampedPad;
+        if (shrink > 0) {
+          eb.px += shrink; eb.py += shrink;
+          eb.pw -= shrink * 2; eb.ph -= shrink * 2;
+        }
       }
     }
 
@@ -741,11 +834,27 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       let fillX: number, fillY: number, fillW: number, fillH: number;
       let fillPoly: [number, number][] | null = null;
       if (isTwoPinPart) {
-        // Expand border to encompass pads centered on pin vertices
-        const bx = eb.horiz ? eb.px - padDepth / 2 : eb.px;
-        const by = eb.horiz ? eb.py : eb.py - padDepth / 2;
-        const bw = eb.horiz ? eb.pw + padDepth : eb.pw;
-        const bh = eb.horiz ? eb.ph : eb.ph + padDepth;
+        // Expand border to encompass pads centered on pin vertices.
+        // Use pin positions directly (not eb bounds) so the outline matches
+        // the pads exactly — eb bounds may be inflated by parser bboxes.
+        const p0 = part.pins[0].position;
+        const p1 = part.pins[part.pins.length - 1].position;
+        let bx: number, by: number, bw: number, bh: number;
+        if (eb.horiz) {
+          const pinMinX = Math.min(p0.x, p1.x);
+          const pinSpanX = Math.abs(p1.x - p0.x);
+          bx = pinMinX - padDepth / 2;
+          by = eb.py;
+          bw = pinSpanX + padDepth;
+          bh = eb.ph;
+        } else {
+          const pinMinY = Math.min(p0.y, p1.y);
+          const pinSpanY = Math.abs(p1.y - p0.y);
+          bx = eb.px;
+          by = pinMinY - padDepth / 2;
+          bw = eb.pw;
+          bh = pinSpanY + padDepth;
+        }
         borderRect = { x: bx, y: by, w: bw, h: bh };
         fillX = bx; fillY = by; fillW = bw; fillH = bh;
       } else {
@@ -973,5 +1082,67 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   }
   root.addChild(padVertexGfx);
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp };
+  // ── Via / drill hole markers ───────────────────────────────────────────────
+  // Rendered as crosshair + annular ring + black center hole.
+  // Layer label text shows connected layers on hover/zoom.
+  let viaLayer: Container | null = null;
+  if (board.vias && board.vias.length > 0 && isMultiLayer) {
+    viaLayer = new Container();
+    viaLayer.label = 'vias';
+    const viaGfx = new Graphics();
+    const viaCenterGfx = new Graphics();
+    const VIA_COLOR = 0xcccccc;
+    const VIA_HOLE_COLOR = 0x111111;
+
+    // Short layer labels for overlay (e.g. "T-B" for top-to-bottom, "1-12" for all)
+    const layerShortNames = board.layerNames
+      ? board.layerNames.map((n, i) => {
+          if (n.includes('TOP')) return 'T';
+          if (n.includes('BOTTOM') || n.includes('BOT')) return 'B';
+          return String(i + 1);
+        })
+      : [];
+
+    for (const via of board.vias) {
+      const { x, y } = via.position;
+      const outerR = Math.max(via.diameter * 0.8, 6);
+      const innerR = Math.max(via.diameter * 0.3, 2);
+      const armLen = outerR * 1.4;
+
+      // Crosshair arms
+      viaGfx.moveTo(x - armLen, y).lineTo(x + armLen, y);
+      viaGfx.moveTo(x, y - armLen).lineTo(x, y + armLen);
+
+      // Annular ring (outer circle)
+      viaGfx.circle(x, y, outerR);
+
+      // Black hole center
+      viaCenterGfx.circle(x, y, innerR);
+
+      // Layer connectivity label
+      if (layerShortNames.length > 0 && via.layers.length > 0) {
+        const fromLayer = layerShortNames[via.layers[0]] ?? '?';
+        const toLayer = layerShortNames[via.layers[via.layers.length - 1]] ?? '?';
+        const labelStr = fromLayer === toLayer ? fromLayer : `${fromLayer}-${toLayer}`;
+        const fontSize = Math.max(outerR * 0.9, 4);
+        const qfs = quantizeFontSize(fontSize);
+        const label = new BitmapText({
+          text: labelStr,
+          style: { fontSize: qfs, fill: 0xffcc44, fontFamily: ensurePinFont(qfs) },
+        });
+        label.anchor.set(0.5, 0);
+        label.x = x;
+        label.y = y + armLen + 1;
+        viaLayer.addChild(label);
+      }
+    }
+
+    viaGfx.stroke({ width: 1.5, color: VIA_COLOR, alpha: 0.7 });
+    viaCenterGfx.fill({ color: VIA_HOLE_COLOR, alpha: 0.9 });
+    viaLayer.addChild(viaGfx);
+    viaLayer.addChild(viaCenterGfx);
+    root.addChild(viaLayer);
+  }
+
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer };
 }
