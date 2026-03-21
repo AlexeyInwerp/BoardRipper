@@ -491,6 +491,8 @@ class BoardStore {
   toggleButterfly() {
     const tab = this.activeTab;
     if (!tab) return;
+    // Butterfly mode is not supported for multi-layer boards (stacked layers)
+    if (tab.board?.layerNames && tab.board.layerNames.length > 0) return;
     const newButterfly = !tab.butterfly;
     if (newButterfly) {
       this.updateActiveTab({ butterfly: true, showTop: true, showBottom: true });
