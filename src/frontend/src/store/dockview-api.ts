@@ -202,6 +202,7 @@ export function ensureLibraryPanel(): void {
     const existing = api.getPanel(id);
     if (existing) {
       existing.api.setActive();
+      if (_sidebarCollapsed) toggleSidebar();
     } else {
       // Place library on the left side of the first existing panel, or standalone
       const anyPanel = api.panels[0];

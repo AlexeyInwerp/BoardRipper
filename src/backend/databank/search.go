@@ -52,7 +52,7 @@ func (db *DB) Search(query string, donorOnly bool) (*SearchResponse, error) {
 		LIMIT 200
 	`
 
-	rows, err := db.conn.Query(sqlQuery, ftsQuery)
+	rows, err := db.reader.Query(sqlQuery, ftsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}
@@ -134,7 +134,7 @@ func buildFTS5Query(query string) string {
 
 // getSearchBindings returns board bindings for a PDF file, enriched with donor status.
 func (db *DB) getSearchBindings(pdfFileID int64) ([]BoardBinding, error) {
-	rows, err := db.conn.Query(`
+	rows, err := db.reader.Query(`
 		SELECT b.board_file_id, f.filename, f.donor_pool
 		FROM bindings b
 		JOIN files f ON f.id = b.board_file_id

@@ -1,7 +1,7 @@
 import type { BoardData, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 21; // bumped: cache traces, vias, layerNames
+const DB_VERSION = 24; // bumped: TVW outline from Roul Through-layer slots
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 

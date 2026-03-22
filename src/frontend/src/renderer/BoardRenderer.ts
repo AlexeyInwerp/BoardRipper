@@ -68,6 +68,8 @@ interface BoardScene {
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
   viaLabels: import('pixi.js').BitmapText[];
+  /** Per-via connected layer indices (parallel to board.vias). Empty for single-layer boards. */
+  viaConnectedLayers: number[][];
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
@@ -2037,18 +2039,86 @@ export class BoardRenderer {
         }
 
         // ── Highlight PCB traces belonging to the selected net ──────────
+        // Traces are colored by their layer's palette color to show which layer each segment is on.
         if (this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
           const netName = sel.highlightedNet!;
-          let hasTraceHighlight = false;
+          const { layerStates } = boardStore;
+
+          // Group trace segments by layer color for batched strokes
+          const traceByColor = new Map<number, { sx: number; sy: number; ex: number; ey: number }[]>();
           for (const t of this.board.traces) {
-            if (t.net === netName) {
-              this.selectionGfx.moveTo(t.start.x, t.start.y);
-              this.selectionGfx.lineTo(t.end.x, t.end.y);
-              hasTraceHighlight = true;
+            if (t.net !== netName) continue;
+            let color: number = COLORS.netHighlight;
+            if (t.layer != null && t.layer < layerStates.length) {
+              color = layerStates[t.layer].color;
             }
+            let arr = traceByColor.get(color);
+            if (!arr) { arr = []; traceByColor.set(color, arr); }
+            arr.push({ sx: t.start.x, sy: t.start.y, ex: t.end.x, ey: t.end.y });
           }
-          if (hasTraceHighlight) {
-            this.selectionGfx.stroke({ width: 3, color: COLORS.netHighlight, alpha: 0.9, join: 'round', cap: 'round' });
+          for (const [c, segs] of traceByColor) {
+            for (const s2 of segs) {
+              this.selectionGfx.moveTo(s2.sx, s2.sy);
+              this.selectionGfx.lineTo(s2.ex, s2.ey);
+            }
+            this.selectionGfx.stroke({ width: 3, color: c as number & 0xffffff, alpha: 0.9, join: 'round', cap: 'round' });
+          }
+        }
+
+        // ── Highlight vias belonging to the selected net ─────────────
+        // Via color = the "other" layer relative to where the signal is coming from.
+        // We determine source layer from the selected part's layer, then for each via
+        // pick the connected layer that is NOT the source → that's the destination color.
+        if (this.board.vias && this.board.vias.length > 0 && boardStore.showVias && this.activeScene) {
+          const netName = sel.highlightedNet!;
+          const { layerStates } = boardStore;
+          const connMap = this.activeScene.viaConnectedLayers;
+
+          // Determine the source layer from the selected part
+          const selectedPart = sel.partIndex !== null ? this.board.parts[sel.partIndex] : null;
+          const sourceLayer = selectedPart?.layer ?? -1;
+
+          // Group vias by their target layer color for batched strokes
+          const byColor = new Map<number, { x: number; y: number }[]>();
+
+          for (let vi = 0; vi < this.board.vias.length; vi++) {
+            const via = this.board.vias[vi];
+            if (via.net !== netName) continue;
+            const connected = connMap[vi] ?? [];
+
+            let color: number = COLORS.netHighlight; // fallback yellow
+            if (connected.length >= 2 && layerStates.length > 0) {
+              // Pick the layer that is NOT the source layer (= destination)
+              // If source is connected[0], destination is connected[last] and vice versa
+              let targetIdx: number;
+              if (connected[0] === sourceLayer) {
+                targetIdx = connected[connected.length - 1];
+              } else if (connected[connected.length - 1] === sourceLayer) {
+                targetIdx = connected[0];
+              } else {
+                // Source layer not directly in this via — pick the farther end from source
+                targetIdx = Math.abs(connected[0] - sourceLayer) > Math.abs(connected[connected.length - 1] - sourceLayer)
+                  ? connected[0]
+                  : connected[connected.length - 1];
+              }
+              if (targetIdx < layerStates.length) color = layerStates[targetIdx].color;
+            } else if (connected.length === 1 && layerStates.length > 0) {
+              const idx = connected[0];
+              if (idx < layerStates.length) color = layerStates[idx].color;
+            }
+
+            let arr = byColor.get(color);
+            if (!arr) { arr = []; byColor.set(color, arr); }
+            arr.push(via.position);
+          }
+
+          for (const [c, positions] of byColor) {
+            for (const { x, y } of positions) {
+              this.selectionGfx.moveTo(x - 12, y).lineTo(x + 12, y);
+              this.selectionGfx.moveTo(x, y - 12).lineTo(x, y + 12);
+              this.selectionGfx.circle(x, y, 10);
+            }
+            this.selectionGfx.stroke({ width: 2.5, color: c as number & 0xffffff, alpha: 0.95 });
           }
         }
       }
@@ -2582,6 +2652,55 @@ export class BoardRenderer {
     return null;
   }
 
+  /** Find the trace segment closest to a world-space point, respecting layer visibility */
+  private traceHitTest(world: Point): { traceIndex: number; net: string } | null {
+    if (!this.board?.traces || !boardStore.showTraces) return null;
+
+    const { layerStates } = boardStore;
+    const local = this.worldToScene(world, this.activeScene?.root);
+    // Threshold: half trace width + a generous pointer tolerance scaled by zoom
+    const zoomScale = Math.abs(this.viewport.scale.x);
+    const pointerTol = 8 / zoomScale; // 8 CSS px converted to scene units
+
+    let bestDist = Infinity;
+    let bestIdx = -1;
+
+    for (let i = 0; i < this.board.traces.length; i++) {
+      const t = this.board.traces[i];
+      // Skip traces on hidden layers
+      if (t.layer != null && t.layer < layerStates.length && !layerStates[t.layer].visible) continue;
+
+      const halfW = (t.width || 1) / 2;
+      const threshold = halfW + pointerTol;
+
+      // Point-to-line-segment distance
+      const ax = t.start.x, ay = t.start.y;
+      const bx = t.end.x, by = t.end.y;
+      const abx = bx - ax, aby = by - ay;
+      const len2 = abx * abx + aby * aby;
+      let dist: number;
+      if (len2 < 0.001) {
+        // Degenerate segment (zero length)
+        const dx = local.x - ax, dy = local.y - ay;
+        dist = Math.sqrt(dx * dx + dy * dy);
+      } else {
+        const t0 = Math.max(0, Math.min(1, ((local.x - ax) * abx + (local.y - ay) * aby) / len2));
+        const px = ax + t0 * abx, py = ay + t0 * aby;
+        const dx = local.x - px, dy = local.y - py;
+        dist = Math.sqrt(dx * dx + dy * dy);
+      }
+      if (dist < threshold && dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0) {
+      return { traceIndex: bestIdx, net: this.board.traces[bestIdx].net };
+    }
+    return null;
+  }
+
   // --- Click handling ---
 
   private handleHover(e: PointerEvent) {
@@ -2598,6 +2717,15 @@ export class BoardRenderer {
         this.showTooltip(e.offsetX, e.offsetY, { net: pin.net ?? '', part: part.name, pin: pinId });
         return;
       }
+    }
+    // Fallback: check traces
+    const traceHit = this.traceHitTest(world);
+    if (traceHit) {
+      const t = this.board.traces![traceHit.traceIndex];
+      const layerName = t.layer != null && this.board.layerNames?.[t.layer]
+        ? this.board.layerNames[t.layer] : '';
+      this.showTooltip(e.offsetX, e.offsetY, { net: traceHit.net, part: layerName, pin: 'trace' });
+      return;
     }
     this.hideTooltip();
   }
@@ -2640,9 +2768,17 @@ export class BoardRenderer {
       } else {
         boardStore.selectPart(hit.partIndex);
       }
-    } else {
-      boardStore.selectPart(null);
+      return;
     }
+    // Fallback: click on trace → highlight its net
+    const traceHit = this.traceHitTest(world);
+    if (traceHit && traceHit.net) {
+      boardStore.highlightNet(
+        boardStore.selection.highlightedNet === traceHit.net ? null : traceHit.net
+      );
+      return;
+    }
+    boardStore.selectPart(null);
   }
 
   private handleRightClick(e: MouseEvent) {

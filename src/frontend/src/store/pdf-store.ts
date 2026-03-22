@@ -3,6 +3,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
+import { logStore } from './log-store';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -222,6 +223,12 @@ interface PdfDocument {
   bookmarks: PdfBookmark[];
 }
 
+/** Follow target: a location to zoom to without highlighting */
+export interface FollowTarget {
+  pageIndex: number;     // 0-based page index
+  items: PdfTextItem[];  // text items to zoom to (bounding box)
+}
+
 class PdfStore {
   private _documents: Map<string, PdfDocument> = new Map();
   private _activeFileName: string | null = null;
@@ -231,6 +238,8 @@ class PdfStore {
   private _multiTermXGap = 3;
   private _loading = false;
   private _listeners = new Set<Listener>();
+  /** Consumable follow target — PDF viewer zooms to this location without highlighting */
+  private _followTarget: FollowTarget | null = null;
 
   private get _active(): PdfDocument | null {
     return this._activeFileName ? this._documents.get(this._activeFileName) ?? null : null;
@@ -761,6 +770,85 @@ class PdfStore {
 
   getDocMatchesForPage(fileName: string, pageIndex: number): PdfTextMatch[] {
     return this._documents.get(fileName)?.matchesByPage.get(pageIndex) ?? [];
+  }
+
+  // --- Follow target (silent navigation, no highlights) ---
+
+  /** Navigate to the first page containing `query` and set a zoom target, without highlighting. */
+  navigateToText(query: string): void {
+    const d = this._active;
+    if (!d || d.textPages.length === 0) {
+      logStore.log('log', `[follow] navigateToText: no active doc or no text pages`);
+      return;
+    }
+
+    const terms = query.split('@').map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
+    if (terms.length === 0) return;
+
+    // Format: net@component — last term is component (mandatory), preceding are nets (optional)
+    const component = terms[terms.length - 1]; // component name — mandatory
+    const nets = terms.slice(0, -1); // net names — optional disambiguation
+
+    logStore.log('log', `[follow] navigateToText: component="${component}" nets=[${nets.join(', ')}] pages=${d.textPages.length}`);
+
+    let fallbackPage = -1;
+    let fallbackItems: PdfTextItem[] = [];
+
+    for (let pi = 0; pi < d.textPages.length; pi++) {
+      const items = d.textPages[pi];
+
+      // Check mandatory primary term (component name) first
+      const primaryItem = items.find(item => item.str.toLowerCase().includes(component));
+      if (!primaryItem) continue;
+
+      // Track first page with component name as fallback
+      if (fallbackPage === -1) {
+        fallbackPage = pi;
+        fallbackItems = [primaryItem];
+      }
+
+      if (nets.length > 0) {
+        // Try to match all net terms on this page for best disambiguation
+        const matchedItems: PdfTextItem[] = [primaryItem];
+        let allNetsFound = true;
+        for (const net of nets) {
+          const netItem = items.find(item => item.str.toLowerCase().includes(net));
+          if (!netItem) { allNetsFound = false; break; }
+          matchedItems.push(netItem);
+        }
+        if (allNetsFound) {
+          logStore.log('log', `[follow] navigateToText: full match on page ${pi + 1} (${matchedItems.length} items)`);
+          d.currentPage = pi + 1;
+          this._followTarget = { pageIndex: pi, items: matchedItems };
+          this.notify();
+          return;
+        }
+      } else {
+        // No nets — primary-only match is sufficient
+        logStore.log('log', `[follow] navigateToText: primary-only match on page ${pi + 1}`);
+        d.currentPage = pi + 1;
+        this._followTarget = { pageIndex: pi, items: [primaryItem] };
+        this.notify();
+        return;
+      }
+    }
+
+    // Fallback: navigate to first page with component name
+    if (fallbackPage !== -1) {
+      logStore.log('log', `[follow] navigateToText: fallback to page ${fallbackPage + 1} (primary only, nets not all found)`);
+      d.currentPage = fallbackPage + 1;
+      this._followTarget = { pageIndex: fallbackPage, items: fallbackItems };
+      this.notify();
+    } else {
+      logStore.log('log', `[follow] navigateToText: no match found for "${component}"`);
+    }
+  }
+
+  /** Consume the follow target (called by PdfViewerPanel after zooming). */
+  consumeFollowTarget(): FollowTarget | null {
+    const t = this._followTarget;
+    this._followTarget = null;
+    return t;
   }
 
   // --- Bookmarks ---

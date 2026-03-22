@@ -25,9 +25,16 @@ func NewDatabankHandler(db *databank.DB, scanner *databank.Scanner, extractor *d
 	return &DatabankHandler{db: db, scanner: scanner, extractor: extractor, dataDir: dataDir}
 }
 
-// Scan triggers a full rescan of DATA_DIR and returns the results.
+// Scan triggers a background rescan of DATA_DIR and returns immediately.
 func (h *DatabankHandler) Scan(w http.ResponseWriter, r *http.Request) {
-	status := h.scanner.Scan()
+	status := h.scanner.ScanAsync()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+// ScanStop cancels a running scan.
+func (h *DatabankHandler) ScanStop(w http.ResponseWriter, r *http.Request) {
+	status := h.scanner.StopScan()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }

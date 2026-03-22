@@ -122,6 +122,8 @@ export interface BoardSceneGraph {
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
   viaLabels: BitmapText[];
+  /** Per-via connected layer indices (parallel to board.vias). Empty for single-layer boards. */
+  viaConnectedLayers: number[][];
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
@@ -1086,9 +1088,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   // ── Via / drill hole markers ───────────────────────────────────────────────
   // Rendered as crosshair + annular ring + black center hole.
-  // Static size (not scaled by drill diameter). Label shows actual connected layers.
+  // Static size (not scaled by drill diameter). Label shows actual connected layers
+  // resolved by finding trace endpoints near each via position.
   let viaLayer: Container | null = null;
   const viaLabels: BitmapText[] = [];
+  const viaConnectedLayers: number[][] = []; // parallel to board.vias — connected layer indices per via
   if (board.vias && board.vias.length > 0 && isMultiLayer) {
     viaLayer = new Container();
     viaLayer.label = 'vias';
@@ -1102,23 +1106,29 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     // Short layer labels for overlay
     const layerShortNames = board.layerNames
-      ? board.layerNames.map((n, i) => {
+      ? board.layerNames.map((n, _i) => {
           const upper = n.toUpperCase();
           if (upper.includes('TOP')) return 'T';
           if (upper.includes('BOTTOM') || upper.includes('BOT')) return 'B';
-          return String(i + 1);
+          // Inner layers: use the layer name, strip parenthesized type suffix
+          const short = n.replace(/\s*\(.*\)$/, '');
+          return short.length <= 4 ? short : String(_i + 1);
         })
       : [];
 
-    // Build net → set of layer indices from trace data for actual connectivity
-    const netLayers = new Map<string, Set<number>>();
+    // ── Resolve per-via layer connectivity from trace endpoints ──────────
+    // Trace coloring works perfectly, so trace data is our source of truth.
+    // For each via, find traces on the same net with an endpoint touching the via.
+    const VIA_MATCH_R2 = 15 * 15; // 15 mils squared
+    // Index: net → array of { layer, x, y } from trace endpoints
+    const traceEndpointsByNet = new Map<string, { layer: number; x: number; y: number }[]>();
     if (board.traces) {
       for (const t of board.traces) {
-        if (t.net && t.layer != null) {
-          let set = netLayers.get(t.net);
-          if (!set) { set = new Set(); netLayers.set(t.net, set); }
-          set.add(t.layer);
-        }
+        if (!t.net || t.layer == null) continue;
+        let arr = traceEndpointsByNet.get(t.net);
+        if (!arr) { arr = []; traceEndpointsByNet.set(t.net, arr); }
+        arr.push({ layer: t.layer, x: t.start.x, y: t.start.y });
+        arr.push({ layer: t.layer, x: t.end.x, y: t.end.y });
       }
     }
 
@@ -1126,6 +1136,20 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     for (const via of board.vias) {
       const { x, y } = via.position;
+
+      // Find which layers have trace endpoints near this via
+      const connected = new Set<number>();
+      const endpoints = via.net ? traceEndpointsByNet.get(via.net) : null;
+      if (endpoints) {
+        for (const ep of endpoints) {
+          const dx = ep.x - x, dy = ep.y - y;
+          if (dx * dx + dy * dy < VIA_MATCH_R2) {
+            connected.add(ep.layer);
+          }
+        }
+      }
+      const sorted = [...connected].sort((a, b) => a - b);
+      viaConnectedLayers.push(sorted);
 
       // Crosshair arms
       viaGfx.moveTo(x - VIA_ARM, y).lineTo(x + VIA_ARM, y);
@@ -1137,25 +1161,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // Black hole center
       viaCenterGfx.circle(x, y, VIA_INNER_R);
 
-      // Layer connectivity label — use actual layers from trace data
-      if (layerShortNames.length > 0) {
-        const actualLayers = via.net ? netLayers.get(via.net) : null;
-        let labelStr: string;
-        if (actualLayers && actualLayers.size >= 2) {
-          // Sort layer indices and show min-max range
-          const sorted = [...actualLayers].sort((a, b) => a - b);
-          const from = layerShortNames[sorted[0]] ?? '?';
-          const to = layerShortNames[sorted[sorted.length - 1]] ?? '?';
-          labelStr = `${from}-${to}`;
-        } else if (actualLayers && actualLayers.size === 1) {
-          const idx = [...actualLayers][0];
-          labelStr = layerShortNames[idx] ?? '?';
-        } else {
-          // Fallback: through-hole (all layers)
-          const from = layerShortNames[0] ?? '?';
-          const to = layerShortNames[layerShortNames.length - 1] ?? '?';
-          labelStr = `${from}-${to}`;
-        }
+      // Layer connectivity label — only show for vias with 2+ resolved layers
+      if (layerShortNames.length > 0 && sorted.length >= 2) {
+        const from = layerShortNames[sorted[0]] ?? '?';
+        const to = layerShortNames[sorted[sorted.length - 1]] ?? '?';
+        const labelStr = `${from}-${to}`;
 
         const label = new BitmapText({
           text: labelStr,
@@ -1176,5 +1186,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
 }

@@ -22,14 +22,23 @@ func formatSize(bytes int64) string {
 
 // ScanStatus reports the current state of a scan operation.
 type ScanStatus struct {
-	Running  bool  `json:"running"`
-	Scanned  int64 `json:"scanned"`
-	Total    int64 `json:"total"`
-	Added    int64 `json:"added"`
-	Updated  int64 `json:"updated"`
-	Deleted  int64 `json:"deleted"`
-	Errors   int64 `json:"errors"`
-	Duration int64 `json:"duration_ms"`
+	Running  bool   `json:"running"`
+	Scanned  int64  `json:"scanned"`
+	Total    int64  `json:"total"`
+	Added    int64  `json:"added"`
+	Updated  int64  `json:"updated"`
+	Deleted  int64  `json:"deleted"`
+	Errors   int64  `json:"errors"`
+	Duration int64  `json:"duration_ms"`
+	Phase    string `json:"phase,omitempty"`     // current phase description
+	LastFile string `json:"last_file,omitempty"` // last processed file (for verbose display)
+
+	// Phase 2: PDF text extraction (runs after file scan)
+	PdfRunning   bool   `json:"pdf_running"`
+	PdfExtracted int64  `json:"pdf_extracted"`
+	PdfTotal     int64  `json:"pdf_total"`
+	PdfErrors    int64  `json:"pdf_errors"`
+	PdfCurrent   string `json:"pdf_current,omitempty"`
 }
 
 // Scanner walks DATA_DIR and syncs findings with the database.
@@ -38,8 +47,17 @@ type Scanner struct {
 	dataDir    string
 	libraryDir string // optional separate library directory
 
-	mu     sync.Mutex
-	status ScanStatus
+	mu         sync.Mutex
+	status     ScanStatus
+	cancelFn   func()     // cancel the current scan goroutine
+	postScanFn func()     // called after scan completes (e.g. PDF extraction)
+}
+
+// SetPostScanFn registers a callback to run after each scan completes (file indexing done).
+func (s *Scanner) SetPostScanFn(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.postScanFn = fn
 }
 
 // NewScanner creates a scanner for the given data directory.
@@ -56,7 +74,25 @@ func NewScanner(db *DB, dataDir string, envLibraryDir string) *Scanner {
 		s.libraryDir = envLibraryDir
 		log.Printf("Scanner: library_dir from LIBRARY_DIR env: %s", envLibraryDir)
 	}
+
+	// Check if supported extensions changed since last scan (code update added new formats)
+	s.checkExtensionsChanged()
+
 	return s
+}
+
+// checkExtensionsChanged compares the current extensions fingerprint with
+// the one stored in the DB. If different, logs a notice — the startup scan
+// will naturally pick up files with newly-supported extensions.
+func (s *Scanner) checkExtensionsChanged() {
+	fp := ExtensionsFingerprint()
+	stored, _ := s.db.GetConfig("extensions_fingerprint")
+	if stored != fp {
+		if stored != "" {
+			log.Printf("Scanner: supported extensions changed (%s → %s) — startup scan will index new file types", stored, fp)
+		}
+		_ = s.db.SetConfig("extensions_fingerprint", fp)
+	}
 }
 
 // SetLibraryDir updates the library directory used for scanning.
@@ -90,8 +126,62 @@ func (s *Scanner) Status() ScanStatus {
 	return s.status
 }
 
-// Scan performs a full incremental scan. It's safe to call from multiple goroutines
-// but only one scan runs at a time.
+// SetPdfStatus updates the PDF extraction progress fields.
+func (s *Scanner) SetPdfStatus(running bool, extracted, total, errors int64, current string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.PdfRunning = running
+	s.status.PdfExtracted = extracted
+	s.status.PdfTotal = total
+	s.status.PdfErrors = errors
+	s.status.PdfCurrent = current
+	if running {
+		s.status.Phase = fmt.Sprintf("PDF text extraction (%d/%d)", extracted, total)
+	}
+}
+
+// ScanAsync starts a background scan. Returns immediately with current status.
+// If a scan is already running, it's a no-op.
+func (s *Scanner) ScanAsync() ScanStatus {
+	s.mu.Lock()
+	if s.status.Running {
+		st := s.status
+		s.mu.Unlock()
+		return st
+	}
+	s.status = ScanStatus{Running: true}
+	done := make(chan struct{})
+	s.cancelFn = func() { close(done) }
+	s.mu.Unlock()
+
+	go func() {
+		s.scanWorker(done)
+		s.runPostScan()
+	}()
+	return s.Status()
+}
+
+func (s *Scanner) runPostScan() {
+	s.mu.Lock()
+	fn := s.postScanFn
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// StopScan cancels a running scan.
+func (s *Scanner) StopScan() ScanStatus {
+	s.mu.Lock()
+	if s.cancelFn != nil {
+		s.cancelFn()
+		s.cancelFn = nil
+	}
+	s.mu.Unlock()
+	return s.Status()
+}
+
+// Scan performs a synchronous scan (for backwards compat / Electron). Blocks until done.
 func (s *Scanner) Scan() ScanStatus {
 	s.mu.Lock()
 	if s.status.Running {
@@ -102,7 +192,26 @@ func (s *Scanner) Scan() ScanStatus {
 	s.status = ScanStatus{Running: true}
 	s.mu.Unlock()
 
+	s.scanWorker(nil)
+	st := s.Status()
+	s.runPostScan()
+	return st
+}
+
+func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 	start := time.Now()
+
+	cancelled := func() bool {
+		if cancel == nil {
+			return false
+		}
+		select {
+		case <-cancel:
+			return true
+		default:
+			return false
+		}
+	}
 
 	var added, updated, deleted, errors, scanned, total int64
 
@@ -117,9 +226,16 @@ func (s *Scanner) Scan() ScanStatus {
 	scanRoot := s.ScanRoot()
 	log.Printf("Scanner: scanning %s", scanRoot)
 
+	s.mu.Lock()
+	s.status.Phase = "Walking filesystem"
+	s.mu.Unlock()
+
 	err := filepath.Walk(scanRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip errors
+		}
+		if cancelled() {
+			return filepath.SkipAll
 		}
 		// Skip hidden directories (like .previews)
 		if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
@@ -147,6 +263,11 @@ func (s *Scanner) Scan() ScanStatus {
 		log.Printf("Scanner: walk error: %v", err)
 	}
 
+	if cancelled() {
+		s.finishScan(scanned, total, added, updated, deleted, errors, start, true)
+		return
+	}
+
 	total = int64(len(diskFiles))
 	// Log file type breakdown
 	typeCounts := make(map[string]int)
@@ -165,6 +286,7 @@ func (s *Scanner) Scan() ScanStatus {
 
 	s.mu.Lock()
 	s.status.Total = total
+	s.status.Phase = "Comparing with database"
 	s.mu.Unlock()
 
 	// Phase 2: Get existing DB records for diff
@@ -174,19 +296,28 @@ func (s *Scanner) Scan() ScanStatus {
 		s.mu.Lock()
 		s.status.Running = false
 		s.status.Errors = 1
+		s.cancelFn = nil
 		s.mu.Unlock()
-		return s.Status()
+		return
 	}
 
 	// Phase 3: Process each disk file
 	seen := make(map[string]bool, len(diskFiles))
 
+	s.mu.Lock()
+	s.status.Phase = "Processing files"
+	s.mu.Unlock()
+
 	for _, df := range diskFiles {
+		if cancelled() {
+			break
+		}
 		seen[df.relPath] = true
 		atomic.AddInt64(&scanned, 1)
 
 		s.mu.Lock()
 		s.status.Scanned = scanned
+		s.status.LastFile = df.relPath
 		s.mu.Unlock()
 
 		if rec, ok := existing[df.relPath]; ok {
@@ -230,23 +361,34 @@ func (s *Scanner) Scan() ScanStatus {
 		}
 	}
 
-	// Phase 4: Delete DB records for files no longer on disk
-	for path, rec := range existing {
-		if !seen[path] {
-			if err := s.db.DeleteFile(rec.ID); err != nil {
-				log.Printf("Scanner: delete error for %s: %v", path, err)
-				atomic.AddInt64(&errors, 1)
-				continue
+	if !cancelled() {
+		// Phase 4: Delete DB records for files no longer on disk
+		s.mu.Lock()
+		s.status.Phase = "Cleaning removed files"
+		s.mu.Unlock()
+		for path, rec := range existing {
+			if !seen[path] {
+				if err := s.db.DeleteFile(rec.ID); err != nil {
+					log.Printf("Scanner: delete error for %s: %v", path, err)
+					atomic.AddInt64(&errors, 1)
+					continue
+				}
+				atomic.AddInt64(&deleted, 1)
 			}
-			atomic.AddInt64(&deleted, 1)
 		}
+
+		// Phase 5: Auto-match board-PDF bindings for new files
+		s.mu.Lock()
+		s.status.Phase = "Auto-matching bindings"
+		s.mu.Unlock()
+		s.autoMatchBindings()
 	}
 
-	// Phase 5: Auto-match board-PDF bindings for new files
-	s.autoMatchBindings()
+	s.finishScan(scanned, total, added, updated, deleted, errors, start, cancelled())
+}
 
+func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int64, start time.Time, stopped bool) {
 	duration := time.Since(start).Milliseconds()
-
 	s.mu.Lock()
 	s.status = ScanStatus{
 		Running:  false,
@@ -258,12 +400,16 @@ func (s *Scanner) Scan() ScanStatus {
 		Errors:   errors,
 		Duration: duration,
 	}
+	s.cancelFn = nil
 	s.mu.Unlock()
 
-	log.Printf("Scanner: done in %dms — %d files, %d added, %d updated, %d deleted, %d errors",
-		duration, total, added, updated, deleted, errors)
-
-	return s.Status()
+	if stopped {
+		log.Printf("Scanner: stopped after %dms — %d/%d files processed, %d added, %d updated, %d deleted, %d errors",
+			duration, scanned, total, added, updated, deleted, errors)
+	} else {
+		log.Printf("Scanner: done in %dms — %d files, %d added, %d updated, %d deleted, %d errors",
+			duration, total, added, updated, deleted, errors)
+	}
 }
 
 // autoMatchBindings creates bindings between boards and PDFs based on filename matching.

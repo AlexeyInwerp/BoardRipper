@@ -35,10 +35,17 @@ export interface LayerState {
   name: string;
 }
 
-/** Create initial layer states from board layer names */
-export function createLayerStates(layerNames: string[]): LayerState[] {
+/** Create initial layer states from board layer names.
+ *  Only the primary view layer is visible by default. */
+export function createLayerStates(layerNames: string[], primarySide?: 'top' | 'bottom'): LayerState[] {
+  // Find the index of the primary layer
+  const side = primarySide ?? 'top';
+  const primaryIdx = side === 'bottom'
+    ? layerNames.findIndex(n => { const u = n.toUpperCase(); return u.includes('BOTTOM') || u.includes('BOT'); })
+    : layerNames.findIndex(n => n.toUpperCase().includes('TOP'));
+
   return layerNames.map((name, i) => ({
-    visible: true,
+    visible: primaryIdx >= 0 ? i === primaryIdx : i === 0,
     color: DEFAULT_LAYER_PALETTE[i % DEFAULT_LAYER_PALETTE.length],
     name,
   }));

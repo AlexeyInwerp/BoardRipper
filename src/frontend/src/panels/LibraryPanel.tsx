@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import type { DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup } from '../store/databank-store';
@@ -7,14 +7,31 @@ import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
 
+function tailTruncate(s: string, max = 60) {
+  return s.length > max ? '...' + s.slice(-(max - 3)) : s;
+}
+
 export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
-    selectedFileDetail, loading, metadataTree, donorOnlyFilter,
+    selectedFileDetail, loading, metadataTree,
     autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
     libraryPath, electronMode, verboseScan, showPreviews,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
+  const [pdfSearchMode, setPdfSearchMode] = useState(false);
+
+  // Client-side filter: match filename, board_number, manufacturer, model (case-insensitive)
+  const searchFilter = localSearch.trim().toLowerCase();
+  const filterFile = useCallback((f: DatabankFile) => {
+    if (!searchFilter) return true;
+    return (
+      f.filename.toLowerCase().includes(searchFilter) ||
+      f.board_number?.toLowerCase().includes(searchFilter) ||
+      f.manufacturer?.toLowerCase().includes(searchFilter) ||
+      f.model?.toLowerCase().includes(searchFilter)
+    );
+  }, [searchFilter]);
 
   // Load data on mount
   useEffect(() => {
@@ -24,6 +41,7 @@ export function LibraryPanel() {
       databankStore.loadConfig();
       databankStore.fetchFiles();
       databankStore.fetchTree();
+      databankStore.checkScanStatus();
     }
   }, []);
 
@@ -78,11 +96,6 @@ export function LibraryPanel() {
     databankStore.fetchFileDetail(file.id);
   }, []);
 
-  const handleToggleDonor = useCallback((e: React.MouseEvent, id: number) => {
-    e.stopPropagation();
-    databankStore.toggleDonor(id);
-  }, []);
-
   const handleCreateBinding = useCallback(async (boardFileId: number, pdfFileId: number) => {
     await databankStore.createBinding(boardFileId, pdfFileId);
     // Refresh the detail
@@ -95,8 +108,11 @@ export function LibraryPanel() {
   }, [selectedFileId]);
 
   const scanning = scanStatus?.running ?? false;
-  const boardCount = files.filter(f => f.file_type === 'board').length;
-  const pdfCount = files.filter(f => f.file_type === 'pdf').length;
+  const { boardCount, pdfCount } = useMemo(() => {
+    let b = 0, p = 0;
+    for (const f of files) { if (f.file_type === 'board') b++; else if (f.file_type === 'pdf') p++; }
+    return { boardCount: b, pdfCount: p };
+  }, [files]);
 
   return (
     <div className="library-panel">
@@ -139,14 +155,6 @@ export function LibraryPanel() {
             />
             Previews
           </label>
-          <label className="library-donor-filter" title="Show only donor pool boards">
-            <input
-              type="checkbox"
-              checked={donorOnlyFilter}
-              onChange={(e) => databankStore.setDonorOnlyFilter(e.target.checked)}
-            />
-            Donor
-          </label>
           <label className="library-donor-filter" title="Show detailed scan results per folder">
             <input
               type="checkbox"
@@ -155,61 +163,111 @@ export function LibraryPanel() {
             />
             Verbose
           </label>
-          <button
-            className="library-scan-btn"
-            onClick={handleScan}
-            disabled={scanning}
-          >
-            {scanning ? 'Scanning...' : 'Scan'}
-          </button>
+          {scanning ? (
+            <button
+              className="library-scan-btn library-scan-stop"
+              onClick={() => databankStore.stopScan()}
+              title="Stop indexing"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              className="library-scan-btn"
+              onClick={handleScan}
+            >
+              Scan
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats / indexing indicator */}
       <div className="library-stats">
-        {boardCount} boards, {pdfCount} PDFs
-        {scanStatus && !scanStatus.running && scanStatus.duration_ms > 0 && (
-          <span className="library-scan-result">
-            {verboseScan
-              ? ` — scan: +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} err:${scanStatus.errors} (${scanStatus.scanned}/${scanStatus.total} files, ${scanStatus.duration_ms}ms)`
-              : ` — last scan: +${scanStatus.added} -${scanStatus.deleted} (${scanStatus.duration_ms}ms)`}
-          </span>
-        )}
-        {scanStatus?.running && verboseScan && (
-          <span className="library-scan-result">
-            {' '}— scanning: {scanStatus.scanned}/{scanStatus.total}...
-          </span>
+        {scanning ? (
+          <>
+            <span className="library-indexing">
+              Indexing{scanStatus && scanStatus.total > 0
+                ? ` ${scanStatus.scanned}/${scanStatus.total}`
+                : ''}
+              {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
+            </span>
+            {verboseScan && scanStatus?.last_file && (
+              <div className="library-indexing-file" title={scanStatus.last_file}>
+                {tailTruncate(scanStatus.last_file)}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {boardCount} boards, {pdfCount} PDFs
+            {scanStatus && scanStatus.duration_ms > 0 && (
+              <span className="library-scan-result">
+                {verboseScan
+                  ? ` — scan: +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} err:${scanStatus.errors} (${scanStatus.scanned}/${scanStatus.total} files, ${scanStatus.duration_ms}ms)`
+                  : ` — last scan: +${scanStatus.added} -${scanStatus.deleted} (${scanStatus.duration_ms}ms)`}
+              </span>
+            )}
+            {scanStatus?.pdf_running && (
+              <span className="library-indexing" style={{ marginLeft: 8 }}>
+                PDF indexing {scanStatus.pdf_extracted}/{scanStatus.pdf_total}
+                {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
+              </span>
+            )}
+            {verboseScan && scanStatus?.pdf_running && scanStatus?.pdf_current && (
+              <div className="library-indexing-file" title={scanStatus.pdf_current}>
+                {tailTruncate(scanStatus.pdf_current)}
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {/* PDF Search */}
+      {/* Search */}
       <div className="library-search">
         <input
           type="text"
-          placeholder="Search PDFs (e.g. 10UF 25V)..."
+          placeholder={pdfSearchMode ? "Search PDF content (e.g. 10UF 25V)..." : "Filter files..."}
           className="library-search-input"
           value={localSearch}
-          onChange={(e) => setLocalSearch(e.target.value)}
+          onChange={(e) => {
+            setLocalSearch(e.target.value);
+            // Clear PDF search results when typing in filter mode
+            if (!pdfSearchMode && searchQuery) databankStore.search('');
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && localSearch.trim()) {
-              databankStore.search(localSearch, donorOnlyFilter);
+            if (e.key === 'Enter' && pdfSearchMode && localSearch.trim()) {
+              databankStore.search(localSearch);
             }
           }}
         />
-        <button
-          className="library-search-btn"
-          onClick={() => {
-            if (localSearch.trim()) databankStore.search(localSearch, donorOnlyFilter);
-          }}
-        >
-          Search
-        </button>
-        {searchQuery && (
+        <label className="library-pdf-search-toggle" title="Toggle PDF content search (searches inside PDF text)">
+          <input
+            type="checkbox"
+            checked={pdfSearchMode}
+            onChange={(e) => {
+              setPdfSearchMode(e.target.checked);
+              if (!e.target.checked && searchQuery) databankStore.search('');
+            }}
+          />
+          PDF
+        </label>
+        {pdfSearchMode && (
+          <button
+            className="library-search-btn"
+            onClick={() => {
+              if (localSearch.trim()) databankStore.search(localSearch);
+            }}
+          >
+            Search
+          </button>
+        )}
+        {(localSearch || searchQuery) && (
           <button
             className="library-search-clear"
             onClick={() => {
               setLocalSearch('');
-              databankStore.search('');
+              if (searchQuery) databankStore.search('');
             }}
             title="Clear search"
           >
@@ -244,7 +302,7 @@ export function LibraryPanel() {
 
       {/* Content */}
       <div className="library-content">
-        {searchResults.length > 0 ? (
+        {pdfSearchMode && searchResults.length > 0 ? (
           <SearchResultsView results={searchResults} files={files} onOpenFile={handleOpenFile} />
         ) : loading && files.length === 0 ? (
           <div className="library-empty">Loading...</div>
@@ -252,34 +310,31 @@ export function LibraryPanel() {
           <div className="library-empty">
             No files found. Click Scan to index your data directory.
           </div>
-        ) : searchQuery && searchResults.length === 0 ? (
+        ) : pdfSearchMode && searchQuery && searchResults.length === 0 ? (
           <div className="library-empty">No results for "{searchQuery}"</div>
         ) : viewMode === 'model' ? (
           <ModelView
             groups={modelTree}
             selectedFileId={selectedFileId}
-            donorOnly={donorOnlyFilter}
+            filterFile={filterFile}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
-            onToggleDonor={handleToggleDonor}
           />
         ) : viewMode === 'metadata' ? (
           <MetadataView
             groups={metadataTree}
             selectedFileId={selectedFileId}
-            donorOnly={donorOnlyFilter}
+            filterFile={filterFile}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
-            onToggleDonor={handleToggleDonor}
           />
         ) : (
           <FolderView
             tree={folderTree}
             selectedFileId={selectedFileId}
-            donorOnly={donorOnlyFilter}
+            filterFile={filterFile}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
-            onToggleDonor={handleToggleDonor}
           />
         )}
       </div>
@@ -484,13 +539,12 @@ function SearchResultsView({ results, files, onOpenFile }: {
 
 // --- Metadata Tree View ---
 
-function MetadataView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenFile, onToggleDonor }: {
+function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
   groups: MetadataGroup[];
   selectedFileId: number | null;
-  donorOnly: boolean;
+  filterFile: (f: DatabankFile) => boolean;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
-  onToggleDonor: (e: React.MouseEvent, id: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -503,16 +557,14 @@ function MetadataView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenF
     });
   };
 
-  const filteredGroups = donorOnly
-    ? groups.map(g => ({
-        ...g,
-        boardNumbers: g.boardNumbers.map(bn => ({
-          ...bn,
-          files: bn.files.filter(f => f.donor_pool || f.file_type === 'pdf'),
-        })).filter(bn => bn.files.some(f => f.donor_pool)),
-        ungrouped: g.ungrouped.filter(f => f.donor_pool),
-      })).filter(g => g.boardNumbers.length > 0 || g.ungrouped.length > 0)
-    : groups;
+  const filteredGroups = useMemo(() => groups.map(g => ({
+    ...g,
+    boardNumbers: g.boardNumbers.map(bn => ({
+      ...bn,
+      files: bn.files.filter(filterFile),
+    })).filter(bn => bn.files.length > 0),
+    ungrouped: g.ungrouped.filter(filterFile),
+  })).filter(g => g.boardNumbers.length > 0 || g.ungrouped.length > 0), [groups, filterFile]);
 
   return (
     <div className="library-tree">
@@ -551,7 +603,6 @@ function MetadataView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenF
                               showPreview={f.file_type === 'pdf'}
                               onSelect={onSelectFile}
                               onOpen={onOpenFile}
-                              onToggleDonor={onToggleDonor}
                             />
                           ))}
                         </div>
@@ -568,7 +619,6 @@ function MetadataView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenF
                     showPreview={f.file_type === 'pdf'}
                     onSelect={onSelectFile}
                     onOpen={onOpenFile}
-                    onToggleDonor={onToggleDonor}
                   />
                 ))}
               </div>
@@ -582,13 +632,12 @@ function MetadataView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenF
 
 // --- Model Tree View ---
 
-function ModelView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenFile, onToggleDonor }: {
+function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
   groups: ModelGroup[];
   selectedFileId: number | null;
-  donorOnly: boolean;
+  filterFile: (f: DatabankFile) => boolean;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
-  onToggleDonor: (e: React.MouseEvent, id: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -601,17 +650,14 @@ function ModelView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenFile
     });
   };
 
-  // Apply donor filter
-  const filteredGroups = donorOnly
-    ? groups.map(g => ({
-        ...g,
-        variants: g.variants.map(v => ({
-          ...v,
-          files: v.files.filter(f => f.donor_pool || f.file_type === 'pdf'),
-        })).filter(v => v.files.some(f => f.donor_pool)),
-        unresolved: g.unresolved.filter(f => f.donor_pool),
-      })).filter(g => g.variants.length > 0 || g.unresolved.length > 0)
-    : groups;
+  const filteredGroups = useMemo(() => groups.map(g => ({
+    ...g,
+    variants: g.variants.map(v => ({
+      ...v,
+      files: v.files.filter(filterFile),
+    })).filter(v => v.files.length > 0),
+    unresolved: g.unresolved.filter(filterFile),
+  })).filter(g => g.variants.length > 0 || g.unresolved.length > 0), [groups, filterFile]);
 
   return (
     <div className="library-tree">
@@ -655,7 +701,6 @@ function ModelView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenFile
                               showPreview={f.file_type === 'pdf'}
                               onSelect={onSelectFile}
                               onOpen={onOpenFile}
-                              onToggleDonor={onToggleDonor}
                             />
                           ))}
                         </div>
@@ -672,7 +717,6 @@ function ModelView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenFile
                     showPreview={f.file_type === 'pdf'}
                     onSelect={onSelectFile}
                     onOpen={onOpenFile}
-                    onToggleDonor={onToggleDonor}
                   />
                 ))}
               </div>
@@ -686,13 +730,12 @@ function ModelView({ groups, selectedFileId, donorOnly, onSelectFile, onOpenFile
 
 // --- Folder Tree View ---
 
-function FolderView({ tree, selectedFileId, donorOnly, onSelectFile, onOpenFile, onToggleDonor }: {
+function FolderView({ tree, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
   tree: FolderNode | null;
   selectedFileId: number | null;
-  donorOnly: boolean;
+  filterFile: (f: DatabankFile) => boolean;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
-  onToggleDonor: (e: React.MouseEvent, id: number) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']));
 
@@ -714,33 +757,29 @@ function FolderView({ tree, selectedFileId, donorOnly, onSelectFile, onOpenFile,
         depth={0}
         expanded={expanded}
         selectedFileId={selectedFileId}
-        donorOnly={donorOnly}
+        filterFile={filterFile}
         onToggleExpand={toggle}
         onSelectFile={onSelectFile}
         onOpenFile={onOpenFile}
-        onToggleDonor={onToggleDonor}
       />
     </div>
   );
 }
 
-function FolderNodeView({ node, depth, expanded, selectedFileId, donorOnly, onToggleExpand, onSelectFile, onOpenFile, onToggleDonor }: {
+function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onToggleExpand, onSelectFile, onOpenFile }: {
   node: FolderNode;
   depth: number;
   expanded: Set<string>;
   selectedFileId: number | null;
-  donorOnly: boolean;
+  filterFile: (f: DatabankFile) => boolean;
   onToggleExpand: (path: string) => void;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
-  onToggleDonor: (e: React.MouseEvent, id: number) => void;
 }) {
   const isExpanded = expanded.has(node.path);
   const hasChildren = (node.children && node.children.length > 0) || (node.files && node.files.length > 0);
 
-  const filteredFiles = donorOnly
-    ? (node.files || []).filter(f => f.donor_pool)
-    : (node.files || []);
+  const filteredFiles = (node.files || []).filter(filterFile);
 
   return (
     <div className="library-tree-group">
@@ -763,11 +802,10 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, donorOnly, onTo
               depth={depth + 1}
               expanded={expanded}
               selectedFileId={selectedFileId}
-              donorOnly={donorOnly}
+              filterFile={filterFile}
               onToggleExpand={onToggleExpand}
               onSelectFile={onSelectFile}
               onOpenFile={onOpenFile}
-              onToggleDonor={onToggleDonor}
             />
           ))}
           {filteredFiles.map(f => (
@@ -779,7 +817,6 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, donorOnly, onTo
               showPreview={f.file_type === 'pdf'}
               onSelect={onSelectFile}
               onOpen={onOpenFile}
-              onToggleDonor={onToggleDonor}
             />
           ))}
         </div>
@@ -790,14 +827,13 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, donorOnly, onTo
 
 // --- File Row ---
 
-function FileRow({ file, selected, indent, showPreview, onSelect, onOpen, onToggleDonor }: {
+function FileRow({ file, selected, indent, showPreview, onSelect, onOpen }: {
   file: DatabankFile;
   selected: boolean;
   indent: number;
   showPreview?: boolean;
   onSelect?: (f: DatabankFile) => void;
   onOpen: (f: DatabankFile) => void;
-  onToggleDonor: (e: React.MouseEvent, id: number) => void;
 }) {
   const icon = file.file_type === 'board' ? 'B' : 'P';
   const iconClass = file.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf';
@@ -814,24 +850,6 @@ function FileRow({ file, selected, indent, showPreview, onSelect, onOpen, onTogg
       {previewEnabled && <PreviewThumbnail file={file} />}
       <span className={`library-file-icon ${iconClass}`}>{icon}</span>
       <span className="library-file-name">{file.filename}</span>
-      {file.donor_pool && (
-        <span
-          className="library-donor-badge"
-          onClick={(e) => onToggleDonor(e, file.id)}
-          title="In donor pool (click to toggle)"
-        >
-          D
-        </span>
-      )}
-      {!file.donor_pool && file.file_type === 'board' && (
-        <span
-          className="library-donor-badge library-donor-badge-off"
-          onClick={(e) => onToggleDonor(e, file.id)}
-          title="Not in donor pool (click to toggle)"
-        >
-          D
-        </span>
-      )}
       {file.part_count != null && (
         <span className="library-file-meta">{file.part_count}p</span>
       )}

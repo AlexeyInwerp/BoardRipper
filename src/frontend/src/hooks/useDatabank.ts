@@ -8,7 +8,6 @@ interface DatabankSnapshot {
   scanStatus: ScanStatus | null;
   searchResults: SearchResult[];
   searchQuery: string;
-  donorOnlyFilter: boolean;
   autoPdf: boolean;
   viewMode: ViewMode;
   selectedFileId: number | null;
@@ -37,7 +36,6 @@ function getSnapshot(): DatabankSnapshot {
       scanStatus: databankStore.scanStatus,
       searchResults: databankStore.searchResults,
       searchQuery: databankStore.searchQuery,
-      donorOnlyFilter: databankStore.donorOnlyFilter,
       autoPdf: databankStore.autoPdf,
       viewMode: databankStore.viewMode,
       selectedFileId: databankStore.selectedFileId,

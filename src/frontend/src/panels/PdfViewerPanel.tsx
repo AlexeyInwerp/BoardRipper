@@ -91,6 +91,31 @@ function textItemRect(
   };
 }
 
+/** Compute zoom & pan to center a group of text items in the viewport */
+function zoomToItemGroup(
+  items: { transform: number[]; width: number }[],
+  vpT: number[], baseScale: number,
+  cw: number, ch: number,
+  targetFraction: number,
+): { zoom: number; pan: { x: number; y: number } } {
+  let gx1 = Infinity, gy1 = Infinity, gx2 = -Infinity, gy2 = -Infinity;
+  for (const item of items) {
+    const r = textItemRect(item.transform, item.width, vpT, baseScale);
+    if (r.x < gx1) gx1 = r.x;
+    if (r.y < gy1) gy1 = r.y;
+    if (r.x + r.w > gx2) gx2 = r.x + r.w;
+    if (r.y + r.h > gy2) gy2 = r.y + r.h;
+  }
+  const mcx = (gx1 + gx2) / 2;
+  const mcy = (gy1 + gy2) / 2;
+  const groupW = Math.max(gx2 - gx1, 1);
+  const groupH = Math.max(gy2 - gy1, 1);
+  const zoomByW = (cw * targetFraction) / groupW;
+  const zoomByH = (ch * targetFraction) / groupH;
+  const zoom = Math.max(0.5, Math.min(Math.min(zoomByW, zoomByH), 3));
+  return { zoom, pan: { x: cw / 2 - mcx * zoom, y: ch / 2 - mcy * zoom } };
+}
+
 /** Apply CSS transform directly to a DOM element — bypasses React for smooth 60fps pan/zoom */
 function applyTransform(el: HTMLElement | null, x: number, y: number, s: number) {
   if (el) el.style.transform = `translate(${x}px,${y}px) scale(${s})`;
@@ -543,37 +568,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         ? activeGroup.map(i => matches[i]).filter(Boolean)
         : [match];
 
-      const vpT = viewportTransformRef.current;
-      let gx1 = Infinity, gy1 = Infinity, gx2 = -Infinity, gy2 = -Infinity;
-      for (const m of groupMatches) {
-        const r = textItemRect(m.item.transform, m.item.width, vpT, baseScale);
-        const mx0 = r.x;
-        const my0 = r.y;
-        const mx1 = r.x + r.w;
-        const my1 = r.y + r.h;
-        if (mx0 < gx1) gx1 = mx0;
-        if (my0 < gy1) gy1 = my0;
-        if (mx1 > gx2) gx2 = mx1;
-        if (my1 > gy2) gy2 = my1;
-      }
-      const mcx = (gx1 + gx2) / 2;
-      const mcy = (gy1 + gy2) / 2;
-      const groupW = Math.max(gx2 - gx1, 1);
-      const groupH = Math.max(gy2 - gy1, 1);
-
       const container = containerRef.current;
-      const cw = container.clientWidth;
-      const ch = container.clientHeight;
-      // Match should occupy ~20% of viewport, capped at 3× zoom
-      const targetFraction = 0.2;
-      const zoomByW = (cw * targetFraction) / groupW;
-      const zoomByH = (ch * targetFraction) / groupH;
-      const newZoom = Math.max(0.5, Math.min(Math.min(zoomByW, zoomByH), 3));
-
-      const newPan = {
-        x: cw / 2 - mcx * newZoom,
-        y: ch / 2 - mcy * newZoom,
-      };
+      const items = groupMatches.map(m => m.item);
+      const { zoom: newZoom, pan: newPan } = zoomToItemGroup(
+        items, viewportTransformRef.current, baseScale,
+        container.clientWidth, container.clientHeight, 0.2,
+      );
 
       zoomRef.current = newZoom;
       panRef.current = newPan;
@@ -612,6 +612,35 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       blinkPhaseRef.current = 0;
     };
   }, [isLoaded, activeMatchIndex, matches, currentPage]);
+
+  // Follow target: zoom to a location without highlighting (triggered by board follow mode)
+  useEffect(() => {
+    const target = pdfStore.consumeFollowTarget();
+    if (!target || !isLoaded) return;
+
+    const targetPage = target.pageIndex + 1;
+    if (targetPage !== currentPage) {
+      skipResetRef.current = true;
+    }
+
+    const applyFollowZoom = () => {
+      const baseScale = scaleRef.current;
+      if (baseScale === 0 || !containerRef.current) return;
+
+      const { zoom, pan } = zoomToItemGroup(
+        target.items, viewportTransformRef.current, baseScale,
+        containerRef.current.clientWidth, containerRef.current.clientHeight, 0.25,
+      );
+      zoomRef.current = zoom;
+      panRef.current = pan;
+      syncTransform();
+      renderPageRef.current();
+    };
+
+    // Defer to ensure the page has rendered first
+    const raf = requestAnimationFrame(applyFollowZoom);
+    return () => cancelAnimationFrame(raf);
+  }, [isLoaded, currentPage]);
 
   // Apply initial transform + re-sync after page change
   useEffect(() => { syncTransform(); }, [syncTransform, currentPage]);

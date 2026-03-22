@@ -779,6 +779,12 @@ export function SettingsPanel() {
           title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
         <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft}
           title="Extra padding (screen pixels) added when fitting the board or a component to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
+        <Toggle label="Disable Inertia" value={draft.disableInertia} field="disableInertia" onUpdate={updateDraft}
+          title="Stop the board from sliding after you release a pan gesture. When enabled, panning stops immediately on release" />
+        <Slider label="Wheel Zoom Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
+          title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />
+        <Toggle label="Two-Finger Pan" value={draft.twoFingerPan} field="twoFingerPan" onUpdate={updateDraft}
+          title="Require two fingers to pan the board (trackpad mode). One finger will not move the viewport" />
       </CollapsibleSection>
 
       <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
@@ -787,6 +793,8 @@ export function SettingsPanel() {
           title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
         <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft}
           title="Draw magenta crosshair markers at each pin's exact coordinate from the board file. Useful for verifying parser accuracy" />
+        <Toggle label="[Debug] Outline Vertex Numbers" value={draft.showVertexNumbers} field="showVertexNumbers" onUpdate={updateDraft}
+          title="Show numbered markers at each board outline vertex. Yellow = unique, orange = duplicate coordinates. Works for all board formats" />
         <Toggle label="[Debug] Label Size Tiers" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft}
           title="Color part labels by their computed font-size tier: blue = small, yellow = medium, green = large. Useful for tuning the Small/Medium/Large size thresholds" />
       </CollapsibleSection>

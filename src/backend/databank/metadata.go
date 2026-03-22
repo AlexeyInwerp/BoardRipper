@@ -3,6 +3,7 @@ package databank
 import (
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -15,11 +16,26 @@ var boardExtensions = map[string]bool{
 	".cae": true,
 	".cad": true,
 	".pcb": true,
+	".tvw": true,
 }
 
 // PDF extension.
 var pdfExtensions = map[string]bool{
 	".pdf": true,
+}
+
+// ExtensionsFingerprint returns a stable string of all supported extensions.
+// Used to detect when supported formats change across code updates.
+func ExtensionsFingerprint() string {
+	exts := make([]string, 0, len(boardExtensions)+len(pdfExtensions))
+	for e := range boardExtensions {
+		exts = append(exts, e)
+	}
+	for e := range pdfExtensions {
+		exts = append(exts, e)
+	}
+	sort.Strings(exts)
+	return strings.Join(exts, ",")
 }
 
 // IsSupportedFile returns true if the extension is a board or PDF file.
