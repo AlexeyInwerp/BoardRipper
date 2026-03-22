@@ -29,6 +29,12 @@ export interface FormatDescriptor {
    *  When true, the initial view shows Bottom instead of Top. */
   swapSides?: boolean;
 
+  /** Format uses multi-layer butterfly layout — show layer selector, hide top/bottom. */
+  hasLayers?: boolean;
+
+  /** Format can produce PCB traces — show traces toggle. */
+  hasTraces?: boolean;
+
   /**
    * Content-based format detection.
    * Receives the first 512 bytes (or fewer if the file is smaller).

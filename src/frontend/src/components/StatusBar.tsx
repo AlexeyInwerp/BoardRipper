@@ -1,6 +1,8 @@
 import { useBoardStore } from '../hooks/useBoardStore';
 import { getAllExtensions } from '../parsers/registry';
 
+declare const __APP_VERSION__: string;
+
 export function StatusBar() {
   const { board, selection, selectedPart, selectedPin } = useBoardStore();
 
@@ -37,7 +39,7 @@ export function StatusBar() {
           )}
         </>
       ) : (
-        <span>Supports {getAllExtensions().join(', ')} formats. Vibecoded by RipperDoc in Claude Opus 4.6</span>
+        <span>BoardRipper v{__APP_VERSION__} — Supports {getAllExtensions().join(', ')} formats. Vibecoded by RipperDoc</span>
       )}
     </div>
   );

@@ -6,7 +6,7 @@
  * The app itself packages fine without it.
  */
 import { execSync } from 'child_process';
-import { cpSync, rmSync, mkdirSync, existsSync } from 'fs';
+import { cpSync, rmSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -50,7 +50,7 @@ const [appPath] = await packager({
   icon: existsSync(path.join(DESKTOP, 'icon.ico'))
     ? path.join(DESKTOP, 'icon.ico')
     : undefined,
-  appVersion: '1.0.0',
+  appVersion: JSON.parse(readFileSync(path.join(FRONTEND, 'package.json'), 'utf8')).version,
   win32metadata: {
     ProductName: 'BoardRipper',
     CompanyName: 'BoardRipper',

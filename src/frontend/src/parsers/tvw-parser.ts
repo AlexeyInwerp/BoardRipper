@@ -227,12 +227,19 @@ interface TvwLogicLayer {
   arcs: TvwArc[];
 }
 
+interface TvwDrillSlot {
+  net: number;
+  start: Point;
+  end: Point;
+}
+
 interface TvwThroughLayer {
   objType: TvwObjectType.Through;
   name: string;
   layerType: TvwLayerType;
   toolSizes: number[];  // drill diameters in mils
   holes: TvwDrillHole[];
+  slots: TvwDrillSlot[];
 }
 
 type TvwLayer = TvwLogicLayer | TvwThroughLayer;
@@ -572,6 +579,7 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
   r.skip(16); // 4 zero dwords
 
   const holes: TvwDrillHole[] = [];
+  const slots: TvwDrillSlot[] = [];
   for (let i = 0; i < drillCount; i++) {
     const code = r.readU8();
     if (code === 0x08) {
@@ -581,11 +589,13 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
       const pos = r.readVec2S();
       holes.push({ net, toolIndex, pos });
     } else if (code === 0x0A || code === 0x0B) {
-      // drill slot — read and skip
-      r.readS32(); // net
+      // drill slot — line segment
+      const net = r.readS32();
       r.readU32(); // tool
-      r.skip(16);  // begin + end (2 × vec2)
+      const start = r.readVec2S();
+      const end = r.readVec2S();
       r.readU32(); // zero
+      slots.push({ net, start, end });
     } else {
       throw new Error(`TVW: unknown drill code 0x${code.toString(16)} at offset 0x${(r.tell() - 1).toString(16)}`);
     }
@@ -597,6 +607,7 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
     layerType: header.layerType,
     toolSizes,
     holes,
+    slots,
   };
 }
 
@@ -917,6 +928,79 @@ function sideFromLayerType(lt: TvwLayerType): 'top' | 'bottom' {
   return lt === TvwLayerType.Bottom ? 'bottom' : 'top';
 }
 
+/** Chain line segments into ordered polygon paths.
+ *  Returns an array of Point[] paths. Uses endpoint proximity
+ *  to find the next connected segment (greedy, O(n²)). */
+function chainLines(lines: TvwLine[], arcs: TvwArc[]): Point[][] {
+  const EPS2 = 1 * 1;  // 1 mil tolerance squared
+
+  // Build edge list from lines + tessellated arcs
+  interface Edge { a: Point; b: Point; used: boolean }
+  const edges: Edge[] = [];
+  for (const l of lines) {
+    edges.push({ a: l.start, b: l.end, used: false });
+  }
+  for (const arc of arcs) {
+    // Tessellate arc into 16-segment polyline
+    const steps = 16;
+    const startRad = arc.startAngle * Math.PI / 180;
+    const sweepRad = arc.sweepAngle * Math.PI / 180;
+    for (let s = 0; s < steps; s++) {
+      const a1 = startRad + (sweepRad * s) / steps;
+      const a2 = startRad + (sweepRad * (s + 1)) / steps;
+      edges.push({
+        a: { x: arc.center.x + arc.radius * Math.cos(a1), y: arc.center.y + arc.radius * Math.sin(a1) },
+        b: { x: arc.center.x + arc.radius * Math.cos(a2), y: arc.center.y + arc.radius * Math.sin(a2) },
+        used: false,
+      });
+    }
+  }
+
+  if (edges.length === 0) return [];
+
+  const dist2 = (a: Point, b: Point) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+
+  const paths: Point[][] = [];
+  while (true) {
+    // Find first unused edge
+    const start = edges.find(e => !e.used);
+    if (!start) break;
+    start.used = true;
+    const path: Point[] = [start.a, start.b];
+    let cursor = start.b;
+
+    // Greedily extend the chain
+    let found = true;
+    while (found) {
+      found = false;
+      let bestIdx = -1;
+      let bestDist = Infinity;
+      let bestFlip = false;
+      for (let i = 0; i < edges.length; i++) {
+        if (edges[i].used) continue;
+        const dA = dist2(cursor, edges[i].a);
+        const dB = dist2(cursor, edges[i].b);
+        if (dA < bestDist) { bestDist = dA; bestIdx = i; bestFlip = false; }
+        if (dB < bestDist) { bestDist = dB; bestIdx = i; bestFlip = true; }
+      }
+      if (bestIdx >= 0 && bestDist < EPS2) {
+        edges[bestIdx].used = true;
+        const e = edges[bestIdx];
+        const next = bestFlip ? e.a : e.b;
+        path.push(next);
+        cursor = next;
+        found = true;
+      }
+    }
+    // Close path if endpoints are close
+    if (path.length > 2 && dist2(path[0], path[path.length - 1]) < EPS2) {
+      path.push(path[0]); // explicit close
+    }
+    paths.push(path);
+  }
+  return paths;
+}
+
 export function parseTVW(buffer: ArrayBuffer): BoardData {
   const tvw = parseTvwBinary(buffer);
 
@@ -928,6 +1012,14 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
   // Also grab drill layer
   const drillLayer = tvw.layers.find(
     (l): l is TvwThroughLayer => l.objType === TvwObjectType.Through
+  );
+
+  // Find Roul (board outline) layer — can be either Logic or Through type
+  const roulLogicLayer = tvw.layers.find(
+    (l): l is TvwLogicLayer => l.objType === TvwObjectType.Logic && l.layerType === TvwLayerType.Roul
+  );
+  const roulThroughLayer = tvw.layers.find(
+    (l): l is TvwThroughLayer => l.objType === TvwObjectType.Through && l.layerType === TvwLayerType.Roul
   );
 
   // Compute the natural board bounds from ALL pads across layers
@@ -1047,25 +1139,50 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     }
   }
 
-  // Single board outline (all layers share the same footprint)
-  const outlinePoints: Point[] = [];
-  const ox = globalMinX - OUTLINE_MARGIN;
-  const oy = globalMinY - OUTLINE_MARGIN;
-  const ew = boardW + OUTLINE_MARGIN * 2;
-  const eh = boardH + OUTLINE_MARGIN * 2;
-  outlinePoints.push(
-    { x: ox, y: oy },
-    { x: ox + ew, y: oy },
-    { x: ox + ew, y: oy + eh },
-    { x: ox, y: oy + eh },
-    { x: ox, y: oy },
-  );
+  // Board outline — prefer Roul layer geometry, fall back to bounding rectangle
+  let outlinePoints: Point[] = [];
 
-  // Add drill layer nails + vias (same coordinates, tagged as last layer)
-  const drillLayerIdx = copperLayers.length;
+  // Try Roul Through layer (slots = line segments forming the outline)
+  if (roulThroughLayer && roulThroughLayer.slots.length > 0) {
+    // Convert slots to TvwLine-compatible edges for chainLines
+    const slotLines: TvwLine[] = roulThroughLayer.slots.map(s => ({
+      net: s.net, dcode: 0, start: s.start, end: s.end,
+    }));
+    const paths = chainLines(slotLines, []);
+    for (let i = 0; i < paths.length; i++) {
+      if (i > 0) outlinePoints.push({ x: NaN, y: NaN });
+      outlinePoints.push(...paths[i]);
+    }
+    if (TVW_DEBUG) console.log(`TVW: outline from Roul Through layer: ${roulThroughLayer.slots.length} slots → ${paths.length} paths`);
+  }
+
+  // Try Roul Logic layer (lines + arcs)
+  if (outlinePoints.length === 0 && roulLogicLayer && (roulLogicLayer.lines.length > 0 || roulLogicLayer.arcs.length > 0)) {
+    const paths = chainLines(roulLogicLayer.lines, roulLogicLayer.arcs);
+    for (let i = 0; i < paths.length; i++) {
+      if (i > 0) outlinePoints.push({ x: NaN, y: NaN });
+      outlinePoints.push(...paths[i]);
+    }
+    if (TVW_DEBUG) console.log(`TVW: outline from Roul Logic layer: ${roulLogicLayer.lines.length} lines, ${roulLogicLayer.arcs.length} arcs → ${paths.length} paths`);
+  }
+
+  if (outlinePoints.length === 0) {
+    // Fallback: rectangle from pad bounds
+    const ox = globalMinX - OUTLINE_MARGIN;
+    const oy = globalMinY - OUTLINE_MARGIN;
+    const ew = boardW + OUTLINE_MARGIN * 2;
+    const eh = boardH + OUTLINE_MARGIN * 2;
+    outlinePoints = [
+      { x: ox, y: oy },
+      { x: ox + ew, y: oy },
+      { x: ox + ew, y: oy + eh },
+      { x: ox, y: oy + eh },
+      { x: ox, y: oy },
+    ];
+  }
+
+  // Add drill layer nails + vias
   const allVias: Via[] = [];
-  // All copper layer indices for through-hole vias
-  const allCopperIndices = copperLayers.map((_, i) => i);
   if (drillLayer) {
     for (const hole of drillLayer.holes) {
       const netName = getNetName(tvw.nets, hole.net);
@@ -1074,7 +1191,6 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         side: 'top',
         net: netName,
       });
-      // Drill size from tool table (mils)
       const diameter = hole.toolIndex < drillLayer.toolSizes.length
         ? drillLayer.toolSizes[hole.toolIndex]
         : 10;
@@ -1082,18 +1198,21 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         position: { x: hole.pos.x, y: hole.pos.y },
         diameter: Math.max(diameter, 5),
         net: netName,
-        layers: allCopperIndices,
+        layers: [], // resolved at scene build time via trace endpoint proximity
       });
     }
   }
 
-  // Board bounds: single footprint
-  const allBounds: BBox = {
-    minX: globalMinX - OUTLINE_MARGIN,
-    minY: globalMinY - OUTLINE_MARGIN,
-    maxX: globalMaxX + OUTLINE_MARGIN,
-    maxY: globalMaxY + OUTLINE_MARGIN,
-  };
+  // Board bounds: from outline if available, else from pads
+  const validOutlinePts = outlinePoints.filter(p => !isNaN(p.x));
+  const allBounds: BBox = validOutlinePts.length > 2
+    ? computeBBox(validOutlinePts)
+    : {
+        minX: globalMinX - OUTLINE_MARGIN,
+        minY: globalMinY - OUTLINE_MARGIN,
+        maxX: globalMaxX + OUTLINE_MARGIN,
+        maxY: globalMaxY + OUTLINE_MARGIN,
+      };
 
   // Build net map from parts, then ensure nail-only nets are also registered
   const nets = buildNets(allParts);

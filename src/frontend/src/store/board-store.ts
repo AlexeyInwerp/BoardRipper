@@ -328,11 +328,12 @@ class BoardStore {
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
-        if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
-        if (getFormat(cached.format)?.swapSides) {
+        const cachedFmt = getFormat(cached.format);
+        if (cachedFmt?.swapSides) {
           tab.showTop = false;
           tab.showBottom = true;
         }
+        if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, cachedFmt?.swapSides ? 'bottom' : 'top');
         this.autoBindBoard(file.name);
         // Create panel AFTER board + rotation are ready so the renderer sees correct state
         this.onTabCreated?.(id, file.name);
@@ -364,11 +365,11 @@ class BoardStore {
 
       tab.board = board;
       tab.rotation = this.autoRotation(board);
-      if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames);
       if (fmt?.swapSides) {
         tab.showTop = false;
         tab.showBottom = true;
       }
+      if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, fmt?.swapSides ? 'bottom' : 'top');
 
       await boardCache.put(file.name, file.size, file.lastModified, board);
 

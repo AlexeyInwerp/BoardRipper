@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
+import { IconHierarchy, IconTooltip, IconObjectScan } from '@tabler/icons-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -12,13 +13,14 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
-  const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo } = useBoardStore();
+  const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo, followPdf, layerStates } = useBoardStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'info' | 'nets' | 'search' | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'nets' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
   const [sliderVisible, setSliderVisible] = useState(false);
   const sliderGroupRef = useRef<HTMLDivElement>(null);
   const prevSearchRef = useRef('');
+  const prevLayerCountRef = useRef(0);
 
   // Auto-open sidebar to search tab when search query changes on this panel's tab
   const isActivePanel = activeTabId === tabId;
@@ -31,6 +33,13 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       setSidebarTab(null);
     }
   }
+
+  // Auto-open sidebar to layers tab when a multi-layer board is loaded
+  if (isActivePanel && layerStates.length > 0 && prevLayerCountRef.current === 0) {
+    if (!sidebarOpen) setSidebarOpen(true);
+    setSidebarTab('layers');
+  }
+  prevLayerCountRef.current = layerStates.length;
 
   // Find this panel's tab to check PDF bindings
   const tab = tabId != null ? tabs.find(t => t.id === tabId) : null;
@@ -50,7 +59,9 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       await renderer.init();
       if (destroyed) {
         renderer.destroy();
-        rendererRef.current = null;
+        // Only null the ref if it still points to THIS renderer — during
+        // React StrictMode double-mount, mount 2 may have already replaced it.
+        if (rendererRef.current === renderer) rendererRef.current = null;
       }
     })();
 
@@ -58,7 +69,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       destroyed = true;
       if (renderer) {
         renderer.destroy();
-        rendererRef.current = null;
+        if (rendererRef.current === renderer) rendererRef.current = null;
       }
     };
   }, [tabId]);
@@ -129,6 +140,12 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         className="board-panel-canvas"
         data-testid="board-canvas"
       />
+      {tab && !tab.board && (
+        <div className="board-loading-overlay">
+          <div className="board-loading-spinner" />
+          <span className="board-loading-text">Loading board...</span>
+        </div>
+      )}
       <div className="board-sidebar-toggle-group" ref={sliderGroupRef}>
         <button
           className={`board-sidebar-toggle ${sidebarOpen ? 'active' : ''}`}
@@ -171,25 +188,26 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           </div>
         )}
         <button
+          className={`board-netlines-toggle ${followPdf ? 'active' : ''}`}
+          onClick={() => boardStore.toggleFollowPdf()}
+          disabled={linkedPdfs.length === 0}
+          title={followPdf ? 'PDF follow: ON' : 'PDF follow: OFF'}
+        >
+          ⇶
+        </button>
+        <button
           className="board-netlines-toggle"
           onClick={() => rendererRef.current?.fitToBoard()}
           title="Zoom to fit board"
         >
-          ⊞
-        </button>
-        <button
-          className="board-netlines-toggle"
-          onClick={() => rendererRef.current?.restartRender()}
-          title="Restart renderer (force scene rebuild)"
-        >
-          ↺
+          <IconObjectScan size={16} />
         </button>
         <button
           className={`board-netlines-toggle ${showHoverInfo ? 'active' : ''}`}
           onClick={() => boardStore.toggleHoverInfo()}
           title={showHoverInfo ? 'Hover info: ON' : 'Hover info: OFF'}
         >
-          ⊙
+          <IconTooltip size={16} />
         </button>
         <button
           className={`board-netlines-toggle ${showNetDim ? 'active' : ''}`}
@@ -203,7 +221,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           onClick={() => boardStore.toggleNetLines()}
           title={showNetLines ? 'Net lines: ON' : 'Net lines: OFF'}
         >
-          ※
+          <IconHierarchy size={16} />
         </button>
       </div>
       <BoardSidebar

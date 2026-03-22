@@ -44,19 +44,26 @@ func main() {
 	libraryDir := os.Getenv("LIBRARY_DIR")
 	scanner := databank.NewScanner(db, dataDir, libraryDir)
 	extractor := databank.NewPdfExtractor(db, dataDir)
+	extractor.SetScanner(scanner)
 
-	// Run initial scan + PDF text extraction in background
-	go func() {
-		log.Println("Starting initial databank scan...")
-		status := scanner.Scan()
-		log.Printf("Initial scan complete: %d files (%d added, %d updated, %d deleted)",
-			status.Total, status.Added, status.Updated, status.Deleted)
-
-		// Extract text from new PDFs (2 concurrent workers for NAS)
+	// After every scan (initial or manual), run PDF text extraction as phase 2
+	scanner.SetPostScanFn(func() {
+		log.Println("Phase 2: Starting PDF text extraction...")
 		extracted, errors := extractor.ExtractAll(2)
 		if extracted > 0 || errors > 0 {
-			log.Printf("PDF text extraction: %d extracted, %d errors", extracted, errors)
+			log.Printf("Phase 2 complete: %d PDFs extracted, %d errors", extracted, errors)
+		} else {
+			log.Println("Phase 2 complete: no new PDFs to extract")
 		}
+	})
+
+	// Run initial scan (phase 1: file indexing) in background
+	go func() {
+		log.Println("Phase 1: Starting file indexing...")
+		status := scanner.Scan()
+		log.Printf("Phase 1 complete: %d files (%d added, %d updated, %d deleted) in %dms",
+			status.Total, status.Added, status.Updated, status.Deleted, status.Duration)
+		// Phase 2 (PDF extraction) runs automatically via postScanFn
 	}()
 
 	mux := http.NewServeMux()
@@ -74,6 +81,7 @@ func main() {
 	// Databank API routes
 	dbHandler := handlers.NewDatabankHandler(db, scanner, extractor, dataDir)
 	mux.HandleFunc("POST /api/databank/scan", dbHandler.Scan)
+	mux.HandleFunc("POST /api/databank/scan/stop", dbHandler.ScanStop)
 	mux.HandleFunc("GET /api/databank/scan/status", dbHandler.ScanStatus)
 	mux.HandleFunc("GET /api/databank/files", dbHandler.ListFiles)
 	mux.HandleFunc("GET /api/databank/files/{id}", dbHandler.GetFile)

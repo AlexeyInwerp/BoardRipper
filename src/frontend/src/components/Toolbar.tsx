@@ -1,16 +1,20 @@
 import { useRef, useEffect } from 'react';
+import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
-import { exportToBVR3, getAllExtensions } from '../parsers';
+import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, butterfly, board, showNetLines, activeTabId, flipAxis } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showNetLines, showTraces, activeTabId, flipAxis } = useBoardStore();
+  const fmt = board ? getFormat(board.format) : undefined;
+  const hasLayers = fmt?.hasLayers ?? false;
+  const hasTraces = fmt?.hasTraces ?? false;
 
   useEffect(() => {
     fileInputRefs.board = fileInputRef.current;
@@ -129,13 +133,26 @@ export function Toolbar() {
       >
         Bottom
       </button>
-      <button
-        onClick={() => boardStore.toggleButterfly()}
-        className={`toolbar-btn ${butterfly ? 'active' : ''}`}
-        data-tooltip="Side by side"
-      >
-        Butterfly
-      </button>
+      {!hasLayers && (
+        <button
+          onClick={() => boardStore.toggleButterfly()}
+          className={`toolbar-btn toolbar-btn-icon ${butterfly ? 'active' : ''}`}
+          data-tooltip="Butterfly (side by side)"
+        >
+          <IconFlipHorizontal size={18} />
+        </button>
+      )}
+
+      {hasTraces && !hasLayers && (
+        <button
+          onClick={() => boardStore.toggleTraces()}
+          className={`toolbar-btn ${showTraces ? 'active' : ''}`}
+          data-tooltip="Toggle PCB traces"
+          data-testid="traces-btn"
+        >
+          Traces
+        </button>
+      )}
 
       <div className="toolbar-separator" />
 

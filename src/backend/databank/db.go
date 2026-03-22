@@ -12,9 +12,12 @@ import (
 )
 
 // DB wraps a SQLite connection with databank-specific helpers.
+// Uses separate read and write connection pools so readers never block on writes
+// (WAL mode allows concurrent reads alongside a single writer).
 type DB struct {
-	conn *sql.DB
-	mu   sync.RWMutex
+	writer *sql.DB // single-connection pool for writes
+	reader *sql.DB // multi-connection pool for reads
+	mu     sync.Mutex // serialises writes at the Go level
 }
 
 // Open creates or opens the databank SQLite database at dataDir/databank.db.
@@ -25,44 +28,53 @@ func Open(dataDir string) (*DB, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 
-	conn, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	dsn := dbPath + "?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
+
+	writer, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("open writer database: %w", err)
 	}
+	writer.SetMaxOpenConns(1) // single writer for SQLite
 
-	// Single writer connection for SQLite
-	conn.SetMaxOpenConns(1)
+	reader, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		writer.Close()
+		return nil, fmt.Errorf("open reader database: %w", err)
+	}
+	reader.SetMaxOpenConns(4) // concurrent readers via WAL
 
-	db := &DB{conn: conn}
+	db := &DB{writer: writer, reader: reader}
 	if err := db.migrate(); err != nil {
-		conn.Close()
+		writer.Close()
+		reader.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	log.Printf("Databank database opened: %s", dbPath)
+	log.Printf("Databank database opened: %s (WAL mode, separate read/write pools)", dbPath)
 	return db, nil
 }
 
-// Close shuts down the database connection.
+// Close shuts down the database connections.
 func (db *DB) Close() error {
-	return db.conn.Close()
+	db.reader.Close()
+	return db.writer.Close()
 }
 
-// Conn returns the underlying sql.DB for direct queries.
+// Conn returns the read connection pool for direct queries.
 func (db *DB) Conn() *sql.DB {
-	return db.conn
+	return db.reader
 }
 
 const schemaVersion = 2
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
-	if _, err := db.conn.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+	if _, err := db.writer.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
 		return err
 	}
 
 	var ver int
-	err := db.conn.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&ver)
+	err := db.writer.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&ver)
 	if err == sql.ErrNoRows {
 		ver = 0
 	} else if err != nil {
@@ -84,7 +96,7 @@ func (db *DB) migrate() error {
 }
 
 func (db *DB) migrateV1() error {
-	tx, err := db.conn.Begin()
+	tx, err := db.writer.Begin()
 	if err != nil {
 		return err
 	}
@@ -157,7 +169,7 @@ func (db *DB) migrateV1() error {
 }
 
 func (db *DB) migrateV2() error {
-	tx, err := db.conn.Begin()
+	tx, err := db.writer.Begin()
 	if err != nil {
 		return err
 	}
@@ -228,7 +240,7 @@ func (db *DB) InsertFile(f *FileRecord) (int64, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	res, err := db.conn.Exec(
+	res, err := db.writer.Exec(
 		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.Path, f.Filename, f.Extension, f.FileType, f.Size, f.ModTime, f.ScanTime,
@@ -246,7 +258,7 @@ func (db *DB) UpdateFileScan(id int64, size, modTime, scanTime int64) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	_, err := db.conn.Exec(
+	_, err := db.writer.Exec(
 		`UPDATE files SET size = ?, mod_time = ?, scan_time = ? WHERE id = ?`,
 		size, modTime, scanTime, id,
 	)
@@ -258,7 +270,7 @@ func (db *DB) UpdateFileMetadata(id int64, boardNumber, manufacturer, model stri
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	_, err := db.conn.Exec(
+	_, err := db.writer.Exec(
 		`UPDATE files SET board_number = ?, manufacturer = ?, model = ?, donor_pool = ? WHERE id = ?`,
 		nullStr(boardNumber), nullStr(manufacturer), nullStr(model), boolToInt(donorPool), id,
 	)
@@ -270,7 +282,7 @@ func (db *DB) SetHasPreview(id int64, has bool) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	_, err := db.conn.Exec(`UPDATE files SET has_preview = ? WHERE id = ?`, boolToInt(has), id)
+	_, err := db.writer.Exec(`UPDATE files SET has_preview = ? WHERE id = ?`, boolToInt(has), id)
 	return err
 }
 
@@ -280,16 +292,16 @@ func (db *DB) DeleteFile(id int64) error {
 	defer db.mu.Unlock()
 
 	// Delete FTS5 entries (no cascade support for virtual tables)
-	if _, err := db.conn.Exec(`DELETE FROM pdf_text WHERE file_id = ?`, id); err != nil {
+	if _, err := db.writer.Exec(`DELETE FROM pdf_text WHERE file_id = ?`, id); err != nil {
 		return err
 	}
-	_, err := db.conn.Exec(`DELETE FROM files WHERE id = ?`, id)
+	_, err := db.writer.Exec(`DELETE FROM files WHERE id = ?`, id)
 	return err
 }
 
 // GetFileByPath returns a file record by its relative path.
 func (db *DB) GetFileByPath(path string) (*FileRecord, error) {
-	return db.scanFile(db.conn.QueryRow(
+	return db.scanFile(db.reader.QueryRow(
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview
 		 FROM files WHERE path = ?`, path,
@@ -298,7 +310,7 @@ func (db *DB) GetFileByPath(path string) (*FileRecord, error) {
 
 // GetFileByID returns a file record by its ID.
 func (db *DB) GetFileByID(id int64) (*FileRecord, error) {
-	return db.scanFile(db.conn.QueryRow(
+	return db.scanFile(db.reader.QueryRow(
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview
 		 FROM files WHERE id = ?`, id,
@@ -326,7 +338,7 @@ func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([
 
 	query += ` ORDER BY manufacturer, board_number, filename`
 
-	rows, err := db.conn.Query(query, args...)
+	rows, err := db.reader.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +357,7 @@ func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([
 
 // AllFilePaths returns all paths currently in the database (for incremental scan diff).
 func (db *DB) AllFilePaths() (map[string]struct{ ID, Size, ModTime int64 }, error) {
-	rows, err := db.conn.Query(`SELECT id, path, size, mod_time FROM files`)
+	rows, err := db.reader.Query(`SELECT id, path, size, mod_time FROM files`)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +377,7 @@ func (db *DB) AllFilePaths() (map[string]struct{ ID, Size, ModTime int64 }, erro
 
 // GetBindingsForBoard returns all PDF bindings for a board file.
 func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
-	rows, err := db.conn.Query(
+	rows, err := db.reader.Query(
 		`SELECT id, board_file_id, pdf_file_id, auto_matched FROM bindings WHERE board_file_id = ?`,
 		boardFileID,
 	)
@@ -389,7 +401,7 @@ func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
 
 // GetBindingsForFile returns all bindings involving a file (as board or PDF), with filenames.
 func (db *DB) GetBindingsForFile(fileID int64) ([]BindingDetail, error) {
-	rows, err := db.conn.Query(
+	rows, err := db.reader.Query(
 		`SELECT b.id, b.board_file_id, b.pdf_file_id, b.auto_matched,
 		        bf.filename, bf.path, pf.filename, pf.path
 		 FROM bindings b
@@ -422,7 +434,7 @@ func (db *DB) InsertBinding(boardFileID, pdfFileID int64, autoMatched bool) (int
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	res, err := db.conn.Exec(
+	res, err := db.writer.Exec(
 		`INSERT OR IGNORE INTO bindings (board_file_id, pdf_file_id, auto_matched) VALUES (?, ?, ?)`,
 		boardFileID, pdfFileID, boolToInt(autoMatched),
 	)
@@ -437,7 +449,7 @@ func (db *DB) DeleteBinding(id int64) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	_, err := db.conn.Exec(`DELETE FROM bindings WHERE id = ?`, id)
+	_, err := db.writer.Exec(`DELETE FROM bindings WHERE id = ?`, id)
 	return err
 }
 
@@ -528,7 +540,7 @@ func boolToInt(b bool) int {
 // GetConfig returns a config value by key, or empty string if not set.
 func (db *DB) GetConfig(key string) (string, error) {
 	var val string
-	err := db.conn.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&val)
+	err := db.reader.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&val)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -541,10 +553,10 @@ func (db *DB) SetConfig(key, value string) error {
 	defer db.mu.Unlock()
 
 	if value == "" {
-		_, err := db.conn.Exec(`DELETE FROM config WHERE key = ?`, key)
+		_, err := db.writer.Exec(`DELETE FROM config WHERE key = ?`, key)
 		return err
 	}
-	_, err := db.conn.Exec(
+	_, err := db.writer.Exec(
 		`INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		key, value,
 	)
@@ -553,7 +565,7 @@ func (db *DB) SetConfig(key, value string) error {
 
 // AllConfig returns all config key-value pairs.
 func (db *DB) AllConfig() (map[string]string, error) {
-	rows, err := db.conn.Query(`SELECT key, value FROM config`)
+	rows, err := db.reader.Query(`SELECT key, value FROM config`)
 	if err != nil {
 		return nil, err
 	}

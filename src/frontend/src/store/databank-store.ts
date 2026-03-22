@@ -70,6 +70,14 @@ export interface ScanStatus {
   deleted: number;
   errors: number;
   duration_ms: number;
+  phase?: string;
+  last_file?: string;
+  // Phase 2: PDF text extraction
+  pdf_running?: boolean;
+  pdf_extracted?: number;
+  pdf_total?: number;
+  pdf_errors?: number;
+  pdf_current?: string;
 }
 
 export type ViewMode = 'metadata' | 'folders' | 'model';
@@ -105,7 +113,6 @@ class DatabankStore {
   private _scanStatus: ScanStatus | null = null;
   private _searchResults: SearchResult[] = [];
   private _searchQuery = '';
-  private _donorOnlyFilter = false;
   private _autoPdf = (() => { try { return localStorage.getItem('boardripper-library-autopdf') !== '0'; } catch { return true; } })();
   private _verboseScan = (() => { try { return localStorage.getItem('boardripper-library-verbose') === '1'; } catch { return false; } })();
   private _showPreviews = (() => { try { return localStorage.getItem('boardripper-library-previews') === '1'; } catch { return false; } })();
@@ -123,7 +130,6 @@ class DatabankStore {
   get scanStatus() { return this._scanStatus; }
   get searchResults() { return this._searchResults; }
   get searchQuery() { return this._searchQuery; }
-  get donorOnlyFilter() { return this._donorOnlyFilter; }
   get autoPdf() { return this._autoPdf; }
   get verboseScan() { return this._verboseScan; }
   get showPreviews() { return this._showPreviews; }
@@ -260,6 +266,19 @@ class DatabankStore {
     }
   }
 
+  /** Check if a scan or PDF extraction is already in progress and start polling if so. */
+  async checkScanStatus(): Promise<void> {
+    if (isElectron()) return;
+    const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
+    if (status) {
+      this._scanStatus = status;
+      this.notify();
+      if (status.running || status.pdf_running) {
+        this._startScanPolling();
+      }
+    }
+  }
+
   async fetchFiles(): Promise<void> {
     this._loading = true;
     this.notify();
@@ -306,6 +325,8 @@ class DatabankStore {
     return this._files.filter(f => pdfIds.includes(f.id));
   }
 
+  private _scanPollTimer: ReturnType<typeof setInterval> | null = null;
+
   async triggerScan(): Promise<void> {
     this._scanStatus = { running: true, scanned: 0, total: 0, added: 0, updated: 0, deleted: 0, errors: 0, duration_ms: 0 };
     this.notify();
@@ -317,17 +338,71 @@ class DatabankStore {
         added: this._files.length, updated: 0, deleted: 0, errors: 0,
         duration_ms: 0,
       };
+      this.notify();
     } else {
-      const data = await this.apiFetch<ScanStatus>('/api/databank/scan', { method: 'POST' });
-      if (data) {
-        this._scanStatus = data;
+      // Fire-and-forget: backend runs scan in background
+      await this.apiFetch<ScanStatus>('/api/databank/scan', { method: 'POST' });
+      this._startScanPolling();
+    }
+  }
+
+  async stopScan(): Promise<void> {
+    if (isElectron()) return;
+    await this.apiFetch<ScanStatus>('/api/databank/scan/stop', { method: 'POST' });
+    this._stopScanPolling();
+    // Fetch final status
+    const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
+    if (status) {
+      this._scanStatus = status;
+      if (!status.running) {
         await this.fetchFiles();
         await this.fetchTree();
-      } else {
-        this._scanStatus = null;
       }
     }
     this.notify();
+  }
+
+  private _filesFetchedAfterScan = false;
+
+  private _startScanPolling() {
+    this._stopScanPolling();
+    this._filesFetchedAfterScan = false;
+    this._scanPollTimer = setInterval(async () => {
+      const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
+      if (status) {
+        const prev = this._scanStatus;
+        const changed = !prev
+          || prev.scanned !== status.scanned || prev.running !== status.running
+          || prev.pdf_running !== status.pdf_running || prev.pdf_extracted !== status.pdf_extracted
+          || prev.phase !== status.phase;
+        this._scanStatus = status;
+        if (changed) this.notify();
+
+        // File scan done — fetch files once (even if PDF extraction still running)
+        if (!status.running && !this._filesFetchedAfterScan) {
+          this._filesFetchedAfterScan = true;
+          await this.fetchFiles();
+          await this.fetchTree();
+          this.notify();
+        }
+
+        // Stop polling only when both file scan and PDF extraction are done
+        if (!status.running && !status.pdf_running) {
+          this._stopScanPolling();
+          // Final refresh in case PDF extraction changed something
+          if (this._filesFetchedAfterScan) {
+            this.notify();
+          }
+        }
+      }
+    }, 500);
+  }
+
+  private _stopScanPolling() {
+    if (this._scanPollTimer) {
+      clearInterval(this._scanPollTimer);
+      this._scanPollTimer = null;
+    }
   }
 
   async updateFile(id: number, update: Partial<Pick<DatabankFile, 'board_number' | 'manufacturer' | 'model' | 'donor_pool'>>): Promise<void> {
@@ -352,9 +427,8 @@ class DatabankStore {
     await this.updateFile(id, { donor_pool: !file.donor_pool });
   }
 
-  async search(query: string, donorOnly?: boolean): Promise<void> {
+  async search(query: string): Promise<void> {
     this._searchQuery = query;
-    if (donorOnly !== undefined) this._donorOnlyFilter = donorOnly;
     this.notify();
 
     if (!query.trim()) {
@@ -364,7 +438,6 @@ class DatabankStore {
     }
 
     const params = new URLSearchParams({ q: query });
-    if (this._donorOnlyFilter) params.set('donor', '1');
     const data = await this.apiFetch<{ results: SearchResult[] }>(`/api/databank/search?${params}`);
     this._searchResults = data?.results || [];
     this.notify();
@@ -440,11 +513,6 @@ class DatabankStore {
 
   setViewMode(mode: ViewMode) {
     this._viewMode = mode;
-    this.notify();
-  }
-
-  setDonorOnlyFilter(v: boolean) {
-    this._donorOnlyFilter = v;
     this.notify();
   }
 

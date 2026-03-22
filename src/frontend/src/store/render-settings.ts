@@ -105,6 +105,8 @@ export interface RenderSettings {
 
   /** Debug: draw a crosshair at each pin's exact file coordinates */
   showPadVertices: boolean;
+  /** Debug: show numbered markers at each outline vertex */
+  showVertexNumbers: boolean;
   /** Debug: color part labels by font-size tier (blue=small, yellow=medium, green=large) */
   showLabelSizeDebug: boolean;
   /** Color part body fills by component type prefix (R/C/L/U/Q/D/J) */
@@ -114,6 +116,13 @@ export interface RenderSettings {
 
   clickThreshold: number;
   fitPadding: number;
+
+  /** Disable inertia/momentum after panning */
+  disableInertia: boolean;
+  /** Wheel zoom smoothing factor (1 = instant, higher = smoother) */
+  wheelSmooth: number;
+  /** Require two fingers for panning (one finger does nothing); useful for trackpad users */
+  twoFingerPan: boolean;
 
   netColorRules: NetColorRule[];
 
@@ -142,16 +151,16 @@ export const DEFAULTS: RenderSettings = {
   partBorderAlpha: 0.4,
   partPadding: 4,
   showPartLabels: true,
-  partLabelShadow: false,
-  labelSize: 'medium',
+  partLabelShadow: true,
+  labelSize: 'small',
   labelSizeSmall: 4,
   labelSizeMedium: 8,
   labelSizeLarge: 14,
   labelHideThreshold: 2,
 
-  pinMinRadius: 3,
+  pinMinRadius: 3.5,
   pinMaxRadius: 30,
-  pinScaleFactor: 1.0,
+  pinScaleFactor: 1,
   partMinBodyMils: 0,
   pinAlpha: 0.85,
   showPinNumbers: true,
@@ -165,12 +174,12 @@ export const DEFAULTS: RenderSettings = {
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
 
-  netLineWidth: 1,
-  netLineAlpha: 0.5,
+  netLineWidth: 3.5,
+  netLineAlpha: 0.6,
   netLineColor: 0xffff44,
-  netLineDashed: true,
+  netLineDashed: false,
   netLineDashLength: 8,
-  netLinePulse: true,
+  netLinePulse: false,
 
   boardFillAlpha: 0.08,
 
@@ -182,17 +191,21 @@ export const DEFAULTS: RenderSettings = {
 
   circleLabelMinScreenPx: 3,
   twoPinLabelMinScreenPx: 6,
-  pinNetLabelBg: false,
+  pinNetLabelBg: true,
   twoPinNetLabelBg: false,
   bgaLabelGapFactor: 0.15,
 
   showPadVertices: false,
+  showVertexNumbers: true,
   showLabelSizeDebug: false,
   showComponentColors: true,
   componentFillAlpha: 0.55,
 
   clickThreshold: 30,
   fitPadding: 50,
+  disableInertia: true,
+  wheelSmooth: 5,
+  twoFingerPan: true,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
 
@@ -327,7 +340,9 @@ export function computeDiagonalOBB(
   }
   if (runLen > bestRun) { bestRun = runLen; bestStart = runStart; }
 
-  if (bestRun < 5) return null;
+  // Require at least 10% of pins in the diagonal run to avoid false positives
+  // on BGA packages where column-to-column transitions mimic diagonals
+  if (bestRun < 5 || bestRun < pins.length * 0.1) return null;
 
   // Compute principal axis from the diagonal run
   const p0 = pins[bestStart].position;

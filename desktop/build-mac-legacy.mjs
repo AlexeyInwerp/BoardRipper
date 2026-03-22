@@ -4,7 +4,7 @@
  * Produces an x64-only .app (Catalina never ran on Apple Silicon).
  */
 import { execSync } from 'child_process';
-import { cpSync, rmSync, mkdirSync, existsSync } from 'fs';
+import { cpSync, rmSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -51,7 +51,7 @@ const [appPath] = await packager({
     ? path.join(DESKTOP, 'icon.icns')
     : undefined,
   appBundleId: 'com.boardripper.app',
-  appVersion: '1.0.0',
+  appVersion: JSON.parse(readFileSync(path.join(FRONTEND, 'package.json'), 'utf8')).version,
   ignore: [
     /^\/out($|\/)/,
     /^\/out-legacy($|\/)/,
