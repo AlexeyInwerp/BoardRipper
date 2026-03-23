@@ -20,7 +20,25 @@ const LINE_HEIGHT_RATIO = 1.2;
 const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
 const DEFAULT_CLEAN_CONTRAST = 3;
-const MAX_CANVAS_DIM = 8192;
+const MAX_CANVAS_DIM = 4096;
+const MAX_CANVAS_AREA = 4096 * 4096; // ~16M pixels — safe for mobile/tablet GPUs
+
+/** Clamp a pdf.js render scale so the resulting canvas stays within GPU limits. */
+function clampCanvasScale(pageW: number, pageH: number, scale: number): number {
+  let w = pageW * scale;
+  let h = pageH * scale;
+  // Clamp individual dimensions
+  if (w > MAX_CANVAS_DIM || h > MAX_CANVAS_DIM) {
+    scale *= Math.min(MAX_CANVAS_DIM / w, MAX_CANVAS_DIM / h);
+    w = pageW * scale;
+    h = pageH * scale;
+  }
+  // Clamp total pixel area
+  if (w * h > MAX_CANVAS_AREA) {
+    scale *= Math.sqrt(MAX_CANVAS_AREA / (w * h));
+  }
+  return scale;
+}
 
 // --- Page render cache (LRU, module-level shared across all PDF panels) ---
 interface CachedRender {
@@ -269,11 +287,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const baseScale = containerWidth / unscaledViewport.width;
 
     let hiresScale = baseScale * tier;
-    const rawW = unscaledViewport.width * hiresScale;
-    const rawH = unscaledViewport.height * hiresScale;
-    if (rawW > MAX_CANVAS_DIM || rawH > MAX_CANVAS_DIM) {
-      hiresScale *= Math.min(MAX_CANVAS_DIM / rawW, MAX_CANVAS_DIM / rawH);
-    }
+    // Clamp to safe canvas dimensions and total pixel area
+    hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale);
     const viewport = page.getViewport({ scale: hiresScale });
     const cssW = containerWidth;
     const cssH = unscaledViewport.height * baseScale;
@@ -281,7 +296,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const offscreen = document.createElement('canvas');
     offscreen.width = viewport.width;
     offscreen.height = viewport.height;
-    const offCtx = offscreen.getContext('2d')!;
+    const offCtx = offscreen.getContext('2d');
+    if (!offCtx) throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`);
 
     // 'display' intent is significantly faster than 'print' for complex schematics
     await page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' }).promise;
@@ -291,7 +307,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const tmpCanvas = document.createElement('canvas');
       tmpCanvas.width = offscreen.width;
       tmpCanvas.height = offscreen.height;
-      const tmpCtx = tmpCanvas.getContext('2d')!;
+      const tmpCtx = tmpCanvas.getContext('2d');
+      if (!tmpCtx) throw new Error('Canvas context failed for clean mode');
       tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
       tmpCtx.drawImage(offscreen, 0, 0);
       const bitmap = await createImageBitmap(tmpCanvas);
@@ -312,7 +329,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     canvas.height = entry.height;
     canvas.style.width = `${entry.cssW}px`;
     canvas.style.height = `${entry.cssH}px`;
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
 
     highlight.width = entry.width;
@@ -370,11 +388,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const baseScale = containerWidth / unscaledViewport.width;
 
       let hiresScale = baseScale * resTier;
-      const rawW = unscaledViewport.width * hiresScale;
-      const rawH = unscaledViewport.height * hiresScale;
-      if (rawW > MAX_CANVAS_DIM || rawH > MAX_CANVAS_DIM) {
-        hiresScale *= Math.min(MAX_CANVAS_DIM / rawW, MAX_CANVAS_DIM / rawH);
-      }
+      hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale);
       const viewport = page.getViewport({ scale: hiresScale });
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
@@ -383,7 +397,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const offscreen = document.createElement('canvas');
       offscreen.width = viewport.width;
       offscreen.height = viewport.height;
-      const offCtx = offscreen.getContext('2d')!;
+      const offCtx = offscreen.getContext('2d');
+      if (!offCtx) throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`);
 
       // 'display' intent is significantly faster than 'print' for complex schematics
       const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
@@ -402,7 +417,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
-      const ctx = canvas.getContext('2d')!;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
       if (cleanMode) ctx.filter = `contrast(${cleanContrastRef.current})`;
       ctx.drawImage(offscreen, 0, 0);
       if (cleanMode) ctx.filter = 'none';
