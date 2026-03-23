@@ -2581,7 +2581,13 @@ export class BoardRenderer {
       if (!this.isPartVisible(part)) continue;
 
       const local = part.side === 'bottom' ? localBot : localTop;
-      const isTwoPin = part.pins.length === 2;
+      // Diagonal 2-pin parts use circle-based hit testing (same as multi-pin)
+      const isDiag = part.pins.length === 2 && (() => {
+        const adx = Math.abs(part.pins[1].position.x - part.pins[0].position.x);
+        const ady = Math.abs(part.pins[1].position.y - part.pins[0].position.y);
+        return Math.min(adx, ady) / (Math.max(adx, ady) || 1) > 0.4;
+      })();
+      const isTwoPin = part.pins.length === 2 && !isDiag;
 
       if (isTwoPin) {
         const eb = computeEffectiveBounds(part.bounds, part.pins, s);

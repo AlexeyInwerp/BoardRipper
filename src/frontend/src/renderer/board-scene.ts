@@ -20,6 +20,7 @@ import {
   computeMultiPinPadding,
   computeEffectiveBounds,
   computeDiagonalOBB,
+  computeTwoPinOBB,
   resolvePinColor,
   quantizeFontSize,
   resolvePartTypeOverride,
@@ -483,11 +484,20 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     partContainer.cullable = true;
     partContainer.label   = part.name;
 
-    const isTwoPinPart = part.pins.length === 2;
     const isSmallPart  = part.pins.length <= 4;
     const isMultiPin   = part.pins.length > 2;
     const isBottom     = part.side === 'bottom';
     const eb = computeEffectiveBounds(part.bounds, part.pins, s);
+
+    // Detect diagonal 2-pin parts: if min(dx,dy)/max(dx,dy) > 0.4, it's diagonal
+    // enough that axis-aligned rendering produces oversized outlines.
+    const isDiag2Pin = part.pins.length === 2 && (() => {
+      const dx = Math.abs(part.pins[1].position.x - part.pins[0].position.x);
+      const dy = Math.abs(part.pins[1].position.y - part.pins[0].position.y);
+      const ratio = Math.min(dx, dy) / (Math.max(dx, dy) || 1);
+      return ratio > 0.4;
+    })();
+    const isTwoPinPart = part.pins.length === 2 && !isDiag2Pin;
 
     applyBodyShapeOverride(eb, override, isSmallPart);
 
@@ -862,7 +872,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         borderRect = { x: bx, y: by, w: bw, h: bh };
         fillX = bx; fillY = by; fillW = bw; fillH = bh;
       } else {
-        const obb = computeDiagonalOBB(part.pins, s);
+        // For diagonal 2-pin parts, compute a simple OBB along the pin axis.
+        // For multi-pin parts, use the existing diagonal detection.
+        const obb = isDiag2Pin
+          ? computeTwoPinOBB(part.pins, s)
+          : computeDiagonalOBB(part.pins, s);
         borderRect = obb
           ? { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, poly: obb }
           : { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };

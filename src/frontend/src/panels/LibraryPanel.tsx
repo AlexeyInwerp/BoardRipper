@@ -49,7 +49,7 @@ export function LibraryPanel() {
     databankStore.triggerScan();
   }, []);
 
-  const handleOpenFile = useCallback(async (file: DatabankFile) => {
+  const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
     databankStore.selectFile(file.id);
     try {
       const fileObj = await databankStore.fetchFileBuffer(file);
@@ -85,6 +85,15 @@ export function LibraryPanel() {
         boardStore.autoBindPdf(fileObj.name);
         await pdfStore.loadFile(fileObj);
         ensurePdfPanel(fileObj.name);
+        pdfStore.switchTo(fileObj.name);
+        // Pre-populate PDF viewer search with library search query
+        if (pdfSearchMode && searchQuery) {
+          pdfStore.searchText(searchQuery);
+        }
+        // Navigate to the specific page from the search result
+        if (pageNum) {
+          pdfStore.goToPage(pageNum);
+        }
       }
     } catch (err) {
       console.error('[Library] Failed to open file:', err);
@@ -494,7 +503,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
 function SearchResultsView({ results, files, onOpenFile }: {
   results: import('../store/databank-store').SearchResult[];
   files: DatabankFile[];
-  onOpenFile: (f: DatabankFile) => void;
+  onOpenFile: (f: DatabankFile, pageNum?: number) => void;
 }) {
   return (
     <div className="library-search-results">
@@ -507,13 +516,20 @@ function SearchResultsView({ results, files, onOpenFile }: {
           className="library-search-result"
           onClick={() => {
             const file = files.find(f => f.id === r.file_id);
-            if (file) onOpenFile(file);
+            if (file) onOpenFile(file, r.page_num);
           }}
         >
           <div className="library-search-result-header">
             <span className="library-file-icon library-icon-pdf">P</span>
             <span className="library-search-result-file">{r.filename}</span>
             <span className="library-search-result-page">p{r.page_num}</span>
+            <button
+              className="library-dump-btn"
+              onClick={(e) => { e.stopPropagation(); window.open(`/api/databank/files/${r.file_id}/dump`, '_blank'); }}
+              title="Dump extracted text (debug)"
+            >
+              dump
+            </button>
           </div>
           {r.snippet && (
             <div

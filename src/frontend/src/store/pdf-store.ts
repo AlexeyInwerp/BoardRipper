@@ -5,10 +5,16 @@ import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, 
 import { boardCache } from './board-cache';
 import { logStore } from './log-store';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+// In Electron (file:// protocol), Workers can't load file:// URLs on Windows.
+// Use workerSrc for normal web mode; disable worker for Electron (runs on main thread).
+if (window.location.protocol === 'file:') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+} else {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url,
+  ).toString();
+}
 
 export interface PdfTextItem {
   str: string;
@@ -29,6 +35,111 @@ export interface PdfTextMatch {
   charStart: number;
   charEnd: number;
   item: PdfTextItem;
+}
+
+/** A merged text line — adjacent items concatenated for cross-item search */
+interface MergedLine {
+  text: string;
+  /** For each character in `text`, which original item index produced it */
+  charToItem: number[];
+  /** For each character in `text`, offset within that item's str */
+  charToOffset: number[];
+  /** The item indices in this line (in order) */
+  itemIndices: number[];
+  /** Average Y position of the line (for multi-term spatial search) */
+  y: number;
+  /** X position of line start */
+  x: number;
+  /** Average font size */
+  fontSize: number;
+}
+
+/**
+ * Merge adjacent PdfTextItems into logical lines for cross-item search.
+ * Items on the same row (similar Y within font-size tolerance) are concatenated.
+ * A space is inserted between items that have a horizontal gap.
+ */
+function mergeItemsIntoLines(items: PdfTextItem[]): MergedLine[] {
+  if (items.length === 0) return [];
+
+  // Build indexed items with spatial info
+  const indexed = items.map((item, idx) => {
+    const fs = pdfFontSize(item.transform);
+    return { item, idx, x: item.transform[4], y: item.transform[5], fontSize: fs || 10 };
+  });
+
+  // Sort by Y descending (PDF coords: top of page = high Y), then X ascending
+  indexed.sort((a, b) => {
+    const yDiff = b.y - a.y;
+    if (Math.abs(yDiff) > Math.min(a.fontSize, b.fontSize) * 0.3) return yDiff;
+    return a.x - b.x;
+  });
+
+  const lines: MergedLine[] = [];
+  let lineItems = [indexed[0]];
+
+  for (let i = 1; i < indexed.length; i++) {
+    const cur = indexed[i];
+    const prev = lineItems[lineItems.length - 1];
+    const yTol = Math.min(cur.fontSize, prev.fontSize) * 0.5;
+
+    if (Math.abs(cur.y - prev.y) <= yTol) {
+      lineItems.push(cur);
+    } else {
+      lines.push(buildLine(lineItems));
+      lineItems = [cur];
+    }
+  }
+  lines.push(buildLine(lineItems));
+  return lines;
+}
+
+function buildLine(lineItems: { item: PdfTextItem; idx: number; x: number; y: number; fontSize: number }[]): MergedLine {
+  // Sort by X within line
+  lineItems.sort((a, b) => a.x - b.x);
+
+  let text = '';
+  const charToItem: number[] = [];
+  const charToOffset: number[] = [];
+  const itemIndices: number[] = [];
+  let totalY = 0;
+  let totalFontSize = 0;
+
+  for (let i = 0; i < lineItems.length; i++) {
+    const li = lineItems[i];
+    itemIndices.push(li.idx);
+    totalY += li.y;
+    totalFontSize += li.fontSize;
+
+    // Insert space between items if there's a horizontal gap
+    if (i > 0) {
+      const prevLi = lineItems[i - 1];
+      const prevEnd = prevLi.x + prevLi.item.width;
+      const gap = li.x - prevEnd;
+      if (gap > li.fontSize * 0.15) {
+        // Significant gap — insert space
+        text += ' ';
+        charToItem.push(-1); // space doesn't belong to any item
+        charToOffset.push(-1);
+      }
+    }
+
+    for (let c = 0; c < li.item.str.length; c++) {
+      text += li.item.str[c];
+      charToItem.push(li.idx);
+      charToOffset.push(c);
+    }
+  }
+
+  return {
+    text,
+    charToItem,
+    charToOffset,
+    itemIndices,
+    y: totalY / lineItems.length,
+    x: lineItems[0].x,
+    fontSize: totalFontSize / lineItems.length,
+  };
 }
 
 export interface PdfBookmark {
@@ -582,18 +693,27 @@ class PdfStore {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
+      const lines = mergeItemsIntoLines(items);
       const pageMatches: PdfTextMatch[] = [];
       let allFound = true;
 
       for (const term of termsLower) {
         let found = false;
-        for (let ii = 0; ii < items.length; ii++) {
-          const lower = items[ii].str.toLowerCase();
+        for (const line of lines) {
+          const lower = line.text.toLowerCase();
           const pos = lower.indexOf(term);
           if (pos !== -1) {
-            pageMatches.push({ pageIndex: pi, itemIndex: ii, charStart: pos, charEnd: pos + term.length, item: items[ii] });
-            found = true;
-            break; // first occurrence per term per page
+            // Find the primary item for this match (first contributing item)
+            let bestItem = -1;
+            let bestCharStart = 0;
+            for (let c = pos; c < pos + term.length; c++) {
+              if (line.charToItem[c] >= 0) { bestItem = line.charToItem[c]; bestCharStart = line.charToOffset[c]; break; }
+            }
+            if (bestItem >= 0) {
+              pageMatches.push({ pageIndex: pi, itemIndex: bestItem, charStart: bestCharStart, charEnd: Math.min(bestCharStart + term.length, items[bestItem].str.length), item: items[bestItem] });
+              found = true;
+              break; // first occurrence per term per page
+            }
           }
         }
         if (!found) { allFound = false; break; }
@@ -611,19 +731,37 @@ class PdfStore {
     const qLower = query.toLowerCase();
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
-      for (let ii = 0; ii < items.length; ii++) {
-        const item = items[ii];
-        const lower = item.str.toLowerCase();
+      const lines = mergeItemsIntoLines(items);
+      for (const line of lines) {
+        const lower = line.text.toLowerCase();
         let pos = 0;
         while ((pos = lower.indexOf(qLower, pos)) !== -1) {
-          d.matches.push({
-            pageIndex: pi,
-            itemIndex: ii,
-            charStart: pos,
-            charEnd: pos + query.length,
-            item,
-          });
-          pos += query.length;
+          // Map match back to original items — find all items that contribute to this match
+          const matchEnd = pos + qLower.length;
+          const itemsHit = new Set<number>();
+          for (let c = pos; c < matchEnd; c++) {
+            if (line.charToItem[c] >= 0) itemsHit.add(line.charToItem[c]);
+          }
+          // Create a match for each item that contributes (so all get highlighted)
+          for (const ii of itemsHit) {
+            const item = items[ii];
+            // Compute char range within this specific item
+            let itemCharStart = item.str.length, itemCharEnd = 0;
+            for (let c = pos; c < matchEnd; c++) {
+              if (line.charToItem[c] === ii) {
+                itemCharStart = Math.min(itemCharStart, line.charToOffset[c]);
+                itemCharEnd = Math.max(itemCharEnd, line.charToOffset[c] + 1);
+              }
+            }
+            d.matches.push({
+              pageIndex: pi,
+              itemIndex: ii,
+              charStart: itemCharStart,
+              charEnd: itemCharEnd,
+              item,
+            });
+          }
+          pos += qLower.length;
         }
       }
     }
@@ -634,25 +772,38 @@ class PdfStore {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
+      const lines = mergeItemsIntoLines(items);
 
+      // Find all hits per term using merged lines
       const termHits: { ii: number; charStart: number; charEnd: number; x: number; y: number; fontSize: number }[][] = [];
       for (const term of termsLower) {
         const hits: typeof termHits[0] = [];
-        for (let ii = 0; ii < items.length; ii++) {
-          const item = items[ii];
-          const lower = item.str.toLowerCase();
+        for (const line of lines) {
+          const lower = line.text.toLowerCase();
           let pos = 0;
           while ((pos = lower.indexOf(term, pos)) !== -1) {
-            const t = item.transform;
-            const fontSize = pdfFontSize(t);
-            hits.push({
-              ii,
-              charStart: pos,
-              charEnd: pos + term.length,
-              x: t[4],
-              y: t[5],
-              fontSize,
-            });
+            // Find the primary item for spatial positioning
+            let primaryItem = -1;
+            let primaryCharStart = 0;
+            for (let c = pos; c < pos + term.length; c++) {
+              if (line.charToItem[c] >= 0) {
+                primaryItem = line.charToItem[c];
+                primaryCharStart = line.charToOffset[c];
+                break;
+              }
+            }
+            if (primaryItem >= 0) {
+              const pItem = items[primaryItem];
+              const fs = pdfFontSize(pItem.transform) || line.fontSize;
+              hits.push({
+                ii: primaryItem,
+                charStart: primaryCharStart,
+                charEnd: Math.min(primaryCharStart + term.length, pItem.str.length),
+                x: pItem.transform[4],
+                y: pItem.transform[5],
+                fontSize: fs,
+              });
+            }
             pos += term.length;
           }
         }
@@ -796,9 +947,20 @@ class PdfStore {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
+      const lines = mergeItemsIntoLines(items);
 
-      // Check mandatory primary term (component name) first
-      const primaryItem = items.find(item => item.str.toLowerCase().includes(component));
+      // Check mandatory primary term (component name) first — search merged lines
+      let primaryItem: PdfTextItem | null = null;
+      for (const line of lines) {
+        const pos = line.text.toLowerCase().indexOf(component);
+        if (pos !== -1) {
+          // Find the first contributing item for zoom target
+          for (let c = pos; c < pos + component.length; c++) {
+            if (line.charToItem[c] >= 0) { primaryItem = items[line.charToItem[c]]; break; }
+          }
+          if (primaryItem) break;
+        }
+      }
       if (!primaryItem) continue;
 
       // Track first page with component name as fallback
@@ -812,7 +974,16 @@ class PdfStore {
         const matchedItems: PdfTextItem[] = [primaryItem];
         let allNetsFound = true;
         for (const net of nets) {
-          const netItem = items.find(item => item.str.toLowerCase().includes(net));
+          let netItem: PdfTextItem | null = null;
+          for (const line of lines) {
+            const pos = line.text.toLowerCase().indexOf(net);
+            if (pos !== -1) {
+              for (let c = pos; c < pos + net.length; c++) {
+                if (line.charToItem[c] >= 0) { netItem = items[line.charToItem[c]]; break; }
+              }
+              if (netItem) break;
+            }
+          }
           if (!netItem) { allNetsFound = false; break; }
           matchedItems.push(netItem);
         }
@@ -906,6 +1077,65 @@ class PdfStore {
     this.notify();
   }
 
+  /** Debug: dump extracted text to a new browser tab for inspection.
+   *  Shows raw items, merged lines, and item boundaries per page. */
+  dumpTextToNewTab(fileName?: string) {
+    const d = fileName ? this._documents.get(fileName) : this._active;
+    if (!d) { console.warn('[PdfStore] dumpText: no document'); return; }
+
+    const lines: string[] = [];
+    lines.push('<!DOCTYPE html><html><head><meta charset="utf-8">');
+    lines.push(`<title>PDF Text Dump: ${d.fileName}</title>`);
+    lines.push('<style>');
+    lines.push('body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; margin: 20px; }');
+    lines.push('h1 { color: #00d4ff; }');
+    lines.push('h2 { color: #ff6b9d; border-bottom: 1px solid #333; padding-bottom: 4px; margin-top: 32px; }');
+    lines.push('h3 { color: #ffd93d; margin-top: 16px; }');
+    lines.push('.item { background: #16213e; padding: 2px 6px; margin: 1px 0; border-left: 3px solid #0f3460; }');
+    lines.push('.merged { background: #1a3a2a; padding: 4px 8px; margin: 2px 0; border-left: 3px solid #00b894; white-space: pre-wrap; word-break: break-all; }');
+    lines.push('.meta { color: #888; font-size: 0.85em; }');
+    lines.push('.empty { color: #666; font-style: italic; }');
+    lines.push('.stats { background: #2d2d44; padding: 8px 12px; border-radius: 4px; margin-bottom: 16px; }');
+    lines.push('</style></head><body>');
+    lines.push(`<h1>PDF Text Dump: ${this._escHtml(d.fileName)}</h1>`);
+    lines.push(`<div class="stats">Pages: ${d.pageCount} | Extracted: ${d.textPages.length} | Total items: ${d.textPages.reduce((s, p) => s + p.length, 0)}</div>`);
+
+    for (let pi = 0; pi < d.textPages.length; pi++) {
+      const items = d.textPages[pi];
+      const merged = mergeItemsIntoLines(items);
+      lines.push(`<h2>Page ${pi + 1} (${items.length} items → ${merged.length} lines)</h2>`);
+
+      // Merged lines view
+      lines.push('<h3>Merged Lines</h3>');
+      if (merged.length === 0) {
+        lines.push('<div class="empty">No text on this page</div>');
+      }
+      for (let li = 0; li < merged.length; li++) {
+        const ml = merged[li];
+        lines.push(`<div class="merged">${this._escHtml(ml.text)} <span class="meta">[y=${ml.y.toFixed(1)} x=${ml.x.toFixed(1)} fs=${ml.fontSize.toFixed(1)} items=${ml.itemIndices.length}]</span></div>`);
+      }
+
+      // Raw items view
+      lines.push('<h3>Raw Items</h3>');
+      for (let ii = 0; ii < items.length; ii++) {
+        const item = items[ii];
+        const t = item.transform;
+        lines.push(`<div class="item">[${ii}] "${this._escHtml(item.str)}" <span class="meta">x=${t[4].toFixed(1)} y=${t[5].toFixed(1)} w=${item.width.toFixed(1)} h=${item.height.toFixed(1)} font=${item.fontName}</span></div>`);
+      }
+    }
+
+    lines.push('</body></html>');
+    const blob = new Blob([lines.join('\n')], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    // Clean up after a delay
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  private _escHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   /** Close a specific document by filename */
   closeFile(fileName: string) {
     const d = this._documents.get(fileName);
@@ -921,3 +1151,8 @@ class PdfStore {
 }
 
 export const pdfStore = new PdfStore();
+
+// Expose for integration tests (Playwright)
+if (typeof window !== 'undefined') {
+  (window as any).__pdfStore = pdfStore;
+}

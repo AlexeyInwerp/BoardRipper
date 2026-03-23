@@ -8,7 +8,7 @@
  * Fixed32 coordinates (raw / 100 = mils), position-dependent string cipher.
  */
 
-import type { BoardData, Part, Pin, Net, Point, BBox, Nail, Trace, Via } from './types';
+import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via } from './types';
 import { computeBBox, buildNets } from './types';
 
 const textDecoder = new TextDecoder('utf-8');
@@ -116,6 +116,24 @@ class TvwReader {
     this.pos += n;
     return bytes;
   }
+
+  /** Seek to absolute position */
+  seek(pos: number): void {
+    if (pos < 0 || pos > this.view.byteLength) {
+      throw new Error(`TVW: seek out of bounds: ${pos}`);
+    }
+    this.pos = pos;
+  }
+
+  /** Peek a u32 at offset from current position without advancing */
+  peekU32(offset: number): number {
+    const p = this.pos + offset;
+    if (p + 4 > this.view.byteLength) return -1;
+    return this.view.getUint32(p, true);
+  }
+
+  /** Access underlying DataView for bulk scanning */
+  getView(): DataView { return this.view; }
 }
 
 // ─── String Decryption ──────────────────────────────────────────────────────
@@ -150,33 +168,36 @@ function decodeString(s: string): string {
 
 // ─── TVW Internal Types ─────────────────────────────────────────────────────
 
-const enum TvwLayerType {
-  Document = 0,
-  Top = 1,
-  Bottom = 2,
-  Signal = 3,
-  Plane = 4,
-  SolderTop = 5,
-  SolderBottom = 6,
-  SilkTop = 7,
-  SilkBottom = 8,
-  PasteTop = 9,
-  PasteBottom = 10,
-  Drill = 11,
-  Roul = 12,
-}
+const TvwLayerType = {
+  Document: 0,
+  Top: 1,
+  Bottom: 2,
+  Signal: 3,
+  Plane: 4,
+  SolderTop: 5,
+  SolderBottom: 6,
+  SilkTop: 7,
+  SilkBottom: 8,
+  PasteTop: 9,
+  PasteBottom: 10,
+  Drill: 11,
+  Roul: 12,
+} as const;
+type TvwLayerType = typeof TvwLayerType[keyof typeof TvwLayerType];
 
-const enum TvwObjectType {
-  Through = 1,
-  Logic = 3,
-}
+const TvwObjectType = {
+  Through: 1,
+  Logic: 3,
+} as const;
+type TvwObjectType = typeof TvwObjectType[keyof typeof TvwObjectType];
 
-const enum TvwShapeType {
-  Round = 0,
-  Rect = 1,
-  RoundRect = 3,
-  Poly = 5,
-}
+const TvwShapeType = {
+  Round: 0,
+  Rect: 1,
+  RoundRect: 3,
+  Poly: 5,
+} as const;
+type TvwShapeType = typeof TvwShapeType[keyof typeof TvwShapeType];
 
 interface TvwShape {
   type: TvwShapeType;
@@ -218,7 +239,7 @@ interface TvwDrillHole {
 }
 
 interface TvwLogicLayer {
-  objType: TvwObjectType.Logic;
+  objType: typeof TvwObjectType.Logic;
   name: string;
   layerType: TvwLayerType;
   shapes: TvwShape[];
@@ -234,7 +255,7 @@ interface TvwDrillSlot {
 }
 
 interface TvwThroughLayer {
-  objType: TvwObjectType.Through;
+  objType: typeof TvwObjectType.Through;
   name: string;
   layerType: TvwLayerType;
   toolSizes: number[];  // drill diameters in mils
@@ -276,12 +297,18 @@ interface TvwBoard {
 
 // ─── Layer Parsing ──────────────────────────────────────────────────────────
 
-function detectObjectType(r: TvwReader): TvwObjectType {
+function detectObjectType(r: TvwReader): TvwObjectType | undefined {
+  const startPos = r.tell();
   for (let i = 0; i < 4; i++) {
     const type = r.readU32();
     if (type === TvwObjectType.Through || type === TvwObjectType.Logic) return type;
+    // eagleview returns first non-zero as object type — if it's unknown, bail
+    if (type !== 0) {
+      if (TVW_DEBUG) console.warn(`TVW: unknown object type ${type} at offset 0x${startPos.toString(16)}`);
+      return undefined;
+    }
   }
-  throw new Error(`TVW: could not detect object type at offset 0x${(r.tell() - 16).toString(16)}`);
+  return undefined;
 }
 
 function readLayerHeader(r: TvwReader): { name: string; initialName: string; path: string; layerType: TvwLayerType; padColor: number; lineColor: number } {
@@ -303,19 +330,13 @@ function readLayerHeader(r: TvwReader): { name: string; initialName: string; pat
 function loadShapes(r: TvwReader): TvwShape[] {
   const maxDCode = r.readU32();
   if (maxDCode === 0) return [];
+  // maxDCode is the highest D-code index; shapes are D10..D(maxDCode-1)
+  const shapeCount = maxDCode - 10;
   const shapes: TvwShape[] = [];
-  // Two termination styles:
-  //   1. Sentinel: marker == 0 → consume 4 bytes, stop
-  //   2. End entry: marker == 1, w == 0 → consume 12 bytes (marker+w+h), stop
-  // After termination, pad count follows directly (no separate flag+markers).
-  const safetyLimit = maxDCode + 10;
-  for (let i = 0; i < safetyLimit; i++) {
-    const marker = r.readU32();
-    if (marker === 0) break; // sentinel
-    // marker should be 1
+  for (let i = 0; i < shapeCount; i++) {
+    const marker = r.readU32(); // always 1
     const w = r.readFixed32();
     const h = r.readFixed32();
-    if (w === 0) break; // end entry (marker=1, w=0, h=x)
     const shapeType = r.readU32() as TvwShapeType;
     let turn = 0;
     switch (shapeType) {
@@ -359,9 +380,6 @@ function loadShapes(r: TvwReader): TvwShape[] {
         break;
     }
     shapes.push({ type: shapeType, width: w, height: h, turn });
-    if (i === safetyLimit - 1) {
-      console.warn(`TVW: shape safety limit reached (maxDCode=${maxDCode}), possible parse error`);
-    }
   }
   return shapes;
 }
@@ -531,17 +549,31 @@ function skipTestpoints(r: TvwReader): void {
 
 function loadLogicLayer(r: TvwReader, header: ReturnType<typeof readLayerHeader>): TvwLogicLayer {
   const shapes = loadShapes(r);
-  // shapes loaded
   let pads: TvwPad[] = [];
   let lines: TvwLine[] = [];
   let arcs: TvwArc[] = [];
 
   // Pads, lines, arcs, surfaces only exist when shapes are present
   if (shapes.length > 0) {
+    // 3 flag u32s before pads (eagleview: skip1/skip2/skip3)
+    const dataOrder = r.readU32(); // 1 = normal, 2 = extra data (second lines+arcs pass)
+    r.readU32(); // always 0
+    r.readU32(); // always 1
+
     pads = loadPads(r, shapes);
     lines = loadLines(r);
     arcs = loadArcs(r);
     skipSurfaces(r);
+
+    // Extra data mode: skip 4 u32s, then reload lines + arcs
+    if (dataOrder === 2) {
+      r.skip(16); // 4 × u32 unknown
+      const extraLines = loadLines(r);
+      const extraArcs = loadArcs(r);
+      lines = lines.concat(extraLines);
+      arcs = arcs.concat(extraArcs);
+      r.readU32(); // trailing 0
+    }
   }
 
   skipUnknownItems(r);
@@ -611,16 +643,17 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
   };
 }
 
-function loadLayer(r: TvwReader): TvwLayer {
+function loadLayer(r: TvwReader): TvwLayer | null {
   const objType = detectObjectType(r);
+  if (objType === undefined) return null; // unknown layer type — caller should handle
+
   const header = readLayerHeader(r);
 
   if (objType === TvwObjectType.Logic) {
     return loadLogicLayer(r, header);
-  } else if (objType === TvwObjectType.Through) {
+  } else {
     return loadThroughLayer(r, header);
   }
-  throw new Error(`TVW: unknown object type ${objType}`);
 }
 
 // ─── Parts Parsing ──────────────────────────────────────────────────────────
@@ -792,7 +825,7 @@ function skipMysteriousBlock(r: TvwReader): void {
 
 // ─── Decal Skipping ─────────────────────────────────────────────────────────
 
-function skipDecal(r: TvwReader): void {
+export function skipDecal(r: TvwReader): void {
   r.readBool8(); // flag1
   r.readPStr();  // name
   r.skip(12);    // headerParams (3 × u32)
@@ -810,6 +843,54 @@ function skipDecal(r: TvwReader): void {
   const vertexCount = r.readU32();
   r.skip(vertexCount * 8); // outline vertices
   r.skip(8);     // params (2 × u32)
+}
+
+// ─── Net Table Recovery ─────────────────────────────────────────────────────
+
+/** Scan forward from current position to find the net table.
+ *  Looks for two identical u32 values (count, count_dup) followed by valid pstrs.
+ *  Returns the position of the first pstr and the count, or null. */
+function scanForNetTable(r: TvwReader): { pos: number; count: number } | null {
+  const startPos = r.tell();
+  const endPos = r.size() - 8;
+  const view = r.getView();
+
+  // Scan at every byte position (DataView handles unaligned reads)
+  for (let p = startPos; p < endPos; p++) {
+    const v1 = view.getUint32(p, true);
+    const v2 = view.getUint32(p + 4, true);
+
+    // Net count should be a matching pair in plausible range
+    if (v1 !== v2 || v1 < 200 || v1 > 50000) continue;
+
+    // Verify: read a few pstrs from p+8 and check they look like net names
+    const pstrStart = p + 8;
+    let np = pstrStart;
+    let valid = 0;
+    const maxCheck = Math.min(v1, 20);
+    let ok = true;
+    for (let i = 0; i < maxCheck; i++) {
+      if (np >= r.size()) { ok = false; break; }
+      const len = view.getUint8(np); np++;
+      if (len > 60) { ok = false; break; }
+      if (np + len > r.size()) { ok = false; break; }
+      if (len > 0) {
+        // Check if string contains only printable ASCII (net name chars)
+        for (let c = 0; c < len; c++) {
+          const ch = view.getUint8(np + c);
+          if (ch < 0x20 || ch > 0x7E) { ok = false; break; }
+        }
+        if (!ok) break;
+        valid++;
+      }
+      np += len;
+    }
+    if (ok && valid >= Math.min(10, maxCheck)) {
+      if (TVW_DEBUG) console.log(`TVW: net table scan hit at 0x${p.toString(16)}: count=${v1}, ${valid}/${maxCheck} valid names`);
+      return { pos: pstrStart, count: v1 };
+    }
+  }
+  return null;
 }
 
 // ─── Main Parse Function ────────────────────────────────────────────────────
@@ -833,29 +914,50 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
 
   // ─ Layers
   const layers: TvwLayer[] = [];
+  let layersParsedCleanly = true;
   for (let i = 0; i < layerCount; i++) {
     try {
       const layer = loadLayer(r);
+      if (layer === null) {
+        // Unknown layer type — can't parse remaining layers
+        if (TVW_DEBUG) console.log(`TVW: layer[${i}] unknown type, stopping layer parsing`);
+        layersParsedCleanly = false;
+        break;
+      }
       layers.push(layer);
       if (TVW_DEBUG) console.log(`TVW: layer[${i}] "${layer.name}" type=${layer.layerType} ${layer.objType === TvwObjectType.Logic ? `pads=${(layer as TvwLogicLayer).pads.length} lines=${(layer as TvwLogicLayer).lines.length}` : `holes=${(layer as TvwThroughLayer).holes.length}`}`);
     } catch (e) {
       console.warn(`TVW: failed to parse layer ${i} at offset 0x${r.tell().toString(16)}: ${e}`);
-      break; // stop on first failure — remaining data can't be parsed reliably
+      layersParsedCleanly = false;
+      break;
     }
   }
 
-  // ─ Skip 4 zero dwords
-  r.skip(16);
-
   // ─ Net names
-  const netCount = r.readU32();
-  const netCount2 = r.readU32();
-  if (netCount !== netCount2) {
-    console.warn(`TVW: net count mismatch ${netCount} vs ${netCount2}`);
-  }
-  const nets: string[] = [];
-  for (let i = 0; i < netCount; i++) {
-    nets.push(r.readPStr());
+  let nets: string[] = [];
+  if (layersParsedCleanly) {
+    // Normal path: 4 zero dwords separator, then net count pair
+    r.skip(16);
+    const netCount = r.readU32();
+    const netCount2 = r.readU32();
+    if (netCount !== netCount2) {
+      console.warn(`TVW: net count mismatch ${netCount} vs ${netCount2}`);
+    }
+    for (let i = 0; i < netCount; i++) {
+      nets.push(r.readPStr());
+    }
+  } else {
+    // Recovery: scan forward for net table (matching count pair + valid pstrs)
+    const found = scanForNetTable(r);
+    if (found) {
+      r.seek(found.pos);
+      for (let i = 0; i < found.count; i++) {
+        nets.push(r.readPStr());
+      }
+      if (TVW_DEBUG) console.log(`TVW: recovered net table at 0x${found.pos.toString(16)}: ${found.count} nets`);
+    } else {
+      console.warn(`TVW: could not locate net table after layer parse failure`);
+    }
   }
   if (TVW_DEBUG) console.log(`TVW: ${nets.length} nets loaded`);
 

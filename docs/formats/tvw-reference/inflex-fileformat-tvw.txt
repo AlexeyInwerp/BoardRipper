@@ -1,0 +1,307 @@
+Little endian integers
+String format: [uint8 size][......] (also known as Pascal string)
+
+FILE header:
+	string name1
+	uint32 unknown
+	string name2
+
+0x33 Section start?
+
+LAYER TYPE field
+value	| name
+0		Document
+1		Top
+2		Bottom
+3		Signal
+4		Power ground
+5		Solder Mask [Top]
+6		Solder Mask [Bottom]
+7		Silkscreen [Top]
+8		Silkscreen [Bottom]
+9		Paste [Top]
+10		Paste [Bottom]
+11		Drill
+12		Roul
+
+LAYER SECTION header:
+	string layer name
+	string initial name
+	string path (UTF8)
+	uint32 layer type (see table)
+	uint32 pad color
+	uint32 line color
+	uint32 unknown (usually less than 10, maybe some ID?)
+
+SHAPE TYPE field
+value	| name
+0		Round
+1		Rectangle?
+2		Round rectangle?
+3		Oblong
+
+
+D-CODE TABLE: indexed by D-Code field (minus 10), ie. if a Pad dcode is 11, it means 2nd entry here.
+	uint32 unknown1 (so far always 1)
+	int32 width
+	int32 height
+	# IF not last item (marked by 1, 0, 1):
+	uint32 shape type (see table)
+	uint32 extra1 (unknown yet)
+	uint32 extra2 (curvature radius for Oblong)
+# The end of the table seems to be indicated by a truncated item with 0,1 as bounds.
+
+
+PAD LIST:
+	uint32 count * [
+		uint32 unknown
+		int32 network
+		uint32 dcode (index into the dcode table + 10)
+		int32 x
+		int32 y
+		uint8 unknown probably a flag about more data
+		uint8 unknown probably a flag about more data
+		uint8 unknown probably a flag about more data
+		# optionally some more data, like hold position
+	]
+
+LINE LIST:
+	uint32 count
+	uint32 unknown
+	count * [
+		int32 network
+		uint32 dcode  (index into the dcode table + 10)
+		int32 x0
+		int32 y0
+		int32 x1
+		int32 y1
+	]
+
+ARC LIST:
+	uint32 count
+	uint32 unknown
+	count * [
+		int32 network
+		uint32 dcode  (index into the dcode table + 10)
+		int32 x
+		int32 y
+		int32 unknown - some of those must be start and end angle
+		int32 unknown
+		int32 unknown
+	]
+
+SURFACE LIST:
+	uint32 count
+	uint32 unknown
+	count * [
+		int32 network
+		uint32 edges
+		edges * [
+			int32 x
+			int32 y
+		]
+		uint32 unknown (maybe linewidth ? 0 in current sample files)
+		uint32 voids
+		voids * [
+			uint32 unknown (maybe linewidth too??)
+			uint32 void_edges
+			void_edges * [
+				int32 x
+				int32 y
+			]
+		]
+		# some sample files seem to have an extra uint32 here !??
+	]
+
+TEXT LIST: TODO - unverified
+	uint32 count
+	uint32 unknown
+	count * [
+		string text
+		uint32 unknown[7]
+	]
+
+LAYER SECTION layout:
+	uint32 0x0
+	uint32 0x3 // Not always 3, sometimes 1; might be a layer type definition?
+	uint32 0x2
+	uint32 0x1
+	LAYER SECTION header
+	D-CODE TABLE
+	PAD LIST
+	LINE LIST
+	ARC LIST
+	SURFACE LIST
+	uint32 unknown ?
+	# (or maybe part of surface list??? or another list that is empty in the test cases)
+	TEXT LIST ?
+	# the rest is unknown yet
+	uint32 0x0
+	uint32 0x7
+	uint32 0x0
+	uint32 0x0
+	uint32 0x4
+	uint32 0x0
+	uint32 0x0
+	uint32 0x0
+	uint32 0x0
+	uint32 0x0
+	uint32 0x0
+
+
+Section->PAD
+0x1B block (BOTTOM layer)
+type	  description
+-------------------
+U32	  Start marker (0x0A)
+U32	  Network ID (from network array)
+U32	  Part Type / D-code (?)
+U32	  X coord
+U32	  Y coord
+U8		  ?
+U8		  ?
+U8		  ?
+U8		  ?
+U32	  x-something
+U32	  y-something
+U32	  x-something
+U32	  y-something
+U32	  ?
+U32	  ?
+U32	  0xF0 0A
+U8		  END (0xF0)
+
+
+
+NETWORK NAMES entry:
+------------------------------------------
+Headerblock size 0x4C bytes;
+	Offset 0x0D: 0x07
+	Offset 0x19: 0x04
+	Offset 0x45: (uint32) number of network names listed
+	Offset 0x49: (uint32) number of network names listed
+
+		  Network names are internally referenced by 0-based indexing scheme
+
+	Network names are string format.
+	Name block finished with 3-byte sequence;
+	0x0000 0000 0x0000 0000 0x0400 0000
+
+	after this sequence, we seem to consistently have "0x07 ProbeDB#"
+	![Network name block header example](assets/images/headerblock-networknames.png)
+
+
+
+
+PART TYPE field
+value	  | description
+0		  IC
+1		  DIODE
+2		  TRANSISTOR
+3		  RESISTOR
+4		  RESISTOR NETWORK(SI)
+5		  CAPACITOR
+6		  CAPACITOR NETWORK(SI)
+7		  ZENER
+8		  LED
+9		  JUMPER
+10		  BATTERY
+11		  MASK
+12		  RELAY
+13		  FUSE
+14		  CHOKE
+15		  CRYSTAL
+16		  SWITCH
+17		  CONNECTOR
+18		  TEST POINT
+19		  TRANSFORMER
+20		  POTENTIOMETER
+21		  MECHANICAL
+22		  RESISTOR NETWORK(DI)
+23		  RESISTOR NETWORK(SB)
+24		  RESISTOR NETWORK(DB)
+25		  CAPACITOR NETWORK(DI)
+26		  CAPACITOR NETWORK(SB)
+27		  CAPACITOR NETWORK(DB)
+28		  STRAP
+29		  FUDICIAL
+30		  UNKNOWN / END
+
+PART entry:
+type/details	| description
+----------------------------------------
+string			part name
+int32				bounding box minimum x
+int32				bounding box minimum y
+int32				bounding box max x
+int32				bounding box max y
+int32				center x
+int32				center y
+int32				rotation (degrees)
+uint32			unknown (132, 133, 98, 10 .. not yet sure)
+uint32			part type ( see table )
+uint32			unknown (1417)
+uint32			unknown (0)
+uint32			height
+uint8				 unknown
+string			BOM Value / metadata about part (100K etc)
+int16				unknown
+string			package name (case insensitive)
+string			serial number
+uint32			unknown (0)
+uint32			pincount
+uint32			unknown (2)
+PINS				Array of pins
+
+
+PAD table:
+type/details	 | description
+----------------------------------------
+***NOTHING KNOWN ABOUT THIS YET***
+I'm purely speculating that this table exists based on the part->pin array index uint32 and that changing that value changes the
+
+
+PIN entry:
+type/details	| description
+----------------------------------------
+uint32			Pad index number.  if you change this up/down by 8, it'll move the pin number string back/forth on the rendered display. Does NOT change the network or other details about the pad, so appears to be only for populating the pad name/id string.
+
+uint32			unknown (0)
+uint32			integer pin index (1-based, ie, 1, 2, 3...n)
+string			pin name (1, 2, 3 etc for small parts, or AA42, B24 etc for BGA)
+uint32			unknown (0)
+
+
+Pin network ID entry:
+	Uint32 network/pin index ID, unsure of constraints
+			For all currently examined files, this ID always increments in steps of 8.  It's not gauranteed that the ID is sequentially updated with the pin count on the part, but it does seem that they're always unique.
+
+			Unsure why the mechanics of this ID have been selected, there's likely a good reason but at this point unsure.   This is the key sticking point for making an initial boardview decoding. We need to determine how to map these IDs to the network names.
+
+
+PACKAGE entry:
+type/details	| description
+----------------------------------------
+Uint8				 Unknown (1)
+string			 package name (uppercase,  CHIP0603R_14R173 etc)
+Uint32[3]		 seemingly moderately fixed 3 32-bit ints
+Uint8	[0x50]	 Unknown header
+uint32			 -1 block end marker
+uint32			 10 block start marker
+uint32[4]		 (x,y) (x,y)
+uint32			 -1 marker
+uint32			 10 marker
+uint32[4]		(x,y) (x,y)
+uint32			 -1 marker
+uint32			 10 marker
+uint32[4]		 (x,y) (x,y)
+uint32			 -1 marker
+uint32			 10 marker
+uint32[4]		 (x,y) (x,y)
+uint32			 0 marker [ end of sequence ]
+Uint8[0x39]		 unknown separator
+
+
+
+---------------
+END OF DOCUMENT

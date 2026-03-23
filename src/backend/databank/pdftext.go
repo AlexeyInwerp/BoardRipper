@@ -1,14 +1,109 @@
 package databank
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
 
 	"rsc.io/pdf"
 )
+
+// Per-file extraction timeout. rsc.io/pdf can hang on certain PDFs
+// (e.g. heavily compressed streams), blocking the worker pool.
+const extractTimeout = 2 * time.Minute
+
+var (
+	// PCB design metadata lines that add no search value
+	noisePatterns = regexp.MustCompile(`(?i)^(MIN_LINE_WIDTH|MIN_NECK_WIDTH|VOLTAGE|SYNC_DATE|SYNC_MASTER|LAST_MODIFICATION|BOM_COST_GROUP)=`)
+	// Page number patterns like "5 OF 119", "10 OF 145"
+	pageNumPattern = regexp.MustCompile(`^\d{1,3} OF \d{1,3}$`)
+)
+
+// cleanPageText removes noise lines from extracted PDF text to reduce storage
+// and improve FTS5 search quality. Removes:
+// - PCB design metadata (MIN_LINE_WIDTH=, VOLTAGE=, etc.)
+// - Page number references ("N OF M")
+// - Lines that are purely numeric (bare page cross-references)
+// - Consecutive blank lines
+// - Lines with only non-letter ASCII noise
+func cleanPageText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	lines := strings.Split(text, "\n")
+	var cleaned []string
+	lastBlank := false
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if !lastBlank {
+				cleaned = append(cleaned, "")
+				lastBlank = true
+			}
+			continue
+		}
+		lastBlank = false
+
+		// Skip PCB metadata
+		if noisePatterns.MatchString(line) {
+			continue
+		}
+
+		// Skip page number references
+		if pageNumPattern.MatchString(line) {
+			continue
+		}
+
+		// Skip lines that are purely small numbers (page cross-references like "28", "100 101")
+		// but keep component package sizes (0402, 0603, 0805, etc.)
+		if isOnlySmallNumbers(line) {
+			continue
+		}
+
+		cleaned = append(cleaned, line)
+	}
+
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+// isOnlySmallNumbers returns true if a line contains only numbers ≤ 200
+// separated by spaces (page cross-references). Returns false for lines
+// with numbers > 200 which could be component package sizes (0402, 0603, etc.).
+func isOnlySmallNumbers(s string) bool {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return false
+	}
+	for _, f := range fields {
+		// Each field must be a pure number
+		n := 0
+		allDigits := true
+		for _, r := range f {
+			if !unicode.IsDigit(r) {
+				allDigits = false
+				break
+			}
+			n = n*10 + int(r-'0')
+		}
+		if !allDigits {
+			return false
+		}
+		// Keep numbers > 200 (likely package sizes: 0402, 0603, 0805, 1206, etc.)
+		if n > 200 {
+			return false
+		}
+	}
+	return true
+}
 
 // PdfExtractor handles PDF text extraction and FTS5 indexing.
 type PdfExtractor struct {
@@ -102,7 +197,25 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 	return extracted, errors
 }
 
+// ReextractAll deletes all existing PDF text and re-extracts from scratch.
+func (e *PdfExtractor) ReextractAll(concurrency int) (extracted, errors int) {
+	files, err := e.db.ListFiles("pdf", "", false)
+	if err != nil {
+		log.Printf("PdfExtractor: failed to list PDFs: %v", err)
+		return 0, 1
+	}
+
+	// Delete all existing text
+	for _, f := range files {
+		_ = e.db.DeletePdfText(f.ID)
+	}
+	log.Printf("PdfExtractor: cleared text for %d PDFs, re-extracting...", len(files))
+
+	return e.ExtractAll(concurrency)
+}
+
 // ExtractOne extracts text from a single PDF file and stores it in the database.
+// Runs with a timeout to prevent rsc.io/pdf hangs from blocking the pipeline.
 func (e *PdfExtractor) ExtractOne(file FileRecord) error {
 	// Use the library scan root if available, otherwise dataDir
 	root := e.dataDir
@@ -111,23 +224,53 @@ func (e *PdfExtractor) ExtractOne(file FileRecord) error {
 	}
 	absPath := filepath.Join(root, file.Path)
 
-	pages, err := extractPdfText(absPath)
-	if err != nil {
-		return fmt.Errorf("extract %s: %w", file.Filename, err)
+	// Run extraction in a goroutine with timeout — rsc.io/pdf can hang
+	// on certain PDFs (heavily compressed streams, infinite loops in xref).
+	type result struct {
+		pages []string
+		err   error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), extractTimeout)
+	defer cancel()
+
+	ch := make(chan result, 1)
+	go func() {
+		pages, err := extractPdfText(absPath)
+		ch <- result{pages, err}
+	}()
+
+	var pages []string
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return fmt.Errorf("extract %s: %w", file.Filename, res.err)
+		}
+		pages = res.pages
+	case <-ctx.Done():
+		return fmt.Errorf("extract %s: timeout after %v (rsc.io/pdf hung)", file.Filename, extractTimeout)
 	}
 
 	// Store in pdf_pages and index in pdf_text FTS5
+	stored := 0
 	for pageNum, text := range pages {
-		text = strings.TrimSpace(text)
+		text = cleanPageText(text)
 		if text == "" {
 			continue
 		}
 		if err := e.db.InsertPdfPage(file.ID, pageNum+1, text, "go"); err != nil {
 			return fmt.Errorf("insert page %d: %w", pageNum+1, err)
 		}
+		stored++
 	}
 
-	log.Printf("PdfExtractor: extracted %d pages from %s", len(pages), file.Filename)
+	if stored == 0 {
+		// Mark as attempted so we don't retry encrypted/broken PDFs forever.
+		// Insert a sentinel row with page_num=0 and empty content.
+		_ = e.db.InsertPdfPage(file.ID, 0, "(no extractable text)", "go")
+		log.Printf("PdfExtractor: %s — no extractable text (encrypted/broken)", file.Filename)
+	} else {
+		log.Printf("PdfExtractor: extracted %d pages from %s", stored, file.Filename)
+	}
 	return nil
 }
 
@@ -178,6 +321,8 @@ func extractOnePage(r *pdf.Reader, i int) (text string, err error) {
 }
 
 // extractPageText extracts all text content from a single PDF page.
+// Merges adjacent text segments into words based on spatial proximity,
+// so that single-character segments (common in many PDFs) form searchable words.
 // rsc.io/pdf panics on malformed streams, so we recover gracefully.
 func extractPageText(page pdf.Page) (text string, err error) {
 	defer func() {
@@ -187,17 +332,62 @@ func extractPageText(page pdf.Page) (text string, err error) {
 	}()
 
 	content := page.Content()
-	var buf strings.Builder
+	if len(content.Text) == 0 {
+		return "", nil
+	}
 
-	for _, t := range content.Text {
-		buf.WriteString(t.S)
-		// Add space between text segments for readability
-		if t.S != "" && !strings.HasSuffix(t.S, " ") && !strings.HasSuffix(t.S, "\n") {
-			buf.WriteByte(' ')
+	var buf strings.Builder
+	prev := content.Text[0]
+	buf.WriteString(prev.S)
+
+	for i := 1; i < len(content.Text); i++ {
+		cur := content.Text[i]
+		if cur.S == "" {
+			continue
 		}
+
+		// Determine if this segment continues the previous word or starts a new one.
+		// Same line: Y values within half font-size tolerance.
+		fontSize := cur.FontSize
+		if fontSize <= 0 {
+			fontSize = prev.FontSize
+		}
+		if fontSize <= 0 {
+			fontSize = 10 // fallback
+		}
+		yTol := fontSize * 0.5
+		sameLine := abs(cur.Y-prev.Y) < yTol
+
+		if sameLine {
+			// Check horizontal gap: space between end of previous and start of current
+			prevEnd := prev.X + prev.W
+			gap := cur.X - prevEnd
+
+			if gap > fontSize*0.3 {
+				// Significant gap — insert space (word boundary)
+				buf.WriteByte(' ')
+			} else if gap < -fontSize*0.5 {
+				// Large backward jump on same line — likely a new column or overlapping text
+				buf.WriteByte(' ')
+			}
+			// Otherwise: no gap or small gap — characters are adjacent, merge directly
+		} else {
+			// Different line — insert newline
+			buf.WriteByte('\n')
+		}
+
+		buf.WriteString(cur.S)
+		prev = cur
 	}
 
 	return buf.String(), nil
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // ReplaceText replaces the text for a file with client-extracted (pdfjs) text.
@@ -222,6 +412,27 @@ func (e *PdfExtractor) ReplaceText(fileID int64, pages map[int]string) error {
 	return nil
 }
 
+// GetPdfPages returns all extracted text pages for a file, ordered by page number.
+func (db *DB) GetPdfPages(fileID int64) ([]struct{ PageNum int; Text, Source string }, error) {
+	rows, err := db.reader.Query(
+		`SELECT page_num, text_content, source FROM pdf_pages WHERE file_id = ? AND page_num > 0 ORDER BY page_num`, fileID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pages []struct{ PageNum int; Text, Source string }
+	for rows.Next() {
+		var p struct{ PageNum int; Text, Source string }
+		if err := rows.Scan(&p.PageNum, &p.Text, &p.Source); err != nil {
+			return nil, err
+		}
+		pages = append(pages, p)
+	}
+	return pages, rows.Err()
+}
+
 // --- DB helpers for PDF text ---
 
 // HasPdfText checks if a file has any extracted text.
@@ -232,6 +443,7 @@ func (db *DB) HasPdfText(fileID int64) (bool, error) {
 }
 
 // InsertPdfPage stores extracted text for a single page and indexes it in FTS5.
+// Sentinel rows (page_num=0) are stored in pdf_pages but NOT indexed in FTS5.
 func (db *DB) InsertPdfPage(fileID int64, pageNum int, text, source string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -243,6 +455,11 @@ func (db *DB) InsertPdfPage(fileID int64, pageNum int, text, source string) erro
 	)
 	if err != nil {
 		return err
+	}
+
+	// Don't index sentinel rows (page_num=0) in FTS5
+	if pageNum <= 0 {
+		return nil
 	}
 
 	// Index in FTS5 — first delete any existing entry for this page
@@ -270,7 +487,7 @@ func (db *DB) DeletePdfText(fileID int64) error {
 // GetPdfTextStats returns the number of pages with extracted text for a file.
 func (db *DB) GetPdfTextStats(fileID int64) (pageCount int, source string, err error) {
 	err = db.reader.QueryRow(
-		`SELECT COUNT(*), COALESCE(MAX(source), '') FROM pdf_pages WHERE file_id = ?`,
+		`SELECT COUNT(*), COALESCE(MAX(source), '') FROM pdf_pages WHERE file_id = ? AND page_num > 0`,
 		fileID,
 	).Scan(&pageCount, &source)
 	return
