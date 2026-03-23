@@ -90,6 +90,8 @@ func main() {
 	mux.HandleFunc("POST /api/databank/bindings", dbHandler.CreateBinding)
 	mux.HandleFunc("DELETE /api/databank/bindings/{id}", dbHandler.DeleteBinding)
 	mux.HandleFunc("GET /api/databank/search", dbHandler.Search)
+	mux.HandleFunc("POST /api/databank/reextract", dbHandler.Reextract)
+	mux.HandleFunc("GET /api/databank/files/{id}/dump", dbHandler.DumpText)
 	mux.HandleFunc("PUT /api/databank/files/{id}/text", dbHandler.UploadText)
 	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)
 	mux.HandleFunc("PUT /api/databank/preview/{id}", dbHandler.PreviewPut)

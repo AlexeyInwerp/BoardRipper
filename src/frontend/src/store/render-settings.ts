@@ -151,14 +151,14 @@ export const DEFAULTS: RenderSettings = {
   partBorderAlpha: 0.4,
   partPadding: 4,
   showPartLabels: true,
-  partLabelShadow: true,
+  partLabelShadow: false,
   labelSize: 'small',
   labelSizeSmall: 4,
-  labelSizeMedium: 8,
+  labelSizeMedium: 6,
   labelSizeLarge: 14,
   labelHideThreshold: 2,
 
-  pinMinRadius: 3.5,
+  pinMinRadius: 3,
   pinMaxRadius: 30,
   pinScaleFactor: 1,
   partMinBodyMils: 0,
@@ -192,11 +192,11 @@ export const DEFAULTS: RenderSettings = {
   circleLabelMinScreenPx: 3,
   twoPinLabelMinScreenPx: 6,
   pinNetLabelBg: true,
-  twoPinNetLabelBg: false,
+  twoPinNetLabelBg: true,
   bgaLabelGapFactor: 0.15,
 
   showPadVertices: false,
-  showVertexNumbers: true,
+  showVertexNumbers: false,
   showLabelSizeDebug: false,
   showComponentColors: true,
   componentFillAlpha: 0.55,
@@ -387,11 +387,55 @@ export function computeDiagonalOBB(
   ];
 }
 
+/**
+ * Compute an oriented bounding box for a diagonal 2-pin part.
+ * Returns 4 corner points forming a rotated rectangle along the pin-to-pin axis.
+ */
+export function computeTwoPinOBB(
+  pins: { position: { x: number; y: number }; radius?: number }[],
+  s: RenderSettings,
+): [number, number][] | null {
+  if (pins.length !== 2) return null;
+  const p0 = pins[0].position;
+  const p1 = pins[1].position;
+  const dx = p1.x - p0.x;
+  const dy = p1.y - p0.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return null;
+
+  // Unit vectors: along pin axis and perpendicular
+  const ux = dx / dist, uy = dy / dist;
+  const vx = -uy, vy = ux;
+
+  // Body half-width perpendicular to pin axis (proportional to distance)
+  const halfW = Math.max(dist * 0.18, s.partMinBodyMils / 2);
+  // Extend slightly beyond pins along the axis
+  const ext = halfW * 0.5;
+
+  const cx = (p0.x + p1.x) / 2;
+  const cy = (p0.y + p1.y) / 2;
+  const halfLen = dist / 2 + ext;
+
+  return [
+    [cx - halfLen * ux - halfW * vx, cy - halfLen * uy - halfW * vy],
+    [cx + halfLen * ux - halfW * vx, cy + halfLen * uy - halfW * vy],
+    [cx + halfLen * ux + halfW * vx, cy + halfLen * uy + halfW * vy],
+    [cx - halfLen * ux + halfW * vx, cy - halfLen * uy + halfW * vy],
+  ];
+}
+
 /** Convenience wrapper: compute OBB polygon for a part, or null if axis-aligned. */
 export function computePartRenderPoly(
   part: { pins: { position: { x: number; y: number }; radius?: number }[] },
   s: RenderSettings,
 ): [number, number][] | null {
+  // Check diagonal 2-pin parts first
+  if (part.pins.length === 2) {
+    const dx = Math.abs(part.pins[1].position.x - part.pins[0].position.x);
+    const dy = Math.abs(part.pins[1].position.y - part.pins[0].position.y);
+    const ratio = Math.min(dx, dy) / (Math.max(dx, dy) || 1);
+    if (ratio > 0.4) return computeTwoPinOBB(part.pins, s);
+  }
   return computeDiagonalOBB(part.pins, s);
 }
 

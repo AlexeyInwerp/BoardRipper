@@ -459,7 +459,7 @@ class DatabankStore {
 
   /** Generate and upload a PDF preview thumbnail for a file */
   async generatePdfPreview(file: DatabankFile): Promise<boolean> {
-    if (file.file_type !== 'pdf' || file.has_preview) return false;
+    if (file.file_type !== 'pdf' || file.has_preview || isElectron()) return false;
     try {
       const pdfjsLib = await import('pdfjs-dist');
       const fileObj = await this.fetchFileBuffer(file);

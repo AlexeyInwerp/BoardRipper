@@ -297,6 +297,80 @@ func (h *DatabankHandler) Search(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(results)
 }
 
+// Reextract deletes all PDF text and re-extracts from scratch.
+// POST /api/databank/reextract
+func (h *DatabankHandler) Reextract(w http.ResponseWriter, r *http.Request) {
+	go func() {
+		extracted, errors := h.extractor.ReextractAll(2)
+		fmt.Printf("[Reextract] Done: %d extracted, %d errors\n", extracted, errors)
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+}
+
+// DumpText returns an HTML page with the extracted text for a PDF file.
+// GET /api/databank/files/{id}/dump — opens in new tab for debugging.
+func (h *DatabankHandler) DumpText(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	file, err := h.db.GetFileByID(id)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	pages, err := h.db.GetPdfPages(id)
+	if err != nil {
+		http.Error(w, "Failed to read text: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Text Dump: %s</title>
+<style>
+body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; margin: 20px; }
+h1 { color: #00d4ff; }
+h2 { color: #ff6b9d; border-bottom: 1px solid #333; padding-bottom: 4px; margin-top: 32px; }
+.text { background: #16213e; padding: 8px 12px; margin: 4px 0; border-left: 3px solid #0f3460; white-space: pre-wrap; word-break: break-all; }
+.meta { color: #888; font-size: 0.85em; }
+.stats { background: #2d2d44; padding: 8px 12px; border-radius: 4px; margin-bottom: 16px; }
+</style></head><body>`, file.Filename)
+	fmt.Fprintf(w, `<h1>Text Dump: %s</h1>`, file.Filename)
+	fmt.Fprintf(w, `<div class="stats">File ID: %d | Pages with text: %d</div>`, id, len(pages))
+
+	for _, p := range pages {
+		fmt.Fprintf(w, `<h2>Page %d <span class="meta">(source: %s, %d chars)</span></h2>`, p.PageNum, p.Source, len(p.Text))
+		fmt.Fprintf(w, `<div class="text">%s</div>`, htmlEscape(p.Text))
+	}
+
+	fmt.Fprint(w, `</body></html>`)
+}
+
+func htmlEscape(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '&':
+			b = append(b, []byte("&amp;")...)
+		case '<':
+			b = append(b, []byte("&lt;")...)
+		case '>':
+			b = append(b, []byte("&gt;")...)
+		case '"':
+			b = append(b, []byte("&quot;")...)
+		default:
+			b = append(b, s[i])
+		}
+	}
+	return string(b)
+}
+
 // GetConfig returns all config values, enriched with runtime info.
 // GET /api/config — returns config as JSON object.
 // Includes "_scan_root" (effective scan directory) for the frontend.

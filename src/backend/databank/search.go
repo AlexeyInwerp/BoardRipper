@@ -49,7 +49,7 @@ func (db *DB) Search(query string, donorOnly bool) (*SearchResponse, error) {
 		JOIN files f ON f.id = pt.file_id
 		WHERE pdf_text MATCH ?
 		ORDER BY rank
-		LIMIT 200
+		LIMIT 1000
 	`
 
 	rows, err := db.reader.Query(sqlQuery, ftsQuery)
@@ -108,8 +108,11 @@ func (db *DB) Search(query string, donorOnly bool) (*SearchResponse, error) {
 }
 
 // buildFTS5Query converts a user query into an FTS5 match expression.
-// "10UF 25V 0603" -> "10UF AND 25V AND 0603"
-// Handles quoted phrases and special characters.
+// Multi-term queries use AND — all terms must appear on the same page.
+// This acts as a broad filter; the PDF viewer's spatial proximity search
+// provides precise column-based matching when the user opens a result.
+// "10UF 25V 0603" -> "10UF" AND "25V" AND "0603"
+// "connector"     -> "connector"
 func buildFTS5Query(query string) string {
 	// Split on whitespace
 	terms := strings.Fields(query)
@@ -129,7 +132,13 @@ func buildFTS5Query(query string) string {
 		quoted = append(quoted, `"`+t+`"`)
 	}
 
-	return strings.Join(quoted, " AND ")
+	if len(quoted) == 1 {
+		return quoted[0]
+	}
+
+	// All terms must appear on the page (AND).
+	// FTS5 implicit AND: just space-separate quoted terms.
+	return strings.Join(quoted, " ")
 }
 
 // getSearchBindings returns board bindings for a PDF file, enriched with donor status.

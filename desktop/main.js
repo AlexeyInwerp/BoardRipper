@@ -2,8 +2,68 @@ const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// ── GPU/sandbox workarounds for Windows ──
+// exitCode 18 = renderer launch-failed, typically GPU process or sandbox issues
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+}
+// Fallback to software rendering if GPU is unavailable
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+app.disableHardwareAcceleration && void 0; // keep HW accel on, but add ANGLE fallback
+app.commandLine.appendSwitch('use-angle', 'default');
+
+// ── Crash logging ──
+const LOG_DIR = path.join(app.getPath('userData'), 'logs');
+try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch {}
+const LOG_FILE = path.join(LOG_DIR, 'boardripper.log');
+
+function log(level, msg) {
+  const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+  try { fs.appendFileSync(LOG_FILE, line); } catch {}
+  if (level === 'ERROR') console.error(line.trim());
+  else console.log(line.trim());
+}
+
+function logFatal(context, err) {
+  const msg = `${context}: ${err?.stack || err?.message || err}`;
+  log('FATAL', msg);
+  try {
+    dialog.showErrorBox(
+      `BoardRipper — Fatal Error`,
+      `${context}\n\n${err?.stack || err?.message || String(err)}\n\nLog file: ${LOG_FILE}`,
+    );
+  } catch {}
+}
+
+process.on('uncaughtException', (err) => {
+  logFatal('Uncaught exception in main process', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logFatal('Unhandled rejection in main process', reason);
+});
+
+log('INFO', '═══ BoardRipper starting ═══');
+log('INFO', `Electron ${process.versions.electron}, Chrome ${process.versions.chrome}, Node ${process.versions.node}`);
+log('INFO', `Platform: ${process.platform} ${process.arch}`);
+log('INFO', `App path: ${app.getAppPath()}`);
+log('INFO', `User data: ${app.getPath('userData')}`);
+log('INFO', `__dirname: ${__dirname}`);
+
 // Serve the Vite build output from the bundled 'webapp' folder
 const WEBAPP_DIR = path.join(__dirname, 'webapp');
+log('INFO', `WEBAPP_DIR: ${WEBAPP_DIR}`);
+log('INFO', `WEBAPP_DIR exists: ${fs.existsSync(WEBAPP_DIR)}`);
+if (fs.existsSync(WEBAPP_DIR)) {
+  try {
+    const files = fs.readdirSync(WEBAPP_DIR);
+    log('INFO', `WEBAPP_DIR contents: ${files.join(', ')}`);
+    log('INFO', `index.html exists: ${files.includes('index.html')}`);
+  } catch (e) {
+    log('ERROR', `Failed to read WEBAPP_DIR: ${e.message}`);
+  }
+}
 
 // ── Library folder persistence ──
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
@@ -107,6 +167,11 @@ function buildFolderTree(files, rootName) {
 let mainWindow;
 
 function createWindow() {
+  log('INFO', 'Creating BrowserWindow...');
+  const preloadPath = path.join(__dirname, 'preload.js');
+  log('INFO', `Preload path: ${preloadPath}`);
+  log('INFO', `Preload exists: ${fs.existsSync(preloadPath)}`);
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -114,17 +179,56 @@ function createWindow() {
     minHeight: 600,
     title: 'BoardRipper',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
 
-  mainWindow.loadFile(path.join(WEBAPP_DIR, 'index.html'));
+  // Log renderer crashes — retry once with GPU disabled on launch failure
+  let retried = false;
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log('ERROR', `Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`);
+    if (details.reason === 'launch-failed' && !retried) {
+      retried = true;
+      log('INFO', 'Retrying with GPU disabled...');
+      app.commandLine.appendSwitch('disable-gpu');
+      mainWindow.loadFile(path.join(WEBAPP_DIR, 'index.html'));
+    } else {
+      logFatal('Renderer process gone', new Error(`reason: ${details.reason}, exitCode: ${details.exitCode}`));
+    }
+  });
 
-  // Build a minimal native menu (keeps Cmd+Q, Cmd+C/V, fullscreen, etc.)
+  mainWindow.webContents.on('crashed', (_event, killed) => {
+    logFatal('Renderer crashed', new Error(`killed: ${killed}`));
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log('ERROR', `Failed to load: ${errorDescription} (code ${errorCode}) URL: ${validatedURL}`);
+    dialog.showErrorBox(
+      'BoardRipper — Load Failed',
+      `Failed to load the app.\n\n${errorDescription} (code ${errorCode})\nURL: ${validatedURL}\n\nLog: ${LOG_FILE}`,
+    );
+  });
+
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const levels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    log(levels[level] || 'INFO', `[renderer] ${message} (${sourceId}:${line})`);
+  });
+
+  const indexPath = path.join(WEBAPP_DIR, 'index.html');
+  log('INFO', `Loading: ${indexPath}`);
+  log('INFO', `index.html exists: ${fs.existsSync(indexPath)}`);
+  mainWindow.loadFile(indexPath).then(() => {
+    log('INFO', 'index.html loaded successfully');
+  }).catch((err) => {
+    logFatal('Failed to load index.html', err);
+  });
+
+  // Build a platform-aware native menu
+  const isMac = process.platform === 'darwin';
   const template = [
-    {
+    ...(isMac ? [{
       label: app.name,
       submenu: [
         { role: 'about' },
@@ -135,7 +239,7 @@ function createWindow() {
         { type: 'separator' },
         { role: 'quit' },
       ],
-    },
+    }] : []),
     {
       label: 'File',
       submenu: [
@@ -145,7 +249,7 @@ function createWindow() {
           click: () => openFileDialog(),
         },
         { type: 'separator' },
-        { role: 'close' },
+        isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },
     {
@@ -273,7 +377,11 @@ ipcMain.handle('read-library-file', async (_event, relativePath) => {
   const fullPath = path.join(libraryPath, relativePath);
   // Security: ensure the resolved path is within the library folder
   const resolved = path.resolve(fullPath);
-  if (!resolved.startsWith(path.resolve(libraryPath))) {
+  const resolvedLib = path.resolve(libraryPath);
+  // Case-insensitive comparison on Windows
+  const a = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const b = process.platform === 'win32' ? resolvedLib.toLowerCase() : resolvedLib;
+  if (!a.startsWith(b)) {
     throw new Error('Path traversal detected');
   }
   const stats = fs.statSync(resolved);
@@ -289,7 +397,14 @@ ipcMain.handle('read-library-file', async (_event, relativePath) => {
   };
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  log('INFO', 'App ready');
+  try {
+    createWindow();
+  } catch (err) {
+    logFatal('Failed to create window', err);
+  }
+});
 
 app.on('window-all-closed', () => {
   app.quit();
