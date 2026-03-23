@@ -531,6 +531,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   useEffect(() => { renderPage(); }, [renderPage]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
 
+  // Sync search input when searchQuery changes externally (e.g. pre-populated from library)
+  useEffect(() => {
+    if (searchInputRef.current && searchQuery !== searchInputRef.current.value) {
+      searchInputRef.current.value = searchQuery;
+    }
+  }, [searchQuery]);
+
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
   useEffect(() => {
@@ -802,20 +809,75 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
+  // --- Touch pinch-to-zoom state ---
+  const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartDistRef = useRef(0);
+  const pinchStartZoomRef = useRef(1);
+  const pinchMidRef = useRef({ x: 0, y: 0 });
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.setPointerCapture(e.pointerId);
+    activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     pdfStore.switchTo(pdfFileName);
-    isDraggingRef.current = true;
-    wasDragRef.current = false;
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
-    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+
+    if (activeTouchesRef.current.size === 1 && (e.pointerType === 'mouse' ? e.button === 0 : true)) {
+      isDraggingRef.current = true;
+      wasDragRef.current = false;
+      dragStartRef.current = { x: e.clientX, y: e.clientY };
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+    }
+
+    if (activeTouchesRef.current.size === 2) {
+      // Start pinch — cancel any single-finger drag
+      isDraggingRef.current = false;
+      wasDragRef.current = false;
+      const pts = [...activeTouchesRef.current.values()];
+      const dx = pts[1].x - pts[0].x;
+      const dy = pts[1].y - pts[0].y;
+      pinchStartDistRef.current = Math.sqrt(dx * dx + dy * dy);
+      pinchStartZoomRef.current = zoomRef.current;
+      const rect = container.getBoundingClientRect();
+      pinchMidRef.current = {
+        x: (pts[0].x + pts[1].x) / 2 - rect.left,
+        y: (pts[0].y + pts[1].y) / 2 - rect.top,
+      };
+    }
   }, [pdfFileName]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDraggingRef.current) return;
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    const prev = activeTouchesRef.current.get(e.pointerId);
+    if (!prev) return;
+    activeTouchesRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    const dx = e.clientX - lastMouseRef.current.x;
-    const dy = e.clientY - lastMouseRef.current.y;
+    // Two-finger pinch zoom
+    if (activeTouchesRef.current.size === 2) {
+      const pts = [...activeTouchesRef.current.values()];
+      const dx = pts[1].x - pts[0].x;
+      const dy = pts[1].y - pts[0].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (pinchStartDistRef.current > 0) {
+        const scale = dist / pinchStartDistRef.current;
+        const oldZoom = zoomRef.current;
+        const newZoom = Math.max(0.1, Math.min(pinchStartZoomRef.current * scale, 20));
+        const ratio = newZoom / oldZoom;
+        const mid = pinchMidRef.current;
+        panRef.current = {
+          x: mid.x - ratio * (mid.x - panRef.current.x),
+          y: mid.y - ratio * (mid.y - panRef.current.y),
+        };
+        zoomRef.current = newZoom;
+        syncTransform();
+        scheduleTierRender();
+      }
+      return;
+    }
+
+    // Single-finger drag
+    if (!isDraggingRef.current) return;
+    const dxm = e.clientX - lastMouseRef.current.x;
+    const dym = e.clientY - lastMouseRef.current.y;
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
 
     if (!wasDragRef.current) {
@@ -825,9 +887,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       wasDragRef.current = true;
     }
 
-    panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+    panRef.current = { x: panRef.current.x + dxm, y: panRef.current.y + dym };
     syncTransform();
-  }, [syncTransform]);
+  }, [syncTransform, scheduleTierRender]);
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
     if (!isLoaded) return;
@@ -874,12 +936,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const handleTextClickRef = useRef(handleTextClick);
   handleTextClickRef.current = handleTextClick;
 
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    activeTouchesRef.current.delete(e.pointerId);
+    if (activeTouchesRef.current.size < 2) {
+      pinchStartDistRef.current = 0;
+    }
+
     const wasDrag = wasDragRef.current;
     isDraggingRef.current = false;
     wasDragRef.current = false;
 
-    if (!wasDrag && e.button === 0) {
+    if (!wasDrag && e.button === 0 && e.pointerType !== 'touch') {
       handleTextClickRef.current(e);
     }
   }, []);
@@ -1271,6 +1338,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                   </div>
                 )}
               </div>
+              <button
+                className="pdf-toolbar-btn"
+                onClick={() => pdfStore.dumpTextToNewTab(pdfFileName)}
+                title="Dump extracted text to new tab (debug)"
+              >
+                Dump Text
+              </button>
             </div>
           )}
         </div>
@@ -1298,10 +1372,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       <div
         className="pdf-canvas-container"
         ref={containerRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => { isDraggingRef.current = false; wasDragRef.current = false; }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
+        onPointerLeave={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
         onContextMenu={handleContextMenu}
         style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
       >

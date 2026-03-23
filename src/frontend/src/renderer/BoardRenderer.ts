@@ -191,7 +191,6 @@ export class BoardRenderer {
   private boundContextRestored: (() => void) | null = null;
 
   // Trackpad rotation gesture state
-  private gestureStartRotation = 0;
   private boundGestureStart: ((e: Event) => void) | null = null;
   private boundGestureChange: ((e: Event) => void) | null = null;
 
@@ -722,16 +721,10 @@ export class BoardRenderer {
     // WebGL context loss recovery — browser may reclaim context when canvas is hidden
     this.installContextLossHandlers(this.app.renderer.canvas as HTMLCanvasElement);
 
-    // Mac trackpad rotation gesture — gesturestart/gesturechange are Safari/Chrome on macOS
-    this.boundGestureStart = (e: Event) => {
-      e.preventDefault();
-      this.gestureStartRotation = boardStore.rotation;
-    };
-    this.boundGestureChange = (e: Event) => {
-      e.preventDefault();
-      const rotation = (e as unknown as { rotation: number }).rotation;
-      boardStore.setRotationFree(this.gestureStartRotation - rotation);
-    };
+    // Rotation gestures disabled — they conflict with pinch-to-zoom on touch devices.
+    // Suppress gesturestart/gesturechange to prevent accidental board rotation.
+    this.boundGestureStart = (e: Event) => { e.preventDefault(); };
+    this.boundGestureChange = (e: Event) => { e.preventDefault(); };
     this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
     this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
 
