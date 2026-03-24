@@ -67,16 +67,33 @@ const commonOpts = {
   ],
 };
 
+/** Ad-hoc sign + zip an .app bundle for distribution. */
+function signAndZip(appPath, appName, archLabel) {
+  console.log('\n--- Ad-hoc code signing ---');
+  execSync(`codesign --force --deep --sign - "${appPath}"`, { stdio: 'inherit' });
+
+  const zipName = `BoardRipper-macOS-${archLabel}.zip`;
+  const zipPath = path.join(OUT_DIR, zipName);
+  console.log(`\n--- Creating ${zipName} ---`);
+  execSync(
+    `cd "${path.dirname(appPath)}" && ditto -c -k --sequesterRsrc --keepParent "${appName}" "${zipPath}"`,
+    { stdio: 'inherit' },
+  );
+
+  console.log(`\n✅  Done!`);
+  console.log(`    App:  ${appPath}`);
+  console.log(`    Zip:  ${zipPath}`);
+  console.log(`\n    Distribute the .zip — unzipping preserves framework symlinks and clears quarantine.`);
+}
+
 if (requestedArch === 'universal') {
   console.log('\n=== Packaging macOS universal app (arm64 + x64) ===');
 
-  // Build both architectures
   console.log('\n--- Building arm64 ---');
   const [arm64Path] = await packager({ ...commonOpts, arch: 'arm64' });
   console.log('\n--- Building x64 ---');
   const [x64Path] = await packager({ ...commonOpts, arch: 'x64' });
 
-  // Merge into universal binary
   const { makeUniversalApp } = await import('@electron/universal');
   const universalDir = path.join(OUT_DIR, 'BoardRipper-darwin-universal');
   mkdirSync(universalDir, { recursive: true });
@@ -90,16 +107,13 @@ if (requestedArch === 'universal') {
     force: true,
   });
 
-  // Clean up single-arch builds
   rmSync(arm64Path, { recursive: true });
   rmSync(x64Path, { recursive: true });
 
-  console.log(`\n✅  Done! Universal app at:\n    ${universalDir}`);
-  console.log(`\n    To run:  open "${universalAppPath}"`);
+  signAndZip(universalAppPath, 'BoardRipper.app', 'universal');
 } else {
   console.log(`\n=== Packaging macOS app (${requestedArch}) ===`);
   const [appPath] = await packager({ ...commonOpts, arch: requestedArch });
 
-  console.log(`\n✅  Done! App bundle at:\n    ${appPath}`);
-  console.log(`\n    To run:  open "${appPath}/BoardRipper.app"`);
+  signAndZip(`${appPath}/BoardRipper.app`, 'BoardRipper.app', requestedArch);
 }
