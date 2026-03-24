@@ -45,9 +45,11 @@ class LogStore {
       const now = new Date();
       const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(3,'0')}`;
       this._entries.push({ id: this._nextId++, time, level, scope, message });
-      if (this._entries.length > 500) this._entries.shift();
-      this._snapshot = [...this._entries];
-      for (const l of this._listeners) l();
+      if (this._entries.length > 600) this._entries = this._entries.slice(-500);
+      if (this._listeners.size > 0) {
+        this._snapshot = [...this._entries];
+        for (const l of this._listeners) l();
+      }
     };
 
     // Intercept unscoped console calls (third-party libs) → tagged 'ui'

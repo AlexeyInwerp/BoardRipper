@@ -20,6 +20,7 @@ import { boardStore } from './store/board-store';
 import { pdfStore } from './store/pdf-store';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
+import { log } from './store/log-store';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
@@ -130,7 +131,7 @@ function App() {
           await pdfStore.loadFile(file);
           ensurePdfPanel(file.name);
         } catch (err) {
-          console.error('[DragDrop] Failed to load PDF:', err);
+          log.ui.error('Failed to load PDF:', err);
         }
       }
 
@@ -138,7 +139,7 @@ function App() {
         pdfStore.switchTo(lastFile.name);
         ensurePdfPanel(lastFile.name);
       } catch (err) {
-        console.error('[DragDrop] Failed to activate PDF:', err);
+        log.ui.error('Failed to activate PDF:', err);
       }
 
       // Re-activate the board panel so PDFs don't steal focus

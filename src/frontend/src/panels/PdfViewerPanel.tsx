@@ -6,7 +6,7 @@ import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
 import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
-import { logStore } from '../store/log-store';
+import { log } from '../store/log-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
 import { extractPageGlyphs, clearFontCache } from '../pdf/glyph-extractor';
@@ -149,15 +149,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!pdfFileName) return;
     // Also switch when this panel becomes active (focused)
     const disposable = props.api.onDidActiveChange((e) => {
-      logStore.log('log', `[pdf] onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
+      log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
         pdfStore.switchTo(pdfFileName);
         // Activate linked board panel so it follows the PDF tab
         const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
-        logStore.log('log', `[pdf] linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
+        log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
         if (linkedTab) {
           const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
-          logStore.log('log', `[pdf] activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
+          log.pdf.log(`activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
         }
       }
     });
@@ -369,7 +369,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (cached && cached.cssW === containerWidth) {
         blitToCanvas(cached);
         const tHit = performance.now();
-        console.log(`[pdf-perf] cache-hit ${cacheKey} ${Math.round(tHit - t0)}ms`);
+        log.perf.log(`cache-hit ${cacheKey} ${Math.round(tHit - t0)}ms`);
         return;
       }
 
@@ -453,7 +453,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         copyMs: Math.round(tCopy - tRender),
         totalMs: Math.round(tCopy - t0),
       };
-      console.log(`[pdf-perf] ${JSON.stringify(metrics)}`);
+      log.perf.log(JSON.stringify(metrics));
       window.dispatchEvent(new CustomEvent('pdf-render-perf', { detail: metrics }));
 
       // Prefetch adjacent pages at base resolution (fire-and-forget)
@@ -466,7 +466,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           .then(result => {
             if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
             putPageCache(pfKey, result);
-            console.log(`[pdf-perf] prefetched page ${pNum}`);
+            log.perf.log(`prefetched page ${pNum}`);
           })
           .catch(() => {});
       }
@@ -474,7 +474,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (err instanceof Error && err.message?.includes('cancel')) {
         return;
       }
-      console.error('[PdfViewerPanel] renderPage failed:', err);
+      log.pdf.error('renderPage failed:', err);
       setError(String(err));
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas]);
@@ -688,7 +688,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           await renderPageRef.current();
         }
       } catch (err) {
-        console.error('[PdfViewerPanel] reloadWithFontData failed:', err);
+        log.pdf.error('reloadWithFontData failed:', err);
       } finally {
         if (!cancelled) setGlyphLoading(false);
       }
@@ -770,7 +770,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           drawMonospaceReplacement(gCtx, pageData, vpT, renderScale, glyphDebug.replaceFont);
         }
       } catch (err) {
-        console.error('[PdfViewerPanel] glyph overlay failed:', err);
+        log.pdf.error('glyph overlay failed:', err);
       } finally {
         if (!cancelled) setGlyphLoading(false);
       }

@@ -1,4 +1,5 @@
 import { lookupBoard } from './apple-boards';
+import { log } from './log-store';
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
@@ -255,7 +256,7 @@ class DatabankStore {
       return await res.json();
     } catch (err) {
       if (!this._backendWarned) {
-        console.warn('[Databank] Backend unavailable — run the Docker container or backend on :8080');
+        log.scan.warn('Backend unavailable — run the Docker container or backend on :8080');
         this._backendWarned = true;
       }
       if (this._backendAvailable) {
@@ -498,7 +499,7 @@ class DatabankStore {
       }
       return true;
     } catch (err) {
-      console.warn('[Databank] Preview generation failed for', file.filename, err);
+      log.scan.warn('Preview generation failed for', file.filename, err);
       return false;
     }
   }
@@ -611,7 +612,7 @@ class DatabankStore {
     if (!isElectron()) return;
     const result = await window.electronAPI!.scanLibrary();
     if (result.error) {
-      console.warn('[Databank] Electron scan error:', result.error);
+      log.scan.warn('Electron scan error:', result.error);
       return;
     }
     this._files = result.files;

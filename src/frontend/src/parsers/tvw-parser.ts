@@ -10,9 +10,9 @@
 
 import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via } from './types';
 import { computeBBox, buildNets } from './types';
+import { log } from '../store/log-store';
 
 const textDecoder = new TextDecoder('utf-8');
-const TVW_DEBUG = false;
 
 /** Outline margin around each butterfly column (mils) */
 const OUTLINE_MARGIN = 50;
@@ -304,7 +304,7 @@ function detectObjectType(r: TvwReader): TvwObjectType | undefined {
     if (type === TvwObjectType.Through || type === TvwObjectType.Logic) return type;
     // eagleview returns first non-zero as object type — if it's unknown, bail
     if (type !== 0) {
-      if (TVW_DEBUG) console.warn(`TVW: unknown object type ${type} at offset 0x${startPos.toString(16)}`);
+      log.parser.warn(`unknown object type ${type} at offset 0x${startPos.toString(16)}`);
       return undefined;
     }
   }
@@ -315,7 +315,7 @@ function readLayerHeader(r: TvwReader): { name: string; initialName: string; pat
   const magic0 = r.readU32(); // expected: 2
   const magic1 = r.readU32(); // expected: 1
   if (magic0 !== 2 || magic1 !== 1) {
-    console.warn(`TVW: unexpected layer header magic ${magic0}/${magic1} at offset 0x${(r.tell() - 8).toString(16)}`);
+    log.parser.warn(`unexpected layer header magic ${magic0}/${magic1} at offset 0x${(r.tell() - 8).toString(16)}`);
   }
   const name = r.readPStr();
   const initialName = r.readPStr();
@@ -375,7 +375,7 @@ function loadShapes(r: TvwReader): TvwShape[] {
         break;
       }
       default:
-        if (TVW_DEBUG) console.warn(`TVW: unknown shape type ${shapeType}, skipping 8 bytes`);
+        log.parser.warn(`unknown shape type ${shapeType}, skipping 8 bytes`);
         r.readFixed32(); r.readFixed32();
         break;
     }
@@ -886,7 +886,7 @@ function scanForNetTable(r: TvwReader): { pos: number; count: number } | null {
       np += len;
     }
     if (ok && valid >= Math.min(10, maxCheck)) {
-      if (TVW_DEBUG) console.log(`TVW: net table scan hit at 0x${p.toString(16)}: count=${v1}, ${valid}/${maxCheck} valid names`);
+      log.parser.log(`net table scan hit at 0x${p.toString(16)}: count=${v1}, ${valid}/${maxCheck} valid names`);
       return { pos: pstrStart, count: v1 };
     }
   }
@@ -910,7 +910,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   r.readU32(); // size3
   const layerCount = r.readU32();
 
-  if (TVW_DEBUG) console.log(`TVW: "${type}" customer="${customer}" date="${date}" layers=${layerCount}`);
+  log.parser.log(`"${type}" customer="${customer}" date="${date}" layers=${layerCount}`);
 
   // ─ Layers
   const layers: TvwLayer[] = [];
@@ -920,14 +920,14 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
       const layer = loadLayer(r);
       if (layer === null) {
         // Unknown layer type — can't parse remaining layers
-        if (TVW_DEBUG) console.log(`TVW: layer[${i}] unknown type, stopping layer parsing`);
+        log.parser.log(`layer[${i}] unknown type, stopping layer parsing`);
         layersParsedCleanly = false;
         break;
       }
       layers.push(layer);
-      if (TVW_DEBUG) console.log(`TVW: layer[${i}] "${layer.name}" type=${layer.layerType} ${layer.objType === TvwObjectType.Logic ? `pads=${(layer as TvwLogicLayer).pads.length} lines=${(layer as TvwLogicLayer).lines.length}` : `holes=${(layer as TvwThroughLayer).holes.length}`}`);
+      log.parser.log(`layer[${i}] "${layer.name}" type=${layer.layerType} ${layer.objType === TvwObjectType.Logic ? `pads=${(layer as TvwLogicLayer).pads.length} lines=${(layer as TvwLogicLayer).lines.length}` : `holes=${(layer as TvwThroughLayer).holes.length}`}`);
     } catch (e) {
-      console.warn(`TVW: failed to parse layer ${i} at offset 0x${r.tell().toString(16)}: ${e}`);
+      log.parser.warn(`failed to parse layer ${i} at offset 0x${r.tell().toString(16)}: ${e}`);
       layersParsedCleanly = false;
       break;
     }
@@ -941,7 +941,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
     const netCount = r.readU32();
     const netCount2 = r.readU32();
     if (netCount !== netCount2) {
-      console.warn(`TVW: net count mismatch ${netCount} vs ${netCount2}`);
+      log.parser.warn(`net count mismatch ${netCount} vs ${netCount2}`);
     }
     for (let i = 0; i < netCount; i++) {
       nets.push(r.readPStr());
@@ -954,12 +954,12 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
       for (let i = 0; i < found.count; i++) {
         nets.push(r.readPStr());
       }
-      if (TVW_DEBUG) console.log(`TVW: recovered net table at 0x${found.pos.toString(16)}: ${found.count} nets`);
+      log.parser.log(`recovered net table at 0x${found.pos.toString(16)}: ${found.count} nets`);
     } else {
-      console.warn(`TVW: could not locate net table after layer parse failure`);
+      log.parser.warn(`could not locate net table after layer parse failure`);
     }
   }
-  if (TVW_DEBUG) console.log(`TVW: ${nets.length} nets loaded`);
+  log.parser.log(`${nets.length} nets loaded`);
 
   // ─ Probes, fixtures, mysterious block (skip)
   try {
@@ -967,7 +967,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
     skipFixtureRegistry(r);
     skipMysteriousBlock(r);
   } catch (e) {
-    console.warn(`TVW: failed to skip probe/fixture data: ${e}`);
+    log.parser.warn(`failed to skip probe/fixture data: ${e}`);
   }
 
   // ─ Parts
@@ -975,15 +975,15 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   try {
     const partCount = r.readU32();
     r.readU32(); // skip
-    if (TVW_DEBUG) console.log(`TVW: loading ${partCount} parts`);
+    log.parser.log(`loading ${partCount} parts`);
     for (let i = 0; i < partCount; i++) {
       parts.push(loadPart(r));
     }
   } catch (e) {
-    console.warn(`TVW: failed to parse parts at offset 0x${r.tell().toString(16)}: ${e}`);
+    log.parser.warn(`failed to parse parts at offset 0x${r.tell().toString(16)}: ${e}`);
   }
 
-  if (TVW_DEBUG) console.log(`TVW: parsed ${layers.length} layers, ${nets.length} nets, ${parts.length} parts`);
+  log.parser.log(`parsed ${layers.length} layers, ${nets.length} nets, ${parts.length} parts`);
 
   return {
     header: { type, customer, date, layerCount },
@@ -1165,7 +1165,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       const padIdx = Math.floor(tvwPin.handle / 8);
       const pad = padIdx >= 0 && padIdx < pads.length ? pads[padIdx] : null;
       if (!pad) {
-        if (TVW_DEBUG) console.log(`TVW: pin "${tvwPin.name}" handle=${tvwPin.handle} → padIdx=${padIdx} not found in ${pads.length} pads`);
+        log.parser.log(`pin "${tvwPin.name}" handle=${tvwPin.handle} → padIdx=${padIdx} not found in ${pads.length} pads`);
         continue;
       }
 
@@ -1255,7 +1255,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       if (i > 0) outlinePoints.push({ x: NaN, y: NaN });
       outlinePoints.push(...paths[i]);
     }
-    if (TVW_DEBUG) console.log(`TVW: outline from Roul Through layer: ${roulThroughLayer.slots.length} slots → ${paths.length} paths`);
+    log.parser.log(`outline from Roul Through layer: ${roulThroughLayer.slots.length} slots → ${paths.length} paths`);
   }
 
   // Try Roul Logic layer (lines + arcs)
@@ -1265,7 +1265,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       if (i > 0) outlinePoints.push({ x: NaN, y: NaN });
       outlinePoints.push(...paths[i]);
     }
-    if (TVW_DEBUG) console.log(`TVW: outline from Roul Logic layer: ${roulLogicLayer.lines.length} lines, ${roulLogicLayer.arcs.length} arcs → ${paths.length} paths`);
+    log.parser.log(`outline from Roul Logic layer: ${roulLogicLayer.lines.length} lines, ${roulLogicLayer.arcs.length} arcs → ${paths.length} paths`);
   }
 
   if (outlinePoints.length === 0) {
@@ -1362,7 +1362,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     layerNames,
   };
 
-  if (TVW_DEBUG) console.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers (stacked)`);
+  log.parser.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers (stacked)`);
 
   return board;
 }

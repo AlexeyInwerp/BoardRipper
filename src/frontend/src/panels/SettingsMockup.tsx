@@ -19,6 +19,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { RenderSettings } from '../store/render-settings';
+import { log } from '../store/log-store';
 import { computePinRadius, computeEffectiveBounds } from '../store/render-settings';
 import { buildBoardScene, BOARD_COLORS } from '../renderer/board-scene';
 import { MOCK_BOARD } from '../renderer/mockup-data';
@@ -229,7 +230,7 @@ export function SettingsMockup({
     try {
       graph = buildBoardScene(MOCK_BOARD, { ...s, showLabelSizeDebug: false, showPadVertices: false });
     } catch (err) {
-      console.error('[SettingsMockup] buildBoardScene failed:', err);
+      log.render.error('buildBoardScene failed:', err);
       return;
     }
     // Lift labels out of the scene so they render above selection/highlight overlays

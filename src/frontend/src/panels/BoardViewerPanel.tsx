@@ -7,7 +7,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { BoardSidebar } from '../components/BoardSidebar';
 import { pdfPanelId, isLinkActivating, activateLinkedPanel } from '../store/dockview-api';
 import { pdfStore } from '../store/pdf-store';
-import { logStore } from '../store/log-store';
+import { log } from '../store/log-store';
 
 export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: number }>) {
   const tabId = props.params.boardTabId;
@@ -87,7 +87,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     }
 
     const disposable = props.api.onDidActiveChange((e) => {
-      logStore.log('log', `[panel] onDidActiveChange tab=${tabId} isActive=${e.isActive} linkActivating=${isLinkActivating()} storeActive=${boardStore.activeTabId}`);
+      log.render.log(`onDidActiveChange tab=${tabId} isActive=${e.isActive} linkActivating=${isLinkActivating()} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
         boardStore.switchTab(tabId);
         rendererRef.current?.resume();
@@ -103,10 +103,10 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         // - activeTabId !== tabId: board store already moved to another tab, so this
         //   renderer must stop even if isActive=false fired inside a link-activation
         //   sequence (which would set _linkActivating=true and block the first condition).
-        logStore.log('log', `[panel] pausing renderer tab=${tabId}`);
+        log.render.log(`pausing renderer tab=${tabId}`);
         rendererRef.current?.pause();
       } else {
-        logStore.log('log', `[panel] SKIP pause tab=${tabId} (linkActivating=${isLinkActivating()} storeActive=${boardStore.activeTabId})`);
+        log.render.log(`SKIP pause tab=${tabId} (linkActivating=${isLinkActivating()} storeActive=${boardStore.activeTabId})`);
       }
     });
 

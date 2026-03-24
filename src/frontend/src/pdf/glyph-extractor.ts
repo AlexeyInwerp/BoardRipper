@@ -1,6 +1,7 @@
 // src/frontend/src/pdf/glyph-extractor.ts
 
 import opentype from 'opentype.js';
+import { log } from '../store/log-store';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { FontCacheEntry, GlyphPathData, PageGlyphData } from './glyph-types';
 import type { PdfTextItem } from '../store/pdf-store';
@@ -57,7 +58,7 @@ async function parseFontsFromPage(
       try {
         fontObj = page.commonObjs.get(name);
       } catch {
-        console.warn(`[glyph-extractor] Font ${name} not available in commonObjs, skipping`);
+        log.pdf.warn(`Font ${name} not available in commonObjs, skipping`);
         continue;
       }
 
@@ -76,7 +77,7 @@ async function parseFontsFromPage(
 
       const data = fontObj.data;
       if (!data || data.length === 0) {
-        console.warn(`[glyph-extractor] Font ${name} has no data. Was fontExtraProperties enabled?`);
+        log.pdf.warn(`Font ${name} has no data. Was fontExtraProperties enabled?`);
         continue;
       }
 
@@ -95,7 +96,7 @@ async function parseFontsFromPage(
       // Yield between font parses to avoid blocking the main thread
       await yieldToMain();
     } catch (err) {
-      console.warn(`[glyph-extractor] Failed to parse font ${name}:`, err);
+      log.pdf.warn(`Failed to parse font ${name}:`, err);
     }
   }
 }
@@ -214,7 +215,7 @@ export async function extractPageGlyphs(
   } catch (err) {
     result.status = 'error';
     result.error = String(err);
-    console.error('[glyph-extractor] extractPageGlyphs failed:', err);
+    log.pdf.error('extractPageGlyphs failed:', err);
   }
 
   return result;

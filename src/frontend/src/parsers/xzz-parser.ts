@@ -1,6 +1,6 @@
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets } from './types';
-import { logStore } from '../store/log-store';
+import { log } from '../store/log-store';
 
 // =====================================================================
 // Fast DES (FIPS PUB 46-3) — Number-based, precomputed tables
@@ -406,9 +406,9 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
       const coordValues = cand.dim === 'x' ? cxs : cys;
       const below = coordValues.filter(v => v < cand.axis).length;
       const balance = Math.min(below, coordValues.length - below) / coordValues.length;
-      logStore.log('log', `[XZZ] fold candidate: dim=${cand.dim}, axis=${cand.axis.toFixed(1)}, ratio=${cand.ratio.toFixed(2)}, balance=${balance.toFixed(2)}`);
+      log.parser.log(`fold candidate: dim=${cand.dim}, axis=${cand.axis.toFixed(1)}, ratio=${cand.ratio.toFixed(2)}, balance=${balance.toFixed(2)}`);
       if (balance < 0.15) {
-        logStore.log('warn', `[XZZ] fold candidate dim=${cand.dim} rejected: imbalanced split (${balance.toFixed(2)} < 0.15)`);
+        log.parser.warn(`fold candidate dim=${cand.dim} rejected: imbalanced split (${balance.toFixed(2)} < 0.15)`);
         passedChecks = false;
       }
     }
@@ -427,9 +427,9 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
       if (isFinite(lowerMin) && isFinite(upperMin)) {
         const lw = lowerMax - lowerMin, uw = upperMax - upperMin;
         const outlineBalance = lw > 0 && uw > 0 ? Math.min(lw, uw) / Math.max(lw, uw) : 0;
-        logStore.log('log', `[XZZ] outline half-widths (dim=${cand.dim}): lower=${lw.toFixed(0)}, upper=${uw.toFixed(0)}, balance=${outlineBalance.toFixed(2)}`);
+        log.parser.log(`outline half-widths (dim=${cand.dim}): lower=${lw.toFixed(0)}, upper=${uw.toFixed(0)}, balance=${outlineBalance.toFixed(2)}`);
         if (outlineBalance < 0.4) {
-          logStore.log('warn', `[XZZ] fold candidate dim=${cand.dim} rejected: outline halves asymmetric (${outlineBalance.toFixed(2)} < 0.40)`);
+          log.parser.warn(`fold candidate dim=${cand.dim} rejected: outline halves asymmetric (${outlineBalance.toFixed(2)} < 0.40)`);
           passedChecks = false;
         }
       }
@@ -452,12 +452,12 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
   } else if (cys.length >= 2) {
     dim = 'y';
     axis = (Math.min(...cys) + Math.max(...cys)) / 2;
-    logStore.log('log', `[XZZ] no gap detected — defaulting to Y fold at axis=${axis.toFixed(0)}`);
+    log.parser.log(`no gap detected — defaulting to Y fold at axis=${axis.toFixed(0)}`);
   } else if (segments.length >= 2) {
     dim = 'y';
     const ys = segments.flatMap(s => [s.p1.y, s.p2.y]);
     axis = (Math.min(...ys) + Math.max(...ys)) / 2;
-    logStore.log('log', `[XZZ] no gap detected — defaulting to Y fold (outline) at axis=${axis.toFixed(0)}`);
+    log.parser.log(`no gap detected — defaulting to Y fold (outline) at axis=${axis.toFixed(0)}`);
   } else {
     return null;
   }
@@ -472,7 +472,7 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
     else if (lowerPads > higherPads * 1.5) lowerIsBottom = true;
   }
 
-  logStore.log('log', `[XZZ] fold: dim=${dim}, axis=${axis.toFixed(1)}, lowerIsBottom=${lowerIsBottom}, gap=${detectedDim !== null}, testPads=${testPads.length}`);
+  log.parser.log(`fold: dim=${dim}, axis=${axis.toFixed(1)}, lowerIsBottom=${lowerIsBottom}, gap=${detectedDim !== null}, testPads=${testPads.length}`);
   return { axis, dim, lowerIsBottom };
 }
 
@@ -641,7 +641,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         segments.push({ p1: bestA, p2: bestB });
       }
     }
-    logStore.log('log', `[XZZ] outline split: dim=${fold.dim}, outlineMid=${outlineMid.toFixed(3)} (partAxis=${fold.axis.toFixed(3)}), before=${segsBefore}, removed=${removed}, clipped=${clipped}, after=${segments.length} (expected~${Math.round(segsBefore/2)})`);
+    log.parser.log(`outline split: dim=${fold.dim}, outlineMid=${outlineMid.toFixed(3)} (partAxis=${fold.axis.toFixed(3)}), before=${segsBefore}, removed=${removed}, clipped=${clipped}, after=${segments.length} (expected~${Math.round(segsBefore/2)})`);
   }
 
   // Normalize coordinates to origin

@@ -1,3 +1,5 @@
+import { log } from './log-store';
+
 export type LabelSize = 'small' | 'medium' | 'large';
 
 /** Pad shape override — applies to pin pads within a part type */
@@ -751,8 +753,7 @@ export function exportSettingsAsDefaults(): string {
   lines.push('};');
 
   const result = lines.join('\n');
-  // eslint-disable-next-line no-console
-  console.log(result);
+  log.render.log(result);
   return result;
 }
 

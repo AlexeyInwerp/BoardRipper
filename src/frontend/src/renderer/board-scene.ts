@@ -13,6 +13,7 @@
  */
 import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
 import type { BoardData } from '../parsers';
+import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
 import {
   getLabelFontSize,
@@ -218,7 +219,7 @@ function ensureShadowFont(fontSize: number): string {
       });
       installedShadowFonts.add(name);
     } catch (err) {
-      console.warn('[board-scene] BitmapFont shadow install failed:', err);
+      log.render.warn('BitmapFont shadow install failed:', err);
       return LABEL_FONT_FAMILY;
     }
   }
