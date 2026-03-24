@@ -62,6 +62,10 @@ const [appPath] = await packager({
   ],
 });
 
+// Ad-hoc code sign so macOS doesn't block the app
+console.log('\n--- Ad-hoc code signing ---');
+execSync(`codesign --force --deep --sign - "${appPath}/BoardRipper Legacy.app"`, { stdio: 'inherit' });
+
 // Create a zip for safe distribution (avoids App Translocation on macOS 10.15+)
 const zipName = 'BoardRipper-Legacy-macOS-x64.zip';
 const zipPath = path.join(OUT_DIR, zipName);
