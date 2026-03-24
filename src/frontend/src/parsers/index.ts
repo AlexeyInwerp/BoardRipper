@@ -7,11 +7,15 @@ import { FZFormat } from './fz-format';
 import { CADFormat } from './cad-format';
 import { XZZFormat } from './xzz-format';
 import { TVWFormat } from './tvw-format';
+import { AllegroBRDFormat } from './allegro-brd-format';
+import { BDVFormat } from './bdv-format';
 
 // Register all known formats in detection-priority order.
 // Content-based detection runs in this order; the first match wins.
 registerFormat(BVR1Format);
 registerFormat(BVR3Format);
+registerFormat(BDVFormat);          // Before Allegro/BRD — plain-text "BRDOUT:" detection is unambiguous
+registerFormat(AllegroBRDFormat);  // Before BRD — both use .brd, content detection differentiates
 registerFormat(BRDFormat);
 registerFormat(FZFormat);
 registerFormat(CADFormat);

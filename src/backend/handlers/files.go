@@ -21,6 +21,7 @@ var allowedExtensions = map[string]bool{
 	".cae": true,
 	".cad": true,
 	".pcb": true,
+	".bdv": true,
 }
 
 // allowedExtensionList returns a human-readable list for error messages.
@@ -96,7 +97,7 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 // allAllowedExtensions includes both board and PDF extensions for listing.
 var allAllowedExtensions = map[string]bool{
-	".bvr": true, ".bv": true, ".brd": true, ".fz": true,
+	".bvr": true, ".bv": true, ".brd": true, ".bdv": true, ".fz": true,
 	".cae": true, ".cad": true, ".pcb": true, ".pdf": true,
 }
 

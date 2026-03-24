@@ -844,11 +844,15 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     }
 
     // ── Part border + optional component-type fill ───────────────────────────
-    if (part.pins.length > 1) {
+    if (part.pins.length > 1 || (part.pins.length === 0 && eb.pw > 0 && eb.ph > 0)) {
       let borderRect: BorderRect;
       let fillX: number, fillY: number, fillW: number, fillH: number;
       let fillPoly: [number, number][] | null = null;
-      if (isTwoPinPart) {
+      if (part.pins.length === 0) {
+        // No pin data — draw simple bounds rectangle from parser-assigned defaults
+        borderRect = { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };
+        fillX = eb.px; fillY = eb.py; fillW = eb.pw; fillH = eb.ph;
+      } else if (isTwoPinPart) {
         // Expand border to encompass pads centered on pin vertices.
         // Use pin positions directly (not eb bounds) so the outline matches
         // the pads exactly — eb bounds may be inflated by parser bboxes.

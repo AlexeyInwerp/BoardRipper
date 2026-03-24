@@ -20,6 +20,7 @@ class LogStore {
   private _listeners = new Set<LogListener>();
   private _nextId = 1;
   private _snapshot: LogEntry[] = [];
+  private _snapshotDirty = false;
   private _orig = {
     log:   console.log.bind(console),
     warn:  console.warn.bind(console),
@@ -29,7 +30,8 @@ class LogStore {
   enabled: boolean;
 
   constructor() {
-    const stored = localStorage.getItem(LS_ENABLED_KEY);
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(LS_ENABLED_KEY); } catch { /* Node.js tests — no localStorage */ }
     this.enabled = stored === null ? true : stored === 'true';
     this._intercept();
   }
@@ -46,10 +48,8 @@ class LogStore {
       const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(3,'0')}`;
       this._entries.push({ id: this._nextId++, time, level, scope, message });
       if (this._entries.length > 600) this._entries = this._entries.slice(-500);
-      if (this._listeners.size > 0) {
-        this._snapshot = [...this._entries];
-        for (const l of this._listeners) l();
-      }
+      this._snapshotDirty = true;
+      for (const l of this._listeners) l();
     };
 
     // Intercept unscoped console calls (third-party libs) → tagged 'ui'
@@ -74,11 +74,17 @@ class LogStore {
 
   setEnabled(v: boolean) {
     this.enabled = v;
-    localStorage.setItem(LS_ENABLED_KEY, String(v));
+    try { localStorage.setItem(LS_ENABLED_KEY, String(v)); } catch { /* Node.js */ }
     for (const l of this._listeners) l();
   }
 
-  getSnapshot(): LogEntry[] { return this._snapshot; }
+  getSnapshot(): LogEntry[] {
+    if (this._snapshotDirty) {
+      this._snapshot = [...this._entries];
+      this._snapshotDirty = false;
+    }
+    return this._snapshot;
+  }
 
   clear() {
     this._entries = [];
