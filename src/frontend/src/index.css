@@ -2173,6 +2173,96 @@ html, body, #root {
   flex: 1;
 }
 
+/* Debug filter bar */
+.debug-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.debug-filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-filter-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.debug-filter-dot-on {
+  background: #4ade80;
+  box-shadow: 0 0 4px #4ade80;
+}
+
+.debug-filter-dot-off {
+  background: #666;
+}
+
+.debug-filter-label {
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.debug-filter-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.debug-filter-scopes.debug-filter-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.debug-filter-scope {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-filter-scope input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.debug-filter-persist {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-left: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-filter-persist input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Scope badge in log entries */
+.debug-log-scope {
+  flex-shrink: 0;
+  width: 52px;
+  font-size: 11px;
+}
+
 /* Drop overlay */
 .drop-overlay {
   position: fixed;
@@ -2467,6 +2557,13 @@ html, body, #root {
 .library-icon-pdf {
   background: var(--red);
   color: #fff;
+}
+
+.library-multilayer-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+  color: var(--accent);
+  margin-left: -2px;
 }
 
 .library-file-name {
