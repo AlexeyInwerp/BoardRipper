@@ -7,6 +7,7 @@ import { ensurePdfPanel, ensureUtilityPanel, ensureLibraryPanel } from '../store
 import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
+import { log } from '../store/log-store';
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,7 +61,7 @@ export function Toolbar() {
         await pdfStore.loadFile(file);
         ensurePdfPanel(file.name);
       } catch (err) {
-        console.error('[Toolbar] Failed to load PDF:', err);
+        log.ui.error('Failed to load PDF:', err);
       }
     }
 
@@ -69,7 +70,7 @@ export function Toolbar() {
       pdfStore.switchTo(lastFile.name);
       ensurePdfPanel(lastFile.name);
     } catch (err) {
-      console.error('[Toolbar] Failed to load PDF:', err);
+      log.ui.error('Failed to load PDF:', err);
     }
 
     e.target.value = '';

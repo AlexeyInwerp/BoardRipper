@@ -1,7 +1,7 @@
 import type { BoardData, Part, Pin } from '../parsers';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
-import { logStore } from './log-store';
+import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 
@@ -324,7 +324,7 @@ class BoardStore {
     try {
       const cached = await boardCache.get(file.name, file.size, file.lastModified);
       if (cached) {
-        logStore.log('log', `[board-store] Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
+        log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
@@ -341,12 +341,12 @@ class BoardStore {
         return;
       }
 
-      logStore.log('log', `[board-store] Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+      log.parser.log(`Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
       const t0 = performance.now();
       const buffer = await file.arrayBuffer();
       const board = await parseBoardFile(buffer, file.name);
       const elapsed = (performance.now() - t0).toFixed(0);
-      logStore.log('log', `[board-store] Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
+      log.parser.log(`Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
 
       // Log side detection summary
       const fmt = getFormat(board.format);
@@ -356,8 +356,8 @@ class BoardStore {
       const botNails = board.nails.filter(n => n.side === 'bottom').length;
       const topTP = board.parts.filter(p => p.side === 'top' && p.pins.length === 1).length;
       const botTP = board.parts.filter(p => p.side === 'bottom' && p.pins.length === 1).length;
-      logStore.log('log',
-        `[board-store] Side detection: top=${topParts} parts/${topNails} nails, bottom=${botParts} parts/${botNails} nails` +
+      log.parser.log(
+        `Side detection: top=${topParts} parts/${topNails} nails, bottom=${botParts} parts/${botNails} nails` +
         (topTP + botTP > 0 ? `, testpoints=${topTP}T/${botTP}B` : '') +
         (fmt?.flipY ? ', flipY=ON' : '') +
         (fmt?.swapSides ? ', swapSides=ON' : ''),
@@ -375,7 +375,7 @@ class BoardStore {
 
       this.autoBindBoard(file.name);
     } catch (err) {
-      logStore.log('error', `[board-store] Failed to load ${file.name}:`, err);
+      log.cache.error(`Failed to load ${file.name}:`, err);
       const idx = this._tabs.indexOf(tab);
       if (idx !== -1) this._tabs.splice(idx, 1);
       if (this._activeTabId === tab.id) {

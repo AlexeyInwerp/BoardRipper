@@ -10,7 +10,6 @@
  *  - Net lines: draws connection lines between components sharing a net
  *  - Reacts to renderSettingsStore changes and rebuilds the scene as needed
  *
- * Debug logging: set `window.__BV_DEBUG = 1` (or 2 for verbose) in the browser console.
  */
 import { Application, Graphics, Container, BitmapText, Text } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
@@ -25,17 +24,12 @@ import type { PanDirection } from '../store/view-commands';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS } from './board-scene';
 import type { BorderBatch } from './board-scene';
 import { getFormat } from '../parsers/registry';
-import { logStore } from '../store/log-store';
+import { log } from '../store/log-store';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
 
-// Debug logging — set via browser console: window.__BV_DEBUG = 1 (or 2 for verbose)
-type DebugLevel = 0 | 1 | 2;
-function dbg(level: DebugLevel, ...args: unknown[]) {
-  const current = (globalThis as Record<string, unknown>).__BV_DEBUG as number ?? 0;
-  if (current >= level) console.log('[BoardRenderer]', ...args);
-}
+
 
 /** Pre-built scene graph for a single board */
 interface BoardScene {
@@ -315,11 +309,11 @@ export class BoardRenderer {
 
   /** Pause the renderer (stop ticker, zero CPU cost). Call when panel is hidden. */
   pause() {
-    dbg(1, 'pause', 'tab=' + this.tabId);
+    log.render.log('pause', 'tab=' + this.tabId);
     if (boardStore.activeTabId === this.tabId) {
-      logStore.log('warn', `[renderer] WARN: pausing the store-active renderer tab=${this.tabId} — possible spurious isActive=false`);
+      log.render.warn(`pausing the store-active renderer tab=${this.tabId} — possible spurious isActive=false`);
     } else {
-      logStore.log('log', `[renderer] pause tab=${this.tabId} storeActive=${boardStore.activeTabId}`);
+      log.render.log(`pause tab=${this.tabId} storeActive=${boardStore.activeTabId}`);
     }
     // Cancel pending follow-PDF debounce
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
@@ -340,7 +334,7 @@ export class BoardRenderer {
    * reclaim GPU resources when the Application becomes unreferenced.
    */
   private teardownForReinit() {
-    dbg(1, 'teardownForReinit', 'tab=' + this.tabId);
+    log.render.log('teardownForReinit', 'tab=' + this.tabId);
 
     // Save viewport state
     if (this.board && this.viewport) {
@@ -358,7 +352,7 @@ export class BoardRenderer {
     this.stopTicker();
 
     // Evict scene cache (GPU objects will be invalid after new app)
-    try { this.invalidateAllScenes(); } catch (e) { console.warn('[BoardRenderer] teardown invalidateAllScenes error:', e); }
+    try { this.invalidateAllScenes(); } catch (e) { log.render.warn('teardown invalidateAllScenes error:', e); }
     this.activeScene = null;
     this.sceneCache.clear();
 
@@ -370,32 +364,26 @@ export class BoardRenderer {
         canvas.removeEventListener('pointerleave', this.boundHideTooltip!);
       }
       canvas?.parentElement?.removeChild(canvas);
-    } catch (e) { console.warn('[BoardRenderer] teardown canvas cleanup error:', e); }
+    } catch (e) { log.render.warn('teardown canvas cleanup error:', e); }
 
     // Do NOT call app.destroy() — it corrupts the global batch pool.
     // The old Application and its WebGL context will be GC'd.
-    logStore.log('log', `[renderer] teardownForReinit tab=${this.tabId} — old app released (no destroy)`);
+    log.render.log(`teardownForReinit tab=${this.tabId} — old app released (no destroy)`);
   }
 
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
   resume() {
     if (this.destroyed) return;
-    dbg(1, 'resume', 'tab=' + this.tabId, 'contextLost=' + this.contextLost, 'board=' + (this.board ? this.board.format : 'null'));
     // GPU was released (pause/context loss) — need full re-init
     if (this.contextLost) {
-      logStore.log('log', `[renderer] resume → reinitApp tab=${this.tabId}`);
+      log.render.log(`resume → reinitApp tab=${this.tabId}`);
       this.reinitApp();
       return;
     }
 
     const w = this.containerEl.clientWidth;
     const h = this.containerEl.clientHeight;
-    dbg(1, 'resume', 'tab=' + this.tabId, 'size=' + w + 'x' + h,
-      'activeTabId=' + boardStore.activeTabId,
-      'board=' + (this.board ? this.board.format : 'null'),
-      'scene=' + (this.activeScene ? 'yes' : 'null'),
-      'initialized=' + this.initialized);
-    logStore.log('log', `[renderer] resume tab=${this.tabId} size=${w}x${h} scene=${this.activeScene ? 'yes' : 'null'} ticker=${this.app.ticker.started} storeActive=${boardStore.activeTabId}`);
+    log.render.log(`resume tab=${this.tabId} size=${w}x${h} scene=${this.activeScene ? 'yes' : 'null'} ticker=${this.app.ticker.started} storeActive=${boardStore.activeTabId}`);
     this.app.ticker.start();
     this.needsRender = true;
     // Re-sync with container size (may have been 0 while hidden)
@@ -414,7 +402,7 @@ export class BoardRenderer {
         const dw = this.containerEl.clientWidth;
         const dh = this.containerEl.clientHeight;
         if (dw > 0 && dh > 0) {
-          dbg(1, 'resume deferred resize', dw, 'x', dh);
+          log.render.log('resume deferred resize', dw, 'x', dh);
           this.viewport.resize(dw, dh);
           this.app.renderer.resize(dw, dh);
           this.needsRender = true;
@@ -426,14 +414,14 @@ export class BoardRenderer {
 
   /** Force a full scene re-activation — use the restart button to recover a broken render. */
   restartRender() {
-    logStore.log('log', `[renderer] restartRender tab=${this.tabId} initialized=${this.initialized} contextLost=${this.contextLost} board=${this.board ? this.board.format : 'null'}`);
+    log.render.log(`restartRender tab=${this.tabId} initialized=${this.initialized} contextLost=${this.contextLost} board=${this.board ? this.board.format : 'null'}`);
     if (!this.initialized) return;
     // Clear the contextLost flag so rendering can resume
     this.contextLost = false;
     // Use renderer's own board reference (works even if boardStore active tab is wrong)
     const board = this.board ?? boardStore.tabs.find(t => t.id === this.tabId)?.board ?? null;
     if (!board) {
-      logStore.log('log', `[renderer] restartRender: no board — nothing to rebuild`);
+      log.render.log(`restartRender: no board — nothing to rebuild`);
       return;
     }
     // Evict cached scene so buildBoardScene runs fresh, then re-activate directly
@@ -443,7 +431,7 @@ export class BoardRenderer {
     // Resync board store so onBoardUpdate won't skip future notifications
     if (this.tabId != null) boardStore.switchTab(this.tabId);
     if (!this.app.ticker.started) {
-      logStore.log('log', `[renderer] restartRender: restarting stopped ticker`);
+      log.render.log(`restartRender: restarting stopped ticker`);
       this.app.ticker.start();
     }
     this.needsRender = true;
@@ -461,7 +449,7 @@ export class BoardRenderer {
   private handleRenderCrash(err: unknown) {
     if (this.contextLost) return; // already handled
     this.contextLost = true;
-    logStore.log('error', `[renderer] render crash tab=${this.tabId} — ticker stopped, use Restart Render to recover:`, err);
+    log.render.error(`render crash tab=${this.tabId} — ticker stopped, use Restart Render to recover:`, err);
     this.stopTicker();
   }
 
@@ -474,11 +462,11 @@ export class BoardRenderer {
       e.preventDefault();
       if (this.destroyed) return;
       this.contextLost = true;
-      logStore.log('warn', `[renderer] WebGL context lost tab=${this.tabId} — will recover on resume`);
+      log.render.warn(`WebGL context lost tab=${this.tabId} — will recover on resume`);
       this.stopTicker();
     };
     this.boundContextRestored = () => {
-      logStore.log('log', `[renderer] WebGL context restored event tab=${this.tabId} — deferring recovery to resume()`);
+      log.render.log(`WebGL context restored event tab=${this.tabId} — deferring recovery to resume()`);
     };
     canvas.addEventListener('webglcontextlost', this.boundContextLost);
     canvas.addEventListener('webglcontextrestored', this.boundContextRestored);
@@ -501,14 +489,14 @@ export class BoardRenderer {
    * and board data. Called by resume() when contextLost is true.
    */
   private async reinitApp() {
-    dbg(1, 'reinitApp ENTER', 'tab=' + this.tabId, 'contextLost=' + this.contextLost, 'board=' + (this.board ? this.board.format : 'null'));
+    log.render.log('reinitApp ENTER', 'tab=' + this.tabId, 'contextLost=' + this.contextLost, 'board=' + (this.board ? this.board.format : 'null'));
     if (this.destroyed) return;
     if (this.reinitializing) {
-      dbg(1, 'reinitApp SKIPPED (already reinitializing)', 'tab=' + this.tabId);
+      log.render.log('reinitApp SKIPPED (already reinitializing)', 'tab=' + this.tabId);
       return;
     }
     this.reinitializing = true;
-    logStore.log('log', `[renderer] reinitApp START tab=${this.tabId} board=${this.board ? this.board.format + '/' + this.board.parts.length + 'parts' : 'null'}`);
+    log.render.log(`reinitApp START tab=${this.tabId} board=${this.board ? this.board.format + '/' + this.board.parts.length + 'parts' : 'null'}`);
 
     const savedBoard = this.board;
 
@@ -517,7 +505,7 @@ export class BoardRenderer {
     this.contextLost = false;
 
     // --- Create fresh Application ---
-    logStore.log('log', `[renderer] reinitApp: creating new Application tab=${this.tabId}`);
+    log.render.log(`reinitApp: creating new Application tab=${this.tabId}`);
     this.app = new Application();
     try {
       await this.app.init({
@@ -529,10 +517,9 @@ export class BoardRenderer {
         autoDensity: true,
         powerPreference: 'high-performance',
       });
-      dbg(1, 'reinitApp app.init DONE', 'tab=' + this.tabId, 'size=' + this.containerEl.clientWidth + 'x' + this.containerEl.clientHeight);
-      logStore.log('log', `[renderer] reinitApp: new app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
+      log.render.log(`reinitApp: app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
     } catch (err) {
-      logStore.log('error', `[renderer] reinitApp: app.init FAILED tab=${this.tabId}:`, err);
+      log.render.error(`reinitApp: app.init FAILED tab=${this.tabId}:`, err);
       this.reinitializing = false;
       return;
     }
@@ -596,7 +583,7 @@ export class BoardRenderer {
     this.app.ticker.add(this.onTick);
 
     // --- Reset state and rebuild scene ---
-    logStore.log('log', `[renderer] reinitApp: resetting state & rebuilding scene tab=${this.tabId}`);
+    log.render.log(`reinitApp: resetting state & rebuilding scene tab=${this.tabId}`);
     this.lastLodScale = -1;
     this.prevTickScale = -1;
     this.lastFlipParams = null;
@@ -604,11 +591,11 @@ export class BoardRenderer {
     this.needsRender = true;
 
     if (savedBoard) {
-      logStore.log('log', `[renderer] reinitApp: activateScene for ${savedBoard.format}/${savedBoard.parts.length}parts tab=${this.tabId}`);
+      log.render.log(`reinitApp: activateScene for ${savedBoard.format}/${savedBoard.parts.length}parts tab=${this.tabId}`);
       this.activateScene(savedBoard);
       this.board = savedBoard;
     } else {
-      logStore.log('warn', `[renderer] reinitApp: no saved board — nothing to rebuild tab=${this.tabId}`);
+      log.render.warn(`reinitApp: no saved board — nothing to rebuild tab=${this.tabId}`);
     }
 
     this.initialized = true;
@@ -618,12 +605,11 @@ export class BoardRenderer {
     // Sync with current store state (applies layer visibility, selection, etc.)
     this.onBoardUpdate();
 
-    dbg(1, 'reinitApp COMPLETE', 'tab=' + this.tabId, 'board=' + (savedBoard ? savedBoard.format : 'null'), 'scene=' + (this.activeScene ? 'yes' : 'null'));
-    logStore.log('log', `[renderer] reinitApp COMPLETE tab=${this.tabId} board=${savedBoard ? savedBoard.format : 'null'} tickerStarted=${this.app.ticker.started} scene=${this.activeScene ? 'yes' : 'null'}`);
+    log.render.log(`reinitApp COMPLETE tab=${this.tabId} board=${savedBoard ? savedBoard.format : 'null'} tickerStarted=${this.app.ticker.started} scene=${this.activeScene ? 'yes' : 'null'}`);
   }
 
   async init() {
-    dbg(1, 'init', this.containerEl.clientWidth, 'x', this.containerEl.clientHeight);
+    log.render.log('init', this.containerEl.clientWidth, 'x', this.containerEl.clientHeight);
     try {
     await this.app.init({
       background: COLORS.background,
@@ -801,9 +787,9 @@ export class BoardRenderer {
     // Pick up any board data that loaded during async init
     this.onBoardUpdate();
     const tabLabel = this.tabId !== null ? ` (tab ${this.tabId})` : '';
-    logStore.log('log', `[renderer] Initialized${tabLabel}: ${this.containerEl.clientWidth}×${this.containerEl.clientHeight}`);
+    log.render.log(`Initialized${tabLabel}: ${this.containerEl.clientWidth}×${this.containerEl.clientHeight}`);
     } catch (err) {
-      logStore.log('error', '[renderer] init failed:', err);
+      log.render.error('init failed:', err);
       throw err;
     }
   }
@@ -1007,7 +993,7 @@ export class BoardRenderer {
 
   /** Apply orientation, view flips, user rotation and mirror to the scene root */
   private applyFlips(board: BoardData, scene: BoardScene) {
-    dbg(2, 'applyFlips', { butterfly: boardStore.butterfly, mirrorX: boardStore.mirrorX, mirrorY: boardStore.mirrorY, rotation: boardStore.rotation });
+    // applyFlips — no logging (fires frequently from onBoardUpdate)
     const butterfly = boardStore.butterfly;
     const autoFlipY = this.needsYFlip(board);
     const rotation = boardStore.rotation * Math.PI / 180;
@@ -1142,7 +1128,7 @@ export class BoardRenderer {
       }
       return;
     }
-    dbg(1, 'setupButterfly');
+    log.render.log('setupButterfly');
 
     // Create butterfly root with a copy of the outline
     const broot = new Container();
@@ -1245,7 +1231,7 @@ export class BoardRenderer {
     try {
       const graph = buildBoardScene(board, renderSettingsStore.settings);
       const elapsed = (performance.now() - t0).toFixed(0);
-      logStore.log('log', `[renderer] Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
+      log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
       // Debug vertex overlay (toggled in settings)
       this.clearDebugVertexLabels();
@@ -1274,7 +1260,7 @@ export class BoardRenderer {
 
       return { ...graph, butterflyRoot: null, butterflyOutline: null };
     } catch (err) {
-      logStore.log('error', '[renderer] buildBoardScene failed — evicting cache entry so re-open will re-parse:', err);
+      log.render.error('buildBoardScene failed — evicting cache entry so re-open will re-parse:', err);
       // Evict the cache entry so the user can re-open the file to get a fresh parse.
       boardStore.evictCacheForBoard(board);
       throw err;
@@ -1332,13 +1318,12 @@ export class BoardRenderer {
   }
 
   private activateScene(board: BoardData) {
-    dbg(1, 'activateScene', board.format, board.parts.length, 'parts');
     const scene = this.getOrBuildScene(board);
-    logStore.log('log', `[renderer] activateScene tab=${this.tabId} ${board.format}/${board.parts.length}pts cached=${this.activeScene === scene} ticker=${this.app.ticker.started}`);
+    log.render.log(`activateScene tab=${this.tabId} ${board.format}/${board.parts.length}pts cached=${this.activeScene === scene} ticker=${this.app.ticker.started}`);
 
     if (this.activeScene === scene) {
       // Same scene — just update layer visibility + flips
-      dbg(1, 'activateScene: same scene, updating flips');
+      log.render.log('activateScene: same scene, updating flips');
       scene.topLayer.visible = this.isTopVisible;
       scene.bottomLayer.visible = this.isBottomVisible;
       this.applyLayerVisibility(scene);
@@ -1346,7 +1331,7 @@ export class BoardRenderer {
       this.needsRender = true;
       return;
     }
-    dbg(1, 'activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
+    log.render.log('activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
 
     // Save current viewport state before switching
     this.saveViewportState();
@@ -1413,7 +1398,7 @@ export class BoardRenderer {
   }
 
   private deactivateScene() {
-    logStore.log('log', `[renderer] deactivateScene tab=${this.tabId}`);
+    log.render.log(`deactivateScene tab=${this.tabId}`);
     this.saveViewportState();
     if (this.activeScene) {
       this.teardownButterfly(this.activeScene);
@@ -1470,21 +1455,21 @@ export class BoardRenderer {
 
   private onBoardUpdate() {
     if (this.contextLost || this.reinitializing) {
-      dbg(1, 'onBoardUpdate SKIP: gpu released/reinitializing', 'tab=' + this.tabId);
+      log.render.log('onBoardUpdate SKIP: gpu released/reinitializing', 'tab=' + this.tabId);
       return;
     }
     if (!this.viewport) {
-      dbg(1, 'onBoardUpdate SKIP: no viewport', 'tab=' + this.tabId);
+      log.render.log('onBoardUpdate SKIP: no viewport', 'tab=' + this.tabId);
       return;
     }
     // Only react when this renderer's tab is active (skip notifications for other tabs)
     if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
-      dbg(2, 'onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
+      log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
     // Notify settings store which board is active so per-board overrides take effect
     renderSettingsStore.setActiveBoard(boardStore.fileName);
-    dbg(1, 'onBoardUpdate', 'tab=' + this.tabId,
+    log.render.log('onBoardUpdate', 'tab=' + this.tabId,
       'board=' + (boardStore.board ? boardStore.board.format + '/' + boardStore.board.parts.length : 'null'),
       'prev=' + (this.board ? this.board.format + '/' + this.board.parts.length : 'null'),
       'same=' + (boardStore.board === this.board),
@@ -1492,13 +1477,13 @@ export class BoardRenderer {
       'tickerStarted=' + this.app.ticker.started);
     // Only log when board reference actually changes (activation/deactivation), not on every store notify
     if (boardStore.board !== this.board) {
-      logStore.log('log', `[renderer] onBoardUpdate tab=${this.tabId} board=${boardStore.board ? boardStore.board.format + '/' + boardStore.board.parts.length : 'null'} prev=${this.board ? this.board.format + '/' + this.board.parts.length : 'null'} ticker=${this.app.ticker.started}`);
+      log.render.log(`onBoardUpdate tab=${this.tabId} board=${boardStore.board ? boardStore.board.format + '/' + boardStore.board.parts.length : 'null'} prev=${this.board ? this.board.format + '/' + this.board.parts.length : 'null'} ticker=${this.app.ticker.started}`);
     }
     try {
       const board = boardStore.board;
       if (board !== this.board) {
         this.lastFollowQuery = '';
-        dbg(1, 'onBoardUpdate: board changed', board ? 'activating' : 'deactivating');
+        log.render.log('onBoardUpdate: board changed', board ? 'activating' : 'deactivating');
         if (board) {
           this.activateScene(board);
         } else {
@@ -1509,8 +1494,7 @@ export class BoardRenderer {
         // Same board but scene was lost (e.g. settings update while paused failed
         // to rebuild, or invalidateAllScenes ran without a successful activateScene).
         // Re-activate to recover from blank render.
-        dbg(1, 'onBoardUpdate: recovering lost scene');
-        logStore.log('log', `[renderer] onBoardUpdate tab=${this.tabId} recovering lost scene for ${board.format}/${board.parts.length}`);
+        log.render.log(`onBoardUpdate tab=${this.tabId} recovering lost scene for ${board.format}/${board.parts.length}`);
         this.activateScene(board);
       } else if (board && this.activeScene) {
         // Same board — update layer visibility + flips
@@ -1525,7 +1509,7 @@ export class BoardRenderer {
       // PDF follow mode: search for selected component
       if (boardStore.followPdf && boardStore.selection.partIndex !== null) {
         const followPart = this.board?.parts[boardStore.selection.partIndex];
-        logStore.log('log', `[follow] selection trigger: partIndex=${boardStore.selection.partIndex} part=${followPart?.name ?? 'null'}`);
+        log.render.log(`selection trigger: partIndex=${boardStore.selection.partIndex} part=${followPart?.name ?? 'null'}`);
         if (followPart) this.triggerFollowPdf(followPart);
       }
 
@@ -1538,7 +1522,7 @@ export class BoardRenderer {
         this.startSelectionBlink();
       }
     } catch (err) {
-      logStore.log('error', '[renderer] onBoardUpdate crashed:', err);
+      log.render.error('onBoardUpdate crashed:', err);
     }
   }
 
@@ -1665,12 +1649,12 @@ export class BoardRenderer {
       : part.name;
 
     if (query === this.lastFollowQuery) {
-      logStore.log('log', `[follow] skip duplicate query: "${query}"`);
+      log.render.log(`skip duplicate query: "${query}"`);
       return;
     }
     this.lastFollowQuery = query;
 
-    logStore.log('log', `[follow] triggerFollowPdf: query="${query}" pdf="${pdfNames[0]}"`);
+    log.render.log(`triggerFollowPdf: query="${query}" pdf="${pdfNames[0]}"`);
     pdfStore.switchTo(pdfNames[0]);
     pdfStore.navigateToText(query);
   }
@@ -1684,11 +1668,11 @@ export class BoardRenderer {
       if (!boardStore.followPdf) return;
       if (boardStore.selection.partIndex !== null) {
         const selName = this.board?.parts[boardStore.selection.partIndex]?.name ?? '?';
-        logStore.log('log', `[follow] debounce skip: component selected: ${selName} (partIndex=${boardStore.selection.partIndex})`);
+        log.render.log(`debounce skip: component selected: ${selName} (partIndex=${boardStore.selection.partIndex})`);
         return;
       }
       const part = this.findLargestPartNearCenter();
-      logStore.log('log', `[follow] debounce fired: centerPart=${part?.name ?? 'none'} pins=${part?.pins.length ?? 0}`);
+      log.render.log(`debounce fired: centerPart=${part?.name ?? 'none'} pins=${part?.pins.length ?? 0}`);
       if (part) this.triggerFollowPdf(part);
     }, 500);
   }
@@ -1712,7 +1696,7 @@ export class BoardRenderer {
 
   private onSettingsUpdate() {
     if (!this.board || this.contextLost || this.reinitializing) return;
-    dbg(2, 'onSettingsUpdate');
+    // onSettingsUpdate — no logging (fires on every settings change)
     try {
       // Cancel any pending zoom-settle timers (scene is about to be rebuilt)
       if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
@@ -1728,7 +1712,7 @@ export class BoardRenderer {
       // Force LoD re-evaluation on next tick (new scene, thresholds may have changed)
       this.lastLodScale = -1;
     } catch (err) {
-      logStore.log('error', `[renderer] onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
+      log.render.error(`onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
       // activeScene may be null after invalidateAllScenes + failed activateScene.
       // The next onBoardUpdate (on resume or tab switch) will detect the missing
       // scene and re-activate it via the "recovering lost scene" path.
@@ -2558,7 +2542,7 @@ export class BoardRenderer {
 
   /** Find the part (and optionally pin) under a world-space point */
   private hitTest(world: Point): { partIndex: number; pinIndex: number } | null {
-    dbg(2, 'hitTest', world);
+    // hitTest logging removed — fires on every pointer interaction, too noisy
     if (!this.board) return null;
 
     const s = renderSettingsStore.settings;

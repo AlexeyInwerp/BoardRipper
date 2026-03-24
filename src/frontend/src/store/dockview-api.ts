@@ -1,4 +1,5 @@
 import type { DockviewApi, IDockviewGroupPanel } from 'dockview-react';
+import { log } from './log-store';
 
 let _api: DockviewApi | null = null;
 
@@ -133,7 +134,7 @@ export function ensureBoardPanel(tabId: number, fileName: string): void {
       });
     }
   } catch (err) {
-    console.error('[dockview] Failed to open board panel:', err);
+    log.ui.error('Failed to open board panel:', err);
   }
 }
 
@@ -170,7 +171,7 @@ export function ensurePdfPanel(fileName: string): void {
       });
     }
   } catch (err) {
-    console.error('[dockview] Failed to open PDF panel:', err);
+    log.ui.error('Failed to open PDF panel:', err);
   }
 }
 
@@ -218,7 +219,7 @@ export function ensureLibraryPanel(): void {
       setSidebarInitialWidth();
     }
   } catch (err) {
-    console.error('[dockview] Failed to open library panel:', err);
+    log.ui.error('Failed to open library panel:', err);
   }
 }
 
@@ -256,6 +257,6 @@ export function ensureUtilityPanel(id: string, component: string, title: string)
     // Fallback: no sidebar exists yet, place standalone
     api.addPanel({ id, component, title });
   } catch (err) {
-    console.error(`[dockview] Failed to open ${id} panel:`, err);
+    log.ui.error(`Failed to open ${id} panel:`, err);
   }
 }

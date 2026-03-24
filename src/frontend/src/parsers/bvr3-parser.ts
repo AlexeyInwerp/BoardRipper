@@ -1,5 +1,6 @@
 import type { BoardData, Part, Pin, Point } from './types';
 import { computeBBox, buildNets } from './types';
+import { log } from '../store/log-store';
 
 /**
  * Pre-scan to detect whether PIN_ORIGIN values are relative to PART_ORIGIN
@@ -43,8 +44,8 @@ function detectAbsolutePinCoords(lines: string[]): boolean {
   // If every non-zero-origin part has first PIN_ORIGIN == PART_ORIGIN, coords are absolute.
   // Partial match (some absolute, some not) falls through to relative mode — log a warning.
   if (matchCount > 0 && matchCount < nonZeroOriginParts) {
-    console.warn(
-      `[BVR3] Mixed coordinate convention detected: ${matchCount}/${nonZeroOriginParts} ` +
+    log.parser.warn(
+      `Mixed coordinate convention detected: ${matchCount}/${nonZeroOriginParts} ` +
       'non-zero-origin parts have PIN_ORIGIN == PART_ORIGIN. Falling back to relative mode.',
     );
   }
@@ -184,8 +185,8 @@ export function parseBVR3(text: string): BoardData {
         if (currentPin && currentPart) {
           const pinPos = currentPin.position || currentPart.origin;
           if (!currentPin.position && currentPart.origin.x === 0 && currentPart.origin.y === 0) {
-            console.warn(
-              `[BVR3] Part "${currentPart.name}" pin "${currentPin.number || currentPin.name || '?'}": ` +
+            log.parser.warn(
+              `Part "${currentPart.name}" pin "${currentPin.number || currentPin.name || '?'}": ` +
               'both PIN_ORIGIN and PART_ORIGIN absent — falling back to {0, 0}'
             );
           }

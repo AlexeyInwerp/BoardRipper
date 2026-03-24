@@ -3,7 +3,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
-import { logStore } from './log-store';
+import { log } from './log-store';
 
 // In Electron (file:// protocol), Workers can't load file:// URLs on Windows.
 // Use workerSrc for normal web mode; disable worker for Electron (runs on main thread).
@@ -302,12 +302,12 @@ async function stripWatermarkImages(buffer: ArrayBuffer, maxDim = 50): Promise<U
       const newStream = doc.context.stream(cleanedBytes);
       doc.context.assign(ref, newStream);
 
-      console.log(`[PdfStore] Content stream: ${text.length} → ${cleaned.length} bytes (−${Math.round((1 - cleaned.length / text.length) * 100)}%)`);
+      log.pdf.log(`Content stream: ${text.length} → ${cleaned.length} bytes (−${Math.round((1 - cleaned.length / text.length) * 100)}%)`);
     }
   }
 
   if (totalRemoved > 0) {
-    console.log(`[PdfStore] Stripped ${totalRemoved} watermark image XObject(s)`);
+    log.pdf.log(`Stripped ${totalRemoved} watermark image XObject(s)`);
   }
   return doc.save();
 }
@@ -487,7 +487,7 @@ class PdfStore {
       // The viewer can render pages immediately without waiting for this.
       this._extractText(pdfDoc);
     } catch (err) {
-      console.error('[PdfStore] loadFile failed:', err);
+      log.pdf.error('loadFile failed:', err);
       this._activeFileName = null;
       this._loading = false;
       this.notify();
@@ -534,7 +534,7 @@ class PdfStore {
         if (i % NOTIFY_INTERVAL === 0) this.notify(); // progress update
       }
     } catch (err) {
-      console.error('[PdfStore] text extraction failed:', err);
+      log.pdf.error('text extraction failed:', err);
     }
 
     this.notify();
@@ -607,9 +607,9 @@ class PdfStore {
           origSize: d.originalBuffer.byteLength,
           strippedSize: stripped.byteLength,
         };
-        console.log(`[pdf-strip-perf] ${JSON.stringify(metrics)}`);
+        log.perf.log(JSON.stringify(metrics));
       } catch (err) {
-        console.error('[PdfStore] stripWatermarkImages failed:', err);
+        log.pdf.error('stripWatermarkImages failed:', err);
         d.cleanMode = false;
       }
     }
@@ -929,7 +929,7 @@ class PdfStore {
   navigateToText(query: string): void {
     const d = this._active;
     if (!d || d.textPages.length === 0) {
-      logStore.log('log', `[follow] navigateToText: no active doc or no text pages`);
+      log.pdf.log(`navigateToText: no active doc or no text pages`);
       return;
     }
 
@@ -940,7 +940,7 @@ class PdfStore {
     const component = terms[terms.length - 1]; // component name — mandatory
     const nets = terms.slice(0, -1); // net names — optional disambiguation
 
-    logStore.log('log', `[follow] navigateToText: component="${component}" nets=[${nets.join(', ')}] pages=${d.textPages.length}`);
+    log.pdf.log(`navigateToText: component="${component}" nets=[${nets.join(', ')}] pages=${d.textPages.length}`);
 
     let fallbackPage = -1;
     let fallbackItems: PdfTextItem[] = [];
@@ -988,7 +988,7 @@ class PdfStore {
           matchedItems.push(netItem);
         }
         if (allNetsFound) {
-          logStore.log('log', `[follow] navigateToText: full match on page ${pi + 1} (${matchedItems.length} items)`);
+          log.pdf.log(`navigateToText: full match on page ${pi + 1} (${matchedItems.length} items)`);
           d.currentPage = pi + 1;
           this._followTarget = { pageIndex: pi, items: matchedItems };
           this.notify();
@@ -996,7 +996,7 @@ class PdfStore {
         }
       } else {
         // No nets — primary-only match is sufficient
-        logStore.log('log', `[follow] navigateToText: primary-only match on page ${pi + 1}`);
+        log.pdf.log(`navigateToText: primary-only match on page ${pi + 1}`);
         d.currentPage = pi + 1;
         this._followTarget = { pageIndex: pi, items: [primaryItem] };
         this.notify();
@@ -1006,12 +1006,12 @@ class PdfStore {
 
     // Fallback: navigate to first page with component name
     if (fallbackPage !== -1) {
-      logStore.log('log', `[follow] navigateToText: fallback to page ${fallbackPage + 1} (primary only, nets not all found)`);
+      log.pdf.log(`navigateToText: fallback to page ${fallbackPage + 1} (primary only, nets not all found)`);
       d.currentPage = fallbackPage + 1;
       this._followTarget = { pageIndex: fallbackPage, items: fallbackItems };
       this.notify();
     } else {
-      logStore.log('log', `[follow] navigateToText: no match found for "${component}"`);
+      log.pdf.log(`navigateToText: no match found for "${component}"`);
     }
   }
 
@@ -1081,7 +1081,7 @@ class PdfStore {
    *  Shows raw items, merged lines, and item boundaries per page. */
   dumpTextToNewTab(fileName?: string) {
     const d = fileName ? this._documents.get(fileName) : this._active;
-    if (!d) { console.warn('[PdfStore] dumpText: no document'); return; }
+    if (!d) { log.pdf.warn('dumpText: no document'); return; }
 
     const lines: string[] = [];
     lines.push('<!DOCTYPE html><html><head><meta charset="utf-8">');

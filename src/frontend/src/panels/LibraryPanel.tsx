@@ -6,6 +6,10 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
+import { IconStack2 } from '@tabler/icons-react';
+import { log } from '../store/log-store';
+
+const MULTILAYER_FORMATS = new Set(['TVW', 'ALLEGRO_BRD']);
 
 function tailTruncate(s: string, max = 60) {
   return s.length > max ? '...' + s.slice(-(max - 3)) : s;
@@ -70,7 +74,7 @@ export function LibraryPanel() {
                 await pdfStore.loadFile(pdfObj);
                 ensurePdfPanel(pdfObj.name);
               } catch (err) {
-                console.error('[Library] Failed to load bound PDF:', err);
+                log.ui.error('Failed to load bound PDF:', err);
               }
             }
             // Re-activate the board panel so auto-loaded PDFs don't steal focus
@@ -96,7 +100,7 @@ export function LibraryPanel() {
         }
       }
     } catch (err) {
-      console.error('[Library] Failed to open file:', err);
+      log.ui.error('Failed to open file:', err);
     }
   }, [files, autoPdf]);
 
@@ -865,6 +869,9 @@ function FileRow({ file, selected, indent, showPreview, onSelect, onOpen }: {
     >
       {previewEnabled && <PreviewThumbnail file={file} />}
       <span className={`library-file-icon ${iconClass}`}>{icon}</span>
+      {file.file_type === 'board' && MULTILAYER_FORMATS.has(file.format_id) && (
+        <IconStack2 size={14} className="library-multilayer-icon" />
+      )}
       <span className="library-file-name">{file.filename}</span>
       {file.part_count != null && (
         <span className="library-file-meta">{file.part_count}p</span>

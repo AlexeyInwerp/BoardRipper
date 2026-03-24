@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useEffect, useRef, useState, useCallback } from 'react';
+import { useSyncExternalStore, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { logStore, LOG_SCOPES, type LogScope, log } from '../store/log-store';
 import { boardCache } from '../store/board-cache';
 
@@ -61,18 +61,20 @@ export function DebugPanel() {
   }, []);
 
   const toggleLogging = useCallback(() => {
-    const next = !loggingEnabled;
-    setLoggingEnabled(next);
-    logStore.setEnabled(next);
-  }, [loggingEnabled]);
+    setLoggingEnabled(prev => { const next = !prev; logStore.setEnabled(next); return next; });
+  }, []);
 
-  const filtered = entries.filter(e => e.level === 'error' || enabledScopes[e.scope]);
+  const filtered = useMemo(
+    () => entries.filter(e => e.level === 'error' || enabledScopes[e.scope]),
+    [entries, enabledScopes],
+  );
 
+  const lastEntryId = entries[entries.length - 1]?.id;
   useEffect(() => {
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ block: 'nearest' });
     }
-  }, [filtered]);
+  }, [lastEntryId]);
 
   const handleScroll = () => {
     const el = containerRef.current;
