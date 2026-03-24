@@ -14,6 +14,7 @@ export const BDVFormat: FormatDescriptor = {
   name: 'BDV (Plain-Text Boardview)',
   extensions: ['.brd', '.bdv'],
   description: 'Plain-text boardview format with BRDOUT/NETS/PARTS/PINS/NAILS sections.',
+  docUrl: 'docs/formats/BDV_FORMAT.md',
   flipY: true,
 
   detect(header: Uint8Array): boolean {

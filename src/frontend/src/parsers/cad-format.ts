@@ -8,6 +8,7 @@ export const CADFormat: FormatDescriptor = {
   name: 'GenCAD (PCB Interchange)',
   extensions: ['.cad'],
   description: 'GenCAD 1.4 text-based PCB interchange format. Sections: $SHAPES, $COMPONENTS, $SIGNALS.',
+  docUrl: 'docs/formats/CAD_FORMAT.md',
   flipY: true,
 
   detect(header) {
