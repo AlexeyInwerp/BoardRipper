@@ -10,6 +10,8 @@ import { IconStack2 } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 
 const MULTILAYER_FORMATS = new Set(['TVW', 'ALLEGRO_BRD']);
+/** Extensions that always indicate multi-layer formats (format_id may not be set by backend) */
+const MULTILAYER_EXTENSIONS = new Set(['.tvw']);
 
 function tailTruncate(s: string, max = 60) {
   return s.length > max ? '...' + s.slice(-(max - 3)) : s;
@@ -869,7 +871,10 @@ function FileRow({ file, selected, indent, showPreview, onSelect, onOpen }: {
     >
       {previewEnabled && <PreviewThumbnail file={file} />}
       <span className={`library-file-icon ${iconClass}`}>{icon}</span>
-      {file.file_type === 'board' && MULTILAYER_FORMATS.has(file.format_id) && (
+      {file.file_type === 'board' && (
+        MULTILAYER_FORMATS.has(file.format_id) ||
+        MULTILAYER_EXTENSIONS.has(('.' + file.extension).toLowerCase())
+      ) && (
         <IconStack2 size={14} className="library-multilayer-icon" />
       )}
       <span className="library-file-name">{file.filename}</span>

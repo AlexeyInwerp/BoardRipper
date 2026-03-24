@@ -12,6 +12,7 @@ var boardExtensions = map[string]bool{
 	".bvr": true,
 	".bv":  true,
 	".brd": true,
+	".bdv": true,
 	".fz":  true,
 	".cae": true,
 	".cad": true,
