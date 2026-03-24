@@ -1,32 +1,42 @@
 export type LogLevel = 'log' | 'warn' | 'error';
+export type LogScope = 'parser' | 'render' | 'pdf' | 'scan' | 'ui' | 'cache' | 'perf';
+
+export const LOG_SCOPES: readonly LogScope[] = ['parser', 'render', 'pdf', 'scan', 'ui', 'cache', 'perf'] as const;
 
 export interface LogEntry {
   id: number;
   time: string;
   level: LogLevel;
+  scope: LogScope;
   message: string;
 }
 
 type LogListener = () => void;
+
+const LS_ENABLED_KEY = 'boardripper-log-enabled';
 
 class LogStore {
   private _entries: LogEntry[] = [];
   private _listeners = new Set<LogListener>();
   private _nextId = 1;
   private _snapshot: LogEntry[] = [];
+  private _orig = {
+    log:   console.log.bind(console),
+    warn:  console.warn.bind(console),
+    error: console.error.bind(console),
+  };
+
+  enabled: boolean;
 
   constructor() {
+    const stored = localStorage.getItem(LS_ENABLED_KEY);
+    this.enabled = stored === null ? true : stored === 'true';
     this._intercept();
   }
 
   private _intercept() {
-    const orig = {
-      log:   console.log.bind(console),
-      warn:  console.warn.bind(console),
-      error: console.error.bind(console),
-    };
-
-    const push = (level: LogLevel, args: unknown[]) => {
+    const push = (level: LogLevel, scope: LogScope, args: unknown[]) => {
+      if (!this.enabled) return;
       const message = args.map(a => {
         if (a instanceof Error) return a.stack ?? a.message;
         if (typeof a === 'object') { try { return JSON.stringify(a); } catch { return String(a); } }
@@ -34,23 +44,36 @@ class LogStore {
       }).join(' ');
       const now = new Date();
       const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}.${String(now.getMilliseconds()).padStart(3,'0')}`;
-      this._entries.push({ id: this._nextId++, time, level, message });
-      // Keep last 500 entries
+      this._entries.push({ id: this._nextId++, time, level, scope, message });
       if (this._entries.length > 500) this._entries.shift();
       this._snapshot = [...this._entries];
       for (const l of this._listeners) l();
     };
 
-    console.log = (...args: unknown[]) => { orig.log(...args); push('log', args); };
-    console.warn = (...args: unknown[]) => { orig.warn(...args); push('warn', args); };
-    console.error = (...args: unknown[]) => { orig.error(...args); push('error', args); };
+    // Intercept unscoped console calls (third-party libs) → tagged 'ui'
+    console.log = (...args: unknown[]) => { this._orig.log(...args); push('log', 'ui', args); };
+    console.warn = (...args: unknown[]) => { this._orig.warn(...args); push('warn', 'ui', args); };
+    console.error = (...args: unknown[]) => { this._orig.error(...args); push('error', 'ui', args); };
+
+    // Expose push for scoped loggers
+    this._push = push;
   }
 
-  log(level: LogLevel, ...args: unknown[]) {
-    // Route through overridden console so it appears in both places
-    if (level === 'error') console.error(...args);
-    else if (level === 'warn') console.warn(...args);
-    else console.log(...args);
+  private _push!: (level: LogLevel, scope: LogScope, args: unknown[]) => void;
+
+  /** Create a scoped logger that routes through original console + store */
+  createScopedLogger(scope: LogScope) {
+    return {
+      log: (...args: unknown[]) => { this._orig.log(`[${scope}]`, ...args); this._push('log', scope, args); },
+      warn: (...args: unknown[]) => { this._orig.warn(`[${scope}]`, ...args); this._push('warn', scope, args); },
+      error: (...args: unknown[]) => { this._orig.error(`[${scope}]`, ...args); this._push('error', scope, args); },
+    };
+  }
+
+  setEnabled(v: boolean) {
+    this.enabled = v;
+    localStorage.setItem(LS_ENABLED_KEY, String(v));
+    for (const l of this._listeners) l();
   }
 
   getSnapshot(): LogEntry[] { return this._snapshot; }
@@ -68,3 +91,13 @@ class LogStore {
 }
 
 export const logStore = new LogStore();
+
+export const log = {
+  parser: logStore.createScopedLogger('parser'),
+  render: logStore.createScopedLogger('render'),
+  pdf:    logStore.createScopedLogger('pdf'),
+  scan:   logStore.createScopedLogger('scan'),
+  ui:     logStore.createScopedLogger('ui'),
+  cache:  logStore.createScopedLogger('cache'),
+  perf:   logStore.createScopedLogger('perf'),
+};
