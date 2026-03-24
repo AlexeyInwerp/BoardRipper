@@ -134,11 +134,17 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 		return 0, 1
 	}
 
+	// Use batch status check instead of N individual queries
+	extractedSet, err := e.db.BatchExtractStatus()
+	if err != nil {
+		log.Printf("PdfExtractor: failed to check extract status: %v", err)
+		return 0, 1
+	}
+
 	// Filter to only unextracted PDFs
 	var toExtract []FileRecord
 	for _, f := range files {
-		hasText, _ := e.db.HasPdfText(f.ID)
-		if !hasText {
+		if !extractedSet[f.ID] {
 			toExtract = append(toExtract, f)
 		}
 	}
@@ -155,37 +161,41 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 		e.scanner.SetPdfStatus(true, 0, total, 0, "")
 	}
 
+	// Bounded worker pool: only `concurrency` goroutines, fed via channel.
+	// Avoids allocating goroutines for all PDFs upfront (which caused OOM on NAS).
+	work := make(chan FileRecord, concurrency)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, concurrency)
 
-	for _, f := range toExtract {
+	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
-		sem <- struct{}{}
-		go func(file FileRecord) {
+		go func() {
 			defer wg.Done()
-			defer func() { <-sem }()
+			for file := range work {
+				if err := e.ExtractOne(file); err != nil {
+					log.Printf("PdfExtractor: error extracting %s: %v", file.Filename, err)
+					mu.Lock()
+					errors++
+					mu.Unlock()
+				} else {
+					mu.Lock()
+					extracted++
+					mu.Unlock()
+				}
 
-			if err := e.ExtractOne(file); err != nil {
-				log.Printf("PdfExtractor: error extracting %s: %v", file.Filename, err)
-				mu.Lock()
-				errors++
-				mu.Unlock()
-			} else {
-				mu.Lock()
-				extracted++
-				mu.Unlock()
+				if e.scanner != nil {
+					mu.Lock()
+					e.scanner.SetPdfStatus(true, int64(extracted), total, int64(errors), file.Filename)
+					mu.Unlock()
+				}
 			}
-
-			// Update progress
-			if e.scanner != nil {
-				mu.Lock()
-				e.scanner.SetPdfStatus(true, int64(extracted), total, int64(errors), file.Filename)
-				mu.Unlock()
-			}
-		}(f)
+		}()
 	}
 
+	for _, f := range toExtract {
+		work <- f
+	}
+	close(work)
 	wg.Wait()
 	log.Printf("PdfExtractor: done — %d extracted, %d errors", extracted, errors)
 

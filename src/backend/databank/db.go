@@ -235,12 +235,44 @@ type BindingDetail struct {
 	PdfPath       string `json:"pdf_path"`
 }
 
+// WriteTx runs fn inside a write transaction.
+// The caller must not hold db.mu — WriteTx acquires it for the whole transaction.
+func (db *DB) WriteTx(fn func(tx *sql.Tx) error) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 // InsertFile inserts a new file record and returns its ID.
 func (db *DB) InsertFile(f *FileRecord) (int64, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
 	res, err := db.writer.Exec(
+		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.Path, f.Filename, f.Extension, f.FileType, f.Size, f.ModTime, f.ScanTime,
+		nullStr(f.BoardNumber), nullStr(f.Manufacturer), nullStr(f.Model), nullStr(f.FormatID),
+		f.PartCount, f.NetCount, boolToInt(f.DonorPool), boolToInt(f.HasPreview),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// InsertFileTx inserts a file inside an existing transaction (no mutex — caller holds it via WriteTx).
+func InsertFileTx(tx *sql.Tx, f *FileRecord) (int64, error) {
+	res, err := tx.Exec(
 		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.Path, f.Filename, f.Extension, f.FileType, f.Size, f.ModTime, f.ScanTime,
