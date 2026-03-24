@@ -6,5 +6,9 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     environment:
       - PORT=8080

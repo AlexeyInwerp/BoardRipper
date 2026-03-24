@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -308,6 +309,8 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 	s.status.Phase = "Processing files"
 	s.mu.Unlock()
 
+	// Separate files into updates (existing, changed) and inserts (new)
+	var toInsert []FileRecord
 	for _, df := range diskFiles {
 		if cancelled() {
 			break
@@ -333,12 +336,12 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			}
 			atomic.AddInt64(&updated, 1)
 		} else {
-			// New file — insert
+			// New file — collect for batch insert
 			meta := ExtractMetadata(df.relPath)
 			fileType := FileTypeFromExt(df.relPath)
 			ext := strings.ToLower(filepath.Ext(df.relPath))
 
-			rec := &FileRecord{
+			toInsert = append(toInsert, FileRecord{
 				Path:         df.relPath,
 				Filename:     filepath.Base(df.relPath),
 				Extension:    ext,
@@ -349,15 +352,37 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 				BoardNumber:  meta.BoardNumber,
 				Manufacturer: meta.Manufacturer,
 				Model:        meta.Model,
-			}
+			})
+		}
+	}
 
-			if _, err := s.db.InsertFile(rec); err != nil {
-				log.Printf("Scanner: insert error for %s: %v", df.relPath, err)
-				atomic.AddInt64(&errors, 1)
-				continue
+	// Batch insert new files in transactions of 100
+	const batchSize = 100
+	for i := 0; i < len(toInsert); i += batchSize {
+		if cancelled() {
+			break
+		}
+		end := i + batchSize
+		if end > len(toInsert) {
+			end = len(toInsert)
+		}
+		batch := toInsert[i:end]
+		err := s.db.WriteTx(func(tx *sql.Tx) error {
+			for j := range batch {
+				if _, err := InsertFileTx(tx, &batch[j]); err != nil {
+					return err
+				}
 			}
-			log.Printf("Scanner: + %s [%s] %s", df.relPath, fileType, formatSize(df.size))
-			atomic.AddInt64(&added, 1)
+			return nil
+		})
+		if err != nil {
+			log.Printf("Scanner: batch insert error (%d files): %v", len(batch), err)
+			atomic.AddInt64(&errors, int64(len(batch)))
+		} else {
+			for _, f := range batch {
+				log.Printf("Scanner: + %s [%s] %s", f.Path, f.FileType, formatSize(f.Size))
+			}
+			atomic.AddInt64(&added, int64(len(batch)))
 		}
 	}
 
