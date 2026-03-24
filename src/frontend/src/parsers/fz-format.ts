@@ -16,6 +16,7 @@ export const FZFormat: FormatDescriptor = {
   name: 'FZ (ASUS Boardview)',
   extensions: ['.fz'],
   description: 'RC6-encrypted, zlib-compressed boardview format used by ASUS motherboards.',
+  docUrl: 'docs/formats/FZ_FORMAT.md',
   flipY: true,
 
   detect(header) {
