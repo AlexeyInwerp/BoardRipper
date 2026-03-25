@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -65,7 +66,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -89,6 +90,11 @@ func (db *DB) migrate() error {
 	if ver < 2 {
 		if err := db.migrateV2(); err != nil {
 			return fmt.Errorf("v2: %w", err)
+		}
+	}
+	if ver < 3 {
+		if err := db.migrateV3(); err != nil {
+			return fmt.Errorf("v3: %w", err)
 		}
 	}
 
@@ -196,6 +202,95 @@ func (db *DB) migrateV2() error {
 	}
 
 	return tx.Commit()
+}
+
+func (db *DB) migrateV3() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS pdf_scan_errors (
+			id          INTEGER PRIMARY KEY,
+			file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+			file_path   TEXT NOT NULL,
+			error_msg   TEXT NOT NULL,
+			error_detail TEXT,
+			created_at  INTEGER NOT NULL,
+			UNIQUE(file_id, error_msg)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pdf_scan_errors_file ON pdf_scan_errors(file_id)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 3); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// PdfScanError represents a row in the pdf_scan_errors table.
+type PdfScanError struct {
+	ID          int64  `json:"id"`
+	FileID      int64  `json:"file_id"`
+	FilePath    string `json:"file_path"`
+	ErrorMsg    string `json:"error_msg"`
+	ErrorDetail string `json:"error_detail,omitempty"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+// InsertPdfScanError logs a PDF extraction error, skipping duplicates (same file + same error message).
+func (db *DB) InsertPdfScanError(fileID int64, filePath, errorMsg, errorDetail string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	_, err := db.writer.Exec(
+		`INSERT OR IGNORE INTO pdf_scan_errors (file_id, file_path, error_msg, error_detail, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		fileID, filePath, errorMsg, errorDetail, time.Now().Unix(),
+	)
+	return err
+}
+
+// ListPdfScanErrors returns all logged PDF scan errors, newest first.
+func (db *DB) ListPdfScanErrors() ([]PdfScanError, error) {
+	rows, err := db.reader.Query(
+		`SELECT id, file_id, file_path, error_msg, COALESCE(error_detail, ''), created_at
+		 FROM pdf_scan_errors ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var errors []PdfScanError
+	for rows.Next() {
+		var e PdfScanError
+		if err := rows.Scan(&e.ID, &e.FileID, &e.FilePath, &e.ErrorMsg, &e.ErrorDetail, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		errors = append(errors, e)
+	}
+	return errors, rows.Err()
+}
+
+// ClearPdfScanErrors deletes all logged PDF scan errors.
+func (db *DB) ClearPdfScanErrors() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(`DELETE FROM pdf_scan_errors`)
+	return err
 }
 
 // FileRecord represents a row in the files table.
