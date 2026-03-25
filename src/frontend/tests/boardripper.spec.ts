@@ -98,8 +98,8 @@ test.describe('BoardRipper', () => {
     await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
     const statsAfterBoard1 = await page.getByTestId('file-name').textContent();
 
-    // Open second board (820-02020)
-    const board2 = path.resolve(__dirname, '../../../samples/820-02020.bvr');
+    // Open second board (820-02935-05.brd)
+    const board2 = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
     await fileInput.setInputFiles(board2);
     await expect(page.getByTestId('file-name')).not.toContainText(statsAfterBoard1!, { timeout: 15000 });
     const statsAfterBoard2 = await page.getByTestId('file-name').textContent();
@@ -107,7 +107,7 @@ test.describe('BoardRipper', () => {
 
     // dockview renders tabs as .dv-tab elements containing the panel title text
     const tab1 = page.locator('.dv-tab', { hasText: '820-02016.bvr' }).first();
-    const tab2 = page.locator('.dv-tab', { hasText: '820-02020.bvr' }).first();
+    const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
 
     // Switch back to board 1
     await expect(tab1).toBeVisible({ timeout: 3000 });
@@ -157,9 +157,9 @@ test.describe('BoardRipper', () => {
     await page.waitForTimeout(500); // let PDF panel open + auto-bind
 
     // Open board 2 + PDF 2
-    await fileInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02020.bvr'));
-    await expect(page.getByTestId('file-name')).toContainText('4317', { timeout: 15000 });
-    await pdfInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02020.pdf'));
+    await fileInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02935-05.brd'));
+    await expect(page.getByTestId('file-name')).not.toContainText('3075', { timeout: 15000 });
+    await pdfInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf'));
     await page.waitForTimeout(500);
 
     // Switch to board 1 tab — activates board 1 and linked PDF 1
@@ -170,7 +170,7 @@ test.describe('BoardRipper', () => {
     expect(await page.getByTestId('file-name').textContent()).toContain('3075');
 
     // Switch to board 2 tab
-    const tab2 = page.locator('.dv-tab', { hasText: '820-02020.bvr' }).first();
+    const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
     await expect(tab2).toBeVisible({ timeout: 3000 });
     await tab2.click();
     await page.waitForTimeout(500);

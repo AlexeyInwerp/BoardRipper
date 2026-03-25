@@ -8,13 +8,9 @@ const __dirname = path.dirname(__filename);
 // Sample files — different formats
 const BVR3_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const BRD_FILE = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
-const BRD_FILE_B = path.resolve(__dirname, '../../../samples/820-00165.brd');
 const FZ_FILE = path.resolve(__dirname, '../../../samples/Asus G532LWS 60NR02T0-MB7010 r1.3.fz');
 const CAD_FILE = path.resolve(__dirname, '../../../samples/Quanta NJM - DANJMMB1AA0_revA_Asus TUF Gaming FA507RM.cad');
 const PDF_FILE = path.resolve(__dirname, '../../../samples/820-02016.pdf');
-const PDF_FILE_B = path.resolve(__dirname, '../../../samples/820-02020.pdf');
-const BVR_841 = path.resolve(__dirname, '../../../samples/820-02841.bvr');
-const PDF_841 = path.resolve(__dirname, '../../../samples/820-02841.pdf');
 const PDF_935 = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
 
 /** Helper: load a board file and wait for the status bar to show part count */
@@ -252,7 +248,7 @@ test.describe('Cross-Format Renderer Stability', () => {
   // 4. Two BRD files (same format, different files)
   // ═══════════════════════════════════════════════════════════════════════
 
-  test('Two BRD files: switching between them works', async ({ page }) => {
+  test('BRD + FZ: switching between them works', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
@@ -260,7 +256,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await loadBoard(page, BRD_FILE);
     const stats1 = await page.getByTestId('file-name').textContent();
 
-    await loadBoard(page, BRD_FILE_B);
+    await loadBoard(page, FZ_FILE);
     const stats2 = await page.getByTestId('file-name').textContent();
     expect(stats2).not.toBe(stats1);
 
@@ -499,7 +495,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await page.waitForTimeout(500);
 
     await loadBoard(page, BRD_FILE);
-    await loadPdf(page, PDF_FILE_B);
+    await loadPdf(page, PDF_935);
     await page.waitForTimeout(500);
 
     // Switch between board tabs rapidly
@@ -601,7 +597,7 @@ test.describe('Cross-Format Renderer Stability', () => {
   // ═══════════════════════════════════════════════════════════════════════
   // 12. EXACT REPRO: BVR + PDF, then BRD + PDF, switch back to BVR
   //     Matches user's manual reproduction steps:
-  //     1. Open 820-02841.bvr (with 820-02841.pdf)
+  //     1. Open 820-02016.bvr (with 820-02841.pdf)
   //     2. Open 820-02935-05.brd (with 820-02935 schematic PDF)
   //     3. Switch back to first board tab → should NOT be blank
   // ═══════════════════════════════════════════════════════════════════════
@@ -621,8 +617,8 @@ test.describe('Cross-Format Renderer Stability', () => {
     await page.goto('/');
 
     // Step 1: Open BVR board + its PDF
-    await loadBoard(page, BVR_841);
-    await loadPdf(page, PDF_841);
+    await loadBoard(page, BVR3_FILE);
+    await loadPdf(page, PDF_FILE);
     await page.waitForTimeout(1000);
 
     // Verify first board is rendering (HUD shows zoom percentage)
@@ -635,7 +631,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await page.waitForTimeout(1000);
 
     // Step 3: Switch back to BVR tab
-    const bvrTab = page.locator('.dv-tab', { hasText: '820-02841.bvr' }).first();
+    const bvrTab = page.locator('.dv-tab', { hasText: '820-02016.bvr' }).first();
     await bvrTab.click();
     await page.waitForTimeout(2000); // Extra time for reinitApp async
 
@@ -693,10 +689,6 @@ test.describe('Cross-Format Renderer Stability', () => {
     await page.goto('/');
 
     // Open 3 boards with PDFs
-    await loadBoard(page, BVR_841);
-    await loadPdf(page, PDF_841);
-    await page.waitForTimeout(500);
-
     await loadBoard(page, BVR3_FILE, '3075');
     await loadPdf(page, PDF_FILE);
     await page.waitForTimeout(500);
@@ -705,10 +697,13 @@ test.describe('Cross-Format Renderer Stability', () => {
     await loadPdf(page, PDF_935);
     await page.waitForTimeout(500);
 
+    await loadBoard(page, FZ_FILE);
+    await page.waitForTimeout(500);
+
     // Rapid switching
-    const tab1 = page.locator('.dv-tab', { hasText: '820-02841.bvr' }).first();
-    const tab2 = page.locator('.dv-tab', { hasText: '820-02016.bvr' }).first();
-    const tab3 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
+    const tab1 = page.locator('.dv-tab', { hasText: '820-02016.bvr' }).first();
+    const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
+    const tab3 = page.locator('.dv-tab', { hasText: 'Asus G532LWS' }).first();
 
     for (let i = 0; i < 3; i++) {
       await tab1.click();
