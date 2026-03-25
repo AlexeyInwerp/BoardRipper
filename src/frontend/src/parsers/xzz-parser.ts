@@ -107,7 +107,7 @@ function init() {
       const col  = (v >> 1) & 0xF;
       const sval = S_BOXES[j][row * 16 + col];
       // Place 4-bit S output at bits 31..28-j*4 of a 32-bit value, then apply P
-      let sOut = (sval << (28 - j * 4)) >>> 0;
+      const sOut = (sval << (28 - j * 4)) >>> 0;
       let pOut = 0;
       for (let i = 0; i < 32; i++) {
         // Output FIPS bit (i+1) comes from input FIPS bit P_TABLE[i]
