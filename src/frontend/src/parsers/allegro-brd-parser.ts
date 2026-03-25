@@ -31,13 +31,8 @@ const dbg = log.parser;
 // ---------------------------------------------------------------------------
 
 /** Allegro version classes — determines struct sizes */
-const enum AllegroVer {
-  V160 = 0,  // 16.0, 16.2
-  V164 = 1,  // 16.4
-  V165 = 2,  // 16.5, 16.6
-  V172 = 3,  // 17.2
-  V174 = 4,  // 17.4
-}
+const AllegroVer = { V160: 0, V164: 1, V165: 2, V172: 3, V174: 4 } as const;
+type AllegroVer = typeof AllegroVer[keyof typeof AllegroVer];
 
 function detectVersion(magic: number): AllegroVer | null {
   switch (magic) {
@@ -199,7 +194,9 @@ class AllegroReader {
   private _decoder = new TextDecoder('ascii');
   readonly size: number;
 
-  constructor(readonly buffer: ArrayBuffer) {
+  readonly buffer: ArrayBuffer;
+  constructor(buffer: ArrayBuffer) {
+    this.buffer = buffer;
     this.view = new DataView(buffer);
     this._pos = 0;
     this.size = buffer.byteLength;
@@ -1170,7 +1167,7 @@ function assembleBoard(
   hdr: AllegroHeader,
 ): BoardData {
   const parts: Part[] = [];
-  const allPins: Pin[] = [];
+  // allPins removed — was declared but never read
   const nails: Nail[] = [];
 
   // Build net name lookup: x1B key → net name string
