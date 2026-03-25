@@ -5,10 +5,12 @@ import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, 
 import { boardCache } from './board-cache';
 import { log } from './log-store';
 
-// In Electron (file:// protocol), Workers can't load file:// URLs on Windows.
-// Use workerSrc for normal web mode; disable worker for Electron (runs on main thread).
+// In Electron (file:// protocol), Workers can't load file:// URLs.
+// Import the worker module directly so pdfjs runs it on the main thread
+// (sets globalThis.pdfjsWorker which pdfjs checks before spawning a Worker).
+// In normal web mode, use workerSrc for a real Web Worker.
 if (window.location.protocol === 'file:') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+  import('pdfjs-dist/build/pdf.worker.min.mjs');
 } else {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     'pdfjs-dist/build/pdf.worker.min.mjs',
