@@ -75,7 +75,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
 }
 
 function LayersTab() {
-  const { layerStates, showComponents, showVias, board, selection } = useBoardStore();
+  const { layerStates, showComponents, showVias, showTraces, board, selection } = useBoardStore();
 
   // Compute which layers have traces for the currently highlighted net
   const highlightedLayers = useMemo(() => {
@@ -96,11 +96,11 @@ function LayersTab() {
         <span>{layerStates.length} layers</span>
         <div className="layer-header-buttons">
           <button
-            className={`layer-toggle-all ${layerStates.every(l => l.visible) ? '' : 'off'}`}
-            onClick={() => boardStore.toggleAllLayers()}
-            title={layerStates.some(l => l.visible) ? 'Hide all trace layers' : 'Show all trace layers'}
+            className={`layer-toggle-all ${showTraces ? '' : 'off'}`}
+            onClick={() => boardStore.toggleTraces()}
+            title={showTraces ? 'Hide all traces' : 'Show all traces'}
           >
-            {layerStates.some(l => l.visible) ? '◉ Traces' : '○ Traces'}
+            {showTraces ? '◉ Traces' : '○ Traces'}
           </button>
           {board?.vias && board.vias.length > 0 && (
             <button
