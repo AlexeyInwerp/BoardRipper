@@ -54,6 +54,40 @@ scp_cmd() {
     echo "${cmd}"
 }
 
+# ── Pre-deploy validation ──────────────────────────────────────
+info "=== Pre-deploy checks ==="
+
+# 1. Verify Docker image builds locally
+info "Building image..."
+docker build -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
+
+# 2. Smoke-test the image locally
+info "Smoke-testing image..."
+docker run -d --name br-deploy-check -p 18080:8080 boardripper:deploy-check
+sleep 3
+if ! curl -sf http://localhost:18080/ > /dev/null; then
+    error "FAIL: Container does not serve HTTP"
+    docker logs br-deploy-check
+    docker rm -f br-deploy-check
+    exit 1
+fi
+docker rm -f br-deploy-check
+info "OK: Image serves HTTP"
+
+# 3. Verify NAS is reachable
+info "Checking NAS connectivity..."
+if ! $(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "echo ok" 2>/dev/null; then
+    error "FAIL: Cannot reach NAS at ${NAS_HOST}"
+    exit 1
+fi
+info "OK: NAS reachable"
+
+# 4. Backup existing data volume
+info "Backing up NAS data..."
+$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "cp -r /volume1/docker/boardripper/data /volume1/docker/boardripper/data.bak.$(date +%Y%m%d)" || warn "WARN: backup failed (first deploy?)"
+
+info "=== All pre-deploy checks passed ==="
+
 # ── Step 1: Push to GitHub ─────────────────────────────────────
 info "Pushing branch '${BRANCH}' to ${REMOTE}..."
 git push "${REMOTE}" "${BRANCH}" || {
