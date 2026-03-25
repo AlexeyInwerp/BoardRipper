@@ -46,25 +46,19 @@ func main() {
 	extractor := databank.NewPdfExtractor(db, dataDir)
 	extractor.SetScanner(scanner)
 
-	// After every scan (initial or manual), run PDF text extraction as phase 2
-	scanner.SetPostScanFn(func() {
-		log.Println("Phase 2: Starting PDF text extraction...")
-		extracted, errors := extractor.ExtractAll(2)
-		if extracted > 0 || errors > 0 {
-			log.Printf("Phase 2 complete: %d PDFs extracted, %d errors", extracted, errors)
-		} else {
-			log.Println("Phase 2 complete: no new PDFs to extract")
-		}
-	})
+	scanner.SetExtractor(extractor)
 
-	// Run initial scan (phase 1: file indexing) in background
-	go func() {
-		log.Println("Phase 1: Starting file indexing...")
-		status := scanner.Scan()
-		log.Printf("Phase 1 complete: %d files (%d added, %d updated, %d deleted) in %dms",
-			status.Total, status.Added, status.Updated, status.Deleted, status.Duration)
-		// Phase 2 (PDF extraction) runs automatically via postScanFn
-	}()
+	// Conditional auto-scan based on config (default: off)
+	if autoScan, _ := db.GetConfig("auto_scan"); autoScan == "true" {
+		go func() {
+			log.Println("Auto-scan: starting file indexing...")
+			status := scanner.Scan()
+			log.Printf("Auto-scan complete: %d files (%d added, %d updated, %d deleted) in %dms",
+				status.Total, status.Added, status.Updated, status.Deleted, status.Duration)
+		}()
+	} else {
+		log.Println("Auto-scan disabled (set auto_scan=true in config to enable)")
+	}
 
 	mux := http.NewServeMux()
 
@@ -90,7 +84,11 @@ func main() {
 	mux.HandleFunc("POST /api/databank/bindings", dbHandler.CreateBinding)
 	mux.HandleFunc("DELETE /api/databank/bindings/{id}", dbHandler.DeleteBinding)
 	mux.HandleFunc("GET /api/databank/search", dbHandler.Search)
-	mux.HandleFunc("POST /api/databank/reextract", dbHandler.Reextract)
+	mux.HandleFunc("POST /api/databank/scan/pdf", dbHandler.ScanPdf)
+	mux.HandleFunc("GET /api/databank/stats", dbHandler.Stats)
+	mux.HandleFunc("POST /api/databank/reset", dbHandler.Reset)
+	mux.HandleFunc("POST /api/databank/reset-pdf", dbHandler.ResetPdf)
+	mux.HandleFunc("GET /api/databank/browse", dbHandler.Browse)
 	mux.HandleFunc("GET /api/databank/pdf-errors", dbHandler.PdfScanErrors)
 	mux.HandleFunc("DELETE /api/databank/pdf-errors", dbHandler.PdfScanErrorsClear)
 	mux.HandleFunc("GET /api/databank/files/{id}/dump", dbHandler.DumpText)

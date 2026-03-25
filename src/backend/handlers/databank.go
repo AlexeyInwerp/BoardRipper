@@ -25,11 +25,73 @@ func NewDatabankHandler(db *databank.DB, scanner *databank.Scanner, extractor *d
 	return &DatabankHandler{db: db, scanner: scanner, extractor: extractor, dataDir: dataDir}
 }
 
-// Scan triggers a background rescan of DATA_DIR and returns immediately.
+// Scan triggers a background file scan and returns immediately.
 func (h *DatabankHandler) Scan(w http.ResponseWriter, r *http.Request) {
-	status := h.scanner.ScanAsync()
+	status, err := h.scanner.ScanAsync()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+// ScanPdf triggers PDF text extraction only.
+func (h *DatabankHandler) ScanPdf(w http.ResponseWriter, r *http.Request) {
+	status, err := h.scanner.ScanPdfAsync()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+// Stats returns database statistics.
+func (h *DatabankHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.db.Stats(h.dataDir)
+	if err != nil {
+		http.Error(w, "Failed to get stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// Reset wipes all scan data.
+func (h *DatabankHandler) Reset(w http.ResponseWriter, r *http.Request) {
+	if err := h.scanner.ResetAll(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
+}
+
+// ResetPdf wipes PDF text data only.
+func (h *DatabankHandler) ResetPdf(w http.ResponseWriter, r *http.Request) {
+	if op := h.scanner.ActiveOp(); op != "" {
+		http.Error(w, "Cannot reset while "+op+" scan is running", http.StatusConflict)
+		return
+	}
+	if err := h.db.ResetPdfText(); err != nil {
+		http.Error(w, "Reset failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
+}
+
+// Browse returns a live filesystem directory listing.
+func (h *DatabankHandler) Browse(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	result, err := h.scanner.BrowseDir(path)
+	if err != nil {
+		http.Error(w, "Browse failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // ScanStop cancels a running scan.
@@ -295,18 +357,6 @@ func (h *DatabankHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
-}
-
-// Reextract deletes all PDF text and re-extracts from scratch.
-// POST /api/databank/reextract
-func (h *DatabankHandler) Reextract(w http.ResponseWriter, r *http.Request) {
-	go func() {
-		extracted, errors := h.extractor.ReextractAll(2)
-		fmt.Printf("[Reextract] Done: %d extracted, %d errors\n", extracted, errors)
-	}()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
 
 // DumpText returns an HTML page with the extracted text for a PDF file.

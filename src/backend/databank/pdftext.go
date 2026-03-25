@@ -208,21 +208,154 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 	return extracted, errors
 }
 
-// ReextractAll deletes all existing PDF text and re-extracts from scratch.
-func (e *PdfExtractor) ReextractAll(concurrency int) (extracted, errors int) {
+// ExtractAllCancellable is like ExtractAll but accepts a done channel for cancellation.
+// Workers stop when the done channel is closed.
+func (e *PdfExtractor) ExtractAllCancellable(concurrency int, done <-chan struct{}) (extracted, errors int) {
 	files, err := e.db.ListFiles("pdf", "", false)
 	if err != nil {
 		log.Printf("PdfExtractor: failed to list PDFs: %v", err)
 		return 0, 1
 	}
 
-	// Delete all existing text
-	for _, f := range files {
-		_ = e.db.DeletePdfText(f.ID)
+	extractedSet, err := e.db.BatchExtractStatus()
+	if err != nil {
+		log.Printf("PdfExtractor: failed to check extract status: %v", err)
+		return 0, 1
 	}
-	log.Printf("PdfExtractor: cleared text for %d PDFs, re-extracting...", len(files))
 
-	return e.ExtractAll(concurrency)
+	var toExtract []FileRecord
+	for _, f := range files {
+		if !extractedSet[f.ID] {
+			toExtract = append(toExtract, f)
+		}
+	}
+
+	if len(toExtract) == 0 {
+		return 0, 0
+	}
+
+	total := int64(len(toExtract))
+	log.Printf("PdfExtractor: %d PDFs to extract", total)
+
+	if e.scanner != nil {
+		e.scanner.SetPdfStatus(true, 0, total, 0, "")
+	}
+
+	work := make(chan FileRecord, concurrency)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for file := range work {
+				if err := e.ExtractOneCancellable(file, done); err != nil {
+					log.Printf("PdfExtractor: error extracting %s: %v", file.Filename, err)
+					e.logScanError(file, err)
+					mu.Lock()
+					errors++
+					mu.Unlock()
+				} else {
+					mu.Lock()
+					extracted++
+					mu.Unlock()
+				}
+
+				if e.scanner != nil {
+					mu.Lock()
+					e.scanner.SetPdfStatus(true, int64(extracted), total, int64(errors), file.Filename)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+
+	for _, f := range toExtract {
+		select {
+		case <-done:
+			// Cancelled — stop feeding work
+			break
+		case work <- f:
+		}
+		// Check cancel again after select (break only exits select)
+		select {
+		case <-done:
+			break
+		default:
+		}
+	}
+	close(work)
+	wg.Wait()
+	log.Printf("PdfExtractor: done — %d extracted, %d errors", extracted, errors)
+
+	if e.scanner != nil {
+		e.scanner.SetPdfStatus(false, int64(extracted), total, int64(errors), "")
+	}
+
+	return extracted, errors
+}
+
+// ExtractOneCancellable is like ExtractOne but respects a done channel for cancellation.
+func (e *PdfExtractor) ExtractOneCancellable(file FileRecord, done <-chan struct{}) error {
+	root := e.dataDir
+	if e.scanRootFn != nil {
+		root = e.scanRootFn()
+	}
+	absPath := filepath.Join(root, file.Path)
+
+	type result struct {
+		pages []string
+		err   error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), extractTimeout)
+	defer cancel()
+
+	// Also cancel if done channel closes
+	go func() {
+		select {
+		case <-done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	ch := make(chan result, 1)
+	go func() {
+		pages, err := extractPdfText(absPath)
+		ch <- result{pages, err}
+	}()
+
+	var pages []string
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			return fmt.Errorf("extract %s: %w", file.Filename, res.err)
+		}
+		pages = res.pages
+	case <-ctx.Done():
+		return fmt.Errorf("extract %s: cancelled or timeout", file.Filename)
+	}
+
+	stored := 0
+	for pageNum, text := range pages {
+		text = cleanPageText(text)
+		if text == "" {
+			continue
+		}
+		if err := e.db.InsertPdfPage(file.ID, pageNum+1, text, "go"); err != nil {
+			return fmt.Errorf("insert page %d: %w", pageNum+1, err)
+		}
+		stored++
+	}
+
+	if stored == 0 {
+		_ = e.db.InsertPdfPage(file.ID, 0, "(no extractable text)", "go")
+		log.Printf("PdfExtractor: %s — no extractable text (encrypted/broken)", file.Filename)
+	} else {
+		log.Printf("PdfExtractor: extracted %d pages from %s", stored, file.Filename)
+	}
+	return nil
 }
 
 // logScanError stores a verbose PDF extraction error in the database for later review.
