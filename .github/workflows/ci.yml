@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - run: cd src/frontend && npm ci
+      - run: cd src/frontend && npm run lint
+      - run: cd src/frontend && npx tsc -b --noEmit
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - run: cd src/frontend && npm ci
+      - run: cd src/frontend && npx playwright install --with-deps chromium
+      - run: cd src/frontend && npm test
+        env:
+          CI: true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: src/frontend/test-results/
+          retention-days: 7
+
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: src/backend/go.sum
+      - run: cd src/backend && go test ./... -v -count=1
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [frontend-tests, backend-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t boardripper:ci-${{ github.sha }} .
+      - run: |
+          docker run -d --name br-smoke -p 8080:8080 boardripper:ci-${{ github.sha }}
+          sleep 3
+          curl -f http://localhost:8080/ || (docker logs br-smoke && exit 1)
+          docker stop br-smoke
