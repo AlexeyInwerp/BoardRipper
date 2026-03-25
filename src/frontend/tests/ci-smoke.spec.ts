@@ -6,8 +6,8 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 
-const BVR_FILE = path.resolve('samples/820-02016.bvr');
-const PDF_FILE = path.resolve('samples/820-02016.pdf');
+const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
+const PDF_FILE = path.resolve(__dirname, '../../../samples/820-02016.pdf');
 
 test('app loads and shows toolbar', async ({ page }) => {
   await page.goto('/');
