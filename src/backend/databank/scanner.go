@@ -2,6 +2,7 @@ package databank
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -31,8 +32,9 @@ type ScanStatus struct {
 	Deleted  int64  `json:"deleted"`
 	Errors   int64  `json:"errors"`
 	Duration int64  `json:"duration_ms"`
-	Phase    string `json:"phase,omitempty"`     // current phase description
-	LastFile string `json:"last_file,omitempty"` // last processed file (for verbose display)
+	Phase       string `json:"phase,omitempty"`        // current phase description
+	LastFile    string `json:"last_file,omitempty"`    // last processed file (for verbose display)
+	CompletedAt int64  `json:"completed_at,omitempty"` // unix timestamp of last scan completion
 
 	// Phase 2: PDF text extraction (runs after file scan)
 	PdfRunning   bool   `json:"pdf_running"`
@@ -79,6 +81,9 @@ func NewScanner(db *DB, dataDir string, envLibraryDir string) *Scanner {
 	// Check if supported extensions changed since last scan (code update added new formats)
 	s.checkExtensionsChanged()
 
+	// Restore last scan status from DB so Status() returns meaningful data after restart
+	s.loadPersistedStatus()
+
 	return s
 }
 
@@ -93,6 +98,43 @@ func (s *Scanner) checkExtensionsChanged() {
 			log.Printf("Scanner: supported extensions changed (%s → %s) — startup scan will index new file types", stored, fp)
 		}
 		_ = s.db.SetConfig("extensions_fingerprint", fp)
+	}
+}
+
+// loadPersistedStatus restores the last scan results from the config table
+// so Status() returns meaningful data immediately after a container restart.
+func (s *Scanner) loadPersistedStatus() {
+	data, err := s.db.GetConfig("last_scan_status")
+	if err != nil || data == "" {
+		return
+	}
+	var st ScanStatus
+	if err := json.Unmarshal([]byte(data), &st); err != nil {
+		log.Printf("Scanner: failed to parse persisted status: %v", err)
+		return
+	}
+	st.Running = false // never start in running state
+	st.PdfRunning = false
+	s.mu.Lock()
+	s.status = st
+	s.mu.Unlock()
+	log.Printf("Scanner: restored last scan status (%d files, completed %dms ago)",
+		st.Total, time.Now().UnixMilli()-st.Duration)
+}
+
+// persistStatus saves the current scan results to the config table.
+func (s *Scanner) persistStatus() {
+	s.mu.Lock()
+	st := s.status
+	s.mu.Unlock()
+
+	data, err := json.Marshal(st)
+	if err != nil {
+		log.Printf("Scanner: failed to marshal status: %v", err)
+		return
+	}
+	if err := s.db.SetConfig("last_scan_status", string(data)); err != nil {
+		log.Printf("Scanner: failed to persist status: %v", err)
 	}
 }
 
@@ -416,14 +458,15 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 	duration := time.Since(start).Milliseconds()
 	s.mu.Lock()
 	s.status = ScanStatus{
-		Running:  false,
-		Scanned:  scanned,
-		Total:    total,
-		Added:    added,
-		Updated:  updated,
-		Deleted:  deleted,
-		Errors:   errors,
-		Duration: duration,
+		Running:     false,
+		Scanned:     scanned,
+		Total:       total,
+		Added:       added,
+		Updated:     updated,
+		Deleted:     deleted,
+		Errors:      errors,
+		Duration:    duration,
+		CompletedAt: time.Now().Unix(),
 	}
 	s.cancelFn = nil
 	s.mu.Unlock()
@@ -435,6 +478,9 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 		log.Printf("Scanner: done in %dms — %d files, %d added, %d updated, %d deleted, %d errors",
 			duration, total, added, updated, deleted, errors)
 	}
+
+	// Persist scan results so they survive container restarts
+	s.persistStatus()
 }
 
 // autoMatchBindings creates bindings between boards and PDFs based on filename matching.

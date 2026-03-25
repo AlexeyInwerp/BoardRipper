@@ -174,6 +174,7 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 			for file := range work {
 				if err := e.ExtractOne(file); err != nil {
 					log.Printf("PdfExtractor: error extracting %s: %v", file.Filename, err)
+					e.logScanError(file, err)
 					mu.Lock()
 					errors++
 					mu.Unlock()
@@ -222,6 +223,24 @@ func (e *PdfExtractor) ReextractAll(concurrency int) (extracted, errors int) {
 	log.Printf("PdfExtractor: cleared text for %d PDFs, re-extracting...", len(files))
 
 	return e.ExtractAll(concurrency)
+}
+
+// logScanError stores a verbose PDF extraction error in the database for later review.
+// Duplicates (same file_id + same error message) are silently skipped via UNIQUE constraint.
+func (e *PdfExtractor) logScanError(file FileRecord, extractErr error) {
+	// Build verbose detail: file metadata + full error chain
+	detail := fmt.Sprintf("file_id=%d\npath=%s\nfilename=%s\nsize=%d\nmod_time=%d\nerror=%v",
+		file.ID, file.Path, file.Filename, file.Size, file.ModTime, extractErr)
+
+	// Truncate error message to first line for the dedup key
+	errMsg := extractErr.Error()
+	if idx := strings.Index(errMsg, "\n"); idx > 0 {
+		errMsg = errMsg[:idx]
+	}
+
+	if err := e.db.InsertPdfScanError(file.ID, file.Path, errMsg, detail); err != nil {
+		log.Printf("PdfExtractor: failed to log scan error for %s: %v", file.Filename, err)
+	}
 }
 
 // ExtractOne extracts text from a single PDF file and stores it in the database.

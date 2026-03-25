@@ -416,6 +416,32 @@ func (h *DatabankHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// PdfScanErrors returns all logged PDF scan errors for review.
+// GET /api/databank/pdf-errors
+func (h *DatabankHandler) PdfScanErrors(w http.ResponseWriter, r *http.Request) {
+	errors, err := h.db.ListPdfScanErrors()
+	if err != nil {
+		http.Error(w, "Failed to list errors: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if errors == nil {
+		errors = []databank.PdfScanError{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(errors)
+}
+
+// PdfScanErrorsClear deletes all logged PDF scan errors.
+// DELETE /api/databank/pdf-errors
+func (h *DatabankHandler) PdfScanErrorsClear(w http.ResponseWriter, r *http.Request) {
+	if err := h.db.ClearPdfScanErrors(); err != nil {
+		http.Error(w, "Failed to clear errors: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+}
+
 // UploadText accepts client-extracted (pdfjs) text to replace Go-extracted text.
 // Body: { "pages": { "1": "page 1 text", "2": "page 2 text", ... } }
 func (h *DatabankHandler) UploadText(w http.ResponseWriter, r *http.Request) {
