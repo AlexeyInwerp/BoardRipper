@@ -1,27 +1,49 @@
 # BoardRipper
 
-Web-based PCB boardview file viewer. Renders `.bvr` files with GPU-accelerated WebGL, hosted via Docker on a NAS.
+Web-based PCB boardview file viewer and inspector. GPU-accelerated WebGL rendering of 9 board formats, dockable panel system, PDF schematics viewer — all in a ~15MB Docker image.
+
+![Main View — BVR board with library panel](docs/screenshots/main-view.png)
 
 ## Features
 
 - **GPU-accelerated rendering** — PixiJS v8 (WebGL), handles 10,000+ components at 60fps
-- **Pan & zoom** — pixi-viewport with mouse wheel, drag, pinch-zoom, deceleration
-- **BVR1 & BVR3 support** — both OpenBoardView formats parsed client-side
+- **9 board formats** — BVR1, BVR3, BRD (Apple), FZ (ASUS), CAD (GenCAD), BDV, XZZ, TVW (Teboview), Allegro BRD
+- **Pan & zoom** — mouse wheel, drag, pinch-zoom, deceleration, fit-to-board
 - **Multi-board tabs** — open multiple boards simultaneously, switch between them
 - **Layer toggle** — show/hide top and bottom layers independently
 - **Butterfly mode** — side-by-side mirrored view of both board sides
 - **Selection & highlight** — click component or pin to highlight entire net across the board
 - **Net lines** — show connection lines between components sharing a net
-- **Search** — find components and nets by name
-- **Context menu** — right-click to copy name, highlight net, open info panel
+- **Search** — find components and nets by name with instant results
+- **Context menu** — right-click to copy name, highlight net, search in PDF
+
+![Selection with context menu and top bar overlay](docs/screenshots/context-menu.png)
+
 - **Panel system** — Dockview: dockable, floating, and popout-to-new-window panels
   - Component Info (pins list, metadata)
   - Net List (searchable, click to highlight)
   - Search Results
-  - PDF Viewer (pan/zoom, text search, bookmarks)
+  - PDF Viewer (pan/zoom, text search, bookmarks, night mode)
   - Settings (live preview mockup, per-net color rules, label/pin/outline tuning)
+- **Board library** — scan folders, browse by board number or model, auto-link PDFs
 - **IndexedDB cache** — instant re-open without re-parsing
 - **Docker deploy** — ~15MB scratch-based image for NAS
+
+![Multi-format — Apple BRD file with multi-tab view](docs/screenshots/brd-format.png)
+
+## Supported File Formats
+
+| Format | Description | Spec |
+|--------|-------------|------|
+| **BVR1** | Tab-delimited, absolute coordinates ×1000 | [BVR_FORMAT.md](docs/formats/BVR_FORMAT.md) |
+| **BVR3** | Keyword-value, relative pin coordinates | [BVR_FORMAT.md](docs/formats/BVR_FORMAT.md) |
+| **BRD** | Binary obfuscated boardview (Apple/Mac repair) | [BRD_FORMAT.md](docs/formats/BRD_FORMAT.md) |
+| **BDV** | Plain-text boardview (BRDOUT/NETS/PARTS/PINS/NAILS) | [BDV_FORMAT.md](docs/formats/BDV_FORMAT.md) |
+| **FZ** | ASUS boardview (RC6-encrypted, zlib-compressed) | [FZ_FORMAT.md](docs/formats/FZ_FORMAT.md) |
+| **CAD** | GenCAD 1.4 text-based PCB interchange | [CAD_FORMAT.md](docs/formats/CAD_FORMAT.md) |
+| **XZZ** | XZZ PCB (DES-encrypted boardview) | [XZZ_FORMAT.md](docs/formats/XZZ_FORMAT.md) |
+| **TVW** | Teboview binary (multi-layer, traces, drill data) | [TVW_FORMAT.md](docs/formats/TVW_FORMAT.md) |
+| **Allegro BRD** | Cadence Allegro binary PCB (v16.0–17.4) | [ALLEGRO_BRD_FORMAT.md](docs/formats/ALLEGRO_BRD_FORMAT.md) |
 
 ## Stack
 
@@ -70,22 +92,6 @@ services:
     restart: unless-stopped
 ```
 
-## Supported File Formats
+## License
 
-- **BVR1** (`BVRAW_FORMAT_1`) — tab-delimited, absolute coordinates ×1000
-- **BVR3** (`BVRAW_FORMAT_3`) — keyword-value, relative pin coordinates
-
-See [`docs/formats/BVR_FORMAT.md`](docs/formats/BVR_FORMAT.md) for the full format specification.
-
-## Project Status
-
-| Phase | Status |
-|---|---|
-| Phase 1: Core Foundation (parsers, backend, Docker) | Done |
-| Phase 2: Board Rendering (PixiJS, viewport, layers) | Done |
-| Phase 3: Interaction & Selection (hover, click, search) | Done |
-| Phase 4: Panel System (Dockview, PDF viewer, cache) | Done |
-| Phase 4+: Multi-board tabs, butterfly mode, net lines, render settings | Done |
-| Phase 5: Polish (drag-drop, themes, recent files) | In Progress |
-
-See [`docs/PLANNING.md`](docs/PLANNING.md) for the full architecture and implementation plan.
+Private — not open-source.
