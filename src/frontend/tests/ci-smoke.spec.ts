@@ -5,7 +5,10 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const PDF_FILE = path.resolve(__dirname, '../../../samples/820-02016.pdf');
 
