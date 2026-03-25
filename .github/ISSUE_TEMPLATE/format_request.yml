@@ -1,0 +1,35 @@
+name: New Format Support
+description: Request support for a new PCB boardview format
+labels: ["enhancement", "new-format"]
+body:
+  - type: input
+    id: format_name
+    attributes:
+      label: Format Name
+      placeholder: "e.g. ODB++, Gerber, KiCad"
+    validations:
+      required: true
+  - type: input
+    id: file_extension
+    attributes:
+      label: File Extension(s)
+      placeholder: "e.g. .odb, .gbr, .kicad_pcb"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Format Description
+      description: What software produces this format? Is it binary or text? Is there a public spec?
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample File
+      description: Can you provide a sample file or link to one? (Attach or link)
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference Implementation
+      description: Links to existing parsers (OpenBoardView, open-source tools, format docs)
