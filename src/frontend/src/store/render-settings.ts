@@ -185,8 +185,8 @@ export const DEFAULTS: RenderSettings = {
 
   boardFillAlpha: 0.08,
 
-  showElevatedPartLabel: true,
-  showElevatedPinLabel: true,
+  showElevatedPartLabel: false,
+  showElevatedPinLabel: false,
   showSelectionOverlay: true,
 
   hideTextDuringZoom: true,
