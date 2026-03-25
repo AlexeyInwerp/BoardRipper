@@ -41,7 +41,8 @@ type ScanStatus struct {
 	PdfExtracted int64  `json:"pdf_extracted"`
 	PdfTotal     int64  `json:"pdf_total"`
 	PdfErrors    int64  `json:"pdf_errors"`
-	PdfCurrent   string `json:"pdf_current,omitempty"`
+	PdfCurrent     string `json:"pdf_current,omitempty"`
+	PdfCompletedAt int64  `json:"pdf_completed_at,omitempty"`
 }
 
 // Scanner walks DATA_DIR and syncs findings with the database.
@@ -50,17 +51,26 @@ type Scanner struct {
 	dataDir    string
 	libraryDir string // optional separate library directory
 
-	mu         sync.Mutex
-	status     ScanStatus
-	cancelFn   func()     // cancel the current scan goroutine
-	postScanFn func()     // called after scan completes (e.g. PDF extraction)
+	mu        sync.Mutex
+	status    ScanStatus
+	cancelFn  func()          // cancel the current scan/pdf goroutine
+	cancelCh  chan struct{}    // closed on cancel
+	activeOp  string          // "", "file", or "pdf"
+	extractor *PdfExtractor   // set via SetExtractor
 }
 
-// SetPostScanFn registers a callback to run after each scan completes (file indexing done).
-func (s *Scanner) SetPostScanFn(fn func()) {
+// SetExtractor registers the PDF extractor for ScanPdfAsync.
+func (s *Scanner) SetExtractor(e *PdfExtractor) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.postScanFn = fn
+	s.extractor = e
+}
+
+// ActiveOp returns the currently running operation ("", "file", or "pdf").
+func (s *Scanner) ActiveOp() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeOp
 }
 
 // NewScanner creates a scanner for the given data directory.
@@ -184,33 +194,25 @@ func (s *Scanner) SetPdfStatus(running bool, extracted, total, errors int64, cur
 }
 
 // ScanAsync starts a background scan. Returns immediately with current status.
-// If a scan is already running, it's a no-op.
-func (s *Scanner) ScanAsync() ScanStatus {
+// Returns an error if another operation is already running.
+func (s *Scanner) ScanAsync() (ScanStatus, error) {
 	s.mu.Lock()
-	if s.status.Running {
+	if s.activeOp != "" {
 		st := s.status
 		s.mu.Unlock()
-		return st
+		return st, fmt.Errorf("operation %q already running", s.activeOp)
 	}
+	s.activeOp = "file"
 	s.status = ScanStatus{Running: true}
 	done := make(chan struct{})
+	s.cancelCh = done
 	s.cancelFn = func() { close(done) }
 	s.mu.Unlock()
 
 	go func() {
 		s.scanWorker(done)
-		s.runPostScan()
 	}()
-	return s.Status()
-}
-
-func (s *Scanner) runPostScan() {
-	s.mu.Lock()
-	fn := s.postScanFn
-	s.mu.Unlock()
-	if fn != nil {
-		fn()
-	}
+	return s.Status(), nil
 }
 
 // StopScan cancels a running scan.
@@ -224,21 +226,20 @@ func (s *Scanner) StopScan() ScanStatus {
 	return s.Status()
 }
 
-// Scan performs a synchronous scan (for backwards compat / Electron). Blocks until done.
+// Scan performs a synchronous scan. Blocks until done.
+// Used only for auto-scan on startup — has no cancel channel.
 func (s *Scanner) Scan() ScanStatus {
 	s.mu.Lock()
-	if s.status.Running {
+	if s.activeOp != "" {
 		st := s.status
 		s.mu.Unlock()
 		return st
 	}
+	s.activeOp = "file"
 	s.status = ScanStatus{Running: true}
 	s.mu.Unlock()
-
 	s.scanWorker(nil)
-	st := s.Status()
-	s.runPostScan()
-	return st
+	return s.Status()
 }
 
 func (s *Scanner) scanWorker(cancel <-chan struct{}) {
@@ -468,7 +469,9 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 		Duration:    duration,
 		CompletedAt: time.Now().Unix(),
 	}
+	s.activeOp = ""
 	s.cancelFn = nil
+	s.cancelCh = nil
 	s.mu.Unlock()
 
 	if stopped {
@@ -481,6 +484,10 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 
 	// Persist scan results so they survive container restarts
 	s.persistStatus()
+
+	if !stopped {
+		_ = s.db.SetConfig("last_file_scan_at", fmt.Sprintf("%d", time.Now().Unix()))
+	}
 }
 
 // autoMatchBindings creates bindings between boards and PDFs based on filename matching.
@@ -522,6 +529,123 @@ func (s *Scanner) autoMatchBindings() {
 			}
 		}
 	}
+}
+
+// ScanPdfAsync starts background PDF text extraction. Returns error if another op is running.
+func (s *Scanner) ScanPdfAsync() (ScanStatus, error) {
+	s.mu.Lock()
+	if s.activeOp != "" {
+		st := s.status
+		s.mu.Unlock()
+		return st, fmt.Errorf("operation %q already running", s.activeOp)
+	}
+	if s.extractor == nil {
+		s.mu.Unlock()
+		return ScanStatus{}, fmt.Errorf("no extractor configured")
+	}
+	s.activeOp = "pdf"
+	done := make(chan struct{})
+	s.cancelCh = done
+	s.cancelFn = func() { close(done) }
+	s.mu.Unlock()
+
+	go func() {
+		log.Println("PDF extraction: starting...")
+		extracted, errors := s.extractor.ExtractAllCancellable(2, done)
+		log.Printf("PDF extraction: done — %d extracted, %d errors", extracted, errors)
+
+		s.mu.Lock()
+		s.status.PdfCompletedAt = time.Now().Unix()
+		s.activeOp = ""
+		s.cancelFn = nil
+		s.cancelCh = nil
+		s.mu.Unlock()
+		_ = s.db.SetConfig("last_pdf_scan_at", fmt.Sprintf("%d", time.Now().Unix()))
+		s.persistStatus()
+	}()
+	return s.Status(), nil
+}
+
+// ResetAll clears the entire databank (files, bindings, PDF text, previews).
+// Returns error if any operation is currently running.
+func (s *Scanner) ResetAll() error {
+	s.mu.Lock()
+	if s.activeOp != "" {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot reset while %q is running", s.activeOp)
+	}
+	s.mu.Unlock()
+	// Now safe — no scan can start because they check activeOp
+	if err := s.db.ResetAll(s.dataDir); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.status = ScanStatus{}
+	s.mu.Unlock()
+	return nil
+}
+
+// BrowseEntry represents a file or directory in a browse listing.
+type BrowseEntry struct {
+	Name     string `json:"name"`
+	IsDir    bool   `json:"is_dir"`
+	Size     int64  `json:"size,omitempty"`
+	ModTime  int64  `json:"mod_time,omitempty"`
+	FileType string `json:"file_type,omitempty"`
+}
+
+// BrowseResult is the response from BrowseDir.
+type BrowseResult struct {
+	Path    string        `json:"path"`
+	Entries []BrowseEntry `json:"entries"`
+}
+
+// BrowseDir lists the contents of a directory relative to the scan root.
+func (s *Scanner) BrowseDir(relPath string) (*BrowseResult, error) {
+	root := s.ScanRoot()
+	relPath = filepath.Clean(relPath)
+	if relPath == "." {
+		relPath = ""
+	}
+	absPath := filepath.Join(root, relPath)
+
+	resolved, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve path: %w", err)
+	}
+	resolvedRoot, _ := filepath.EvalSymlinks(root)
+	if !strings.HasPrefix(resolved, resolvedRoot) {
+		return nil, fmt.Errorf("path escapes scan root")
+	}
+
+	entries, err := os.ReadDir(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("read dir: %w", err)
+	}
+
+	result := &BrowseResult{Path: relPath, Entries: []BrowseEntry{}}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if entry.IsDir() {
+			result.Entries = append(result.Entries, BrowseEntry{Name: name, IsDir: true})
+			continue
+		}
+		if !IsSupportedFile(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		result.Entries = append(result.Entries, BrowseEntry{
+			Name: name, IsDir: false, Size: info.Size(),
+			ModTime: info.ModTime().Unix(), FileType: FileTypeFromExt(name),
+		})
+	}
+	return result, nil
 }
 
 // FolderNode represents a directory in the folder tree.

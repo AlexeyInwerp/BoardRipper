@@ -293,6 +293,94 @@ func (db *DB) ClearPdfScanErrors() error {
 	return err
 }
 
+// DatabankStats holds aggregate database info.
+type DatabankStats struct {
+	Boards         int   `json:"boards"`
+	Pdfs           int   `json:"pdfs"`
+	Bindings       int   `json:"bindings"`
+	PdfPages       int   `json:"pdf_pages"`
+	PdfErrors      int   `json:"pdf_errors"`
+	DbSizeBytes    int64 `json:"db_size_bytes"`
+	LastFileScanAt int64 `json:"last_file_scan_at"`
+	LastPdfScanAt  int64 `json:"last_pdf_scan_at"`
+}
+
+// Stats returns aggregate database statistics.
+func (db *DB) Stats(dataDir string) (*DatabankStats, error) {
+	s := &DatabankStats{}
+
+	db.reader.QueryRow(`SELECT COUNT(*) FROM files WHERE file_type='board'`).Scan(&s.Boards)
+	db.reader.QueryRow(`SELECT COUNT(*) FROM files WHERE file_type='pdf'`).Scan(&s.Pdfs)
+	db.reader.QueryRow(`SELECT COUNT(*) FROM bindings`).Scan(&s.Bindings)
+	db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_pages WHERE page_num > 0`).Scan(&s.PdfPages)
+	db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_scan_errors`).Scan(&s.PdfErrors)
+
+	// Sum DB file sizes (main + WAL + SHM)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		path := filepath.Join(dataDir, "databank.db"+suffix)
+		if info, err := os.Stat(path); err == nil {
+			s.DbSizeBytes += info.Size()
+		}
+	}
+
+	if v, err := db.GetConfig("last_file_scan_at"); err == nil && v != "" {
+		fmt.Sscanf(v, "%d", &s.LastFileScanAt)
+	}
+	if v, err := db.GetConfig("last_pdf_scan_at"); err == nil && v != "" {
+		fmt.Sscanf(v, "%d", &s.LastPdfScanAt)
+	}
+
+	return s, nil
+}
+
+// ResetAll wipes all scan data from the database.
+func (db *DB) ResetAll(dataDir string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	stmts := []string{
+		`DELETE FROM pdf_text`,
+		`DELETE FROM pdf_pages`,
+		`DELETE FROM pdf_scan_errors`,
+		`DELETE FROM bindings`,
+		`DELETE FROM files`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.writer.Exec(stmt); err != nil {
+			return fmt.Errorf("reset %s: %w", stmt, err)
+		}
+	}
+
+	for _, key := range []string{"last_scan_status", "last_file_scan_at", "last_pdf_scan_at"} {
+		db.writer.Exec(`DELETE FROM config WHERE key = ?`, key)
+	}
+
+	previewDir := filepath.Join(dataDir, ".previews")
+	os.RemoveAll(previewDir)
+
+	return nil
+}
+
+// ResetPdfText wipes PDF text and error data only.
+func (db *DB) ResetPdfText() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	stmts := []string{
+		`DELETE FROM pdf_text`,
+		`DELETE FROM pdf_pages`,
+		`DELETE FROM pdf_scan_errors`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.writer.Exec(stmt); err != nil {
+			return fmt.Errorf("reset-pdf %s: %w", stmt, err)
+		}
+	}
+
+	db.writer.Exec(`DELETE FROM config WHERE key = ?`, "last_pdf_scan_at")
+	return nil
+}
+
 // FileRecord represents a row in the files table.
 type FileRecord struct {
 	ID           int64  `json:"id"`
