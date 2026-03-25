@@ -31,24 +31,18 @@ desktop/out-legacy/
 desktop/out-win/
 desktop/webapp/
 
-# Samples — large/private test data
-samples/.previews/
-samples/databank.db
-samples/databank.db-wal
-samples/databank.db-shm
-samples/*.sqlite3
-samples/allegroBRD/
-samples/TVW/LCFC NM-D711.tvw
-samples/TVW/HY568_NMD711R20_View.tvw
-samples/TVW/NM-A361 boardview.TVW
-samples/TVW/LCFC NM-D711.pdf
-samples/HY56F_NMD821R10_View.tvw
-samples/LA-H501P-R10-1650 MB.BRD
-samples/820-00165.pcb
-samples/820-02935-05 Kopie.brd
-samples/A2991 820-02935 timing diagram.pdf
-samples/WISTRON WOODY_KBL 16924-2 (BDV).brd
-samples/Acer Spin 5SP513-52N Wistron Woody KBL 16924-3M PDF .pdf
+# Samples — ignore everything, then whitelist one per format
+samples/*
+!samples/820-02016.bvr
+!samples/820-02016.pdf
+!samples/820-02935-05.brd
+!samples/820-02935 051-08286 Rev 5.0.3.pdf
+!samples/820-00165.pcb
+!samples/Asus G532LWS 60NR02T0-MB7010 r1.3.fz
+!samples/Quanta NJM - DANJMMB1AA0_revA_Asus TUF Gaming FA507RM.cad
+!samples/TVW/
+samples/TVW/*
+!samples/TVW/NSE562R10_View_0402.tvw
 
 # Claude worktrees
 .claude/worktrees/

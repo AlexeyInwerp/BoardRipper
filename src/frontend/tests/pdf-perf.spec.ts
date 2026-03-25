@@ -5,11 +5,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Watermarked PDFs (laptop-schematics.com tiled images)
-const WATERMARKED_PDF = path.resolve(__dirname, '../../../samples/820-01055/Power Sequence Timing Diagram_LO.pdf');
-const WATERMARKED_PDF_B = path.resolve(__dirname, '../../../samples/820-01055/MLB# 820-01055 Component Placement diagram_LO.pdf');
-const WATERMARKED_PDF_C = path.resolve(__dirname, '../../../samples/820-01055/Taurus power sequence(before press power button) and architecture diagram_LO.pdf');
-// Clean PDF (no watermark)
+// PDFs for perf testing
+const WATERMARKED_PDF = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
+const WATERMARKED_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
+const WATERMARKED_PDF_C = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
+// Clean PDF
 const CLEAN_PDF = path.resolve(__dirname, '../../../samples/820-02016.pdf');
 
 interface RenderPerf {

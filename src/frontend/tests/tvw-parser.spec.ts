@@ -12,7 +12,7 @@ test.describe('TVW Parser', () => {
 
     // Upload TVW file via the file input
     const fileInput = page.getByTestId('file-input');
-    const tvwFile = path.resolve(__dirname, '../../../samples/TVW/LCFC NM-D711.tvw');
+    const tvwFile = path.resolve(__dirname, '../../../samples/TVW/NSE562R10_View_0402.tvw');
     await fileInput.setInputFiles(tvwFile);
 
     // Wait for parsing — status bar should show component/net counts
@@ -30,7 +30,7 @@ test.describe('TVW Parser', () => {
     await page.goto('/');
 
     const fileInput = page.getByTestId('file-input');
-    const tvwFile = path.resolve(__dirname, '../../../samples/TVW/LCFC NM-D711.tvw');
+    const tvwFile = path.resolve(__dirname, '../../../samples/TVW/NSE562R10_View_0402.tvw');
     await fileInput.setInputFiles(tvwFile);
 
     // Wait for parsing
@@ -136,7 +136,7 @@ test.describe('TVW Parser', () => {
 
   test('NM-D711 TVW parser produces valid board data', async () => {
     const { parseTVW } = await import('../src/parsers/tvw-parser');
-    const tvwFile = path.resolve(__dirname, '../../../samples/TVW/LCFC NM-D711.tvw');
+    const tvwFile = path.resolve(__dirname, '../../../samples/TVW/NSE562R10_View_0402.tvw');
     const buf = fs.readFileSync(tvwFile);
     const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
     const board = parseTVW(ab);

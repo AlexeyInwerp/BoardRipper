@@ -7,9 +7,9 @@ const __dirname = path.dirname(__filename);
 
 const TEST_BVR1 = path.resolve(__dirname, '../public/samples/test-board.bvr');
 const REAL_BVR3 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
-const REAL_BVR3_B = path.resolve(__dirname, '../../../samples/820-02020.bvr');
+const REAL_BRD = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
 const REAL_PDF_A = path.resolve(__dirname, '../../../samples/820-02016.pdf');
-const REAL_PDF_B = path.resolve(__dirname, '../../../samples/820-02020.pdf');
+const REAL_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
 
 /** Helper: load a board and wait for stats to appear */
 async function loadBoard(page: import('@playwright/test').Page, filePath: string, expectedText?: string) {
@@ -237,7 +237,7 @@ test.describe('Comprehensive Board Tests', () => {
     const stats1 = await page.getByTestId('file-name').textContent();
 
     // Load second board
-    await loadBoard(page, REAL_BVR3_B, '4317');
+    await loadBoard(page, REAL_BRD, '4317');
     const stats2 = await page.getByTestId('file-name').textContent();
     expect(stats2).not.toBe(stats1);
 
@@ -256,10 +256,10 @@ test.describe('Comprehensive Board Tests', () => {
 
     await page.goto('/');
     await loadBoard(page, REAL_BVR3, '3075');
-    await loadBoard(page, REAL_BVR3_B, '4317');
+    await loadBoard(page, REAL_BRD, '4317');
 
     // Close the second board tab via dockview close button
-    const tab2 = page.locator('.dv-tab', { hasText: '820-02020.bvr' }).first();
+    const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
     // The close button is a child inside the dv-tab
     const closeBtn = tab2.locator('.dv-default-tab-action');
     if (await closeBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -392,10 +392,10 @@ test.describe('Comprehensive Board Tests', () => {
 
     await page.goto('/');
     await loadBoard(page, REAL_BVR3, '3075');
-    await loadBoard(page, REAL_BVR3_B, '4317');
+    await loadBoard(page, REAL_BRD, '4317');
 
     const tab1 = page.locator('.dv-tab', { hasText: '820-02016.bvr' }).first();
-    const tab2 = page.locator('.dv-tab', { hasText: '820-02020.bvr' }).first();
+    const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
 
     // Rapid switching
     for (let i = 0; i < 10; i++) {
@@ -777,11 +777,11 @@ test.describe('Comprehensive Board Tests', () => {
 
     await page.goto('/');
     await loadBoard(page, REAL_BVR3, '3075');
-    await loadBoard(page, REAL_BVR3_B, '4317');
+    await loadBoard(page, REAL_BRD, '4317');
 
     const searchInput = page.getByTestId('search-input');
     const tab1 = page.locator('.dv-tab', { hasText: '820-02016.bvr' }).first();
-    const tab2 = page.locator('.dv-tab', { hasText: '820-02020.bvr' }).first();
+    const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
 
     // Type search, switch tabs rapidly
     await searchInput.fill('U');
@@ -855,7 +855,7 @@ test.describe('Comprehensive Board Tests', () => {
     // Open 3 boards
     await loadBoard(page, TEST_BVR1, '10 parts');
     await loadBoard(page, REAL_BVR3, '3075');
-    await loadBoard(page, REAL_BVR3_B, '4317');
+    await loadBoard(page, REAL_BRD, '4317');
 
     // Verify all 3 tabs exist
     const tabCount = await page.locator('.dv-tab').count();
