@@ -31,9 +31,24 @@ desktop/out-legacy/
 desktop/out-win/
 desktop/webapp/
 
-# Samples — binary/test data
-samples/
+# Samples — large/private test data
 samples/.previews/
+samples/databank.db
+samples/databank.db-wal
+samples/databank.db-shm
+samples/*.sqlite3
+samples/allegroBRD/
+samples/TVW/LCFC NM-D711.tvw
+samples/TVW/HY568_NMD711R20_View.tvw
+samples/TVW/NM-A361 boardview.TVW
+samples/TVW/LCFC NM-D711.pdf
+samples/HY56F_NMD821R10_View.tvw
+samples/LA-H501P-R10-1650 MB.BRD
+samples/820-00165.pcb
+samples/820-02935-05 Kopie.brd
+samples/A2991 820-02935 timing diagram.pdf
+samples/WISTRON WOODY_KBL 16924-2 (BDV).brd
+samples/Acer Spin 5SP513-52N Wistron Woody KBL 16924-3M PDF .pdf
 
 # Claude worktrees
 .claude/worktrees/
