@@ -934,7 +934,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   }
 
   // ─ Net names
-  let nets: string[] = [];
+  const nets: string[] = [];
   if (layersParsedCleanly) {
     // Normal path: 4 zero dwords separator, then net count pair
     r.skip(16);

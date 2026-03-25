@@ -36,11 +36,11 @@ function readSections(text: string): Sections {
   const header = lines[0] ?? '';
 
   let brdout = { count: 0, width: 0, height: 0 };
-  let outlineVerts: string[] = [];
-  let nets: string[] = [];
-  let parts: string[] = [];
-  let pins: string[] = [];
-  let nails: string[] = [];
+  const outlineVerts: string[] = [];
+  const nets: string[] = [];
+  const parts: string[] = [];
+  const pins: string[] = [];
+  const nails: string[] = [];
 
   let i = 0;
   while (i < lines.length) {

@@ -715,7 +715,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       if (hasNet) {
         let netFontSize: number;
         let nx: number, ny: number;
-        let anchorX = 0.5, anchorY = 0.5;
+        const anchorX = 0.5;
+        let anchorY = 0.5;
 
         if (isTwoPinPart) {
           // 2-pin: fit net name inside pad. When two-level, use the bottom half.

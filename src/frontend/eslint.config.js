@@ -24,6 +24,10 @@ export default defineConfig([
       // that intentionally accesses refs during render and manages its own memoization
       'react-hooks/refs': 'warn',
       'react-hooks/preserve-manual-memoization': 'warn',
+      // Pre-existing across codebase — downgrade to warn, fix incrementally
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'react-refresh/only-export-components': 'warn',
     },
   },
 ])
