@@ -23,6 +23,7 @@ export function LibraryPanel() {
     selectedFileDetail, loading, metadataTree,
     autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
     libraryPath, electronMode, verboseScan, showPreviews,
+    browseMode, browseResult, browsing,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
   const [pdfSearchMode, setPdfSearchMode] = useState(false);
@@ -51,8 +52,8 @@ export function LibraryPanel() {
     }
   }, []);
 
-  const handleScan = useCallback(() => {
-    databankStore.triggerScan();
+  const handleFileScan = useCallback(() => {
+    databankStore.triggerFileScan();
   }, []);
 
   const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
@@ -153,6 +154,14 @@ export function LibraryPanel() {
             Folders
           </button>
         </div>
+        {viewMode === 'folders' && (
+          <div className="library-browse-toggle">
+            <button className={`library-tab ${browseMode === 'database' ? 'active' : ''}`}
+              onClick={() => databankStore.setBrowseMode('database')}>Database</button>
+            <button className={`library-tab ${browseMode === 'live' ? 'active' : ''}`}
+              onClick={() => databankStore.setBrowseMode('live')}>Live</button>
+          </div>
+        )}
         <div className="library-actions">
           <label className="library-donor-filter" title="Auto-load bound PDFs when opening a board">
             <input
@@ -178,21 +187,17 @@ export function LibraryPanel() {
             />
             Verbose
           </label>
-          {scanning ? (
-            <button
-              className="library-scan-btn library-scan-stop"
-              onClick={() => databankStore.stopScan()}
-              title="Stop indexing"
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              className="library-scan-btn"
-              onClick={handleScan}
-            >
-              Scan
-            </button>
+          {!(viewMode === 'folders' && browseMode === 'live') && (
+            scanStatus?.running ? (
+              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop file scan">Stop</button>
+            ) : scanStatus?.pdf_running ? (
+              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
+            ) : (
+              <>
+                <button className="library-scan-btn" onClick={handleFileScan} title="Scan filesystem for board and PDF files">Files</button>
+                <button className="library-scan-btn" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs">PDFs</button>
+              </>
+            )
           )}
         </div>
       </div>
@@ -343,6 +348,8 @@ export function LibraryPanel() {
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
           />
+        ) : viewMode === 'folders' && browseMode === 'live' ? (
+          <LiveBrowser browseResult={browseResult} browsing={browsing} />
         ) : (
           <FolderView
             tree={folderTree}
@@ -363,6 +370,105 @@ export function LibraryPanel() {
           onCreateBinding={handleCreateBinding}
           onDeleteBinding={handleDeleteBinding}
         />
+      )}
+    </div>
+  );
+}
+
+// --- Live Browser ---
+
+function LiveBrowser({ browseResult, browsing }: {
+  browseResult: import('../store/databank-store').BrowseResult | null;
+  browsing: boolean;
+}) {
+  const [currentPath, setCurrentPath] = useState('');
+
+  useEffect(() => {
+    databankStore.browse(currentPath);
+  }, [currentPath]);
+
+  const navigateTo = useCallback((dir: string) => {
+    if (currentPath) {
+      setCurrentPath(currentPath + '/' + dir);
+    } else {
+      setCurrentPath(dir);
+    }
+  }, [currentPath]);
+
+  const navigateUp = useCallback(() => {
+    const idx = currentPath.lastIndexOf('/');
+    setCurrentPath(idx > 0 ? currentPath.slice(0, idx) : '');
+  }, [currentPath]);
+
+  const handleOpenLiveFile = useCallback(async (entry: import('../store/databank-store').BrowseEntry) => {
+    const fullPath = currentPath ? currentPath + '/' + entry.name : entry.name;
+    try {
+      const res = await fetch(`/api/files/path/${encodeURIComponent(fullPath)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buffer = await res.arrayBuffer();
+      const fileObj = new File([buffer], entry.name, {
+        lastModified: entry.mod_time ? entry.mod_time * 1000 : Date.now(),
+      });
+
+      const ext = entry.name.split('.').pop()?.toLowerCase() ?? '';
+      if (ext === 'pdf') {
+        const { boardStore } = await import('../store/board-store');
+        const { pdfStore } = await import('../store/pdf-store');
+        const { ensurePdfPanel } = await import('../store/dockview-api');
+        boardStore.addPdf(fileObj);
+        boardStore.autoBindPdf(fileObj.name);
+        await pdfStore.loadFile(fileObj);
+        ensurePdfPanel(fileObj.name);
+        pdfStore.switchTo(fileObj.name);
+      } else {
+        const { boardStore } = await import('../store/board-store');
+        await boardStore.loadFiles([fileObj]);
+      }
+    } catch (err) {
+      log.ui.error('Failed to open live file:', err);
+    }
+  }, [currentPath]);
+
+  if (browsing && !browseResult) return <div className="library-empty">Loading...</div>;
+  if (!browseResult) return <div className="library-empty">Browse the live filesystem</div>;
+
+  const entries = browseResult.entries || [];
+  const dirs = entries.filter(e => e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+  const files = entries.filter(e => !e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <div className="library-tree">
+      {currentPath && (
+        <div className="library-tree-node" onClick={navigateUp} style={{ cursor: 'pointer' }}>
+          <span className="library-tree-arrow">▶</span>
+          <span className="library-tree-folder">..</span>
+        </div>
+      )}
+      {dirs.map(d => (
+        <div key={d.name} className="library-tree-node" onClick={() => navigateTo(d.name)} style={{ cursor: 'pointer' }}>
+          <span className="library-tree-arrow">▶</span>
+          <span className="library-tree-folder">{d.name}</span>
+        </div>
+      ))}
+      {files.map(f => {
+        const icon = f.file_type === 'pdf' ? 'P' : 'B';
+        const iconClass = f.file_type === 'pdf' ? 'library-icon-pdf' : 'library-icon-board';
+        return (
+          <div
+            key={f.name}
+            className="library-file-row"
+            style={{ paddingLeft: 20, cursor: 'pointer' }}
+            onDoubleClick={() => handleOpenLiveFile(f)}
+            title={`${f.name}\n${f.size != null ? formatSize(f.size) : ''}`}
+          >
+            <span className={`library-file-icon ${iconClass}`}>{icon}</span>
+            <span className="library-file-name">{f.name}</span>
+            {f.size != null && <span className="library-file-meta">{formatSize(f.size)}</span>}
+          </div>
+        );
+      })}
+      {dirs.length === 0 && files.length === 0 && (
+        <div className="library-empty">Empty directory</div>
       )}
     </div>
   );

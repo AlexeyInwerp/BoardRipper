@@ -73,12 +73,38 @@ export interface ScanStatus {
   duration_ms: number;
   phase?: string;
   last_file?: string;
+  completed_at?: number;
+  pdf_completed_at?: number;
   // Phase 2: PDF text extraction
   pdf_running?: boolean;
   pdf_extracted?: number;
   pdf_total?: number;
   pdf_errors?: number;
   pdf_current?: string;
+}
+
+export interface DatabankStats {
+  boards: number;
+  pdfs: number;
+  bindings: number;
+  pdf_pages: number;
+  pdf_errors: number;
+  db_size_bytes: number;
+  last_file_scan_at: number;
+  last_pdf_scan_at: number;
+}
+
+export interface BrowseEntry {
+  name: string;
+  is_dir: boolean;
+  size?: number;
+  mod_time?: number;
+  file_type?: string;
+}
+
+export interface BrowseResult {
+  path: string;
+  entries: BrowseEntry[];
 }
 
 export type ViewMode = 'metadata' | 'folders' | 'model';
@@ -111,7 +137,19 @@ export interface ModelGroup {
 class DatabankStore {
   private _files: DatabankFile[] = [];
   private _folderTree: FolderNode | null = null;
-  private _scanStatus: ScanStatus | null = null;
+  private _scanStatus: ScanStatus | null = (() => {
+    try {
+      const stored = localStorage.getItem('boardripper-scan-status');
+      return stored ? JSON.parse(stored) : null;
+    } catch { return null; }
+  })();
+  private _stats: DatabankStats | null = null;
+  private _browseMode: 'database' | 'live' = (() => {
+    try { return (localStorage.getItem('boardripper-library-browse-mode') as 'database' | 'live') || 'database'; }
+    catch { return 'database' as const; }
+  })();
+  private _browseResult: BrowseResult | null = null;
+  private _browsing = false;
   private _searchResults: SearchResult[] = [];
   private _searchQuery = '';
   private _autoPdf = (() => { try { return localStorage.getItem('boardripper-library-autopdf') !== '0'; } catch { return true; } })();
@@ -129,6 +167,10 @@ class DatabankStore {
   get files() { return this._files; }
   get folderTree() { return this._folderTree; }
   get scanStatus() { return this._scanStatus; }
+  get stats() { return this._stats; }
+  get browseMode() { return this._browseMode; }
+  get browseResult() { return this._browseResult; }
+  get browsing() { return this._browsing; }
   get searchResults() { return this._searchResults; }
   get searchQuery() { return this._searchQuery; }
   get autoPdf() { return this._autoPdf; }
@@ -267,14 +309,24 @@ class DatabankStore {
     }
   }
 
+  private _persistScanStatus() {
+    try {
+      if (this._scanStatus) {
+        localStorage.setItem('boardripper-scan-status', JSON.stringify(this._scanStatus));
+      }
+    } catch { /* ignore */ }
+  }
+
   /** Check if a scan or PDF extraction is already in progress and start polling if so. */
   async checkScanStatus(): Promise<void> {
     if (isElectron()) return;
     const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
     if (status) {
       this._scanStatus = status;
+      this._persistScanStatus();
       this.notify();
       if (status.running || status.pdf_running) {
+        log.scan.log('Resuming scan polling — scan still in progress');
         this._startScanPolling();
       }
     }
@@ -328,8 +380,10 @@ class DatabankStore {
 
   private _scanPollTimer: ReturnType<typeof setInterval> | null = null;
 
-  async triggerScan(): Promise<void> {
+  async triggerFileScan(): Promise<void> {
+    log.scan.log('File scan: starting...');
     this._scanStatus = { running: true, scanned: 0, total: 0, added: 0, updated: 0, deleted: 0, errors: 0, duration_ms: 0 };
+    this._persistScanStatus();
     this.notify();
 
     if (isElectron()) {
@@ -339,12 +393,19 @@ class DatabankStore {
         added: this._files.length, updated: 0, deleted: 0, errors: 0,
         duration_ms: 0,
       };
+      this._persistScanStatus();
       this.notify();
     } else {
       // Fire-and-forget: backend runs scan in background
       await this.apiFetch<ScanStatus>('/api/databank/scan', { method: 'POST' });
       this._startScanPolling();
     }
+  }
+
+  async triggerPdfScan(): Promise<void> {
+    log.scan.log('PDF extraction: starting...');
+    await this.apiFetch<ScanStatus>('/api/databank/scan/pdf', { method: 'POST' });
+    this._startScanPolling();
   }
 
   async stopScan(): Promise<void> {
@@ -355,6 +416,7 @@ class DatabankStore {
     const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
     if (status) {
       this._scanStatus = status;
+      this._persistScanStatus();
       if (!status.running) {
         await this.fetchFiles();
         await this.fetchTree();
@@ -377,6 +439,7 @@ class DatabankStore {
           || prev.pdf_running !== status.pdf_running || prev.pdf_extracted !== status.pdf_extracted
           || prev.phase !== status.phase;
         this._scanStatus = status;
+        this._persistScanStatus();
         if (changed) this.notify();
 
         // File scan done — fetch files once (even if PDF extraction still running)
@@ -508,6 +571,53 @@ class DatabankStore {
   previewUrl(file: DatabankFile): string | null {
     if (!file.has_preview) return null;
     return `/api/databank/preview/${file.id}`;
+  }
+
+  // --- Stats, reset, browse ---
+
+  async fetchStats(): Promise<void> {
+    const data = await this.apiFetch<DatabankStats>('/api/databank/stats');
+    if (data) { this._stats = data; this.notify(); }
+  }
+
+  async resetAll(): Promise<boolean> {
+    const res = await this.apiFetch<{ status: string }>('/api/databank/reset', { method: 'POST' });
+    if (res) {
+      log.scan.log('Database reset complete');
+      this._files = []; this._folderTree = null; this._scanStatus = null; this._stats = null;
+      try { localStorage.removeItem('boardripper-scan-status'); } catch {}
+      await this.fetchStats();
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
+  async resetPdf(): Promise<boolean> {
+    const res = await this.apiFetch<{ status: string }>('/api/databank/reset-pdf', { method: 'POST' });
+    if (res) {
+      log.scan.log('PDF text reset complete');
+      await this.fetchStats();
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
+  async browse(path: string): Promise<void> {
+    this._browsing = true;
+    this.notify();
+    const data = await this.apiFetch<BrowseResult>(`/api/databank/browse?path=${encodeURIComponent(path)}`);
+    if (data) this._browseResult = data;
+    this._browsing = false;
+    this.notify();
+  }
+
+  setBrowseMode(mode: 'database' | 'live') {
+    this._browseMode = mode;
+    try { localStorage.setItem('boardripper-library-browse-mode', mode); } catch {}
+    if (mode === 'live') this.browse('');
+    this.notify();
   }
 
   // --- Local state ---
