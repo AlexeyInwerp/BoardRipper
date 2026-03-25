@@ -334,7 +334,7 @@ function loadShapes(r: TvwReader): TvwShape[] {
   const shapeCount = maxDCode - 10;
   const shapes: TvwShape[] = [];
   for (let i = 0; i < shapeCount; i++) {
-    const marker = r.readU32(); // always 1
+    r.readU32(); // marker = 1
     const w = r.readFixed32();
     const h = r.readFixed32();
     const shapeType = r.readU32() as TvwShapeType;
