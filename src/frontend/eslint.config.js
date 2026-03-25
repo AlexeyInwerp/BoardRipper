@@ -19,5 +19,11 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // React Compiler strict rules — downgrade to warn for PixiJS imperative code
+      // that intentionally accesses refs during render and manages its own memoization
+      'react-hooks/refs': 'warn',
+      'react-hooks/preserve-manual-memoization': 'warn',
+    },
   },
 ])
