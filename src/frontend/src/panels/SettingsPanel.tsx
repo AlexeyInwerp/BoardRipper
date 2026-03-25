@@ -367,7 +367,7 @@ function LibraryFolderSetting() {
     if (ok) {
       setEditing(false);
       // Trigger rescan with new library dir
-      databankStore.triggerScan();
+      databankStore.triggerFileScan();
     }
   };
 
@@ -410,6 +410,151 @@ function LibraryFolderSetting() {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- Auto-scan toggle ----
+
+function AutoScanToggle() {
+  const { backendAvailable, electronMode } = useDatabank();
+  const [autoScan, setAutoScan] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (electronMode || !backendAvailable) return;
+    fetch('/api/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(cfg => {
+        if (cfg && typeof cfg.auto_scan === 'string') {
+          setAutoScan(cfg.auto_scan === 'true');
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [backendAvailable, electronMode]);
+
+  if (electronMode || !loaded) return null;
+
+  const handleToggle = async (checked: boolean) => {
+    setAutoScan(checked);
+    try {
+      await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'auto_scan', value: checked ? 'true' : '' }),
+      });
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="settings-row settings-toggle-row">
+      <label className="settings-label">Auto-scan on startup</label>
+      <input type="checkbox" checked={autoScan} onChange={e => handleToggle(e.target.checked)} />
+    </div>
+  );
+}
+
+// ---- Database info section ----
+
+function DatabaseInfoSection() {
+  const { stats, scanStatus, backendAvailable, electronMode } = useDatabank();
+  const [resetting, setResetting] = useState(false);
+
+  useEffect(() => {
+    if (!electronMode && backendAvailable) {
+      databankStore.fetchStats();
+    }
+  }, [backendAvailable, electronMode]);
+
+  if (electronMode || !backendAvailable) return null;
+
+  const isRunning = scanStatus?.running || scanStatus?.pdf_running;
+
+  const formatDate = (ts: number) => {
+    if (!ts) return 'Never';
+    return new Date(ts * 1000).toLocaleString();
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const handleResetPdf = async () => {
+    if (!confirm('Reset all extracted PDF text? You will need to re-run PDF extraction.')) return;
+    setResetting(true);
+    await databankStore.resetPdf();
+    setResetting(false);
+  };
+
+  const handleResetAll = async () => {
+    if (!confirm('Wipe ALL scan data (files, bindings, PDF text)? This cannot be undone.')) return;
+    setResetting(true);
+    await databankStore.resetAll();
+    setResetting(false);
+  };
+
+  return (
+    <div className="settings-db-info">
+      {stats && (
+        <>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">Board files</label>
+            <span>{stats.boards}</span>
+          </div>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">PDF files</label>
+            <span>{stats.pdfs}</span>
+          </div>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">Bindings</label>
+            <span>{stats.bindings}</span>
+          </div>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">PDF pages indexed</label>
+            <span>{stats.pdf_pages}</span>
+          </div>
+          {stats.pdf_errors > 0 && (
+            <div className="settings-row settings-toggle-row">
+              <label className="settings-label">PDF scan errors</label>
+              <span>{stats.pdf_errors}</span>
+            </div>
+          )}
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">Database size</label>
+            <span>{formatBytes(stats.db_size_bytes)}</span>
+          </div>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">Last file scan</label>
+            <span>{formatDate(stats.last_file_scan_at)}</span>
+          </div>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">Last PDF scan</label>
+            <span>{formatDate(stats.last_pdf_scan_at)}</span>
+          </div>
+        </>
+      )}
+      <div className="settings-db-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+        <button
+          className="settings-action-btn"
+          onClick={handleResetPdf}
+          disabled={!!isRunning || resetting}
+          title="Wipe extracted PDF text — keeps file index and bindings"
+        >
+          Reset PDF Text
+        </button>
+        <button
+          className="settings-action-btn"
+          onClick={handleResetAll}
+          disabled={!!isRunning || resetting}
+          title="Wipe ALL scan data"
+          style={{ color: '#e55' }}
+        >
+          Reset Database
+        </button>
+      </div>
     </div>
   );
 }
@@ -807,6 +952,8 @@ export function SettingsPanel() {
       <CollapsibleSection id="server" title="Server / Library" isOpen={openSections.has('server')}
         onToggle={toggleSection} sectionRef={serverRef} isFocused={focusedSection === 'server'}>
         <LibraryFolderSetting />
+        <AutoScanToggle />
+        <DatabaseInfoSection />
       </CollapsibleSection>
 
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { databankStore } from '../store/databank-store';
-import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, MetadataGroup, ModelGroup } from '../store/databank-store';
+import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, MetadataGroup, ModelGroup, DatabankStats, BrowseResult } from '../store/databank-store';
 
 interface DatabankSnapshot {
   files: DatabankFile[];
@@ -20,6 +20,10 @@ interface DatabankSnapshot {
   electronMode: boolean;
   verboseScan: boolean;
   showPreviews: boolean;
+  stats: DatabankStats | null;
+  browseMode: 'database' | 'live';
+  browseResult: BrowseResult | null;
+  browsing: boolean;
 }
 
 let cachedSnapshot: DatabankSnapshot | null = null;
@@ -48,6 +52,10 @@ function getSnapshot(): DatabankSnapshot {
       electronMode: databankStore.electronMode,
       verboseScan: databankStore.verboseScan,
       showPreviews: databankStore.showPreviews,
+      stats: databankStore.stats,
+      browseMode: databankStore.browseMode,
+      browseResult: databankStore.browseResult,
+      browsing: databankStore.browsing,
     };
     lastVersion = snapshotVersion;
   }
