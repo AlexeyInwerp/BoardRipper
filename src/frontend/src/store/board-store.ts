@@ -394,9 +394,9 @@ class BoardStore {
     const w = board.bounds.maxX - board.bounds.minX;
     const h = board.bounds.maxY - board.bounds.minY;
     if (h <= w) return 0;
-    // Formats with flipY: 90° + flipY creates horizontal mirror. Use 270° instead.
-    const fmt = getFormat(board.format);
-    return fmt?.flipY ? 270 : 90;
+    // X-fold boards set initialMirrorY — use 270° so flipY + mirrorY + 270° = correct.
+    // All other tall boards use standard 90° rotation.
+    return board.initialMirrorY ? 270 : 90;
   }
 
   async loadFiles(files: FileList | File[]) {
