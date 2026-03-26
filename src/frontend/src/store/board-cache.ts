@@ -1,7 +1,7 @@
 import type { BoardData, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 24; // bumped: TVW outline from Roul Through-layer slots
+const DB_VERSION = 27; // bumped: XZZ butterflyFoldAxis support
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 
@@ -25,6 +25,8 @@ interface SerializedBoardData {
   traces?: Trace[];
   vias?: Via[];
   layerNames?: string[];
+  initialMirrorY?: boolean;
+  butterflyFoldAxis?: 'x' | 'y';
 }
 
 function makeCacheKey(name: string, size: number, modified: number): string {
@@ -43,6 +45,8 @@ function serialize(board: BoardData): SerializedBoardData {
     traces: board.traces,
     vias: board.vias,
     layerNames: board.layerNames,
+    initialMirrorY: board.initialMirrorY,
+    butterflyFoldAxis: board.butterflyFoldAxis,
   };
 }
 
@@ -61,6 +65,8 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       traces: data.traces,
       vias: data.vias,
       layerNames: data.layerNames,
+      initialMirrorY: data.initialMirrorY,
+      butterflyFoldAxis: data.butterflyFoldAxis,
     };
   } catch {
     return null;
@@ -93,6 +99,11 @@ class BoardCache {
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
+      req.onblocked = () => {
+        // Another tab holds the old DB version — delete and retry without cache
+        indexedDB.deleteDatabase(DB_NAME);
+        reject(new Error('IndexedDB upgrade blocked — cache cleared, please reload'));
+      };
     });
     return this.dbPromise;
   }

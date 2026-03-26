@@ -1032,24 +1032,26 @@ export class BoardRenderer {
       const sx = mirrorX ? -1 : 1;
       const topSy = flipY ? -1 : 1;
 
-      // The bottom half must be mirrored perpendicular to the separation direction
-      // in VISUAL (screen) space so it appears as a physical fold of the board.
+      // Butterfly bottom-half mirroring.
       //
-      // separateX=true  → halves side-by-side → fold axis is vertical  → mirror visual-X
-      // separateX=false → halves stacked      → fold axis is horizontal → mirror visual-Y
+      // X-fold boards (butterflyFoldAxis='x'): the parser already X-mirrored bottom
+      // parts during fold processing — they're at their overlaid positions. No
+      // additional mirror needed; both halves use the same scale.
       //
-      // When axes are swapped (rotation 90°/270°): visual-X ↔ board-Y, so:
-      //   mirror visual-X needs board-Y flip  (i.e. botSy = -topSy)
-      //   mirror visual-Y needs board-X flip  (i.e. botSx = -sx)
-      //
-      // When axes are NOT swapped (rotation 0°/180°):
-      //   mirror visual-X needs board-X flip  (i.e. botSx = -sx)
-      //   mirror visual-Y needs board-Y flip  (i.e. botSy = -topSy)
-      //
-      // So: mirror board-X when (separateX XOR axesSwapped), else mirror board-Y.
-      const mirrorBoardX = separateX !== axesSwapped;
-      const botScaleX = mirrorBoardX ? -sx    : sx;
-      const botScaleY = mirrorBoardX ? topSy  : -topSy;
+      // Y-fold boards (butterflyFoldAxis='y' or default): flip the perpendicular
+      // axis (Y) to create the visual fold effect. The renderer must undo the
+      // parser's Y-fold mirror so the bottom appears at its unfolded position.
+      let botScaleX: number, botScaleY: number;
+      if (board.butterflyFoldAxis === 'x') {
+        botScaleX = sx;
+        botScaleY = topSy;
+      } else {
+        const mirrorBoardX = board.butterflyFoldAxis === 'y'
+          ? false
+          : separateX !== axesSwapped;
+        botScaleX = mirrorBoardX ? -sx : sx;
+        botScaleY = -topSy;
+      }
 
       const dx = separateX ? halfSep : 0;
       const dy = separateX ? 0 : halfSep;
