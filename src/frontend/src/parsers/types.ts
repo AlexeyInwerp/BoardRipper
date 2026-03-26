@@ -71,9 +71,8 @@ export interface BoardData {
   vias?: Via[];
   /** Layer names for multi-layer formats (e.g. TVW butterfly columns). Index = column. */
   layerNames?: string[];
-  /** Hint: set mirrorY on load to correct orientation for X-fold butterfly boards. */
-  initialMirrorY?: boolean;
   /** Butterfly fold axis in board coordinates — renderer mirrors this axis for the bottom half.
+   *  When 'x', the board store also sets mirrorY on load to correct orientation.
    *  'x' = fold was vertical (left/right split), 'y' = fold was horizontal (top/bottom split). */
   butterflyFoldAxis?: 'x' | 'y';
 }

@@ -338,6 +338,8 @@ interface FoldResult {
   axis: number;
   dim: 'x' | 'y';
   lowerIsBottom: boolean;
+  /** True when the outline has two disconnected components (no clipping needed). */
+  disconnectedOutline: boolean;
   _debug: { source: string; sideSignal: string; compGap: number | null };
 }
 
@@ -581,7 +583,11 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
   }
 
   const source = compFold ? 'outline-components' : detectedDim !== null ? 'gap' : 'default';
-  return { axis, dim, lowerIsBottom, _debug: { source, sideSignal, compGap: compFold?.gap ?? null } };
+  return {
+    axis, dim, lowerIsBottom,
+    disconnectedOutline: compFold !== null,
+    _debug: { source, sideSignal, compGap: compFold?.gap ?? null },
+  };
 }
 
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
@@ -698,7 +704,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     const segsBefore = segments.length;
     let removed = 0, clipped = 0;
 
-    if (fold._debug.compGap !== null) {
+    if (fold.disconnectedOutline) {
       // Two-component outline: discard the component whose centroid is on the bottom side.
       // No clipping needed — each component is entirely on one side of the fold axis.
       // Also deduplicate segments — XZZ files often list each outline edge twice.
@@ -791,10 +797,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     );
   }
 
-  // X-fold boards stay tall — the renderer's 270° autoRotation + mirrorY handles orientation.
-  // Set initialMirrorY so the board store applies it on load.
-  const xFold = fold?.dim === 'x';
-
   // Normalize coordinates to origin
   let minX = Infinity, minY = Infinity;
   for (const s of segments) {
@@ -806,7 +808,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
     }
   }
-  // Note: isFinite(NaN) === false, so !isFinite also covers NaN — no separate isNaN check needed.
   if (!isFinite(minX)) { minX = 0; minY = 0; }
 
   for (const s of segments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
@@ -842,7 +843,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
 
   return {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
-    initialMirrorY: xFold || undefined,
-    butterflyFoldAxis: fold ? fold.dim : undefined,
+    butterflyFoldAxis: fold?.dim,
   };
 }

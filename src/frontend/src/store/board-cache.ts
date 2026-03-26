@@ -1,7 +1,7 @@
 import type { BoardData, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 27; // bumped: XZZ butterflyFoldAxis support
+const DB_VERSION = 28; // bumped: removed initialMirrorY (derived from butterflyFoldAxis)
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 
@@ -25,7 +25,6 @@ interface SerializedBoardData {
   traces?: Trace[];
   vias?: Via[];
   layerNames?: string[];
-  initialMirrorY?: boolean;
   butterflyFoldAxis?: 'x' | 'y';
 }
 
@@ -45,7 +44,6 @@ function serialize(board: BoardData): SerializedBoardData {
     traces: board.traces,
     vias: board.vias,
     layerNames: board.layerNames,
-    initialMirrorY: board.initialMirrorY,
     butterflyFoldAxis: board.butterflyFoldAxis,
   };
 }
@@ -65,7 +63,6 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       traces: data.traces,
       vias: data.vias,
       layerNames: data.layerNames,
-      initialMirrorY: data.initialMirrorY,
       butterflyFoldAxis: data.butterflyFoldAxis,
     };
   } catch {
