@@ -68,9 +68,18 @@ export interface FormatOverrides {
 type OverridesMap = Record<FormatId, FormatOverrides>;
 
 let _overrides: OverridesMap = {};
+// v0.2.0-beta.1: clear stale overrides — parser defaults are now correct for all formats.
+const OVERRIDE_VERSION_KEY = 'boardviewer-format-overrides-version';
+const OVERRIDE_VERSION = 2; // bump to force-clear overrides on next load
 try {
-  const raw = localStorage.getItem(FORMAT_OVERRIDES_KEY);
-  if (raw) _overrides = JSON.parse(raw);
+  const ver = Number(localStorage.getItem(OVERRIDE_VERSION_KEY)) || 0;
+  if (ver < OVERRIDE_VERSION) {
+    localStorage.removeItem(FORMAT_OVERRIDES_KEY);
+    localStorage.setItem(OVERRIDE_VERSION_KEY, String(OVERRIDE_VERSION));
+  } else {
+    const raw = localStorage.getItem(FORMAT_OVERRIDES_KEY);
+    if (raw) _overrides = JSON.parse(raw);
+  }
 } catch { /* ignore */ }
 
 /** Apply user overrides to a format descriptor (returns a new object). */
