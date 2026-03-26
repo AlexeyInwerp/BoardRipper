@@ -328,7 +328,7 @@ class BoardStore {
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
-        if (cached.initialMirrorY) tab.mirrorY = true;
+        if (this.needsAutoMirrorY(cached)) tab.mirrorY = true;
         const cachedFmt = getFormat(cached.format);
         if (cachedFmt?.swapSides) {
           tab.showTop = false;
@@ -366,7 +366,7 @@ class BoardStore {
 
       tab.board = board;
       tab.rotation = this.autoRotation(board);
-      if (board.initialMirrorY) tab.mirrorY = true;
+      if (this.needsAutoMirrorY(board)) tab.mirrorY = true;
       if (fmt?.swapSides) {
         tab.showTop = false;
         tab.showBottom = true;
@@ -394,9 +394,18 @@ class BoardStore {
     const w = board.bounds.maxX - board.bounds.minX;
     const h = board.bounds.maxY - board.bounds.minY;
     if (h <= w) return 0;
-    // X-fold boards set initialMirrorY — use 270° so flipY + mirrorY + 270° = correct.
-    // All other tall boards use standard 90° rotation.
+    // X-fold XZZ boards use 270° (combined with flipY + mirrorY = correct orientation).
+    // All other tall boards use 90°.
     return board.initialMirrorY ? 270 : 90;
+  }
+
+  /** Whether a tall flipY board needs mirrorY to correct 90°+flipY vertical flip. */
+  private needsAutoMirrorY(board: BoardData): boolean {
+    const w = board.bounds.maxX - board.bounds.minX;
+    const h = board.bounds.maxY - board.bounds.minY;
+    if (h <= w) return false;
+    const fmt = getFormat(board.format);
+    return !!fmt?.flipY;
   }
 
   async loadFiles(files: FileList | File[]) {
