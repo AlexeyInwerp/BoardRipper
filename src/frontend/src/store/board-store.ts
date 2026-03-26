@@ -328,6 +328,7 @@ class BoardStore {
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
+        if (cached.initialMirrorY) tab.mirrorY = true;
         const cachedFmt = getFormat(cached.format);
         if (cachedFmt?.swapSides) {
           tab.showTop = false;
@@ -365,6 +366,7 @@ class BoardStore {
 
       tab.board = board;
       tab.rotation = this.autoRotation(board);
+      if (board.initialMirrorY) tab.mirrorY = true;
       if (fmt?.swapSides) {
         tab.showTop = false;
         tab.showBottom = true;
@@ -391,7 +393,10 @@ class BoardStore {
   private autoRotation(board: BoardData): number {
     const w = board.bounds.maxX - board.bounds.minX;
     const h = board.bounds.maxY - board.bounds.minY;
-    return h > w ? 90 : 0;
+    if (h <= w) return 0;
+    // Formats with flipY: 90° + flipY creates horizontal mirror. Use 270° instead.
+    const fmt = getFormat(board.format);
+    return fmt?.flipY ? 270 : 90;
   }
 
   async loadFiles(files: FileList | File[]) {

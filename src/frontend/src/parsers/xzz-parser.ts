@@ -334,17 +334,105 @@ function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   return { x, y, netIndex };
 }
 
-interface FoldResult { axis: number; dim: 'x' | 'y'; lowerIsBottom: boolean; }
+interface FoldResult {
+  axis: number;
+  dim: 'x' | 'y';
+  lowerIsBottom: boolean;
+  _debug: { source: string; sideSignal: string; compGap: number | null };
+}
+
+/**
+ * Detect fold axis from two disconnected outline groups (connected-component analysis).
+ *
+ * XZZ butterfly boards often have two separate board outlines placed side-by-side
+ * with a small gap (sometimes as little as 20 mils). Gap-ratio heuristics miss
+ * these because the gap is tiny relative to the board width. Instead, group
+ * segments by endpoint proximity and check if exactly two groups exist.
+ */
+function detectOutlineComponentFold(segments: Segment[]): { axis: number; dim: 'x' | 'y'; gap: number } | null {
+  if (segments.length < 4) return null;
+  const n = segments.length;
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+
+  function find(i: number): number {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  }
+  function union(a: number, b: number) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  // Connect segments sharing an endpoint (within 1 mil tolerance)
+  const eps = 1.0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const si = segments[i], sj = segments[j];
+      if (Math.hypot(si.p1.x - sj.p1.x, si.p1.y - sj.p1.y) < eps ||
+          Math.hypot(si.p1.x - sj.p2.x, si.p1.y - sj.p2.y) < eps ||
+          Math.hypot(si.p2.x - sj.p1.x, si.p2.y - sj.p1.y) < eps ||
+          Math.hypot(si.p2.x - sj.p2.x, si.p2.y - sj.p2.y) < eps) {
+        union(i, j);
+      }
+    }
+  }
+
+  // Collect groups
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    let g = groups.get(r);
+    if (!g) { g = []; groups.set(r, g); }
+    g.push(i);
+  }
+
+  if (groups.size !== 2) return null;
+
+  // Compute bounds of each group
+  const groupList = [...groups.values()];
+  const bounds = groupList.map(idxs => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const i of idxs) {
+      const s = segments[i];
+      minX = Math.min(minX, s.p1.x, s.p2.x); maxX = Math.max(maxX, s.p1.x, s.p2.x);
+      minY = Math.min(minY, s.p1.y, s.p2.y); maxY = Math.max(maxY, s.p1.y, s.p2.y);
+    }
+    return { minX, maxX, minY, maxY };
+  });
+
+  const [b0, b1] = bounds;
+  const xSep = !((b0.minX <= b1.maxX) && (b1.minX <= b0.maxX)); // no X overlap
+  const ySep = !((b0.minY <= b1.maxY) && (b1.minY <= b0.maxY)); // no Y overlap
+
+  // Separated in X, overlapping in Y → X fold
+  if (xSep && !ySep) {
+    const [left, right] = b0.maxX < b1.minX ? [b0, b1] : [b1, b0];
+    const axis = (left.maxX + right.minX) / 2;
+    return { axis, dim: 'x', gap: right.minX - left.maxX };
+  }
+
+  // Separated in Y, overlapping in X → Y fold
+  if (ySep && !xSep) {
+    const [lower, upper] = b0.maxY < b1.minY ? [b0, b1] : [b1, b0];
+    const axis = (lower.maxY + upper.minY) / 2;
+    return { axis, dim: 'y', gap: upper.minY - lower.maxY };
+  }
+
+  return null;
+}
 
 /** Find the fold axis in XZZ butterfly layout.
  *
- *  Primary signal: part centroid distribution — two dense clusters separated by a
- *  clear void. This is far more reliable than outline coordinates because board
- *  notches/cutouts create false outline gaps that can outrank the real fold gap.
+ *  Detection priority:
+ *  1. Outline connectivity — two disconnected outline groups = definitive butterfly.
+ *     Handles boards where the gap between halves is tiny (e.g. 20 mils in a 9000-mil board).
+ *  2. Part centroid gap — two dense clusters separated by a clear void.
+ *  3. Outline coordinate gap — fallback when <8 parts are available.
+ *  4. Default Y fold at midpoint — last resort for boards that look like butterfly but
+ *     have no detectable gap.
  *
  *  Side determination: lower coordinate = top side (XZZ uses screen coords, Y down).
- *
- *  Fallback: outline segment coordinates when <8 parts are available.
  */
 function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadData[]): FoldResult | null {
   function bestGap(values: number[]): { axis: number; ratio: number } | null {
@@ -359,6 +447,9 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
     }
     return maxGap > span * 0.2 ? { axis: foldPos, ratio: maxGap / span } : null;
   }
+
+  // ---- Priority 1: outline connectivity (two disconnected board halves) ----
+  const compFold = detectOutlineComponentFold(segments);
 
   // Primary: part centroid clusters (unaffected by board notches/holes)
   let xFold: ReturnType<typeof bestGap> = null;
@@ -406,9 +497,7 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
       const coordValues = cand.dim === 'x' ? cxs : cys;
       const below = coordValues.filter(v => v < cand.axis).length;
       const balance = Math.min(below, coordValues.length - below) / coordValues.length;
-      log.parser.log(`fold candidate: dim=${cand.dim}, axis=${cand.axis.toFixed(1)}, ratio=${cand.ratio.toFixed(2)}, balance=${balance.toFixed(2)}`);
       if (balance < 0.15) {
-        log.parser.warn(`fold candidate dim=${cand.dim} rejected: imbalanced split (${balance.toFixed(2)} < 0.15)`);
         passedChecks = false;
       }
     }
@@ -427,9 +516,7 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
       if (isFinite(lowerMin) && isFinite(upperMin)) {
         const lw = lowerMax - lowerMin, uw = upperMax - upperMin;
         const outlineBalance = lw > 0 && uw > 0 ? Math.min(lw, uw) / Math.max(lw, uw) : 0;
-        log.parser.log(`outline half-widths (dim=${cand.dim}): lower=${lw.toFixed(0)}, upper=${uw.toFixed(0)}, balance=${outlineBalance.toFixed(2)}`);
         if (outlineBalance < 0.4) {
-          log.parser.warn(`fold candidate dim=${cand.dim} rejected: outline halves asymmetric (${outlineBalance.toFixed(2)} < 0.40)`);
           passedChecks = false;
         }
       }
@@ -446,34 +533,55 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
   // Almost all .PCB boards are butterfly layouts; fall back when gap detection fails.
   let dim: 'x' | 'y';
   let axis: number;
-  if (detectedDim !== null) {
+  if (compFold) {
+    // Outline connectivity is the strongest signal — two separate board outlines
+    dim = compFold.dim;
+    axis = compFold.axis;
+  } else if (detectedDim !== null) {
     dim = detectedDim;
     axis = detectedAxis;
   } else if (cys.length >= 2) {
     dim = 'y';
     axis = (Math.min(...cys) + Math.max(...cys)) / 2;
-    log.parser.log(`no gap detected — defaulting to Y fold at axis=${axis.toFixed(0)}`);
   } else if (segments.length >= 2) {
     dim = 'y';
     const ys = segments.flatMap(s => [s.p1.y, s.p2.y]);
     axis = (Math.min(...ys) + Math.max(...ys)) / 2;
-    log.parser.log(`no gap detected — defaulting to Y fold (outline) at axis=${axis.toFixed(0)}`);
   } else {
     return null;
   }
 
-  // Last-resort tie-breaker: test pad distribution hints at which half is bottom.
-  // Default: lower coordinate = top (XZZ screen coords, Y increases downward).
+  // Determine which half is bottom (gets mirrored onto the top half).
   let lowerIsBottom = false;
-  if (testPads.length >= 5) {
+  let sideSignal = 'default';
+
+  if (parts.length >= 8) {
+    // Primary signal: the part with the most pins is the CPU/SoC — always on the top side.
+    // Find it and use its position to determine which half is top.
+    let maxPins = 0, maxPinCentroid = 0;
+    for (const pd of parts) {
+      if (pd.pins.length > maxPins) {
+        maxPins = pd.pins.length;
+        maxPinCentroid = pd.pins.reduce((s, p) => s + (dim === 'x' ? p.x : p.y), 0) / pd.pins.length;
+      }
+    }
+    if (maxPins >= 10) {
+      const cpuInLower = maxPinCentroid < axis;
+      lowerIsBottom = !cpuInLower; // CPU side = top
+      sideSignal = `cpu(${maxPins}pins): ${cpuInLower ? 'lower' : 'upper'}=top`;
+    }
+  } else if (testPads.length >= 5) {
+    // Fallback: test pad distribution hints at which half is bottom.
+    // Default: lower coordinate = top (XZZ screen coords, Y increases downward).
     const lowerPads  = testPads.filter(tp => (dim === 'x' ? tp.x : tp.y) < axis).length;
     const higherPads = testPads.length - lowerPads;
     if (higherPads > lowerPads * 1.5) lowerIsBottom = false;
     else if (lowerPads > higherPads * 1.5) lowerIsBottom = true;
+    sideSignal = `test-pads: lower=${lowerPads} upper=${higherPads}`;
   }
 
-  log.parser.log(`fold: dim=${dim}, axis=${axis.toFixed(1)}, lowerIsBottom=${lowerIsBottom}, gap=${detectedDim !== null}, testPads=${testPads.length}`);
-  return { axis, dim, lowerIsBottom };
+  const source = compFold ? 'outline-components' : detectedDim !== null ? 'gap' : 'default';
+  return { axis, dim, lowerIsBottom, _debug: { source, sideSignal, compGap: compFold?.gap ?? null } };
 }
 
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
@@ -586,63 +694,106 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         }
       }
     }
-    // Keep only the "top" half of the outline (discard the duplicate bottom half).
-    // Use the outline's own geometric midpoint as the cut — not the part-centroid
-    // fold axis, which may be biased if parts are unevenly distributed.
-    const outlineVals = segments.flatMap(s => fold.dim === 'x'
-      ? [s.p1.x, s.p2.x] : [s.p1.y, s.p2.y]);
-    const outlineMid = outlineVals.length > 0
-      ? (Math.min(...outlineVals) + Math.max(...outlineVals)) / 2
-      : fold.axis;
+    // Keep only the "top" half of the outline (discard the bottom half).
     const segsBefore = segments.length;
-    const inBottom = (v: number) => fold.lowerIsBottom ? v < outlineMid : v > outlineMid;
     let removed = 0, clipped = 0;
-    for (let i = segments.length - 1; i >= 0; i--) {
-      const s = segments[i];
-      const v1 = fold.dim === 'x' ? s.p1.x : s.p1.y;
-      const v2 = fold.dim === 'x' ? s.p2.x : s.p2.y;
-      if (inBottom(v1) && inBottom(v2)) {
-        segments.splice(i, 1); removed++;
-      } else if (inBottom(v1) !== inBottom(v2)) {
-        const t = (outlineMid - v1) / (v2 - v1);
-        const cx = s.p1.x + t * (s.p2.x - s.p1.x);
-        const cy = s.p1.y + t * (s.p2.y - s.p1.y);
-        if (inBottom(v1)) { s.p1.x = cx; s.p1.y = cy; }
-        else               { s.p2.x = cx; s.p2.y = cy; }
-        clipped++;
+
+    if (fold._debug.compGap !== null) {
+      // Two-component outline: discard the component whose centroid is on the bottom side.
+      // No clipping needed — each component is entirely on one side of the fold axis.
+      // Also deduplicate segments — XZZ files often list each outline edge twice.
+      for (let i = segments.length - 1; i >= 0; i--) {
+        const s = segments[i];
+        const mid = fold.dim === 'x'
+          ? (s.p1.x + s.p2.x) / 2
+          : (s.p1.y + s.p2.y) / 2;
+        const isBottom = fold.lowerIsBottom ? mid < fold.axis : mid > fold.axis;
+        if (isBottom) { segments.splice(i, 1); removed++; }
       }
-    }
-    // Collect the cut endpoints (clipped to outlineMid) and add a closing segment
-    // along the fold axis so the polygon is properly sealed after the cut.
-    if (clipped > 0) {
-      const eps = 0.5;
-      const cutPts: Point[] = [];
-      for (const s of segments) {
+      // Deduplicate: remove segments with both endpoints matching an earlier one
+      const eps = 1.0;
+      for (let i = segments.length - 1; i > 0; i--) {
+        const a = segments[i];
+        for (let j = 0; j < i; j++) {
+          const b = segments[j];
+          const match =
+            (Math.hypot(a.p1.x - b.p1.x, a.p1.y - b.p1.y) < eps &&
+             Math.hypot(a.p2.x - b.p2.x, a.p2.y - b.p2.y) < eps) ||
+            (Math.hypot(a.p1.x - b.p2.x, a.p1.y - b.p2.y) < eps &&
+             Math.hypot(a.p2.x - b.p1.x, a.p2.y - b.p1.y) < eps);
+          if (match) { segments.splice(i, 1); removed++; break; }
+        }
+      }
+    } else {
+      // Single connected outline: cut along the geometric midpoint.
+      const outlineVals = segments.flatMap(s => fold.dim === 'x'
+        ? [s.p1.x, s.p2.x] : [s.p1.y, s.p2.y]);
+      const outlineMid = outlineVals.length > 0
+        ? (Math.min(...outlineVals) + Math.max(...outlineVals)) / 2
+        : fold.axis;
+      const inBottom = (v: number) => fold.lowerIsBottom ? v < outlineMid : v > outlineMid;
+      for (let i = segments.length - 1; i >= 0; i--) {
+        const s = segments[i];
         const v1 = fold.dim === 'x' ? s.p1.x : s.p1.y;
         const v2 = fold.dim === 'x' ? s.p2.x : s.p2.y;
-        if (Math.abs(v1 - outlineMid) < eps) cutPts.push({ ...s.p1 });
-        if (Math.abs(v2 - outlineMid) < eps) cutPts.push({ ...s.p2 });
-      }
-      // Deduplicate cut-points within eps, then pick the two farthest apart.
-      const uniqueCuts: Point[] = [];
-      for (const cp of cutPts) {
-        if (!uniqueCuts.some(u => Math.hypot(cp.x - u.x, cp.y - u.y) < eps)) {
-          uniqueCuts.push(cp);
+        if (inBottom(v1) && inBottom(v2)) {
+          segments.splice(i, 1); removed++;
+        } else if (inBottom(v1) !== inBottom(v2)) {
+          const t = (outlineMid - v1) / (v2 - v1);
+          const cx = s.p1.x + t * (s.p2.x - s.p1.x);
+          const cy = s.p1.y + t * (s.p2.y - s.p1.y);
+          if (inBottom(v1)) { s.p1.x = cx; s.p1.y = cy; }
+          else               { s.p2.x = cx; s.p2.y = cy; }
+          clipped++;
         }
       }
-      if (uniqueCuts.length >= 2) {
-        let bestDist = -1, bestA = uniqueCuts[0], bestB = uniqueCuts[1];
-        for (let _i = 0; _i < uniqueCuts.length - 1; _i++) {
-          for (let _j = _i + 1; _j < uniqueCuts.length; _j++) {
-            const d = Math.hypot(uniqueCuts[_i].x - uniqueCuts[_j].x, uniqueCuts[_i].y - uniqueCuts[_j].y);
-            if (d > bestDist) { bestDist = d; bestA = uniqueCuts[_i]; bestB = uniqueCuts[_j]; }
+      // Seal the cut with a closing segment along the fold axis.
+      if (clipped > 0) {
+        const eps = 0.5;
+        const cutPts: Point[] = [];
+        for (const s of segments) {
+          const v1 = fold.dim === 'x' ? s.p1.x : s.p1.y;
+          const v2 = fold.dim === 'x' ? s.p2.x : s.p2.y;
+          if (Math.abs(v1 - outlineMid) < eps) cutPts.push({ ...s.p1 });
+          if (Math.abs(v2 - outlineMid) < eps) cutPts.push({ ...s.p2 });
+        }
+        const uniqueCuts: Point[] = [];
+        for (const cp of cutPts) {
+          if (!uniqueCuts.some(u => Math.hypot(cp.x - u.x, cp.y - u.y) < eps)) {
+            uniqueCuts.push(cp);
           }
         }
-        segments.push({ p1: bestA, p2: bestB });
+        if (uniqueCuts.length >= 2) {
+          let bestDist = -1, bestA = uniqueCuts[0], bestB = uniqueCuts[1];
+          for (let _i = 0; _i < uniqueCuts.length - 1; _i++) {
+            for (let _j = _i + 1; _j < uniqueCuts.length; _j++) {
+              const dd = Math.hypot(uniqueCuts[_i].x - uniqueCuts[_j].x, uniqueCuts[_i].y - uniqueCuts[_j].y);
+              if (dd > bestDist) { bestDist = dd; bestA = uniqueCuts[_i]; bestB = uniqueCuts[_j]; }
+            }
+          }
+          segments.push({ p1: bestA, p2: bestB });
+        }
       }
     }
-    log.parser.log(`outline split: dim=${fold.dim}, outlineMid=${outlineMid.toFixed(3)} (partAxis=${fold.axis.toFixed(3)}), before=${segsBefore}, removed=${removed}, clipped=${clipped}, after=${segments.length} (expected~${Math.round(segsBefore/2)})`);
+    // ---- Structured butterfly summary ----
+    const topParts  = partDataList.filter(p => p.side === 'top').length;
+    const botParts  = partDataList.filter(p => p.side === 'bottom').length;
+    const d = fold._debug;
+    log.parser.log(
+      `(pcb butterfly) ` +
+      `detect=${d.source}` +
+      (d.compGap !== null ? ` gap=${d.compGap.toFixed(0)}` : '') +
+      ` | fold: dim=${fold.dim} axis=${fold.axis.toFixed(0)}` +
+      ` | side: lowerIsBottom=${fold.lowerIsBottom} (${d.sideSignal})` +
+      ` | mirror: ${fold.dim === 'x' ? 'X' : 'Y'}-flip on ${fold.lowerIsBottom ? 'lower' : 'upper'} half` +
+      ` | parts: top=${topParts} bottom=${botParts}` +
+      ` | outline: ${segsBefore}→${segments.length} segs (removed=${removed} clipped=${clipped})`,
+    );
   }
+
+  // X-fold boards stay tall — the renderer's 270° autoRotation + mirrorY handles orientation.
+  // Set initialMirrorY so the board store applies it on load.
+  const xFold = fold?.dim === 'x';
 
   // Normalize coordinates to origin
   let minX = Infinity, minY = Infinity;
@@ -689,5 +840,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   const allPts: Point[] = [...outline, ...parts.flatMap(p => p.pins.map(pi => pi.position))];
   const bounds = computeBBox(allPts.length > 0 ? allPts : [{ x: 0, y: 0 }]);
 
-  return { format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds };
+  return {
+    format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
+    initialMirrorY: xFold || undefined,
+    butterflyFoldAxis: fold ? fold.dim : undefined,
+  };
 }
