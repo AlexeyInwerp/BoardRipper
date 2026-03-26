@@ -58,6 +58,7 @@ export function LibraryPanel() {
 
   const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
     databankStore.selectFile(file.id);
+    databankStore.addToHistory(file);
     try {
       const fileObj = await databankStore.fetchFileBuffer(file);
       if (file.file_type === 'board') {
@@ -135,6 +136,12 @@ export function LibraryPanel() {
       {/* Header bar */}
       <div className="library-header">
         <div className="library-tabs">
+          <button
+            className={`library-tab ${viewMode === 'history' ? 'active' : ''}`}
+            onClick={() => databankStore.setViewMode('history')}
+          >
+            History
+          </button>
           <button
             className={`library-tab ${viewMode === 'metadata' ? 'active' : ''}`}
             onClick={() => databankStore.setViewMode('metadata')}
@@ -332,6 +339,8 @@ export function LibraryPanel() {
           </div>
         ) : pdfSearchMode && searchQuery && searchResults.length === 0 ? (
           <div className="library-empty">No results for "{searchQuery}"</div>
+        ) : viewMode === 'history' ? (
+          <HistoryView onOpenFile={handleOpenFile} />
         ) : viewMode === 'model' ? (
           <ModelView
             groups={modelTree}
@@ -606,6 +615,64 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// --- History View ---
+
+function HistoryView({ onOpenFile }: {
+  onOpenFile: (f: DatabankFile) => void;
+}) {
+  const { recentItems, historyDepth, files } = useDatabank();
+
+  const formatTime = (ts: number) => {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+
+  return (
+    <div className="library-history">
+      <div className="library-history-controls">
+        <label className="library-history-depth" title="Maximum number of recent items to remember">
+          Depth: <input
+            type="number" min={1} max={100} value={historyDepth}
+            onChange={e => databankStore.setHistoryDepth(Number(e.target.value) || 20)}
+          />
+        </label>
+        {recentItems.length > 0 && (
+          <button className="library-history-clear" onClick={() => databankStore.clearHistory()}>Clear</button>
+        )}
+      </div>
+      {recentItems.length === 0 ? (
+        <div className="library-empty">No recently opened files.</div>
+      ) : (
+        <div className="library-file-list">
+          {recentItems.map((item, i) => {
+            const dbFile = files.find(f => f.path === item.path);
+            return (
+              <div
+                key={`${item.path}-${i}`}
+                className={`library-file-item${dbFile ? '' : ' library-file-missing'}`}
+                onClick={() => { if (dbFile) onOpenFile(dbFile); }}
+                title={dbFile ? item.path : `${item.path} (not in library)`}
+              >
+                <span className={`library-file-icon ${item.fileType === 'pdf' ? 'library-icon-pdf' : 'library-icon-board'}`}>
+                  {item.fileType === 'pdf' ? 'P' : 'B'}
+                </span>
+                <span className="library-file-name">{item.fileName}</span>
+                <span className="library-history-time">{formatTime(item.openedAt)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

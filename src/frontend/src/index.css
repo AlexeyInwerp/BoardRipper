@@ -3125,6 +3125,51 @@ html, body, #root {
   font-size: 11px;
 }
 
+.library-history-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.library-history-depth {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.library-history-depth input {
+  width: 48px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+.library-history-clear {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  background: var(--bg-button);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.library-history-clear:hover { color: var(--text-primary); }
+.library-history-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.library-file-missing {
+  opacity: 0.4;
+  cursor: default !important;
+}
+
 /* Part type overrides section */
 .part-type-overrides {
   display: flex;

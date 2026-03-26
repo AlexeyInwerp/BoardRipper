@@ -107,7 +107,17 @@ export interface BrowseResult {
   entries: BrowseEntry[];
 }
 
-export type ViewMode = 'metadata' | 'folders' | 'model';
+export type ViewMode = 'history' | 'metadata' | 'folders' | 'model';
+
+/** Entry in the recently-opened history */
+export interface RecentItem {
+  fileName: string;
+  fileType: 'board' | 'pdf';
+  path: string;
+  openedAt: number;
+  /** Databank file ID (if available) */
+  fileId?: number;
+}
 
 /** Metadata tree node for foobar2000-style grouping */
 export interface MetadataGroup {
@@ -155,8 +165,20 @@ class DatabankStore {
   private _autoPdf = (() => { try { return localStorage.getItem('boardripper-library-autopdf') !== '0'; } catch { return true; } })();
   private _verboseScan = (() => { try { return localStorage.getItem('boardripper-library-verbose') === '1'; } catch { return false; } })();
   private _showPreviews = (() => { try { return localStorage.getItem('boardripper-library-previews') === '1'; } catch { return false; } })();
-  private _viewMode: ViewMode = 'model';
+  private _viewMode: ViewMode = 'history';
   private _selectedFileId: number | null = null;
+  private _recentItems: RecentItem[] = (() => {
+    try {
+      const raw = localStorage.getItem('boardripper-history');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  })();
+  private _historyDepth: number = (() => {
+    try {
+      const v = localStorage.getItem('boardripper-history-depth');
+      return v ? Math.min(100, Math.max(1, Number(v))) : 20;
+    } catch { return 20; }
+  })();
   private _selectedFileDetail: FileDetail | null = null;
   private _loading = false;
   private _backendAvailable = true; // assume yes until first failure
@@ -183,6 +205,8 @@ class DatabankStore {
   get backendAvailable() { return this._backendAvailable; }
   get libraryPath() { return this._libraryPath; }
   get electronMode() { return this._electronMode; }
+  get recentItems() { return this._recentItems; }
+  get historyDepth() { return this._historyDepth; }
 
   get metadataTree(): MetadataGroup[] {
     const mfrMap = new Map<string, Map<string, DatabankFile[]>>();
@@ -642,6 +666,43 @@ class DatabankStore {
   setShowPreviews(v: boolean) {
     this._showPreviews = v;
     try { localStorage.setItem('boardripper-library-previews', v ? '1' : '0'); } catch { /* ignore */ }
+    this.notify();
+  }
+
+  // --- History ---
+
+  addToHistory(file: DatabankFile) {
+    // Remove any existing entry for the same path (move to top)
+    this._recentItems = this._recentItems.filter(r => r.path !== file.path);
+    this._recentItems.unshift({
+      fileName: file.filename,
+      fileType: file.file_type,
+      path: file.path,
+      openedAt: Date.now(),
+      fileId: file.id,
+    });
+    // Trim to depth limit
+    if (this._recentItems.length > this._historyDepth) {
+      this._recentItems = this._recentItems.slice(0, this._historyDepth);
+    }
+    try { localStorage.setItem('boardripper-history', JSON.stringify(this._recentItems)); } catch { /* ignore */ }
+    this.notify();
+  }
+
+  clearHistory() {
+    this._recentItems = [];
+    try { localStorage.removeItem('boardripper-history'); } catch { /* ignore */ }
+    this.notify();
+  }
+
+  setHistoryDepth(n: number) {
+    this._historyDepth = Math.min(100, Math.max(1, n));
+    // Trim if needed
+    if (this._recentItems.length > this._historyDepth) {
+      this._recentItems = this._recentItems.slice(0, this._historyDepth);
+      try { localStorage.setItem('boardripper-history', JSON.stringify(this._recentItems)); } catch { /* ignore */ }
+    }
+    try { localStorage.setItem('boardripper-history-depth', String(this._historyDepth)); } catch { /* ignore */ }
     this.notify();
   }
 
