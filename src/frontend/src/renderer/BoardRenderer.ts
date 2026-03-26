@@ -113,6 +113,8 @@ export class BoardRenderer {
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
   private boundHideTooltip: (() => void) | null = null;
+  /** Net name currently under the pointer (for ambient dim hover highlight) */
+  private hoverNet: string | null = null;
   private hudEl: HTMLDivElement | null = null;
   private selectionOverlayEl: HTMLDivElement | null = null;
   private perfOverlayEl: HTMLDivElement | null = null;
@@ -700,7 +702,7 @@ export class BoardRenderer {
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     this.boundHover = (e: PointerEvent) => this.handleHover(e);
-    this.boundHideTooltip = () => this.hideTooltip();
+    this.boundHideTooltip = () => { this.hideTooltip(); this.setHoverNet(null); };
     this.tooltipCanvas.addEventListener('pointermove', this.boundHover);
     this.tooltipCanvas.addEventListener('pointerleave', this.boundHideTooltip);
 
@@ -1855,23 +1857,38 @@ export class BoardRenderer {
       }
     }
 
-    if (sel.highlightedNet) {
-      const net = this.board.nets.get(sel.highlightedNet);
+    // ── Determine the effective net to highlight (selection or hover in ambient dim) ──
+    const effectiveNet = sel.highlightedNet
+      || (s.ambientDim && boardStore.showNetDim && boardStore.showHoverInfo ? this.hoverNet : null);
+    // Ambient dim: draw overlay even when nothing is selected/hovered
+    const showDim = boardStore.showNetDim;
+    const needsAmbientDim = s.ambientDim && showDim && !effectiveNet;
+
+    if (needsAmbientDim) {
+      const b = this.board.bounds;
+      const bw = b.maxX - b.minX;
+      const bh = b.maxY - b.minY;
+      const pad = Math.max(bw, bh) * 5;
+      const cx = (b.minX + b.maxX) / 2;
+      const cy = (b.minY + b.maxY) / 2;
+      this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
+      this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+    }
+
+    if (effectiveNet) {
+      const net = this.board.nets.get(effectiveNet);
       if (net) {
         // ── Dim the entire board (if enabled) ────────────────────────────────
-        if (boardStore.showNetDim) {
+        if (showDim) {
           const b = this.board.bounds;
           const bw = b.maxX - b.minX;
           const bh = b.maxY - b.minY;
-          // Use a massive rect (10× board size) to cover butterfly mode, zoom, and pan
           const pad = Math.max(bw, bh) * 5;
           const cx = (b.minX + b.maxX) / 2;
           const cy = (b.minY + b.maxY) / 2;
           this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-          this.netDimGfx.fill({ color: 0x000000, alpha: 0.5 });
+          this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
         }
-
-        const showDim = boardStore.showNetDim;
 
         // ── Highlight parts containing net pins (selection-style outlines) ──
         const seenParts = new Set<number>();
@@ -1934,11 +1951,8 @@ export class BoardRenderer {
         }
 
         // ── Re-draw highlighted pins on top of dim with full brightness ────
-        // Group per gfx target and per color for batched fills
         const topByColor = new Map<number, (() => void)[]>();
         const botByColor = new Map<number, (() => void)[]>();
-
-        // Also collect yellow highlight shapes (existing behavior)
         const topHighlights: (() => void)[] = [];
         const botHighlights: (() => void)[] = [];
 
@@ -1951,7 +1965,6 @@ export class BoardRenderer {
           const isBotGfx = gfx === this.butterflySelectionGfx;
           const highlights = isBotGfx ? botHighlights : topHighlights;
 
-          // Resolve the pin's actual color
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
@@ -1973,26 +1986,22 @@ export class BoardRenderer {
               rw = eb.pw;
               rh = depth;
             }
-            // Bright re-draw of the pin pad (only needed when dimming)
             if (showDim) {
               const colorMap = isBotGfx ? botByColor : topByColor;
               let arr = colorMap.get(pinColor);
               if (!arr) { arr = []; colorMap.set(pinColor, arr); }
               arr.push(() => gfx.rect(rx, ry, rw, rh));
             }
-            // Yellow highlight (slightly larger)
             highlights.push(() => gfx.rect(rx - grow, ry - grow, rw + grow * 2, rh + grow * 2));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            // Bright re-draw of the pin circle (only needed when dimming)
             if (showDim) {
               const colorMap = isBotGfx ? botByColor : topByColor;
               let arr = colorMap.get(pinColor);
               if (!arr) { arr = []; colorMap.set(pinColor, arr); }
               arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
             }
-            // Yellow highlight (slightly larger)
             highlights.push(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
           }
         }
@@ -2020,7 +2029,7 @@ export class BoardRenderer {
         // ── Highlight PCB traces belonging to the selected net ──────────
         // Traces are colored by their layer's palette color to show which layer each segment is on.
         if (this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
-          const netName = sel.highlightedNet!;
+          const netName = effectiveNet!;
           const { layerStates } = boardStore;
 
           // Group trace segments by layer color for batched strokes
@@ -2049,7 +2058,7 @@ export class BoardRenderer {
         // We determine source layer from the selected part's layer, then for each via
         // pick the connected layer that is NOT the source → that's the destination color.
         if (this.board.vias && this.board.vias.length > 0 && boardStore.showVias && this.activeScene) {
-          const netName = sel.highlightedNet!;
+          const netName = effectiveNet!;
           const { layerStates } = boardStore;
           const connMap = this.activeScene.viaConnectedLayers;
 
@@ -2689,7 +2698,11 @@ export class BoardRenderer {
   // --- Click handling ---
 
   private handleHover(e: PointerEvent) {
-    if (!this.board || !this.activeScene || !boardStore.showHoverInfo) { this.hideTooltip(); return; }
+    if (!this.board || !this.activeScene || !boardStore.showHoverInfo) {
+      this.hideTooltip();
+      this.setHoverNet(null);
+      return;
+    }
 
     // e.offsetX/Y are canvas-relative — same as containerEl coords since canvas fills the container
     const world = this.viewport.toWorld(e.offsetX, e.offsetY);
@@ -2700,6 +2713,7 @@ export class BoardRenderer {
       if (pin && part) {
         const pinId = pin.number || String(hit.pinIndex + 1);
         this.showTooltip(e.offsetX, e.offsetY, { net: pin.net ?? '', part: part.name, pin: pinId });
+        this.setHoverNet(pin.net || null);
         return;
       }
     }
@@ -2710,9 +2724,21 @@ export class BoardRenderer {
       const layerName = t.layer != null && this.board.layerNames?.[t.layer]
         ? this.board.layerNames[t.layer] : '';
       this.showTooltip(e.offsetX, e.offsetY, { net: traceHit.net, part: layerName, pin: 'trace' });
+      this.setHoverNet(traceHit.net || null);
       return;
     }
     this.hideTooltip();
+    this.setHoverNet(null);
+  }
+
+  /** Update hover net and redraw selection overlay if ambient dim needs it */
+  private setHoverNet(net: string | null) {
+    if (net === this.hoverNet) return;
+    this.hoverNet = net;
+    // In ambient dim mode, hover changes which pins are punched through the overlay
+    if (renderSettingsStore.settings.ambientDim && boardStore.showNetDim) {
+      this.onSelectionChanged();
+    }
   }
 
   private showTooltip(x: number, y: number, info: { net: string; part: string; pin: string }) {
