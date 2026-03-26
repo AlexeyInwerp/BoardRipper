@@ -8,8 +8,9 @@ DOCKER="/usr/local/bin/docker"
 PW="$1"
 IMAGE_NAME="boardripper"
 IMAGE_TAG="latest"
+CONFIG_FILE="/volume1/docker/boardripper/container-config.json"
 
-# Fallback config for first deploy (no existing container)
+# Fallback config for first deploy (no existing container AND no saved config)
 DEFAULT_MOUNTS='-v /volume1/docker/boardripper/data:/data -v /volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI:/library:ro'
 DEFAULT_PORTS='-p 8081:8080'
 DEFAULT_ENV='-e PORT=8080 -e LIBRARY_DIR=/library'
@@ -19,49 +20,45 @@ sdocker() {
     echo "${PW}" | sudo -S ${DOCKER} "$@" 2>&1 | grep -v '^\[sudo\]' | grep -v '^Password:' || true
 }
 
-# Helper: run docker inspect quietly (returns "" on failure, not error text)
-sdocker_inspect() {
-    echo "${PW}" | sudo -S ${DOCKER} inspect "$@" 2>/dev/null | grep -v '^\[sudo\]' | grep -v '^Password:' || true
-}
-
 echo "[NAS] Decompressing image..."
 gunzip -f /tmp/${IMAGE_NAME}.tar.gz
 
 echo "[NAS] Loading Docker image..."
 sdocker load -i /tmp/${IMAGE_NAME}.tar
 
-# ── Capture existing container config before removing ──
+# ── Capture existing container config and persist to file ──
+EXISTING=$(echo "${PW}" | sudo -S ${DOCKER} ps -a --filter "name=^${IMAGE_NAME}$" --format '{{.Names}}' 2>/dev/null | grep -v '^\[sudo\]' | grep -v '^Password:' || true)
+
+if [ -n "${EXISTING}" ]; then
+    echo "[NAS] Saving container config to ${CONFIG_FILE}..."
+    echo "${PW}" | sudo -S ${DOCKER} inspect "${IMAGE_NAME}" 2>/dev/null \
+        | grep -v '^\[sudo\]' | grep -v '^Password:' \
+        > "${CONFIG_FILE}" 2>/dev/null || true
+fi
+
+# ── Read config: from saved file, or fall back to defaults ──
 MOUNT_ARGS=""
 PORT_ARGS=""
 ENV_ARGS=""
 RESTART_POLICY="unless-stopped"
 
-# Check if container exists
-EXISTING=$(echo "${PW}" | sudo -S ${DOCKER} ps -a --filter "name=^${IMAGE_NAME}$" --format '{{.Names}}' 2>/dev/null | grep -v '^\[sudo\]' | grep -v '^Password:' || true)
+if [ -f "${CONFIG_FILE}" ] && python3 -c "import sys,json; json.load(open(sys.argv[1]))" "${CONFIG_FILE}" 2>/dev/null; then
+    echo "[NAS] Reading config from ${CONFIG_FILE}..."
 
-if [ -n "${EXISTING}" ]; then
-    echo "[NAS] Capturing existing container config..."
-
-    # Use raw JSON inspect — Go templates are fragile across Docker versions
-    INSPECT_JSON=$(sdocker_inspect "${IMAGE_NAME}")
-
-    if [ -n "${INSPECT_JSON}" ] && echo "${INSPECT_JSON}" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-        # Mounts: extract bind mounts as -v source:destination[:ro]
-        MOUNT_ARGS=$(echo "${INSPECT_JSON}" | python3 -c "
+    MOUNT_ARGS=$(python3 -c "
 import sys, json
-data = json.load(sys.stdin)
+data = json.load(open(sys.argv[1]))
 if isinstance(data, list): data = data[0]
 for m in data.get('Mounts', []):
     if m.get('Type') == 'bind':
         s = '-v ' + m['Source'] + ':' + m['Destination']
         if not m.get('RW', True): s += ':ro'
         print(s, end=' ')
-" 2>/dev/null)
+" "${CONFIG_FILE}" 2>/dev/null)
 
-        # Ports: extract published port bindings
-        PORT_ARGS=$(echo "${INSPECT_JSON}" | python3 -c "
+    PORT_ARGS=$(python3 -c "
 import sys, json
-data = json.load(sys.stdin)
+data = json.load(open(sys.argv[1]))
 if isinstance(data, list): data = data[0]
 for cp, bindings in (data.get('HostConfig', {}).get('PortBindings') or {}).items():
     port = cp.replace('/tcp', '')
@@ -71,69 +68,59 @@ for cp, bindings in (data.get('HostConfig', {}).get('PortBindings') or {}).items
         if hp:
             prefix = (hip + ':') if hip and hip != '0.0.0.0' else ''
             print(f'-p {prefix}{hp}:{port}', end=' ')
-" 2>/dev/null)
+" "${CONFIG_FILE}" 2>/dev/null)
 
-        # Env: extract env vars (skip runtime-injected ones)
-        ENV_ARGS=$(echo "${INSPECT_JSON}" | python3 -c "
+    ENV_ARGS=$(python3 -c "
 import sys, json
-data = json.load(sys.stdin)
+data = json.load(open(sys.argv[1]))
 if isinstance(data, list): data = data[0]
 skip = {'PATH', 'HOME', 'HOSTNAME'}
 for e in data.get('Config', {}).get('Env', []):
     key = e.split('=', 1)[0]
     if key not in skip:
         print(f'-e {e}', end=' ')
-" 2>/dev/null)
+" "${CONFIG_FILE}" 2>/dev/null)
 
-        # Restart policy
-        RP=$(echo "${INSPECT_JSON}" | python3 -c "
+    RP=$(python3 -c "
 import sys, json
-data = json.load(sys.stdin)
+data = json.load(open(sys.argv[1]))
 if isinstance(data, list): data = data[0]
 print(data.get('HostConfig', {}).get('RestartPolicy', {}).get('Name', ''))
-" 2>/dev/null)
-        if [ -n "${RP}" ] && [ "${RP}" != "no" ]; then
-            RESTART_POLICY="${RP}"
-        fi
+" "${CONFIG_FILE}" 2>/dev/null)
+    if [ -n "${RP}" ] && [ "${RP}" != "no" ]; then
+        RESTART_POLICY="${RP}"
     fi
-
-    # Fall back to defaults for any empty captures
-    [ -z "${PORT_ARGS}" ] && PORT_ARGS="${DEFAULT_PORTS}" && echo "[NAS]   ports: empty, using defaults"
-    [ -z "${MOUNT_ARGS}" ] && MOUNT_ARGS="${DEFAULT_MOUNTS}" && echo "[NAS]   mounts: empty, using defaults"
-    [ -z "${ENV_ARGS}" ] && ENV_ARGS="${DEFAULT_ENV}" && echo "[NAS]   env: empty, using defaults"
-
-    echo "[NAS]   mounts: ${MOUNT_ARGS}"
-    echo "[NAS]   ports:  ${PORT_ARGS}"
-    echo "[NAS]   env:    ${ENV_ARGS}"
-    echo "[NAS]   restart: ${RESTART_POLICY}"
 else
-    echo "[NAS] No existing container — using defaults"
-    MOUNT_ARGS="${DEFAULT_MOUNTS}"
-    PORT_ARGS="${DEFAULT_PORTS}"
-    ENV_ARGS="${DEFAULT_ENV}"
+    echo "[NAS] No saved config — using defaults"
 fi
+
+# Fall back to defaults for any empty fields
+[ -z "${PORT_ARGS}" ] && PORT_ARGS="${DEFAULT_PORTS}" && echo "[NAS]   ports: using defaults"
+[ -z "${MOUNT_ARGS}" ] && MOUNT_ARGS="${DEFAULT_MOUNTS}" && echo "[NAS]   mounts: using defaults"
+[ -z "${ENV_ARGS}" ] && ENV_ARGS="${DEFAULT_ENV}" && echo "[NAS]   env: using defaults"
+
+echo "[NAS]   mounts:  ${MOUNT_ARGS}"
+echo "[NAS]   ports:   ${PORT_ARGS}"
+echo "[NAS]   env:     ${ENV_ARGS}"
+echo "[NAS]   restart: ${RESTART_POLICY}"
 
 echo "[NAS] Stopping old container..."
 sdocker stop ${IMAGE_NAME} 2>/dev/null || true
 sdocker rm ${IMAGE_NAME} 2>/dev/null || true
 
-echo "[NAS] Starting new container (preserving config)..."
-# Build docker run command via python3 to handle paths with spaces correctly
+echo "[NAS] Starting new container..."
 RUN_CMD=$(python3 -c "
-import shlex, sys
+import shlex
 args = ['run', '-d', '--name', '${IMAGE_NAME}', '--restart', '${RESTART_POLICY}']
-# Parse preserved args (handles -v, -p, -e with values that may contain spaces)
 for raw in '''${PORT_ARGS}
 ${MOUNT_ARGS}
 ${ENV_ARGS}'''.strip().splitlines():
     raw = raw.strip()
     if not raw: continue
-    # Split on ' -' boundaries to separate flags, keeping the leading dash
     parts = raw.split()
     i = 0
     while i < len(parts):
         if parts[i] in ('-v', '-p', '-e') and i + 1 < len(parts):
-            # Collect the value — may span multiple space-separated tokens until next flag
             val_parts = [parts[i + 1]]
             j = i + 2
             while j < len(parts) and parts[j] not in ('-v', '-p', '-e'):
