@@ -115,6 +115,10 @@ export class BoardRenderer {
   private boundHideTooltip: (() => void) | null = null;
   /** Net name currently under the pointer (for ambient dim hover highlight) */
   private hoverNet: string | null = null;
+  /** Bound wheel wake-up handler for cleanup */
+  private boundWheelWake: ((e: WheelEvent) => void) | null = null;
+  /** Timer to re-pause ticker after wheel activity on an unfocused panel */
+  private wheelIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private hudEl: HTMLDivElement | null = null;
   private selectionOverlayEl: HTMLDivElement | null = null;
   private perfOverlayEl: HTMLDivElement | null = null;
@@ -326,6 +330,18 @@ export class BoardRenderer {
     this.stopTicker();
   }
 
+  /** Re-pause the ticker after wheel activity if this panel isn't the active Dockview panel. */
+  private scheduleWheelIdlePause() {
+    if (this.wheelIdleTimer) clearTimeout(this.wheelIdleTimer);
+    this.wheelIdleTimer = setTimeout(() => {
+      this.wheelIdleTimer = null;
+      // Only auto-pause if this renderer's panel is NOT the active board tab
+      if (boardStore.activeTabId !== this.tabId && this.app.ticker.started) {
+        this.stopTicker();
+      }
+    }, 300);
+  }
+
   /**
    * Tear down the scene and canvas without calling app.destroy().
    *
@@ -364,6 +380,7 @@ export class BoardRenderer {
       if (canvas && this.boundHover) {
         canvas.removeEventListener('pointermove', this.boundHover);
         canvas.removeEventListener('pointerleave', this.boundHideTooltip!);
+        if (this.boundWheelWake) canvas.removeEventListener('wheel', this.boundWheelWake);
       }
       canvas?.parentElement?.removeChild(canvas);
     } catch (e) { log.render.warn('teardown canvas cleanup error:', e); }
@@ -577,6 +594,7 @@ export class BoardRenderer {
     if (this.boundHover) {
       newCanvas.addEventListener('pointermove', this.boundHover);
       newCanvas.addEventListener('pointerleave', this.boundHideTooltip!);
+      if (this.boundWheelWake) newCanvas.addEventListener('wheel', this.boundWheelWake, { passive: true });
     }
     this.installContextLossHandlers(newCanvas);
 
@@ -705,6 +723,18 @@ export class BoardRenderer {
     this.boundHideTooltip = () => { this.hideTooltip(); this.setHoverNet(null); };
     this.tooltipCanvas.addEventListener('pointermove', this.boundHover);
     this.tooltipCanvas.addEventListener('pointerleave', this.boundHideTooltip);
+
+    // Wheel wake-up: if the ticker is stopped (panel not focused), restart it
+    // so zoom/scroll gestures render immediately without needing a click first.
+    // The ticker auto-pauses after 300ms of idle when the panel isn't active.
+    this.boundWheelWake = () => {
+      if (!this.app.ticker.started && !this.destroyed && !this.contextLost) {
+        this.app.ticker.start();
+        this.needsRender = true;
+      }
+      this.scheduleWheelIdlePause();
+    };
+    this.tooltipCanvas.addEventListener('wheel', this.boundWheelWake, { passive: true });
 
     // WebGL context loss recovery — browser may reclaim context when canvas is hidden
     this.installContextLossHandlers(this.app.renderer.canvas as HTMLCanvasElement);
@@ -2869,6 +2899,7 @@ export class BoardRenderer {
     if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }
+    if (this.wheelIdleTimer) { clearTimeout(this.wheelIdleTimer); this.wheelIdleTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
     this.unsubscribeViewCommands?.();
@@ -2879,10 +2910,12 @@ export class BoardRenderer {
     if (this.tooltipCanvas && this.boundHover) {
       this.tooltipCanvas.removeEventListener('pointermove', this.boundHover);
       this.tooltipCanvas.removeEventListener('pointerleave', this.boundHideTooltip!);
+      if (this.boundWheelWake) this.tooltipCanvas.removeEventListener('wheel', this.boundWheelWake);
       this.tooltipCanvas = null;
     }
     this.boundHover = null;
     this.boundHideTooltip = null;
+    this.boundWheelWake = null;
     this.tooltipEl?.remove();
     this.tooltipEl = null;
     this.tooltipNetSpan = null;
