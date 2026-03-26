@@ -328,7 +328,7 @@ class BoardStore {
         tab.board = cached;
         tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
         tab.rotation = this.autoRotation(cached);
-        if (cached.initialMirrorY) tab.mirrorY = true;
+        if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
         const cachedFmt = getFormat(cached.format);
         if (cachedFmt?.swapSides) {
           tab.showTop = false;
@@ -366,7 +366,7 @@ class BoardStore {
 
       tab.board = board;
       tab.rotation = this.autoRotation(board);
-      if (board.initialMirrorY) tab.mirrorY = true;
+      if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
       if (fmt?.swapSides) {
         tab.showTop = false;
         tab.showBottom = true;
