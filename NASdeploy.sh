@@ -118,57 +118,15 @@ $(scp_cmd) "${TAR_FILE}" "${NAS_USER}@${NAS_HOST}:/tmp/${IMAGE_NAME}.tar.gz" || 
 }
 info "Upload complete."
 
-# ── Step 5: SSH into NAS to load image and restart container ──
-info "Deploying on NAS..."
-$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" << REMOTE_SCRIPT_END
-set -e
-DOCKER="/usr/local/bin/docker"
-PW="${NAS_PW}"
-IMAGE_NAME="boardripper"
-IMAGE_TAG="latest"
-NAS_DATA_DIR="/volume1/docker/boardripper/data"
-NAS_LIBRARY_DIR="/volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI"
-NAS_PORT=8081
-CONTAINER_PORT=8080
-
-# Helper: run docker with sudo
-sdocker() {
-    echo "\${PW}" | sudo -S \${DOCKER} "\$@" 2>&1 | { grep -v '^\[sudo\]' || true; }
+# ── Step 5: Upload deploy script and run on NAS ──────────────
+info "Uploading deploy script to NAS..."
+$(scp_cmd) "${SCRIPT_DIR}/deploy-remote.sh" "${NAS_USER}@${NAS_HOST}:/tmp/deploy-remote.sh" || {
+    error "Failed to upload deploy script."
+    exit 1
 }
 
-echo "[NAS] Decompressing image..."
-gunzip -f /tmp/\${IMAGE_NAME}.tar.gz
-
-echo "[NAS] Loading Docker image..."
-sdocker load -i /tmp/\${IMAGE_NAME}.tar
-
-echo "[NAS] Stopping old container..."
-sdocker stop \${IMAGE_NAME} 2>/dev/null || true
-sdocker rm \${IMAGE_NAME} 2>/dev/null || true
-
-echo "[NAS] Ensuring data directory exists..."
-mkdir -p "\${NAS_DATA_DIR}" 2>/dev/null || echo "\${PW}" | sudo -S mkdir -p "\${NAS_DATA_DIR}"
-
-echo "[NAS] Starting new container..."
-sdocker run -d \
-    --name "\${IMAGE_NAME}" \
-    --restart unless-stopped \
-    -p "\${NAS_PORT}:\${CONTAINER_PORT}" \
-    -v "\${NAS_DATA_DIR}:/data" \
-    -v "\${NAS_LIBRARY_DIR}:/library:ro" \
-    -e "PORT=\${CONTAINER_PORT}" \
-    -e "LIBRARY_DIR=/library" \
-    "\${IMAGE_NAME}:\${IMAGE_TAG}"
-
-echo "[NAS] Pruning old images..."
-sdocker image prune -f 2>/dev/null || true
-
-echo "[NAS] Container status:"
-sdocker ps --filter "name=\${IMAGE_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
-echo "[NAS] Cleaning up..."
-rm -f /tmp/\${IMAGE_NAME}.tar
-REMOTE_SCRIPT_END
+info "Deploying on NAS..."
+$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "bash /tmp/deploy-remote.sh '${NAS_PW}'"
 
 # Clean up local tar
 rm -f "${TAR_FILE}"
