@@ -894,8 +894,12 @@ export function SettingsPanel() {
           title="Extra space (mils) around pins when drawing the selection highlight outline. Larger = selection box extends further beyond the component" />
         <Slider label="Net Highlight Ring" value={draft.netHighlightGrow} min={0} max={20} step={0.5} field="netHighlightGrow" onUpdate={updateDraft}
           title="How much larger (mils) the yellow net highlight circle is compared to the pin circle. Creates a visible ring around each pin in the selected net" />
-        <Slider label="Dim Overlay Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft}
-          title="Opacity of the dark overlay applied to all non-highlighted pins when a net is selected. Higher = stronger dimming of unrelated pins" />
+        <Slider label="Highlight Ring Opacity" value={draft.netHighlightAlpha} min={0} max={1} step={0.05} field="netHighlightAlpha" onUpdate={updateDraft}
+          title="Opacity of the yellow highlight ring around pins in the selected net. Higher = more visible ring" />
+        <Slider label="Dim Overlay Strength" value={draft.dimOverlayAlpha} min={0} max={0.8} step={0.05} field="dimOverlayAlpha" onUpdate={updateDraft}
+          title="Opacity of the black overlay that dims unselected areas when a net is highlighted. 0 = no dimming, higher = darker" />
+        <Toggle label="Ambient Dim" value={draft.ambientDim} field="ambientDim" onUpdate={updateDraft}
+          title="Always dim the board even when nothing is selected. Hovering over a pin punches through the overlay to reveal its net. Useful for high-contrast inspection" />
         <Toggle label="Floating Part Label" value={draft.showElevatedPartLabel} field="showElevatedPartLabel" onUpdate={updateDraft}
           title="Show a large background-backed label above the selected component with its reference designator (e.g. U1)" />
         <Toggle label="Floating Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft}

@@ -64,6 +64,10 @@ export interface RenderSettings {
   selectionFillAlpha: number;
   netHighlightGrow: number;
   netHighlightAlpha: number;
+  /** Opacity of the black dim overlay (0 = no dim, 1 = fully black) */
+  dimOverlayAlpha: number;
+  /** Always dim the board even when nothing is selected — hover/click punches through */
+  ambientDim: boolean;
 
   netLineWidth: number;
   netLineAlpha: number;
@@ -175,6 +179,8 @@ export const DEFAULTS: RenderSettings = {
   selectionFillAlpha: 0.07,
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
+  dimOverlayAlpha: 0.5,
+  ambientDim: true,
 
   netLineWidth: 3.5,
   netLineAlpha: 0.6,
