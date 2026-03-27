@@ -2767,7 +2767,7 @@ export class BoardRenderer {
     this.hoverNet = net;
     // In ambient dim mode, hover changes which pins are punched through the overlay
     if (renderSettingsStore.settings.ambientDim && boardStore.showNetDim) {
-      this.onSelectionChanged();
+      this.renderSelection();
     }
   }
 
