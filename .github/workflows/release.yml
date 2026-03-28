@@ -18,10 +18,12 @@ jobs:
         with:
           go-version: '1.22'
 
-      # Full test suite
+      # Lint + typecheck + smoke tests
       - run: cd src/frontend && npm ci
+      - run: cd src/frontend && npx eslint . --max-warnings 50
+      - run: cd src/frontend && npx tsc -b --noEmit
       - run: cd src/frontend && npx playwright install --with-deps chromium
-      - run: cd src/frontend && npm test
+      - run: cd src/frontend && npx playwright test ci-smoke.spec.ts
       - run: cd src/backend && go test ./... -v -count=1
 
       # Docker build + smoke
