@@ -777,7 +777,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     })();
 
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, isFiltered, pdfFileName, currentPage,
       glyphDebug.overlayMode, glyphDebug.simplifyEnabled, glyphDebug.simplifyTolerance,
       glyphDebug.replaceEnabled, glyphDebug.replaceFont]);
@@ -822,7 +822,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender]);
 
   // --- Touch pinch-to-zoom state ---

@@ -653,13 +653,13 @@ function HistoryView({ onOpenFile }: {
       {recentItems.length === 0 ? (
         <div className="library-empty">No recently opened files.</div>
       ) : (
-        <div className="library-file-list">
+        <div className="library-tree-children">
           {recentItems.map((item, i) => {
             const dbFile = files.find(f => f.path === item.path);
             return (
               <div
                 key={`${item.path}-${i}`}
-                className={`library-file-item${dbFile ? '' : ' library-file-missing'}`}
+                className={`library-file-row${dbFile ? '' : ' library-file-missing'}`}
                 onClick={() => { if (dbFile) onOpenFile(dbFile); }}
                 title={dbFile ? item.path : `${item.path} (not in library)`}
               >
