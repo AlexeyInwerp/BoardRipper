@@ -1,5 +1,5 @@
 import type { FormatDescriptor } from './registry';
-import { parseAllegroBRD } from './allegro-brd-parser';
+import { parseAllegroBRD } from './allegro/allegro-brd-parser';
 
 /**
  * Cadence Allegro BRD — binary PCB design format.
@@ -27,7 +27,7 @@ export const AllegroBRDFormat: FormatDescriptor = {
     const family = (magic >>> 16) & 0xFFFF;
 
     // General Allegro pattern: high word is 0x0013 (v16.x) or 0x0014 (v17.x)
-    if (family !== 0x0013 && family !== 0x0014) return false;
+    if (family !== 0x0013 && family !== 0x0014 && family !== 0x0015) return false;
 
     // Additionally verify bytes[8..11] as uint32 LE == 1
     // This distinguishes Allegro BRD from other formats sharing .brd
