@@ -609,7 +609,7 @@ class DatabankStore {
     if (res) {
       log.scan.log('Database reset complete');
       this._files = []; this._folderTree = null; this._scanStatus = null; this._stats = null;
-      try { localStorage.removeItem('boardripper-scan-status'); } catch {}
+      try { localStorage.removeItem('boardripper-scan-status'); } catch { /* ignored */ }
       await this.fetchStats();
       this.notify();
       return true;
@@ -639,7 +639,7 @@ class DatabankStore {
 
   setBrowseMode(mode: 'database' | 'live') {
     this._browseMode = mode;
-    try { localStorage.setItem('boardripper-library-browse-mode', mode); } catch {}
+    try { localStorage.setItem('boardripper-library-browse-mode', mode); } catch { /* ignored */ }
     if (mode === 'live') this.browse('');
     this.notify();
   }
