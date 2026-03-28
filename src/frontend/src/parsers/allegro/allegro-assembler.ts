@@ -18,12 +18,10 @@ import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { FmtVer, LayerClass } from './allegro-types';
 import type {
-  AllegroBlock,
   Blk0x04NetAssign,
   Blk0x05Track,
   Blk0x07ComponentInst,
   Blk0x08PinNumber,
-  Blk0x0DPad,
   Blk0x11PinName,
   Blk0x15_16_17Segment,
   Blk0x01Arc,
