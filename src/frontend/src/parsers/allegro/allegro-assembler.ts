@@ -212,19 +212,11 @@ function extractPins(
     const pad = db.getBlockAs<Blk0x32PlacedPad>(padKey, 0x32);
     if (!pad) break;
 
-    // Position: from 0x0D PAD block (padPtr) for board-absolute coords
-    let px = 0;
-    let py = 0;
-    const padGeom = db.getBlockAs<Blk0x0DPad>(pad.padPtr, 0x0D);
-    if (padGeom) {
-      px = padGeom.coordsX / div;
-      py = padGeom.coordsY / div;
-    } else {
-      // Fallback: 0x32 bbox midpoint
-      const [x1, y1, x2, y2] = pad.coords;
-      px = ((x1 + x2) / 2) / div;
-      py = ((y1 + y2) / 2) / div;
-    }
+    // Position: 0x32 bbox midpoint gives board-absolute coords.
+    // (0x0D coords are footprint-local offsets, not board-absolute.)
+    const [cx1, cy1, cx2, cy2] = pad.coords;
+    const px = ((cx1 + cx2) / 2) / div;
+    const py = ((cy1 + cy2) / 2) / div;
 
     // Pin number: 0x32 ptrPinNumber → 0x08 PIN_NUMBER
     let pinNumber = '';
@@ -248,11 +240,11 @@ function extractPins(
     // Net: 0x32 netPtr → net assignment map
     const net = netAssignMap.get(pad.netPtr) ?? '';
 
-    // Radius: from 0x32 bbox, clamped 3–30 mils
-    const [bx1, by1, bx2, by2] = pad.coords;
-    const bw = Math.abs(bx2 - bx1) / div;
-    const bh = Math.abs(by2 - by1) / div;
-    const rawRadius = Math.max(bw, bh) / 2;
+    // Radius: from 0x32 bbox. The bbox includes clearance/mask extent,
+    // so use the smaller dimension as a better pad-body estimate.
+    const bw = Math.abs(cx2 - cx1) / div;
+    const bh = Math.abs(cy2 - cy1) / div;
+    const rawRadius = Math.min(bw, bh) / 2;
     const radius = Math.max(3, Math.min(30, rawRadius));
 
     const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
