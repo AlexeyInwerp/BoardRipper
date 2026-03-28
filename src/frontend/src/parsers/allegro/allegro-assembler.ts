@@ -70,7 +70,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
   for (const p of allPinPositions) allPoints.push(p);
   const bounds = computeBBox(allPoints);
 
-  dbg.debug(
+  dbg.log(
     `Assembled: ${parts.length} parts, ` +
     `${parts.reduce((n, p) => n + p.pins.length, 0)} pins, ` +
     `${traces.length} traces, ${vias.length} vias, ` +

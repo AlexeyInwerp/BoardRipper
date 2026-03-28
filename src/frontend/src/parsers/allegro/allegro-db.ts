@@ -32,7 +32,7 @@ export class AllegroDb {
 
     // Phase 1: Header
     this.header = parseHeader(stream);
-    dbg.debug(
+    dbg.log(
       `Allegro ${this.header.allegroVersion.trim()} ` +
       `(ver=${FmtVer[this.header.fmtVer] ?? this.header.fmtVer}, ` +
       `objects=${this.header.objectCount}, strings=${this.header.stringsCount})`
@@ -40,11 +40,11 @@ export class AllegroDb {
 
     // Phase 2: String table
     this.strings = this.parseStringTable(stream);
-    dbg.debug(`String table: ${this.strings.size} entries`);
+    dbg.log(`String table: ${this.strings.size} entries`);
 
     // Phase 3: Blocks
     this.blocks = this.parseBlocks(stream);
-    dbg.debug(`Blocks: ${this.blocks.size} objects parsed`);
+    dbg.log(`Blocks: ${this.blocks.size} objects parsed`);
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
