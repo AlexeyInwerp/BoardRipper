@@ -46,6 +46,7 @@ samples/TVW/*
 
 # Claude worktrees
 .claude/worktrees/
+.worktrees/
 
 # Test results (root level)
 test-results/
