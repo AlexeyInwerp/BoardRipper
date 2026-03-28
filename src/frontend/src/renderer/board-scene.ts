@@ -10,6 +10,10 @@
  * in a cullable Container. PixiJS skips off-screen cells entirely, and within each
  * cell pins share one Graphics per color — O(cells × colors) draw calls, with most
  * cells culled when zoomed in. Pin-1 triangles are batched per-cell likewise.
+ *
+ * Pin labels (numbers + net names) use the same spatial grid: each cell accumulates
+ * labels during the part loop, then flushes them into cullable Containers within
+ * the label layers. This gives O(visible cells) label rendering instead of O(all labels).
  */
 import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
 import type { BoardData } from '../parsers';
@@ -432,6 +436,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     pinGfx: Map<number, Graphics>;
     triGfx: Graphics | null;
     container: Container;
+    // Label accumulation arrays — flushed into cullable containers after all parts
+    circleNums: BitmapText[];       // pin number labels (Group A, lower z)
+    circleNets: Container[];        // net name labels (Group A, higher z)
+    twoPinItems: Container[];       // 2-pin net labels (Group B)
   }
 
   const makeGrid = (): GridCell[][] => {
@@ -447,7 +455,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           cellW,
           cellH,
         );
-        cells[cy][cx] = { pinGfx: new Map(), triGfx: null, container };
+        cells[cy][cx] = { pinGfx: new Map(), triGfx: null, container, circleNums: [], circleNets: [], twoPinItems: [] };
       }
     }
     return cells;
@@ -948,16 +956,23 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       }
     }
 
-    // ── Deferred text — route to the correct label layer ──────────────────
-    // Pin numbers first (lower z), net names second (render on top).
+    // ── Deferred text — route to grid cells for spatial culling ────────────
+    // Labels are accumulated in grid cells and flushed after all parts,
+    // maintaining z-order (pin numbers below net names) within each cell.
+    const targetGrid = isBottom ? bottomGrid : topGrid;
     for (const txt of deferredCircleNumTexts) {
-      (isBottom ? bottomCircleLabelLayer : topCircleLabelLayer).addChild(txt);
+      const [cx, cy] = posToCell(txt.x, txt.y);
+      targetGrid[cy][cx].circleNums.push(txt);
     }
     for (const txt of deferredCircleNetTexts) {
-      (isBottom ? bottomCircleLabelLayer : topCircleLabelLayer).addChild(txt);
+      const [cx, cy] = posToCell(txt.x, txt.y);
+      targetGrid[cy][cx].circleNets.push(txt);
     }
     for (const txt of deferredTwoPinTexts) {
-      (isBottom ? bottomTwoPinNetLayer : topTwoPinNetLayer).addChild(txt);
+      // Extract position from BitmapText or Container wrapper
+      const px = txt instanceof BitmapText ? txt.x : txt.x;
+      const [cx, cy] = posToCell(px, txt instanceof BitmapText ? txt.y : txt.y);
+      targetGrid[cy][cx].twoPinItems.push(txt);
     }
 
     partQueue.push({ container: partContainer, isBottom });
@@ -1033,7 +1048,48 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   }
 
 
-  // Background plates are now children of individual BitmapText labels (see creation above).
+  // ── Flush grid cell labels into cullable containers ──────────────────────
+  // Each non-empty grid cell gets a cullable Container within the label layers.
+  // Pin numbers are added before net names for correct z-ordering within each cell.
+  // Generous cullArea padding accounts for label text extending beyond pin center.
+  const labelCullPad = Math.max(cellW, cellH) * 0.5;
+  for (const [grid, circleLayer, twoPinLayer] of [
+    [topGrid, topCircleLabelLayer, topTwoPinNetLayer],
+    [bottomGrid, bottomCircleLabelLayer, bottomTwoPinNetLayer],
+  ] as [GridCell[][], Container, Container][]) {
+    for (let cy = 0; cy < gridSize; cy++) {
+      for (let cx = 0; cx < gridSize; cx++) {
+        const cell = grid[cy][cx];
+        if (cell.circleNums.length > 0 || cell.circleNets.length > 0) {
+          const c = new Container();
+          c.cullable = true;
+          c.cullArea = new Rectangle(
+            bMinX + cx * cellW - labelCullPad,
+            bMinY + cy * cellH - labelCullPad,
+            cellW + labelCullPad * 2,
+            cellH + labelCullPad * 2,
+          );
+          // Z-order: nums first (below), nets second (on top)
+          for (const txt of cell.circleNums) c.addChild(txt);
+          for (const txt of cell.circleNets) c.addChild(txt);
+          circleLayer.addChild(c);
+        }
+        if (cell.twoPinItems.length > 0) {
+          const c = new Container();
+          c.cullable = true;
+          c.cullArea = new Rectangle(
+            bMinX + cx * cellW - labelCullPad,
+            bMinY + cy * cellH - labelCullPad,
+            cellW + labelCullPad * 2,
+            cellH + labelCullPad * 2,
+          );
+          for (const txt of cell.twoPinItems) c.addChild(txt);
+          twoPinLayer.addChild(c);
+        }
+      }
+    }
+  }
+
   // Group B (2-pin net names) added below Group A (circle labels) — Group A is smallest/densest.
   topLayer.addChild(topTwoPinNetLayer);
   topLayer.addChild(topCircleLabelLayer);
@@ -1062,6 +1118,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   // Build font-size groups for pin labels (Group A: circle, Group B: 2-pin).
   // Items are either BitmapText or Container wrappers — extract fontSize from the BitmapText child.
+  // Labels are now nested inside grid-cell containers, so flatten through one level.
   const pinFontSize = (item: Container): number => {
     if (item instanceof BitmapText) return item.style.fontSize as number;
     // Container wrapper: bg at [0], BitmapText at [1]
@@ -1083,11 +1140,21 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     groups.sort((a, b) => a.minSize - b.minSize);
     return groups;
   };
-  // Circle labels = pin numbers + net names on multi-pin parts
-  const allCircleItems: Container[] = [...topCircleLabelLayer.children, ...bottomCircleLabelLayer.children];
+  // Circle labels = pin numbers + net names on multi-pin parts.
+  // Flatten through grid-cell containers to get individual label items.
+  const flattenLabelLayer = (layer: Container): Container[] => {
+    const items: Container[] = [];
+    for (const cellContainer of layer.children) {
+      for (const label of (cellContainer as Container).children) {
+        items.push(label as Container);
+      }
+    }
+    return items;
+  };
+  const allCircleItems: Container[] = [...flattenLabelLayer(topCircleLabelLayer), ...flattenLabelLayer(bottomCircleLabelLayer)];
   const circleFontSizeGroups = buildPinGroups(allCircleItems);
-  // 2-pin net labels
-  const allTwoPinItems: Container[] = [...topTwoPinNetLayer.children, ...bottomTwoPinNetLayer.children];
+  // 2-pin net labels — also flatten through grid-cell containers
+  const allTwoPinItems: Container[] = [...flattenLabelLayer(topTwoPinNetLayer), ...flattenLabelLayer(bottomTwoPinNetLayer)];
   const twoPinFontSizeGroups = buildPinGroups(allTwoPinItems);
 
   // ── Debug: pad vertex crosshairs ─────────────────────────────────────────
