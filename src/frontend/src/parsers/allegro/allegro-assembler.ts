@@ -267,7 +267,7 @@ function extractPins(
 
 function extractTraces(
   db: AllegroDb,
-  ver: FmtVer,
+  _ver: FmtVer,
   div: number,
   netAssignMap: Map<number, string>,
 ): Trace[] {
@@ -428,7 +428,7 @@ function extractVias(
 
 // ── Board outline ─────────────────────────────────────────────────────────────
 
-function extractOutline(db: AllegroDb, ver: FmtVer, div: number): Point[] {
+function extractOutline(db: AllegroDb, _ver: FmtVer, div: number): Point[] {
   const points: Point[] = [];
 
   // Walk LL_Shapes → 0x28 shapes

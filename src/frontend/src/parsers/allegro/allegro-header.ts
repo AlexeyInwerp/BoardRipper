@@ -158,18 +158,12 @@ export function parseHeader(stream: AllegroStream): FileHeader {
     x35End_preV18   = stream.u32();
   }
 
-  // LL_Unknown5: V180 uses first slot, pre-V180 uses second
-  let LL_Unknown5_V18: LinkedList | undefined;
-  if (ver >= FmtVer.V_180) {
-    LL_Unknown5_V18 = readLL(stream, ver);
-  }
+  // LL_Unknown5: V180 uses first slot, pre-V180 uses second (read to maintain alignment)
+  if (ver >= FmtVer.V_180) { readLL(stream, ver); }
 
   const LL_0x36    = readLL(stream, ver);
 
-  let LL_Unknown5_preV18: LinkedList | undefined;
-  if (ver < FmtVer.V_180) {
-    LL_Unknown5_preV18 = readLL(stream, ver);
-  }
+  if (ver < FmtVer.V_180) { readLL(stream, ver); }
 
   const LL_Unknown6 = readLL(stream, ver);
   const LL_0x0A_2   = readLL(stream, ver);
@@ -274,9 +268,6 @@ export function parseHeader(stream: AllegroStream): FileHeader {
   const stringsCount = (ver >= FmtVer.V_180 ? stringsCount_V18 : stringsCount_preV18) ?? 0;
   const x35Start    = (ver >= FmtVer.V_180 ? x35Start_V18 : x35Start_preV18) ?? 0;
   const x35End      = (ver >= FmtVer.V_180 ? x35End_V18 : x35End_preV18) ?? 0;
-
-  // Resolve LL_Unknown5 (V18 vs pre-V18 position)
-  const LL_Unknown5 = LL_Unknown5_V18 ?? LL_Unknown5_preV18 ?? { head: 0, tail: 0 };
 
   return {
     magic,

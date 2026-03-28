@@ -34,7 +34,7 @@ export class AllegroDb {
     this.header = parseHeader(stream);
     dbg.log(
       `Allegro ${this.header.allegroVersion.trim()} ` +
-      `(ver=${FmtVer[this.header.fmtVer] ?? this.header.fmtVer}, ` +
+      `(ver=${Object.entries(FmtVer).find(([, v]) => v === this.header.fmtVer)?.[0] ?? this.header.fmtVer}, ` +
       `objects=${this.header.objectCount}, strings=${this.header.stringsCount})`
     );
 
