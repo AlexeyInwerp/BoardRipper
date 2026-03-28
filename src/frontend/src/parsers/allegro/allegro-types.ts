@@ -11,19 +11,20 @@
 // ── Version ─────────────────────────────────────────────────────────────────
 
 /** Format version — determines struct field layouts */
-export const enum FmtVer {
-  V_PRE_V16 = -1, // Pre-v16 Allegro (unsupported binary format)
-  V_UNKNOWN = 0,
-  V_160 = 1,  // 0x00130000
-  V_162 = 2,  // 0x00130400
-  V_164 = 3,  // 0x00130C00
-  V_165 = 4,  // 0x00131000
-  V_166 = 5,  // 0x00131500
-  V_172 = 6,  // 0x00140400–0x00140700
-  V_174 = 7,  // 0x00140900, 0x00140E00
-  V_175 = 8,  // 0x00141500
-  V_180 = 9,  // 0x00150000
-}
+export const FmtVer = {
+  V_PRE_V16: -1, // Pre-v16 Allegro (unsupported binary format)
+  V_UNKNOWN: 0,
+  V_160: 1,  // 0x00130000
+  V_162: 2,  // 0x00130400
+  V_164: 3,  // 0x00130C00
+  V_165: 4,  // 0x00131000
+  V_166: 5,  // 0x00131500
+  V_172: 6,  // 0x00140400–0x00140700
+  V_174: 7,  // 0x00140900, 0x00140E00
+  V_175: 8,  // 0x00141500
+  V_180: 9,  // 0x00150000
+} as const;
+export type FmtVer = typeof FmtVer[keyof typeof FmtVer];
 
 // ── Layer ────────────────────────────────────────────────────────────────────
 
@@ -34,29 +35,29 @@ export interface LayerInfo {
 }
 
 /** Layer class codes */
-export const enum LayerClass {
-  BOARD_GEOMETRY   = 0x01,
-  COMPONENT_VALUE  = 0x02,
-  DEVICE_TYPE      = 0x03,
-  DRAWING_FORMAT   = 0x04,
-  DRC_ERROR        = 0x05,
-  ETCH             = 0x06,
-  MANUFACTURING    = 0x07,
-  ANALYSIS         = 0x08,
-  PACKAGE_GEOMETRY = 0x09,
-  PACKAGE_KEEPIN   = 0x0A,
-  PACKAGE_KEEPOUT  = 0x0B,
-  PIN              = 0x0C,
-  REF_DES          = 0x0D,
-  ROUTE_KEEPIN     = 0x0E,
-  ROUTE_KEEPOUT    = 0x0F,
-  TOLERANCE        = 0x10,
-  USER_PART_NUMBER = 0x11,
-  VIA_CLASS        = 0x12,
-  VIA_KEEPOUT      = 0x13,
-  ANTI_ETCH        = 0x14,
-  BOUNDARY         = 0x15,
-}
+export const LayerClass = {
+  BOARD_GEOMETRY:   0x01,
+  COMPONENT_VALUE:  0x02,
+  DEVICE_TYPE:      0x03,
+  DRAWING_FORMAT:   0x04,
+  DRC_ERROR:        0x05,
+  ETCH:             0x06,
+  MANUFACTURING:    0x07,
+  ANALYSIS:         0x08,
+  PACKAGE_GEOMETRY: 0x09,
+  PACKAGE_KEEPIN:   0x0A,
+  PACKAGE_KEEPOUT:  0x0B,
+  PIN:              0x0C,
+  REF_DES:          0x0D,
+  ROUTE_KEEPIN:     0x0E,
+  ROUTE_KEEPOUT:    0x0F,
+  TOLERANCE:        0x10,
+  USER_PART_NUMBER: 0x11,
+  VIA_CLASS:        0x12,
+  VIA_KEEPOUT:      0x13,
+  ANTI_ETCH:        0x14,
+  BOUNDARY:         0x15,
+} as const;
 
 // ── Header ───────────────────────────────────────────────────────────────────
 
@@ -67,13 +68,14 @@ export interface LinkedList {
 }
 
 /** Board unit types */
-export const enum BoardUnits {
-  MILS         = 0x01,
-  INCHES       = 0x02,
-  MILLIMETERS  = 0x03,
-  CENTIMETERS  = 0x04,
-  MICROMETERS  = 0x05,
-}
+export const BoardUnits = {
+  MILS:         0x01,
+  INCHES:       0x02,
+  MILLIMETERS:  0x03,
+  CENTIMETERS:  0x04,
+  MICROMETERS:  0x05,
+} as const;
+export type BoardUnits = typeof BoardUnits[keyof typeof BoardUnits];
 
 /** Parsed file header (version-conditional fields are optional) */
 export interface FileHeader {

@@ -902,7 +902,7 @@ function parseBlock0x20(s: AllegroStream, ver: FmtVer, offset: number): Blk0x20U
   return { blockType: 0x20, offset, key, type, r, next, unknownArray1, unknownArray2 };
 }
 
-function parseBlock0x21(s: AllegroStream, ver: FmtVer, offset: number): Blk0x21Blob {
+function parseBlock0x21(s: AllegroStream, _ver: FmtVer, offset: number): Blk0x21Blob {
   const type = s.u8();
   const r = s.u16();
   const size = s.u32();

@@ -815,6 +815,7 @@ export class BoardRenderer {
     // Combined ticker: LoD updates + net line animation + HUD + on-demand render
     this.hudThrottle = 0;
     this.app.ticker.add(this.onTick);
+    this.app.ticker.start();
 
     // Pick up any board data that loaded during async init
     this.onBoardUpdate();
