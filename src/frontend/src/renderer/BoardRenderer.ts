@@ -781,6 +781,12 @@ export class BoardRenderer {
       this.viewport.resize(w, h);
       this.app.renderer.resize(w, h);
       this.needsRender = true;
+      // If ticker is stopped (panel inactive), do a one-shot render so the
+      // resized canvas isn't left black until the user clicks.
+      if (!this.app.ticker.started && !this.contextLost) {
+        try { this.app.render(); } catch { /* ignore if context lost */ }
+        this.needsRender = false;
+      }
 
       // When a fit-to-board is pending (e.g. initial load), re-fit after each
       // resize. Debounce so we only fit once the layout has stabilised (e.g.
@@ -2420,7 +2426,7 @@ export class BoardRenderer {
     if (!this.board || !boardStore.showNetLines) return;
 
     const sel = boardStore.selection;
-    if (sel.partIndex === null || !sel.highlightedNet) return;
+    if (!sel.highlightedNet) return;
 
     const net = this.board.nets.get(sel.highlightedNet);
     if (!net) return;
@@ -2430,62 +2436,105 @@ export class BoardRenderer {
     // Skip GND/NC nets — GND connects too many components, NC is not a real net.
     const netUpper = sel.highlightedNet.toUpperCase();
     if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
-    const selectedPart = this.board.parts[sel.partIndex];
-    if (!selectedPart) return;
 
-    const selectedRoot = this.rootForPart(selectedPart);
-    const selEB = computePartRenderBounds(selectedPart, s);
+    if (sel.partIndex !== null) {
+      // ── Selected part mode: star topology from selected part to all others ──
+      const selectedPart = this.board.parts[sel.partIndex];
+      if (!selectedPart) return;
 
-    // If a specific pin is selected, use its position as the line origin (no clipping)
-    const selectedPin = sel.pinIndex !== null ? selectedPart.pins[sel.pinIndex] : null;
-    const selCenterW = selectedPin
-      ? this.sceneToWorld(selectedPin.position, selectedRoot)
-      : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
+      const selectedRoot = this.rootForPart(selectedPart);
+      const selEB = computePartRenderBounds(selectedPart, s);
+      const selectedPin = sel.pinIndex !== null ? selectedPart.pins[sel.pinIndex] : null;
+      const selCenterW = selectedPin
+        ? this.sceneToWorld(selectedPin.position, selectedRoot)
+        : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
 
-    // Group net pin indices by target part
-    const partNetPins = new Map<number, number[]>();
-    for (const ref of net.pinIndices) {
-      if (ref.partIndex === sel.partIndex) continue;
-      let arr = partNetPins.get(ref.partIndex);
-      if (!arr) { arr = []; partNetPins.set(ref.partIndex, arr); }
-      arr.push(ref.pinIndex);
-    }
-
-    // Collect visible + ghost target parts — anchor line to closest net pin
-    let targetCount = 0;
-    for (const [partIndex, pinIndices] of partNetPins) {
-      const part = this.board.parts[partIndex];
-      if (!part) continue;
-      // Include both visible parts and cross-side ghost parts
-      const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(partIndex);
-      if (!this.isPartVisible(part) && !isGhost) continue;
-
-      // Ghost parts live in the main root (not butterfly) since their layer is hidden
-      const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
-
-      // Find the net pin closest to the selection origin
-      let bestPin: Point | null = null;
-      let bestDist = Infinity;
-      for (const pi of pinIndices) {
-        const pin = part.pins[pi];
-        if (!pin) continue;
-        const pw = this.sceneToWorld(pin.position, root);
-        const dx = pw.x - selCenterW.x;
-        const dy = pw.y - selCenterW.y;
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) { bestDist = d; bestPin = pw; }
+      // Group net pin indices by target part
+      const partNetPins = new Map<number, number[]>();
+      for (const ref of net.pinIndices) {
+        if (ref.partIndex === sel.partIndex) continue;
+        let arr = partNetPins.get(ref.partIndex);
+        if (!arr) { arr = []; partNetPins.set(ref.partIndex, arr); }
+        arr.push(ref.pinIndex);
       }
 
-      if (bestPin) {
-        const start = this.clipToRectEdge(selCenterW, bestPin, selEB, selectedRoot);
-        this.netLineSegments.push({ start, end: bestPin });
-      }
-      targetCount++;
-    }
+      let targetCount = 0;
+      for (const [partIndex, pinIndices] of partNetPins) {
+        const part = this.board.parts[partIndex];
+        if (!part) continue;
+        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(partIndex);
+        if (!this.isPartVisible(part) && !isGhost) continue;
 
-    // Fade distance for lines (used when many converge)
-    const vpScale = Math.abs(this.viewport.scale.x);
-    this.netLineFadeDist = targetCount > 8 ? 60 / vpScale : 0;
+        const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
+
+        // Find the net pin closest to the selection origin
+        let bestPin: Point | null = null;
+        let bestDist = Infinity;
+        for (const pi of pinIndices) {
+          const pin = part.pins[pi];
+          if (!pin) continue;
+          const pw = this.sceneToWorld(pin.position, root);
+          const dx = pw.x - selCenterW.x;
+          const dy = pw.y - selCenterW.y;
+          const d = dx * dx + dy * dy;
+          if (d < bestDist) { bestDist = d; bestPin = pw; }
+        }
+
+        if (bestPin) {
+          const start = this.clipToRectEdge(selCenterW, bestPin, selEB, selectedRoot);
+          this.netLineSegments.push({ start, end: bestPin });
+        }
+        targetCount++;
+      }
+
+      const vpScale = Math.abs(this.viewport.scale.x);
+      this.netLineFadeDist = targetCount > 8 ? 60 / vpScale : 0;
+    } else {
+      // ── Net-only mode (no selected part): nearest-neighbor chain ──
+      // Collect visible parts with world-space centers (only computed for this mode).
+      type NetPartInfo = { partIndex: number; center: Point; eb: ReturnType<typeof computePartRenderBounds>; root: Container | undefined };
+      const netParts: NetPartInfo[] = [];
+      const seenParts = new Set<number>();
+      for (const ref of net.pinIndices) {
+        if (seenParts.has(ref.partIndex)) continue;
+        seenParts.add(ref.partIndex);
+        const part = this.board.parts[ref.partIndex];
+        if (!part) continue;
+        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(ref.partIndex);
+        if (!this.isPartVisible(part) && !isGhost) continue;
+        const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
+        const eb = computePartRenderBounds(part, s);
+        const center = this.sceneToWorld({ x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2 }, root);
+        netParts.push({ partIndex: ref.partIndex, center, eb, root });
+      }
+      if (netParts.length < 2) return;
+
+      // Build a greedy minimum spanning tree so each part connects to its closest neighbor.
+      const connected = new Set<number>([0]);
+      const remaining = new Set<number>();
+      for (let i = 1; i < netParts.length; i++) remaining.add(i);
+
+      while (remaining.size > 0) {
+        let bestI = -1, bestJ = -1, bestDist = Infinity;
+        for (const ci of connected) {
+          const a = netParts[ci].center;
+          for (const ri of remaining) {
+            const b = netParts[ri].center;
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestDist) { bestDist = d; bestI = ci; bestJ = ri; }
+          }
+        }
+        if (bestJ < 0) break;
+        connected.add(bestJ);
+        remaining.delete(bestJ);
+
+        const a = netParts[bestI], b = netParts[bestJ];
+        const start = this.clipToRectEdge(a.center, b.center, a.eb, a.root);
+        const end = this.clipToRectEdge(b.center, a.center, b.eb, b.root);
+        this.netLineSegments.push({ start, end });
+      }
+    }
   }
 
   /** Draw cached net line segments with current animation state */

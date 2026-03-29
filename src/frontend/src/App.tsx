@@ -167,12 +167,22 @@ function App() {
       } catch { /* panel already removed */ }
     };
 
-    // When user closes a board panel via dockview X button, clean up the boardStore tab
+    // When user closes a panel via dockview X button, clean up store state
     api.onDidRemovePanel((e) => {
       if (e.id.startsWith('board-')) {
         const tabId = parseInt(e.id.slice('board-'.length), 10);
         if (!isNaN(tabId)) {
           boardStore.closeTab(tabId);
+        }
+      } else if (e.id.startsWith('pdf-')) {
+        // Remove PDF binding from all board tabs that reference this PDF
+        const pdfFileName = (e.params as Record<string, unknown>)?.pdfFileName as string | undefined;
+        if (pdfFileName) {
+          for (const tab of boardStore.tabs) {
+            if (tab.pdfFileNames.includes(pdfFileName)) {
+              boardStore.removePdfBinding(tab.id, pdfFileName);
+            }
+          }
         }
       }
     });
