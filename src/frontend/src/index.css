@@ -1805,6 +1805,46 @@ html, body, #root {
   color: var(--text-secondary);
 }
 
+.context-menu-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 8px;
+}
+
+.context-menu-submenu-trigger {
+  position: relative;
+}
+
+.context-menu-has-submenu {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.context-submenu-arrow {
+  font-size: 0.75em;
+  opacity: 0.5;
+}
+
+.context-submenu {
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 1001;
+}
+
+.context-submenu-item {
+  font-size: 0.85em !important;
+  padding: 5px 12px !important;
+}
+
 /* PDF Viewer */
 .pdf-viewer {
   display: flex;

@@ -1,4 +1,4 @@
-import React, { useEffect, useSyncExternalStore } from 'react';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
@@ -23,8 +23,19 @@ function subscribe(cb: () => void) {
   return contextMenuStore.subscribe(cb);
 }
 
+/** Strip extension for shorter display labels */
+function shortPdfName(fileName: string): string {
+  return fileName.replace(/\.pdf$/i, '');
+}
+
 export function ContextMenu() {
   const state = useSyncExternalStore(subscribe, getSnapshot);
+  const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
+
+  // Reset submenu when menu closes/opens
+  useEffect(() => {
+    if (state.visible) setOpenSubmenu(null);
+  }, [state.visible]);
 
   useEffect(() => {
     if (!state.visible) return;
@@ -60,7 +71,8 @@ export function ContextMenu() {
   const chipPinQuery = state.pinId ? `${state.pinId}@${state.componentName}` : null;
   const netName = state.netName;
 
-  const renderItems = (pdfFileName: string, pdfLabel: string) => (
+  // Single PDF: flat list of all search options
+  const renderFlatItems = (pdfFileName: string, pdfLabel: string) => (
     <>
       {chipPinQuery && (
         <div
@@ -87,6 +99,34 @@ export function ContextMenu() {
     </>
   );
 
+  // Multi-PDF submenu items for a single PDF
+  const renderSubmenuItems = (pdfFileName: string) => (
+    <>
+      <div
+        className="context-menu-item context-submenu-item"
+        onClick={(e) => doSearch(e, pdfFileName, state.componentName)}
+      >
+        {state.componentName}
+      </div>
+      {chipPinQuery && (
+        <div
+          className="context-menu-item context-submenu-item"
+          onClick={(e) => doSearch(e, pdfFileName, chipPinQuery)}
+        >
+          {chipPinQuery}
+        </div>
+      )}
+      {netName && (
+        <div
+          className="context-menu-item context-submenu-item"
+          onClick={(e) => doSearch(e, pdfFileName, netName)}
+        >
+          net {netName}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div
       className="context-menu"
@@ -98,13 +138,37 @@ export function ContextMenu() {
           Search &apos;{state.componentName}&apos; in PDF (none linked)
         </div>
       ) : boundPdfNames.length === 1 ? (
-        renderItems(boundPdfNames[0], ' in PDF')
+        renderFlatItems(boundPdfNames[0], ' in PDF')
       ) : (
-        boundPdfNames.map(name => (
-          <React.Fragment key={name}>
-            {renderItems(name, ` in ${name}`)}
-          </React.Fragment>
-        ))
+        <>
+          {/* Quick search: component name in first (bound) PDF */}
+          <div
+            className="context-menu-item"
+            onClick={(e) => doSearch(e, boundPdfNames[0], state.componentName)}
+          >
+            Search &apos;{state.componentName}&apos; in PDF
+          </div>
+          <div className="context-menu-separator" />
+          {/* Per-PDF submenus with all query options */}
+          {boundPdfNames.map(name => (
+            <div
+              key={name}
+              className="context-menu-submenu-trigger"
+              onMouseEnter={() => setOpenSubmenu(name)}
+              onMouseLeave={() => setOpenSubmenu(null)}
+            >
+              <div className="context-menu-item context-menu-has-submenu">
+                {shortPdfName(name)}
+                <span className="context-submenu-arrow">▸</span>
+              </div>
+              {openSubmenu === name && (
+                <div className="context-submenu">
+                  {renderSubmenuItems(name)}
+                </div>
+              )}
+            </div>
+          ))}
+        </>
       )}
     </div>
   );
