@@ -1395,6 +1395,7 @@ export class BoardRenderer {
     // Detach old scene (netDimGfx + selectionGfx + elevated labels live inside root)
     if (this.activeScene) {
       this.activeScene.root.removeChild(this.netDimGfx);
+      this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
@@ -1461,6 +1462,7 @@ export class BoardRenderer {
     if (this.activeScene) {
       this.teardownButterfly(this.activeScene);
       this.activeScene.root.removeChild(this.netDimGfx);
+      this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
@@ -1471,6 +1473,7 @@ export class BoardRenderer {
       this.activeScene = null;
     }
     this.netDimGfx.clear();
+    this.crossSideGhostGfx.clear();
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
   }
@@ -1481,6 +1484,7 @@ export class BoardRenderer {
     // when scene.root.destroy({ children: true }) is called below.
     if (this.activeScene) {
       this.activeScene.root.removeChild(this.netDimGfx);
+      this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
@@ -1571,12 +1575,14 @@ export class BoardRenderer {
         if (followPart) this.triggerFollowPdf(followPart);
       }
 
-      // Handle focus requests (animated zoom to part + blink selection)
+      // Handle focus requests (animated zoom to part/net + blink selection)
       const focus = boardStore.consumeFocusRequest();
       if (focus) {
-        const focusPart = this.board?.parts[focus.partIndex];
+        const focusPart = focus.partIndex != null ? this.board?.parts[focus.partIndex] : undefined;
         const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
-        this.zoomToBounds(focus.bounds, focusRoot, 0.25);
+        // Net-only focus: zoom to show all pins, use larger view fraction
+        const viewFrac = focus.partIndex != null ? 0.25 : 0.6;
+        this.zoomToBounds(focus.bounds, focusRoot, viewFrac);
         this.startSelectionBlink();
       }
     } catch (err) {
@@ -1824,10 +1830,9 @@ export class BoardRenderer {
       this.selectionBlinkTimer = null;
     }
     this.selectionBlinkPhase = 0;
-    // Reset previously highlighted part label to its original color
+    // Reset previously highlighted part label tint to neutral (no color shift)
     if (this.highlightedPartLabel) {
-      const orig = (this.highlightedPartLabel as { _origFill?: number })._origFill;
-      if (orig !== undefined) this.highlightedPartLabel.style.fill = orig;
+      this.highlightedPartLabel.tint = 0xffffff;
       this.highlightedPartLabel = null;
     }
     this.netDimGfx.clear();
@@ -1842,23 +1847,25 @@ export class BoardRenderer {
     const sel = boardStore.selection;
     const butterfly = boardStore.butterfly && !!this.activeScene?.butterflyRoot;
 
-    // Brighten the selected part's in-scene name label (+20% lighter via tint)
+    // Brighten the selected part's in-scene name label via BitmapText tint.
+    // BitmapText renders from a pre-baked atlas — style.fill has no runtime effect.
+    // Tint multiplies: result = atlas_color × tint / 255.
+    // Atlas is white (0xffffff) with fill=0xcccccc applied via tint internally.
+    // To brighten: override tint to push the label toward full white.
     if (sel.partIndex !== null && this.activeScene) {
       const lbl = this.activeScene.partLabelByIndex.get(sel.partIndex);
       if (lbl) {
-        // Tint shifts the BitmapText color toward white. 0xffffff = no change.
-        // To make 0xcccccc label ~20% brighter → tint that pushes it toward 0xffffff.
-        // PixiJS tint multiplies: result = fill × tint / 255. For fill=0xcc, tint=0xff → 0xcc (no change).
-        // Instead, set fill directly to a brighter value.
-        lbl.tint = 0xffffff;
-        // Store original fill and override with brightened version
-        const origFill = (lbl as { _origFill?: number })._origFill ?? (lbl.style.fill as number);
-        (lbl as { _origFill?: number })._origFill = origFill;
-        // Brighten each channel by ~30% toward 255
-        const r = Math.min(255, ((origFill >> 16) & 0xff) + 60);
-        const g = Math.min(255, ((origFill >> 8) & 0xff) + 60);
-        const b = Math.min(255, (origFill & 0xff) + 60);
-        lbl.style.fill = (r << 16) | (g << 8) | b;
+        // For default 0xcccccc labels: tint 0xffffff/0xcccccc ≈ 1.25× per channel.
+        // We want ~20-30% brighter, so compute a tint that achieves that.
+        const fill = lbl.style.fill as number;
+        const r = (fill >> 16) & 0xff;
+        const g = (fill >> 8) & 0xff;
+        const b = fill & 0xff;
+        // Target: each channel + 50, clamped to 255. Tint = target * 255 / fill.
+        const tr = r > 0 ? Math.min(255, Math.round(Math.min(255, r + 50) * 255 / r)) : 255;
+        const tg = g > 0 ? Math.min(255, Math.round(Math.min(255, g + 50) * 255 / g)) : 255;
+        const tb = b > 0 ? Math.min(255, Math.round(Math.min(255, b + 50) * 255 / b)) : 255;
+        lbl.tint = (tr << 16) | (tg << 8) | tb;
         this.highlightedPartLabel = lbl;
       }
     }

@@ -15,7 +15,7 @@ export interface Shortcut {
   /** Human label shown in settings */
   label: string;
   /** Category for grouping */
-  category: 'file' | 'view' | 'navigation';
+  category: 'file' | 'view' | 'navigation' | 'pdf';
   /** Key code (e.event.key) — case-insensitive match */
   key: string;
   /** Alternative key (for Mac PageUp/Down → Cmd+Up/Down) */
@@ -136,6 +136,30 @@ export const shortcuts: Shortcut[] = [
     category: 'navigation',
     key: 'PageUp',
     description: 'Go to the previous PDF page',
+  },
+
+  // --- PDF Viewer ---
+  {
+    id: 'pdfSearch',
+    label: 'Search in PDF',
+    category: 'pdf',
+    key: 'f',
+    mod: true,
+    description: 'Focus PDF search (when PDF panel is active)',
+  },
+  {
+    id: 'pdfNextPage',
+    label: 'Next Page',
+    category: 'pdf',
+    key: 'ArrowDown',
+    description: 'Go to next PDF page (when PDF panel is active)',
+  },
+  {
+    id: 'pdfPrevPage',
+    label: 'Previous Page',
+    category: 'pdf',
+    key: 'ArrowUp',
+    description: 'Go to previous PDF page (when PDF panel is active)',
   },
 ];
 

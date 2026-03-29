@@ -5,17 +5,42 @@ import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, 
 import { boardCache } from './board-cache';
 import { log } from './log-store';
 
-// In Electron (file:// protocol), Workers can't load file:// URLs.
-// Import the worker module directly so pdfjs runs it on the main thread
-// (sets globalThis.pdfjsWorker which pdfjs checks before spawning a Worker).
+// Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
+if (typeof Uint8Array.prototype.toHex !== 'function') {
+  Uint8Array.prototype.toHex = function () {
+    let hex = '';
+    for (let i = 0; i < this.length; i++) hex += this[i].toString(16).padStart(2, '0');
+    return hex;
+  };
+}
+if (typeof Map.prototype.getOrInsertComputed !== 'function') {
+  Map.prototype.getOrInsertComputed = function <K, V>(key: K, cb: (key: K) => V): V {
+    if (this.has(key)) return this.get(key)!;
+    const val = cb(key);
+    this.set(key, val);
+    return val;
+  };
+}
+
+// Configure pdf.js worker.
+// In Electron (file:// protocol), try dynamic import first (sets globalThis.pdfjsWorker
+// for main-thread execution). If that fails, fall back to workerSrc with file:// URL.
 // In normal web mode, use workerSrc for a real Web Worker.
+const _workerUrl = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
+
+let _workerReady: Promise<void> = Promise.resolve();
 if (window.location.protocol === 'file:') {
-  import('pdfjs-dist/build/pdf.worker.min.mjs');
+  _workerReady = import('pdfjs-dist/build/pdf.worker.min.mjs').then(() => {
+    log.pdf.log('pdf.js worker loaded via dynamic import (main-thread mode)');
+  }).catch((err) => {
+    log.pdf.warn('pdf.js worker dynamic import failed, setting workerSrc fallback:', err);
+    pdfjsLib.GlobalWorkerOptions.workerSrc = _workerUrl;
+  });
 } else {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url,
-  ).toString();
+  pdfjsLib.GlobalWorkerOptions.workerSrc = _workerUrl;
 }
 
 export interface PdfTextItem {
@@ -454,6 +479,8 @@ class PdfStore {
     this.notify();
 
     try {
+      // Ensure the worker module is loaded before first getDocument() call (Electron/file://)
+      await _workerReady;
       const buffer = await file.arrayBuffer();
       // Copy buffer before passing to pdf.js — getDocument() transfers/detaches the original
       const bufferCopy = buffer.slice(0);
@@ -489,7 +516,7 @@ class PdfStore {
       // The viewer can render pages immediately without waiting for this.
       this._extractText(pdfDoc);
     } catch (err) {
-      log.pdf.error('loadFile failed:', err);
+      log.pdf.error('loadFile failed:', err instanceof Error ? err.message : JSON.stringify(err));
       this._activeFileName = null;
       this._loading = false;
       this.notify();

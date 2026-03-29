@@ -75,6 +75,8 @@ export interface BoardData {
    *  When 'x', the board store also sets mirrorY on load to correct orientation.
    *  'x' = fold was vertical (left/right split), 'y' = fold was horizontal (top/bottom split). */
   butterflyFoldAxis?: 'x' | 'y';
+  /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
+  flipY?: boolean;
 }
 
 /** Display ID for a pin: prefer name, then number, then 1-based index fallback. */

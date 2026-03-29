@@ -132,8 +132,26 @@ export interface RenderSettings {
 
   netColorRules: NetColorRule[];
 
+  /** Net name patterns treated as "no connect" — outline-only pins, no fill, no labels.
+   *  Patterns are case-insensitive. Supports trailing `*` wildcard (e.g. `NC_*` matches `NC_PAD`). */
+  ncNetPatterns: string[];
+
   /** Per-type rendering overrides, keyed by uppercase first letter (e.g. 'L', 'R', 'C') */
   partTypeOverrides: Record<string, PartTypeOverride>;
+}
+
+/** Check if a net name matches any NC (no-connect) pattern in settings.
+ *  Patterns are case-insensitive; trailing `*` acts as a prefix wildcard. */
+export function isNcNet(netUpper: string, patterns: string[]): boolean {
+  for (const pat of patterns) {
+    const p = pat.toUpperCase();
+    if (p.endsWith('*')) {
+      if (netUpper.startsWith(p.slice(0, -1))) return true;
+    } else {
+      if (netUpper === p) return true;
+    }
+  }
+  return false;
 }
 
 /** Return the active label font size for the selected tier. */
@@ -216,6 +234,8 @@ export const DEFAULTS: RenderSettings = {
   twoFingerPan: true,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
+
+  ncNetPatterns: ['NC', 'NC_*', 'N/C', 'NO CONNECT'],
 
   partTypeOverrides: {
     R: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#222222' },
@@ -731,7 +751,7 @@ export function exportSettingsAsDefaults(): string {
   const lines: string[] = ['export const DEFAULTS: RenderSettings = {'];
 
   for (const [key, val] of Object.entries(s)) {
-    if (key === 'netColorRules' || key === 'partTypeOverrides') continue;
+    if (key === 'netColorRules' || key === 'ncNetPatterns' || key === 'partTypeOverrides') continue;
     if (typeof val === 'string') {
       lines.push(`  ${key}: '${val}',`);
     } else if (typeof val === 'number' && key.toLowerCase().includes('color') && val > 255) {
@@ -748,6 +768,10 @@ export function exportSettingsAsDefaults(): string {
     lines.push(`    { id: '${r.id}', pattern: '${r.pattern}', color: '${r.color}', enabled: ${r.enabled} },`);
   }
   lines.push('  ],');
+
+  // ncNetPatterns
+  lines.push('');
+  lines.push(`  ncNetPatterns: ${JSON.stringify(s.ncNetPatterns)},`);
 
   // partTypeOverrides
   lines.push('');

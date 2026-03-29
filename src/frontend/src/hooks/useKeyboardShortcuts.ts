@@ -12,13 +12,21 @@ import { fileInputRefs } from '../store/file-inputs';
 export function useKeyboardShortcuts() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+F → focus search bar (works from anywhere, including inputs)
+      // Cmd/Ctrl+F → focus PDF search if a PDF panel is active, otherwise board search
       const focusSearch = getShortcut('focusSearch');
-      if (focusSearch && matchesShortcut(e, focusSearch) && fileInputRefs.search) {
-        e.preventDefault();
-        fileInputRefs.search.focus();
-        fileInputRefs.search.select();
-        return;
+      if (focusSearch && matchesShortcut(e, focusSearch)) {
+        if (fileInputRefs.pdfSearch) {
+          e.preventDefault();
+          fileInputRefs.pdfSearch.focus();
+          fileInputRefs.pdfSearch.select();
+          return;
+        }
+        if (fileInputRefs.search) {
+          e.preventDefault();
+          fileInputRefs.search.focus();
+          fileInputRefs.search.select();
+          return;
+        }
       }
 
       // Don't intercept when typing in inputs/textareas
@@ -26,17 +34,31 @@ export function useKeyboardShortcuts() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.target as HTMLElement)?.isContentEditable) return;
 
-      // Arrow keys navigate PDF search results when matches exist
-      if (pdfStore.matches.length > 0 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-          e.preventDefault();
-          pdfStore.nextMatch();
-          return;
-        }
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-          e.preventDefault();
-          pdfStore.prevMatch();
-          return;
+      // Arrow keys in PDF context: navigate matches if they exist, otherwise scroll pages
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (pdfStore.matches.length > 0) {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            pdfStore.nextMatch();
+            return;
+          }
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            pdfStore.prevMatch();
+            return;
+          }
+        } else if (fileInputRefs.pdfSearch) {
+          // No search matches — arrow up/down scroll PDF pages
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            pdfStore.goToPage(pdfStore.currentPage + 1);
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            pdfStore.goToPage(pdfStore.currentPage - 1);
+            return;
+          }
         }
       }
 

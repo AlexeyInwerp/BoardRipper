@@ -30,6 +30,7 @@ import {
   quantizeFontSize,
   resolvePartTypeOverride,
   applyBodyShapeOverride,
+  isNcNet,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
@@ -118,6 +119,8 @@ export interface BoardSceneGraph {
   circleFontSizeGroups: PinFontSizeGroup[];
   /** Font-size groups for Group B (2-pin net labels) — progressive zoom visibility */
   twoPinFontSizeGroups: PinFontSizeGroup[];
+  /** Part index → part name BitmapText label. For selection highlighting (tint/brightness). */
+  partLabelByIndex: Map<number, BitmapText>;
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. Only set when < Infinity. */
   pinRadiusClamp: Map<number, number>;
   /** PCB trace lines container — toggled by showTraces */
@@ -480,6 +483,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Part containers are queued and added AFTER global pin Graphics so borders/labels render on top
   const partQueue: { container: Container; isBottom: boolean }[] = [];
   const pinRadiusClamp = new Map<number, number>();
+  const partLabelByIndex = new Map<number, BitmapText>();
 
   // Parts
   for (let pi = 0; pi < board.parts.length; pi++) {
@@ -601,7 +605,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       const isPin1 = pni === 0 && isMultiPin;
       // Compute netUpper early — needed for both NC drawing routing and label suppression.
       const netUpper = pin.net?.toUpperCase() ?? '';
-      const isNcPin  = netUpper === 'NC';
+      const isNcPin  = isNcNet(netUpper, s.ncNetPatterns);
       const color = (isPin1 && s.showPin1Marker) ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
       const ncGfx = isBottom ? bottomNcPinGfx : topNcPinGfx;
 
@@ -645,8 +649,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
         const padShape = override?.padShape ?? 'natural';
         if (isNcPin) {
-          if (padShape === 'square') ncGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
-          else                       ncGfx.circle(pin.position.x, pin.position.y, r);
+          // Inset by half stroke width so outer edge aligns with filled pins of same radius
+          const ncInset = Math.max(0.15, s.pinMinRadius * 0.06);
+          const ri = r - ncInset;
+          if (padShape === 'square') ncGfx.rect(pin.position.x - ri, pin.position.y - ri, ri * 2, ri * 2);
+          else                       ncGfx.circle(pin.position.x, pin.position.y, ri);
         } else {
           const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
           if (padShape === 'square') pinGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
@@ -655,7 +662,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       }
 
       // Whether this pin has a displayable net name (GND/NC suppressed — already color-coded)
-      const hasNet = !!(pin.net && pin.net !== '(null)' && pin.net !== '' && !netUpper.includes('GND') && netUpper !== 'NC');
+      const hasNet = !!(pin.net && pin.net !== '(null)' && pin.net !== '' && !netUpper.includes('GND') && !isNcPin);
       // BGA alternating: when both pin number and net name are shown on a multi-pin part,
       // alternate their vertical positions by pin index so adjacent pins' labels interleave.
       const bgaAlternate = isMultiPin && s.showPinNumbers && hasNet;
@@ -668,7 +675,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // ── Pin number label ──────────────────────────────────────────────
       // Multi-pin (BGA/IC): always shown when showPinNumbers is on.
       // 2-pin: shown when showTwoPinNumbers is on — sized to fit the pad rectangle.
-      if ((isMultiPin && s.showPinNumbers) || twoPinShowNum) {
+      // NC pins skip labels entirely — no useful info, saves draw calls.
+      if (((isMultiPin && s.showPinNumbers) || twoPinShowNum) && !isNcPin) {
         const numStr = pinDisplayId(pin, pni);
         let pinFontSize: number;
         let pinX: number, pinY: number;
@@ -953,6 +961,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         partContainer.addChild(label);
         labels.push(label);
         (isBottom ? bottomLabels : topLabels).push(label);
+        partLabelByIndex.set(pi, label);
       }
     }
 
@@ -1019,8 +1028,12 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   }
 
   // Flush NC (no-connect) pin outlines — stroke-only, no fill.
+  // Thin stroke so NC pins don't visually dominate over filled pins.
+  // Stroke extends outward by half its width, so the drawn NC circle
+  // already appears slightly larger than same-radius filled pins.
+  const ncStrokeWidth = Math.max(0.3, s.pinMinRadius * 0.12);
   for (const [ncGfx, layer] of [[topNcPinGfx, topLayer], [bottomNcPinGfx, bottomLayer]] as [Graphics, Container][]) {
-    ncGfx.stroke({ width: 1.5, color: 0x555555, alpha: s.pinAlpha });
+    ncGfx.stroke({ width: ncStrokeWidth, color: 0x555555, alpha: s.pinAlpha });
     layer.addChild(ncGfx);
   }
 
@@ -1273,5 +1286,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
 }

@@ -6,4 +6,6 @@ export const fileInputRefs = {
   board: null as HTMLInputElement | null,
   pdf: null as HTMLInputElement | null,
   search: null as HTMLInputElement | null,
+  /** Active PDF panel's search input (set/cleared on panel activation) */
+  pdfSearch: null as HTMLInputElement | null,
 };

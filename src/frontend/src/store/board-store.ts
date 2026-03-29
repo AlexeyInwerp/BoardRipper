@@ -47,7 +47,7 @@ export interface PdfEntry {
 }
 
 export interface FocusRequest {
-  partIndex: number;
+  partIndex: number | null;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
@@ -397,7 +397,8 @@ class BoardStore {
     // 90° + flipY creates a horizontal mirror on tall boards.
     // 270° avoids this for all flipY formats.
     const fmt = getFormat(board.format);
-    return fmt?.flipY ? 270 : 90;
+    const flipY = board.flipY ?? fmt?.flipY ?? false;
+    return flipY ? 270 : 90;
   }
 
   async loadFiles(files: FileList | File[]) {
@@ -729,6 +730,42 @@ class BoardStore {
       selection: { partIndex: idx, pinIndex: null, highlightedNet: null },
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
+    this.notify();
+  }
+
+  focusNet(name: string) {
+    const tab = this.activeTab;
+    if (!tab?.board) return;
+    // Case-insensitive net lookup — try exact match first, then scan
+    let net = tab.board.nets.get(name);
+    if (!net) {
+      const upper = name.toUpperCase();
+      for (const [k, v] of tab.board.nets) {
+        if (k.toUpperCase() === upper) { net = v; name = k; break; }
+      }
+    }
+    if (!net || net.pinIndices.length === 0) return;
+
+    // Compute bounding box of all pins on this net
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const { partIndex, pinIndex } of net.pinIndices) {
+      const pin = tab.board.parts[partIndex]?.pins[pinIndex];
+      if (!pin) continue;
+      if (pin.position.x < minX) minX = pin.position.x;
+      if (pin.position.y < minY) minY = pin.position.y;
+      if (pin.position.x > maxX) maxX = pin.position.x;
+      if (pin.position.y > maxY) maxY = pin.position.y;
+    }
+    if (!isFinite(minX)) return;
+
+    // Pad the bounds so a single-pin net doesn't zoom to infinity
+    const pad = Math.max(maxX - minX, maxY - minY, 200) * 0.1;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+
+    this.updateActiveTab({
+      selection: { partIndex: null, pinIndex: null, highlightedNet: name },
+    });
+    this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
     this.notify();
   }
 }
