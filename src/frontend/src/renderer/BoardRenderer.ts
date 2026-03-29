@@ -17,7 +17,7 @@ import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
@@ -52,6 +52,11 @@ interface BoardScene {
   topTwoPinNetLayer: Container;
   bottomTwoPinNetLayer: Container;
   twoPinFontSizeGroups: import('./board-scene').PinFontSizeGroup[];
+  /** Part label by index — for brightening selected part name */
+  partLabelByIndex: Map<number, import('pixi.js').BitmapText>;
+  /** Top/bottom pin circle graphics by part index */
+  topPinGfx: Map<number, import('pixi.js').Graphics>;
+  bottomPinGfx: Map<number, import('pixi.js').Graphics>;
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. */
   pinRadiusClamp: Map<number, number>;
   /** PCB trace lines container — toggled by showTraces */
@@ -97,6 +102,10 @@ export class BoardRenderer {
   private netLabelLayer!: Container;
   private butterflySelectionGfx!: Graphics;
   private netLinesGfx!: Graphics;
+  /** Ghost outlines for cross-side net components (hidden side, semi-transparent + pulsing) */
+  private crossSideGhostGfx!: Graphics;
+  /** Part indices currently drawn as cross-side ghosts (for ticker-driven pulse redraw) */
+  private crossSideGhostParts: number[] = [];
   private debugVertexLabels: Text[] = [];
   private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
@@ -152,6 +161,8 @@ export class BoardRenderer {
   // Selection blink state (triggered by focusPart / PDF reverse search)
   private selectionBlinkPhase = 0;
   private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Part label whose tint was boosted by selection — reset on next renderSelection */
+  private highlightedPartLabel: import('pixi.js').BitmapText | null = null;
 
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
@@ -264,12 +275,16 @@ export class BoardRenderer {
     if (perf) this.perfAccum.lod += performance.now() - t0;
 
     // Net line pulse animation — only when there's an active selection with net lines
-    if (boardStore.showNetLines && boardStore.selection.highlightedNet) {
+    // Also drives cross-side ghost pulse (ghosts always pulse when present)
+    const hasGhosts = this.crossSideGhostParts.length > 0;
+    if ((boardStore.showNetLines && boardStore.selection.highlightedNet) || hasGhosts) {
       const s = renderSettingsStore.settings;
-      if (s.netLineDashed || s.netLinePulse) {
+      const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts;
+      if (needsPulse) {
         this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
         t0 = perf ? performance.now() : 0;
         this.renderNetLines();
+        if (hasGhosts) this.renderCrossSideGhosts();
         if (perf) this.perfAccum.netLines += performance.now() - t0;
         this.needsRender = true;
       }
@@ -569,6 +584,8 @@ export class BoardRenderer {
     this.netLabelLayer.zIndex = 20;
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
+    this.crossSideGhostGfx = new Graphics();
+    this.crossSideGhostGfx.zIndex = 15;
     this.viewport.addChild(this.netLinesGfx);
 
     // Recreate elevated labels (see init() for detailed comments)
@@ -676,6 +693,8 @@ export class BoardRenderer {
     this.netLabelLayer.zIndex = 20;
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
+    this.crossSideGhostGfx = new Graphics();
+    this.crossSideGhostGfx.zIndex = 15; // above dim (10), below labels (20) and selection (30)
 
     // Elevated labels for selected part/pin — persistent objects reused across
     // scene switches. Visibility is toggled in updateElevatedLabels() each frame.
@@ -1005,6 +1024,7 @@ export class BoardRenderer {
    * User can toggle Mirror Y for manual override.
    */
   private needsYFlip(board: BoardData): boolean {
+    if (board.flipY !== undefined) return board.flipY;
     return getFormat(board.format)?.flipY ?? false;
   }
 
@@ -1197,6 +1217,7 @@ export class BoardRenderer {
     scene.butterflyRoot.removeChild(scene.bottomLayer);
     scene.root.addChild(scene.bottomLayer);
     scene.root.addChild(this.netDimGfx);
+    scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
     // Elevated labels must always be last (addChild on existing child moves it to end)
@@ -1390,11 +1411,13 @@ export class BoardRenderer {
     // Render order is controlled by zIndex (root.sortableChildren=true), not addChild order:
     //   zIndex 0:       board content (outline, layers, pins, labels)
     //   zIndex 10:      netDimGfx (dim non-selected nets)
+    //   zIndex 15:      crossSideGhostGfx (ghost outlines for hidden-side net components)
     //   zIndex 20:      netLabelLayer (net name labels)
     //   zIndex 30:      selectionGfx (yellow highlight)
     //   zIndex 100-103: elevated selection labels (always topmost)
     this.viewport.addChild(scene.root);
     scene.root.addChild(this.netDimGfx);
+    scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
     scene.root.addChild(this.elevatedPinBg!);
@@ -1801,15 +1824,44 @@ export class BoardRenderer {
       this.selectionBlinkTimer = null;
     }
     this.selectionBlinkPhase = 0;
+    // Reset previously highlighted part label to its original color
+    if (this.highlightedPartLabel) {
+      const orig = (this.highlightedPartLabel as { _origFill?: number })._origFill;
+      if (orig !== undefined) this.highlightedPartLabel.style.fill = orig;
+      this.highlightedPartLabel = null;
+    }
     this.netDimGfx.clear();
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
+    this.crossSideGhostGfx.clear();
+    this.crossSideGhostParts = [];
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
     const sel = boardStore.selection;
     const butterfly = boardStore.butterfly && !!this.activeScene?.butterflyRoot;
+
+    // Brighten the selected part's in-scene name label (+20% lighter via tint)
+    if (sel.partIndex !== null && this.activeScene) {
+      const lbl = this.activeScene.partLabelByIndex.get(sel.partIndex);
+      if (lbl) {
+        // Tint shifts the BitmapText color toward white. 0xffffff = no change.
+        // To make 0xcccccc label ~20% brighter → tint that pushes it toward 0xffffff.
+        // PixiJS tint multiplies: result = fill × tint / 255. For fill=0xcc, tint=0xff → 0xcc (no change).
+        // Instead, set fill directly to a brighter value.
+        lbl.tint = 0xffffff;
+        // Store original fill and override with brightened version
+        const origFill = (lbl as { _origFill?: number })._origFill ?? (lbl.style.fill as number);
+        (lbl as { _origFill?: number })._origFill = origFill;
+        // Brighten each channel by ~30% toward 255
+        const r = Math.min(255, ((origFill >> 16) & 0xff) + 60);
+        const g = Math.min(255, ((origFill >> 8) & 0xff) + 60);
+        const b = Math.min(255, (origFill & 0xff) + 60);
+        lbl.style.fill = (r << 16) | (g << 8) | b;
+        this.highlightedPartLabel = lbl;
+      }
+    }
 
     // Pick the right Graphics target for a part (butterfly bottom → butterflySelectionGfx)
     const gfxFor = (part: { side: string }) =>
@@ -1925,12 +1977,21 @@ export class BoardRenderer {
         const seenParts = new Set<number>();
         const topPartOutlines: (() => void)[] = [];
         const botPartOutlines: (() => void)[] = [];
+        const ghostPartIndices: number[] = []; // hidden-side parts for cross-side ghost
+        // GND/NC nets connect too many components or aren't real — skip cross-side ghosts
+        const netUpper = effectiveNet!.toUpperCase();
+        const skipGhosts = netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns);
 
         for (const ref of net.pinIndices) {
           if (seenParts.has(ref.partIndex)) continue;
           seenParts.add(ref.partIndex);
           const part = this.board.parts[ref.partIndex];
-          if (!part || !this.isPartVisible(part)) continue;
+          if (!part) continue;
+          // Collect hidden-side parts as ghosts (skip butterfly mode and GND/NC nets)
+          if (!this.isPartVisible(part)) {
+            if (!butterfly && !skipGhosts) ghostPartIndices.push(ref.partIndex);
+            continue;
+          }
 
           const gfx = gfxFor(part);
           const outlines = gfx === this.butterflySelectionGfx ? botPartOutlines : topPartOutlines;
@@ -2140,8 +2201,12 @@ export class BoardRenderer {
             this.selectionGfx.stroke({ width: 2.5, color: c as number & 0xffffff, alpha: 0.95 });
           }
         }
+        this.crossSideGhostParts = ghostPartIndices;
       }
     }
+
+    // ── Cross-side ghost components (hidden side, pulsing semi-transparent) ──
+    this.renderCrossSideGhosts();
 
     // ── Elevated labels for selected part/pin ───────────────────────────────
     this.updateElevatedLabels(sel, s);
@@ -2357,7 +2422,7 @@ export class BoardRenderer {
 
     // Skip GND/NC nets — GND connects too many components, NC is not a real net.
     const netUpper = sel.highlightedNet.toUpperCase();
-    if (netUpper.includes('GND') || netUpper === 'NC' || netUpper === 'N/C' || netUpper === 'NO CONNECT') return;
+    if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
     const selectedPart = this.board.parts[sel.partIndex];
     if (!selectedPart) return;
 
@@ -2379,13 +2444,17 @@ export class BoardRenderer {
       arr.push(ref.pinIndex);
     }
 
-    // Collect visible target parts — anchor line to closest net pin
+    // Collect visible + ghost target parts — anchor line to closest net pin
     let targetCount = 0;
     for (const [partIndex, pinIndices] of partNetPins) {
       const part = this.board.parts[partIndex];
-      if (!part || !this.isPartVisible(part)) continue;
+      if (!part) continue;
+      // Include both visible parts and cross-side ghost parts
+      const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(partIndex);
+      if (!this.isPartVisible(part) && !isGhost) continue;
 
-      const root = this.rootForPart(part);
+      // Ghost parts live in the main root (not butterfly) since their layer is hidden
+      const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
 
       // Find the net pin closest to the selection origin
       let bestPin: Point | null = null;
@@ -2449,6 +2518,55 @@ export class BoardRenderer {
         this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
       }
     }
+  }
+
+  /**
+   * Draw cross-side ghost outlines for net-connected parts on the hidden board side.
+   * Called from renderSelection() and the ticker for pulse animation.
+   * Ghosts are semi-transparent with a pulsing opacity driven by netLinePulsePhase.
+   */
+  private renderCrossSideGhosts() {
+    this.crossSideGhostGfx.clear();
+    if (this.crossSideGhostParts.length === 0 || !this.board) return;
+
+    const s = renderSettingsStore.settings;
+    // Pulse alpha between 0.12 and 0.35
+    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
+    const ghostAlpha = 0.12 + pulse * 0.23;
+    const outlineAlpha = 0.25 + pulse * 0.35;
+    const ghostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
+
+    const gfx = this.crossSideGhostGfx;
+
+    for (const partIndex of this.crossSideGhostParts) {
+      const part = this.board.parts[partIndex];
+      if (!part) continue;
+
+      // Draw part body outline
+      const poly = computePartRenderPoly(part, s);
+      if (poly) {
+        gfx.moveTo(poly[0][0], poly[0][1]);
+        for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
+        gfx.closePath();
+      } else {
+        const rb = computePartRenderBounds(part, s);
+        gfx.rect(rb.px, rb.py, rb.pw, rb.ph);
+      }
+      gfx.fill({ color: ghostColor, alpha: ghostAlpha * 0.5 });
+      gfx.stroke({ width: s.selectionWidth, color: ghostColor, alpha: outlineAlpha });
+
+      // Draw pins
+      for (const pin of part.pins) {
+        const clamp = this.activeScene?.pinRadiusClamp.get(partIndex) ?? Infinity;
+        const r = Math.min(computePinRadius(s, pin.radius), clamp);
+        gfx.circle(pin.position.x, pin.position.y, r);
+      }
+      if (part.pins.length > 0) {
+        gfx.fill({ color: ghostColor, alpha: ghostAlpha });
+      }
+    }
+
+    this.needsRender = true;
   }
 
   /** Clip a ray from `from` toward `to` to the edge of a part's bounding rect, returning world coords */
