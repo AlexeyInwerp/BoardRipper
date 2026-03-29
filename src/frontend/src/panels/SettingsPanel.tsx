@@ -209,6 +209,44 @@ function NetColorRulesSection({ rules, ruleActions }: { rules: NetColorRule[]; r
   );
 }
 
+// ---- NC net patterns ----
+
+function NcNetPatternsSection({ patterns, onChange }: { patterns: string[]; onChange: (p: string[]) => void }) {
+  const [newPat, setNewPat] = useState('');
+
+  const add = () => {
+    const trimmed = newPat.trim();
+    if (!trimmed || patterns.includes(trimmed)) return;
+    onChange([...patterns, trimmed]);
+    setNewPat('');
+  };
+
+  const remove = (idx: number) => onChange(patterns.filter((_, i) => i !== idx));
+
+  return (
+    <>
+      <div className="nc-patterns-list">
+        {patterns.map((pat, i) => (
+          <div key={i} className="nc-pattern-row">
+            <span className="nc-pattern-text">{pat}</span>
+            <button className="color-rule-remove" onClick={() => remove(i)} title="Remove pattern">×</button>
+          </div>
+        ))}
+      </div>
+      <div className="color-rule-add">
+        <input
+          type="text" className="color-rule-pattern" value={newPat}
+          onChange={(e) => setNewPat(e.target.value)}
+          placeholder="e.g. NC_*"
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+        />
+        <button className="color-rule-add-btn" onClick={add}>+</button>
+      </div>
+      <div className="color-rule-hint">Outline-only pins, no fill or labels. Case-insensitive. Trailing * = prefix match.</div>
+    </>
+  );
+}
+
 // ---- Part type overrides ----
 
 type OverrideActions = {
@@ -677,6 +715,15 @@ export function SettingsPanel() {
     },
   }), []);
 
+  const onNcPatternsChange = useCallback((patterns: string[]) => {
+    setDraft(prev => {
+      const next = { ...prev, ncNetPatterns: patterns };
+      if (previewingRef.current) renderSettingsStore.applySettings(next);
+      return next;
+    });
+    setDirty(true);
+  }, []);
+
   const overrideActions: OverrideActions = useMemo(() => ({
     update(key, o) {
       setDraft(prev => {
@@ -882,6 +929,8 @@ export function SettingsPanel() {
       <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}
         onToggle={toggleSection} sectionRef={netColorsRef} isFocused={focusedSection === 'netColors'}>
         <NetColorRulesSection rules={draft.netColorRules} ruleActions={ruleActions} />
+        <div className="settings-subsection-label">No-Connect Patterns</div>
+        <NcNetPatternsSection patterns={draft.ncNetPatterns} onChange={onNcPatternsChange} />
       </CollapsibleSection>
 
       <CollapsibleSection id="selection" title="Selection & Highlight" isOpen={openSections.has('selection')}
@@ -962,7 +1011,7 @@ export function SettingsPanel() {
 
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
         onToggle={toggleSection} sectionRef={shortcutsRef} isFocused={focusedSection === 'shortcuts'}>
-        {(['file', 'view', 'navigation'] as const).map(cat => (
+        {(['file', 'view', 'navigation', 'pdf'] as const).map(cat => (
           <div key={cat} className="shortcuts-category">
             <div className="shortcuts-category-title">{cat[0].toUpperCase() + cat.slice(1)}</div>
             {shortcuts.filter(s => s.category === cat).map(s => (

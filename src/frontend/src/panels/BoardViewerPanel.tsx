@@ -7,6 +7,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { BoardSidebar } from '../components/BoardSidebar';
 import { pdfPanelId, isLinkActivating, activateLinkedPanel } from '../store/dockview-api';
 import { pdfStore } from '../store/pdf-store';
+import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 
 export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: number }>) {
@@ -91,6 +92,8 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       if (e.isActive) {
         boardStore.switchTab(tabId);
         rendererRef.current?.resume();
+        // Board is active — clear PDF search ref so Cmd+F goes to board search
+        fileInputRefs.pdfSearch = null;
         // Activate linked PDF panel so it follows the board tab
         const tab = boardStore.tabs.find(t => t.id === tabId);
         if (tab && tab.pdfFileNames.length > 0) {

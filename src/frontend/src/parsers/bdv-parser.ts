@@ -167,6 +167,18 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
 
   const sideStr = (s: number): 'top' | 'bottom' => s === 1 ? 'top' : 'bottom';
 
+  // ---- Detect side=0 Y-mirror axis ----------------------------------------
+  // Some BDV exporters encode bottom-side pins with side=0 and Y-mirrored
+  // coordinates: y_pin = boardMaxY - y_actual. Detect the mirror axis from
+  // the maximum Y across all part bounding boxes.
+  const hasSide0 = rawPins.some(p => p.side === 0);
+  let mirrorY = 0;
+  if (hasSide0) {
+    for (const rp of rawParts) {
+      mirrorY = Math.max(mirrorY, rp.y1, rp.y2);
+    }
+  }
+
   const parts: Part[] = [];
   for (let i = 0; i < rawParts.length; i++) {
     const rp = rawParts[i];
@@ -176,12 +188,15 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
     const pins: Pin[] = [];
     for (let j = rp.pinStart; j < pinEnd && j < rawPins.length; j++) {
       const rpin = rawPins[j];
+      // side=0 pins have Y-mirrored coords — unmirror and assign to bottom
+      const pinY = rpin.side === 0 ? mirrorY - rpin.y : rpin.y;
+      const pinSide = rpin.side === 0 ? 'bottom' as const : side;
       pins.push({
         name: String(j - rp.pinStart + 1),
         number: String(j - rp.pinStart + 1),
-        position: { x: rpin.x, y: rpin.y },
+        position: { x: rpin.x, y: pinY },
         radius: 8,
-        side,
+        side: pinSide,
         net: netNames.get(rpin.netIdx) ?? '',
       });
     }
@@ -191,10 +206,14 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
       y: (rp.y1 + rp.y2) / 2,
     };
 
+    // Use file-provided part bounds so outlier pins don't stretch the box
+    const fileBounds = {
+      minX: Math.min(rp.x1, rp.x2), minY: Math.min(rp.y1, rp.y2),
+      maxX: Math.max(rp.x1, rp.x2), maxY: Math.max(rp.y1, rp.y2),
+    };
     const bounds = pins.length > 0
-      ? computeBBox(pins.map(p => p.position))
-      : { minX: Math.min(rp.x1, rp.x2), minY: Math.min(rp.y1, rp.y2),
-          maxX: Math.max(rp.x1, rp.x2), maxY: Math.max(rp.y1, rp.y2) };
+      ? computeBBox([...pins.map(p => p.position), { x: fileBounds.minX, y: fileBounds.minY }, { x: fileBounds.maxX, y: fileBounds.maxY }])
+      : fileBounds;
 
     parts.push({ name: rp.name, side, type: 'smd', origin, pins, bounds });
   }
@@ -214,6 +233,22 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // ---- Detect Y direction from outline winding order -------------------------
+  // Positive signed area (shoelace) → CCW in Y-up space → file uses Y-up → need flipY.
+  // Negative → CW in Y-up = file is Y-down → no flipY.
+  // Zero/degenerate outline → assume screen-oriented (Y-down) → no flipY.
+  let flipY = false; // default: no flip (screen Y-down)
+  if (outline.length >= 3) {
+    let signedArea2 = 0;
+    for (let i = 0; i < outline.length; i++) {
+      const j = (i + 1) % outline.length;
+      signedArea2 += outline[i].x * outline[j].y - outline[j].x * outline[i].y;
+    }
+    if (Math.abs(signedArea2) > 1) {
+      flipY = signedArea2 > 0; // positive = CCW in Y-up = need flip
+    }
+  }
+
   // ---- Finalise -------------------------------------------------------------
   const allPoints = [
     ...outline,
@@ -222,5 +257,5 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
   const bounds = computeBBox(allPoints);
   const nets = buildNets(parts);
 
-  return { format: 'BDV', outline, parts, nails, nets, bounds };
+  return { format: 'BDV', outline, parts, nails, nets, bounds, flipY };
 }

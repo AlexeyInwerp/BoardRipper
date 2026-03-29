@@ -98,7 +98,8 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 // allAllowedExtensions includes both board and PDF extensions for listing.
 var allAllowedExtensions = map[string]bool{
 	".bvr": true, ".bv": true, ".brd": true, ".bdv": true, ".fz": true,
-	".cae": true, ".cad": true, ".pcb": true, ".pdf": true,
+	".cae": true, ".cad": true, ".pcb": true, ".xzz": true, ".tvw": true,
+	".pdf": true,
 }
 
 func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
 import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
+import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
@@ -22,6 +23,20 @@ const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
 const DEFAULT_CLEAN_CONTRAST = 3;
 const MAX_CANVAS_DIM = 4096;
 const MAX_CANVAS_AREA = 4096 * 4096; // ~16M pixels — safe for mobile/tablet GPUs
+const TIER_DEBOUNCE_MS = 60; // trailing debounce — guarantees final crisp frame after zoom
+
+// --- Offscreen canvas pool (avoids GC churn during fast zoom/page navigation) ---
+const _canvasPool: HTMLCanvasElement[] = [];
+function acquireCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = _canvasPool.pop() ?? document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+}
+function releaseCanvas(c: HTMLCanvasElement): void {
+  // Cap pool size to avoid hoarding memory
+  if (_canvasPool.length < 4) _canvasPool.push(c);
+}
 
 /** Clamp a pdf.js render scale so the resulting canvas stays within GPU limits. */
 function clampCanvasScale(pageW: number, pageH: number, scale: number): number {
@@ -139,6 +154,71 @@ function applyTransform(el: HTMLElement | null, x: number, y: number, s: number)
   if (el) el.style.transform = `translate(${x}px,${y}px) scale(${s})`;
 }
 
+// --- Page Scrubber Rail ---
+function PageScrubber({ currentPage, pageCount, onGoToPage }: {
+  currentPage: number;
+  pageCount: number;
+  onGoToPage: (page: number) => void;
+}) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const [hoverPage, setHoverPage] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const pageFromY = useCallback((clientY: number) => {
+    const rail = railRef.current;
+    if (!rail) return 1;
+    const rect = rail.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    return Math.max(1, Math.min(pageCount, Math.round(ratio * (pageCount - 1) + 1)));
+  }, [pageCount]);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    setIsDragging(true);
+    const page = pageFromY(e.clientY);
+    setHoverPage(page);
+    onGoToPage(page);
+  }, [pageFromY, onGoToPage]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    const page = pageFromY(e.clientY);
+    setHoverPage(page);
+    if (isDragging) onGoToPage(page);
+  }, [pageFromY, isDragging, onGoToPage]);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    setIsDragging(false);
+  }, []);
+
+  // Thumb position as percentage
+  const thumbPct = pageCount > 1 ? ((currentPage - 1) / (pageCount - 1)) * 100 : 0;
+
+  return (
+    <div
+      className={`pdf-scrubber${isDragging ? ' dragging' : ''}`}
+      ref={railRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => setIsDragging(false)}
+      onPointerLeave={() => { if (!isDragging) setHoverPage(null); }}
+      onPointerEnter={(e) => setHoverPage(pageFromY(e.clientY))}
+    >
+      <div className="pdf-scrubber-track">
+        <div className="pdf-scrubber-thumb" style={{ top: `${thumbPct}%` }} />
+      </div>
+      {hoverPage !== null && (
+        <div className="pdf-scrubber-tooltip" style={{ top: `${((hoverPage - 1) / Math.max(1, pageCount - 1)) * 100}%` }}>
+          {hoverPage}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
   const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode } = usePdfDoc(pdfFileName);
@@ -152,6 +232,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
         pdfStore.switchTo(pdfFileName);
+        // Register this panel's search input for global Cmd+F routing
+        fileInputRefs.pdfSearch = searchInputRef.current;
         // Activate linked board panel so it follows the PDF tab
         const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
         log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
@@ -159,9 +241,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
           log.pdf.log(`activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
         }
+      } else {
+        // Clear PDF search ref when this panel deactivates (only if it's ours)
+        if (fileInputRefs.pdfSearch === searchInputRef.current) {
+          fileInputRefs.pdfSearch = null;
+        }
       }
     });
-    return () => disposable.dispose();
+    return () => {
+      // Cleanup on unmount
+      if (fileInputRefs.pdfSearch === searchInputRef.current) {
+        fileInputRefs.pdfSearch = null;
+      }
+      disposable.dispose();
+    };
   }, [pdfFileName, props.api]);
 
   // Board binding: which board tabs have this PDF linked
@@ -210,6 +303,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const wasDragRef = useRef(false);
   const tierDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Last zoom level at which highlights were drawn — skip redraw on pan-only changes */
+  const lastHighlightZoomRef = useRef(0);
+  /** Adaptive zoom: exponential moving average of pdf.js render time (ms) */
+  const renderTimeEmaRef = useRef(0);
+  /** Adaptive zoom: timestamp of last throttled render start */
+  const lastThrottleRenderRef = useRef(0);
 
   const [nightMode, setNightMode] = useState(() => {
     try { return localStorage.getItem(NIGHT_MODE_KEY) === '1'; } catch { return false; }
@@ -250,13 +349,28 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, []);
 
-  /** Schedule a re-render at exact zoom resolution once zoom settles (debounced 150ms) */
+  /** Schedule a re-render at exact zoom resolution.
+   *  Adaptive throttle: renders at a rate the system can sustain (based on EMA of
+   *  recent render times). Fast pages get near-instant crisp zoom; slow pages get
+   *  CSS-only zoom with a trailing debounce for the final crisp frame. */
   const scheduleTierRender = useCallback(() => {
+    // Trailing debounce: always fires after zoom settles — guarantees final crisp frame
     if (tierDebounceRef.current) clearTimeout(tierDebounceRef.current);
     tierDebounceRef.current = setTimeout(() => {
       tierDebounceRef.current = null;
       renderPageRef.current();
-    }, 150);
+    }, TIER_DEBOUNCE_MS);
+
+    // Adaptive throttle: if enough time has passed since the last render, fire now.
+    // Throttle interval = max(EMA × 1.5, 16ms) — gives the GPU breathing room
+    // while keeping up with fast pages. First render (EMA=0) always fires immediately.
+    const ema = renderTimeEmaRef.current;
+    const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
+    const now = performance.now();
+    if (now - lastThrottleRenderRef.current >= throttleMs) {
+      lastThrottleRenderRef.current = now;
+      renderPageRef.current();
+    }
   }, []);
 
   // Reset scale refs when document is unloaded so framing re-runs on next load
@@ -293,29 +407,28 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const cssW = containerWidth;
     const cssH = unscaledViewport.height * baseScale;
 
-    const offscreen = document.createElement('canvas');
-    offscreen.width = viewport.width;
-    offscreen.height = viewport.height;
+    const offscreen = acquireCanvas(viewport.width, viewport.height);
     const offCtx = offscreen.getContext('2d');
-    if (!offCtx) throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`);
+    if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
     // 'display' intent is significantly faster than 'print' for complex schematics
     await page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' }).promise;
 
     // Apply contrast filter for clean mode before creating bitmap
     if (clean) {
-      const tmpCanvas = document.createElement('canvas');
-      tmpCanvas.width = offscreen.width;
-      tmpCanvas.height = offscreen.height;
+      const tmpCanvas = acquireCanvas(offscreen.width, offscreen.height);
       const tmpCtx = tmpCanvas.getContext('2d');
-      if (!tmpCtx) throw new Error('Canvas context failed for clean mode');
+      if (!tmpCtx) { releaseCanvas(offscreen); releaseCanvas(tmpCanvas); throw new Error('Canvas context failed for clean mode'); }
       tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
       tmpCtx.drawImage(offscreen, 0, 0);
       const bitmap = await createImageBitmap(tmpCanvas);
+      releaseCanvas(offscreen);
+      releaseCanvas(tmpCanvas);
       return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
     }
 
     const bitmap = await createImageBitmap(offscreen);
+    releaseCanvas(offscreen);
     return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
   }, [pdfFileName]);
 
@@ -325,16 +438,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const highlight = highlightRef.current;
     if (!canvas || !highlight) return;
 
-    canvas.width = entry.width;
-    canvas.height = entry.height;
+    // Only resize if dimensions changed — avoids clearing existing content
+    if (canvas.width !== entry.width || canvas.height !== entry.height) {
+      canvas.width = entry.width;
+      canvas.height = entry.height;
+    }
     canvas.style.width = `${entry.cssW}px`;
     canvas.style.height = `${entry.cssH}px`;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
 
-    highlight.width = entry.width;
-    highlight.height = entry.height;
+    if (highlight.width !== entry.width || highlight.height !== entry.height) {
+      highlight.width = entry.width;
+      highlight.height = entry.height;
+    }
     highlight.style.width = `${entry.cssW}px`;
     highlight.style.height = `${entry.cssH}px`;
 
@@ -368,17 +486,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const cached = getPageCache(cacheKey);
       if (cached && cached.cssW === containerWidth) {
         blitToCanvas(cached);
-        const tHit = performance.now();
-        log.perf.log(`cache-hit ${cacheKey} ${Math.round(tHit - t0)}ms`);
+        const tHit = performance.now() - t0;
+        // Cache hits are near-instant — feed EMA so adaptive zoom stays aggressive
+        const prev = renderTimeEmaRef.current;
+        renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + tHit * 0.3 : tHit;
+        log.perf.log(`cache-hit ${cacheKey} ${Math.round(tHit)}ms`);
         return;
       }
 
-      // If zoomed in, show a low-res preview from cache while we render hi-res
-      if (resTier > 1) {
-        const lowKey = pageCacheKey(pdfFileName, currentPage, 1, cleanMode);
-        const lowCached = getPageCache(lowKey);
-        if (lowCached) blitToCanvas(lowCached);
-      }
+      // Don't blit a low-res preview — it downgrades the current canvas content and
+      // causes a visible blur flash. The existing canvas (at whatever tier was last
+      // rendered) stays visible via CSS transform until the new tier is ready.
 
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
       if (renderIdRef.current !== renderId) return;
@@ -393,35 +511,50 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
 
-      // Render to offscreen buffer
-      const offscreen = document.createElement('canvas');
-      offscreen.width = viewport.width;
-      offscreen.height = viewport.height;
+      // Render to pooled offscreen buffer
+      const offscreen = acquireCanvas(viewport.width, viewport.height);
       const offCtx = offscreen.getContext('2d');
-      if (!offCtx) throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`);
+      if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
       // 'display' intent is significantly faster than 'print' for complex schematics
       const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
 
-      if (renderIdRef.current !== renderId) return;
+      if (renderIdRef.current !== renderId) { releaseCanvas(offscreen); return; }
       const tRender = performance.now();
 
-      // Blit to visible canvas
+      // Apply contrast to offscreen buffer before creating bitmap (avoids double-blit)
+      let sourceCanvas = offscreen;
+      if (cleanMode) {
+        const tmpCanvas = acquireCanvas(offscreen.width, offscreen.height);
+        const tmpCtx = tmpCanvas.getContext('2d');
+        if (tmpCtx) {
+          tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
+          tmpCtx.drawImage(offscreen, 0, 0);
+          releaseCanvas(offscreen);
+          sourceCanvas = tmpCanvas;
+        }
+      }
+
+      // Create bitmap from offscreen BEFORE touching the visible canvas —
+      // this avoids the blank frame caused by canvas.width= clearing content.
+      let bitmap: ImageBitmap | null = null;
+      try { bitmap = await createImageBitmap(sourceCanvas); } catch { /* skip */ }
+      if (renderIdRef.current !== renderId) { releaseCanvas(sourceCanvas); bitmap?.close(); return; }
+
+      // Atomic blit: resize + draw in one go, minimising the cleared-canvas window
       const canvas = canvasRef.current;
       const highlight = highlightRef.current;
-      if (!canvas || !highlight) return;
+      if (!canvas || !highlight) { releaseCanvas(sourceCanvas); bitmap?.close(); return; }
 
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      if (cleanMode) ctx.filter = `contrast(${cleanContrastRef.current})`;
-      ctx.drawImage(offscreen, 0, 0);
-      if (cleanMode) ctx.filter = 'none';
+      if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
+      releaseCanvas(sourceCanvas);
       const tCopy = performance.now();
 
       scaleRef.current = baseScale;
@@ -435,26 +568,30 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       drawHighlightsRef.current();
 
-      // Store in cache (create bitmap from the canvas for efficient reuse)
-      try {
-        const bitmap = await createImageBitmap(canvas);
+      // Cache the pre-created bitmap for instant reuse
+      if (bitmap) {
         putPageCache(cacheKey, {
           bitmap, width: viewport.width, height: viewport.height,
           cssW, cssH, baseScale, vpHeight: unscaledViewport.height,
           vpTransform: unscaledViewport.transform,
         });
-      } catch { /* bitmap creation not supported — skip caching */ }
+      }
 
+      const totalMs = tCopy - t0;
       const metrics = {
         file: pdfFileName, page: currentPage, tier: resTier, clean: cleanMode,
         canvasW: viewport.width, canvasH: viewport.height,
         getPageMs: Math.round(tPage - t0),
         renderMs: Math.round(tRender - tPage),
         copyMs: Math.round(tCopy - tRender),
-        totalMs: Math.round(tCopy - t0),
+        totalMs: Math.round(totalMs),
       };
       log.perf.log(JSON.stringify(metrics));
       window.dispatchEvent(new CustomEvent('pdf-render-perf', { detail: metrics }));
+
+      // Update adaptive zoom EMA (α=0.3 — responsive but not twitchy)
+      const prev = renderTimeEmaRef.current;
+      renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + totalMs * 0.3 : totalMs;
 
       // Prefetch adjacent pages at base resolution (fire-and-forget)
       const pfId = ++prefetchIdRef.current;
@@ -482,11 +619,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const drawHighlights = useCallback(() => {
     if (!highlightRef.current || !isLoaded) return;
     const highlight = highlightRef.current;
-    const hCtx = highlight.getContext('2d')!;
-    hCtx.clearRect(0, 0, highlight.width, highlight.height);
 
     const pageIndex = currentPage - 1;
     const pageMatches = pdfStore.getDocMatchesForPage(pdfFileName, pageIndex);
+
+    // Hide highlight canvas entirely when no matches — avoids compositing an empty layer
+    if (pageMatches.length === 0 && matches.length === 0) {
+      highlight.style.display = 'none';
+      lastHighlightZoomRef.current = 0;
+      return;
+    }
+    if (highlight.style.display === 'none') highlight.style.display = '';
+
+    const hCtx = highlight.getContext('2d')!;
+    hCtx.clearRect(0, 0, highlight.width, highlight.height);
     const scale = scaleRef.current * renderTierRef.current ;
     const vpT = viewportTransformRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1;
@@ -941,6 +1087,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             const upper = word.toUpperCase();
             if (board.parts.some(p => p.name.toUpperCase() === upper)) {
               boardStore.focusPart(word);
+            } else {
+              boardStore.focusNet(word);
             }
           }
         }
@@ -1406,6 +1554,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
           <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
         </div>
+        {pageCount > 1 && (
+          <PageScrubber
+            currentPage={currentPage}
+            pageCount={pageCount}
+            onGoToPage={(n) => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(n); }}
+          />
+        )}
       </div>
     </div>
   );

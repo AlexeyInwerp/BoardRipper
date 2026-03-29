@@ -9,6 +9,36 @@ import { lookupBoard } from '../store/apple-boards';
 import { IconStack2 } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 
+/** Persisted tree expansion state — survives tab switches and page reloads.
+ *  Closing a parent keeps children's keys in the Set so re-opening restores them. */
+function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [Set<string>, (key: string) => void, () => void] {
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch { /* ignore */ }
+    return new Set(defaultKeys);
+  });
+
+  const toggle = useCallback((key: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, [storageKey]);
+
+  const collapseAll = useCallback(() => {
+    const empty = new Set<string>();
+    setExpanded(empty);
+    try { localStorage.setItem(storageKey, '[]'); } catch { /* ignore */ }
+  }, [storageKey]);
+
+  return [expanded, toggle, collapseAll];
+}
+
 const MULTILAYER_FORMATS = new Set(['TVW', 'ALLEGRO_BRD']);
 /** Extensions that always indicate multi-layer formats (format_id may not be set by backend) */
 const MULTILAYER_EXTENSIONS = new Set(['.tvw']);
@@ -741,16 +771,7 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const toggle = (key: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+  const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-metadata');
 
   const filteredGroups = useMemo(() => groups.map(g => ({
     ...g,
@@ -763,6 +784,9 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
 
   return (
     <div className="library-tree">
+      {expanded.size > 0 && (
+        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all">⊟</button>
+      )}
       {filteredGroups.map(group => {
         const mfrKey = `mfr:${group.manufacturer}`;
         const isExpanded = expanded.has(mfrKey);
@@ -834,16 +858,7 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const toggle = (key: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+  const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-model');
 
   const filteredGroups = useMemo(() => groups.map(g => ({
     ...g,
@@ -856,6 +871,9 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
 
   return (
     <div className="library-tree">
+      {expanded.size > 0 && (
+        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all">⊟</button>
+      )}
       {filteredGroups.map(group => {
         const modelKey = `model:${group.modelLine}`;
         const isExpanded = expanded.has(modelKey);
@@ -932,21 +950,15 @@ function FolderView({ tree, selectedFileId, filterFile, onSelectFile, onOpenFile
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(['']));
-
-  const toggle = (path: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
+  const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-folders', ['']);
 
   if (!tree) return <div className="library-empty">Loading folder tree...</div>;
 
   return (
     <div className="library-tree">
+      {expanded.size > 0 && (
+        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all folders">⊟</button>
+      )}
       <FolderNodeView
         node={tree}
         depth={0}

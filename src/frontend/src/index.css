@@ -989,6 +989,31 @@ html, body, #root {
   margin-top: 4px;
 }
 
+/* NC pattern list */
+.nc-pattern-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+}
+.nc-pattern-text {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.85em;
+  color: var(--text-primary);
+  padding: 1px 6px;
+}
+.settings-subsection-label {
+  font-size: 0.78em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 12px;
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
 /* Settings mockup preview */
 .settings-mockup {
   position: relative;
@@ -2463,6 +2488,32 @@ html, body, #root {
 
 .library-tree {
   padding: 2px 0;
+  position: relative;
+}
+.library-collapse-all {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+}
+.library-collapse-all:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
 }
 
 .library-tree-group {
@@ -3382,4 +3433,63 @@ html, body, #root {
   border-radius: 3px;
   font-size: 11px;
   z-index: 50;
+}
+
+/* --- Page Scrubber Rail --- */
+.pdf-scrubber {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  right: 4px;
+  width: 14px;
+  z-index: 40;
+  cursor: pointer;
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+.pdf-scrubber:hover {
+  opacity: 0.6;
+}
+.pdf-scrubber.dragging {
+  opacity: 0.9;
+}
+.pdf-scrubber-track {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  background: var(--text-secondary);
+  border-radius: 2px;
+  opacity: 0.4;
+}
+.pdf-scrubber-thumb {
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(0,0,0,0.5);
+  transition: top 0.08s ease-out;
+}
+.pdf-scrubber.dragging .pdf-scrubber-thumb {
+  transition: none;
+}
+.pdf-scrubber-tooltip {
+  position: absolute;
+  right: 20px;
+  transform: translateY(-50%);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }

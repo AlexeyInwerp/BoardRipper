@@ -79,7 +79,7 @@ function saveSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 }
 
-const BOARD_EXTENSIONS = new Set(['.bvr', '.bv', '.brd', '.fz', '.cae', '.cad', '.pcb', '.xzz']);
+const BOARD_EXTENSIONS = new Set(['.bvr', '.bv', '.brd', '.bdv', '.fz', '.cae', '.cad', '.pcb', '.xzz', '.tvw']);
 const PDF_EXTENSIONS = new Set(['.pdf']);
 
 function scanDirectory(dirPath) {
