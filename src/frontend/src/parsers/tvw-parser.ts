@@ -1324,7 +1324,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     }
   }
 
-  // Convert TVW lines from copper layers into traces — tagged with layer index
+  // Convert TVW lines + arcs from copper layers into traces — tagged with layer index
   const allTraces: Trace[] = [];
   for (let col = 0; col < copperLayers.length; col++) {
     const layer = copperLayers[col];
@@ -1340,6 +1340,27 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         net: getNetName(tvw.nets, line.net),
         layer: col,
       });
+    }
+
+    // Tessellate arcs into straight-line trace segments (16 segments per arc)
+    for (const arc of layer.arcs) {
+      const shape = resolveShape(layer.shapes, arc.dcode);
+      const width = shape ? Math.max(shape.width, shape.height) : 5;
+      const net = getNetName(tvw.nets, arc.net);
+      const steps = 16;
+      const startRad = arc.startAngle * Math.PI / 180;
+      const sweepRad = arc.sweepAngle * Math.PI / 180;
+      for (let s = 0; s < steps; s++) {
+        const a1 = startRad + (sweepRad * s) / steps;
+        const a2 = startRad + (sweepRad * (s + 1)) / steps;
+        allTraces.push({
+          start: { x: arc.center.x + arc.radius * Math.cos(a1), y: arc.center.y + arc.radius * Math.sin(a1) },
+          end:   { x: arc.center.x + arc.radius * Math.cos(a2), y: arc.center.y + arc.radius * Math.sin(a2) },
+          width,
+          net,
+          layer: col,
+        });
+      }
     }
   }
 
