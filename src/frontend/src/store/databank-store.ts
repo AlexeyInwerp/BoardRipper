@@ -1,12 +1,12 @@
 import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
+import { Emitter } from './emitter';
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
   return typeof window !== 'undefined' && !!window.electronAPI?.scanLibrary;
 }
 
-export type DatabankListener = () => void;
 
 export interface DatabankFile {
   id: number;
@@ -144,7 +144,7 @@ export interface ModelGroup {
   unresolved: DatabankFile[];
 }
 
-class DatabankStore {
+class DatabankStore extends Emitter {
   private _files: DatabankFile[] = [];
   private _folderTree: FolderNode | null = null;
   private _scanStatus: ScanStatus | null = (() => {
@@ -182,7 +182,6 @@ class DatabankStore {
   private _selectedFileDetail: FileDetail | null = null;
   private _loading = false;
   private _backendAvailable = true; // assume yes until first failure
-  private _listeners = new Set<DatabankListener>();
   private _libraryPath: string | null = null;
   private _electronMode = false;
 
@@ -290,15 +289,6 @@ class DatabankStore {
     }
 
     return groups;
-  }
-
-  subscribe(listener: DatabankListener): () => void {
-    this._listeners.add(listener);
-    return () => this._listeners.delete(listener);
-  }
-
-  private notify() {
-    this._listeners.forEach(l => l());
   }
 
   // --- API calls ---

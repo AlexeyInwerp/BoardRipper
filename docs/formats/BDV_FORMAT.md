@@ -133,4 +133,5 @@ NAILS: 2
 
 - All coordinates are in mils — no conversion needed for BoardRipper's internal coordinate system.
 - Pin names are synthetic (sequential `1`, `2`, ...) since the format does not include pin names.
-- The `flipY` flag is enabled for this format.
+- **`side=0` handling:** Some BDV exporters emit `side=0` for bottom-side pins instead of `side=2`. When detected, the parser treats these as bottom-side and applies a Y-mirror to correct the inverted coordinates (bottom-side coords in these files are Y-mirrored relative to top-side).
+- **Dynamic `flipY`:** The format descriptor sets `flipY: true` as a default, but the parser overrides this per-board using a shoelace-algorithm winding-order test on the board outline. If the outline winds clockwise (positive signed area), `flipY` is set to `false`. This handles BDV files from different exporters that use different coordinate conventions.

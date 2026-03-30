@@ -87,13 +87,17 @@
 - [x] Context menu (right-click: copy name, highlight net, open panel)
 
 ### Phase 5: Polish (IN PROGRESS)
-- [ ] File drag-and-drop upload
-- [ ] Recent files list
+- [x] File drag-and-drop upload
+- [x] Recent files list
 - [ ] Dark/light theme toggle
 - [ ] Production optimizations (gzip, caching headers)
 
-### Future
-- [ ] PDF viewer ↔ component binding (click component → jump to PDF location)
+### PDF Viewer (DONE)
+- [x] Multi-document PDF viewer with per-document state
+- [x] PDF text search (multi-term, spatial, @page syntax)
+- [x] PDF ↔ component binding (click component → jump to PDF location)
+- [x] Bookmarks, night mode, page scrubber
+- [x] PDF content search from library panel
 
 ---
 
@@ -150,22 +154,31 @@ so they always appear above the selection/highlight overlay.
 
 ### BoardData Model (TypeScript)
 
+See `parsers/types.ts` for the canonical definitions. Summary:
+
 ```typescript
 interface BoardData {
-  format: 'BVR1' | 'BVR3';
+  format: string;       // e.g. 'BVR1', 'BVR3', 'BRD', 'BDV', 'FZ', 'CAD', 'XZZ', 'TVW', 'ALLEGRO_BRD'
   outline: Point[];
   parts: Part[];
-  nails: Nail[];       // BVR1 only
-  nets: Map<string, Net>;  // derived: net_name → pins[]
+  nails: Nail[];
+  nets: Map<string, Net>;  // derived: net_name → { name, pins[] }
+  bounds: BBox;            // computed global bounds of all points
+  traces?: Trace[];        // PCB traces (TVW, Allegro)
+  vias?: Via[];            // vias (TVW, Allegro)
+  layerNames?: string[];   // multi-layer board layer names
+  butterflyFoldAxis?: 'x' | 'y';  // axis for butterfly mode fold
+  flipY?: boolean;         // parser hint: Y-axis is inverted
 }
 
 interface Part {
   name: string;
   side: 'top' | 'bottom' | 'both';
   type: 'smd' | 'throughhole';
-  origin: Point;       // BVR3: explicit, BVR1: computed from pins
+  origin: Point;
   pins: Pin[];
-  bounds: BBox;        // computed from pin positions
+  bounds: BBox;
+  layer?: number;          // layer index for multi-layer boards
 }
 
 interface Pin {
@@ -223,56 +236,28 @@ Panels can be:
 
 ```
 src/
-├── frontend/
-│   ├── src/
-│   │   ├── main.tsx                    # React entry point
-│   │   ├── App.tsx                     # Dockview layout root, panel wiring
-│   │   ├── index.css                   # Global styles (dark theme, panel/settings CSS)
-│   │   ├── parsers/
-│   │   │   ├── types.ts               # BoardData, Part, Pin, Nail, Point, BBox interfaces
-│   │   │   ├── bvr1-parser.ts         # BVRAW_FORMAT_1 parser (tab-delimited, coords ×1000)
-│   │   │   ├── bvr3-parser.ts         # BVRAW_FORMAT_3 parser (keyword-value, relative pins)
-│   │   │   └── index.ts               # Auto-detect format + re-export all types/helpers
-│   │   ├── renderer/
-│   │   │   ├── BoardRenderer.ts        # PixiJS Application + Viewport orchestrator;
-│   │   │   │                           #   selection, net highlight, butterfly mode, net lines
-│   │   │   ├── board-scene.ts          # Shared pure scene builder — used by BoardRenderer
-│   │   │   │                           #   and SettingsMockup; BitmapText atlases, BOARD_COLORS
-│   │   │   └── mockup-data.ts          # Static fake board (U1 IC + R1 + C1) for SettingsMockup
-│   │   ├── components/
-│   │   │   ├── BoardCanvas.tsx         # React container mounting BoardRenderer
-│   │   │   ├── Toolbar.tsx             # File open, flip, layer toggles, net lines, zoom fit
-│   │   │   ├── StatusBar.tsx           # Part/net/nail counts, selected component info, zoom %
-│   │   │   ├── ContextMenu.tsx         # Right-click menu (copy name, highlight net, panel)
-│   │   │   ├── TabBar.tsx              # Multi-board tab switcher
-│   │   │   └── PanelAdder.tsx          # Button to re-open hidden Dockview panels
-│   │   ├── panels/
-│   │   │   ├── ComponentInfoPanel.tsx  # Selected part metadata + pin list
-│   │   │   ├── NetListPanel.tsx        # All nets (searchable, click to highlight)
-│   │   │   ├── SearchResultsPanel.tsx  # Component/net search results
-│   │   │   ├── PdfViewerPanel.tsx      # PDF viewer (pan/zoom, text search, bookmarks)
-│   │   │   ├── SettingsPanel.tsx       # Render tuning UI (collapsible sections, live preview)
-│   │   │   └── SettingsMockup.tsx      # PixiJS mockup preview — same pipeline as BoardRenderer
-│   │   ├── hooks/
-│   │   │   ├── useBoardStore.ts        # useSyncExternalStore wrapper for board-store
-│   │   │   └── usePdfStore.ts          # useSyncExternalStore wrapper for pdf-store
-│   │   └── store/
-│   │       ├── board-store.ts          # Central board/selection/tabs/search/butterfly state
-│   │       ├── board-cache.ts          # IndexedDB cache (key: fileName:fileSize:lastModified)
-│   │       ├── render-settings.ts      # Visual tuning store (sizes, alphas, net color rules)
-│   │       ├── pdf-store.ts            # PDF viewer state (page, search, bookmarks)
-│   │       ├── context-menu-store.ts   # Right-click context menu state
-│   │       └── dockview-api.ts         # Dockview API reference holder
-│   ├── tests/
-│   │   └── boardripper.spec.ts         # Playwright E2E smoke tests
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   └── playwright.config.ts
+├── frontend/src/
+│   ├── main.tsx                    # React entry point
+│   ├── App.tsx                     # Dockview layout root, panel wiring, drag-drop
+│   ├── index.css                   # Global styles (dark theme)
+│   ├── parsers/                    # 9 format parsers — see registry.ts for full list
+│   │   ├── types.ts               # BoardData, Part, Pin, Net, Trace, Via, BBox interfaces
+│   │   ├── registry.ts            # FormatDescriptor registry + content-based detection
+│   │   ├── index.ts               # Barrel re-export
+│   │   ├── *-parser.ts / *-format.ts  # One parser + one descriptor per format
+│   │   └── allegro/               # Allegro BRD sub-modules (6 files)
+│   ├── renderer/
+│   │   ├── BoardRenderer.ts       # PixiJS orchestrator (viewport, selection, net lines, LoD)
+│   │   ├── board-scene.ts         # Shared scene builder — used by renderer + settings mockup
+│   │   └── mockup-data.ts         # Static fake board for SettingsMockup
+│   ├── components/                # Toolbar, StatusBar, TabBar, ContextMenu, BoardSidebar, etc.
+│   ├── panels/                    # Dockview panels: BoardViewer, PDF, Settings, NetList, etc.
+│   ├── hooks/                     # createStoreHook factory, useBoardStore, usePdfStore, useDatabank
+│   └── store/                     # board-store, pdf-store, render-settings, board-cache, etc.
+│       └── tests/                  # Playwright E2E specs (12 files)
 ├── backend/
-│   ├── main.go                         # HTTP server (env config, routes, SPA fallback)
-│   └── handlers/
-│       └── files.go                    # Upload, list, get, delete handlers
+│   ├── main.go                    # HTTP server (env config, routes, SPA fallback)
+│   └── handlers/files.go         # Upload, list, get, delete handlers
 ```
 
 ---

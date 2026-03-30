@@ -130,13 +130,15 @@ export function useKeyboardShortcuts() {
     // Block browser page zoom (Ctrl+wheel on Win/Linux, Cmd+wheel / pinch on Mac).
     // The board viewport (pixi-viewport) and PDF panel handle their own zoom already;
     // we just need to stop the browser from scaling the entire page.
+    // Only block browser zoom when pointer is over a canvas (board or PDF viewer).
+    // This preserves Ctrl+wheel page zoom in settings, debug, and other non-canvas panels.
     const blockBrowserZoom = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
+      if ((e.ctrlKey || e.metaKey) && (e.target instanceof HTMLCanvasElement)) {
         e.preventDefault();
       }
     };
 
-    // Also block Ctrl+Plus/Minus/0 keyboard zoom
+    // Block Ctrl+Plus/Minus/0 keyboard zoom only when a canvas-based panel is focused
     const blockKeyboardZoom = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')) {

@@ -1,11 +1,11 @@
 import type { BoardData, Part, Pin } from '../parsers';
+import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 
-export type BoardStoreListener = () => void;
 
 export interface SelectionState {
   partIndex: number | null;
@@ -95,12 +95,20 @@ function saveViewPrefs(p: ViewPrefs) {
   try { localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
 }
 
-class BoardStore {
+export interface Toast {
+  id: number;
+  message: string;
+  type: 'error' | 'info';
+  timestamp: number;
+}
+
+class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
   private _focusRequest: FocusRequest | null = null;
   private _pdfFiles: Map<string, PdfEntry> = new Map();
-  private _listeners = new Set<BoardStoreListener>();
+  private _toasts: Toast[] = [];
+  private _nextToastId = 1;
   /** Callback fired when a new board tab is created (tabId, fileName) */
   onTabCreated: ((tabId: number, fileName: string) => void) | null = null;
   /** Callback fired when a board tab is closed (tabId) */
@@ -109,6 +117,22 @@ class BoardStore {
   get tabs(): BoardTab[] { return this._tabs; }
   get activeTabId(): number | null { return this._activeTabId; }
   get pdfFiles(): Map<string, PdfEntry> { return this._pdfFiles; }
+  get toasts(): Toast[] { return this._toasts; }
+
+  addToast(message: string, type: 'error' | 'info' = 'error') {
+    const toast: Toast = { id: this._nextToastId++, message, type, timestamp: Date.now() };
+    this._toasts = [...this._toasts, toast];
+    this.notify();
+    setTimeout(() => this.dismissToast(toast.id), 6000);
+  }
+
+  dismissToast(id: number) {
+    const next = this._toasts.filter(t => t.id !== id);
+    if (next.length !== this._toasts.length) {
+      this._toasts = next;
+      this.notify();
+    }
+  }
 
   /** Look up a specific tab by id (for per-panel sidebar use). */
   getTab(tabId: number): BoardTab | null {
@@ -267,15 +291,6 @@ class BoardStore {
     return null;
   }
 
-  subscribe(listener: BoardStoreListener): () => void {
-    this._listeners.add(listener);
-    return () => this._listeners.delete(listener);
-  }
-
-  private notify() {
-    for (const l of this._listeners) l();
-  }
-
   private updateActiveTab(patch: Partial<BoardTab>) {
     const tab = this.activeTab;
     if (!tab) return;
@@ -377,7 +392,9 @@ class BoardStore {
 
       this.autoBindBoard(file.name);
     } catch (err) {
-      log.cache.error(`Failed to load ${file.name}:`, err);
+      log.parser.error(`Failed to load ${file.name}:`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.addToast(`Failed to load ${file.name}: ${errMsg}`, 'error');
       const idx = this._tabs.indexOf(tab);
       if (idx !== -1) this._tabs.splice(idx, 1);
       if (this._activeTabId === tab.id) {
@@ -432,6 +449,11 @@ class BoardStore {
     for (const name of tab.pdfFileNames) {
       const entry = this._pdfFiles.get(name);
       if (entry) entry.boundTabIds.delete(tab.id);
+    }
+
+    // Clear search cache if it referenced the closed tab's board
+    if (this._cachedSearchBoard && tab.board === this._cachedSearchBoard) {
+      this._cachedSearchBoard = null;
     }
 
     this._tabs.splice(idx, 1);

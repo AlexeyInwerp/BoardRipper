@@ -108,6 +108,7 @@ export function parseBVR3(text: string): BoardData {
         break;
       case 'PART_SIDE':
         if (currentPart) {
+          // Side intentionally inverted — see bvr1-parser.ts for detailed explanation.
           currentPart.side = value === 'T' ? 'bottom' : value === 'B' ? 'top' : 'both';
         }
         break;

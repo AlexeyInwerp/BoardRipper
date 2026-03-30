@@ -166,6 +166,8 @@ export class BoardRenderer {
 
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
+  // Pool index for reusing BitmapText children in netLabelLayer
+  private netLabelPoolIdx = 0;
 
   // Animated zoom state
   private zoomAnim: {
@@ -185,6 +187,11 @@ export class BoardRenderer {
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
   private sceneCache = new Map<BoardData, BoardScene>();
   private activeScene: BoardScene | null = null;
+
+  // Spatial hash for O(1) hit-testing — maps grid cell keys to part indices.
+  // Rebuilt when activateScene sets a new board.
+  private hitGrid: Map<string, number[]> = new Map();
+  private hitGridCellSize = 0;
 
   // WebGL context loss recovery
   private contextLost = false;
@@ -401,8 +408,14 @@ export class BoardRenderer {
     } catch (e) { log.render.warn('teardown canvas cleanup error:', e); }
 
     // Do NOT call app.destroy() — it corrupts the global batch pool.
-    // The old Application and its WebGL context will be GC'd.
-    log.render.log(`teardownForReinit tab=${this.tabId} — old app released (no destroy)`);
+    // Instead, explicitly release the WebGL context so the browser can reclaim the
+    // GPU slot (browsers limit WebGL contexts to ~8-16). Then null out references
+    // so GC can collect the Application and its scene graph.
+    try {
+      const gl = (this.app?.renderer as any)?.gl as WebGL2RenderingContext | undefined;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    } catch { /* ignore — renderer may already be gone */ }
+    log.render.log(`teardownForReinit tab=${this.tabId} — old app released (context lost, no destroy)`);
   }
 
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
@@ -1455,6 +1468,9 @@ export class BoardRenderer {
     // Restore viewport position or fit
     this.restoreViewportState(board);
 
+    // Build spatial hash for fast hit-testing
+    this.buildHitGrid(board);
+
     // Force LoD re-evaluation for the new scene
     this.lastLodScale = -1;
     this.updateLoD();
@@ -1824,6 +1840,29 @@ export class BoardRenderer {
 
   // --- Selection rendering (always rebuilt, lightweight) ---
 
+  /** Reuse or create a BitmapText in the net label pool, copying properties from a source label */
+  private acquireNetLabel(srcLabel: BitmapText) {
+    let label: BitmapText;
+    if (this.netLabelPoolIdx < this.netLabelLayer.children.length) {
+      label = this.netLabelLayer.children[this.netLabelPoolIdx] as BitmapText;
+      label.text = srcLabel.text;
+      label.style.fontSize = srcLabel.style.fontSize as number;
+    } else {
+      label = new BitmapText({
+        text: srcLabel.text,
+        style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
+      });
+      label.anchor.set(0.5, 0.5);
+      this.netLabelLayer.addChild(label);
+    }
+    label.x = srcLabel.x;
+    label.y = srcLabel.y;
+    label.rotation = srcLabel.rotation;
+    label.scale.copyFrom(srcLabel.scale);
+    label.visible = true;
+    this.netLabelPoolIdx++;
+  }
+
   private renderSelection() {
     const perf = this.perfVisible;
     const selStart = perf ? performance.now() : 0;
@@ -1842,7 +1881,11 @@ export class BoardRenderer {
       this.highlightedPartLabel = null;
     }
     this.netDimGfx.clear();
-    this.netLabelLayer.removeChildren();
+    // Hide all pooled net labels instead of removing (avoids GC churn)
+    for (let i = 0; i < this.netLabelLayer.children.length; i++) {
+      this.netLabelLayer.children[i].visible = false;
+    }
+    this.netLabelPoolIdx = 0;
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
     this.crossSideGhostGfx.clear();
@@ -2045,16 +2088,7 @@ export class BoardRenderer {
           if (this.isTopVisible) {
             for (const srcLabel of this.activeScene.topLabels) {
               if (!srcLabel.visible || !affectedTopNames.has(srcLabel.text)) continue;
-              const clone = new BitmapText({
-                text: srcLabel.text,
-                style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
-              });
-              clone.anchor.set(0.5, 0.5);
-              clone.x = srcLabel.x;
-              clone.y = srcLabel.y;
-              clone.rotation = srcLabel.rotation;
-              clone.scale.copyFrom(srcLabel.scale);
-              this.netLabelLayer.addChild(clone);
+              this.acquireNetLabel(srcLabel);
             }
           }
           if (this.isBottomVisible && !butterfly) {
@@ -2063,16 +2097,7 @@ export class BoardRenderer {
             // would render them mirrored at wrong positions, so skip.
             for (const srcLabel of this.activeScene.bottomLabels) {
               if (!srcLabel.visible || !affectedBotNames.has(srcLabel.text)) continue;
-              const clone = new BitmapText({
-                text: srcLabel.text,
-                style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
-              });
-              clone.anchor.set(0.5, 0.5);
-              clone.x = srcLabel.x;
-              clone.y = srcLabel.y;
-              clone.rotation = srcLabel.rotation;
-              clone.scale.copyFrom(srcLabel.scale);
-              this.netLabelLayer.addChild(clone);
+              this.acquireNetLabel(srcLabel);
             }
           }
         }
@@ -2585,15 +2610,20 @@ export class BoardRenderer {
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    for (const { start, end } of this.netLineSegments) {
-      if (useFade) {
-        this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-      } else if (s.netLineDashed) {
-        this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
-      } else {
+    if (!useFade && !s.netLineDashed) {
+      // Fast path: batch all segments into a single stroke() call
+      for (const { start, end } of this.netLineSegments) {
         this.netLinesGfx.moveTo(start.x, start.y);
         this.netLinesGfx.lineTo(end.x, end.y);
-        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+      }
+      this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+    } else {
+      for (const { start, end } of this.netLineSegments) {
+        if (useFade) {
+          this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+        } else {
+          this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+        }
       }
     }
   }
@@ -2716,7 +2746,8 @@ export class BoardRenderer {
     }
   }
 
-  /** Draw a net line with alpha fade-in near the start to reduce clutter with many lines */
+  /** Draw a net line with alpha fade-in near the start to reduce clutter with many lines.
+   *  Non-dashed mode: batches all fade segments per alpha level into a single stroke call. */
   private drawNetLineWithFade(from: Point, to: Point, fadeDist: number, width: number, color: number, alpha: number, dashed: boolean, dashLen: number, dashOffset: number) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
@@ -2727,30 +2758,35 @@ export class BoardRenderer {
     const uy = dy / totalLen;
     const fadeEnd = Math.min(fadeDist, totalLen * 0.4);
 
-    // Draw fade region in 4 steps with increasing alpha
-    const fadeSteps = 4;
-    for (let i = 0; i < fadeSteps; i++) {
-      const t0 = (i / fadeSteps) * fadeEnd;
-      const t1 = ((i + 1) / fadeSteps) * fadeEnd;
-      const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7; // ramp from ~0.18x to ~0.7x alpha
-      const segFrom: Point = { x: from.x + ux * t0, y: from.y + uy * t0 };
-      const segTo: Point = { x: from.x + ux * t1, y: from.y + uy * t1 };
-      if (dashed) {
+    if (dashed) {
+      // Dashed: each drawDashedLine call already batches internally
+      const fadeSteps = 4;
+      for (let i = 0; i < fadeSteps; i++) {
+        const t0 = (i / fadeSteps) * fadeEnd;
+        const t1 = ((i + 1) / fadeSteps) * fadeEnd;
+        const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7;
+        const segFrom: Point = { x: from.x + ux * t0, y: from.y + uy * t0 };
+        const segTo: Point = { x: from.x + ux * t1, y: from.y + uy * t1 };
         this.drawDashedLine(segFrom, segTo, dashLen, dashOffset + t0, width, color, stepAlpha);
-      } else {
-        this.netLinesGfx.moveTo(segFrom.x, segFrom.y);
-        this.netLinesGfx.lineTo(segTo.x, segTo.y);
+      }
+      if (fadeEnd < totalLen) {
+        const remainFrom: Point = { x: from.x + ux * fadeEnd, y: from.y + uy * fadeEnd };
+        this.drawDashedLine(remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
+      }
+    } else {
+      // Non-dashed: batch all fade segments by alpha level, one stroke() per level
+      const fadeSteps = 4;
+      for (let i = 0; i < fadeSteps; i++) {
+        const t0 = (i / fadeSteps) * fadeEnd;
+        const t1 = ((i + 1) / fadeSteps) * fadeEnd;
+        const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7;
+        this.netLinesGfx.moveTo(from.x + ux * t0, from.y + uy * t0);
+        this.netLinesGfx.lineTo(from.x + ux * t1, from.y + uy * t1);
         this.netLinesGfx.stroke({ width, color, alpha: stepAlpha });
       }
-    }
-
-    // Draw remaining line at full alpha
-    if (fadeEnd < totalLen) {
-      const remainFrom: Point = { x: from.x + ux * fadeEnd, y: from.y + uy * fadeEnd };
-      if (dashed) {
-        this.drawDashedLine(remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
-      } else {
-        this.netLinesGfx.moveTo(remainFrom.x, remainFrom.y);
+      // Remaining line at full alpha
+      if (fadeEnd < totalLen) {
+        this.netLinesGfx.moveTo(from.x + ux * fadeEnd, from.y + uy * fadeEnd);
         this.netLinesGfx.lineTo(to.x, to.y);
         this.netLinesGfx.stroke({ width, color, alpha });
       }
@@ -2768,6 +2804,55 @@ export class BoardRenderer {
   }
 
   // --- Hit testing ---
+
+  /** Build a spatial hash grid for O(1) hit-test lookups.
+   *  Each part is inserted into every grid cell its bounding box overlaps. */
+  private buildHitGrid(board: BoardData) {
+    const grid = new Map<string, number[]>();
+    if (board.parts.length === 0) {
+      this.hitGrid = grid;
+      this.hitGridCellSize = 1;
+      return;
+    }
+    // Cell size: use board bounds divided into a reasonable grid (~50x50 cells)
+    const bw = board.bounds.maxX - board.bounds.minX || 1;
+    const bh = board.bounds.maxY - board.bounds.minY || 1;
+    const cellSize = Math.max(bw, bh) / 50;
+    this.hitGridCellSize = cellSize;
+
+    for (let pi = 0; pi < board.parts.length; pi++) {
+      const part = board.parts[pi];
+      // Use part bounds (authoritative, already includes pin positions)
+      const b = part.bounds;
+      if (b.minX === b.maxX && b.minY === b.maxY && part.pins.length === 0) continue;
+      let minX = b.minX, minY = b.minY, maxX = b.maxX, maxY = b.maxY;
+      // Expand by a margin for click tolerance
+      const margin = cellSize * 0.5;
+      minX -= margin; minY -= margin; maxX += margin; maxY += margin;
+
+      const x0 = Math.floor(minX / cellSize);
+      const y0 = Math.floor(minY / cellSize);
+      const x1 = Math.floor(maxX / cellSize);
+      const y1 = Math.floor(maxY / cellSize);
+      for (let gx = x0; gx <= x1; gx++) {
+        for (let gy = y0; gy <= y1; gy++) {
+          const key = `${gx},${gy}`;
+          let cell = grid.get(key);
+          if (!cell) { cell = []; grid.set(key, cell); }
+          cell.push(pi);
+        }
+      }
+    }
+    this.hitGrid = grid;
+  }
+
+  /** Get candidate part indices from the spatial hash for a given scene-space point */
+  private hitGridCandidates(x: number, y: number): number[] {
+    if (this.hitGridCellSize <= 0) return [];
+    const gx = Math.floor(x / this.hitGridCellSize);
+    const gy = Math.floor(y / this.hitGridCellSize);
+    return this.hitGrid.get(`${gx},${gy}`) ?? [];
+  }
 
   /** Get the root container a part belongs to (different in butterfly mode) */
   private rootForPart(part: { side: string }): Container | undefined {
@@ -2793,12 +2878,20 @@ export class BoardRenderer {
       ? this.worldToScene(world, this.activeScene!.butterflyRoot!)
       : localTop;
 
+    // Use spatial hash to get candidate parts near the pointer (O(1) vs O(N))
+    // Query both top and bottom local coords to cover butterfly mode
+    const candidateSet = new Set<number>();
+    for (const pi of this.hitGridCandidates(localTop.x, localTop.y)) candidateSet.add(pi);
+    if (butterfly) {
+      for (const pi of this.hitGridCandidates(localBot.x, localBot.y)) candidateSet.add(pi);
+    }
+
     // First pass: try to hit a specific pin
     let bestDist = Infinity;
     let bestPartIdx = -1;
     let bestPinIdx = -1;
 
-    for (let pi = 0; pi < this.board.parts.length; pi++) {
+    for (const pi of candidateSet) {
       const part = this.board.parts[pi];
       if (!this.isPartVisible(part)) continue;
 
@@ -2857,8 +2950,8 @@ export class BoardRenderer {
       return { partIndex: bestPartIdx, pinIndex: bestPinIdx };
     }
 
-    // Second pass: check part bounds
-    for (let pi = 0; pi < this.board.parts.length; pi++) {
+    // Second pass: check part bounds (same candidate set)
+    for (const pi of candidateSet) {
       const part = this.board.parts[pi];
       if (!this.isPartVisible(part)) continue;
 
@@ -3097,6 +3190,7 @@ export class BoardRenderer {
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }
     if (this.wheelIdleTimer) { clearTimeout(this.wheelIdleTimer); this.wheelIdleTimer = null; }
+    if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
     this.unsubscribeViewCommands?.();
@@ -3152,13 +3246,25 @@ export class BoardRenderer {
     this.removeContextLossHandlers();
     // Do NOT call app.destroy() — it triggers GlobalResourceRegistry.clear()
     // which corrupts the module-level batchPool shared by ALL PixiJS Applications.
-    // Just remove the canvas from DOM and let GC reclaim the Application + WebGL context.
+    // Instead: remove canvas, force-release the WebGL context so the browser can
+    // reclaim the GPU slot (browsers limit to ~8-16 contexts), then null out all
+    // PixiJS references to break the closure cycle (onTick arrow fn → this → app).
     try {
-      // Use this renderer's own canvas reference — NOT querySelector('canvas')
-      // which would grab the first canvas in the container and could remove
-      // a different renderer's canvas during React StrictMode double-mount.
       const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
       canvas?.parentElement?.removeChild(canvas);
+      // Force browser to release the WebGL context immediately
+      const gl = (this.app?.renderer as any)?.gl as WebGL2RenderingContext | undefined;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
     } catch { /* ignore */ }
+
+    // Break strong reference cycles so GC can collect the Application + scene graph.
+    // The onTick arrow function captures `this`, so we must sever the chain:
+    //   BoardRenderer → app → ticker → onTick → BoardRenderer
+    this.activeScene = null;
+    this.sceneCache.clear();
+    this.viewportStates.clear();
+    this.board = null;
+    (this as any).app = null;
+    (this as any).viewport = null;
   }
 }

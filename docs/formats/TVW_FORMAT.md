@@ -495,18 +495,11 @@ enum Untestable {
 
 ### Data Model Mapping (TVW → BoardData)
 
-```typescript
-// TVW parsing produces richer data than BVR — extend BoardData or create TvwBoardData
-interface TvwBoardData extends BoardData {
-    layers: TvwLayer[];           // multiple copper + non-copper layers
-    traces: TvwLine[];            // trace segments (lines)
-    arcs: TvwArc[];               // arc segments
-    surfaces: TvwSurface[];       // copper fills with voids
-    drillHoles: TvwDrillHole[];   // via/through-hole drill data
-    decals: TvwDecal[];           // package outlines
-    probes?: TvwProbe[];          // test probe data (optional)
-}
-```
+The TVW parser uses the standard `BoardData` type (not a custom extension). TVW-specific data maps to these fields:
+- `traces` — trace line segments (converted from TVW lines)
+- `vias` — drill holes (converted from TVW vias/through-holes)
+- `layerNames` — copper + non-copper layer names (enables per-layer visibility toggles)
+- Standard `parts`, `pins`, `nails`, `nets` — mapped from TVW components/pads/probes
 
 ### Multi-Layer Rendering
 TVW's multi-layer data requires layer visibility toggles — each of the 14+ copper layers can be independently shown/hidden. This maps well to the existing render settings infrastructure.

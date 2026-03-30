@@ -3533,3 +3533,41 @@ html, body, #root {
   pointer-events: none;
   box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
+
+/* --- Toast notifications --- */
+.toast-container {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  max-width: 500px;
+  animation: toast-in 0.2s ease-out;
+}
+.toast-error {
+  background: #5c1a1a;
+  color: #ff8888;
+  border: 1px solid #882222;
+}
+.toast-info {
+  background: #1a3a5c;
+  color: #88bbff;
+  border: 1px solid #225588;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}

@@ -34,6 +34,9 @@ function acquireCanvas(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 function releaseCanvas(c: HTMLCanvasElement): void {
+  // Shrink canvas before pooling to release its backing store memory
+  c.width = 1;
+  c.height = 1;
   // Cap pool size to avoid hoarding memory
   if (_canvasPool.length < 4) _canvasPool.push(c);
 }
@@ -66,21 +69,29 @@ interface CachedRender {
   vpHeight: number;
   vpTransform: number[];
 }
-const PAGE_CACHE_MAX = 20;
+const PAGE_CACHE_MAX = 10;
+const PAGE_CACHE_MAX_PIXELS = 80_000_000; // ~80M total pixels across all cached bitmaps
 const _pageCache = new Map<string, CachedRender>();
+let _pageCacheTotalPixels = 0;
 
 function pageCacheKey(file: string, page: number, tier: number, clean: boolean): string {
   return `${file}:${page}:${tier}:${clean ? 1 : 0}`;
 }
 
 function putPageCache(key: string, entry: CachedRender): void {
-  // LRU eviction
-  if (_pageCache.size >= PAGE_CACHE_MAX) {
+  const entryPixels = entry.width * entry.height;
+  // LRU eviction: enforce both entry count and total pixel area
+  while (
+    _pageCache.size > 0 &&
+    (_pageCache.size >= PAGE_CACHE_MAX || _pageCacheTotalPixels + entryPixels > PAGE_CACHE_MAX_PIXELS)
+  ) {
     const oldest = _pageCache.keys().next().value!;
-    const old = _pageCache.get(oldest);
-    old?.bitmap.close();
+    const old = _pageCache.get(oldest)!;
+    _pageCacheTotalPixels -= old.width * old.height;
+    old.bitmap.close();
     _pageCache.delete(oldest);
   }
+  _pageCacheTotalPixels += entryPixels;
   _pageCache.set(key, entry);
 }
 
@@ -99,10 +110,12 @@ export function invalidatePageCache(file?: string): void {
   if (!file) {
     for (const e of _pageCache.values()) e.bitmap.close();
     _pageCache.clear();
+    _pageCacheTotalPixels = 0;
     return;
   }
   for (const [k, v] of _pageCache) {
     if (k.startsWith(file + ':')) {
+      _pageCacheTotalPixels -= v.width * v.height;
       v.bitmap.close();
       _pageCache.delete(k);
     }

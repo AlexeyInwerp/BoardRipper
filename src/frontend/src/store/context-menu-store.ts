@@ -1,3 +1,5 @@
+import { Emitter } from './emitter';
+
 export interface ContextMenuState {
   visible: boolean;
   screenX: number;
@@ -9,23 +11,11 @@ export interface ContextMenuState {
   netName: string | null;
 }
 
-type Listener = () => void;
-
-class ContextMenuStore {
+class ContextMenuStore extends Emitter {
   private _state: ContextMenuState = { visible: false, screenX: 0, screenY: 0, componentName: '', pinId: null, netName: null };
-  private _listeners = new Set<Listener>();
 
   get state(): ContextMenuState {
     return this._state;
-  }
-
-  subscribe(listener: Listener): () => void {
-    this._listeners.add(listener);
-    return () => this._listeners.delete(listener);
-  }
-
-  private notify() {
-    for (const l of this._listeners) l();
   }
 
   show(screenX: number, screenY: number, componentName: string, pinId: string | null = null, netName: string | null = null) {

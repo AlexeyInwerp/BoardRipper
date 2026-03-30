@@ -1,4 +1,5 @@
 import { log } from './log-store';
+import { Emitter } from './emitter';
 
 export type LabelSize = 'small' | 'medium' | 'large';
 
@@ -532,7 +533,6 @@ export function resolvePinColor(settings: RenderSettings, netName: string, side:
   return side === 'bottom' ? 0xcc4444 : 0x44cc44;
 }
 
-export type RenderSettingsListener = () => void;
 
 const STORAGE_KEY = 'boardripper-render-settings';
 const BOARD_OVERRIDES_KEY = 'boardripper-board-overrides';
@@ -613,12 +613,11 @@ export function computeOverrides(base: RenderSettings, edited: RenderSettings): 
   return diff as Partial<RenderSettings>;
 }
 
-class RenderSettingsStore {
+class RenderSettingsStore extends Emitter {
   private _global: RenderSettings = loadFromStorage();
   private _boardOverrides: Record<string, Partial<RenderSettings>> = loadBoardOverridesMap();
   private _activeBoard: string = '';
   private _effective: RenderSettings = this._global;
-  private _listeners = new Set<RenderSettingsListener>();
 
   private recomputeEffective() {
     const ov = this._activeBoard ? (this._boardOverrides[this._activeBoard] ?? {}) : {};
@@ -640,14 +639,6 @@ class RenderSettingsStore {
     return this._activeBoard;
   }
 
-  subscribe(listener: RenderSettingsListener): () => void {
-    this._listeners.add(listener);
-    return () => this._listeners.delete(listener);
-  }
-
-  private notify() {
-    for (const l of this._listeners) l();
-  }
 
   /** Set the active board fileName — recomputes effective settings and notifies */
   setActiveBoard(fileName: string) {

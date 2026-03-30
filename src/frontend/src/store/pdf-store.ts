@@ -3,6 +3,7 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/types/src/pdf';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
+import { Emitter } from './emitter';
 import { log } from './log-store';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
@@ -177,8 +178,6 @@ export interface PdfBookmark {
   panY: number;
   label: string;   // user-editable, defaults to "p{page}"
 }
-
-type Listener = () => void;
 
 const BOOKMARKS_KEY_PREFIX = 'boardripper-pdf-bookmarks-';
 
@@ -367,7 +366,7 @@ export interface FollowTarget {
   items: PdfTextItem[];  // text items to zoom to (bounding box)
 }
 
-class PdfStore {
+class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
   private _activeFileName: string | null = null;
   /** Vertical distance multiplier for multi-term search (fontSize × this) */
@@ -375,7 +374,6 @@ class PdfStore {
   /** Horizontal tolerance multiplier for multi-term search (fontSize × this) */
   private _multiTermXGap = 3;
   private _loading = false;
-  private _listeners = new Set<Listener>();
   /** Consumable follow target — PDF viewer zooms to this location without highlighting */
   private _followTarget: FollowTarget | null = null;
 
@@ -446,15 +444,6 @@ class PdfStore {
     const d = this._documents.get(fileName);
     if (!d || d.pageCount === 0) return 1;
     return d.textPages.length / d.pageCount;
-  }
-
-  subscribe(listener: Listener): () => void {
-    this._listeners.add(listener);
-    return () => this._listeners.delete(listener);
-  }
-
-  private notify() {
-    for (const l of this._listeners) l();
   }
 
   /** Switch to an already-loaded PDF instantly (no I/O). */
