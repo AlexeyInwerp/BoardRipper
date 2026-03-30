@@ -505,7 +505,7 @@ class BoardStore {
     if (newButterfly) {
       this.updateActiveTab({ butterfly: true, showTop: true, showBottom: true });
     } else {
-      this.updateActiveTab({ butterfly: false });
+      this.updateActiveTab({ butterfly: false, showTop: true, showBottom: false });
     }
     this.notify();
   }
