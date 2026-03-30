@@ -16,6 +16,22 @@ let _sidebarWidthBeforeCollapse = 0;
 /** Listeners notified when sidebar collapse state changes */
 const _sidebarListeners = new Set<() => void>();
 
+const SIDEBAR_WIDTH_KEY = 'boardripper-sidebar-width';
+const DEFAULT_SIDEBAR_RATIO = 0.22; // ~22% of container width
+
+/** Read persisted sidebar width from localStorage (pixels), or null */
+function loadSidebarWidth(): number | null {
+  try {
+    const v = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    return v ? parseInt(v, 10) : null;
+  } catch { return null; }
+}
+
+/** Save sidebar width to localStorage */
+function saveSidebarWidth(px: number): void {
+  try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(px))); } catch { /* ignore */ }
+}
+
 export function isSidebarCollapsed(): boolean { return _sidebarCollapsed; }
 export function onSidebarChange(fn: () => void): () => void {
   _sidebarListeners.add(fn);
@@ -52,12 +68,13 @@ export function toggleSidebar(): void {
   if (_sidebarCollapsed) {
     // Expand: restore constraints and previous width
     group.api.setConstraints({ minimumWidth: 100 });
-    const restoreWidth = _sidebarWidthBeforeCollapse || Math.round(api.width / 3);
+    const restoreWidth = _sidebarWidthBeforeCollapse || loadSidebarWidth() || Math.round(api.width * DEFAULT_SIDEBAR_RATIO);
     group.api.setSize({ width: restoreWidth });
     _sidebarCollapsed = false;
   } else {
     // Collapse: save current width, allow 0 minimum, then hide completely
     _sidebarWidthBeforeCollapse = group.api.width;
+    saveSidebarWidth(group.api.width);
     group.api.setConstraints({ minimumWidth: 0 });
     group.api.setSize({ width: 0 });
     _sidebarCollapsed = true;
@@ -81,19 +98,63 @@ function equalizeContentGroups(): void {
   }
 }
 
-/** Set sidebar to 1/3 width of the dockview container */
+/** Set sidebar to persisted width (or default ~22%), and persist on manual resize */
 export function setSidebarInitialWidth(): void {
   const api = _api;
   if (!api) return;
   const group = getSidebarGroup();
   if (!group) return;
-  // Use requestAnimationFrame to ensure layout is settled, then notify listeners
   requestAnimationFrame(() => {
-    const targetWidth = Math.round(api.width / 3);
+    const saved = loadSidebarWidth();
+    const targetWidth = saved ?? Math.round(api.width * DEFAULT_SIDEBAR_RATIO);
     group.api.setSize({ width: targetWidth });
-    // Notify so the toggle button repositions to the sidebar's right edge
     _sidebarListeners.forEach(fn => fn());
   });
+}
+
+/** Guard: when true, layout changes are automatic (not user-initiated) — don't persist */
+let _restoringLayout = false;
+
+/**
+ * Restore the sidebar to its intended width after Dockview redistributes space
+ * (e.g. when a content panel is closed). Called from onDidRemovePanel.
+ */
+export function preserveSidebarWidth(): void {
+  const api = _api;
+  if (!api) return;
+  const group = getSidebarGroup();
+  if (!group) return;
+
+  _restoringLayout = true;
+
+  if (_sidebarCollapsed) {
+    // Sidebar is collapsed — Dockview may have given it width during redistribution.
+    // Force it back to 0 and equalize the content panels.
+    requestAnimationFrame(() => {
+      group.api.setConstraints({ minimumWidth: 0 });
+      group.api.setSize({ width: 0 });
+      equalizeContentGroups();
+      _sidebarListeners.forEach(fn => fn());
+      _restoringLayout = false;
+    });
+    return;
+  }
+
+  const target = loadSidebarWidth() ?? Math.round(api.width * DEFAULT_SIDEBAR_RATIO);
+  // Defer to next frame so Dockview finishes its own layout pass first
+  requestAnimationFrame(() => {
+    group.api.setSize({ width: target });
+    _sidebarListeners.forEach(fn => fn());
+    _restoringLayout = false;
+  });
+}
+
+/** Save the current sidebar width (call after user manually resizes) */
+export function persistSidebarWidth(): void {
+  if (_sidebarCollapsed || _restoringLayout) return;
+  const group = getSidebarGroup();
+  if (!group) return;
+  if (group.api.width > 0) saveSidebarWidth(group.api.width);
 }
 
 export function setDockviewApi(api: DockviewApi) {

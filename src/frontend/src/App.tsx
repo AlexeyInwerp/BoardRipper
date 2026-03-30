@@ -15,12 +15,13 @@ import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DebugPanel } from './panels/DebugPanel';
 import { LibraryPanel } from './panels/LibraryPanel';
-import { setDockviewApi, ensureBoardPanel, ensurePdfPanel, ensureLibraryPanel, boardPanelId, toggleSidebar, isSidebarCollapsed, onSidebarChange, getSidebarWidth } from './store/dockview-api';
+import { setDockviewApi, ensureBoardPanel, ensureLibraryPanel, boardPanelId, toggleSidebar, isSidebarCollapsed, onSidebarChange, getSidebarWidth, preserveSidebarWidth, persistSidebarWidth } from './store/dockview-api';
 import { boardStore } from './store/board-store';
+import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
+import { openPdfFiles } from './store/file-actions';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
-import { log } from './store/log-store';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
@@ -47,6 +48,7 @@ function isSupportedFile(name: string): 'board' | 'pdf' | null {
 
 function App() {
   useKeyboardShortcuts();
+  const { toasts } = useBoardStore();
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
   const sidebarCollapsed = useSyncExternalStore(onSidebarChange, isSidebarCollapsed);
@@ -113,34 +115,9 @@ function App() {
       await boardStore.loadFiles(boardFiles);
     }
 
-    // Load PDF files (same flow as Toolbar)
+    // Load PDF files
     if (pdfFiles.length > 0) {
-      for (const file of pdfFiles) {
-        boardStore.addPdf(file);
-        boardStore.autoBindPdf(file.name);
-      }
-
-      const activeTabId = boardStore.activeTabId;
-      const lastFile = pdfFiles[pdfFiles.length - 1];
-      if (activeTabId !== null) {
-        boardStore.addPdfBinding(activeTabId, lastFile.name);
-      }
-
-      for (const file of pdfFiles) {
-        try {
-          await pdfStore.loadFile(file);
-          ensurePdfPanel(file.name);
-        } catch (err) {
-          log.ui.error('Failed to load PDF:', err);
-        }
-      }
-
-      try {
-        pdfStore.switchTo(lastFile.name);
-        ensurePdfPanel(lastFile.name);
-      } catch (err) {
-        log.ui.error('Failed to activate PDF:', err);
-      }
+      await openPdfFiles(pdfFiles);
 
       // Re-activate the board panel so PDFs don't steal focus
       if (boardFiles.length > 0) {
@@ -183,8 +160,18 @@ function App() {
               boardStore.removePdfBinding(tab.id, pdfFileName);
             }
           }
+          // Release the PDF document from memory (ArrayBuffer, pdf.js proxy, text cache)
+          pdfStore.closeFile(pdfFileName);
+          boardStore.removePdf(pdfFileName);
         }
       }
+      // Restore sidebar width after Dockview redistributes space
+      preserveSidebarWidth();
+    });
+
+    // Persist sidebar width when user manually resizes it
+    api.onDidLayoutChange(() => {
+      persistSidebarWidth();
     });
 
     // Auto-open Library as the first (leftmost) panel on page load
@@ -221,6 +208,15 @@ function App() {
       </div>
       <StatusBar />
       <ContextMenu />
+      {toasts.length > 0 && (
+        <div className="toast-container">
+          {toasts.map(t => (
+            <div key={t.id} className={`toast toast-${t.type}`} onClick={() => boardStore.dismissToast(t.id)}>
+              {t.message}
+            </div>
+          ))}
+        </div>
+      )}
       {dragOver && (
         <div className="drop-overlay">
           <div className="drop-overlay-content">

@@ -50,11 +50,11 @@ export const shortcuts: Shortcut[] = [
   },
   {
     id: 'focusSearch',
-    label: 'Find Component',
+    label: 'Find',
     category: 'file',
     key: 'f',
     mod: true,
-    description: 'Focus the search bar',
+    description: 'Focus PDF search (when PDF active) or board search bar',
   },
 
   // --- View ---
@@ -139,14 +139,6 @@ export const shortcuts: Shortcut[] = [
   },
 
   // --- PDF Viewer ---
-  {
-    id: 'pdfSearch',
-    label: 'Search in PDF',
-    category: 'pdf',
-    key: 'f',
-    mod: true,
-    description: 'Focus PDF search (when PDF panel is active)',
-  },
   {
     id: 'pdfNextPage',
     label: 'Next Page',

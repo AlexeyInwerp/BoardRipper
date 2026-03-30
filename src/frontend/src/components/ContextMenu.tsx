@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
@@ -31,6 +31,18 @@ function shortPdfName(fileName: string): string {
 export function ContextMenu() {
   const state = useSyncExternalStore(subscribe, getSnapshot);
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Clamp menu position to viewport after render
+  useEffect(() => {
+    const el = menuRef.current;
+    if (!el || !state.visible) return;
+    const rect = el.getBoundingClientRect();
+    const maxX = window.innerWidth - 8;
+    const maxY = window.innerHeight - 8;
+    if (rect.right > maxX) el.style.left = `${state.screenX - (rect.right - maxX)}px`;
+    if (rect.bottom > maxY) el.style.top = `${state.screenY - (rect.bottom - maxY)}px`;
+  }, [state.visible, state.screenX, state.screenY]);
 
   // Reset submenu when menu closes/opens
   useEffect(() => {
@@ -130,6 +142,7 @@ export function ContextMenu() {
   return (
     <div
       className="context-menu"
+      ref={menuRef}
       style={{ left: state.screenX, top: state.screenY }}
       onClick={(e) => e.stopPropagation()}
     >

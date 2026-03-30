@@ -1,5 +1,5 @@
-import { useSyncExternalStore } from 'react';
 import { databankStore } from '../store/databank-store';
+import { createStoreHook } from './createStoreHook';
 import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, MetadataGroup, ModelGroup, DatabankStats, BrowseResult, RecentItem } from '../store/databank-store';
 
 interface DatabankSnapshot {
@@ -28,48 +28,28 @@ interface DatabankSnapshot {
   historyDepth: number;
 }
 
-let cachedSnapshot: DatabankSnapshot | null = null;
-let snapshotVersion = 0;
-let lastVersion = -1;
-
-databankStore.subscribe(() => { snapshotVersion++; });
-
-function getSnapshot(): DatabankSnapshot {
-  if (lastVersion !== snapshotVersion || !cachedSnapshot) {
-    cachedSnapshot = {
-      files: databankStore.files,
-      folderTree: databankStore.folderTree,
-      scanStatus: databankStore.scanStatus,
-      searchResults: databankStore.searchResults,
-      searchQuery: databankStore.searchQuery,
-      autoPdf: databankStore.autoPdf,
-      viewMode: databankStore.viewMode,
-      selectedFileId: databankStore.selectedFileId,
-      selectedFileDetail: databankStore.selectedFileDetail,
-      loading: databankStore.loading,
-      backendAvailable: databankStore.backendAvailable,
-      metadataTree: databankStore.metadataTree,
-      modelTree: databankStore.modelTree,
-      libraryPath: databankStore.libraryPath,
-      electronMode: databankStore.electronMode,
-      verboseScan: databankStore.verboseScan,
-      showPreviews: databankStore.showPreviews,
-      stats: databankStore.stats,
-      browseMode: databankStore.browseMode,
-      browseResult: databankStore.browseResult,
-      browsing: databankStore.browsing,
-      recentItems: databankStore.recentItems,
-      historyDepth: databankStore.historyDepth,
-    };
-    lastVersion = snapshotVersion;
-  }
-  return cachedSnapshot;
-}
-
-function subscribe(cb: () => void) {
-  return databankStore.subscribe(cb);
-}
-
-export function useDatabank() {
-  return useSyncExternalStore(subscribe, getSnapshot);
-}
+export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () => ({
+  files: databankStore.files,
+  folderTree: databankStore.folderTree,
+  scanStatus: databankStore.scanStatus,
+  searchResults: databankStore.searchResults,
+  searchQuery: databankStore.searchQuery,
+  autoPdf: databankStore.autoPdf,
+  viewMode: databankStore.viewMode,
+  selectedFileId: databankStore.selectedFileId,
+  selectedFileDetail: databankStore.selectedFileDetail,
+  loading: databankStore.loading,
+  backendAvailable: databankStore.backendAvailable,
+  metadataTree: databankStore.metadataTree,
+  modelTree: databankStore.modelTree,
+  libraryPath: databankStore.libraryPath,
+  electronMode: databankStore.electronMode,
+  verboseScan: databankStore.verboseScan,
+  showPreviews: databankStore.showPreviews,
+  stats: databankStore.stats,
+  browseMode: databankStore.browseMode,
+  browseResult: databankStore.browseResult,
+  browsing: databankStore.browsing,
+  recentItems: databankStore.recentItems,
+  historyDepth: databankStore.historyDepth,
+}));

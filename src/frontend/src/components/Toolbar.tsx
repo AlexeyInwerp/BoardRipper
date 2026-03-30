@@ -2,12 +2,11 @@ import { useRef, useEffect } from 'react';
 import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
-import { pdfStore } from '../store/pdf-store';
-import { ensurePdfPanel, ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
+import { ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
 import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
-import { log } from '../store/log-store';
+import { openPdfFiles } from '../store/file-actions';
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -42,37 +41,7 @@ export function Toolbar() {
   const handlePdfChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) { e.target.value = ''; return; }
-
-    // Add all files to registry and auto-bind unbound tabs by name
-    for (const file of files) {
-      boardStore.addPdf(file);
-      boardStore.autoBindPdf(file.name);
-    }
-
-    // Bind the last opened PDF to the active tab (explicit user action overrides)
-    const lastFile = files[files.length - 1];
-    if (activeTabId !== null) {
-      boardStore.addPdfBinding(activeTabId, lastFile.name);
-    }
-
-    // Load all PDFs into pdfStore and create panels
-    for (const file of files) {
-      try {
-        await pdfStore.loadFile(file);
-        ensurePdfPanel(file.name);
-      } catch (err) {
-        log.ui.error('Failed to load PDF:', err);
-      }
-    }
-
-    // Activate the last opened PDF's panel
-    try {
-      pdfStore.switchTo(lastFile.name);
-      ensurePdfPanel(lastFile.name);
-    } catch (err) {
-      log.ui.error('Failed to load PDF:', err);
-    }
-
+    await openPdfFiles(Array.from(files), { activeTabId });
     e.target.value = '';
   };
 

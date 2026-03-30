@@ -4,6 +4,8 @@ const DB_NAME = 'boardripper-cache';
 const DB_VERSION = 28; // bumped: removed initialMirrorY (derived from butterflyFoldAxis)
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
+const MAX_BOARD_ENTRIES = 20;
+const MAX_PDF_TEXT_ENTRIES = 30;
 
 interface CachedBoard {
   key: string;
@@ -153,6 +155,35 @@ class BoardCache {
     }
   }
 
+  /** Evict oldest entries from an object store when count exceeds max.
+   *  Uses count() first to avoid deserializing all entries when under limit.
+   *  Entries must have a `timestamp` (number) and `key` (string) field. */
+  private async evictOldest(storeName: string, max: number): Promise<void> {
+    try {
+      const db = await this.openDB();
+      // Quick count check — avoids getAll() in the common case
+      const count: number = await new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readonly');
+        const req = tx.objectStore(storeName).count();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      if (count <= max) return;
+      // Only now fetch all entries to find oldest by timestamp
+      const all: { key: string; timestamp: number }[] = await new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readonly');
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      const toDelete = all.slice(0, all.length - max);
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      for (const entry of toDelete) store.delete(entry.key);
+    } catch { /* non-critical */ }
+  }
+
   async put(fileName: string, fileSize: number, lastModified: number, board: BoardData): Promise<void> {
     try {
       const db = await this.openDB();
@@ -169,7 +200,10 @@ class BoardCache {
         const tx = db.transaction(BOARD_STORE, 'readwrite');
         const store = tx.objectStore(BOARD_STORE);
         const req = store.put(entry);
-        req.onsuccess = () => resolve();
+        req.onsuccess = () => {
+          this.evictOldest(BOARD_STORE, MAX_BOARD_ENTRIES);
+          resolve();
+        };
         req.onerror = () => reject(req.error);
       });
     } catch {
@@ -201,8 +235,11 @@ class BoardCache {
       const key = makeCacheKey(fileName, fileSize, lastModified);
       return new Promise((resolve, reject) => {
         const tx = db.transaction(PDF_TEXT_STORE, 'readwrite');
-        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, textPages });
-        req.onsuccess = () => resolve();
+        const req = tx.objectStore(PDF_TEXT_STORE).put({ key, textPages, timestamp: Date.now() });
+        req.onsuccess = () => {
+          this.evictOldest(PDF_TEXT_STORE, MAX_PDF_TEXT_ENTRIES);
+          resolve();
+        };
         req.onerror = () => reject(req.error);
       });
     } catch { /* non-critical */ }

@@ -138,8 +138,11 @@ export interface BoardSceneGraph {
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
 const PCB_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./+#()[]{}:;,<>!@$%^&*=~|\\?\'"ÄÖÜäöüß';
 
-/** Resolution for pre-installed BitmapFonts (higher = sharper at deep zoom, larger atlas) */
-const BITMAP_FONT_RESOLUTION = 8;
+/** Resolution for pre-installed BitmapFonts (higher = sharper at deep zoom, larger atlas).
+ *  Small font sizes use lower resolution since the extra pixels aren't visible. */
+function bitmapFontResolution(fontSize: number): number {
+  return fontSize < 8 ? 4 : 8;
+}
 
 /** Track which fonts have been installed to avoid re-installing */
 const installedShadowFonts = new Set<string>();
@@ -166,7 +169,7 @@ function ensurePinFont(fontSize: number): string {
         name,
         style: { fontFamily: LABEL_FONT_FAMILY, fontSize, fill: 0xffffff },
         chars: PCB_CHARS,
-        resolution: BITMAP_FONT_RESOLUTION,
+        resolution: bitmapFontResolution(fontSize),
       });
       installedPinFonts.add(name);
     } catch {
@@ -222,7 +225,7 @@ function ensureShadowFont(fontSize: number): string {
           dropShadow: { color: 0x000000, alpha: 0.85, blur: fontSize * 0.35, distance: 0 },
         },
         chars: PCB_CHARS,
-        resolution: BITMAP_FONT_RESOLUTION,
+        resolution: bitmapFontResolution(fontSize),
       });
       installedShadowFonts.add(name);
     } catch (err) {

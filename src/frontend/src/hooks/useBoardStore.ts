@@ -1,7 +1,7 @@
-import { useSyncExternalStore } from 'react';
 import { boardStore } from '../store/board-store';
+import { createStoreHook } from './createStoreHook';
 import type { BoardData, Part, Pin } from '../parsers';
-import type { SelectionState, BoardTab } from '../store/board-store';
+import type { SelectionState, BoardTab, Toast } from '../store/board-store';
 import type { LayerState } from '../store/layer-store';
 
 interface StoreSnapshot {
@@ -31,53 +31,35 @@ interface StoreSnapshot {
   layerStates: LayerState[];
   boundPdfFiles: File[];
   pdfFileNames: string[];
+  toasts: Toast[];
 }
 
-let cachedSnapshot: StoreSnapshot | null = null;
-let snapshotVersion = 0;
-let lastVersion = -1;
-
-boardStore.subscribe(() => { snapshotVersion++; });
-
-function getSnapshot(): StoreSnapshot {
-  if (lastVersion !== snapshotVersion || !cachedSnapshot) {
-    cachedSnapshot = {
-      board: boardStore.board,
-      fileName: boardStore.fileName,
-      selection: boardStore.selection,
-      selectedPart: boardStore.selectedPart,
-      selectedPin: boardStore.selectedPin,
-      showTop: boardStore.showTop,
-      showBottom: boardStore.showBottom,
-      butterfly: boardStore.butterfly,
-      searchQuery: boardStore.searchQuery,
-      searchResults: boardStore.searchResults,
-      tabs: boardStore.tabs,
-      activeTabId: boardStore.activeTabId,
-      rotation: boardStore.rotation,
-      mirrorX: boardStore.mirrorX,
-      mirrorY: boardStore.mirrorY,
-      flipAxis: boardStore.flipAxis,
-      showNetLines: boardStore.showNetLines,
-      showNetDim: boardStore.showNetDim,
-      showHoverInfo: boardStore.showHoverInfo,
-      followPdf: boardStore.followPdf,
-      showTraces: boardStore.showTraces,
-      showComponents: boardStore.showComponents,
-      showVias: boardStore.showVias,
-      layerStates: boardStore.layerStates,
-      boundPdfFiles: boardStore.boundPdfFiles,
-      pdfFileNames: boardStore.pdfFileNames,
-    };
-    lastVersion = snapshotVersion;
-  }
-  return cachedSnapshot;
-}
-
-function subscribe(cb: () => void) {
-  return boardStore.subscribe(cb);
-}
-
-export function useBoardStore() {
-  return useSyncExternalStore(subscribe, getSnapshot);
-}
+export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
+  board: boardStore.board,
+  fileName: boardStore.fileName,
+  selection: boardStore.selection,
+  selectedPart: boardStore.selectedPart,
+  selectedPin: boardStore.selectedPin,
+  showTop: boardStore.showTop,
+  showBottom: boardStore.showBottom,
+  butterfly: boardStore.butterfly,
+  searchQuery: boardStore.searchQuery,
+  searchResults: boardStore.searchResults,
+  tabs: boardStore.tabs,
+  activeTabId: boardStore.activeTabId,
+  rotation: boardStore.rotation,
+  mirrorX: boardStore.mirrorX,
+  mirrorY: boardStore.mirrorY,
+  flipAxis: boardStore.flipAxis,
+  showNetLines: boardStore.showNetLines,
+  showNetDim: boardStore.showNetDim,
+  showHoverInfo: boardStore.showHoverInfo,
+  followPdf: boardStore.followPdf,
+  showTraces: boardStore.showTraces,
+  showComponents: boardStore.showComponents,
+  showVias: boardStore.showVias,
+  layerStates: boardStore.layerStates,
+  boundPdfFiles: boardStore.boundPdfFiles,
+  pdfFileNames: boardStore.pdfFileNames,
+  toasts: boardStore.toasts,
+}));

@@ -68,7 +68,7 @@ Boardviewer/
 - TypeScript strict mode
 - All coordinates internally in mils (thousandths of an inch)
 - Component naming: PascalCase for React components, camelCase for functions/variables
-- File format parsers are pure functions: `(text: string) => BoardData`
+- File format parsers are pure functions: `(buffer: ArrayBuffer) => BoardData | Promise<BoardData>` (see `FormatDescriptor.parse` in `parsers/registry.ts`)
 - **Logging:** Use scoped loggers from `store/log-store.ts` — never raw `console.log`. Import `{ log }` and use `log.parser.*`, `log.render.*`, `log.pdf.*`, `log.scan.*`, `log.ui.*`, `log.cache.*`, `log.perf.*`. The Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move).
 
 ## Reference

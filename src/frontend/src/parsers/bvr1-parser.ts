@@ -43,6 +43,10 @@ export function parseBVR1(text: string): BoardData {
         const x = parseFloat(fields[4]) * 1000;
         const y = parseFloat(fields[5]) * 1000;
         const netName = fields[7];
+        // Side is intentionally inverted: BVR files use (T)=Top/(B)=Bottom in the
+        // PCB's physical coordinate system, but the renderer expects 'top' to mean
+        // "component side facing the viewer". BVR1/BVR3 format descriptors don't set
+        // swapSides, so the inversion is applied here at parse time.
         const side: 'top' | 'bottom' = location === '(T)' ? 'bottom' : 'top';
 
         const pin: Pin = {

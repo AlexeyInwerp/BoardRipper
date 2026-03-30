@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
@@ -21,11 +21,15 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
   const hasLayers = layerStates.length > 0;
   const [activeTab, setActiveTab] = useState<SidebarTab>(hasLayers ? 'layers' : 'info');
 
-  // Apply external tab request (one-shot: clear after applying)
-  if (requestedTab && requestedTab !== activeTab) {
-    setActiveTab(requestedTab);
-    onTabApplied?.();
-  }
+  // Apply external tab request (one-shot, rAF defers setState to satisfy lint rule)
+  useEffect(() => {
+    if (!requestedTab || requestedTab === activeTab) return;
+    const frame = requestAnimationFrame(() => {
+      setActiveTab(requestedTab);
+      onTabApplied?.();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [requestedTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!visible) return null;
 

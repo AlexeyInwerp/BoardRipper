@@ -1,3 +1,5 @@
+import { Emitter } from './emitter';
+
 export type LogLevel = 'log' | 'warn' | 'error';
 export type LogScope = 'parser' | 'render' | 'pdf' | 'scan' | 'ui' | 'cache' | 'perf';
 
@@ -11,13 +13,10 @@ export interface LogEntry {
   message: string;
 }
 
-type LogListener = () => void;
-
 const LS_ENABLED_KEY = 'boardripper-log-enabled';
 
-class LogStore {
+class LogStore extends Emitter {
   private _entries: LogEntry[] = [];
-  private _listeners = new Set<LogListener>();
   private _nextId = 1;
   private _snapshot: LogEntry[] = [];
   private _snapshotDirty = false;
@@ -30,6 +29,7 @@ class LogStore {
   enabled: boolean;
 
   constructor() {
+    super();
     let stored: string | null = null;
     try { stored = localStorage.getItem(LS_ENABLED_KEY); } catch { /* Node.js tests — no localStorage */ }
     this.enabled = stored === null ? true : stored === 'true';
@@ -49,7 +49,7 @@ class LogStore {
       this._entries.push({ id: this._nextId++, time, level, scope, message });
       if (this._entries.length > 600) this._entries = this._entries.slice(-500);
       this._snapshotDirty = true;
-      for (const l of this._listeners) l();
+      this.notify();
     };
 
     // Intercept unscoped console calls (third-party libs) → tagged 'ui'
@@ -75,7 +75,7 @@ class LogStore {
   setEnabled(v: boolean) {
     this.enabled = v;
     try { localStorage.setItem(LS_ENABLED_KEY, String(v)); } catch { /* Node.js */ }
-    for (const l of this._listeners) l();
+    this.notify();
   }
 
   getSnapshot(): LogEntry[] {
@@ -89,13 +89,9 @@ class LogStore {
   clear() {
     this._entries = [];
     this._snapshot = [];
-    for (const l of this._listeners) l();
+    this.notify();
   }
 
-  subscribe(listener: LogListener): () => void {
-    this._listeners.add(listener);
-    return () => this._listeners.delete(listener);
-  }
 }
 
 export const logStore = new LogStore();
