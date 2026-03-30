@@ -2031,27 +2031,49 @@ export class BoardRenderer {
 
         // ── Re-draw affected part name labels above the dim overlay ─────────
         if (showDim && this.activeScene) {
-          const affectedPartNames = new Set<string>();
+          // In butterfly mode, track which sides have affected parts to avoid
+          // cloning labels from the wrong side (which would appear mirrored).
+          const affectedTopNames = new Set<string>();
+          const affectedBotNames = new Set<string>();
           for (const pi of seenParts) {
             const p = this.board.parts[pi];
-            if (p) affectedPartNames.add(p.name);
+            if (!p) continue;
+            if (p.side === 'bottom') affectedBotNames.add(p.name);
+            else affectedTopNames.add(p.name);
           }
-          const visibleLabels = [
-            ...(this.isTopVisible    ? this.activeScene.topLabels    : []),
-            ...(this.isBottomVisible ? this.activeScene.bottomLabels : []),
-          ];
-          for (const srcLabel of visibleLabels) {
-            if (!srcLabel.visible || !affectedPartNames.has(srcLabel.text)) continue;
-            const clone = new BitmapText({
-              text: srcLabel.text,
-              style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
-            });
-            clone.anchor.set(0.5, 0.5);
-            clone.x = srcLabel.x;
-            clone.y = srcLabel.y;
-            clone.rotation = srcLabel.rotation;
-            clone.scale.copyFrom(srcLabel.scale);
-            this.netLabelLayer.addChild(clone);
+
+          if (this.isTopVisible) {
+            for (const srcLabel of this.activeScene.topLabels) {
+              if (!srcLabel.visible || !affectedTopNames.has(srcLabel.text)) continue;
+              const clone = new BitmapText({
+                text: srcLabel.text,
+                style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
+              });
+              clone.anchor.set(0.5, 0.5);
+              clone.x = srcLabel.x;
+              clone.y = srcLabel.y;
+              clone.rotation = srcLabel.rotation;
+              clone.scale.copyFrom(srcLabel.scale);
+              this.netLabelLayer.addChild(clone);
+            }
+          }
+          if (this.isBottomVisible && !butterfly) {
+            // Non-butterfly: bottom labels live in scene.root, safe to clone into netLabelLayer.
+            // In butterfly mode, bottom labels are in butterflyRoot — cloning into scene.root
+            // would render them mirrored at wrong positions, so skip.
+            for (const srcLabel of this.activeScene.bottomLabels) {
+              if (!srcLabel.visible || !affectedBotNames.has(srcLabel.text)) continue;
+              const clone = new BitmapText({
+                text: srcLabel.text,
+                style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
+              });
+              clone.anchor.set(0.5, 0.5);
+              clone.x = srcLabel.x;
+              clone.y = srcLabel.y;
+              clone.rotation = srcLabel.rotation;
+              clone.scale.copyFrom(srcLabel.scale);
+              this.netLabelLayer.addChild(clone);
+            }
           }
         }
 
