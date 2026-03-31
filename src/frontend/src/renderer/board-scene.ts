@@ -95,6 +95,15 @@ export interface BoardSceneGraph {
   outlineGfx:  Graphics;
   topLayer:    Container;
   bottomLayer: Container;
+  /** Sub-layer containers for granular visibility control */
+  topFillLayer: Container;
+  bottomFillLayer: Container;
+  topPinLayer: Container;
+  bottomPinLayer: Container;
+  topOutlineLayer: Container;
+  bottomOutlineLayer: Container;
+  topLabelLayer: Container;
+  bottomLabelLayer: Container;
   labels:      BitmapText[];
   topLabels:   BitmapText[];
   bottomLabels: BitmapText[];
@@ -315,6 +324,22 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const outlineGfx  = new Graphics();
   const bottomLayer = new Container();
   const topLayer    = new Container();
+
+  // Sub-layer containers for granular visibility control.
+  // Each wraps a rendering phase so visibility can be toggled independently.
+  const topFillLayer     = new Container();
+  const bottomFillLayer  = new Container();
+  const topPinLayer      = new Container();
+  const bottomPinLayer   = new Container();
+  const topOutlineLayer  = new Container();
+  const bottomOutlineLayer = new Container();
+  const topLabelLayer    = new Container();
+  const bottomLabelLayer = new Container();
+
+  // Add sub-layers to parent layers in z-order: fills → pins → outlines → labels
+  topLayer.addChild(topFillLayer, topPinLayer, topOutlineLayer, topLabelLayer);
+  bottomLayer.addChild(bottomFillLayer, bottomPinLayer, bottomOutlineLayer, bottomLabelLayer);
+
   const labels: BitmapText[] = [];
   const topLabels: BitmapText[] = [];
   const bottomLabels: BitmapText[] = [];
@@ -993,11 +1018,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Flush component-type fills — one Graphics per color, added before grid cells (fills under pins)
   for (const [color, gfx] of topFillMap) {
     gfx.fill({ color, alpha: s.componentFillAlpha });
-    topLayer.addChild(gfx);
+    topFillLayer.addChild(gfx);
   }
   for (const [color, gfx] of bottomFillMap) {
     gfx.fill({ color, alpha: s.componentFillAlpha });
-    bottomLayer.addChild(gfx);
+    bottomFillLayer.addChild(gfx);
   }
 
   // ── Flush grid cells ─────────────────────────────────────────────────────
@@ -1008,8 +1033,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const bottomPinGfx = new Map<number, Graphics>();
 
   for (const [grid, layer, flatMap] of [
-    [topGrid, topLayer, topPinGfx],
-    [bottomGrid, bottomLayer, bottomPinGfx],
+    [topGrid, topPinLayer, topPinGfx],
+    [bottomGrid, bottomPinLayer, bottomPinGfx],
   ] as [GridCell[][], Container, Map<number, Graphics>][]) {
     for (let cy = 0; cy < gridSize; cy++) {
       for (let cx = 0; cx < gridSize; cx++) {
@@ -1035,14 +1060,14 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Stroke extends outward by half its width, so the drawn NC circle
   // already appears slightly larger than same-radius filled pins.
   const ncStrokeWidth = Math.max(0.3, s.pinMinRadius * 0.12);
-  for (const [ncGfx, layer] of [[topNcPinGfx, topLayer], [bottomNcPinGfx, bottomLayer]] as [Graphics, Container][]) {
+  for (const [ncGfx, layer] of [[topNcPinGfx, topPinLayer], [bottomNcPinGfx, bottomPinLayer]] as [Graphics, Container][]) {
     ncGfx.stroke({ width: ncStrokeWidth, color: 0x555555, alpha: s.pinAlpha });
     layer.addChild(ncGfx);
   }
 
   // Flush batched border Graphics — initial draw, will be rebuilt on zoom
   const borderBatches: BorderBatch[] = [];
-  for (const [batch, layer] of [[topBorderBatch, topLayer], [bottomBorderBatch, bottomLayer]] as [BorderBatch, Container][]) {
+  for (const [batch, layer] of [[topBorderBatch, topOutlineLayer], [bottomBorderBatch, bottomOutlineLayer]] as [BorderBatch, Container][]) {
     if (batch.rects.length === 0) continue;
     for (const r of batch.rects) {
       if (r.poly) {
@@ -1060,7 +1085,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
   // Add part containers above pins, triangles, and borders
   for (const { container, isBottom } of partQueue) {
-    (isBottom ? bottomLayer : topLayer).addChild(container);
+    (isBottom ? bottomLabelLayer : topLabelLayer).addChild(container);
   }
 
 
@@ -1107,10 +1132,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   }
 
   // Group B (2-pin net names) added below Group A (circle labels) — Group A is smallest/densest.
-  topLayer.addChild(topTwoPinNetLayer);
-  topLayer.addChild(topCircleLabelLayer);
-  bottomLayer.addChild(bottomTwoPinNetLayer);
-  bottomLayer.addChild(bottomCircleLabelLayer);
+  topLabelLayer.addChild(topTwoPinNetLayer);
+  topLabelLayer.addChild(topCircleLabelLayer);
+  bottomLabelLayer.addChild(bottomTwoPinNetLayer);
+  bottomLabelLayer.addChild(bottomCircleLabelLayer);
 
   // Build font-size groups: bucket all labels by floor(log2(fontSize)).
   // This gives ~5-6 groups, enabling O(groups) visibility checks instead of O(labels).
@@ -1289,5 +1314,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
 }
