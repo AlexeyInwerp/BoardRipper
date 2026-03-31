@@ -160,7 +160,7 @@ class BoardStore extends Emitter {
   get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
   get showTraces(): boolean { return this.activeTab?.showTraces ?? true; }
   get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
-  get showVias(): boolean { return this.activeTab?.showVias ?? true; }
+  get showVias(): boolean { return this.activeTab?.showVias ?? false; }
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
