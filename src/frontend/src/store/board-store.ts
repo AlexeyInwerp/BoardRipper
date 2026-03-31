@@ -35,6 +35,9 @@ export interface BoardTab {
   showTraces: boolean;
   showComponents: boolean;
   showVias: boolean;
+  showPins: boolean;
+  showOutlines: boolean;
+  showLabels: boolean;
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
@@ -158,6 +161,9 @@ class BoardStore extends Emitter {
   get showTraces(): boolean { return this.activeTab?.showTraces ?? true; }
   get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
   get showVias(): boolean { return this.activeTab?.showVias ?? true; }
+  get showPins(): boolean { return this.activeTab?.showPins ?? true; }
+  get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
+  get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -326,7 +332,10 @@ class BoardStore extends Emitter {
       followPdf: vp.followPdf,
       showTraces: true,
       showComponents: true,
-      showVias: true,
+      showVias: false,
+      showPins: true,
+      showOutlines: true,
+      showLabels: true,
       layerStates: [],
       pdfFileNames: [],
       cacheKey: '',
@@ -607,6 +616,27 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showVias: !tab.showVias });
+    this.notify();
+  }
+
+  togglePins() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showPins: !tab.showPins });
+    this.notify();
+  }
+
+  toggleOutlines() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showOutlines: !tab.showOutlines });
+    this.notify();
+  }
+
+  toggleLabels() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showLabels: !tab.showLabels });
     this.notify();
   }
 
