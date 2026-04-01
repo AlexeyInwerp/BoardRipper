@@ -37,6 +37,14 @@ interface BoardScene {
   outlineGfx: Graphics;
   topLayer: Container;
   bottomLayer: Container;
+  topFillLayer: Container;
+  bottomFillLayer: Container;
+  topPinLayer: Container;
+  bottomPinLayer: Container;
+  topOutlineLayer: Container;
+  bottomOutlineLayer: Container;
+  topLabelLayer: Container;
+  bottomLabelLayer: Container;
   labels: import('pixi.js').BitmapText[];
   topLabels: import('pixi.js').BitmapText[];
   bottomLabels: import('pixi.js').BitmapText[];
@@ -161,6 +169,8 @@ export class BoardRenderer {
   // Selection blink state (triggered by focusPart / PDF reverse search)
   private selectionBlinkPhase = 0;
   private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
+  // Last-rendered selection — used to skip redundant renderSelection() on tab switch
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true };
   /** Part label whose tint was boosted by selection — reset on next renderSelection */
   private highlightedPartLabel: import('pixi.js').BitmapText | null = null;
 
@@ -189,9 +199,10 @@ export class BoardRenderer {
   private activeScene: BoardScene | null = null;
 
   // Spatial hash for O(1) hit-testing — maps grid cell keys to part indices.
-  // Rebuilt when activateScene sets a new board.
+  // Cached per-board to avoid expensive rebuild on tab switch.
   private hitGrid: Map<string, number[]> = new Map();
   private hitGridCellSize = 0;
+  private hitGridCache = new Map<BoardData, { grid: Map<string, number[]>; cellSize: number }>();
 
   // WebGL context loss recovery
   private contextLost = false;
@@ -395,6 +406,7 @@ export class BoardRenderer {
     try { this.invalidateAllScenes(); } catch (e) { log.render.warn('teardown invalidateAllScenes error:', e); }
     this.activeScene = null;
     this.sceneCache.clear();
+    this.hitGridCache.clear();
 
     // Remove canvas event listeners and canvas from DOM
     try {
@@ -473,6 +485,7 @@ export class BoardRenderer {
     }
     // Evict cached scene so buildBoardScene runs fresh, then re-activate directly
     this.sceneCache.delete(board);
+    this.hitGridCache.delete(board);
     this.activateScene(board);
     this.board = board;
     // Resync board store so onBoardUpdate won't skip future notifications
@@ -932,6 +945,8 @@ export class BoardRenderer {
     // Redraw net lines immediately on every zoom frame
     this.netLinesDirty = true;
     this.renderNetLines();
+    // Rescale elevated selection labels to maintain constant screen-pixel size
+    this.updateElevatedLabels(boardStore.selection, s);
     // Reset settle timer on every zoom frame
     if (this.zoomSettleTimer) clearTimeout(this.zoomSettleTimer);
     // Restore labels after zoom settles (~2 frames idle)
@@ -1047,9 +1062,9 @@ export class BoardRenderer {
     return getFormat(board.format)?.flipY ?? false;
   }
 
-  /** Apply per-layer trace and component visibility based on boardStore.layerStates */
+  /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias } = boardStore;
+    const { layerStates, showTraces, showVias, showComponents, showPins, showOutlines, showLabels } = boardStore;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers
@@ -1059,6 +1074,15 @@ export class BoardRenderer {
     }
     // Via overlay
     if (scene.viaLayer) scene.viaLayer.visible = showVias;
+    // Component sub-layer visibility (master: showComponents)
+    scene.topFillLayer.visible       = showComponents;
+    scene.bottomFillLayer.visible    = showComponents;
+    scene.topPinLayer.visible        = showComponents && showPins;
+    scene.bottomPinLayer.visible     = showComponents && showPins;
+    scene.topOutlineLayer.visible    = showComponents && showOutlines;
+    scene.bottomOutlineLayer.visible = showComponents && showOutlines;
+    scene.topLabelLayer.visible      = showComponents && showLabels;
+    scene.bottomLabelLayer.visible   = showComponents && showLabels;
   }
 
   // --- Flip management ---
@@ -1532,6 +1556,7 @@ export class BoardRenderer {
       scene.root.destroy({ children: true });
     }
     this.sceneCache.clear();
+    this.hitGridCache.clear();
     this.activeScene = null;
   }
 
@@ -1586,9 +1611,25 @@ export class BoardRenderer {
         this.activeScene.bottomLayer.visible = this.isBottomVisible;
         this.applyLayerVisibility(this.activeScene);
         this.applyFlips(board, this.activeScene);
+        this.needsRender = true;
       }
 
-      this.renderSelection();
+      // Skip renderSelection() if all relevant state is unchanged (e.g. tab switch with no selection)
+      const sel = boardStore.selection;
+      const searchLen = boardStore.searchResultIndices?.size ?? 0;
+      const lrs = this.lastRenderedSel;
+      if (sel.partIndex !== lrs.partIndex
+        || sel.pinIndex !== lrs.pinIndex
+        || sel.highlightedNet !== lrs.highlightedNet
+        || searchLen !== lrs.searchLen
+        || this.board !== lrs.board
+        || boardStore.showNetDim !== lrs.showNetDim
+        || boardStore.butterfly !== lrs.butterfly
+        || boardStore.showTop !== lrs.showTop
+        || boardStore.showBottom !== lrs.showBottom) {
+        this.renderSelection();
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, showNetDim: boardStore.showNetDim, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom };
+      }
 
       // PDF follow mode: search for selected component
       if (boardStore.followPdf && boardStore.selection.partIndex !== null) {
@@ -2345,12 +2386,20 @@ export class BoardRenderer {
       gfx.rotation = labelRot;
     };
 
+    // Estimate text dimensions directly from font metrics (avoids stale getBounds during zoom)
+    const charW = fontSize * 0.6;   // approximate character width for bitmap font
+    const lineH = fontSize * 1.15;  // approximate line height
+    const measure = (text: string) => ({
+      w: text.length * charW + pad * 2,
+      h: lineH + pad * 2,
+    });
+
     // ── Part label: centered on the part's bounding box ──
     let partLabelCx = 0, partLabelCy = 0, partLabelHW = 0, partLabelHH = 0;
     if (s.showElevatedPartLabel) {
       const rb = computePartRenderBounds(part, s);
-      partLabelCx = rb.px + rb.pw / 2;              // center X of part bounds
-      partLabelCy = rb.py + rb.ph / 2;              // center Y of part bounds
+      partLabelCx = rb.px + rb.pw / 2;
+      partLabelCy = rb.py + rb.ph / 2;
       partLbl.style.fontSize = fontSize;
       partLbl.text = part.name;
       partLbl.x = partLabelCx;
@@ -2358,14 +2407,12 @@ export class BoardRenderer {
       applyCounterFlip(partLbl);
       partLbl.visible = true;
 
-      const pBounds = partLbl.getBounds();
-      const pw = pBounds.width / vpScale + pad * 2;
-      const ph = pBounds.height / vpScale + pad * 2;
-      partLabelHW = pw / 2;
-      partLabelHH = ph / 2;
+      const pm = measure(part.name);
+      partLabelHW = pm.w / 2;
+      partLabelHH = pm.h / 2;
       partBg.clear();
-      partBg.roundRect(-pw / 2, -ph / 2, pw, ph, cornerR);
-      partBg.fill({ color: 0x000000, alpha: 0.75 }); // ← part badge color
+      partBg.roundRect(-partLabelHW, -partLabelHH, pm.w, pm.h, cornerR);
+      partBg.fill({ color: 0x000000, alpha: 0.75 });
       applyCounterFlipGfx(partBg, partLabelCx, partLabelCy);
       partBg.visible = true;
     }
@@ -2376,7 +2423,6 @@ export class BoardRenderer {
       if (pin) {
         const pinId = pinDisplayId(pin, sel.pinIndex);
         const hasNet = pin.net && pin.net !== '(null)' && pin.net !== '';
-        // Net name leads when present — it is the most useful information at this zoom level.
         const pinText = hasNet ? `${pin.net} (${pinId})` : pinId;
         pinLbl.style.fontSize = fontSize;
         pinLbl.text = pinText;
@@ -2385,16 +2431,29 @@ export class BoardRenderer {
         const r = Math.min(computePinRadius(s, pin.radius), clamp);
         const yOffset = (r + fontSize * 0.8) * lsy;
 
+        const pnm = measure(pinText);
+        const pinHalfW = pnm.w / 2;
+        const pinHalfH = pnm.h / 2;
+
         // Default: above the pin. If that overlaps the part label, flip below.
         let cy = pin.position.y - yOffset;
         if (s.showElevatedPartLabel) {
-          const pinHalfW = pinText.length * fontSize * 0.55 + pad;
-          const pinHalfH = fontSize * 0.6 + pad;
           const overlaps = cx + pinHalfW > partLabelCx - partLabelHW &&
                            cx - pinHalfW < partLabelCx + partLabelHW &&
                            cy + pinHalfH > partLabelCy - partLabelHH &&
                            cy - pinHalfH < partLabelCy + partLabelHH;
-          if (overlaps) cy = pin.position.y + yOffset;
+          if (overlaps) {
+            // Try below the pin
+            cy = pin.position.y + yOffset;
+            // If still overlapping, push pin label fully clear of part label
+            const stillOverlaps = cx + pinHalfW > partLabelCx - partLabelHW &&
+                                  cx - pinHalfW < partLabelCx + partLabelHW &&
+                                  cy + pinHalfH > partLabelCy - partLabelHH &&
+                                  cy - pinHalfH < partLabelCy + partLabelHH;
+            if (stillOverlaps) {
+              cy = partLabelCy + partLabelHH + pinHalfH + pad;
+            }
+          }
         }
 
         pinLbl.x = cx;
@@ -2402,12 +2461,9 @@ export class BoardRenderer {
         applyCounterFlip(pinLbl);
         pinLbl.visible = true;
 
-        const pnBounds = pinLbl.getBounds();
-        const pnw = pnBounds.width / vpScale + pad * 2;
-        const pnh = pnBounds.height / vpScale + pad * 2;
         pinBg.clear();
-        pinBg.roundRect(-pnw / 2, -pnh / 2, pnw, pnh, cornerR);
-        pinBg.fill({ color: 0x1a1a2e, alpha: 0.85 }); // ← pin badge color
+        pinBg.roundRect(-pinHalfW, -pinHalfH, pnm.w, pnm.h, cornerR);
+        pinBg.fill({ color: 0x1a1a2e, alpha: 0.85 });
         applyCounterFlipGfx(pinBg, cx, cy);
         pinBg.visible = true;
       }
@@ -2806,12 +2862,21 @@ export class BoardRenderer {
   // --- Hit testing ---
 
   /** Build a spatial hash grid for O(1) hit-test lookups.
-   *  Each part is inserted into every grid cell its bounding box overlaps. */
+   *  Each part is inserted into every grid cell its bounding box overlaps.
+   *  Results are cached per-board so tab switches are instant. */
   private buildHitGrid(board: BoardData) {
+    const cached = this.hitGridCache.get(board);
+    if (cached) {
+      this.hitGrid = cached.grid;
+      this.hitGridCellSize = cached.cellSize;
+      return;
+    }
+
     const grid = new Map<string, number[]>();
     if (board.parts.length === 0) {
       this.hitGrid = grid;
       this.hitGridCellSize = 1;
+      this.hitGridCache.set(board, { grid, cellSize: 1 });
       return;
     }
     // Cell size: use board bounds divided into a reasonable grid (~50x50 cells)
@@ -2844,6 +2909,7 @@ export class BoardRenderer {
       }
     }
     this.hitGrid = grid;
+    this.hitGridCache.set(board, { grid, cellSize });
   }
 
   /** Get candidate part indices from the spatial hash for a given scene-space point */
@@ -3262,6 +3328,7 @@ export class BoardRenderer {
     //   BoardRenderer → app → ticker → onTick → BoardRenderer
     this.activeScene = null;
     this.sceneCache.clear();
+    this.hitGridCache.clear();
     this.viewportStates.clear();
     this.board = null;
     (this as any).app = null;

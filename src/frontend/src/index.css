@@ -1528,6 +1528,65 @@ html, body, #root {
   opacity: 0.5;
 }
 
+/* Component sub-layer group */
+.component-layer-group {
+  border-bottom: 1px solid var(--border);
+  padding: 4px 12px 6px;
+}
+
+.component-layer-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.component-layer-collapse {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.component-layer-collapse:hover {
+  color: var(--text-primary);
+}
+
+.component-sub-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 20px;
+  margin-top: 2px;
+}
+
+.component-sub-toggles.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.layer-toggle-sub {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-align: left;
+}
+
+.layer-toggle-sub:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.layer-toggle-sub.off {
+  opacity: 0.5;
+}
+
 .layer-list-container {
   padding: 4px 0;
 }

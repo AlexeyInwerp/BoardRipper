@@ -79,7 +79,8 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
 }
 
 function LayersTab() {
-  const { layerStates, showComponents, showVias, showTraces, board, selection } = useBoardStore();
+  const { layerStates, showComponents, showVias, showTraces, showPins, showOutlines, showLabels, board, selection } = useBoardStore();
+  const [componentsExpanded, setComponentsExpanded] = useState(true);
 
   // Compute which layers have traces for the currently highlighted net
   const highlightedLayers = useMemo(() => {
@@ -115,6 +116,19 @@ function LayersTab() {
               {showVias ? '◉ Vias' : '○ Vias'}
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Collapsible Components group */}
+      <div className="component-layer-group">
+        <div className="component-layer-header">
+          <button
+            className="component-layer-collapse"
+            onClick={() => setComponentsExpanded(!componentsExpanded)}
+            title={componentsExpanded ? 'Collapse' : 'Expand'}
+          >
+            {componentsExpanded ? '▾' : '▸'}
+          </button>
           <button
             className={`layer-toggle-all ${showComponents ? '' : 'off'}`}
             onClick={() => boardStore.toggleComponents()}
@@ -123,7 +137,36 @@ function LayersTab() {
             {showComponents ? '◉ Components' : '○ Components'}
           </button>
         </div>
+        {componentsExpanded && (
+          <div className={`component-sub-toggles ${showComponents ? '' : 'disabled'}`}>
+            <button
+              className={`layer-toggle-sub ${showComponents && showPins ? '' : 'off'}`}
+              onClick={() => boardStore.togglePins()}
+              disabled={!showComponents}
+              title={showPins ? 'Hide pins' : 'Show pins'}
+            >
+              {showPins ? '◉ Pins' : '○ Pins'}
+            </button>
+            <button
+              className={`layer-toggle-sub ${showComponents && showOutlines ? '' : 'off'}`}
+              onClick={() => boardStore.toggleOutlines()}
+              disabled={!showComponents}
+              title={showOutlines ? 'Hide outlines' : 'Show outlines'}
+            >
+              {showOutlines ? '◉ Outlines' : '○ Outlines'}
+            </button>
+            <button
+              className={`layer-toggle-sub ${showComponents && showLabels ? '' : 'off'}`}
+              onClick={() => boardStore.toggleLabels()}
+              disabled={!showComponents}
+              title={showLabels ? 'Hide labels' : 'Show labels'}
+            >
+              {showLabels ? '◉ Labels' : '○ Labels'}
+            </button>
+          </div>
+        )}
       </div>
+
       <div className="layer-list-container">
         {layerStates.map((layer, idx) => {
           const hasNet = highlightedLayers.has(idx);
