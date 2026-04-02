@@ -99,72 +99,71 @@ function LayersTab() {
     <div className="panel-content layer-list" data-testid="layer-list">
       <div className="layer-list-header">
         <span>{layerStates.length} layers</span>
-        <div className="layer-header-buttons">
-          <button
-            className={`layer-toggle-all ${showTraces ? '' : 'off'}`}
-            onClick={() => boardStore.toggleTraces()}
-            title={showTraces ? 'Hide all traces' : 'Show all traces'}
-          >
-            {showTraces ? '◉ Traces' : '○ Traces'}
-          </button>
-          {board?.vias && board.vias.length > 0 && (
-            <button
-              className={`layer-toggle-all ${showVias ? '' : 'off'}`}
-              onClick={() => boardStore.toggleVias()}
-              title={showVias ? 'Hide vias' : 'Show vias'}
-            >
-              {showVias ? '◉ Vias' : '○ Vias'}
-            </button>
-          )}
-        </div>
       </div>
 
-      {/* Collapsible Components group */}
-      <div className="component-layer-group">
-        <div className="component-layer-header">
+      {/* Visibility toggles — unified vertical list */}
+      <div className="visibility-toggle-list">
+        <button
+          className={`visibility-toggle ${showTraces ? '' : 'off'}`}
+          onClick={() => boardStore.toggleTraces()}
+          title={showTraces ? 'Hide traces' : 'Show traces'}
+        >
+          <span className="toggle-check">{showTraces ? '☑' : '☐'}</span> Traces
+        </button>
+        {board?.vias && board.vias.length > 0 && (
           <button
-            className="component-layer-collapse"
-            onClick={() => setComponentsExpanded(!componentsExpanded)}
-            title={componentsExpanded ? 'Collapse' : 'Expand'}
+            className={`visibility-toggle ${showVias ? '' : 'off'}`}
+            onClick={() => boardStore.toggleVias()}
+            title={showVias ? 'Hide vias' : 'Show vias'}
           >
-            {componentsExpanded ? '▾' : '▸'}
+            <span className="toggle-check">{showVias ? '☑' : '☐'}</span> Vias
           </button>
+        )}
+        <div className="visibility-toggle-group">
           <button
-            className={`layer-toggle-all ${showComponents ? '' : 'off'}`}
+            className={`visibility-toggle ${showComponents ? '' : 'off'}`}
             onClick={() => boardStore.toggleComponents()}
             title={showComponents ? 'Hide all components' : 'Show all components'}
           >
-            {showComponents ? '◉ Components' : '○ Components'}
+            <span className="toggle-check">{showComponents ? '☑' : '☐'}</span>
+            <span className="toggle-label">Components</span>
+            <button
+              className="toggle-collapse"
+              onClick={(e) => { e.stopPropagation(); setComponentsExpanded(!componentsExpanded); }}
+              title={componentsExpanded ? 'Collapse' : 'Expand'}
+            >
+              {componentsExpanded ? '▾' : '▸'}
+            </button>
           </button>
+          {componentsExpanded && (
+            <div className={`visibility-sub-toggles ${showComponents ? '' : 'disabled'}`}>
+              <button
+                className={`visibility-toggle sub ${showComponents && showPins ? '' : 'off'}`}
+                onClick={() => boardStore.togglePins()}
+                disabled={!showComponents}
+                title={showPins ? 'Hide pins' : 'Show pins'}
+              >
+                <span className="toggle-check">{showPins ? '☑' : '☐'}</span> Pins
+              </button>
+              <button
+                className={`visibility-toggle sub ${showComponents && showOutlines ? '' : 'off'}`}
+                onClick={() => boardStore.toggleOutlines()}
+                disabled={!showComponents}
+                title={showOutlines ? 'Hide outlines' : 'Show outlines'}
+              >
+                <span className="toggle-check">{showOutlines ? '☑' : '☐'}</span> Outlines
+              </button>
+              <button
+                className={`visibility-toggle sub ${showComponents && showLabels ? '' : 'off'}`}
+                onClick={() => boardStore.toggleLabels()}
+                disabled={!showComponents}
+                title={showLabels ? 'Hide labels' : 'Show labels'}
+              >
+                <span className="toggle-check">{showLabels ? '☑' : '☐'}</span> Labels
+              </button>
+            </div>
+          )}
         </div>
-        {componentsExpanded && (
-          <div className={`component-sub-toggles ${showComponents ? '' : 'disabled'}`}>
-            <button
-              className={`layer-toggle-sub ${showComponents && showPins ? '' : 'off'}`}
-              onClick={() => boardStore.togglePins()}
-              disabled={!showComponents}
-              title={showPins ? 'Hide pins' : 'Show pins'}
-            >
-              {showPins ? '◉ Pins' : '○ Pins'}
-            </button>
-            <button
-              className={`layer-toggle-sub ${showComponents && showOutlines ? '' : 'off'}`}
-              onClick={() => boardStore.toggleOutlines()}
-              disabled={!showComponents}
-              title={showOutlines ? 'Hide outlines' : 'Show outlines'}
-            >
-              {showOutlines ? '◉ Outlines' : '○ Outlines'}
-            </button>
-            <button
-              className={`layer-toggle-sub ${showComponents && showLabels ? '' : 'off'}`}
-              onClick={() => boardStore.toggleLabels()}
-              disabled={!showComponents}
-              title={showLabels ? 'Hide labels' : 'Show labels'}
-            >
-              {showLabels ? '◉ Labels' : '○ Labels'}
-            </button>
-          </div>
-        )}
       </div>
 
       <div className="layer-list-container">
