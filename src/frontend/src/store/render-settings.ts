@@ -640,12 +640,18 @@ class RenderSettingsStore extends Emitter {
   }
 
 
-  /** Set the active board fileName — recomputes effective settings and notifies */
+  /** Set the active board fileName — recomputes effective settings, notifies only if they changed */
   setActiveBoard(fileName: string) {
     if (this._activeBoard === fileName) return;
+    // Check if switching boards could change effective settings: only if either
+    // the old or new board has per-board overrides. Without overrides, effective = global.
+    const hadOverrides = this._activeBoard ? this.hasBoardOverrides(this._activeBoard) : false;
+    const hasOverrides = fileName ? this.hasBoardOverrides(fileName) : false;
     this._activeBoard = fileName;
-    this.recomputeEffective();
-    this.notify();
+    if (hadOverrides || hasOverrides) {
+      this.recomputeEffective();
+      this.notify();
+    }
   }
 
   /** Take a snapshot of effective settings */
