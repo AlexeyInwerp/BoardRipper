@@ -229,8 +229,24 @@ This is a one-time cost on first startup after upgrade. For a DB with 8500 files
 
 ---
 
-## Out of Scope (Future)
+## Design for Future: Library Organizer Module
 
-- Library organizer (rearrange files based on board-number-to-model mapping) — the folder registry is the foundation, but the organizer logic is a separate feature
+A separate module is being built that maintains a precise brand → model → board-number mapping database (e.g., Apple → MacBook Pro 16" 2019 → 820-01700). This module will be able to reorganize the entire library file structure based on that mapping — moving files from chaotic repair-shop folder layouts into a canonical hierarchy.
+
+**How this spec prepares for it:**
+
+- The `folders` table gives the organizer a mutable tree it can restructure (create new folders, move files between them by updating `folder_id` + `files.path`, delete empty source folders).
+- `files.board_number`, `files.manufacturer`, `files.model` columns already exist for metadata — the organizer module will populate these from its mapping DB, then use them to compute target folder paths.
+- The `PATCH /api/databank/files/{id}/rename` endpoint handles the physical file rename + DB update pattern that the organizer will use at scale (batch variant needed later).
+- Offline folder support means the organizer can work on available branches without touching disconnected volumes.
+
+**Not implemented here:** The mapping database itself, the reorganization logic, the batch-move API, and the UI for previewing/approving a reorganization plan. Those belong to the organizer module spec.
+
+---
+
+## Out of Scope
+
+- Library organizer module (brand-model-boardnumber mapping DB + reorganization engine) — separate spec/project
 - Drag-and-drop file moving between folders in the UI
 - Multi-library support (multiple scan roots)
+- Batch move/rename API (needed by organizer, not by this spec)
