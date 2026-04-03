@@ -97,6 +97,9 @@ var (
 
 	// Asus model pattern: e.g. "G532LWS", "FA507RM"
 	asusModelRe = regexp.MustCompile(`\b([A-Z][A-Z0-9]{3,8}[A-Z])\b`)
+
+	// Revision suffix: R10, R20, Rev1, Rev01, etc. at end of token
+	revisionSuffixRe = regexp.MustCompile(`(?i)R(?:ev)?\d{1,2}$`)
 )
 
 // ExtractMetadata extracts board number, manufacturer, and model from a filename and its directory path.
@@ -190,7 +193,56 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 		}
 	}
 
-	// Fallback to keyword-based extraction
+	// Fallback: tokenize filename and try alias lookups (catches codenames, model names)
+	if bdb != nil && bdb.Available() {
+		base := strings.TrimSuffix(filename, filepath.Ext(filename))
+		// Split on common separators: space, underscore, dash, dot, comma, parens
+		tokens := strings.FieldsFunc(base, func(r rune) bool {
+			return r == ' ' || r == '_' || r == '-' || r == '.' || r == ',' || r == '(' || r == ')' || r == '[' || r == ']'
+		})
+		for _, tok := range tokens {
+			if len(tok) < 3 {
+				continue
+			}
+			// Try the token as-is
+			if match := bdb.ResolveByAlias(tok); match != nil {
+				return Metadata{
+					BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
+					Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+				}
+			}
+			// Strip trailing revision (R10, R20, Rev1, etc.) and retry
+			stripped := revisionSuffixRe.ReplaceAllString(tok, "")
+			if stripped != tok && len(stripped) >= 3 {
+				if match := bdb.ResolveByAlias(stripped); match != nil {
+					return Metadata{
+						BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
+						Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+					}
+				}
+				// Also try resolving as a board number (for NME471 → NM-E471)
+				if match := bdb.Resolve(stripped); match != nil {
+					return Metadata{
+						BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
+						Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+					}
+				}
+			}
+		}
+		// Last resort: try regex extraction on the entire base name without any separators
+		// This catches compound tokens like "JY575NME471R10" where board numbers are glued together
+		lastTry := boarddb.ExtractBoardNumbers(base)
+		for _, e := range lastTry {
+			if match := bdb.Resolve(e.Number); match != nil {
+				return Metadata{
+					BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
+					Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+				}
+			}
+		}
+	}
+
+	// Final fallback: keyword-based extraction
 	m := ExtractMetadata(relPath)
 	if m.BoardNumber == "" && m.Manufacturer == "" {
 		m.ResolutionStatus = "unresolved"

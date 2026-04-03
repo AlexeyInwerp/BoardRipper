@@ -22,7 +22,8 @@ var odmPatterns = []ODMPattern{
 	{ODM: "Apple", Type: "apple_820", Pattern: regexp.MustCompile(`(?i)` + lb + `(820-\d{4,5}(?:-[A-Z0-9]+)?)`)},
 	{ODM: "Apple", Type: "apple_661", Pattern: regexp.MustCompile(lb + `(661-\d{5})`)},
 	// NM-D821 or NMD821 (LCFC files often omit the hyphen and append revision like R10)
-	{ODM: "LCFC", Type: "lenovo_nm", Pattern: regexp.MustCompile(`(?i)` + lb + `(NM-?[A-Z]\d{3,4})`)},
+	// Left boundary includes digits because LCFC project codes (JY575) end with digits before NM
+	{ODM: "LCFC", Type: "lenovo_nm", Pattern: regexp.MustCompile(`(?i)(?:^|[\s_\-/.,(\[0-9])(NM-?[A-Z]\d{3,4})`)},
 	{ODM: "Compal", Type: "compal_la", Pattern: regexp.MustCompile(`(?i)` + lb + `(LA-[A-Z]?\d{3,4}[A-Z]?)`)},
 	{ODM: "Quanta", Type: "quanta_da0", Pattern: regexp.MustCompile(`(?i)` + lb + `(DA[0A-Z][A-Z0-9]{2,8}MB[0-9A-Z]{2,5})`)},
 	{ODM: "ASUS", Type: "asus_60nb", Pattern: regexp.MustCompile(`(?i)` + lb + `(60N[BR][A-Z0-9]{4}-MB[A-Z0-9]{4,5})`)},
@@ -37,5 +38,6 @@ var odmPatterns = []ODMPattern{
 	{ODM: "Razer", Type: "razer_rz", Pattern: regexp.MustCompile(`(?i)` + lb + `(RZ09-\d{4})`)},
 	{ODM: "Clevo", Type: "clevo", Pattern: regexp.MustCompile(`(?i)` + lb + `(N[HPB]\d{2}[A-Z]{2,4})`)},
 	{ODM: "HP", Type: "hp_spare", Pattern: regexp.MustCompile(lb + `([A-Z]\d{5,6}-\d{3})`)},
+	{ODM: "Samsung", Type: "samsung_sm", Pattern: regexp.MustCompile(`(?i)` + lb + `(SM-[A-Z]\d{3,4}[A-Z]?)`)},
 	{ODM: "Wistron", Type: "wistron_numeric", Pattern: regexp.MustCompile(lb + `(\d{5,6}-\d[A-Z]?)`)},
 }

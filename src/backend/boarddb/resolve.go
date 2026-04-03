@@ -63,6 +63,23 @@ func (db *DB) Resolve(boardNumber string) *BoardMatch {
 	return db.queryBoard(boardQuery+` WHERE id = ?`, boardID)
 }
 
+// ResolveByAlias looks up a string directly against the board_aliases table.
+func (db *DB) ResolveByAlias(alias string) *BoardMatch {
+	if !db.Available() || alias == "" {
+		return nil
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	upper := strings.ToUpper(strings.TrimSpace(alias))
+	var boardID int64
+	err := db.reader.QueryRow(`SELECT board_id FROM board_aliases WHERE upper(alias_number) = ? LIMIT 1`, upper).Scan(&boardID)
+	if err != nil {
+		return nil
+	}
+	return db.queryBoard(boardQuery+` WHERE id = ?`, boardID)
+}
+
 // ResolveFilename extracts board numbers from a filename and resolves the best match.
 // Returns the extracted numbers, the best match (if any), and the ODM from the pattern.
 func (db *DB) ResolveFilename(filename string) ([]ExtractedNumber, *BoardMatch) {
