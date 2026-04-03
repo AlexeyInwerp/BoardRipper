@@ -10,10 +10,15 @@ func ExtractBoardNumbers(filename string) []ExtractedNumber {
 	seen := map[string]bool{}
 
 	for _, odm := range odmPatterns {
-		matches := odm.Pattern.FindAllString(filename, -1)
+		// Patterns use a capturing group (1) for the actual board number,
+		// with the left boundary in group 0.
+		matches := odm.Pattern.FindAllStringSubmatch(filename, -1)
 		for _, m := range matches {
-			upper := strings.ToUpper(m)
-			if seen[upper] {
+			if len(m) < 2 {
+				continue
+			}
+			upper := strings.ToUpper(strings.TrimSpace(m[1]))
+			if upper == "" || seen[upper] {
 				continue
 			}
 			seen[upper] = true
