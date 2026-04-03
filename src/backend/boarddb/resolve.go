@@ -1,9 +1,21 @@
 package boarddb
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// appleRevisionRe strips the revision suffix from Apple board numbers:
+// 820-02098-H → 820-02098, 820-02935-05 → 820-02935
+var appleRevisionRe = regexp.MustCompile(`^(820-\d{4,5})-[A-Z0-9]+$`)
+
+// nmNoHyphenRe normalizes LCFC board numbers without hyphens: NMD821 → NM-D821
+var nmNoHyphenRe = regexp.MustCompile(`^NM([A-Z]\d{3,4})$`)
+
+const boardQuery = `SELECT id, brand, model, model_number, board_number, board_name, odm, board_number_type, source FROM boards`
 
 // Resolve looks up a board number in the reference database.
-// Checks: exact match → prefix match (820-02016 → 820-02016-A) → alias match.
+// Checks: exact → prefix → base number (strip revision) → alias.
 // Returns nil if not found.
 func (db *DB) Resolve(boardNumber string) *BoardMatch {
 	if !db.Available() {
@@ -17,25 +29,38 @@ func (db *DB) Resolve(boardNumber string) *BoardMatch {
 		return nil
 	}
 
-	// 1. Exact match (case-insensitive)
-	m := db.queryBoard(`SELECT id, brand, model, model_number, board_number, board_name, odm, board_number_type, source FROM boards WHERE upper(board_number) = ?`, upper)
-	if m != nil {
+	// 1. Exact match
+	if m := db.queryBoard(boardQuery+` WHERE upper(board_number) = ?`, upper); m != nil {
 		return m
 	}
 
 	// 2. Prefix match (820-02016 matches 820-02016-A)
-	m = db.queryBoard(`SELECT id, brand, model, model_number, board_number, board_name, odm, board_number_type, source FROM boards WHERE upper(board_number) LIKE ? LIMIT 1`, upper+"-%")
-	if m != nil {
+	if m := db.queryBoard(boardQuery+` WHERE upper(board_number) LIKE ? LIMIT 1`, upper+"-%"); m != nil {
 		return m
 	}
 
-	// 3. Alias match
+	// 3. Strip Apple revision suffix (820-02098-H → 820-02098%)
+	if base := appleRevisionRe.FindStringSubmatch(upper); base != nil {
+		if m := db.queryBoard(boardQuery+` WHERE upper(board_number) LIKE ? LIMIT 1`, base[1]+"%"); m != nil {
+			return m
+		}
+	}
+
+	// 4. Normalize LCFC no-hyphen format (NMD821 → NM-D821)
+	if nm := nmNoHyphenRe.FindStringSubmatch(upper); nm != nil {
+		normalized := "NM-" + nm[1]
+		if m := db.queryBoard(boardQuery+` WHERE upper(board_number) = ?`, normalized); m != nil {
+			return m
+		}
+	}
+
+	// 5. Alias match
 	var boardID int64
 	err := db.reader.QueryRow(`SELECT board_id FROM board_aliases WHERE upper(alias_number) = ? LIMIT 1`, upper).Scan(&boardID)
 	if err != nil {
 		return nil
 	}
-	return db.queryBoard(`SELECT id, brand, model, model_number, board_number, board_name, odm, board_number_type, source FROM boards WHERE id = ?`, boardID)
+	return db.queryBoard(boardQuery+` WHERE id = ?`, boardID)
 }
 
 // ResolveFilename extracts board numbers from a filename and resolves the best match.
