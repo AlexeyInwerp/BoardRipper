@@ -66,7 +66,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -95,6 +95,11 @@ func (db *DB) migrate() error {
 	if ver < 3 {
 		if err := db.migrateV3(); err != nil {
 			return fmt.Errorf("v3: %w", err)
+		}
+	}
+	if ver < 4 {
+		if err := db.migrateV4(); err != nil {
+			return fmt.Errorf("v4: %w", err)
 		}
 	}
 
@@ -234,6 +239,36 @@ func (db *DB) migrateV3() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 3); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (db *DB) migrateV4() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE files ADD COLUMN board_manufacturer TEXT`,
+		`ALTER TABLE files ADD COLUMN resolution_status TEXT NOT NULL DEFAULT 'unresolved'`,
+		`CREATE INDEX IF NOT EXISTS idx_files_resolution ON files(resolution_status)`,
+		`CREATE INDEX IF NOT EXISTS idx_files_board_mfg ON files(board_manufacturer)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 4); err != nil {
 		return err
 	}
 
@@ -397,8 +432,10 @@ type FileRecord struct {
 	FormatID     string `json:"format_id,omitempty"`
 	PartCount    *int   `json:"part_count,omitempty"`
 	NetCount     *int   `json:"net_count,omitempty"`
-	DonorPool    bool   `json:"donor_pool"`
-	HasPreview   bool   `json:"has_preview"`
+	DonorPool         bool   `json:"donor_pool"`
+	HasPreview        bool   `json:"has_preview"`
+	BoardManufacturer string `json:"board_manufacturer,omitempty"`
+	ResolutionStatus  string `json:"resolution_status,omitempty"`
 }
 
 // BindingRecord represents a row in the bindings table.
@@ -441,11 +478,12 @@ func (db *DB) InsertFile(f *FileRecord) (int64, error) {
 	defer db.mu.Unlock()
 
 	res, err := db.writer.Exec(
-		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview, board_manufacturer, resolution_status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.Path, f.Filename, f.Extension, f.FileType, f.Size, f.ModTime, f.ScanTime,
 		nullStr(f.BoardNumber), nullStr(f.Manufacturer), nullStr(f.Model), nullStr(f.FormatID),
 		f.PartCount, f.NetCount, boolToInt(f.DonorPool), boolToInt(f.HasPreview),
+		nullStr(f.BoardManufacturer), coalesceStr(f.ResolutionStatus, "unresolved"),
 	)
 	if err != nil {
 		return 0, err
@@ -456,11 +494,12 @@ func (db *DB) InsertFile(f *FileRecord) (int64, error) {
 // InsertFileTx inserts a file inside an existing transaction (no mutex — caller holds it via WriteTx).
 func InsertFileTx(tx *sql.Tx, f *FileRecord) (int64, error) {
 	res, err := tx.Exec(
-		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO files (path, filename, extension, file_type, size, mod_time, scan_time, board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview, board_manufacturer, resolution_status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.Path, f.Filename, f.Extension, f.FileType, f.Size, f.ModTime, f.ScanTime,
 		nullStr(f.BoardNumber), nullStr(f.Manufacturer), nullStr(f.Model), nullStr(f.FormatID),
 		f.PartCount, f.NetCount, boolToInt(f.DonorPool), boolToInt(f.HasPreview),
+		nullStr(f.BoardManufacturer), coalesceStr(f.ResolutionStatus, "unresolved"),
 	)
 	if err != nil {
 		return 0, err
@@ -518,7 +557,8 @@ func (db *DB) DeleteFile(id int64) error {
 func (db *DB) GetFileByPath(path string) (*FileRecord, error) {
 	return db.scanFile(db.reader.QueryRow(
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
-		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview
+		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
+		        board_manufacturer, resolution_status
 		 FROM files WHERE path = ?`, path,
 	))
 }
@@ -527,7 +567,8 @@ func (db *DB) GetFileByPath(path string) (*FileRecord, error) {
 func (db *DB) GetFileByID(id int64) (*FileRecord, error) {
 	return db.scanFile(db.reader.QueryRow(
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
-		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview
+		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
+		        board_manufacturer, resolution_status
 		 FROM files WHERE id = ?`, id,
 	))
 }
@@ -535,7 +576,8 @@ func (db *DB) GetFileByID(id int64) (*FileRecord, error) {
 // ListFiles returns all files, optionally filtered.
 func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([]FileRecord, error) {
 	query := `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
-	                 board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview
+	                 board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
+	                 board_manufacturer, resolution_status
 	          FROM files WHERE 1=1`
 	args := []interface{}{}
 
@@ -672,13 +714,14 @@ func (db *DB) DeleteBinding(id int64) error {
 
 func (db *DB) scanFile(row *sql.Row) (*FileRecord, error) {
 	f := &FileRecord{}
-	var boardNum, mfr, model, fmtID sql.NullString
+	var boardNum, mfr, model, fmtID, boardMfr, resStat sql.NullString
 	var partCount, netCount sql.NullInt64
 	var donor, preview int
 
 	err := row.Scan(
 		&f.ID, &f.Path, &f.Filename, &f.Extension, &f.FileType, &f.Size, &f.ModTime, &f.ScanTime,
 		&boardNum, &mfr, &model, &fmtID, &partCount, &netCount, &donor, &preview,
+		&boardMfr, &resStat,
 	)
 	if err != nil {
 		return nil, err
@@ -688,6 +731,8 @@ func (db *DB) scanFile(row *sql.Row) (*FileRecord, error) {
 	f.Manufacturer = mfr.String
 	f.Model = model.String
 	f.FormatID = fmtID.String
+	f.BoardManufacturer = boardMfr.String
+	f.ResolutionStatus = resStat.String
 	if partCount.Valid {
 		v := int(partCount.Int64)
 		f.PartCount = &v
@@ -707,13 +752,14 @@ type scannable interface {
 
 func (db *DB) scanFileRow(row scannable) (*FileRecord, error) {
 	f := &FileRecord{}
-	var boardNum, mfr, model, fmtID sql.NullString
+	var boardNum, mfr, model, fmtID, boardMfr, resStat sql.NullString
 	var partCount, netCount sql.NullInt64
 	var donor, preview int
 
 	err := row.Scan(
 		&f.ID, &f.Path, &f.Filename, &f.Extension, &f.FileType, &f.Size, &f.ModTime, &f.ScanTime,
 		&boardNum, &mfr, &model, &fmtID, &partCount, &netCount, &donor, &preview,
+		&boardMfr, &resStat,
 	)
 	if err != nil {
 		return nil, err
@@ -723,6 +769,8 @@ func (db *DB) scanFileRow(row scannable) (*FileRecord, error) {
 	f.Manufacturer = mfr.String
 	f.Model = model.String
 	f.FormatID = fmtID.String
+	f.BoardManufacturer = boardMfr.String
+	f.ResolutionStatus = resStat.String
 	if partCount.Valid {
 		v := int(partCount.Int64)
 		f.PartCount = &v
@@ -734,6 +782,13 @@ func (db *DB) scanFileRow(row scannable) (*FileRecord, error) {
 	f.DonorPool = donor != 0
 	f.HasPreview = preview != 0
 	return f, nil
+}
+
+func coalesceStr(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 func nullStr(s string) interface{} {

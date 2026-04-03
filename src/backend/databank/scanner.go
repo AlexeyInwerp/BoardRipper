@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"boardripper/boarddb"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -50,6 +51,7 @@ type Scanner struct {
 	db         *DB
 	dataDir    string
 	libraryDir string // optional separate library directory
+	boardDB    *boarddb.DB // optional board reference database
 
 	mu        sync.Mutex
 	status    ScanStatus
@@ -57,6 +59,13 @@ type Scanner struct {
 	cancelCh  chan struct{}    // closed on cancel
 	activeOp  string          // "", "file", or "pdf"
 	extractor *PdfExtractor   // set via SetExtractor
+}
+
+// SetBoardDB registers the board reference database for ODM-aware metadata extraction.
+func (s *Scanner) SetBoardDB(bdb *boarddb.DB) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.boardDB = bdb
 }
 
 // SetExtractor registers the PDF extractor for ScanPdfAsync.
@@ -380,21 +389,23 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			atomic.AddInt64(&updated, 1)
 		} else {
 			// New file — collect for batch insert
-			meta := ExtractMetadata(df.relPath)
+			meta := ExtractMetadataWithBoardDB(df.relPath, s.boardDB)
 			fileType := FileTypeFromExt(df.relPath)
 			ext := strings.ToLower(filepath.Ext(df.relPath))
 
 			toInsert = append(toInsert, FileRecord{
-				Path:         df.relPath,
-				Filename:     filepath.Base(df.relPath),
-				Extension:    ext,
-				FileType:     fileType,
-				Size:         df.size,
-				ModTime:      df.modTime,
-				ScanTime:     time.Now().Unix(),
-				BoardNumber:  meta.BoardNumber,
-				Manufacturer: meta.Manufacturer,
-				Model:        meta.Model,
+				Path:              df.relPath,
+				Filename:          filepath.Base(df.relPath),
+				Extension:         ext,
+				FileType:          fileType,
+				Size:              df.size,
+				ModTime:           df.modTime,
+				ScanTime:          time.Now().Unix(),
+				BoardNumber:       meta.BoardNumber,
+				Manufacturer:      meta.Manufacturer,
+				Model:             meta.Model,
+				BoardManufacturer: meta.BoardManufacturer,
+				ResolutionStatus:  meta.ResolutionStatus,
 			})
 		}
 	}

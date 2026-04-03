@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"boardripper/boarddb"
 	"boardripper/databank"
 	"boardripper/handlers"
 )
@@ -39,10 +40,18 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize board reference database (optional — disabled if boards.db missing)
+	boardDBPath := filepath.Join(dataDir, "boards.db")
+	bdb := boarddb.Open(boardDBPath)
+	if bdb != nil {
+		defer bdb.Close()
+	}
+
 	// Create scanner and PDF extractor
 	// LIBRARY_DIR env sets the default scan root (Docker: /library, dev: unset)
 	libraryDir := os.Getenv("LIBRARY_DIR")
 	scanner := databank.NewScanner(db, dataDir, libraryDir)
+	scanner.SetBoardDB(bdb)
 	extractor := databank.NewPdfExtractor(db, dataDir)
 	extractor.SetScanner(scanner)
 
@@ -95,6 +104,11 @@ func main() {
 	mux.HandleFunc("PUT /api/databank/files/{id}/text", dbHandler.UploadText)
 	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)
 	mux.HandleFunc("PUT /api/databank/preview/{id}", dbHandler.PreviewPut)
+
+	// Board reference database API routes
+	boardsHandler := handlers.NewBoardsHandler(bdb)
+	mux.HandleFunc("GET /api/boards/resolve", boardsHandler.Resolve)
+	mux.HandleFunc("GET /api/boards/stats", boardsHandler.Stats)
 
 	// Config API routes
 	mux.HandleFunc("GET /api/config", dbHandler.GetConfig)

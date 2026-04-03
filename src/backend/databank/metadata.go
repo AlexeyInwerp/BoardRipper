@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"boardripper/boarddb"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -59,9 +60,11 @@ func FileTypeFromExt(name string) string {
 
 // Metadata holds extracted metadata from a filename.
 type Metadata struct {
-	BoardNumber  string
-	Manufacturer string
-	Model        string
+	BoardNumber       string
+	Manufacturer      string
+	Model             string
+	BoardManufacturer string // ODM: "Compal", "Quanta", etc.
+	ResolutionStatus  string // "resolved", "pattern_matched", "unresolved"
 }
 
 var (
@@ -153,6 +156,47 @@ func ExtractMetadata(relPath string) Metadata {
 		}
 	}
 
+	return m
+}
+
+// ExtractMetadataWithBoardDB uses the board reference database for ODM-aware metadata extraction.
+// Falls back to ExtractMetadata if boarddb is nil or no patterns match.
+func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
+	filename := filepath.Base(relPath)
+
+	if bdb != nil && bdb.Available() {
+		extracted := boarddb.ExtractBoardNumbers(filename)
+		if len(extracted) == 0 {
+			// Try directory components too
+			extracted = boarddb.ExtractBoardNumbers(relPath)
+		}
+		if len(extracted) > 0 {
+			best := extracted[0]
+			m := Metadata{
+				BoardNumber:       best.Number,
+				BoardManufacturer: best.ODM,
+				ResolutionStatus:  "pattern_matched",
+			}
+
+			match := bdb.Resolve(best.Number)
+			if match != nil {
+				m.BoardNumber = match.BoardNumber // canonical from DB
+				m.Manufacturer = match.Brand
+				m.Model = match.Model
+				m.BoardManufacturer = match.ODM
+				m.ResolutionStatus = "resolved"
+			}
+			return m
+		}
+	}
+
+	// Fallback to keyword-based extraction
+	m := ExtractMetadata(relPath)
+	if m.BoardNumber == "" && m.Manufacturer == "" {
+		m.ResolutionStatus = "unresolved"
+	} else {
+		m.ResolutionStatus = "pattern_matched"
+	}
 	return m
 }
 
