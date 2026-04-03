@@ -25,6 +25,8 @@ export interface DatabankFile {
   net_count: number | null;
   donor_pool: boolean;
   has_preview: boolean;
+  board_manufacturer: string;
+  resolution_status: 'resolved' | 'pattern_matched' | 'unresolved' | '';
 }
 
 export interface DatabankBinding {
@@ -249,24 +251,41 @@ class DatabankStore extends Emitter {
   }
 
   get modelTree(): ModelGroup[] {
-    // Group files by resolved model line (e.g. "MacBook Pro 16\"")
+    // Group files by brand → model → board_number
+    // Uses backend-enriched model/manufacturer fields (from Board DB resolution)
+    // Falls back to client-side Apple lookup for files without backend resolution
     const lineMap = new Map<string, Map<string, { info: string; aNumber: string; boardNumber: string; files: DatabankFile[] }>>();
     const unresolved: DatabankFile[] = [];
 
     for (const f of this._files) {
-      const entry = f.board_number ? lookupBoard(f.board_number) : undefined;
-      if (!entry) {
-        unresolved.push(f);
+      // Prefer backend-resolved model (works for all brands)
+      if (f.resolution_status === 'resolved' && f.model && f.manufacturer) {
+        const modelLine = `${f.manufacturer} — ${f.model}`;
+        if (!lineMap.has(modelLine)) lineMap.set(modelLine, new Map());
+        const variants = lineMap.get(modelLine)!;
+        const key = f.board_number;
+        if (!variants.has(key)) {
+          const odm = f.board_manufacturer ? ` [${f.board_manufacturer}]` : '';
+          variants.set(key, { info: `${f.model}${odm}`, aNumber: '', boardNumber: f.board_number, files: [] });
+        }
+        variants.get(key)!.files.push(f);
         continue;
       }
 
-      if (!lineMap.has(entry.model)) lineMap.set(entry.model, new Map());
-      const variants = lineMap.get(entry.model)!;
-      const key = entry.board_number; // group by exact board entry
-      if (!variants.has(key)) {
-        variants.set(key, { info: entry.info, aNumber: entry.a_number, boardNumber: entry.board_number, files: [] });
+      // Fallback: client-side Apple lookup (for existing DBs not yet re-scanned)
+      const entry = f.board_number ? lookupBoard(f.board_number) : undefined;
+      if (entry) {
+        if (!lineMap.has(entry.model)) lineMap.set(entry.model, new Map());
+        const variants = lineMap.get(entry.model)!;
+        const key = entry.board_number;
+        if (!variants.has(key)) {
+          variants.set(key, { info: entry.info, aNumber: entry.a_number, boardNumber: entry.board_number, files: [] });
+        }
+        variants.get(key)!.files.push(f);
+        continue;
       }
-      variants.get(key)!.files.push(f);
+
+      unresolved.push(f);
     }
 
     const groups: ModelGroup[] = [];
@@ -279,7 +298,6 @@ class DatabankStore extends Emitter {
       });
     }
 
-    // Add unresolved files as a separate group at the end
     if (unresolved.length > 0) {
       groups.push({
         modelLine: 'Other',
