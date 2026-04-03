@@ -14,7 +14,8 @@ type ODMPattern struct {
 var odmPatterns = []ODMPattern{
 	{ODM: "Apple", Type: "apple_820", Pattern: regexp.MustCompile(`(?i)\b820-\d{4,5}(?:-[A-Z])?\b`)},
 	{ODM: "Apple", Type: "apple_661", Pattern: regexp.MustCompile(`\b661-\d{5}\b`)},
-	{ODM: "LCFC", Type: "lenovo_nm", Pattern: regexp.MustCompile(`(?i)\bNM-[A-Z]\d{3,4}\b`)},
+	// NM-D821 or NMD821 (LCFC files often omit the hyphen and append revision like R10)
+	{ODM: "LCFC", Type: "lenovo_nm", Pattern: regexp.MustCompile(`(?i)NM-?[A-Z]\d{3,4}`)},
 	{ODM: "Compal", Type: "compal_la", Pattern: regexp.MustCompile(`(?i)\bLA-[A-Z]?\d{3,4}[A-Z]?\b`)},
 	{ODM: "Quanta", Type: "quanta_da0", Pattern: regexp.MustCompile(`(?i)\bDA[0A-Z][A-Z0-9]{2,8}MB[0-9A-Z]{2,5}\b`)},
 	{ODM: "ASUS", Type: "asus_60nb", Pattern: regexp.MustCompile(`(?i)\b60N[BR][A-Z0-9]{4}-MB[A-Z0-9]{4,5}\b`)},
