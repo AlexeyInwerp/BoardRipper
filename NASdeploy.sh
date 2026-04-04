@@ -26,7 +26,7 @@ if [[ -f "${SCRIPT_DIR}/deploy.conf" ]]; then
     NAS_HOST=$(grep '^server:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $2}')
     NAS_USER=$(grep '^ssh user:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $3}')
     NAS_PW=$(grep '^ssh pw:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $3}')
-    GITHUB_UPDATE_TOKEN=$(grep '^github_token:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $2}')
+    GITHUB_UPDATE_TOKEN=$(grep '^github_token:' "${SCRIPT_DIR}/deploy.conf" 2>/dev/null | awk '{print $2}' || true)
 fi
 APP_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
 
