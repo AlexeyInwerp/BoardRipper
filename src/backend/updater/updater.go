@@ -253,14 +253,17 @@ func (u *Updater) Apply() error {
 }
 
 // fetchLatestRelease calls the GitHub API.
+// Uses /releases?per_page=1 instead of /releases/latest to include pre-releases.
 func fetchLatestRelease() (*ReleaseInfo, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", RepoOwner, RepoName)
+	if GitHubToken == "" {
+		return nil, fmt.Errorf("no GitHub token configured — required for private repo")
+	}
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=1", RepoOwner, RepoName)
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "BoardRipper/"+Version)
-	if GitHubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+GitHubToken)
-	}
+	req.Header.Set("Authorization", "Bearer "+GitHubToken)
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
@@ -274,11 +277,14 @@ func fetchLatestRelease() (*ReleaseInfo, error) {
 		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var rel ReleaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return nil, fmt.Errorf("failed to parse release JSON: %w", err)
+	var releases []ReleaseInfo
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return nil, fmt.Errorf("failed to parse releases JSON: %w", err)
 	}
-	return &rel, nil
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("no releases found")
+	}
+	return &releases[0], nil
 }
 
 // downloadAsset fetches a release asset to disk.
