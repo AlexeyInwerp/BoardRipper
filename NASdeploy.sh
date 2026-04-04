@@ -21,11 +21,14 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 # Read config from deploy.conf
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAS_PW=""
+GITHUB_UPDATE_TOKEN=""
 if [[ -f "${SCRIPT_DIR}/deploy.conf" ]]; then
     NAS_HOST=$(grep '^server:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $2}')
     NAS_USER=$(grep '^ssh user:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $3}')
     NAS_PW=$(grep '^ssh pw:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $3}')
+    GITHUB_UPDATE_TOKEN=$(grep '^github_token:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $2}')
 fi
+APP_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
 
 # ── Colors ─────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -59,7 +62,7 @@ info "=== Pre-deploy checks ==="
 
 # 1. Verify Docker image builds locally
 info "Building image..."
-docker build -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
+docker build --build-arg APP_VERSION="${APP_VERSION}" --build-arg GITHUB_TOKEN="${GITHUB_UPDATE_TOKEN}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
 
 # 2. Smoke-test the image locally
 info "Smoke-testing image..."
@@ -99,7 +102,7 @@ info "Push complete."
 # ── Step 2: Build Docker image for linux/amd64 ────────────────
 TAR_FILE="/tmp/${IMAGE_NAME}.tar.gz"
 info "Building Docker image ${IMAGE_NAME}:${IMAGE_TAG} for linux/amd64..."
-docker buildx build --platform linux/amd64 -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
+docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" --build-arg GITHUB_TOKEN="${GITHUB_UPDATE_TOKEN}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
     error "Docker build failed."
     exit 1
 }

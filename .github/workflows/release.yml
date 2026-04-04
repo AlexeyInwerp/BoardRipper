@@ -31,7 +31,7 @@ jobs:
       - run: cd src/backend && go test ./... -v -count=1
 
       # Docker build + smoke
-      - run: docker build -t boardripper:${{ github.ref_name }} .
+      - run: docker build --build-arg APP_VERSION=${{ github.ref_name }} --build-arg GITHUB_TOKEN=${{ secrets.UPDATE_TOKEN }} -t boardripper:${{ github.ref_name }} .
       - run: |
           docker run -d --name br-release -p 8080:8080 boardripper:${{ github.ref_name }}
           sleep 3
@@ -56,23 +56,23 @@ jobs:
       # Build frontend once
       - run: cd src/frontend && npm ci && npm run build
 
-      # Build Go server for all platforms
+      # Build Go server for all platforms (version injected, no update token for standalone)
       - name: Build Linux amd64
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../boardripper-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-linux-amd64 .
       - name: Build Windows amd64
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ../boardripper-windows-amd64.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-windows-amd64.exe .
       - name: Build macOS amd64 (Intel)
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ../boardripper-macos-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-macos-amd64 .
       - name: Build macOS arm64 (Apple Silicon)
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ../boardripper-macos-arm64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-macos-arm64 .
 
       # Package each platform: binary + frontend dist
       - name: Package releases
@@ -114,6 +114,8 @@ jobs:
         run: |
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
+            --build-arg APP_VERSION=${{ github.ref_name }} \
+            --build-arg GITHUB_TOKEN=${{ secrets.UPDATE_TOKEN }} \
             --tag boardripper:${{ github.ref_name }} \
             --output type=docker,dest=boardripper-docker.tar \
             .
