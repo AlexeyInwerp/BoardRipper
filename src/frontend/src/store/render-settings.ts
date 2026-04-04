@@ -465,6 +465,56 @@ export function computeTwoPinOBB(
   ];
 }
 
+/**
+ * Compute two rotated pad polygons for a diagonal 2-pin part.
+ * Each pad is a rotated rectangle centered on its pin, spanning the full body
+ * width perpendicular to the pin axis and ~40% of the body length along it.
+ * Returns null if the part is not a valid diagonal 2-pin.
+ */
+export function computeDiag2PinPads(
+  pins: { position: { x: number; y: number }; radius?: number }[],
+  s: RenderSettings,
+): { pads: [number, number][][]; ux: number; uy: number; vx: number; vy: number; halfW: number } | null {
+  if (pins.length !== 2) return null;
+  const p0 = pins[0].position;
+  const p1 = pins[1].position;
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return null;
+
+  // Same axes and dimensions as computeTwoPinOBB
+  const ux = dx / dist, uy = dy / dist;
+  const vx = -uy, vy = ux;
+  const halfW = dist * s.partMinBodyRatio / 2;
+  const ext = halfW * 0.5;
+  const halfLen = dist / 2 + ext;
+  const bodyW = halfW * 2;
+
+  // Pad depth along axis: same ratio as axis-aligned (min of short axis, long axis * 0.4)
+  const padDepth = Math.min(bodyW, halfLen * 2 * 0.4);
+  const padHL = padDepth / 2;
+
+  // Clamp so pads don't exceed OBB edges: pin is at ±dist/2 from center,
+  // OBB edge is at ±halfLen, so outward limit from pin = ext
+  const makePad = (px: number, py: number, outwardSign: number): [number, number][] => {
+    // From pin center: extend padHL inward (toward other pin) and min(padHL, ext) outward
+    const inner = padHL;
+    const outer = Math.min(padHL, ext);
+    // outwardSign: -1 for p0 (OBB edge at -halfLen), +1 for p1 (OBB edge at +halfLen)
+    const e0 = -inner * outwardSign; // toward other pin
+    const e1 = outer * outwardSign;  // toward OBB edge
+    const lo = Math.min(e0, e1), hi = Math.max(e0, e1);
+    return [
+      [px + lo * ux - halfW * vx, py + lo * uy - halfW * vy],
+      [px + hi * ux - halfW * vx, py + hi * uy - halfW * vy],
+      [px + hi * ux + halfW * vx, py + hi * uy + halfW * vy],
+      [px + lo * ux + halfW * vx, py + lo * uy + halfW * vy],
+    ];
+  };
+
+  return { pads: [makePad(p0.x, p0.y, -1), makePad(p1.x, p1.y, 1)], ux, uy, vx, vy, halfW };
+}
+
 /** Convenience wrapper: compute OBB polygon for a part, or null if axis-aligned. */
 export function computePartRenderPoly(
   part: { pins: { position: { x: number; y: number }; radius?: number }[] },
