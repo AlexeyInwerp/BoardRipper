@@ -108,7 +108,7 @@ function LayersTab() {
           onClick={() => boardStore.toggleTraces()}
           title={showTraces ? 'Hide traces' : 'Show traces'}
         >
-          <span className="toggle-check">{showTraces ? '☑' : '☐'}</span> Traces
+          <span className="toggle-check">{showTraces ? '■' : '□'}</span> Traces
         </button>
         {board?.vias && board.vias.length > 0 && (
           <button
@@ -116,7 +116,7 @@ function LayersTab() {
             onClick={() => boardStore.toggleVias()}
             title={showVias ? 'Hide vias' : 'Show vias'}
           >
-            <span className="toggle-check">{showVias ? '☑' : '☐'}</span> Vias
+            <span className="toggle-check">{showVias ? '■' : '□'}</span> Vias
           </button>
         )}
         <div className="visibility-toggle-group">
@@ -125,7 +125,7 @@ function LayersTab() {
             onClick={() => boardStore.toggleComponents()}
             title={showComponents ? 'Hide all components' : 'Show all components'}
           >
-            <span className="toggle-check">{showComponents ? '☑' : '☐'}</span>
+            <span className="toggle-check">{showComponents ? '■' : '□'}</span>
             <span className="toggle-label">Components</span>
             <button
               className="toggle-collapse"
@@ -143,7 +143,7 @@ function LayersTab() {
                 disabled={!showComponents}
                 title={showPins ? 'Hide pins' : 'Show pins'}
               >
-                <span className="toggle-check">{showPins ? '☑' : '☐'}</span> Pins
+                <span className="toggle-check">{showPins ? '■' : '□'}</span> Pins
               </button>
               <button
                 className={`visibility-toggle sub ${showComponents && showOutlines ? '' : 'off'}`}
@@ -151,7 +151,7 @@ function LayersTab() {
                 disabled={!showComponents}
                 title={showOutlines ? 'Hide outlines' : 'Show outlines'}
               >
-                <span className="toggle-check">{showOutlines ? '☑' : '☐'}</span> Outlines
+                <span className="toggle-check">{showOutlines ? '■' : '□'}</span> Outlines
               </button>
               <button
                 className={`visibility-toggle sub ${showComponents && showLabels ? '' : 'off'}`}
@@ -159,7 +159,7 @@ function LayersTab() {
                 disabled={!showComponents}
                 title={showLabels ? 'Hide labels' : 'Show labels'}
               >
-                <span className="toggle-check">{showLabels ? '☑' : '☐'}</span> Labels
+                <span className="toggle-check">{showLabels ? '■' : '□'}</span> Labels
               </button>
             </div>
           )}
