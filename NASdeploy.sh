@@ -8,12 +8,12 @@ set -euo pipefail
 # ── Configuration ──────────────────────────────────────────────
 IMAGE_NAME="boardripper"
 IMAGE_TAG="latest"
-NAS_HOST="192.168.178.21"
+NAS_HOST="rd-nas"
 NAS_USER="inwerp"
 NAS_SSH_PORT=22
 NAS_DATA_DIR="/volume1/docker/boardripper/data"
 NAS_LIBRARY_DIR="/volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI"
-NAS_PORT=8081          # External port on NAS (8080 is taken by CRM)
+NAS_PORT=8090          # External port on NAS
 CONTAINER_PORT=8080    # Internal port the Go server listens on
 REMOTE="origin"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"

@@ -12,7 +12,7 @@ CONFIG_FILE="/volume1/docker/boardripper/container-config.json"
 
 # Fallback config for first deploy (no existing container AND no saved config)
 DEFAULT_MOUNTS='-v /volume1/docker/boardripper/data:/data -v /volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI:/library:ro'
-DEFAULT_PORTS='-p 8081:8080'
+DEFAULT_PORTS='-p 8090:8080'
 DEFAULT_ENV='-e PORT=8080 -e LIBRARY_DIR=/library'
 
 # Helper: run docker with sudo, filtering prompt noise

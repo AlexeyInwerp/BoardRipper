@@ -20,14 +20,6 @@ const OUTLINE_MARGIN = 50;
 /** Max pin radius in mils — clamps oversized thermal/connector pads */
 const MAX_PIN_RADIUS = 30;
 
-/** Padding around pin bounds for component outline (mils) */
-const BOUNDS_PAD = 10;
-
-/** Max body-to-pin-spread ratio — prevents oversized outlines on small passives */
-const BOUNDS_CLAMP_RATIO = 1.2;
-
-/** Minimum component body dimension in mils (for single-pin or zero-spread parts) */
-const BOUNDS_MIN_SIZE = 30;
 
 // ─── Binary Reader ──────────────────────────────────────────────────────────
 
@@ -1185,31 +1177,11 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
 
     if (pins.length === 0) continue;
 
-    const pinBBox = computeBBox(pins.map(p => p.position));
-    const nativeW = tvwPart.bboxMax.x - tvwPart.bboxMin.x;
-    const nativeH = tvwPart.bboxMax.y - tvwPart.bboxMin.y;
+    // Use pin-only bounds (like BRD parser) so the renderer controls padding.
+    // Native part bboxes from TVW files are often oversized.
+    const bounds = computeBBox(pins.map(p => p.position));
     const cx = tvwPart.pos.x;
     const cy = tvwPart.pos.y;
-    const pinW = pinBBox.maxX - pinBBox.minX;
-    const pinH = pinBBox.maxY - pinBBox.minY;
-    const bounds: BBox = {
-      minX: Math.min(cx - nativeW / 2, pinBBox.minX - BOUNDS_PAD),
-      minY: Math.min(cy - nativeH / 2, pinBBox.minY - BOUNDS_PAD),
-      maxX: Math.max(cx + nativeW / 2, pinBBox.maxX + BOUNDS_PAD),
-      maxY: Math.max(cy + nativeH / 2, pinBBox.maxY + BOUNDS_PAD),
-    };
-    const maxW = Math.max(pinW * BOUNDS_CLAMP_RATIO, BOUNDS_MIN_SIZE);
-    const maxH = Math.max(pinH * BOUNDS_CLAMP_RATIO, BOUNDS_MIN_SIZE);
-    const bw = bounds.maxX - bounds.minX;
-    const bh = bounds.maxY - bounds.minY;
-    if (bw > maxW) {
-      bounds.minX = cx - maxW / 2;
-      bounds.maxX = cx + maxW / 2;
-    }
-    if (bh > maxH) {
-      bounds.minY = cy - maxH / 2;
-      bounds.maxY = cy + maxH / 2;
-    }
     const origin: Point = { x: cx, y: cy };
 
     allParts.push({
@@ -1266,6 +1238,31 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       outlinePoints.push(...paths[i]);
     }
     log.parser.log(`outline from Roul Logic layer: ${roulLogicLayer.lines.length} lines, ${roulLogicLayer.arcs.length} arcs → ${paths.length} paths`);
+  }
+
+  // Sanitize outline: discard points far outside content bounds (corrupted Roul data).
+  // Use 3× content extent as the plausible outline limit.
+  if (outlinePoints.length > 0 && allPadPoints.length > 0) {
+    const OUTLINE_SANITY = 3;
+    const extentX = (globalMaxX - globalMinX) * OUTLINE_SANITY;
+    const extentY = (globalMaxY - globalMinY) * OUTLINE_SANITY;
+    const limMinX = globalMinX - extentX;
+    const limMaxX = globalMaxX + extentX;
+    const limMinY = globalMinY - extentY;
+    const limMaxY = globalMaxY + extentY;
+    const before = outlinePoints.length;
+    outlinePoints = outlinePoints.filter(p =>
+      isNaN(p.x) || (p.x >= limMinX && p.x <= limMaxX && p.y >= limMinY && p.y <= limMaxY)
+    );
+    // Remove leading/trailing/consecutive NaN separators left by filtering
+    while (outlinePoints.length > 0 && isNaN(outlinePoints[0].x)) outlinePoints.shift();
+    while (outlinePoints.length > 0 && isNaN(outlinePoints[outlinePoints.length - 1].x)) outlinePoints.pop();
+    for (let i = outlinePoints.length - 1; i > 0; i--) {
+      if (isNaN(outlinePoints[i].x) && isNaN(outlinePoints[i - 1].x)) outlinePoints.splice(i, 1);
+    }
+    if (before !== outlinePoints.length) {
+      log.parser.warn(`outline sanitized: removed ${before - outlinePoints.length} out-of-bounds points`);
+    }
   }
 
   if (outlinePoints.length === 0) {

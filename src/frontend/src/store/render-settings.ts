@@ -49,7 +49,7 @@ export interface RenderSettings {
   pinMaxRadius: number;
   pinScaleFactor: number;
   /** Minimum body size (mils) in the narrow dimension for 2-pin parts. 0 = disabled. */
-  partMinBodyMils: number;
+  partMinBodyRatio: number;
   pinAlpha: number;
   showPinNumbers: boolean;
   /** Show pin-1 marker (red color + triangle indicator) on multi-pin parts */
@@ -109,6 +109,11 @@ export interface RenderSettings {
    * Higher = more vertical distance between the two labels. Default 0.25.
    */
   bgaLabelGapFactor: number;
+  /**
+   * Vertical shift factor for net labels on horizontal 2-pin parts.
+   * Multiplied by body half-height to offset labels above/below the part name.
+   */
+  twoPinLabelGapFactor: number;
 
   /** Debug: draw a crosshair at each pin's exact file coordinates */
   showPadVertices: boolean;
@@ -186,7 +191,7 @@ export const DEFAULTS: RenderSettings = {
   pinMinRadius: 3,
   pinMaxRadius: 30,
   pinScaleFactor: 1,
-  partMinBodyMils: 0,
+  partMinBodyRatio: 0.8,
   pinAlpha: 0.85,
   showPinNumbers: true,
   showPin1Marker: true,
@@ -194,7 +199,7 @@ export const DEFAULTS: RenderSettings = {
   labelZoomHide: 0,
 
   selectionWidth: 2,
-  selectionPadding: 6,
+  selectionPadding: 4,
   selectionFillAlpha: 0.07,
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
@@ -221,6 +226,7 @@ export const DEFAULTS: RenderSettings = {
   pinNetLabelBg: true,
   twoPinNetLabelBg: true,
   bgaLabelGapFactor: 0.15,
+  twoPinLabelGapFactor: 0.6,
 
   showPadVertices: false,
   showVertexNumbers: false,
@@ -307,7 +313,7 @@ export function computeEffectiveBounds(
     const p1 = pins[pins.length - 1].position;
     horiz = Math.abs(p0.x - p1.x) >= Math.abs(p0.y - p1.y);
     const dist = Math.sqrt((p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2);
-    const inflate = Math.max(dist * 0.35, s.partMinBodyMils);
+    const inflate = dist * s.partMinBodyRatio;
     if (horiz && maxY - minY < inflate) {
       const cy = (minY + maxY) / 2;
       minY = cy - inflate / 2;
@@ -339,56 +345,48 @@ export function computeEffectiveBounds(
  * Detect if a multi-pin part's pins are arranged diagonally and compute an
  * oriented bounding box (OBB) if so. Returns 4 corner points or null.
  *
- * Detection: ≥20 pins, and ≥5 consecutive pins with both dx and dy nonzero
- * and consistent sign (all moving in the same diagonal direction).
+ * Uses PCA (principal component analysis) on pin positions to find the axis
+ * of maximum variance. If the OBB saves >30% area vs the AABB, it's diagonal
+ * enough to warrant an oriented outline.
  */
 export function computeDiagonalOBB(
   pins: { position: { x: number; y: number }; radius?: number }[],
   s: RenderSettings,
 ): [number, number][] | null {
-  if (pins.length < 20) return null;
+  if (pins.length < 3) return null;
 
-  // Find longest run of consecutive pins with consistent diagonal deltas
-  let bestRun = 0, bestStart = 0;
-  let runLen = 0, runStart = 0;
-  let lastSignX = 0, lastSignY = 0;
+  // Centroid
+  let cx = 0, cy = 0;
+  for (const pin of pins) { cx += pin.position.x; cy += pin.position.y; }
+  cx /= pins.length; cy /= pins.length;
 
-  for (let i = 1; i < pins.length; i++) {
-    const dx = pins[i].position.x - pins[i - 1].position.x;
-    const dy = pins[i].position.y - pins[i - 1].position.y;
-    const sx = Math.sign(dx), sy = Math.sign(dy);
-    // Both axes must move, and direction must be consistent with the run
-    if (sx !== 0 && sy !== 0 && (runLen === 0 || (sx === lastSignX && sy === lastSignY))) {
-      if (runLen === 0) runStart = i - 1;
-      runLen++;
-      lastSignX = sx; lastSignY = sy;
-    } else {
-      if (runLen > bestRun) { bestRun = runLen; bestStart = runStart; }
-      runLen = 0;
-    }
+  // Covariance matrix [cxx cxy; cxy cyy]
+  let cxx = 0, cxy = 0, cyy = 0;
+  for (const pin of pins) {
+    const dx = pin.position.x - cx;
+    const dy = pin.position.y - cy;
+    cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
   }
-  if (runLen > bestRun) { bestRun = runLen; bestStart = runStart; }
 
-  // Require at least 10% of pins in the diagonal run to avoid false positives
-  // on BGA packages where column-to-column transitions mimic diagonals
-  if (bestRun < 5 || bestRun < pins.length * 0.1) return null;
+  // Principal eigenvector via analytic solution for 2×2 symmetric matrix
+  const trace = cxx + cyy;
+  const det = cxx * cyy - cxy * cxy;
+  const disc = Math.sqrt(Math.max(0, trace * trace / 4 - det));
+  const lambda1 = trace / 2 + disc; // largest eigenvalue
+  // Eigenvector for lambda1
+  let ux: number, uy: number;
+  if (Math.abs(cxy) > 1e-6) {
+    ux = lambda1 - cyy; uy = cxy;
+  } else {
+    // Already axis-aligned — no OBB needed
+    return null;
+  }
+  const len = Math.hypot(ux, uy);
+  if (len < 1e-6) return null;
+  ux /= len; uy /= len;
+  const vx = -uy, vy = ux;
 
-  // Compute principal axis from the diagonal run
-  const p0 = pins[bestStart].position;
-  const pN = pins[bestStart + bestRun].position;
-  const axisX = pN.x - p0.x;
-  const axisY = pN.y - p0.y;
-  const axisLen = Math.hypot(axisX, axisY);
-  if (axisLen < 1) return null;
-
-  // Unit vectors: along axis and perpendicular
-  const ux = axisX / axisLen, uy = axisY / axisLen;
-  const vx = -uy, vy = ux; // perpendicular
-
-  // Project ALL pins onto the axis coordinate system
-  const cx = (pins[0].position.x + pins[pins.length - 1].position.x) / 2;
-  const cy = (pins[0].position.y + pins[pins.length - 1].position.y) / 2;
-
+  // Project all pins onto principal axes
   let minU = Infinity, maxU = -Infinity;
   let minV = Infinity, maxV = -Infinity;
   for (const pin of pins) {
@@ -402,12 +400,26 @@ export function computeDiagonalOBB(
     if (v > maxV) maxV = v;
   }
 
+  // Compare OBB area vs AABB area — only use OBB if it saves >30%
+  const obbW = maxU - minU, obbH = maxV - minV;
+  let aabbW = 0, aabbH = 0;
+  for (const pin of pins) {
+    const dx = Math.abs(pin.position.x - cx);
+    const dy = Math.abs(pin.position.y - cy);
+    if (dx * 2 > aabbW) aabbW = dx * 2;
+    if (dy * 2 > aabbH) aabbH = dy * 2;
+  }
+  const obbArea = obbW * obbH;
+  const aabbArea = aabbW * aabbH;
+  if (aabbArea < 1 || obbArea / aabbArea > 0.7) return null;
+
   // Pad the OBB
-  const pad = computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
+  const pad = pins.length <= 4
+    ? 0
+    : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
   minU -= pad; maxU += pad;
   minV -= pad; maxV += pad;
 
-  // Convert back to world-space corners
   return [
     [cx + minU * ux + minV * vx, cy + minU * uy + minV * vy],
     [cx + maxU * ux + minV * vx, cy + maxU * uy + minV * vy],
@@ -437,7 +449,7 @@ export function computeTwoPinOBB(
   const vx = -uy, vy = ux;
 
   // Body half-width perpendicular to pin axis (proportional to distance)
-  const halfW = Math.max(dist * 0.18, s.partMinBodyMils / 2);
+  const halfW = dist * s.partMinBodyRatio / 2;
   // Extend slightly beyond pins along the axis
   const ext = halfW * 0.5;
 

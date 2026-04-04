@@ -871,8 +871,8 @@ export function SettingsPanel() {
           title="Transparency of component border outlines. 0 = invisible, 1 = fully opaque" />
         <Slider label="Padding" value={draft.partPadding} min={0} max={30} step={1} field="partPadding" onUpdate={updateDraft}
           title="Extra space (mils) between component pins and the part border. Larger = more room around the IC/chip outline" />
-        <Slider label="2-Pin Min Body (mils)" value={draft.partMinBodyMils} min={0} max={60} step={1} field="partMinBodyMils" onUpdate={updateDraft}
-          title="Minimum body width for 2-pin parts (resistors, capacitors) in mils. Inflates narrow parts so they're easier to see and click. 0 = use file data as-is" />
+        <Slider label="2-Pin Body Ratio" value={draft.partMinBodyRatio} min={0} max={1} step={0.01} field="partMinBodyRatio" onUpdate={updateDraft}
+          title="Short-axis to pin-distance ratio for 2-pin parts (resistors, capacitors). 0.333 = 1:3 proportion. 0 = use file data as-is" />
         <Toggle label="Component Type Colors" value={draft.showComponentColors} field="showComponentColors" onUpdate={updateDraft}
           title="Fill component bodies with colors based on their type prefix (R = resistor, C = capacitor, U = IC, etc.). Colors are configured in Part Type Overrides" />
         <Slider label="Type Fill Opacity" value={draft.componentFillAlpha} min={0} max={1} step={0.05} field="componentFillAlpha" onUpdate={updateDraft}
