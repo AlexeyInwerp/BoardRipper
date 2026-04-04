@@ -249,16 +249,6 @@ export function Toolbar() {
 
       <div className="toolbar-separator" />
 
-      <button
-        onClick={() => boardStore.toggleNetLines()}
-        className={`toolbar-btn ${showNetLines ? 'active' : ''}`}
-        data-tooltip="Toggle net lines"
-      >
-        Net Lines
-      </button>
-
-      <div className="toolbar-separator" />
-
       <input
         type="text"
         placeholder="Search component or net..."
