@@ -11,7 +11,7 @@ IMAGE_TAG="latest"
 CONFIG_FILE="/volume1/docker/boardripper/container-config.json"
 
 # Fallback config for first deploy (no existing container AND no saved config)
-DEFAULT_MOUNTS='-v /volume1/docker/boardripper/data:/data -v /volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI:/library:ro'
+DEFAULT_MOUNTS='-v /volume1/docker/boardripper/data:/data -v /volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI:/library:ro -v /var/run/docker.sock:/var/run/docker.sock'
 DEFAULT_PORTS='-p 8090:8080'
 DEFAULT_ENV='-e PORT=8080 -e LIBRARY_DIR=/library'
 
@@ -98,6 +98,11 @@ fi
 [ -z "${PORT_ARGS}" ] && PORT_ARGS="${DEFAULT_PORTS}" && echo "[NAS]   ports: using defaults"
 [ -z "${MOUNT_ARGS}" ] && MOUNT_ARGS="${DEFAULT_MOUNTS}" && echo "[NAS]   mounts: using defaults"
 [ -z "${ENV_ARGS}" ] && ENV_ARGS="${DEFAULT_ENV}" && echo "[NAS]   env: using defaults"
+
+# Ensure Docker socket is always mounted (required for self-update)
+if ! echo "${MOUNT_ARGS}" | grep -q 'docker.sock'; then
+    MOUNT_ARGS="${MOUNT_ARGS} -v /var/run/docker.sock:/var/run/docker.sock"
+fi
 
 echo "[NAS]   mounts:  ${MOUNT_ARGS}"
 echo "[NAS]   ports:   ${PORT_ARGS}"

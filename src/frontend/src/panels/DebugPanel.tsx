@@ -25,6 +25,7 @@ const SCOPE_COLORS: Record<LogScope, string> = {
   ui:     '#94a3b8',
   cache:  '#fbbf24',
   perf:   '#f472b6',
+  update: '#22d3ee',
 };
 
 export function DebugPanel() {

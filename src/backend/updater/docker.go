@@ -2,6 +2,7 @@ package updater
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -38,7 +38,7 @@ func dockerClient() *http.Client {
 	}
 }
 
-// dockerLoad loads a tar.gz image into Docker via CLI.
+// dockerLoad loads a tar.gz image into Docker via the Engine API (no CLI needed).
 func dockerLoad(tarPath string) error {
 	f, err := os.Open(tarPath)
 	if err != nil {
@@ -46,11 +46,34 @@ func dockerLoad(tarPath string) error {
 	}
 	defer f.Close()
 
-	// Use gzip decompression + docker load
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("gzip -dc '%s' | docker load", tarPath))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("gzip decompress failed: %w", err)
+	}
+	defer gz.Close()
+
+	// POST /images/load with the raw tar stream
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", dockerSocket)
+			},
+		},
+		Timeout: 10 * time.Minute,
+	}
+	req, _ := http.NewRequest("POST", "http://docker/v1.41/images/load", gz)
+	req.Header.Set("Content-Type", "application/x-tar")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker image load failed: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body) // drain response
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("docker image load returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // containerInfo holds the subset of Docker container inspect data we need.
