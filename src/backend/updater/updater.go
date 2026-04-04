@@ -32,6 +32,7 @@ type ReleaseInfo struct {
 	PublishedAt string `json:"published_at"`
 	HTMLURL     string `json:"html_url"`
 	Assets      []struct {
+		ID                 int64  `json:"id"`
 		Name               string `json:"name"`
 		BrowserDownloadURL string `json:"browser_download_url"`
 		Size               int64  `json:"size"`
@@ -209,19 +210,23 @@ func (u *Updater) Apply() error {
 	version := rel.TagName
 
 	// Find the Docker image asset
-	var assetURL string
+	var assetID int64
 	var assetSize int64
 	for _, a := range rel.Assets {
 		if strings.Contains(a.Name, "docker") && strings.HasSuffix(a.Name, ".tar.gz") {
-			assetURL = a.BrowserDownloadURL
+			assetID = a.ID
 			assetSize = a.Size
 			break
 		}
 	}
-	if assetURL == "" {
+	if assetID == 0 {
 		u.logProgress("No Docker image asset found in release", "error")
 		return fmt.Errorf("no docker asset in release %s", version)
 	}
+
+	// Use GitHub API endpoint for asset download (works with private repos)
+	assetURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/assets/%d",
+		RepoOwner, RepoName, assetID)
 
 	// Download the image
 	destPath := filepath.Join(u.dataDir, fmt.Sprintf("boardripper-docker-%s.tar.gz", version))
@@ -287,14 +292,17 @@ func fetchLatestRelease() (*ReleaseInfo, error) {
 	return &releases[0], nil
 }
 
-// downloadAsset fetches a release asset to disk.
+// downloadAsset fetches a release asset to disk via the GitHub API.
+// Uses Accept: application/octet-stream which works for private repos.
 func downloadAsset(url, dest string) error {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "BoardRipper/"+Version)
+	req.Header.Set("Accept", "application/octet-stream")
 	if GitHubToken != "" {
 		req.Header.Set("Authorization", "Bearer "+GitHubToken)
 	}
 
+	// Follow redirects (GitHub redirects to S3)
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -303,7 +311,8 @@ func downloadAsset(url, dest string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("download returned %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("download returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	f, err := os.Create(dest)
