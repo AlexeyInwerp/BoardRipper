@@ -172,8 +172,15 @@ func findSelfContainer() (*containerInfo, error) {
 	}, nil
 }
 
-// orchestrateRestart stops the current container, creates a new one with the updated image,
-// and starts it. On failure, it attempts to restart the old container.
+// orchestrateRestart launches a lightweight Alpine container that:
+// 1. Stops the current container
+// 2. Renames it to -old
+// 3. Creates a new container with the same config + new image
+// 4. Starts the new container
+// 5. On failure, rolls back
+//
+// This is necessary because the current container cannot stop itself
+// and continue executing — the Go process dies when Docker stops it.
 func orchestrateRestart(newVersion string, logFn func(string, string)) error {
 	self, err := findSelfContainer()
 	if err != nil {
@@ -184,66 +191,111 @@ func orchestrateRestart(newVersion string, logFn func(string, string)) error {
 
 	newImage := fmt.Sprintf("boardripper:%s", newVersion)
 
-	client := dockerClient()
-
-	// Build the create body from existing config, but with the new image
+	// Build the create body for the new container
 	createBody := map[string]interface{}{
-		"Image":    newImage,
-		"Env":      self.Env,
-		"Hostname": "",
+		"Image": newImage,
+		"Env":   self.Env,
 		"HostConfig": map[string]interface{}{
 			"Binds":         bindsFromMounts(self.Mounts),
 			"PortBindings":  self.Ports,
 			"RestartPolicy": map[string]string{"Name": self.Restart},
 		},
 	}
-
 	bodyJSON, _ := json.Marshal(createBody)
 
-	// Stop current container
-	logFn("Stopping current container...", "info")
-	stopReq, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://docker/v1.41/containers/%s/stop?t=10", self.ID), nil)
-	if resp, err := client.Do(stopReq); err == nil {
-		resp.Body.Close()
+	// Shell script for the orchestrator to execute
+	script := fmt.Sprintf(`#!/bin/sh
+set -e
+SOCK="/var/run/docker.sock"
+API="http://localhost/v1.41"
+
+# Helper: Docker API via curl
+dapi() { curl -sf --unix-socket "$SOCK" "$@"; }
+
+echo "[orchestrator] Stopping %s..."
+dapi -X POST "$API/containers/%s/stop?t=10" >/dev/null 2>&1 || true
+sleep 2
+
+echo "[orchestrator] Removing old -old container if exists..."
+dapi -X DELETE "$API/containers/%s-old?force=true" >/dev/null 2>&1 || true
+
+echo "[orchestrator] Renaming %s → %s-old..."
+dapi -X POST "$API/containers/%s/rename?name=%s-old" >/dev/null
+
+echo "[orchestrator] Creating new container %s with image %s..."
+RESP=$(dapi -X POST -H "Content-Type: application/json" -d '%s' "$API/containers/create?name=%s")
+NEW_ID=$(echo "$RESP" | sed -n 's/.*"Id":"\([^"]*\)".*/\1/p')
+if [ -z "$NEW_ID" ]; then
+  echo "[orchestrator] FAIL: create returned: $RESP — rolling back"
+  dapi -X POST "$API/containers/%s/rename?name=%s" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "[orchestrator] Starting new container $NEW_ID..."
+START_CODE=$(dapi -o /dev/null -w "%%{http_code}" -X POST "$API/containers/$NEW_ID/start")
+if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
+  echo "[orchestrator] FAIL: start returned $START_CODE — rolling back"
+  dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/%s/rename?name=%s" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "[orchestrator] Success! New container running."
+sleep 5
+echo "[orchestrator] Cleaning up old container..."
+dapi -X DELETE "$API/containers/%s-old?force=true" >/dev/null 2>&1 || true
+echo "[orchestrator] Done."
+`,
+		self.Name, self.ID,                    // stop
+		self.Name,                              // delete -old
+		self.Name, self.Name,                   // rename log
+		self.ID, self.Name,                     // rename API
+		self.Name, newImage,                    // create log
+		string(bodyJSON), self.Name,            // create API
+		self.ID, self.Name,                     // rollback rename
+		self.ID,                                // rollback start
+		self.ID, self.Name,                     // rollback rename (start fail)
+		self.ID,                                // rollback start (start fail)
+		self.Name,                              // cleanup
+	)
+
+	client := dockerClient()
+
+	// Create the orchestrator container using Alpine with curl
+	orchBody := map[string]interface{}{
+		"Image": "alpine:latest",
+		"Cmd":   []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1 && " + script},
+		"HostConfig": map[string]interface{}{
+			"Binds":     []string{"/var/run/docker.sock:/var/run/docker.sock"},
+			"AutoRemove": true,
+		},
 	}
+	orchJSON, _ := json.Marshal(orchBody)
 
-	// Rename current container to -old
-	oldName := self.Name + "-old"
-	logFn(fmt.Sprintf("Renaming %s → %s", self.Name, oldName), "info")
+	logFn("Launching orchestrator container...", "info")
+	createReq, _ := http.NewRequest("POST",
+		"http://docker/v1.41/containers/create?name=boardripper-orchestrator",
+		bytes.NewReader(orchJSON))
+	createReq.Header.Set("Content-Type", "application/json")
 
-	// Delete any existing -old container first
+	// Delete any existing orchestrator container first
 	delReq, _ := http.NewRequest("DELETE",
-		fmt.Sprintf("http://docker/v1.41/containers/%s?force=true", oldName), nil)
+		"http://docker/v1.41/containers/boardripper-orchestrator?force=true", nil)
 	if resp, err := client.Do(delReq); err == nil {
 		resp.Body.Close()
 	}
 
-	renameReq, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://docker/v1.41/containers/%s/rename?name=%s", self.ID, oldName), nil)
-	if resp, err := client.Do(renameReq); err == nil {
-		resp.Body.Close()
-	}
-
-	// Create new container with same name + new image
-	logFn(fmt.Sprintf("Creating new container: %s (image: %s)", self.Name, newImage), "info")
-	createReq, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://docker/v1.41/containers/create?name=%s", self.Name),
-		bytes.NewReader(bodyJSON))
-	createReq.Header.Set("Content-Type", "application/json")
 	createResp, err := client.Do(createReq)
 	if err != nil {
-		logFn("Container create failed — rolling back", "error")
-		rollback(client, self.ID, self.Name)
-		return fmt.Errorf("create failed: %w", err)
+		return fmt.Errorf("failed to create orchestrator: %w", err)
 	}
 	defer createResp.Body.Close()
 
 	if createResp.StatusCode != 201 {
-		respBody, _ := io.ReadAll(io.LimitReader(createResp.Body, 512))
-		logFn(fmt.Sprintf("Create returned %d: %s — rolling back", createResp.StatusCode, string(respBody)), "error")
-		rollback(client, self.ID, self.Name)
-		return fmt.Errorf("create returned %d", createResp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(createResp.Body, 512))
+		return fmt.Errorf("orchestrator create returned %d: %s", createResp.StatusCode, string(body))
 	}
 
 	var created struct {
@@ -251,64 +303,17 @@ func orchestrateRestart(newVersion string, logFn func(string, string)) error {
 	}
 	json.NewDecoder(createResp.Body).Decode(&created)
 
-	// Start new container
-	logFn("Starting new container...", "info")
+	// Start the orchestrator
 	startReq, _ := http.NewRequest("POST",
 		fmt.Sprintf("http://docker/v1.41/containers/%s/start", created.ID), nil)
 	startResp, err := client.Do(startReq)
 	if err != nil {
-		logFn("Start failed — rolling back", "error")
-		// Remove new container, rollback old
-		delNew, _ := http.NewRequest("DELETE",
-			fmt.Sprintf("http://docker/v1.41/containers/%s?force=true", created.ID), nil)
-		if resp, err := client.Do(delNew); err == nil {
-			resp.Body.Close()
-		}
-		rollback(client, self.ID, self.Name)
-		return fmt.Errorf("start failed: %w", err)
+		return fmt.Errorf("failed to start orchestrator: %w", err)
 	}
 	startResp.Body.Close()
 
-	if startResp.StatusCode != 204 && startResp.StatusCode != 304 {
-		logFn(fmt.Sprintf("Start returned %d — rolling back", startResp.StatusCode), "error")
-		delNew, _ := http.NewRequest("DELETE",
-			fmt.Sprintf("http://docker/v1.41/containers/%s?force=true", created.ID), nil)
-		if resp, err := client.Do(delNew); err == nil {
-			resp.Body.Close()
-		}
-		rollback(client, self.ID, self.Name)
-		return fmt.Errorf("start returned %d", startResp.StatusCode)
-	}
-
-	logFn("New container started successfully", "info")
-
-	// Clean up old container (non-blocking)
-	go func() {
-		time.Sleep(10 * time.Second)
-		delOld, _ := http.NewRequest("DELETE",
-			fmt.Sprintf("http://docker/v1.41/containers/%s?force=true", self.ID), nil)
-		if resp, err := client.Do(delOld); err == nil {
-			resp.Body.Close()
-		}
-	}()
-
+	logFn("Orchestrator launched — container will restart momentarily", "done")
 	return nil
-}
-
-// rollback restores the old container name and restarts it.
-func rollback(client *http.Client, oldID, originalName string) {
-	// Rename back
-	renameReq, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://docker/v1.41/containers/%s/rename?name=%s", oldID, originalName), nil)
-	if resp, err := client.Do(renameReq); err == nil {
-		resp.Body.Close()
-	}
-	// Start old container
-	startReq, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://docker/v1.41/containers/%s/start", oldID), nil)
-	if resp, err := client.Do(startReq); err == nil {
-		resp.Body.Close()
-	}
 }
 
 // bindsFromMounts converts Docker mount objects to bind strings.
