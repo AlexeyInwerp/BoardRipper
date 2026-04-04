@@ -335,15 +335,38 @@ func isNewer(release, current string) bool {
 
 // parseVersion extracts numeric parts from a version string.
 // "v0.2.5-beta.1" → [0, 2, 5, 1]
+// "v0.2.6-beta-4-g9572f7b" (git describe) → [0, 2, 6]
 func parseVersion(v string) []int {
 	v = strings.TrimPrefix(v, "v")
-	// Remove pre-release label but keep its numeric suffix
+
+	// Strip git describe suffix: "-N-gHASH" at the end
+	// e.g. "0.2.6-beta-4-g9572f7b" → "0.2.6-beta"
+	if idx := strings.LastIndex(v, "-g"); idx >= 0 {
+		// Verify it looks like a git hash after -g
+		hash := v[idx+2:]
+		if len(hash) >= 7 && len(hash) <= 40 {
+			v = v[:idx]
+			// Also strip the commit count: "0.2.6-beta-4" → "0.2.6-beta"
+			if dashIdx := strings.LastIndex(v, "-"); dashIdx >= 0 {
+				if _, err := strconv.Atoi(v[dashIdx+1:]); err == nil {
+					v = v[:dashIdx]
+				}
+			}
+		}
+	}
+
+	// Remove pre-release labels but keep their numeric suffixes
 	// "0.2.5-beta.1" → "0.2.5.1"
 	v = strings.NewReplacer(
 		"-beta", "",
 		"-alpha", "",
 		"-rc", "",
 	).Replace(v)
+
+	// Strip any remaining dash-suffix (safety net)
+	if idx := strings.Index(v, "-"); idx >= 0 {
+		v = v[:idx]
+	}
 
 	parts := strings.Split(v, ".")
 	nums := make([]int, 0, len(parts))
