@@ -14,7 +14,7 @@ type ODMPattern struct {
 // "Quanta_Z8IA_DAZ8IAMBAC0" would fail to match with \b before DA.
 // Right boundaries are omitted where revision suffixes may follow (e.g., R10, Rev1.0).
 
-const lb = `(?:^|[\s_\-/.,(\[])` // left boundary: start-of-string or common filename separators
+const lb = `(?:^|[\s_\-/.,(\[=])` // left boundary: start-of-string or common filename separators (incl. = for Apple archives)
 
 // odmPatterns is the registry of all known board number patterns,
 // ordered by specificity (most distinctive first).

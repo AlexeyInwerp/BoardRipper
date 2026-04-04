@@ -769,9 +769,18 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           const fitH = twoPinTwoLevel ? (pad.rh * 0.45) : (pad.rh * 0.85);
           netFontSize = Math.min(fitW / (pin.net.length * 0.6), fitH * 0.8);
           nx = pad.rx + pad.rw / 2;
-          ny = twoPinTwoLevel
-            ? pad.ry + pad.rh * 0.75   // bottom quarter of pad
-            : pad.ry + pad.rh / 2;     // center of pad
+          if (twoPinTwoLevel) {
+            ny = pad.ry + pad.rh * 0.75;   // bottom quarter of pad
+          } else if (eb.horiz) {
+            // Horizontal: alternate labels above/below part-name level
+            // so they don't overlap each other or the component name.
+            const gap = (eb.ph / 2) * s.twoPinLabelGapFactor;
+            ny = pad.ry + pad.rh / 2;
+            anchorY = pni === 0 ? 1.0 : 0.0; // pin 0 above, pin 1 below
+            ny += pni === 0 ? -gap : gap;
+          } else {
+            ny = pad.ry + pad.rh / 2;       // vertical: center in pad
+          }
         } else {
           const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
           const diameter = r * 2;
