@@ -20,6 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 # Stage 3: Final minimal image
 FROM scratch
+COPY --from=backend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=backend /app/backend/server /server
 COPY --from=frontend /app/frontend/dist /static
 EXPOSE 8080
