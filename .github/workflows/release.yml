@@ -60,19 +60,19 @@ jobs:
       - name: Build Linux amd64
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-linux-amd64 .
       - name: Build Windows amd64
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-windows-amd64.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-windows-amd64.exe .
       - name: Build macOS amd64 (Intel)
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-macos-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-macos-amd64 .
       - name: Build macOS arm64 (Apple Silicon)
         run: |
           cd src/backend
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../boardripper-macos-arm64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-macos-arm64 .
 
       # Package each platform: binary + frontend dist
       - name: Package releases
@@ -110,10 +110,10 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build multi-arch Docker image
+      - name: Build Docker image (amd64)
         run: |
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform linux/amd64 \
             --build-arg APP_VERSION=${{ github.ref_name }} \
             --build-arg GITHUB_TOKEN=${{ secrets.UPDATE_TOKEN }} \
             --tag boardripper:${{ github.ref_name }} \
