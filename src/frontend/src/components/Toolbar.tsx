@@ -1,4 +1,4 @@
-import { useRef, useEffect, useSyncExternalStore } from 'react';
+import { useRef, useEffect, useState, useSyncExternalStore } from 'react';
 import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -8,6 +8,96 @@ import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
+
+/** Dropdown showing release notes + update/download action */
+function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnapshot> }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { state, updating, progress } = update;
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  if (!state.has_update && !updating) return null;
+
+  const rel = state.release_info;
+  const body = rel?.body ?? '';
+
+  return (
+    <div className="update-badge-wrap" ref={ref}>
+      <button
+        className="toolbar-btn toolbar-update-badge"
+        onClick={() => setOpen(v => !v)}
+      >
+        {updating ? 'Updating...' : `${state.latest_version}`}
+      </button>
+
+      {open && (
+        <div className="update-dropdown">
+          <div className="update-dropdown-header">
+            <span>{rel?.name || state.latest_version}</span>
+            <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
+          </div>
+
+          {body && (
+            <div className="update-dropdown-body">
+              {body.split('\n').map((line, i) => {
+                if (line.startsWith('## ')) return <h3 key={i}>{line.slice(3)}</h3>;
+                if (line.startsWith('### ')) return <h4 key={i}>{line.slice(4)}</h4>;
+                if (line.startsWith('- ')) return <li key={i}>{line.slice(2)}</li>;
+                if (line.startsWith('| ') || line.startsWith('---')) return null;
+                if (!line.trim()) return <br key={i} />;
+                return <p key={i}>{line}</p>;
+              })}
+            </div>
+          )}
+
+          {updating && progress.length > 0 && (
+            <div className="update-dropdown-progress">
+              {progress.map((e, i) => (
+                <div key={i} className={`update-progress-line update-progress-${e.status}`}>
+                  {e.message}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!updating && (
+            <div className="update-dropdown-actions">
+              {state.docker_available ? (
+                <button
+                  className="update-dropdown-btn"
+                  onClick={() => updateStore.apply()}
+                >
+                  Update &amp; Restart
+                </button>
+              ) : (
+                <a
+                  className="update-dropdown-btn"
+                  href={rel?.html_url ?? '#'}
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Download from GitHub
+                </a>
+              )}
+              <span className="update-dropdown-version">
+                {state.current_version} &#8594; {state.latest_version}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -224,35 +314,7 @@ export function Toolbar() {
         </>
       )}
 
-      {update.state.has_update && update.state.docker_available && !update.updating && (
-        <button
-          className="toolbar-btn toolbar-update-badge"
-          data-tooltip={`Update available: ${update.state.latest_version}`}
-          onClick={() => {
-            if (confirm(`Update BoardRipper to ${update.state.latest_version}?\n\nThe container will restart automatically.`)) {
-              updateStore.apply();
-            }
-          }}
-        >
-          Update {update.state.latest_version}
-        </button>
-      )}
-      {update.state.has_update && !update.state.docker_available && (
-        <a
-          className="toolbar-btn toolbar-update-badge"
-          href={update.state.release_info?.html_url ?? '#'}
-          target="_blank"
-          rel="noopener"
-          data-tooltip={`New version: ${update.state.latest_version} (download from GitHub)`}
-        >
-          {update.state.latest_version} available
-        </a>
-      )}
-      {update.updating && (
-        <span className="toolbar-stats" style={{ color: 'var(--accent)' }}>
-          Updating...
-        </span>
-      )}
+      <UpdateBadge update={update} />
     </div>
   );
 }
