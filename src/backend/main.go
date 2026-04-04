@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"boardripper/boarddb"
 	"boardripper/databank"
 	"boardripper/handlers"
+	"boardripper/updater"
 )
 
 func main() {
@@ -113,6 +115,16 @@ func main() {
 	// Config API routes
 	mux.HandleFunc("GET /api/config", dbHandler.GetConfig)
 	mux.HandleFunc("PUT /api/config", dbHandler.SetConfig)
+
+	// Update API routes
+	upd := updater.New(dataDir)
+	upd.StartBackgroundChecker(6 * time.Hour)
+	defer upd.Stop()
+	updateHandler := handlers.NewUpdateHandler(upd)
+	mux.HandleFunc("GET /api/update/status", updateHandler.Status)
+	mux.HandleFunc("POST /api/update/check", updateHandler.Check)
+	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)
+	mux.HandleFunc("GET /api/update/progress", updateHandler.Progress)
 
 	// Serve static frontend files
 	fs := http.FileServer(http.Dir(staticDir))

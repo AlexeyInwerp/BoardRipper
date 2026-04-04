@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useSyncExternalStore } from 'react';
 import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -7,11 +7,13 @@ import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
+import { updateStore } from '../store/update-store';
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const { showTop, showBottom, butterfly, board, showNetLines, showTraces, activeTabId, flipAxis } = useBoardStore();
+  const update = useSyncExternalStore(updateStore.subscribe, updateStore.getSnapshot);
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
   const hasTraces = fmt?.hasTraces ?? false;
@@ -220,6 +222,36 @@ export function Toolbar() {
             {board.parts.length} parts | {board.nets.size} nets
           </span>
         </>
+      )}
+
+      {update.state.has_update && update.state.docker_available && !update.updating && (
+        <button
+          className="toolbar-btn toolbar-update-badge"
+          data-tooltip={`Update available: ${update.state.latest_version}`}
+          onClick={() => {
+            if (confirm(`Update BoardRipper to ${update.state.latest_version}?\n\nThe container will restart automatically.`)) {
+              updateStore.apply();
+            }
+          }}
+        >
+          Update {update.state.latest_version}
+        </button>
+      )}
+      {update.state.has_update && !update.state.docker_available && (
+        <a
+          className="toolbar-btn toolbar-update-badge"
+          href={update.state.release_info?.html_url ?? '#'}
+          target="_blank"
+          rel="noopener"
+          data-tooltip={`New version: ${update.state.latest_version} (download from GitHub)`}
+        >
+          {update.state.latest_version} available
+        </a>
+      )}
+      {update.updating && (
+        <span className="toolbar-stats" style={{ color: 'var(--accent)' }}>
+          Updating...
+        </span>
       )}
     </div>
   );

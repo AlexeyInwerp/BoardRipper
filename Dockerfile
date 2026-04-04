@@ -12,7 +12,11 @@ WORKDIR /app/backend
 COPY src/backend/go.* ./
 RUN go mod download
 COPY src/backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server .
+ARG APP_VERSION=dev
+ARG GITHUB_TOKEN=""
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION} -X boardripper/updater.GitHubToken=${GITHUB_TOKEN}" \
+    -o server .
 
 # Stage 3: Final minimal image
 FROM scratch

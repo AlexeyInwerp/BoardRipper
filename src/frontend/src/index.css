@@ -278,6 +278,21 @@ html, body, #root {
   opacity: 0.7;
 }
 
+.toolbar-update-badge {
+  background: #2d7d46 !important;
+  color: #fff !important;
+  font-weight: 600;
+  text-decoration: none;
+  animation: update-pulse 2s ease-in-out infinite;
+}
+.toolbar-update-badge:hover {
+  background: #38a055 !important;
+}
+@keyframes update-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
 /* Tab Bar */
 .tab-bar {
   display: flex;
