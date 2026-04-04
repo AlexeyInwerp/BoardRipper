@@ -44,10 +44,12 @@ export function ContextMenu() {
     if (rect.bottom > maxY) el.style.top = `${state.screenY - (rect.bottom - maxY)}px`;
   }, [state.visible, state.screenX, state.screenY]);
 
-  // Reset submenu when menu closes/opens
-  useEffect(() => {
+  // Reset submenu when menu opens — derive during render (React-recommended pattern)
+  const [trackedVisible, setTrackedVisible] = useState(false);
+  if (state.visible !== trackedVisible) {
+    setTrackedVisible(state.visible);
     if (state.visible) setOpenSubmenu(null);
-  }, [state.visible]);
+  }
 
   useEffect(() => {
     if (!state.visible) return;
