@@ -26,6 +26,7 @@ import {
   computeEffectiveBounds,
   computeDiagonalOBB,
   computeTwoPinOBB,
+  computeDiag2PinPads,
   resolvePinColor,
   quantizeFontSize,
   resolvePartTypeOverride,
@@ -565,6 +566,9 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       ? (eb.horiz ? Math.min(eb.ph, eb.pw * 0.4) : Math.min(eb.pw, eb.ph * 0.4))
       : 0;
 
+    // Pre-compute rotated pads for diagonal 2-pin parts
+    const diag2Pads = isDiag2Pin ? computeDiag2PinPads(part.pins, s) : null;
+
     // Auto-clamp pin radius for dense parts (e.g. BGA) so pins don't overlap.
     // Uses sorted-axis approach: O(N log N) instead of O(N²) for finding
     // minimum pin-to-pin distance. Sort by X, then only check neighbors
@@ -673,6 +677,20 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
             padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
           }
         }
+      } else if (diag2Pads) {
+        // Diagonal 2-pin: draw rotated rectangular pads along the pin axis
+        const poly = diag2Pads.pads[pni];
+        const targetGfx = isNcPin ? ncGfx : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
+        targetGfx.moveTo(poly[0][0], poly[0][1]);
+        for (let vi = 1; vi < poly.length; vi++) targetGfx.lineTo(poly[vi][0], poly[vi][1]);
+        targetGfx.closePath();
+        // Store axis-aligned bounding rect for label sizing
+        const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+        padRects[pni] = {
+          rx: Math.min(...xs), ry: Math.min(...ys),
+          rw: Math.max(...xs) - Math.min(...xs),
+          rh: Math.max(...ys) - Math.min(...ys),
+        };
       } else {
         const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
         const padShape = override?.padShape ?? 'natural';

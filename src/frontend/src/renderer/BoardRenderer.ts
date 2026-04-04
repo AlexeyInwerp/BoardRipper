@@ -17,7 +17,7 @@ import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly, computeDiag2PinPads, isNcNet } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
@@ -1965,22 +1965,28 @@ export class BoardRenderer {
       butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
 
     // Draw part outline as OBB polygon (diagonal) or AABB rect, with selection padding
+    /** Expand a convex polygon outward by `sp` mils along edge normals. */
+    const expandPoly = (poly: [number, number][], sp: number): [number, number][] => {
+      const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
+      const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
+      return poly.map(([px, py]) => {
+        const dx = px - cx, dy = py - cy;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-6) return [px, py] as [number, number];
+        return [px + dx / len * sp, py + dy / len * sp] as [number, number];
+      });
+    };
+
+    const drawPoly = (gfx: Graphics, poly: [number, number][]) => {
+      gfx.moveTo(poly[0][0], poly[0][1]);
+      for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
+      gfx.closePath();
+    };
+
     const drawPartOutline = (gfx: Graphics, part: typeof this.board.parts[0], sp: number) => {
       const poly = computePartRenderPoly(part, s);
       if (poly) {
-        const cx = poly.reduce((sum, p) => sum + p[0], 0) / poly.length;
-        const cy = poly.reduce((sum, p) => sum + p[1], 0) / poly.length;
-        gfx.moveTo(
-          poly[0][0] + Math.sign(poly[0][0] - cx) * sp,
-          poly[0][1] + Math.sign(poly[0][1] - cy) * sp,
-        );
-        for (let i = 1; i < poly.length; i++) {
-          gfx.lineTo(
-            poly[i][0] + Math.sign(poly[i][0] - cx) * sp,
-            poly[i][1] + Math.sign(poly[i][1] - cy) * sp,
-          );
-        }
-        gfx.closePath();
+        drawPoly(gfx, expandPoly(poly, sp));
       } else {
         const rb = computePartRenderBounds(part, s);
         gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
@@ -2161,7 +2167,19 @@ export class BoardRenderer {
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
-          if (part.pins.length === 2) {
+          const diagPads = part.pins.length === 2 ? computeDiag2PinPads(part.pins, s) : null;
+          if (part.pins.length === 2 && diagPads) {
+            // Diagonal 2-pin: highlight with rotated pad polygon
+            const grow = s.netHighlightGrow;
+            const padPoly = diagPads.pads[ref.pinIndex];
+            if (showDim) {
+              const colorMap = isBotGfx ? botByColor : topByColor;
+              let arr = colorMap.get(pinColor);
+              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
+              arr.push(() => drawPoly(gfx, padPoly));
+            }
+            highlights.push(() => drawPoly(gfx, expandPoly(padPoly, grow)));
+          } else if (part.pins.length === 2) {
             const grow = s.netHighlightGrow;
             const eb = computeEffectiveBounds(part.bounds, part.pins, s);
             applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), true);
