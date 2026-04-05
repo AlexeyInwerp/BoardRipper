@@ -847,7 +847,7 @@ export function exportSettingsAsDefaults(): string {
 }
 
 // Expose on window for console access in dev
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).exportSettingsAsDefaults = exportSettingsAsDefaults;
 }

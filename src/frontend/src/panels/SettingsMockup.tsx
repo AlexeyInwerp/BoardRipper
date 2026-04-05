@@ -268,7 +268,7 @@ export function SettingsMockup({
       resolution:   window.devicePixelRatio || 1,
       autoDensity:  true,
     }).then(() => {
-      if (destroyed) { app.destroy(); return; }
+      if (destroyed) { return; }
 
       el.appendChild(app.canvas as HTMLCanvasElement);
 
@@ -365,7 +365,8 @@ export function SettingsMockup({
         }
         const canvas = state.app.canvas as HTMLCanvasElement;
         if (el.contains(canvas)) el.removeChild(canvas);
-        state.app.destroy();
+        // Do NOT call app.destroy() — PixiJS v8 destroy() corrupts the global
+        // batch pool, breaking all other Application instances. Let GC reclaim.
         pixiRef.current = null;
       }
     };

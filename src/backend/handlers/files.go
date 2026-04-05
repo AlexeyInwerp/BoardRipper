@@ -22,6 +22,8 @@ var allowedExtensions = map[string]bool{
 	".cad": true,
 	".pcb": true,
 	".bdv": true,
+	".xzz": true,
+	".tvw": true,
 }
 
 // allowedExtensionList returns a human-readable list for error messages.
@@ -84,6 +86,8 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	defer dst.Close()
 
 	if _, err := io.Copy(dst, file); err != nil {
+		dst.Close()
+		os.Remove(destPath)
 		http.Error(w, "Failed to write file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

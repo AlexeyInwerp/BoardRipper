@@ -150,6 +150,8 @@ export const updateStore = {
   },
 };
 
-// Initial fetch + periodic poll every 30 minutes
-updateStore.fetchStatus();
-setInterval(() => updateStore.fetchStatus(), 30 * 60 * 1000);
+// Initial fetch + periodic poll every 30 minutes (skip in test environments)
+if (typeof window !== 'undefined' && !import.meta.env.SSR) {
+  updateStore.fetchStatus();
+  setInterval(() => updateStore.fetchStatus(), 30 * 60 * 1000);
+}

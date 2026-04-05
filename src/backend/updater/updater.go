@@ -18,11 +18,15 @@ import (
 
 // Build-time variables injected via -ldflags.
 var (
-	Version     = "dev"            // e.g. "v0.2.5-beta.1"
-	GitHubToken = ""               // fine-grained PAT (read-only contents)
-	RepoOwner   = "AlexeyInwerp"
-	RepoName    = "BoardRipper"
+	Version   = "dev"            // e.g. "v0.2.5-beta.1"
+	RepoOwner = "AlexeyInwerp"
+	RepoName  = "BoardRipper"
 )
+
+// gitHubToken returns the token from the GITHUB_TOKEN env var (runtime).
+func gitHubToken() string {
+	return os.Getenv("GITHUB_TOKEN")
+}
 
 // ReleaseInfo holds data from a GitHub release.
 type ReleaseInfo struct {
@@ -260,15 +264,16 @@ func (u *Updater) Apply() error {
 // fetchLatestRelease calls the GitHub API.
 // Uses /releases?per_page=1 instead of /releases/latest to include pre-releases.
 func fetchLatestRelease() (*ReleaseInfo, error) {
-	if GitHubToken == "" {
-		return nil, fmt.Errorf("no GitHub token configured — required for private repo")
+	token := gitHubToken()
+	if token == "" {
+		return nil, fmt.Errorf("no GitHub token configured — set GITHUB_TOKEN env var")
 	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=1", RepoOwner, RepoName)
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "BoardRipper/"+Version)
-	req.Header.Set("Authorization", "Bearer "+GitHubToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
@@ -298,8 +303,8 @@ func downloadAsset(url, dest string) error {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "BoardRipper/"+Version)
 	req.Header.Set("Accept", "application/octet-stream")
-	if GitHubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+GitHubToken)
+	if token := gitHubToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	// Follow redirects (GitHub redirects to S3)
@@ -343,8 +348,10 @@ func isNewer(release, current string) bool {
 }
 
 // parseVersion extracts numeric parts from a version string.
-// "v0.2.5-beta.1" → [0, 2, 5, 1]
-// "v0.2.6-beta-4-g9572f7b" (git describe) → [0, 2, 6]
+// Pre-release sorts below release via -1 marker:
+//   "v0.3.0"        → [0, 3, 0]
+//   "v0.3.0-beta.1" → [0, 3, 0, -1, 1]
+// Git describe suffixes are stripped: "v0.2.6-beta-4-g9572f7b" → [0, 2, 6, -1]
 func parseVersion(v string) []int {
 	v = strings.TrimPrefix(v, "v")
 
@@ -364,21 +371,15 @@ func parseVersion(v string) []int {
 		}
 	}
 
-	// Remove pre-release labels but keep their numeric suffixes
-	// "0.2.5-beta.1" → "0.2.5.1"
-	v = strings.NewReplacer(
-		"-beta", "",
-		"-alpha", "",
-		"-rc", "",
-	).Replace(v)
-
-	// Strip any remaining dash-suffix (safety net)
+	// Separate pre-release label from version core: "0.2.5-beta.1" → core="0.2.5", pre="beta.1"
+	preRelease := ""
 	if idx := strings.Index(v, "-"); idx >= 0 {
+		preRelease = v[idx+1:]
 		v = v[:idx]
 	}
 
 	parts := strings.Split(v, ".")
-	nums := make([]int, 0, len(parts))
+	nums := make([]int, 0, len(parts)+2)
 	for _, p := range parts {
 		n, err := strconv.Atoi(p)
 		if err != nil {
@@ -386,6 +387,20 @@ func parseVersion(v string) []int {
 		}
 		nums = append(nums, n)
 	}
+
+	if preRelease != "" {
+		// Pre-release sorts BELOW the release: append -1 marker, then pre-release number.
+		// e.g. v0.3.0-beta.1 → [0,3,0,-1,1] < v0.3.0 → [0,3,0]
+		nums = append(nums, -1)
+		for _, p := range strings.Split(preRelease, ".") {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				continue
+			}
+			nums = append(nums, n)
+		}
+	}
+
 	return nums
 }
 

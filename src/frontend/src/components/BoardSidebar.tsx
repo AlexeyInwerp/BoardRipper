@@ -276,10 +276,12 @@ function NetsTab({ tabId }: { tabId: number }) {
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
   const searchQuery = tab?.searchQuery ?? '';
 
-  if (!board) return <div className="panel-empty">No board loaded</div>;
+  const nets = useMemo(
+    () => board ? Array.from(board.nets.entries()).sort((a, b) => a[0].localeCompare(b[0])) : [],
+    [board?.nets],
+  );
 
-  const nets = Array.from(board.nets.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]));
+  if (!board) return <div className="panel-empty">No board loaded</div>;
 
   const filtered = searchQuery
     ? nets.filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))

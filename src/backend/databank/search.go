@@ -128,6 +128,8 @@ func buildFTS5Query(query string) string {
 		if t == "" {
 			continue
 		}
+		// Escape embedded double quotes for FTS5 (double them)
+		t = strings.ReplaceAll(t, `"`, `""`)
 		// Quote the term for FTS5
 		quoted = append(quoted, `"`+t+`"`)
 	}
