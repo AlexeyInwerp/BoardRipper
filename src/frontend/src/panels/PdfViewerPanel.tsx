@@ -1231,7 +1231,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             options={boardTabNames}
             onToggle={handleBindBoard}
             title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'No board linked'}
-            singleSelect
           />
         )}
         <span className="pdf-filename" title={boundBoardTabs.length > 0 ? boundBoardTabs.map(t => t.fileName).join(', ') : 'No board linked'}>

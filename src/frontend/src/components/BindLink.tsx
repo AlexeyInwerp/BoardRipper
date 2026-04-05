@@ -9,16 +9,13 @@ interface BindLinkProps {
   onToggle: (name: string | null) => void;
   /** Tooltip for the link icon */
   title?: string;
-  /** If true, behave as single-select (clicking replaces instead of toggling) */
-  singleSelect?: boolean;
 }
 
 /**
  * Link icon that opens a dropdown to manage board↔PDF associations.
- * Multi-select by default (boards can link multiple PDFs).
- * Set singleSelect for reverse direction (PDF → board).
+ * Multi-select: boards can link multiple PDFs.
  */
-export function BindLink({ boundNames, options, onToggle, title, singleSelect: _singleSelect }: BindLinkProps) {
+export function BindLink({ boundNames, options, onToggle, title }: BindLinkProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

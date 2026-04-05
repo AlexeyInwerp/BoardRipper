@@ -1,15 +1,18 @@
+import { useMemo } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 
 export function NetListPanel() {
   const { board, selection, searchQuery } = useBoardStore();
 
+  const nets = useMemo(
+    () => board ? Array.from(board.nets.entries()).sort((a, b) => a[0].localeCompare(b[0])) : [],
+    [board?.nets],
+  );
+
   if (!board) {
     return <div className="panel-empty">No board loaded</div>;
   }
-
-  const nets = Array.from(board.nets.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]));
 
   const filtered = searchQuery
     ? nets.filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))

@@ -97,10 +97,11 @@ class BoardCache {
         db.createObjectStore(PDF_TEXT_STORE, { keyPath: 'key' });
       };
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onerror = () => { this.dbPromise = null; reject(req.error); };
       req.onblocked = () => {
         // Another tab holds the old DB version — delete and retry without cache
         indexedDB.deleteDatabase(DB_NAME);
+        this.dbPromise = null; // allow retry on next access
         reject(new Error('IndexedDB upgrade blocked — cache cleared, please reload'));
       };
     });

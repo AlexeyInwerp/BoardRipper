@@ -223,7 +223,11 @@ echo "[orchestrator] Renaming %s → %s-old..."
 dapi -X POST "$API/containers/%s/rename?name=%s-old" >/dev/null
 
 echo "[orchestrator] Creating new container %s with image %s..."
-RESP=$(dapi -X POST -H "Content-Type: application/json" -d '%s' "$API/containers/create?name=%s")
+CREATE_BODY=$(cat <<'ENDJSON'
+%s
+ENDJSON
+)
+RESP=$(dapi -X POST -H "Content-Type: application/json" -d "$CREATE_BODY" "$API/containers/create?name=%s")
 NEW_ID=$(echo "$RESP" | sed -n 's/.*"Id":"\([^"]*\)".*/\1/p')
 if [ -z "$NEW_ID" ]; then
   echo "[orchestrator] FAIL: create returned: $RESP — rolling back"

@@ -409,6 +409,8 @@ class BoardStore extends Emitter {
       if (this._activeTabId === tab.id) {
         this._activeTabId = this._tabs.length > 0 ? this._tabs[this._tabs.length - 1].id : null;
       }
+      this.notify();
+      return;
     }
 
     // Create panel AFTER board + rotation are ready so the renderer sees correct state

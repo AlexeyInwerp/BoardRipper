@@ -21,7 +21,7 @@ import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolveP
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
-import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS } from './board-scene';
+import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, cleanupShadowFonts, BOARD_COLORS } from './board-scene';
 import type { BorderBatch } from './board-scene';
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
@@ -1558,6 +1558,7 @@ export class BoardRenderer {
     this.sceneCache.clear();
     this.hitGridCache.clear();
     this.activeScene = null;
+    cleanupShadowFonts();
   }
 
   // --- Event handlers ---

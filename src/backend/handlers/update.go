@@ -30,7 +30,9 @@ func (h *UpdateHandler) Status(w http.ResponseWriter, r *http.Request) {
 func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 	state, err := h.upd.Check()
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadGateway)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

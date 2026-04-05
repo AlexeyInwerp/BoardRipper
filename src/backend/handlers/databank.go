@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,12 @@ import (
 
 	"boardripper/databank"
 )
+
+// allowedConfigKeys is the set of config keys that can be set via the API.
+var allowedConfigKeys = map[string]bool{
+	"auto_scan":   true,
+	"library_dir": true,
+}
 
 // DatabankHandler serves all /api/databank/* endpoints.
 type DatabankHandler struct {
@@ -380,6 +387,7 @@ func (h *DatabankHandler) DumpText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	safeName := html.EscapeString(file.Filename)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Text Dump: %s</title>
@@ -390,35 +398,16 @@ h2 { color: #ff6b9d; border-bottom: 1px solid #333; padding-bottom: 4px; margin-
 .text { background: #16213e; padding: 8px 12px; margin: 4px 0; border-left: 3px solid #0f3460; white-space: pre-wrap; word-break: break-all; }
 .meta { color: #888; font-size: 0.85em; }
 .stats { background: #2d2d44; padding: 8px 12px; border-radius: 4px; margin-bottom: 16px; }
-</style></head><body>`, file.Filename)
-	fmt.Fprintf(w, `<h1>Text Dump: %s</h1>`, file.Filename)
+</style></head><body>`, safeName)
+	fmt.Fprintf(w, `<h1>Text Dump: %s</h1>`, safeName)
 	fmt.Fprintf(w, `<div class="stats">File ID: %d | Pages with text: %d</div>`, id, len(pages))
 
 	for _, p := range pages {
 		fmt.Fprintf(w, `<h2>Page %d <span class="meta">(source: %s, %d chars)</span></h2>`, p.PageNum, p.Source, len(p.Text))
-		fmt.Fprintf(w, `<div class="text">%s</div>`, htmlEscape(p.Text))
+		fmt.Fprintf(w, `<div class="text">%s</div>`, html.EscapeString(p.Text))
 	}
 
 	fmt.Fprint(w, `</body></html>`)
-}
-
-func htmlEscape(s string) string {
-	var b []byte
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '&':
-			b = append(b, []byte("&amp;")...)
-		case '<':
-			b = append(b, []byte("&lt;")...)
-		case '>':
-			b = append(b, []byte("&gt;")...)
-		case '"':
-			b = append(b, []byte("&quot;")...)
-		default:
-			b = append(b, s[i])
-		}
-	}
-	return string(b)
 }
 
 // GetConfig returns all config values, enriched with runtime info.
@@ -449,6 +438,10 @@ func (h *DatabankHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Key == "" {
 		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+	if !allowedConfigKeys[req.Key] {
+		http.Error(w, "unknown config key: "+req.Key, http.StatusBadRequest)
 		return
 	}
 

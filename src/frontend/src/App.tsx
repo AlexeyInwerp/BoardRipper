@@ -15,7 +15,7 @@ import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DebugPanel } from './panels/DebugPanel';
 import { LibraryPanel } from './panels/LibraryPanel';
-import { setDockviewApi, ensureBoardPanel, ensureLibraryPanel, boardPanelId, toggleSidebar, isSidebarCollapsed, onSidebarChange, getSidebarWidth, preserveSidebarWidth, persistSidebarWidth } from './store/dockview-api';
+import { setDockviewApi, ensureBoardPanel, ensureLibraryPanel, boardPanelId, toggleSidebar, isSidebarCollapsed, onSidebarChange, getSidebarWidth, getSidebarElement, preserveSidebarWidth, persistSidebarWidth } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
@@ -57,17 +57,20 @@ function App() {
   // Track sidebar group width to position the toggle button at its right edge
   useEffect(() => {
     const update = () => setSidebarLeft(getSidebarWidth());
-    // Poll sidebar width — dockview doesn't expose group resize events,
-    // so we check periodically (lightweight: just reads one property)
-    let lastWidth = -1;
-    const poll = setInterval(() => {
-      const w = getSidebarWidth();
-      if (w !== lastWidth) { lastWidth = w; setSidebarLeft(w); }
-    }, 200);
-    // Also update immediately when sidebar state changes (toggle)
-    const unsub = onSidebarChange(update);
+    // Use ResizeObserver on the sidebar group element to detect width changes
+    let ro: ResizeObserver | null = null;
+    const tryObserve = () => {
+      const el = getSidebarElement();
+      if (el && !ro) {
+        ro = new ResizeObserver(update);
+        ro.observe(el);
+      }
+    };
+    tryObserve();
+    // Also update immediately when sidebar state changes (toggle/collapse)
+    const unsub = onSidebarChange(() => { update(); tryObserve(); });
     update();
-    return () => { clearInterval(poll); unsub(); };
+    return () => { ro?.disconnect(); unsub(); };
   }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {

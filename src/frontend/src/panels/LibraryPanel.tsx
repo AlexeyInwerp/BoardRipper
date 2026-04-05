@@ -451,16 +451,12 @@ function LiveBrowser({ browseResult, browsing }: {
 
       const ext = entry.name.split('.').pop()?.toLowerCase() ?? '';
       if (ext === 'pdf') {
-        const { boardStore } = await import('../store/board-store');
-        const { pdfStore } = await import('../store/pdf-store');
-        const { ensurePdfPanel } = await import('../store/dockview-api');
         boardStore.addPdf(fileObj);
         boardStore.autoBindPdf(fileObj.name);
         await pdfStore.loadFile(fileObj);
         ensurePdfPanel(fileObj.name);
         pdfStore.switchTo(fileObj.name);
       } else {
-        const { boardStore } = await import('../store/board-store');
         await boardStore.loadFiles([fileObj]);
       }
     } catch (err) {

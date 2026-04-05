@@ -274,17 +274,16 @@ func (e *PdfExtractor) ExtractAllCancellable(concurrency int, done <-chan struct
 	for _, f := range toExtract {
 		select {
 		case <-done:
-			// Cancelled — stop feeding work
-			break
+			goto cancelled
 		case work <- f:
 		}
-		// Check cancel again after select (break only exits select)
 		select {
 		case <-done:
-			break
+			goto cancelled
 		default:
 		}
 	}
+cancelled:
 	close(work)
 	wg.Wait()
 	log.Printf("PdfExtractor: done — %d extracted, %d errors", extracted, errors)

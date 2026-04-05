@@ -45,6 +45,13 @@ export function getSidebarWidth(): number {
   return group.api.width;
 }
 
+/** Get the sidebar group's container DOM element (for ResizeObserver) */
+export function getSidebarElement(): HTMLElement | null {
+  const group = getSidebarGroup();
+  if (!group) return null;
+  return (group as unknown as { element?: HTMLElement }).element ?? null;
+}
+
 /** Get or create the sidebar group, returning it */
 function getSidebarGroup(): IDockviewGroupPanel | undefined {
   const api = _api;

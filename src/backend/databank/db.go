@@ -603,7 +603,7 @@ func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([
 
 	var files []FileRecord
 	for rows.Next() {
-		f, err := db.scanFileRow(rows)
+		f, err := db.scanFile(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -712,45 +712,12 @@ func (db *DB) DeleteBinding(id int64) error {
 
 // --- helpers ---
 
-func (db *DB) scanFile(row *sql.Row) (*FileRecord, error) {
-	f := &FileRecord{}
-	var boardNum, mfr, model, fmtID, boardMfr, resStat sql.NullString
-	var partCount, netCount sql.NullInt64
-	var donor, preview int
-
-	err := row.Scan(
-		&f.ID, &f.Path, &f.Filename, &f.Extension, &f.FileType, &f.Size, &f.ModTime, &f.ScanTime,
-		&boardNum, &mfr, &model, &fmtID, &partCount, &netCount, &donor, &preview,
-		&boardMfr, &resStat,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	f.BoardNumber = boardNum.String
-	f.Manufacturer = mfr.String
-	f.Model = model.String
-	f.FormatID = fmtID.String
-	f.BoardManufacturer = boardMfr.String
-	f.ResolutionStatus = resStat.String
-	if partCount.Valid {
-		v := int(partCount.Int64)
-		f.PartCount = &v
-	}
-	if netCount.Valid {
-		v := int(netCount.Int64)
-		f.NetCount = &v
-	}
-	f.DonorPool = donor != 0
-	f.HasPreview = preview != 0
-	return f, nil
-}
-
 type scannable interface {
 	Scan(dest ...interface{}) error
 }
 
-func (db *DB) scanFileRow(row scannable) (*FileRecord, error) {
+// scanFile scans a single file row from any scannable source (*sql.Row or *sql.Rows).
+func (db *DB) scanFile(row scannable) (*FileRecord, error) {
 	f := &FileRecord{}
 	var boardNum, mfr, model, fmtID, boardMfr, resStat sql.NullString
 	var partCount, netCount sql.NullInt64

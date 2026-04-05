@@ -1171,6 +1171,6 @@ class PdfStore extends Emitter {
 export const pdfStore = new PdfStore();
 
 // Expose for integration tests (Playwright)
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
   (window as any).__pdfStore = pdfStore;
 }

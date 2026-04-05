@@ -19,6 +19,7 @@ var boardExtensions = map[string]bool{
 	".cad": true,
 	".pcb": true,
 	".tvw": true,
+	".xzz": true,
 }
 
 // PDF extension.

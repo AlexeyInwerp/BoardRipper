@@ -921,6 +921,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
     } catch (e) {
       log.parser.warn(`failed to parse layer ${i} at offset 0x${r.tell().toString(16)}: ${e}`);
       layersParsedCleanly = false;
+      // Can't reliably find the next layer boundary after a parse error
       break;
     }
   }

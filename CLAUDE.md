@@ -7,7 +7,7 @@ BoardRipper — web-based PCB boardview file viewer and inspector. Hosted via Do
 - **Rendering:** PixiJS v8 (WebGL) + pixi-viewport v6 (pan/zoom/culling/deceleration)
 - **Frontend:** React 19 + TypeScript + Vite 7
 - **Panels:** Dockview v5 (dockable, detachable, floating, popout-to-window)
-- **Backend:** Go (net/http stdlib) — serves SPA + handles file upload/list/delete
+- **Backend:** Go (net/http stdlib) — serves SPA, file management, board database, self-update
 - **Container:** Docker (multi-stage build, scratch-based, ~15MB)
 - **Tests:** Playwright (Chromium headless)
 
@@ -29,6 +29,9 @@ Boardviewer/
 ├── README.md
 ├── Dockerfile                   # Multi-stage build (node → golang → scratch)
 ├── docker-compose.yml
+├── desktop/                     # Electron desktop app (Mac + Windows builds)
+├── scripts/                     # CI/workflow scripts
+├── Board Database/              # Reference board database (SQLite)
 ├── docs/
 │   ├── formats/                  # Format specifications (one per format)
 │   │   ├── BVR_FORMAT.md        # BVR1/BVR3
@@ -43,14 +46,20 @@ Boardviewer/
 ├── samples/                     # Real-world BVR3 + PDF test files
 └── src/
     ├── frontend/                # React + PixiJS SPA
+    │   ├── tests/               # Playwright E2E specs
     │   └── src/
     │       ├── parsers/         # Format parsers (pure TS functions, 9 formats)
     │       ├── renderer/        # BoardRenderer, board-scene (shared), mockup-data
-    │       ├── components/      # Toolbar, StatusBar, TabBar, ContextMenu, PanelAdder
-    │       ├── panels/          # ComponentInfo, NetList, SearchResults, PDF, Settings, SettingsMockup
-    │       ├── hooks/           # useBoardStore, usePdfStore
-    │       └── store/           # board-store, render-settings, board-cache, pdf-store, ...
-    └── backend/                 # Go net/http server (upload/list/delete + SPA fallback)
+    │       ├── pdf/             # PDF glyph extraction & overlay utilities
+    │       ├── components/      # Toolbar, StatusBar, TabBar, ContextMenu, PanelAdder, BindLink, BoardSidebar
+    │       ├── panels/          # BoardViewer, ComponentInfo, NetList, SearchResults, PDF, Settings, SettingsMockup, Debug, Library
+    │       ├── hooks/           # useBoardStore, usePdfStore, useDatabank, useKeyboardShortcuts, createStoreHook
+    │       └── store/           # board-store, render-settings, board-cache, pdf-store, databank-store, update-store, ...
+    └── backend/                 # Go net/http server
+        ├── handlers/            # HTTP handlers (files, boards, databank, update)
+        ├── boarddb/             # Board reference database (ODM matcher, resolver)
+        ├── databank/            # File scanner, search, PDF text extraction
+        └── updater/             # Self-update via Docker socket
 ```
 
 ## Key Architectural Decisions
@@ -69,7 +78,7 @@ Boardviewer/
 - All coordinates internally in mils (thousandths of an inch)
 - Component naming: PascalCase for React components, camelCase for functions/variables
 - File format parsers are pure functions: `(buffer: ArrayBuffer) => BoardData | Promise<BoardData>` (see `FormatDescriptor.parse` in `parsers/registry.ts`)
-- **Logging:** Use scoped loggers from `store/log-store.ts` — never raw `console.log`. Import `{ log }` and use `log.parser.*`, `log.render.*`, `log.pdf.*`, `log.scan.*`, `log.ui.*`, `log.cache.*`, `log.perf.*`. The Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move).
+- **Logging:** Use scoped loggers from `store/log-store.ts` — never raw `console.log`. Import `{ log }` and use `log.parser.*`, `log.render.*`, `log.pdf.*`, `log.scan.*`, `log.ui.*`, `log.cache.*`, `log.perf.*`, `log.update.*`. The Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move).
 
 ## Reference
 - OpenBoardView source: https://github.com/OpenBoardView/OpenBoardView
