@@ -102,7 +102,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnap
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, butterfly, board, showNetLines, showTraces, activeTabId, flipAxis } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis } = useBoardStore();
   const update = useSyncExternalStore(updateStore.subscribe, updateStore.getSnapshot);
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
