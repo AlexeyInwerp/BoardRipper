@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useSyncExternalStore } from 'react';
-import { IconFlipHorizontal, IconGhost2 } from '@tabler/icons-react';
+import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
@@ -107,7 +107,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnap
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const { showTop, showBottom, butterfly, board, showTraces, showGhosts, activeTabId, flipAxis } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis } = useBoardStore();
   const update = useSyncExternalStore(updateStore.subscribe, updateStore.getSnapshot);
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
@@ -209,13 +209,6 @@ export function Toolbar() {
           <IconFlipHorizontal size={18} />
         </button>
       )}
-      <button
-        onClick={() => boardStore.toggleGhosts()}
-        className={`toolbar-btn toolbar-btn-icon ${showGhosts ? 'active' : ''}`}
-        data-tooltip="Show hidden-side components (ghost)"
-      >
-        <IconGhost2 size={18} />
-      </button>
 
       {hasTraces && !hasLayers && (
         <button
