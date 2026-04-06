@@ -187,6 +187,9 @@ export class BoardRenderer {
   private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
   private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true, showGhosts: true };
+  // Track previous top/bottom state for flip-to-center
+  private prevShowTop = true;
+  private prevShowBottom = false;
   /** Part label whose tint was boosted by selection — reset on next renderSelection */
   private highlightedPartLabel: import('pixi.js').BitmapText | null = null;
 
@@ -1623,12 +1626,27 @@ export class BoardRenderer {
         log.render.log(`onBoardUpdate tab=${this.tabId} recovering lost scene for ${board.format}/${board.parts.length}`);
         this.activateScene(board);
       } else if (board && this.activeScene) {
+        // Detect side flip (top↔bottom) for auto-centering
+        const flipped = boardStore.showTop !== this.prevShowTop || boardStore.showBottom !== this.prevShowBottom;
+        this.prevShowTop = boardStore.showTop;
+        this.prevShowBottom = boardStore.showBottom;
+
         // Same board — update layer visibility + flips
         this.activeScene.topLayer.visible = this.isTopVisible;
         this.activeScene.bottomLayer.visible = this.isBottomVisible;
         this.applyLayerVisibility(this.activeScene);
         this.applyFlips(board, this.activeScene);
         this.needsRender = true;
+
+        // After flip: re-center on selected component so the user keeps focus
+        if (flipped && boardStore.selection.partIndex !== null) {
+          const part = board.parts[boardStore.selection.partIndex];
+          if (part) {
+            const s = renderSettingsStore.settings;
+            const eb = computePartRenderBounds(part, s);
+            this.zoomToBounds({ minX: eb.px, minY: eb.py, maxX: eb.px + eb.pw, maxY: eb.py + eb.ph }, this.rootForPart(part), 0.25);
+          }
+        }
       }
 
       // Skip renderSelection() if all relevant state is unchanged (e.g. tab switch with no selection)
