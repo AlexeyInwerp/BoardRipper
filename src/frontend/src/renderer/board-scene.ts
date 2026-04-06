@@ -133,6 +133,8 @@ export interface BoardSceneGraph {
   partLabelByIndex: Map<number, BitmapText>;
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. Only set when < Infinity. */
   pinRadiusClamp: Map<number, number>;
+  /** Per 2-pin part: per-pin pad polygons (4 corners each). Used for exact selection highlights. */
+  twoPinPadPolys: Map<number, [number, number][][]>;
   /** PCB trace lines container — toggled by showTraces */
   traceLayer: Container | null;
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
@@ -512,6 +514,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Part containers are queued and added AFTER global pin Graphics so borders/labels render on top
   const partQueue: { container: Container; isBottom: boolean }[] = [];
   const pinRadiusClamp = new Map<number, number>();
+  const twoPinPadPolys = new Map<number, [number, number][][]>();
   const partLabelByIndex = new Map<number, BitmapText>();
 
   // Parts
@@ -913,6 +916,16 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       triGfx.lineTo(tx + pts[1].x * cos - pts[1].y * sin, ty + pts[1].x * sin + pts[1].y * cos);
       triGfx.lineTo(tx + pts[2].x * cos - pts[2].y * sin, ty + pts[2].x * sin + pts[2].y * cos);
       triGfx.closePath();
+    }
+
+    // Store pad polygons for 2-pin parts so selection highlights can reuse exact geometry
+    if (isTwoPinPart && padRects.length === 2) {
+      twoPinPadPolys.set(pi, padRects.map(r => [
+        [r.rx, r.ry], [r.rx + r.rw, r.ry],
+        [r.rx + r.rw, r.ry + r.rh], [r.rx, r.ry + r.rh],
+      ] as [number, number][]));
+    } else if (diag2Pads) {
+      twoPinPadPolys.set(pi, diag2Pads.pads);
     }
 
     // ── Part border + optional component-type fill ───────────────────────────
@@ -1341,5 +1354,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
 }
