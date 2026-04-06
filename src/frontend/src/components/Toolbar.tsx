@@ -25,28 +25,27 @@ function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnap
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  if (!state.has_update && !updating) return null;
-
   const rel = state.release_info;
   const body = rel?.body ?? '';
 
   return (
     <div className="update-badge-wrap" ref={ref}>
       <button
-        className="toolbar-btn toolbar-update-badge"
-        onClick={() => setOpen(v => !v)}
+        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}`}
+        onClick={() => { if (!open) updateStore.check(); setOpen(v => !v); }}
+        title={state.has_update ? `Update available: ${state.latest_version}` : `v${state.current_version} — click to check`}
       >
-        {updating ? 'Updating...' : `${state.latest_version}`}
+        {updating ? 'Updating...' : state.has_update ? `${state.latest_version}` : `v${state.current_version}`}
       </button>
 
       {open && (
         <div className="update-dropdown">
           <div className="update-dropdown-header">
-            <span>{rel?.name || state.latest_version}</span>
+            <span>{state.has_update ? (rel?.name || state.latest_version) : `v${state.current_version}`}</span>
             <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
           </div>
 
-          {body && (
+          {state.has_update && body && (
             <div className="update-dropdown-body">
               {body.split('\n').map((line, i) => {
                 if (line.startsWith('## ')) return <h3 key={i}>{line.slice(3)}</h3>;
@@ -56,6 +55,12 @@ function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnap
                 if (!line.trim()) return <br key={i} />;
                 return <p key={i}>{line}</p>;
               })}
+            </div>
+          )}
+
+          {!state.has_update && !updating && (
+            <div className="update-dropdown-body">
+              <p>You are on the latest version.</p>
             </div>
           )}
 
@@ -69,7 +74,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnap
             </div>
           )}
 
-          {!updating && (
+          {!updating && state.has_update && (
             <div className="update-dropdown-actions">
               {state.docker_available ? (
                 <button

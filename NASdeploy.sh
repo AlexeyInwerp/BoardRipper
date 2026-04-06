@@ -62,7 +62,7 @@ info "=== Pre-deploy checks ==="
 
 # 1. Verify Docker image builds locally
 info "Building image..."
-docker build --build-arg APP_VERSION="${APP_VERSION}" --build-arg GITHUB_TOKEN="${GITHUB_UPDATE_TOKEN}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
+docker build --build-arg APP_VERSION="${APP_VERSION}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
 
 # 2. Smoke-test the image locally
 info "Smoke-testing image..."
@@ -102,7 +102,7 @@ info "Push complete."
 # ── Step 2: Build Docker image for linux/amd64 ────────────────
 TAR_FILE="/tmp/${IMAGE_NAME}.tar.gz"
 info "Building Docker image ${IMAGE_NAME}:${IMAGE_TAG} for linux/amd64..."
-docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" --build-arg GITHUB_TOKEN="${GITHUB_UPDATE_TOKEN}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
+docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
     error "Docker build failed."
     exit 1
 }
@@ -129,7 +129,7 @@ $(scp_cmd) "${SCRIPT_DIR}/deploy-remote.sh" "${NAS_USER}@${NAS_HOST}:/tmp/deploy
 }
 
 info "Deploying on NAS..."
-$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "bash /tmp/deploy-remote.sh '${NAS_PW}'"
+$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "bash /tmp/deploy-remote.sh '${NAS_PW}' '${GITHUB_UPDATE_TOKEN}'"
 
 # Clean up local tar
 rm -f "${TAR_FILE}"

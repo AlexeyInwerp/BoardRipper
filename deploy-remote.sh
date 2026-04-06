@@ -6,6 +6,7 @@ set -e
 
 DOCKER="/usr/local/bin/docker"
 PW="$1"
+GITHUB_TOKEN="${2:-}"
 IMAGE_NAME="boardripper"
 IMAGE_TAG="latest"
 CONFIG_FILE="/volume1/docker/boardripper/container-config.json"
@@ -13,7 +14,7 @@ CONFIG_FILE="/volume1/docker/boardripper/container-config.json"
 # Fallback config for first deploy (no existing container AND no saved config)
 DEFAULT_MOUNTS='-v /volume1/docker/boardripper/data:/data -v /volume1/AL ZEUG/LogiCloud/Schematics-BV-EFI:/library:ro -v /var/run/docker.sock:/var/run/docker.sock'
 DEFAULT_PORTS='-p 8090:8080'
-DEFAULT_ENV='-e PORT=8080 -e LIBRARY_DIR=/library'
+DEFAULT_ENV='-e PORT=8080 -e LIBRARY_DIR=/library -e GITHUB_TOKEN=${GITHUB_TOKEN:-}'
 
 # Helper: run docker with sudo, filtering prompt noise
 sdocker() {
@@ -102,6 +103,13 @@ fi
 # Ensure Docker socket is always mounted (required for self-update)
 if ! echo "${MOUNT_ARGS}" | grep -q 'docker.sock'; then
     MOUNT_ARGS="${MOUNT_ARGS} -v /var/run/docker.sock:/var/run/docker.sock"
+fi
+
+# Ensure GITHUB_TOKEN is set (required for update checking from private repo)
+if [ -n "${GITHUB_TOKEN}" ]; then
+    # Remove any existing GITHUB_TOKEN from env args, then add the current one
+    ENV_ARGS=$(echo "${ENV_ARGS}" | sed 's/-e GITHUB_TOKEN=[^ ]* //g')
+    ENV_ARGS="${ENV_ARGS} -e GITHUB_TOKEN=${GITHUB_TOKEN}"
 fi
 
 echo "[NAS]   mounts:  ${MOUNT_ARGS}"
