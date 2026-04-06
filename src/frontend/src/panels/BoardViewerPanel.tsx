@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
-import { IconHierarchy, IconTooltip, IconObjectScan } from '@tabler/icons-react';
+import { IconHierarchy, IconTooltip, IconObjectScan, IconGhost2 } from '@tabler/icons-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -14,7 +14,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
-  const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo, followPdf, layerStates } = useBoardStore();
+  const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'nets' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
@@ -225,6 +225,13 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           title={showNetLines ? 'Net lines: ON' : 'Net lines: OFF'}
         >
           <IconHierarchy size={16} />
+        </button>
+        <button
+          className={`board-netlines-toggle ${showGhosts ? 'active' : ''}`}
+          onClick={() => boardStore.toggleGhosts()}
+          title={showGhosts ? 'Hidden-side ghosts: ON' : 'Hidden-side ghosts: OFF'}
+        >
+          <IconGhost2 size={16} />
         </button>
       </div>
       <BoardSidebar
