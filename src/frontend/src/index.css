@@ -1295,6 +1295,77 @@ html, body, #root {
   text-align: center;
 }
 
+/* Scroll Bindings Editor (PDF settings) */
+.settings-hint {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  margin: 0 0 8px 0;
+}
+.scroll-bindings-editor {
+  padding: 4px 0;
+}
+.scroll-bindings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scroll-binding-slot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  transition: border-color 0.15s, background 0.15s;
+}
+.scroll-binding-slot.drag-over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+}
+.scroll-binding-modifier {
+  font-size: 0.82em;
+  color: var(--text-secondary);
+  min-width: 100px;
+  flex-shrink: 0;
+}
+.scroll-binding-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 12px;
+  border-radius: 12px;
+  font-size: 0.82em;
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+  background: color-mix(in srgb, var(--pill-color) 20%, var(--bg-tertiary));
+  color: var(--pill-color);
+  border: 1px solid color-mix(in srgb, var(--pill-color) 40%, transparent);
+  transition: opacity 0.15s, transform 0.1s;
+}
+.scroll-binding-pill:hover {
+  transform: scale(1.05);
+}
+.scroll-binding-pill:active,
+.scroll-binding-pill.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+.scroll-bindings-reset {
+  margin-top: 8px;
+  font-size: 0.78em;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.scroll-bindings-reset:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Formats table in Settings */
 .formats-table {
   width: 100%;
@@ -2184,6 +2255,14 @@ html, body, #root {
   top: 0;
   left: 0;
   pointer-events: none;
+}
+
+.pdf-adjacent-page {
+  position: absolute;
+  left: 0;
+  pointer-events: none;
+  display: block;
+  opacity: 0.85;
 }
 
 .pdf-clicked-text {
@@ -3634,6 +3713,14 @@ html, body, #root {
 }
 .pdf-scrubber.dragging {
   opacity: 0.9;
+}
+.pdf-scrubber.flash {
+  opacity: 0.8;
+  transition: opacity 0.1s ease;
+}
+.pdf-scrubber.flash .pdf-scrubber-thumb {
+  background: var(--accent, #00d4ff);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
 }
 .pdf-scrubber-track {
   position: absolute;
