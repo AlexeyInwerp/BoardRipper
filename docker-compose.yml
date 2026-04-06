@@ -6,13 +6,18 @@
 #
 # Volumes:
 #   - ./data    → uploaded board files (persists across restarts)
-#   - ./library → optional: mount your existing board file library for browsing
+#   - ./library → mount your board file folders here for browsing in the Library panel
+#     Mount individual folders as subdirectories of /library, e.g.:
+#       - /path/to/MacBooks:/library/MacBooks:ro
+#       - /path/to/iPhones:/library/iPhones:ro
+#     These will appear as top-level folders in the Library browser.
 #
 # Environment variables:
-#   PORT         — internal server port (default: 8080, no need to change)
-#   STATIC_DIR   — frontend files location (default: /static, set by image)
-#   DATA_DIR     — upload storage (default: /data, mapped via volume)
-#   LIBRARY_DIR  — library root for file browser (default: /library)
+#   PORT           — internal server port (default: 8080, no need to change)
+#   STATIC_DIR     — frontend files location (default: /static, set by image)
+#   DATA_DIR       — upload storage (default: /data, mapped via volume)
+#   LIBRARY_DIR    — library root for file browser (default: /library)
+#   GITHUB_TOKEN   — GitHub PAT for update checking (private repo)
 
 services:
   boardripper:

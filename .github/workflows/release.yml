@@ -31,7 +31,7 @@ jobs:
       - run: cd src/backend && go test ./... -v -count=1
 
       # Docker build + smoke
-      - run: docker build --build-arg APP_VERSION=${{ github.ref_name }} --build-arg GITHUB_TOKEN=${{ secrets.UPDATE_TOKEN }} -t boardripper:${{ github.ref_name }} .
+      - run: docker build --build-arg APP_VERSION=${{ github.ref_name }} -t boardripper:${{ github.ref_name }} .
       - run: |
           docker run -d --name br-release -p 8080:8080 boardripper:${{ github.ref_name }}
           sleep 3
@@ -115,7 +115,6 @@ jobs:
           docker buildx build \
             --platform linux/amd64 \
             --build-arg APP_VERSION=${{ github.ref_name }} \
-            --build-arg GITHUB_TOKEN=${{ secrets.UPDATE_TOKEN }} \
             --tag boardripper:${{ github.ref_name }} \
             --output type=docker,dest=boardripper-docker.tar \
             .
@@ -156,99 +155,4 @@ jobs:
             artifacts/boardripper-docker-*.tar.gz
           body: |
             ## BoardRipper ${{ github.ref_name }}
-
-            ### Downloads
-
-            | Platform | File | Notes |
-            |----------|------|-------|
-            | **Windows** | `boardripper-windows-amd64-${{ github.ref_name }}.zip` | Standalone, no install needed |
-            | **macOS Intel** | `boardripper-macos-amd64-${{ github.ref_name }}.tar.gz` | For Intel Macs |
-            | **macOS Apple Silicon** | `boardripper-macos-arm64-${{ github.ref_name }}.tar.gz` | For M1/M2/M3/M4 Macs |
-            | **Linux** | `boardripper-linux-amd64-${{ github.ref_name }}.tar.gz` | Standalone binary |
-            | **Docker** | `boardripper-docker-${{ github.ref_name }}.tar.gz` | Multi-arch (amd64 + arm64) |
-
-            ### Standalone Usage (Windows/macOS/Linux)
-
-            ```bash
-            # Extract
-            tar -xzf boardripper-<platform>-${{ github.ref_name }}.tar.gz
-            # (Windows: unzip boardripper-windows-amd64-${{ github.ref_name }}.zip)
-
-            # Run — serves on http://localhost:8080
-            STATIC_DIR=./static DATA_DIR=./data ./boardripper
-            # Windows: set STATIC_DIR=static& set DATA_DIR=data& boardripper.exe
-            ```
-
-            ### Docker Setup (Recommended for NAS/Server)
-
-            #### Quick Start
-            ```bash
-            # Load the image
-            docker load < boardripper-docker-${{ github.ref_name }}.tar.gz
-
-            # Run
-            docker run -d \
-              --name boardripper \
-              -p 8081:8080 \
-              -v /path/to/your/boards:/data \
-              -v /path/to/your/library:/library \
-              --restart unless-stopped \
-              boardripper:${{ github.ref_name }}
-            ```
-
-            #### Step-by-Step Docker Compose Setup
-
-            **1. Create a project directory:**
-            ```bash
-            mkdir boardripper && cd boardripper
-            ```
-
-            **2. Create `docker-compose.yml`:**
-            ```yaml
-            services:
-              boardripper:
-                image: boardripper:${{ github.ref_name }}
-                ports:
-                  - "8081:8080"        # Access at http://your-nas-ip:8081
-                volumes:
-                  - ./data:/data       # Uploaded board files persist here
-                  - ./library:/library # Optional: mount your board file library
-                restart: unless-stopped
-                environment:
-                  - PORT=8080
-                deploy:
-                  resources:
-                    limits:
-                      memory: 512M
-            ```
-
-            **3. Load the Docker image:**
-            ```bash
-            docker load < boardripper-docker-${{ github.ref_name }}.tar.gz
-            ```
-
-            **4. Start the service:**
-            ```bash
-            docker compose up -d
-            ```
-
-            **5. Open in browser:**
-            ```
-            http://localhost:8081
-            # or http://your-nas-ip:8081
-            ```
-
-            #### Synology NAS (DSM 7.2+)
-            1. Copy `boardripper-docker-${{ github.ref_name }}.tar.gz` to your NAS
-            2. SSH in: `docker load < boardripper-docker-${{ github.ref_name }}.tar.gz`
-            3. In Container Manager → Project → Create:
-               - Paste the `docker-compose.yml` above
-               - Set paths: `/volume1/docker/boardripper/data` and `/volume1/docker/boardripper/library`
-            4. Click "Build" → access at `http://nas-ip:8081`
-
-            #### Updating
-            ```bash
-            docker load < boardripper-docker-<new-version>.tar.gz
-            docker compose down && docker compose up -d
-            ```
           generate_release_notes: true
