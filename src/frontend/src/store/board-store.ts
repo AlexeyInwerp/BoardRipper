@@ -38,6 +38,8 @@ export interface BoardTab {
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
+  /** Show ghost outlines of hidden-side components when a net is selected */
+  showGhosts: boolean;
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
@@ -164,6 +166,7 @@ class BoardStore extends Emitter {
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
+  get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -336,6 +339,7 @@ class BoardStore extends Emitter {
       showPins: true,
       showOutlines: true,
       showLabels: true,
+      showGhosts: true,
       layerStates: [],
       pdfFileNames: [],
       cacheKey: '',
@@ -639,6 +643,13 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showLabels: !tab.showLabels });
+    this.notify();
+  }
+
+  toggleGhosts() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showGhosts: !tab.showGhosts });
     this.notify();
   }
 

@@ -31,6 +31,7 @@ interface StoreSnapshot {
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
+  showGhosts: boolean;
   layerStates: LayerState[];
   boundPdfFiles: File[];
   pdfFileNames: string[];
@@ -64,6 +65,7 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   showPins: boardStore.showPins,
   showOutlines: boardStore.showOutlines,
   showLabels: boardStore.showLabels,
+  showGhosts: boardStore.showGhosts,
   layerStates: boardStore.layerStates,
   boundPdfFiles: boardStore.boundPdfFiles,
   pdfFileNames: boardStore.pdfFileNames,
