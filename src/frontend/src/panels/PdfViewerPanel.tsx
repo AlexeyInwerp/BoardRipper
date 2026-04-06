@@ -17,10 +17,40 @@ import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
 
 const DRAG_THRESHOLD = 3;
+const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
+const TRACKPAD_PINCH_SPEED = 0.01;  // trackpad pinch sensitivity (10× faster than mouse wheel)
+const MOUSE_WHEEL_SPEED = 0.001;    // mouse wheel zoom sensitivity
 const LINE_HEIGHT_RATIO = 1.2;
 const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
 const DEFAULT_CLEAN_CONTRAST = 3;
+
+/** The three scroll wheel actions */
+export type ScrollAction = 'zoom' | 'pan' | 'switch';
+export const SCROLL_ACTIONS: ScrollAction[] = ['zoom', 'pan', 'switch'];
+
+/** Which action is assigned to each modifier (must be a permutation of all 3 actions) */
+export interface ScrollBindings {
+  bare: ScrollAction;   // no modifier
+  shift: ScrollAction;  // shift + scroll
+  meta: ScrollAction;   // cmd (mac) / ctrl (win) + scroll
+}
+
+export const SCROLL_BINDINGS_KEY = 'boardripper-pdf-scroll-bindings';
+export const DEFAULT_SCROLL_BINDINGS: ScrollBindings = { bare: 'zoom', shift: 'pan', meta: 'switch' };
+
+export function loadScrollBindings(): ScrollBindings {
+  try {
+    const raw = localStorage.getItem(SCROLL_BINDINGS_KEY);
+    if (!raw) return DEFAULT_SCROLL_BINDINGS;
+    const parsed = JSON.parse(raw) as ScrollBindings;
+    // Validate: must be a valid permutation
+    const vals = new Set([parsed.bare, parsed.shift, parsed.meta]);
+    if (vals.size === 3 && SCROLL_ACTIONS.every(a => vals.has(a))) return parsed;
+  } catch { /* ignore */ }
+  return DEFAULT_SCROLL_BINDINGS;
+}
+
 const MAX_CANVAS_DIM = 4096;
 const MAX_CANVAS_AREA = 4096 * 4096; // ~16M pixels — safe for mobile/tablet GPUs
 const TIER_DEBOUNCE_MS = 60; // trailing debounce — guarantees final crisp frame after zoom
@@ -168,10 +198,11 @@ function applyTransform(el: HTMLElement | null, x: number, y: number, s: number)
 }
 
 // --- Page Scrubber Rail ---
-function PageScrubber({ currentPage, pageCount, onGoToPage }: {
+function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
   currentPage: number;
   pageCount: number;
   onGoToPage: (page: number) => void;
+  scrubberRef?: React.MutableRefObject<HTMLDivElement | null>;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
   const [hoverPage, setHoverPage] = useState<number | null>(null);
@@ -212,7 +243,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage }: {
   return (
     <div
       className={`pdf-scrubber${isDragging ? ' dragging' : ''}`}
-      ref={railRef}
+      ref={(el) => { (railRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (scrubberRef) scrubberRef.current = el; }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -331,6 +362,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   });
   const cleanContrastRef = useRef(cleanContrast);
   cleanContrastRef.current = cleanContrast;
+  const [scrollBindings, setScrollBindings] = useState<ScrollBindings>(loadScrollBindings);
+  const scrollBindingsRef = useRef(scrollBindings);
+  scrollBindingsRef.current = scrollBindings;
+
+  // Sync scroll bindings when changed from Settings panel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent<ScrollBindings>).detail;
+      setScrollBindings(next);
+      scrollBindingsRef.current = next;
+    };
+    window.addEventListener('pdf-scroll-bindings-changed', handler);
+    return () => window.removeEventListener('pdf-scroll-bindings-changed', handler);
+  }, []);
 
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
@@ -350,6 +395,26 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const bookmarkClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const skipResetRef = useRef(false);
+
+  // Scrubber flash: DOM classList toggle to avoid re-rendering the whole panel
+  const scrubberFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrubberElRef = useRef<HTMLDivElement | null>(null);
+  const flashScrubber = useCallback(() => {
+    const el = scrubberElRef.current;
+    if (!el) return;
+    el.classList.add('flash');
+    if (scrubberFlashTimerRef.current) clearTimeout(scrubberFlashTimerRef.current);
+    scrubberFlashTimerRef.current = setTimeout(() => el.classList.remove('flash'), 800);
+  }, []);
+
+  // --- Multi-page rendering (adjacent pages visible when zoomed out / panning) ---
+  /** CSS height of the current page at zoom=1 */
+  const pageCssHRef = useRef(0);
+  /** Imperatively managed canvases for previous and next pages */
+  const adjPrevRef = useRef<HTMLCanvasElement | null>(null);
+  const adjNextRef = useRef<HTMLCanvasElement | null>(null);
+  /** Track which page numbers are currently rendered in adjacent canvases */
+  const adjRenderedRef = useRef<{ prev: number; next: number }>({ prev: 0, next: 0 });
 
   /** Push zoom/pan refs to DOM + throttled React state for toolbar */
   const syncTransform = useCallback(() => {
@@ -472,6 +537,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     scaleRef.current = entry.baseScale;
     viewportHeightRef.current = entry.vpHeight;
     viewportTransformRef.current = entry.vpTransform;
+    pageCssHRef.current = entry.cssH;
 
     drawHighlightsRef.current();
   }, []);
@@ -573,6 +639,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       scaleRef.current = baseScale;
       viewportHeightRef.current = unscaledViewport.height;
       viewportTransformRef.current = unscaledViewport.transform;
+      pageCssHRef.current = cssH;
 
       highlight.width = viewport.width;
       highlight.height = viewport.height;
@@ -705,6 +772,101 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   useEffect(() => { renderPage(); }, [renderPage]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
+
+  // --- Adjacent page rendering (prev/next pages visible when panning / zoomed out) ---
+  useEffect(() => {
+    if (!isLoaded || pageCount <= 1) return;
+    const wrapper = wrapperRef.current;
+    const container = containerRef.current;
+    if (!wrapper || !container) return;
+
+    const cssH = pageCssHRef.current;
+    if (cssH === 0) return; // main page hasn't rendered yet
+
+    const containerWidth = container.clientWidth;
+    if (containerWidth === 0) return;
+
+    let cancelled = false;
+
+    const ensureCanvas = (ref: React.MutableRefObject<HTMLCanvasElement | null>, className: string): HTMLCanvasElement => {
+      if (!ref.current) {
+        ref.current = document.createElement('canvas');
+        ref.current.className = className;
+      }
+      return ref.current;
+    };
+
+    const blitAdjacentPage = async (pageNum: number, canvas: HTMLCanvasElement, yOffset: number) => {
+      // Check page cache first (tier 1, same as prefetch)
+      const cacheKey = pageCacheKey(pdfFileName, pageNum, 1, cleanMode);
+      let entry = getPageCache(cacheKey);
+
+      if (!entry) {
+        // Render at base resolution
+        try {
+          const result = await renderPageToBitmap(pageNum, containerWidth, 1, cleanMode);
+          if (cancelled) { result.bitmap.close(); return; }
+          putPageCache(cacheKey, result);
+          entry = result;
+        } catch { return; }
+      }
+      if (cancelled) return;
+
+      if (canvas.width !== entry.width || canvas.height !== entry.height) {
+        canvas.width = entry.width;
+        canvas.height = entry.height;
+      }
+      canvas.style.width = `${entry.cssW}px`;
+      canvas.style.height = `${entry.cssH}px`;
+      canvas.style.position = 'absolute';
+      canvas.style.left = '0';
+      canvas.style.top = `${yOffset}px`;
+      canvas.style.pointerEvents = 'none';
+      canvas.style.opacity = '0.85';
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.drawImage(entry.bitmap, 0, 0);
+
+      // Insert into wrapper if not already there
+      if (!canvas.parentElement) {
+        wrapper.insertBefore(canvas, wrapper.firstChild);
+      }
+    };
+
+    // Render previous page (above current, at y = -cssH)
+    const prevPage = currentPage - 1;
+    const nextPage = currentPage + 1;
+
+    if (prevPage >= 1) {
+      const prevCanvas = ensureCanvas(adjPrevRef, 'pdf-adjacent-page');
+      if (adjRenderedRef.current.prev !== prevPage) {
+        adjRenderedRef.current.prev = prevPage;
+        blitAdjacentPage(prevPage, prevCanvas, -cssH);
+      } else {
+        // Just reposition (page height may have changed)
+        prevCanvas.style.top = `${-cssH}px`;
+      }
+    } else if (adjPrevRef.current?.parentElement) {
+      adjPrevRef.current.remove();
+      adjRenderedRef.current.prev = 0;
+    }
+
+    if (nextPage <= pageCount) {
+      const nextCanvas = ensureCanvas(adjNextRef, 'pdf-adjacent-page');
+      if (adjRenderedRef.current.next !== nextPage) {
+        adjRenderedRef.current.next = nextPage;
+        blitAdjacentPage(nextPage, nextCanvas, cssH);
+      } else {
+        nextCanvas.style.top = `${cssH}px`;
+      }
+    } else if (adjNextRef.current?.parentElement) {
+      adjNextRef.current.remove();
+      adjRenderedRef.current.next = 0;
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap]);
 
   // Sync search input when searchQuery changes externally (e.g. pre-populated from library)
   useEffect(() => {
@@ -941,14 +1103,24 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       glyphDebug.overlayMode, glyphDebug.simplifyEnabled, glyphDebug.simplifyTolerance,
       glyphDebug.replaceEnabled, glyphDebug.replaceFont]);
 
-  // Clean up font cache on unmount
+  // Clean up font cache + adjacent canvases on unmount
   useEffect(() => {
     return () => {
       const doc = pdfStore.getDocProxy(pdfFileName);
       clearFontCache(doc?.fingerprints[0] ?? undefined);
       pageGlyphDataRef.current = null;
+      adjPrevRef.current?.remove();
+      adjNextRef.current?.remove();
+      adjPrevRef.current = null;
+      adjNextRef.current = null;
+      adjRenderedRef.current = { prev: 0, next: 0 };
+      if (scrubberFlashTimerRef.current) clearTimeout(scrubberFlashTimerRef.current);
     };
   }, [pdfFileName]);
+
+  // Accumulated scroll for page-switch mode — debounce discrete page flips
+  const switchAccRef = useRef(0);
+  const switchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -956,27 +1128,112 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      // Ensure this panel's document is active before interacting
       pdfStore.switchTo(pdfFileName);
 
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+      // Trackpad pinch-to-zoom generates wheel events with ctrlKey=true.
+      // Always treat those as zoom — pinch is a fundamental gesture that should
+      // never be remapped by scroll binding settings.
+      const isTrackpadPinch = e.ctrlKey && !e.metaKey && !e.shiftKey;
 
-      const zoomFactor = Math.exp(-e.deltaY * 0.001);
-      const oldZoom = zoomRef.current;
-      const newZoom = Math.max(0.1, Math.min(oldZoom * zoomFactor, 20));
-      const ratio = newZoom / oldZoom;
-      const oldPan = panRef.current;
-      const newPan = {
-        x: mouseX - ratio * (mouseX - oldPan.x),
-        y: mouseY - ratio * (mouseY - oldPan.y),
-      };
+      // Resolve effective action: trackpad pinch → always zoom, otherwise use bindings.
+      const bindings = scrollBindingsRef.current;
+      const action: ScrollAction = isTrackpadPinch
+        ? 'zoom'
+        : (e.metaKey || e.ctrlKey) ? bindings.meta
+        : e.shiftKey ? bindings.shift
+        : bindings.bare;
 
-      zoomRef.current = newZoom;
-      panRef.current = newPan;
-      syncTransform();
-      scheduleTierRender();
+      if (action === 'zoom') {
+        const rect = container.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        // Min zoom: at most 3 pages visible vertically
+        const cssH = pageCssHRef.current;
+        const minZoom = cssH > 0 ? Math.max(0.1, container.clientHeight / (3 * cssH)) : 0.1;
+
+        // Trackpad pinch has small deltaY values — use higher sensitivity
+        const speed = isTrackpadPinch ? TRACKPAD_PINCH_SPEED : MOUSE_WHEEL_SPEED;
+        const zoomFactor = Math.exp(-e.deltaY * speed);
+        const oldZoom = zoomRef.current;
+        const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 20));
+        const ratio = newZoom / oldZoom;
+        const oldPan = panRef.current;
+        panRef.current = {
+          x: mouseX - ratio * (mouseX - oldPan.x),
+          y: mouseY - ratio * (mouseY - oldPan.y),
+        };
+        zoomRef.current = newZoom;
+        syncTransform();
+        scheduleTierRender();
+        return;
+      }
+
+      if (action === 'pan') {
+        // Continuous multi-page scrolling. Adjacent pages are rendered above/below
+        // the current page. When the viewport center crosses a page boundary,
+        // currentPage updates and panY is adjusted to maintain visual continuity.
+        const cssH = pageCssHRef.current;
+        if (cssH === 0) return;
+        const zoom = zoomRef.current;
+        const pageH = cssH * zoom; // page height in screen pixels
+        const containerH = container.clientHeight;
+
+        const dy = -e.deltaY;
+        const oldPan = panRef.current;
+        let newY = oldPan.y + dy;
+
+        const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+        const total = pdfStore.getDocPageCount(pdfFileName);
+
+        // Current page top in container coords = newY (wrapper origin = page top-left)
+        // Current page bottom = newY + pageH
+        // Viewport center = containerH / 2
+        //
+        // Transition to next page when current page bottom is above viewport center
+        // (user scrolled down past the page). Transition to prev page when current
+        // page top is below viewport center (user scrolled up past the page).
+        if (newY + pageH < containerH / 2 && curPage < total) {
+          // Crossed into next page — shift pan up by one page height
+          skipResetRef.current = true;
+          pdfStore.goToPage(curPage + 1);
+          newY += pageH;
+          flashScrubber();
+        } else if (newY > containerH / 2 && curPage > 1) {
+          // Crossed into prev page — shift pan down by one page height
+          skipResetRef.current = true;
+          pdfStore.goToPage(curPage - 1);
+          newY -= pageH;
+          flashScrubber();
+        }
+
+        panRef.current = { x: oldPan.x, y: newY };
+        syncTransform();
+        return;
+      }
+
+      // action === 'switch': discrete page change, page stays centered
+      const delta = e.deltaY;
+      switchAccRef.current += delta;
+      if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
+      switchTimerRef.current = setTimeout(() => { switchAccRef.current = 0; }, 200);
+
+      const threshold = 50; // pixels of scroll accumulation needed
+      if (Math.abs(switchAccRef.current) >= threshold) {
+        const dir = switchAccRef.current > 0 ? 1 : -1;
+        switchAccRef.current = 0;
+        const doc = pdfStore.getDocCurrentPage(pdfFileName);
+        const total = pdfStore.getDocPageCount(pdfFileName);
+        const target = doc + dir;
+        if (target >= 1 && target <= total) {
+          // Reset zoom/pan to center the new page (don't skip reset)
+          zoomRef.current = 1;
+          panRef.current = { x: 0, y: 0 };
+          pdfStore.goToPage(target);
+          syncTransform();
+          flashScrubber();
+        }
+      }
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
@@ -1033,9 +1290,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const dy = pts[1].y - pts[0].y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (pinchStartDistRef.current > 0) {
-        const scale = dist / pinchStartDistRef.current;
+        const rawScale = dist / pinchStartDistRef.current;
+        const scale = 1 + (rawScale - 1) * TOUCH_PINCH_FACTOR;
         const oldZoom = zoomRef.current;
-        const newZoom = Math.max(0.1, Math.min(pinchStartZoomRef.current * scale, 20));
+        const cssH = pageCssHRef.current;
+        const containerH = containerRef.current?.clientHeight ?? 0;
+        const minZoom = cssH > 0 && containerH > 0 ? Math.max(0.1, containerH / (3 * cssH)) : 0.1;
+        const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 20));
         const ratio = newZoom / oldZoom;
         const mid = pinchMidRef.current;
         panRef.current = {
@@ -1044,7 +1305,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         };
         zoomRef.current = newZoom;
         syncTransform();
-        scheduleTierRender();
+        // Skip expensive PDF re-render during active pinch — CSS transform is enough.
+        // The crisp render fires on pinch end (handlePointerUp).
       }
       return;
     }
@@ -1064,7 +1326,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     panRef.current = { x: panRef.current.x + dxm, y: panRef.current.y + dym };
     syncTransform();
-  }, [syncTransform, scheduleTierRender]);
+  }, [syncTransform]);
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
     if (!isLoaded) return;
@@ -1114,9 +1376,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   handleTextClickRef.current = handleTextClick;
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    const wasPinching = activeTouchesRef.current.size >= 2;
     activeTouchesRef.current.delete(e.pointerId);
     if (activeTouchesRef.current.size < 2) {
       pinchStartDistRef.current = 0;
+    }
+
+    // Pinch ended — schedule crisp re-render at final zoom level
+    if (wasPinching && activeTouchesRef.current.size < 2) {
+      scheduleTierRender();
     }
 
     const wasDrag = wasDragRef.current;
@@ -1126,7 +1394,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!wasDrag && e.button === 0 && e.pointerType !== 'touch') {
       handleTextClickRef.current(e);
     }
-  }, []);
+  }, [scheduleTierRender]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1151,14 +1419,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     bookmarkClickTimerRef.current = setTimeout(() => {
       bookmarkClickTimerRef.current = null;
       pdfStore.switchTo(pdfFileName);
-      const bm = pdfStore.bookmarks.find(b => b.id === id);
+      const bm = pdfStore.getDocBookmarks(pdfFileName).find(b => b.id === id);
       if (!bm) return;
-      skipResetRef.current = true;
-      pdfStore.goToPage(bm.page);
       zoomRef.current = bm.zoom;
       panRef.current = { x: bm.panX, y: bm.panY };
+      const samePage = bm.page === pdfStore.getDocCurrentPage(pdfFileName);
+      if (!samePage) {
+        // Defer zoom/pan restore — goToPage triggers re-render + renderPage via useEffect.
+        // skipResetRef prevents the page-change effect from resetting zoom/pan to defaults.
+        skipResetRef.current = true;
+        pdfStore.goToPage(bm.page);
+      }
       syncTransform();
-      renderPageRef.current();
+      // Only render immediately when staying on the same page. When changing pages,
+      // the useEffect([renderPage]) fires after re-render with the correct currentPage.
+      if (samePage) renderPageRef.current();
     }, 250);
   }, [pdfFileName]);
 
@@ -1571,6 +1846,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             currentPage={currentPage}
             pageCount={pageCount}
             onGoToPage={(n) => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(n); }}
+            scrubberRef={scrubberElRef}
           />
         )}
       </div>

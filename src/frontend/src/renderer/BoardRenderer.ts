@@ -182,6 +182,7 @@ export class BoardRenderer {
   // Hide-text-during-zoom: detect actual zooming via per-frame scale comparison
   private zoomSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private textHiddenForZoom = false;
+  private netLinesHiddenForZoom = false;
   private prevTickScale = -1;
 
   // Selection blink state (triggered by focusPart / PDF reverse search)
@@ -313,10 +314,10 @@ export class BoardRenderer {
     if (this.updateLoD()) this.needsRender = true;
     if (perf) this.perfAccum.lod += performance.now() - t0;
 
-    // Net line pulse animation — only when there's an active selection with net lines
-    // Also drives cross-side ghost pulse (ghosts always pulse when present)
+    // Net line pulse animation — only when there's an active selection with net lines.
+    // Skip during active zoom (net lines are hidden, no point redrawing).
     const hasGhosts = this.crossSideGhostParts.length > 0;
-    if ((boardStore.showNetLines && boardStore.selection.highlightedNet) || hasGhosts) {
+    if (!this.netLinesHiddenForZoom && ((boardStore.showNetLines && boardStore.selection.highlightedNet) || hasGhosts)) {
       const s = renderSettingsStore.settings;
       const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts;
       if (needsPulse) {
@@ -963,22 +964,33 @@ export class BoardRenderer {
         scene.bottomTwoPinNetLayer.visible = false;
       }
     }
-    // Redraw net lines immediately on every zoom frame
-    this.netLinesDirty = true;
-    this.renderNetLines();
+    // Hide net lines during active zoom instead of redrawing every frame.
+    // The geometry changes with viewport scale (line widths are scale-dependent),
+    // so deferring to the settle timer avoids expensive per-frame Graphics redraws.
+    if (!this.netLinesHiddenForZoom && this.netLineSegments.length > 0) {
+      this.netLinesHiddenForZoom = true;
+      this.netLinesGfx.clear();
+      this.crossSideGhostGfx.clear();
+      this.needsRender = true;
+    }
     // Rescale elevated selection labels to maintain constant screen-pixel size
     this.updateElevatedLabels(boardStore.selection, s);
     // Reset settle timer on every zoom frame
     if (this.zoomSettleTimer) clearTimeout(this.zoomSettleTimer);
-    // Restore labels after zoom settles (~2 frames idle)
+    // Restore labels + net lines after zoom settles (~2 frames idle)
     this.zoomSettleTimer = setTimeout(() => {
       this.zoomSettleTimer = null;
       if (this.textHiddenForZoom) {
         this.textHiddenForZoom = false;
-        // Apply LoD — sets both part label groups and pin layer visibility
         this.applyLabelVisibility();
-        this.needsRender = true;
       }
+      if (this.netLinesHiddenForZoom) {
+        this.netLinesHiddenForZoom = false;
+        this.netLinesDirty = true;
+        this.renderNetLines();
+        if (this.crossSideGhostParts.length > 0) this.renderCrossSideGhosts();
+      }
+      this.needsRender = true;
     }, 32);
   }
 
@@ -1851,8 +1863,8 @@ export class BoardRenderer {
     }
     this.viewport
       .drag({})
-      .pinch()
-      .wheel({ smooth: s.wheelSmooth })
+      .pinch({ percent: 2 })
+      .wheel({ smooth: s.wheelSmooth, percent: 0.3, trackpadPinch: true })
       .clampZoom({ minScale: 0.001, maxScale: 10 });
     if (!s.disableInertia) {
       this.viewport.decelerate({ friction: 0.95 });
@@ -1867,6 +1879,7 @@ export class BoardRenderer {
       if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
 
       this.textHiddenForZoom = false;
+      this.netLinesHiddenForZoom = false;
       // Update viewport interaction plugins
       this.applyViewportPlugins();
       // Save viewport, invalidate all scenes, rebuild current

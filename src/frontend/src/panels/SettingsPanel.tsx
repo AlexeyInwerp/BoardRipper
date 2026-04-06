@@ -8,6 +8,8 @@ import { getAllFormats, setFormatOverride } from '../parsers/registry';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
+import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings } from './PdfViewerPanel';
+import type { ScrollAction, ScrollBindings } from './PdfViewerPanel';
 
 /** Context that provides per-field override info to Slider/Toggle children */
 interface OverrideCtx {
@@ -28,7 +30,7 @@ function useOverride(field: keyof RenderSettings) {
   return { isOverride, resetValue: gv as number & boolean };
 }
 
-type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides' | 'server';
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides' | 'server' | 'pdf';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -597,6 +599,103 @@ function DatabaseInfoSection() {
   );
 }
 
+// ---- PDF Scroll Bindings Editor (drag-and-drop) ----
+
+const MODIFIER_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
+const MODIFIER_LABELS: Record<keyof ScrollBindings, string> = {
+  bare: 'Scroll',
+  shift: 'Shift + Scroll',
+  meta: navigator.platform?.includes('Mac') ? '⌘ + Scroll' : 'Ctrl + Scroll',
+};
+const ACTION_LABELS: Record<ScrollAction, string> = { zoom: 'Zoom', pan: 'Pan', switch: 'Page' };
+const ACTION_COLORS: Record<ScrollAction, string> = { zoom: '#00d4ff', pan: '#ffd93d', switch: '#ff6b9d' };
+
+function ScrollBindingsEditor() {
+  const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
+  const [dragging, setDragging] = useState<ScrollAction | null>(null);
+  const [dragOver, setDragOver] = useState<keyof ScrollBindings | null>(null);
+
+  const save = useCallback((next: ScrollBindings) => {
+    setBindings(next);
+    try { localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    // Notify any open PDF panels (they read from localStorage on next wheel event via ref)
+    window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
+  }, []);
+
+  const handleDragStart = useCallback((e: React.DragEvent, action: ScrollAction) => {
+    setDragging(action);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', action);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, slot: keyof ScrollBindings) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(slot);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, targetSlot: keyof ScrollBindings) => {
+    e.preventDefault();
+    setDragOver(null);
+    setDragging(null);
+    const action = e.dataTransfer.getData('text/plain') as ScrollAction;
+    if (!SCROLL_ACTIONS.includes(action)) return;
+
+    // Find which slot currently holds this action and swap
+    const sourceSlot = MODIFIER_KEYS.find(k => bindings[k] === action);
+    if (!sourceSlot || sourceSlot === targetSlot) return;
+
+    const next = { ...bindings };
+    // Swap: source gets target's current action, target gets dragged action
+    next[sourceSlot] = bindings[targetSlot];
+    next[targetSlot] = action;
+    save(next);
+  }, [bindings, save]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragging(null);
+    setDragOver(null);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    save(DEFAULT_SCROLL_BINDINGS);
+  }, [save]);
+
+  return (
+    <div className="scroll-bindings-editor">
+      <div className="scroll-bindings-grid">
+        {MODIFIER_KEYS.map(slot => {
+          const action = bindings[slot];
+          const isOver = dragOver === slot;
+          return (
+            <div
+              key={slot}
+              className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
+              onDragOver={e => handleDragOver(e, slot)}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={e => handleDrop(e, slot)}
+            >
+              <span className="scroll-binding-modifier">{MODIFIER_LABELS[slot]}</span>
+              <span
+                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
+                style={{ '--pill-color': ACTION_COLORS[action] } as React.CSSProperties}
+                draggable
+                onDragStart={e => handleDragStart(e, action)}
+                onDragEnd={handleDragEnd}
+              >
+                {ACTION_LABELS[action]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {(bindings.bare !== 'zoom' || bindings.shift !== 'pan' || bindings.meta !== 'switch') && (
+        <button className="scroll-bindings-reset" onClick={handleReset}>Reset to default</button>
+      )}
+    </div>
+  );
+}
+
 // ---- Main panel ----
 
 const INITIALLY_OPEN: SectionId[] = [];
@@ -653,12 +752,13 @@ export function SettingsPanel() {
   const partTypeOverridesRef = useRef<HTMLDivElement>(null);
   const zoomLodRef = useRef<HTMLDivElement>(null);
   const serverRef = useRef<HTMLDivElement>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, interaction: interactionRef,
     performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
-    partTypeOverrides: partTypeOverridesRef, server: serverRef,
+    partTypeOverrides: partTypeOverridesRef, server: serverRef, pdf: pdfRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -1000,6 +1100,13 @@ export function SettingsPanel() {
       <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}
         onToggle={toggleSection} sectionRef={formatsRef} isFocused={focusedSection === 'formats'}>
         <FormatSettingsTable />
+      </CollapsibleSection>
+
+      <CollapsibleSection id="pdf" title="PDF Viewer" isOpen={openSections.has('pdf')}
+        onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
+        <div className="settings-subsection-label">Scroll wheel behavior</div>
+        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
+        <ScrollBindingsEditor />
       </CollapsibleSection>
 
       <CollapsibleSection id="server" title="Server / Library" isOpen={openSections.has('server')}
