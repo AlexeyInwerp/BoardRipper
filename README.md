@@ -1,6 +1,6 @@
 # BoardRipper
 
-Web-based PCB boardview file viewer and inspector. GPU-accelerated WebGL rendering of 9 board formats, dockable panel system, PDF schematics viewer — all in a ~15MB Docker image.
+Web-based PCB boardview file viewer and inspector for board-level repair. GPU-accelerated WebGL rendering of 9 board formats with integrated PDF schematics viewer, dockable panel system, and board library — all in a ~15MB Docker image with self-update.
 
 ![Main View — BVR board with library panel](docs/screenshots/main-view.png)
 
@@ -25,9 +25,12 @@ Web-based PCB boardview file viewer and inspector. GPU-accelerated WebGL renderi
   - Search Results
   - PDF Viewer (pan/zoom, text search, bookmarks, night mode)
   - Settings (live preview mockup, per-net color rules, label/pin/outline tuning)
-- **Board library** — scan folders, browse by board number or model, auto-link PDFs
+  - Debug Panel (scoped log viewer)
+- **Board library** — scan folders, browse by board number or model, auto-link PDFs to boards
+- **Board database** — ODM-aware resolution engine, maps board numbers to manufacturers/models
+- **Self-update** — check for updates from the UI, one-click Docker container update via Docker socket
+- **Electron desktop app** — standalone macOS (universal + legacy) and Windows builds
 - **IndexedDB cache** — instant re-open without re-parsing
-- **Docker deploy** — ~15MB scratch-based image for NAS
 
 ![Multi-format — Apple BRD file with multi-tab view](docs/screenshots/brd-format.png)
 
@@ -54,43 +57,135 @@ Web-based PCB boardview file viewer and inspector. GPU-accelerated WebGL renderi
 | Panels | Dockview v5 |
 | Backend | Go (net/http stdlib) |
 | Container | Docker multi-stage, scratch-based |
+| Desktop | Electron (macOS universal + Windows) |
 | Tests | Playwright (Chromium headless) |
 
 ## Quick Start
 
-### Docker (production)
+### Docker (recommended for NAS/server)
 
 ```bash
-docker compose up --build
+docker compose up --build -d
+# → http://localhost:8081
+```
+
+### Standalone binary
+
+```bash
+# Download the release for your platform from GitHub Releases, then:
+tar -xzf boardripper-<platform>-<version>.tar.gz
+STATIC_DIR=./static DATA_DIR=./data ./boardripper
 # → http://localhost:8080
+
+# Windows:
+# Unzip, then: set STATIC_DIR=static& set DATA_DIR=data& boardripper.exe
 ```
 
 ### Development
 
 ```bash
-# Frontend
-cd src/frontend
-npm install
-npm run dev       # http://localhost:5173
+# Frontend (hot reload)
+cd src/frontend && npm install && npm run dev    # http://localhost:5173
 
 # Backend (separate terminal)
-cd src/backend
-go run .          # http://localhost:8080
+cd src/backend && go run .                       # http://localhost:8080
 ```
 
-## Deployment (NAS / Docker)
+## Docker Setup
+
+### docker-compose.yml
 
 ```yaml
-# docker-compose.yml
 services:
   boardripper:
-    build: .
+    image: boardripper:latest    # or build: .
     ports:
-      - "8080:8080"
+      - "8081:8080"              # access at http://your-host:8081
     volumes:
-      - ./data:/data
+      - ./data:/data             # uploaded board files persist here
+      # Mount your board file folders as subdirectories of /library:
+      - /path/to/MacBooks:/library/MacBooks:ro
+      - /path/to/iPhones:/library/iPhones:ro
+      - /path/to/Schematics:/library/Schematics:ro
+      # Each mount appears as a top-level folder in the Library browser.
+      # Docker socket (required for self-update):
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=8080
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}   # GitHub PAT for update checking (private repo)
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 ```
+
+### Volume Mounting
+
+The Library panel browses the `/library` directory inside the container. Mount your board file folders as **subdirectories** of `/library` to see them in the browser:
+
+```
+-v /nas/boards/MacBooks:/library/MacBooks:ro
+-v /nas/boards/iPhones:/library/iPhones:ro
+-v /nas/schematics:/library/Schematics:ro
+```
+
+These will appear as top-level folders (`MacBooks/`, `iPhones/`, `Schematics/`) in the Library panel. Use `:ro` for read-only access.
+
+### Synology NAS (DSM 7.2+)
+
+1. Download `boardripper-docker-<version>.tar.gz` from [GitHub Releases](https://github.com/AlexeyInwerp/BoardRipper/releases)
+2. SSH into your NAS and load the image:
+   ```bash
+   docker load < boardripper-docker-<version>.tar.gz
+   ```
+3. Create the container:
+   ```bash
+   docker run -d \
+     --name boardripper \
+     -p 8090:8080 \
+     -v /volume1/docker/boardripper/data:/data \
+     -v /volume1/your-boards/MacBooks:/library/MacBooks:ro \
+     -v /volume1/your-boards/iPhones:/library/iPhones:ro \
+     -v /var/run/docker.sock:/var/run/docker.sock \
+     -e PORT=8080 \
+     -e GITHUB_TOKEN=your_github_pat_here \
+     --restart unless-stopped \
+     boardripper:latest
+   ```
+4. Open `http://your-nas-ip:8090`
+
+### Self-Update
+
+BoardRipper can update itself when running in Docker:
+1. Click the **version badge** in the toolbar to check for updates
+2. If an update is available, click **Update & Restart**
+3. The container pulls the new image and restarts automatically
+
+Requires:
+- Docker socket mounted (`-v /var/run/docker.sock:/var/run/docker.sock`)
+- `GITHUB_TOKEN` environment variable set (for private repo access)
+
+### Updating Manually
+
+```bash
+docker load < boardripper-docker-<new-version>.tar.gz
+docker compose down && docker compose up -d
+```
+
+## Electron Desktop App
+
+Build standalone desktop apps (no Docker needed):
+
+```bash
+cd desktop
+npm install
+node build-all.mjs           # builds macOS universal + legacy + Windows
+node build-all.mjs --mac     # macOS only
+node build-all.mjs --win     # Windows only
+```
+
+Output in `desktop/out/` (macOS), `desktop/out-legacy/` (macOS legacy), `desktop/out-win/` (Windows).
 
 ## License
 
