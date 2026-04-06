@@ -17,7 +17,7 @@ import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly, computeDiag2PinPads, isNcNet } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
@@ -28,6 +28,22 @@ import { log } from '../store/log-store';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
+
+/** Point-in-convex-polygon test using cross-product winding. */
+function pointInConvexPoly(px: number, py: number, poly: [number, number][]): boolean {
+  const n = poly.length;
+  if (n < 3) return false;
+  let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = poly[i];
+    const [bx, by] = poly[(i + 1) % n];
+    const cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+    if (cross === 0) continue;
+    if (sign === 0) sign = cross > 0 ? 1 : -1;
+    else if ((cross > 0 ? 1 : -1) !== sign) return false;
+  }
+  return true;
+}
 
 
 
@@ -170,7 +186,7 @@ export class BoardRenderer {
   private selectionBlinkPhase = 0;
   private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true, showGhosts: true };
   /** Part label whose tint was boosted by selection — reset on next renderSelection */
   private highlightedPartLabel: import('pixi.js').BitmapText | null = null;
 
@@ -1627,9 +1643,10 @@ export class BoardRenderer {
         || boardStore.showNetDim !== lrs.showNetDim
         || boardStore.butterfly !== lrs.butterfly
         || boardStore.showTop !== lrs.showTop
-        || boardStore.showBottom !== lrs.showBottom) {
+        || boardStore.showBottom !== lrs.showBottom
+        || boardStore.showGhosts !== lrs.showGhosts) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, showNetDim: boardStore.showNetDim, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, showNetDim: boardStore.showNetDim, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts };
       }
 
       // PDF follow mode: search for selected component
@@ -2091,9 +2108,9 @@ export class BoardRenderer {
           seenParts.add(ref.partIndex);
           const part = this.board.parts[ref.partIndex];
           if (!part) continue;
-          // Collect hidden-side parts as ghosts (skip butterfly mode and GND/NC nets)
+          // Collect hidden-side parts as ghosts (skip butterfly mode, GND/NC nets, and when ghosts disabled)
           if (!this.isPartVisible(part)) {
-            if (!butterfly && !skipGhosts) ghostPartIndices.push(ref.partIndex);
+            if (!butterfly && !skipGhosts && boardStore.showGhosts) ghostPartIndices.push(ref.partIndex);
             continue;
           }
 
@@ -2168,43 +2185,17 @@ export class BoardRenderer {
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
-          const diagPads = part.pins.length === 2 ? computeDiag2PinPads(part.pins, s) : null;
-          if (part.pins.length === 2 && diagPads) {
-            // Diagonal 2-pin: highlight with rotated pad polygon
-            const grow = s.netHighlightGrow;
-            const padPoly = diagPads.pads[ref.pinIndex];
+          const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
+          if (storedPads && storedPads[ref.pinIndex]) {
+            // 2-pin: reuse exact pad polygon from scene build — same size as rendered pin
+            const padPoly = storedPads[ref.pinIndex];
             if (showDim) {
               const colorMap = isBotGfx ? botByColor : topByColor;
               let arr = colorMap.get(pinColor);
               if (!arr) { arr = []; colorMap.set(pinColor, arr); }
               arr.push(() => drawPoly(gfx, padPoly));
             }
-            highlights.push(() => drawPoly(gfx, expandPoly(padPoly, grow)));
-          } else if (part.pins.length === 2) {
-            const grow = s.netHighlightGrow;
-            const eb = computeEffectiveBounds(part.bounds, part.pins, s);
-            applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), true);
-            let rx: number, ry: number, rw: number, rh: number;
-            if (eb.horiz) {
-              const depth = Math.min(eb.ph, eb.pw * 0.4);
-              rx = pin.position.x - depth / 2;
-              ry = eb.py;
-              rw = depth;
-              rh = eb.ph;
-            } else {
-              const depth = Math.min(eb.pw, eb.ph * 0.4);
-              rx = eb.px;
-              ry = pin.position.y - depth / 2;
-              rw = eb.pw;
-              rh = depth;
-            }
-            if (showDim) {
-              const colorMap = isBotGfx ? botByColor : topByColor;
-              let arr = colorMap.get(pinColor);
-              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
-              arr.push(() => gfx.rect(rx, ry, rw, rh));
-            }
-            highlights.push(() => gfx.rect(rx - grow, ry - grow, rw + grow * 2, rh + grow * 2));
+            highlights.push(() => drawPoly(gfx, padPoly));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
@@ -2981,32 +2972,15 @@ export class BoardRenderer {
       if (!this.isPartVisible(part)) continue;
 
       const local = part.side === 'bottom' ? localBot : localTop;
-      // Diagonal 2-pin parts use circle-based hit testing (same as multi-pin)
-      const isDiag = part.pins.length === 2 && (() => {
-        const adx = Math.abs(part.pins[1].position.x - part.pins[0].position.x);
-        const ady = Math.abs(part.pins[1].position.y - part.pins[0].position.y);
-        return Math.min(adx, ady) / (Math.max(adx, ady) || 1) > 0.4;
-      })();
-      const isTwoPin = part.pins.length === 2 && !isDiag;
+      // Use stored pad polygons for 2-pin parts (both axis-aligned and diagonal)
+      const padPolys = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(pi) : null;
 
-      if (isTwoPin) {
-        const eb = computeEffectiveBounds(part.bounds, part.pins, s);
-        applyBodyShapeOverride(eb, resolvePartTypeOverride(part.name, s), true);
+      if (padPolys) {
         for (let pni = 0; pni < 2; pni++) {
-          const pin = part.pins[pni];
-          let rx: number, ry: number, rw: number, rh: number;
-          if (eb.horiz) {
-            const depth = Math.min(eb.ph, eb.pw * 0.4);
-            rx = pin.position.x - depth / 2;
-            ry = eb.py; rw = depth; rh = eb.ph;
-          } else {
-            const depth = Math.min(eb.pw, eb.ph * 0.4);
-            rx = eb.px; ry = pin.position.y - depth / 2;
-            rw = eb.pw; rh = depth;
-          }
-          if (local.x >= rx && local.x <= rx + rw &&
-              local.y >= ry && local.y <= ry + rh) {
-            const cx = rx + rw / 2, cy = ry + rh / 2;
+          const poly = padPolys[pni];
+          if (pointInConvexPoly(local.x, local.y, poly)) {
+            const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
+            const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
             const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
             if (dist < bestDist) {
               bestDist = dist;
