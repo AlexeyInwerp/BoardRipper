@@ -17,7 +17,7 @@ import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, computeEffectiveBounds, resolvePinColor, resolvePartTypeOverride, applyBodyShapeOverride, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
@@ -83,6 +83,8 @@ interface BoardScene {
   bottomPinGfx: Map<number, import('pixi.js').Graphics>;
   /** Per-part max pin radius to prevent overlap (BGA etc). partIndex → maxRadius. */
   pinRadiusClamp: Map<number, number>;
+  /** Per 2-pin part: per-pin pad polygons (4 corners each). Used for exact selection highlights. */
+  twoPinPadPolys: Map<number, [number, number][][]>;
   /** PCB trace lines container — toggled by showTraces */
   traceLayer: Container | null;
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
@@ -2997,8 +2999,8 @@ export class BoardRenderer {
         for (let pni = 0; pni < 2; pni++) {
           const poly = padPolys[pni];
           if (pointInConvexPoly(local.x, local.y, poly)) {
-            const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
-            const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
+            const cx = poly.reduce((s: number, p: [number, number]) => s + p[0], 0) / poly.length;
+            const cy = poly.reduce((s: number, p: [number, number]) => s + p[1], 0) / poly.length;
             const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
             if (dist < bestDist) {
               bestDist = dist;
