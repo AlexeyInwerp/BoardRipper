@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache-dependency-path: src/backend/go.sum
 
       # Lint + typecheck + smoke tests
       - run: cd src/frontend && npm ci
@@ -42,6 +43,8 @@ jobs:
   build-binaries:
     needs: validate
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,32 +55,44 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache-dependency-path: src/backend/go.sum
 
       # Build frontend once
-      - run: cd src/frontend && npm ci && npm run build
+      - name: Build frontend
+        run: cd src/frontend && npm ci && npm run build
 
-      # Build Go server for all platforms (version injected, no update token for standalone)
-      - name: Build Linux amd64
+      - name: Verify frontend build
         run: |
-          cd src/backend
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-linux-amd64 .
-      - name: Build Windows amd64
+          test -f src/frontend/dist/index.html || { echo "FATAL: frontend dist missing"; exit 1; }
+          echo "Frontend dist OK ($(find src/frontend/dist -type f | wc -l) files)"
+
+      # Build Go server for all platforms
+      - name: Build Go binaries
+        working-directory: src/backend
         run: |
-          cd src/backend
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-windows-amd64.exe .
-      - name: Build macOS amd64 (Intel)
+          set -euxo pipefail
+          LDFLAGS="-s -w -X boardripper/updater.Version=${VERSION}"
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-linux-amd64" .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-windows-amd64.exe" .
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-macos-amd64" .
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-macos-arm64" .
+
+      - name: Verify Go binaries
         run: |
-          cd src/backend
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-macos-amd64 .
-      - name: Build macOS arm64 (Apple Silicon)
-        run: |
-          cd src/backend
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X boardripper/updater.Version=${{ github.ref_name }}" -o ../../boardripper-macos-arm64 .
+          set -euo pipefail
+          for bin in boardripper-linux-amd64 boardripper-windows-amd64.exe boardripper-macos-amd64 boardripper-macos-arm64; do
+            test -f "$bin" || { echo "FATAL: $bin not found"; exit 1; }
+            SIZE=$(stat --format=%s "$bin")
+            if [ "$SIZE" -lt 1000000 ]; then
+              echo "FATAL: $bin too small (${SIZE} bytes)"; exit 1
+            fi
+            echo "OK: $bin ($(numfmt --to=iec $SIZE))"
+          done
 
       # Package each platform: binary + frontend dist
       - name: Package releases
         run: |
-          VERSION=${{ github.ref_name }}
+          set -euxo pipefail
           for PLATFORM in linux-amd64 macos-amd64 macos-arm64; do
             mkdir -p "pkg-${PLATFORM}/static"
             cp "boardripper-${PLATFORM}" "pkg-${PLATFORM}/boardripper"
@@ -90,6 +105,22 @@ jobs:
           cp boardripper-windows-amd64.exe pkg-windows-amd64/boardripper.exe
           cp -r src/frontend/dist/* pkg-windows-amd64/static/
           cd pkg-windows-amd64 && zip -r "../boardripper-windows-amd64-${VERSION}.zip" . && cd ..
+
+      - name: Validate release contents
+        run: |
+          set -euo pipefail
+          for file in boardripper-*-${VERSION}.tar.gz; do
+            echo "=== $file ==="
+            CONTENTS=$(tar -tzf "$file")
+            echo "$CONTENTS" | grep -q '^\./boardripper$' || { echo "FATAL: binary missing from $file"; exit 1; }
+            echo "$CONTENTS" | grep -q '^\./static/index.html$' || { echo "FATAL: static missing from $file"; exit 1; }
+            echo "OK: binary + static present"
+          done
+          echo "=== boardripper-windows-amd64-${VERSION}.zip ==="
+          CONTENTS=$(unzip -l "boardripper-windows-amd64-${VERSION}.zip")
+          echo "$CONTENTS" | grep -q 'boardripper.exe' || { echo "FATAL: exe missing from zip"; exit 1; }
+          echo "$CONTENTS" | grep -q 'static/index.html' || { echo "FATAL: static missing from zip"; exit 1; }
+          echo "OK: exe + static present"
 
       - uses: actions/upload-artifact@v4
         with:
