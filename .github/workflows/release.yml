@@ -131,6 +131,83 @@ jobs:
             boardripper-macos-arm64-*.tar.gz
             boardripper-windows-amd64-*.zip
 
+  # Build standalone Electron desktop app for macOS (universal: arm64 + x64)
+  build-desktop-mac:
+    needs: validate
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend deps
+        run: cd src/frontend && npm ci
+
+      - name: Install desktop deps
+        run: cd desktop && npm ci
+
+      - name: Build macOS universal Electron app
+        run: cd desktop && node build-all.mjs --mac
+
+      - name: Verify macOS build output
+        run: |
+          set -euo pipefail
+          ZIP="desktop/out/BoardRipper-macOS-universal-${VERSION}.zip"
+          test -f "$ZIP" || { echo "FATAL: $ZIP not found"; ls -la desktop/out/; exit 1; }
+          SIZE=$(stat -f%z "$ZIP")
+          if [ "$SIZE" -lt 50000000 ]; then
+            echo "FATAL: $ZIP too small (${SIZE} bytes — Electron app should be 100MB+)"; exit 1
+          fi
+          echo "OK: $ZIP ($(du -h "$ZIP" | cut -f1))"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac
+          path: desktop/out/BoardRipper-macOS-universal-*.zip
+
+  # Build standalone Electron desktop app for Windows (x64) — cross-compiled from Linux
+  build-desktop-win:
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install zip (for cross-platform zipping)
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Install frontend deps
+        run: cd src/frontend && npm ci
+
+      - name: Install desktop deps
+        run: cd desktop && npm ci
+
+      - name: Build Windows x64 Electron app
+        run: cd desktop && node build-all.mjs --win
+
+      - name: Verify Windows build output
+        run: |
+          set -euo pipefail
+          ZIP="desktop/out-win/BoardRipper-Windows-x64-${VERSION}.zip"
+          test -f "$ZIP" || { echo "FATAL: $ZIP not found"; ls -la desktop/out-win/; exit 1; }
+          SIZE=$(stat --format=%s "$ZIP")
+          if [ "$SIZE" -lt 50000000 ]; then
+            echo "FATAL: $ZIP too small (${SIZE} bytes — Electron app should be 100MB+)"; exit 1
+          fi
+          echo "OK: $ZIP ($(numfmt --to=iec $SIZE))"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win
+          path: desktop/out-win/BoardRipper-Windows-x64-*.zip
+
   # Build and push multi-arch Docker image
   build-docker:
     needs: validate
@@ -158,7 +235,7 @@ jobs:
 
   # Create GitHub release with all artifacts
   create-release:
-    needs: [build-binaries, build-docker]
+    needs: [build-binaries, build-desktop-mac, build-desktop-win, build-docker]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -166,6 +243,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-binaries
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-mac
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-win
           path: artifacts/
 
       - uses: actions/download-artifact@v4
@@ -179,6 +266,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
+            artifacts/BoardRipper-macOS-universal-*.zip
+            artifacts/BoardRipper-Windows-x64-*.zip
             artifacts/boardripper-linux-amd64-*.tar.gz
             artifacts/boardripper-macos-amd64-*.tar.gz
             artifacts/boardripper-macos-arm64-*.tar.gz
@@ -186,4 +275,12 @@ jobs:
             artifacts/boardripper-docker-*.tar.gz
           body: |
             ## BoardRipper ${{ github.ref_name }}
+
+            ### Desktop apps (recommended)
+            - **macOS**: `BoardRipper-macOS-universal-${{ github.ref_name }}.zip` — universal (Intel + Apple Silicon)
+            - **Windows**: `BoardRipper-Windows-x64-${{ github.ref_name }}.zip` — x64
+
+            ### Server deployment
+            - **Docker**: `boardripper-docker-${{ github.ref_name }}.tar.gz`
+            - **Standalone** (Go server + static files, requires manual setup): linux/macos/windows tarballs
           generate_release_notes: true
