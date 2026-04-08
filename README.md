@@ -62,6 +62,52 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 
 ## Quick Start
 
+### Desktop app (recommended for end users)
+
+Download the standalone Electron app from [GitHub Releases](https://github.com/AlexeyInwerp/BoardRipper/releases/latest):
+
+- **macOS**: `BoardRipper-macOS-universal-<version>.zip` — universal (Intel + Apple Silicon)
+- **Windows**: `BoardRipper-Windows-x64-<version>.zip` — x64
+
+No Docker, no setup, no command line — just extract and launch.
+
+#### ⚠️ macOS — running the unsigned app
+
+BoardRipper is currently **not code-signed or notarized**, so macOS Gatekeeper will block it on first launch with a message like:
+> "BoardRipper.app" cannot be opened because Apple cannot check it for malicious software.
+> — or —
+> "BoardRipper.app" is damaged and can't be opened. You should move it to the Trash.
+
+This is normal for unsigned apps. To run it, pick **one** of the following:
+
+**Option 1 — Remove quarantine attribute (easiest, one command):**
+```bash
+# After unzipping, before first launch:
+xattr -cr /Applications/BoardRipper.app
+# or, if you extracted it elsewhere:
+xattr -cr ~/Downloads/BoardRipper.app
+```
+Then double-click the app normally.
+
+**Option 2 — Right-click → Open (macOS < 15):**
+1. Unzip the archive
+2. Drag `BoardRipper.app` to `/Applications`
+3. **Right-click** (or Ctrl-click) `BoardRipper.app` → **Open**
+4. Click **Open** in the warning dialog
+5. After the first launch, double-click works normally
+
+> On macOS 15 Sequoia and newer, Apple removed the right-click-Open bypass. Use Option 1 (`xattr`) instead.
+
+**Option 3 — System Settings override:**
+1. Double-click the app (it will fail with a warning)
+2. Open **System Settings → Privacy & Security**
+3. Scroll to the security section and click **Open Anyway** next to the BoardRipper notice
+4. Confirm with your password
+
+#### Windows — SmartScreen
+
+Windows SmartScreen may show "Windows protected your PC" on first launch. Click **More info → Run anyway**.
+
 ### Docker (recommended for NAS/server)
 
 ```bash
@@ -69,10 +115,10 @@ docker compose up --build -d
 # → http://localhost:8081
 ```
 
-### Standalone binary
+### Standalone binary (advanced / self-hosted)
 
 ```bash
-# Download the release for your platform from GitHub Releases, then:
+# Download boardripper-<platform>-<version>.tar.gz from GitHub Releases, then:
 tar -xzf boardripper-<platform>-<version>.tar.gz
 STATIC_DIR=./static DATA_DIR=./data ./boardripper
 # → http://localhost:8080
