@@ -50,6 +50,30 @@ function elapsed(start) {
   return `${s}s`;
 }
 
+/** Cross-platform zip: uses ditto on macOS (preserves resource forks for .app bundles),
+ *  zip -r -y on Linux (-y preserves symlinks), Compress-Archive on Windows. */
+function zipApp(sourcePath, zipPath) {
+  const parentDir = path.dirname(sourcePath);
+  const baseName = path.basename(sourcePath);
+  if (process.platform === 'darwin') {
+    execSync(
+      `cd "${parentDir}" && ditto -c -k --sequesterRsrc --keepParent "${baseName}" "${zipPath}"`,
+      { stdio: 'inherit' },
+    );
+  } else if (process.platform === 'win32') {
+    execSync(
+      `powershell -Command "Compress-Archive -Path '${sourcePath}' -DestinationPath '${zipPath}' -Force"`,
+      { stdio: 'inherit' },
+    );
+  } else {
+    // Linux: use zip -y to preserve symlinks (important for macOS .app bundles)
+    execSync(
+      `cd "${parentDir}" && zip -r -y -q "${zipPath}" "${baseName}"`,
+      { stdio: 'inherit' },
+    );
+  }
+}
+
 // Common ignore patterns for @electron/packager
 const IGNORE_PATTERNS = [
   /^\/out($|\/)/,
@@ -132,7 +156,12 @@ if (buildMac) {
   rmSync(arm64Path, { recursive: true });
   rmSync(x64Path, { recursive: true });
 
-  results.push({ target: 'macOS universal', path: universalDir, time: elapsed(t1) });
+  const zipName = `BoardRipper-macOS-universal-v${APP_VERSION}.zip`;
+  const zipPath = path.join(OUT_DIR, zipName);
+  console.log(`  --- Creating ${zipName} ---`);
+  zipApp(universalAppPath, zipPath);
+
+  results.push({ target: 'macOS universal', path: zipPath, time: elapsed(t1) });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -164,10 +193,7 @@ if (buildLegacy) {
   const zipName = `BoardRipper-Legacy-macOS-x64-v${APP_VERSION}.zip`;
   const zipPath = path.join(OUT_DIR, zipName);
   console.log(`  --- Creating ${zipName} ---`);
-  execSync(
-    `cd "${appPath}" && ditto -c -k --sequesterRsrc --keepParent "BoardRipper Legacy.app" "${zipPath}"`,
-    { stdio: 'inherit' },
-  );
+  zipApp(path.join(appPath, 'BoardRipper Legacy.app'), zipPath);
 
   results.push({ target: 'macOS legacy (x64)', path: zipPath, time: elapsed(t2) });
 }
@@ -204,10 +230,7 @@ if (buildWin) {
   const zipName = `BoardRipper-Windows-x64-v${APP_VERSION}.zip`;
   const zipPath = path.join(OUT_DIR, zipName);
   console.log(`  --- Creating ${zipName} ---`);
-  execSync(
-    `cd "${OUT_DIR}" && ditto -c -k --keepParent "${path.basename(appPath)}" "${zipPath}"`,
-    { stdio: 'inherit' },
-  );
+  zipApp(appPath, zipPath);
 
   results.push({ target: 'Windows (x64)', path: zipPath, time: elapsed(t3) });
 }
