@@ -37,6 +37,11 @@ export interface ScrollBindings {
   meta: ScrollAction;   // cmd (mac) / ctrl (win) + scroll
 }
 
+export const PDF_INERTIA_KEY = 'boardripper-pdf-inertia';
+export function loadPdfInertia(): boolean {
+  try { return localStorage.getItem(PDF_INERTIA_KEY) !== 'false'; } catch { return true; }
+}
+
 export const SCROLL_BINDINGS_KEY = 'boardripper-pdf-scroll-bindings';
 export const DEFAULT_SCROLL_BINDINGS: ScrollBindings = { bare: 'zoom', shift: 'pan', meta: 'switch' };
 
@@ -506,6 +511,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const dragStartRef = useRef({ x: 0, y: 0 });
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const wasDragRef = useRef(false);
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const lastDragTimeRef = useRef(0);
+  const inertiaRafRef = useRef(0);
+  const pdfInertiaRef = useRef(loadPdfInertia());
+  const lastRealWheelTimeRef = useRef(0);
   const tierDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last zoom level at which highlights were drawn — skip redraw on pan-only changes */
   const lastHighlightZoomRef = useRef(0);
@@ -539,7 +549,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       scrollBindingsRef.current = next;
     };
     window.addEventListener('pdf-scroll-bindings-changed', handler);
-    return () => window.removeEventListener('pdf-scroll-bindings-changed', handler);
+    const inertiaHandler = () => { pdfInertiaRef.current = loadPdfInertia(); };
+    window.addEventListener('pdf-inertia-changed', inertiaHandler);
+    return () => {
+      window.removeEventListener('pdf-scroll-bindings-changed', handler);
+      window.removeEventListener('pdf-inertia-changed', inertiaHandler);
+    };
   }, []);
 
   // PDF render quality — persisted, synced from Settings panel
@@ -1495,6 +1510,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
+
+      // Suppress macOS trackpad momentum events when inertia is disabled
+      if (!pdfInertiaRef.current) {
+        const now = performance.now();
+        const gap = now - lastRealWheelTimeRef.current;
+        if (gap > 80 && lastRealWheelTimeRef.current > 0) return; // momentum → suppress
+        lastRealWheelTimeRef.current = now;
+      }
+
       pdfStore.switchTo(pdfFileName);
 
       // Trackpad pinch-to-zoom generates wheel events with ctrlKey=true.
@@ -1635,6 +1659,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     pdfStore.switchTo(pdfFileName);
 
     if (activeTouchesRef.current.size === 1 && (e.pointerType === 'mouse' ? e.button === 0 : true)) {
+      cancelAnimationFrame(inertiaRafRef.current);
+      velocityRef.current = { x: 0, y: 0 };
+      lastDragTimeRef.current = performance.now();
       isDraggingRef.current = true;
       wasDragRef.current = false;
       dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -1704,6 +1731,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       wasDragRef.current = true;
     }
 
+    // Track velocity for inertia
+    const now = performance.now();
+    const dt = now - lastDragTimeRef.current;
+    if (dt > 0) {
+      const decay = 0.6; // blend with previous velocity for smoothing
+      velocityRef.current = {
+        x: decay * velocityRef.current.x + (1 - decay) * (dxm / dt * 16),
+        y: decay * velocityRef.current.y + (1 - decay) * (dym / dt * 16),
+      };
+    }
+    lastDragTimeRef.current = now;
+
     panRef.current = { x: panRef.current.x + dxm, y: panRef.current.y + dym };
     syncTransform();
   }, [syncTransform]);
@@ -1770,6 +1809,29 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const wasDrag = wasDragRef.current;
     isDraggingRef.current = false;
     wasDragRef.current = false;
+
+    // Inertia: continue panning with decaying velocity
+    if (wasDrag && pdfInertiaRef.current) {
+      const v = velocityRef.current;
+      const speed = Math.sqrt(v.x * v.x + v.y * v.y);
+      if (speed > 0.5) {
+        cancelAnimationFrame(inertiaRafRef.current);
+        const friction = 0.93;
+        const animate = () => {
+          velocityRef.current.x *= friction;
+          velocityRef.current.y *= friction;
+          if (Math.abs(velocityRef.current.x) < 0.2 && Math.abs(velocityRef.current.y) < 0.2) return;
+          panRef.current = {
+            x: panRef.current.x + velocityRef.current.x,
+            y: panRef.current.y + velocityRef.current.y,
+          };
+          syncTransform();
+          inertiaRafRef.current = requestAnimationFrame(animate);
+        };
+        inertiaRafRef.current = requestAnimationFrame(animate);
+      }
+    }
+    velocityRef.current = { x: 0, y: 0 };
 
     if (!wasDrag && e.button === 0 && e.pointerType !== 'touch') {
       handleTextClickRef.current(e);

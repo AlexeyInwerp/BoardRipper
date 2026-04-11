@@ -8,7 +8,7 @@ import { getAllFormats, setFormatOverride } from '../parsers/registry';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig } from './PdfViewerPanel';
+import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
 import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
 
 /** Context that provides per-field override info to Slider/Toggle children */
@@ -30,7 +30,7 @@ function useOverride(field: keyof RenderSettings) {
   return { isOverride, resetValue: gv as number & boolean };
 }
 
-type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'interaction' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides' | 'server' | 'pdf';
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides' | 'server' | 'pdf';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -745,6 +745,101 @@ function PdfQualitySelector() {
   );
 }
 
+// ---- Board scroll bindings editor (drag-and-drop pills) ----
+
+type BoardScrollAction = 'zoom' | 'pan';
+const BOARD_ACTIONS: BoardScrollAction[] = ['zoom', 'pan'];
+const BOARD_ACTION_LABELS: Record<BoardScrollAction, string> = { zoom: 'Zoom', pan: 'Pan' };
+const BOARD_ACTION_COLORS: Record<BoardScrollAction, string> = { zoom: '#00d4ff', pan: '#ffd93d' };
+
+const BOARD_MODIFIER_KEYS = ['bare', 'shift'] as const;
+type BoardModifier = typeof BOARD_MODIFIER_KEYS[number];
+const BOARD_MODIFIER_LABELS: Record<BoardModifier, string> = {
+  bare: 'Scroll',
+  shift: 'Shift + Scroll',
+};
+
+function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: boolean; onUpdate: DraftUpdater }) {
+  // Derive bindings from twoFingerPan: bare=pan when twoFingerPan, else bare=zoom
+  const bindings: Record<BoardModifier, BoardScrollAction> = {
+    bare: twoFingerPan ? 'pan' : 'zoom',
+    shift: twoFingerPan ? 'zoom' : 'pan',
+  };
+
+  const [dragging, setDragging] = useState<BoardScrollAction | null>(null);
+  const [dragOver, setDragOver] = useState<BoardModifier | null>(null);
+
+  const handleDragStart = useCallback((e: React.DragEvent, action: BoardScrollAction) => {
+    setDragging(action);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', action);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, slot: BoardModifier) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(slot);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, targetSlot: BoardModifier) => {
+    e.preventDefault();
+    setDragOver(null);
+    setDragging(null);
+    const action = e.dataTransfer.getData('text/plain') as BoardScrollAction;
+    if (!BOARD_ACTIONS.includes(action)) return;
+    const sourceSlot = BOARD_MODIFIER_KEYS.find(k => bindings[k] === action);
+    if (!sourceSlot || sourceSlot === targetSlot) return;
+    // Swapping bare and shift means toggling twoFingerPan
+    onUpdate({ twoFingerPan: targetSlot === 'bare' && action === 'pan' });
+  }, [bindings, onUpdate]);
+
+  const handleDragEnd = useCallback(() => { setDragging(null); setDragOver(null); }, []);
+
+  return (
+    <div className="scroll-bindings-editor">
+      <div className="scroll-bindings-grid">
+        {BOARD_MODIFIER_KEYS.map(slot => {
+          const action = bindings[slot];
+          const isOver = dragOver === slot;
+          return (
+            <div key={slot} className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
+              onDragOver={e => handleDragOver(e, slot)}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={e => handleDrop(e, slot)}>
+              <span className="scroll-binding-modifier">{BOARD_MODIFIER_LABELS[slot]}</span>
+              <span
+                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
+                style={{ '--pill-color': BOARD_ACTION_COLORS[action] } as React.CSSProperties}
+                draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
+                {BOARD_ACTION_LABELS[action]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="settings-hint" style={{ marginTop: 4 }}>Pinch-to-zoom always works regardless of scroll assignment.</p>
+    </div>
+  );
+}
+
+// ---- PDF inertia toggle ----
+
+function PdfInertiaToggle() {
+  const [enabled, setEnabled] = useState(loadPdfInertia);
+  const toggle = useCallback(() => {
+    const next = !enabled;
+    setEnabled(next);
+    try { localStorage.setItem(PDF_INERTIA_KEY, String(next)); } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('pdf-inertia-changed'));
+  }, [enabled]);
+  return (
+    <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing the drag. When disabled, panning stops immediately on release">
+      <label className="settings-label">Inertia</label>
+      <input type="checkbox" checked={enabled} onChange={toggle} />
+    </div>
+  );
+}
+
 // ---- Main panel ----
 
 const INITIALLY_OPEN: SectionId[] = [];
@@ -794,7 +889,7 @@ export function SettingsPanel() {
   const netColorsRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<HTMLDivElement>(null);
   const netLinesRef = useRef<HTMLDivElement>(null);
-  const interactionRef = useRef<HTMLDivElement>(null);
+  const navigationRef = useRef<HTMLDivElement>(null);
   const performanceRef = useRef<HTMLDivElement>(null);
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const formatsRef = useRef<HTMLDivElement>(null);
@@ -805,7 +900,7 @@ export function SettingsPanel() {
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
-    netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, interaction: interactionRef,
+    netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, navigation: navigationRef,
     performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
     partTypeOverrides: partTypeOverridesRef, server: serverRef, pdf: pdfRef,
   });
@@ -1120,18 +1215,25 @@ export function SettingsPanel() {
           title="Animate net lines with a red traveling pulse effect, making the connection path easier to follow across the board" />
       </CollapsibleSection>
 
-      <CollapsibleSection id="interaction" title="Interaction" isOpen={openSections.has('interaction')}
-        onToggle={toggleSection} sectionRef={interactionRef} isFocused={focusedSection === 'interaction'}>
+      <CollapsibleSection id="navigation" title="Navigation" isOpen={openSections.has('navigation')}
+        onToggle={toggleSection} sectionRef={navigationRef} isFocused={focusedSection === 'navigation'}>
+        <div className="settings-subsection-label">Scroll wheel behavior</div>
+        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
+        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateDraft} />
+
+        <div className="settings-subsection-label">Zoom</div>
+        <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
+          title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />
+        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft}
+          title="Extra padding (screen pixels) added when fitting the board to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
+
+        <div className="settings-subsection-label">Pan</div>
+        <Toggle label="Disable Inertia" value={draft.disableInertia} field="disableInertia" onUpdate={updateDraft}
+          title="Stop the board from sliding after you release a pan gesture. Panning stops immediately on release" />
+
+        <div className="settings-subsection-label">Click</div>
         <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft}
           title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
-        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft}
-          title="Extra padding (screen pixels) added when fitting the board or a component to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
-        <Toggle label="Disable Inertia" value={draft.disableInertia} field="disableInertia" onUpdate={updateDraft}
-          title="Stop the board from sliding after you release a pan gesture. When enabled, panning stops immediately on release" />
-        <Slider label="Wheel Zoom Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
-          title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />
-        <Toggle label="Two-Finger Pan" value={draft.twoFingerPan} field="twoFingerPan" onUpdate={updateDraft}
-          title="Require two fingers to pan the board (trackpad mode). One finger will not move the viewport" />
       </CollapsibleSection>
 
       <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
@@ -1155,6 +1257,8 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
         <div className="settings-subsection-label">Render quality</div>
         <PdfQualitySelector />
+        <div className="settings-subsection-label">Navigation</div>
+        <PdfInertiaToggle />
         <div className="settings-subsection-label">Shortcuts (when PDF panel is active)</div>
         <div className="pdf-shortcuts-list">
           {shortcuts.filter(s => s.category === 'pdf').map(s => (
