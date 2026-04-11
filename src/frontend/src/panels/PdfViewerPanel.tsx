@@ -109,7 +109,7 @@ export interface PdfQualityConfig {
 }
 
 const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
-  max:    { maxMainTier: 16, maxAdjTier: 8,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 160_000_000 },
+  max:    { maxMainTier: 10, maxAdjTier: 8,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 160_000_000 },
   high:   { maxMainTier: 8,  maxAdjTier: 4,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 80_000_000 },
   medium: { maxMainTier: 4,  maxAdjTier: 2,  adjSettleMs: 250, cacheMaxEntries: 8,  cacheMaxPixels: 50_000_000 },
   low:    { maxMainTier: 2,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000 },
@@ -490,6 +490,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderTimeEmaRef = useRef(0);
   /** Adaptive zoom: timestamp of last throttled render start */
   const lastThrottleRenderRef = useRef(0);
+  /** Delayed full-quality render — fires 500ms after zoom settles */
+  const crispTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** When true, renderPage ignores quality cap and renders at full zoom tier */
+  const forceFullTierRef = useRef(false);
+  const CRISP_SETTLE_MS = 500;
 
   const [nightMode, setNightMode] = useState(() => {
     try { return localStorage.getItem(NIGHT_MODE_KEY) === '1'; } catch { return false; }
@@ -531,6 +536,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const next = (e as CustomEvent<PdfRenderQuality>).detail;
       setPdfQuality(next);
       const cfg = getPdfQualityConfig(next);
+      // Update ref immediately so renderPage uses the new config
+      // (React state won't commit until next render cycle)
+      qcfgRef.current = cfg;
       setPageCacheLimits(cfg.cacheMaxEntries, cfg.cacheMaxPixels);
       invalidatePageCache(pdfFileName);
       _lastCommittedTier = 1; // reset hysteresis
@@ -643,8 +651,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }, TIER_DEBOUNCE_MS);
 
     // Adaptive throttle: if enough time has passed since the last render, fire now.
-    // Throttle interval = max(EMA × 1.5, 16ms) — gives the GPU breathing room
-    // while keeping up with fast pages. First render (EMA=0) always fires immediately.
     const ema = renderTimeEmaRef.current;
     const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
     const now = performance.now();
@@ -652,6 +658,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       lastThrottleRenderRef.current = now;
       renderPageRef.current();
     }
+
+    // Schedule full-quality crisp render after zoom fully settles (500ms).
+    // Quality presets only cap the interactive tier; this ensures the final
+    // frame is always rendered at full zoom resolution regardless of preset.
+    if (crispTimerRef.current) clearTimeout(crispTimerRef.current);
+    crispTimerRef.current = setTimeout(() => {
+      crispTimerRef.current = null;
+      forceFullTierRef.current = true;
+      renderPageRef.current();
+    }, CRISP_SETTLE_MS);
   }, []);
 
   // Reset scale refs when document is unloaded so framing re-runs on next load
@@ -759,7 +775,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     setError(null);
 
     const renderId = ++renderIdRef.current;
-    const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier)));
+    // During active zoom: cap tier by quality preset for smooth interaction.
+    // After settle (forceFullTierRef): render at full zoom tier for crisp text.
+    const maxTier = forceFullTierRef.current ? 10 : qcfgRef.current.maxMainTier;
+    forceFullTierRef.current = false;
+    const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoomRef.current, maxTier)));
     renderTierRef.current = resTier;
     const t0 = performance.now();
 
@@ -1406,7 +1426,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const speed = isTrackpadPinch ? TRACKPAD_PINCH_SPEED : MOUSE_WHEEL_SPEED;
         const zoomFactor = Math.exp(-e.deltaY * speed);
         const oldZoom = zoomRef.current;
-        const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 20));
+        const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 10));
         const ratio = newZoom / oldZoom;
         const oldPan = panRef.current;
         const newPanY = mouseY - ratio * (mouseY - oldPan.y);
@@ -1559,7 +1579,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const cssH = pageCssHRef.current;
         const containerH = containerRef.current?.clientHeight ?? 0;
         const minZoom = cssH > 0 && containerH > 0 ? Math.max(0.1, containerH / (3 * cssH)) : 0.1;
-        const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 20));
+        const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 10));
         const ratio = newZoom / oldZoom;
         const mid = pinchMidRef.current;
         panRef.current = {
@@ -1668,6 +1688,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
   }, []);
+
+  /** Reset zoom to 1 and pan to origin — page fits container width exactly */
+  const handleFitWidth = useCallback(() => {
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    syncTransform();
+    scheduleTierRender();
+  }, [syncTransform, scheduleTierRender]);
+
+  // Listen for global Space key → fit-to-width dispatch
+  useEffect(() => {
+    const handler = () => handleFitWidth();
+    window.addEventListener('pdf-fit-width', handler);
+    return () => window.removeEventListener('pdf-fit-width', handler);
+  }, [handleFitWidth]);
 
   const handleAddBookmark = useCallback(() => {
     pdfStore.switchTo(pdfFileName);
@@ -2073,6 +2108,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           title="Toggle night mode (invert colors)"
         >
           &#x25D0;
+        </button>
+        <button
+          className="pdf-toolbar-btn pdf-fit-width-btn"
+          onClick={handleFitWidth}
+          title="Fit to page width (Space)"
+        >
+          &#x21F5;
         </button>
         <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
       </div>

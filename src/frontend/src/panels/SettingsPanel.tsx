@@ -1155,6 +1155,15 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
         <div className="settings-subsection-label">Render quality</div>
         <PdfQualitySelector />
+        <div className="settings-subsection-label">Shortcuts (when PDF panel is active)</div>
+        <div className="pdf-shortcuts-list">
+          {shortcuts.filter(s => s.category === 'pdf').map(s => (
+            <div key={s.id} className="shortcuts-row">
+              <span className="shortcuts-label" title={s.description}>{s.label}</span>
+              <kbd className="shortcuts-key">{formatShortcut(s.id)}</kbd>
+            </div>
+          ))}
+        </div>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
         <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
         <ScrollBindingsEditor />

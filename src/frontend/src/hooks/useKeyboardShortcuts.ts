@@ -77,6 +77,12 @@ export function useKeyboardShortcuts() {
             return;
 
           case 'flipBoard': {
+            // When PDF panel is active, Space → fit-to-width instead
+            if (fileInputRefs.pdfSearch) {
+              e.preventDefault();
+              window.dispatchEvent(new Event('pdf-fit-width'));
+              return;
+            }
             e.preventDefault();
             const { showTop, showBottom, butterfly } = boardStore;
             if (butterfly || (showTop && showBottom)) return;
@@ -84,6 +90,10 @@ export function useKeyboardShortcuts() {
             else boardStore.selectTop();
             return;
           }
+
+          case 'pdfFitWidth':
+            // Handled via flipBoard case above (same key, context-dependent)
+            break;
 
           case 'rotateCW':
             e.preventDefault();
