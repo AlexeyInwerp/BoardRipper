@@ -5,7 +5,7 @@ import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
-import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
+import { boardPanelId, activateLinkedPanel, isLinkActivating } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
@@ -410,28 +410,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   useEffect(() => {
     if (!pdfFileName) return;
     // Also switch when this panel becomes active (focused)
-    let activatingLinkedPanel = false;
     const disposable = props.api.onDidActiveChange((e) => {
       log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
         pdfStore.switchTo(pdfFileName);
-        // Register this panel's search input for global Cmd+F routing
-        fileInputRefs.pdfSearch = searchInputRef.current;
+        // Only register pdfSearch when the user directly activates the PDF
+        // panel — NOT when it's activated by a linked board panel activation
+        // (isLinkActivating). This ensures Space → flipBoard when the board
+        // was the user's last click, and Space → fitWidth when the PDF was.
+        if (!isLinkActivating()) {
+          fileInputRefs.pdfSearch = searchInputRef.current;
+        }
         // Activate linked board panel so it follows the PDF tab
         const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
         log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
         if (linkedTab) {
-          activatingLinkedPanel = true;
           const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
           log.pdf.log(`activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
-          activatingLinkedPanel = false;
-        }
-      } else {
-        // Clear PDF search ref when this panel deactivates — BUT skip if the
-        // deactivation was caused by our own activateLinkedPanel call (which
-        // activates the board panel, causing Dockview to deactivate us briefly)
-        if (!activatingLinkedPanel && fileInputRefs.pdfSearch === searchInputRef.current) {
-          fileInputRefs.pdfSearch = null;
         }
       }
     });
