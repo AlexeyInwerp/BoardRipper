@@ -140,6 +140,13 @@ export const shortcuts: Shortcut[] = [
 
   // --- PDF Viewer ---
   {
+    id: 'pdfFitWidth',
+    label: 'Fit to Width',
+    category: 'pdf',
+    key: ' ',         // Space
+    description: 'Reset zoom to fit page width (when PDF panel is active)',
+  },
+  {
     id: 'pdfNextPage',
     label: 'Next Page',
     category: 'pdf',
