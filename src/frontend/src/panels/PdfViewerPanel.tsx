@@ -15,6 +15,7 @@ import { drawGlyphBoxes, drawGlyphOutlines } from '../pdf/glyph-overlay';
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
+import { IconArrowAutofitWidth } from '@tabler/icons-react';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -409,6 +410,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   useEffect(() => {
     if (!pdfFileName) return;
     // Also switch when this panel becomes active (focused)
+    let activatingLinkedPanel = false;
     const disposable = props.api.onDidActiveChange((e) => {
       log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
@@ -419,12 +421,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
         log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
         if (linkedTab) {
+          activatingLinkedPanel = true;
           const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
           log.pdf.log(`activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
+          activatingLinkedPanel = false;
         }
       } else {
-        // Clear PDF search ref when this panel deactivates (only if it's ours)
-        if (fileInputRefs.pdfSearch === searchInputRef.current) {
+        // Clear PDF search ref when this panel deactivates — BUT skip if the
+        // deactivation was caused by our own activateLinkedPanel call (which
+        // activates the board panel, causing Dockview to deactivate us briefly)
+        if (!activatingLinkedPanel && fileInputRefs.pdfSearch === searchInputRef.current) {
           fileInputRefs.pdfSearch = null;
         }
       }
@@ -1090,10 +1096,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       if (ac.signal.aborted) return;
 
-      if (canvas.width !== entry.width || canvas.height !== entry.height) {
-        canvas.width = entry.width;
-        canvas.height = entry.height;
-      }
+      // Always reset canvas dimensions to clear stale content and ensure
+      // getContext returns a fresh context with correct alpha setting.
+      canvas.width = entry.width;
+      canvas.height = entry.height;
       canvas.style.width = `${entry.cssW}px`;
       canvas.style.height = `${entry.cssH}px`;
       canvas.style.position = 'absolute';
@@ -2114,7 +2120,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           onClick={handleFitWidth}
           title="Fit to page width (Space)"
         >
-          &#x21F5;
+          <IconArrowAutofitWidth size={16} />
         </button>
         <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
       </div>
