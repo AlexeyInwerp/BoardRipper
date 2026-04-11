@@ -755,7 +755,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     canvas.style.width = `${entry.cssW}px`;
     canvas.style.height = `${entry.cssH}px`;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
 
@@ -873,7 +873,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
-      const ctx = canvas.getContext('2d', { alpha: false });
+      const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
       releaseCanvas(sourceCanvas);
       const tCopy = performance.now();
@@ -1106,7 +1106,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.style.left = '0';
       canvas.style.top = `${yOffset}px`;
       canvas.style.pointerEvents = 'none';
-      const ctx = canvas.getContext('2d', { alpha: false });
+      const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(entry.bitmap, 0, 0);
 
       if (!canvas.parentElement) {
