@@ -1451,35 +1451,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       if (action === 'pan') {
         // Omnidirectional multi-page scrolling. Two-finger scroll moves freely
-        // in X and Y. X is clamped to keep the page within view (can't scroll
-        // the page entirely off-screen horizontally). Y supports smooth page
-        // transitions when the viewport center crosses a page boundary.
+        // in X and Y. syncTransform → clampPan handles all boundary clamping.
         const cssH = pageCssHRef.current;
         if (cssH === 0) return;
         const zoom = zoomRef.current;
-        const pageH = cssH * zoom; // page height in screen pixels
-        const containerW = container.clientWidth;
+        const pageH = cssH * zoom;
         const containerH = container.clientHeight;
 
-        const dx = -e.deltaX;
-        const dy = -e.deltaY;
         const oldPan = panRef.current;
-
-        // --- X axis: free pan, clamped so the page stays partially visible ---
-        const pageW = containerW * zoom; // page width in screen pixels
-        // Allow panning until only 20% of the page is visible on each side
-        const xMin = containerW - pageW * 0.8;  // left edge: page right side at 80%
-        const xMax = pageW * 0.8 - pageW;       // right edge: page left side at 80%
-        // When page fits in container (zoom ≤ 1), center it — no X pan
-        let newX: number;
-        if (pageW <= containerW) {
-          newX = (containerW - pageW) / 2; // centered, ignore dx
-        } else {
-          newX = Math.max(Math.min(oldPan.x + dx, -xMax), xMin);
-        }
-
-        // --- Y axis: continuous multi-page scrolling with page transitions ---
-        let newY = oldPan.y + dy;
+        const newX = oldPan.x - e.deltaX;
+        let newY = oldPan.y - e.deltaY;
 
         const curPage = pdfStore.getDocCurrentPage(pdfFileName);
         const total = pdfStore.getDocPageCount(pdfFileName);
