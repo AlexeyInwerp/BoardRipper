@@ -15,45 +15,47 @@ git log --oneline a7bbb79..HEAD -- src/backend/ "Board Database/"
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.go` | ~120 | Server startup, route registration, static file serving, SPA fallback |
+| `main.go` | 159 | Server startup, route registration, static file serving, SPA fallback |
 
 ### Handlers (`handlers/`)
 
-| File | ~Lines | Purpose | Key Routes |
-|------|--------|---------|-----------|
-| `files.go` | ~100 | File upload/list/get/delete | POST /api/upload, GET /api/files, DELETE /api/files/{name} |
-| `databank.go` | ~540 | Library management, scanning, PDF text extraction | POST /api/databank/scan, GET /api/databank/files, GET /api/databank/search, GET /api/databank/tree |
-| `boards.go` | ~150 | Board reference DB resolution | GET /api/boards/resolve, GET /api/boards/stats |
-| `update.go` | ~200 | Self-update status/check/apply/SSE | GET /api/update/status, POST /api/update/check, POST /api/update/apply |
-| `handlers_test.go` | ~100 | Path traversal, upload validation tests |
+| File | Lines | Purpose | Key Routes |
+|------|-------|---------|-----------|
+| `files.go` | 228 | File upload/list/get/delete | POST /api/upload, GET /api/files, DELETE /api/files/{name} |
+| `databank.go` | 538 | Library management, scanning, PDF text extraction | POST /api/databank/scan, GET /api/databank/files, GET /api/databank/search, GET /api/databank/tree |
+| `boards.go` | 64 | Board reference DB resolution | GET /api/boards/resolve, GET /api/boards/stats |
+| `update.go` | 96 | Self-update status/check/apply/SSE | GET /api/update/status, POST /api/update/check, POST /api/update/apply |
+| `handlers_test.go` | 73 | Path traversal, upload validation tests |
 
 ### Databank (`databank/`)
 
-| File | ~Lines | Purpose |
-|------|--------|---------|
-| `db.go` | ~400 | SQLite wrapper, WAL mode, read/write pools (1 writer, 4 readers), schema v4 |
-| `scanner.go` | ~300 | Async file scanner, background PDF extraction, status tracking |
-| `metadata.go` | ~100 | Board number/part count/net count extraction from filenames |
-| `pdftext.go` | ~200 | PDF text extraction via rsc.io/pdf, noise filtering, FTS5 index |
-| `db_test.go` | ~100 | SQLite wrapper tests |
+| File | Lines | Purpose |
+|------|-------|---------|
+| `db.go` | 820 | SQLite wrapper, WAL mode, read/write pools (1 writer, 4 readers), schema v4 |
+| `scanner.go` | 723 | Async file scanner, background PDF extraction, status tracking |
+| `metadata.go` | 319 | Board number/part count/net count extraction from filenames |
+| `pdftext.go` | 674 | PDF text extraction via rsc.io/pdf, noise filtering, FTS5 index |
+| `search.go` | 174 | FTS5 full-text search, snippet extraction, multi-term AND queries |
+| `db_test.go` | 71 | SQLite wrapper tests |
+| `pdftext_test.go` | 273 | PDF extraction + cleaning tests |
 
 ### Board Database (`boarddb/`)
 
-| File | ~Lines | Purpose |
-|------|--------|---------|
-| `boarddb.go` | ~80 | Read-only SQLite handle for boards.db (graceful if missing) |
-| `matcher.go` | ~150 | Board number extraction from filenames (regex patterns) |
-| `odm.go` | ~100 | ODM registry (regex → manufacturer) |
-| `resolve.go` | ~150 | Resolution engine: extract → match → resolve brand/model |
+| File | Lines | Purpose |
+|------|-------|---------|
+| `boarddb.go` | 119 | Read-only SQLite handle for boards.db (graceful if missing) |
+| `matcher.go` | 33 | Board number extraction from filenames (regex patterns) |
+| `odm.go` | 43 | ODM registry — 19 patterns (Apple, LCFC, Compal, Quanta, ASUS, etc.) |
+| `resolve.go` | 152 | Resolution engine: exact → prefix → alias lookup |
 
 ### Updater (`updater/`)
 
-| File | ~Lines | Purpose |
-|------|--------|---------|
-| `updater.go` | ~420 | GitHub API polling, release checking, version comparison |
-| `docker.go` | ~340 | Docker socket API for in-place container update |
+| File | Lines | Purpose |
+|------|-------|---------|
+| `updater.go` | 417 | GitHub API polling, release checking, version comparison |
+| `docker.go` | 334 | Docker socket API for in-place container update |
 
-**Total backend: ~5,310 lines across 19 Go files**
+**Total backend: 5,469 lines across 19 Go files (14 production + 3 test)**
 
 ## Domain: Board Database (`Board Database/`)
 
