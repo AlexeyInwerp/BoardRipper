@@ -601,16 +601,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     //   left edge on screen  = panX              → must be ≤ 0  (can't expose left gap)
     //   right edge on screen = panX + pageW      → must be ≥ containerW (can't expose right gap)
     const pageW = containerW * zoom;
-    if (pageW < containerW - 1) {
+    if (pageW <= containerW) {
       // Page fits — center horizontally
       x = (containerW - pageW) / 2;
-    } else if (pageW > containerW + 1) {
-      // Page wider — clamp: right edge reachable, left edge reachable
+    } else {
+      // Page wider — clamp so both edges stay reachable
       const xMin = containerW - pageW; // most negative pan (scrolled fully right)
       const xMax = 0;                  // most positive pan (left edge at container left)
       x = Math.max(xMin, Math.min(xMax, x));
     }
-    // else pageW ≈ containerW (zoom ≈ 1): don't clamp, allow smooth cursor-centric zoom
 
     // --- Y axis: can't scroll past first/last page ---
     if (cssH > 0) {
