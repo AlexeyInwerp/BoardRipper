@@ -149,6 +149,8 @@ export class BoardRenderer {
   private containerEl: HTMLDivElement;
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
+  private momentumSuppressor: ((e: WheelEvent) => void) | null = null;
+  private lastRealWheelTime = 0;
   private tooltipEl: HTMLDivElement | null = null;
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
@@ -1867,14 +1869,47 @@ export class BoardRenderer {
       this.viewport.plugins.remove(name);
     }
     this.viewport
-      .drag({})
+      .drag({ wheel: s.twoFingerPan })
       .pinch({ percent: 2 })
-      .wheel({ smooth: s.wheelSmooth, percent: 0.3, trackpadPinch: true })
+      .wheel({
+        smooth: s.wheelSmooth,
+        percent: 0.3,
+        trackpadPinch: true,
+        wheelZoom: !s.twoFingerPan,  // disable scroll-to-zoom in two-finger-pan mode
+      })
       .clampZoom({ minScale: 0.001, maxScale: 10 });
     if (!s.disableInertia) {
       this.viewport.decelerate({ friction: 0.95 });
     }
+    this.setupMomentumSuppression(s.disableInertia);
   }
+
+  /** Suppress macOS trackpad momentum wheel events when inertia is disabled.
+   *  Momentum events arrive after a ~80ms gap from the last real scroll. */
+  private setupMomentumSuppression(enabled: boolean): void {
+    const canvas = this.app?.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) return;
+    if (this.momentumSuppressor) {
+      canvas.removeEventListener('wheel', this.momentumSuppressor, true);
+      this.momentumSuppressor = null;
+    }
+    if (!enabled) return;
+    this.momentumSuppressor = (e: WheelEvent) => {
+      const now = performance.now();
+      const gap = now - this.lastRealWheelTime;
+      // First event or continuous stream (< 80ms gap) → real scroll
+      if (gap > 80 && this.lastRealWheelTime > 0) {
+        // Gap detected → this is a momentum event, suppress it
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      this.lastRealWheelTime = now;
+    };
+    // Capture phase to intercept before pixi-viewport
+    canvas.addEventListener('wheel', this.momentumSuppressor, { capture: true, passive: false });
+  }
+
 
   private onSettingsUpdate() {
     if (!this.board || this.contextLost || this.reinitializing) return;
