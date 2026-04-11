@@ -715,9 +715,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
     const onAbort = () => task.cancel();
     signal?.addEventListener('abort', onAbort, { once: true });
-    try { await task.promise; } catch (err) { releaseCanvas(offscreen); throw err; } finally { signal?.removeEventListener('abort', onAbort); }
+    try {
+      await task.promise;
+    } catch (err) {
+      // On cancel/abort: DON'T return canvas to pool — pdf.js worker thread may
+      // still queue draw operations that would corrupt a reused canvas. Abandon to GC.
+      offscreen.width = 1; offscreen.height = 1; // release backing store
+      throw err;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
 
-    if (signal?.aborted) { releaseCanvas(offscreen); throw new DOMException('Aborted', 'AbortError'); }
+    if (signal?.aborted) { offscreen.width = 1; offscreen.height = 1; throw new DOMException('Aborted', 'AbortError'); }
 
     // Apply contrast filter for clean mode before creating bitmap
     if (clean) {
@@ -837,7 +846,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
 
-      if (renderIdRef.current !== renderId) { releaseCanvas(offscreen); return; }
+      if (renderIdRef.current !== renderId) {
+        // Stale render — abandon canvas (don't pool, pdf.js may still draw to it)
+        offscreen.width = 1; offscreen.height = 1;
+        return;
+      }
       const tRender = performance.now();
 
       // Apply contrast to offscreen buffer before creating bitmap (avoids double-blit)
@@ -868,9 +881,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
-      const ctx = canvas.getContext('2d');
-      if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
       releaseCanvas(sourceCanvas);
+      const ctx = canvas.getContext('2d');
+      // Blit from bitmap (frozen snapshot) not sourceCanvas — avoids race with
+      // stale pdf.js worker draws that may still be queued on the offscreen canvas
+      if (ctx && bitmap) ctx.drawImage(bitmap, 0, 0);
       const tCopy = performance.now();
 
       scaleRef.current = baseScale;
