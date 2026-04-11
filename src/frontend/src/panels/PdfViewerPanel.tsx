@@ -114,11 +114,12 @@ export interface PdfQualityConfig {
   cacheMaxPixels: number;
 }
 
+// Higher tiers = crisper text. Cache budgets sized for comfort.
 const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
-  max:    { maxMainTier: 10, maxAdjTier: 8,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 160_000_000 },
-  high:   { maxMainTier: 8,  maxAdjTier: 4,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 80_000_000 },
-  medium: { maxMainTier: 4,  maxAdjTier: 2,  adjSettleMs: 250, cacheMaxEntries: 8,  cacheMaxPixels: 50_000_000 },
-  low:    { maxMainTier: 2,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000 },
+  max:    { maxMainTier: 10, maxAdjTier: 4,  adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 200_000_000 },
+  high:   { maxMainTier: 10, maxAdjTier: 4,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 120_000_000 },
+  medium: { maxMainTier: 8,  maxAdjTier: 2,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000 },
+  low:    { maxMainTier: 4,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000 },
 };
 
 export const PDF_QUALITY_KEY = 'boardripper-pdf-render-quality';
