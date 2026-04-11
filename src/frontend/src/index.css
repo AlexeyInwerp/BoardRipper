@@ -452,10 +452,76 @@ html, body, #root {
   flex: 1;
   overflow: hidden;
   position: relative;
+  display: flex;
+  flex-direction: row;
 }
 .dockview-container {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 100%;
+}
+
+/* --- Sidebar (outside Dockview) --- */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+.sidebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+.sidebar-tab {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sidebar-tab:hover {
+  color: var(--text-primary);
+}
+.sidebar-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.sidebar-action-btn {
+  padding: 4px 6px !important;
+  display: flex;
+  align-items: center;
+  font-size: 9px;
+}
+.sidebar-content {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 100;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--accent);
+  opacity: 0.3;
 }
 
 /* Sidebar toggle button — above dockview's stacking context */
@@ -496,6 +562,13 @@ html, body, #root {
   opacity: 1;
   color: var(--text-primary);
   border-color: var(--text-secondary);
+}
+.sidebar-toggle-right {
+  left: auto !important;
+  right: 0;
+  border-left: 1px solid var(--accent);
+  border-right: none;
+  border-radius: 4px 0 0 4px;
 }
 
 /* StatusBar */
@@ -2663,6 +2736,12 @@ html, body, #root {
 .library-scan-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.library-scan-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
 }
 
 .library-scan-stop {

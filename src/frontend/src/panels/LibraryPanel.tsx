@@ -6,7 +6,7 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2 } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
@@ -169,26 +169,28 @@ export function LibraryPanel() {
           <button
             className={`library-tab ${viewMode === 'history' ? 'active' : ''}`}
             onClick={() => databankStore.setViewMode('history')}
+            title="Recently opened"
           >
-            History
+            <IconHistory size={14} />
           </button>
           <button
             className={`library-tab ${viewMode === 'metadata' ? 'active' : ''}`}
             onClick={() => databankStore.setViewMode('metadata')}
           >
-            By Board #
+            Board #
           </button>
           <button
             className={`library-tab ${viewMode === 'model' ? 'active' : ''}`}
             onClick={() => databankStore.setViewMode('model')}
           >
-            By Model
+            Model
           </button>
           <button
             className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
             onClick={() => databankStore.setViewMode('folders')}
+            title="Browse folders"
           >
-            Folders
+            <IconFolder size={14} />
           </button>
         </div>
         {viewMode === 'folders' && (
@@ -208,31 +210,19 @@ export function LibraryPanel() {
             />
             Auto PDF
           </label>
-          <label className="library-donor-filter" title="Show PDF thumbnail previews in file list">
-            <input
-              type="checkbox"
-              checked={showPreviews}
-              onChange={(e) => databankStore.setShowPreviews(e.target.checked)}
-            />
-            Previews
-          </label>
-          <label className="library-donor-filter" title="Show detailed scan results per folder">
-            <input
-              type="checkbox"
-              checked={verboseScan}
-              onChange={(e) => databankStore.setVerboseScan(e.target.checked)}
-            />
-            Verbose
-          </label>
           {!(viewMode === 'folders' && browseMode === 'live') && (
             scanStatus?.running ? (
-              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop file scan">Stop</button>
+              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
             ) : scanStatus?.pdf_running ? (
               <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
             ) : (
               <>
-                <button className="library-scan-btn" onClick={handleFileScan} title="Scan filesystem for board and PDF files">Files</button>
-                <button className="library-scan-btn" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs">PDFs</button>
+                <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
+                  <IconFolderSearch size={14} />
+                </button>
+                <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
+                  <IconFileText size={14} />
+                </button>
               </>
             )
           )}
@@ -249,7 +239,7 @@ export function LibraryPanel() {
                 : ''}
               {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
             </span>
-            {verboseScan && scanStatus?.last_file && (
+            {scanStatus?.last_file && (
               <div className="library-indexing-file" title={scanStatus.last_file}>
                 {tailTruncate(scanStatus.last_file)}
               </div>
@@ -260,9 +250,7 @@ export function LibraryPanel() {
             {boardCount} boards, {pdfCount} PDFs
             {scanStatus && scanStatus.duration_ms > 0 && (
               <span className="library-scan-result">
-                {verboseScan
-                  ? ` — scan: +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} err:${scanStatus.errors} (${scanStatus.scanned}/${scanStatus.total} files, ${scanStatus.duration_ms}ms)`
-                  : ` — last scan: +${scanStatus.added} -${scanStatus.deleted} (${scanStatus.duration_ms}ms)`}
+                {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
               </span>
             )}
             {scanStatus?.pdf_running && (
@@ -271,7 +259,7 @@ export function LibraryPanel() {
                 {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
               </span>
             )}
-            {verboseScan && scanStatus?.pdf_running && scanStatus?.pdf_current && (
+            {scanStatus?.pdf_running && scanStatus?.pdf_current && (
               <div className="library-indexing-file" title={scanStatus.pdf_current}>
                 {tailTruncate(scanStatus.pdf_current)}
               </div>
