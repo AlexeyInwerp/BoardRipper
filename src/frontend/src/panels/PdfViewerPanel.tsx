@@ -5,13 +5,13 @@ import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
-import { boardPanelId, activateLinkedPanel, isLinkActivating } from '../store/dockview-api';
+import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
 import { extractPageGlyphs, clearFontCache } from '../pdf/glyph-extractor';
-import { drawGlyphBoxes, drawGlyphOutlines } from '../pdf/glyph-overlay';
+import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-overlay';
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
@@ -414,13 +414,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
       if (e.isActive) {
         pdfStore.switchTo(pdfFileName);
-        // Only register pdfSearch when the user directly activates the PDF
-        // panel — NOT when it's activated by a linked board panel activation
-        // (isLinkActivating). This ensures Space → flipBoard when the board
-        // was the user's last click, and Space → fitWidth when the PDF was.
-        if (!isLinkActivating()) {
-          fileInputRefs.pdfSearch = searchInputRef.current;
-        }
+        // Register this panel's search input for global Cmd+F routing
+        fileInputRefs.pdfSearch = searchInputRef.current;
         // Activate linked board panel so it follows the PDF tab
         const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
         log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
@@ -561,7 +556,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const simplifyStatsRef = useRef<SimplifyStats | null>(null);
   const glyphMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const isGlyphActive = glyphDebug.overlayMode !== 'off' || glyphDebug.simplifyEnabled || glyphDebug.replaceEnabled;
+  const isTextItemsMode = glyphDebug.overlayMode === 'textItems';
+  const isGlyphActive = (glyphDebug.overlayMode !== 'off' && !isTextItemsMode) || glyphDebug.simplifyEnabled || glyphDebug.replaceEnabled;
+  const isOverlayActive = isGlyphActive || isTextItemsMode;
   const isGlyphComposite = glyphDebug.simplifyEnabled || glyphDebug.replaceEnabled;
 
   const bookmarkClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1310,7 +1307,46 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // cleanMode is fine: contrast is baked into canvas pixels at render time
   const isFiltered = nightMode;
   useEffect(() => {
-    if (!isGlyphActive || !fontDataLoaded || !isLoaded || isFiltered) {
+    if (!isOverlayActive || !isLoaded || isFiltered) {
+      const gc = glyphCanvasRef.current;
+      if (gc) {
+        const gCtx = gc.getContext('2d');
+        if (gCtx) gCtx.clearRect(0, 0, gc.width, gc.height);
+      }
+      pageGlyphDataRef.current = null;
+      return;
+    }
+
+    // textItems mode: draw raw pdf.js text items without glyph extraction
+    if (isTextItemsMode) {
+      const gc = glyphCanvasRef.current;
+      const pdfCanvas = canvasRef.current;
+      if (!gc || !pdfCanvas) return;
+      gc.width = pdfCanvas.width;
+      gc.height = pdfCanvas.height;
+      gc.style.width = pdfCanvas.style.width;
+      gc.style.height = pdfCanvas.style.height;
+
+      const gCtx = gc.getContext('2d')!;
+      gCtx.clearRect(0, 0, gc.width, gc.height);
+
+      const vpT = viewportTransformRef.current;
+      const renderScale = scaleRef.current * renderTierRef.current;
+      const pageIndex = currentPage - 1;
+      const rawItems = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
+      drawTextItems(gCtx, rawItems, vpT, renderScale);
+
+      // Log all text items to console for investigation
+      log.pdf.log(`[textItems] Page ${currentPage}: ${rawItems.length} items extracted by pdf.js`);
+      for (let i = 0; i < rawItems.length; i++) {
+        const it = rawItems[i];
+        log.pdf.log(`  #${i} "${it.str}" font=${it.fontName} fs=${pdfFontSize(it.transform).toFixed(1)} w=${it.width.toFixed(1)} tx=[${it.transform.map(v => v.toFixed(2)).join(',')}]`);
+      }
+      return;
+    }
+
+    // Glyph modes: need fontData loaded
+    if (!isGlyphActive || !fontDataLoaded) {
       const gc = glyphCanvasRef.current;
       if (gc) {
         const gCtx = gc.getContext('2d');
@@ -1386,8 +1422,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     })();
 
     return () => { cancelled = true; };
-   
-  }, [isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, isFiltered, pdfFileName, currentPage,
+
+  }, [isOverlayActive, isTextItemsMode, isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, isFiltered, pdfFileName, currentPage,
       glyphDebug.overlayMode, glyphDebug.simplifyEnabled, glyphDebug.simplifyTolerance,
       glyphDebug.replaceEnabled, glyphDebug.replaceFont]);
 
@@ -2010,7 +2046,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                     onMouseEnter={() => { if (glyphMenuTimerRef.current) { clearTimeout(glyphMenuTimerRef.current); glyphMenuTimerRef.current = null; } }}
                     onMouseLeave={() => { glyphMenuTimerRef.current = setTimeout(() => setGlyphMenuOpen(false), 300); }}
                   >
-                    {(['off', 'boxes', 'outlines'] as const).map(mode => (
+                    {(['off', 'textItems', 'boxes', 'outlines'] as const).map(mode => (
                       <label key={mode}>
                         <input
                           type="radio"
@@ -2018,7 +2054,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                           checked={glyphDebug.overlayMode === mode}
                           onChange={() => setGlyphDebug(s => ({ ...s, overlayMode: mode }))}
                         />
-                        {mode === 'off' ? 'Off' : mode === 'boxes' ? 'Show Boxes' : 'Show Outlines'}
+                        {mode === 'off' ? 'Off' : mode === 'textItems' ? 'Text Items' : mode === 'boxes' ? 'Glyph Boxes' : 'Glyph Outlines'}
                       </label>
                     ))}
                     <hr />

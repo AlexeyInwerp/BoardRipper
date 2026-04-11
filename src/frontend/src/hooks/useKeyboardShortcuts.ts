@@ -9,8 +9,15 @@ import { fileInputRefs } from '../store/file-inputs';
  * Global keyboard shortcut handler — attach once in App.
  * Uses shared fileInputRefs set by Toolbar.
  */
+// Track last known cursor position for context-sensitive shortcuts
+let _lastMouseX = 0;
+let _lastMouseY = 0;
+
 export function useKeyboardShortcuts() {
   useEffect(() => {
+    const trackMouse = (e: MouseEvent) => { _lastMouseX = e.clientX; _lastMouseY = e.clientY; };
+    document.addEventListener('mousemove', trackMouse, { passive: true });
+
     const handler = (e: KeyboardEvent) => {
       // Cmd/Ctrl+F → focus PDF search if a PDF panel is active, otherwise board search
       const focusSearch = getShortcut('focusSearch');
@@ -77,8 +84,9 @@ export function useKeyboardShortcuts() {
             return;
 
           case 'flipBoard': {
-            // When PDF panel is active, Space → fit-to-width instead
-            if (fileInputRefs.pdfSearch) {
+            // Cursor over a PDF panel → fit-to-width; otherwise → flip board
+            const hovered = document.elementFromPoint(_lastMouseX, _lastMouseY);
+            if (hovered?.closest('.pdf-viewer')) {
               e.preventDefault();
               window.dispatchEvent(new Event('pdf-fit-width'));
               return;
@@ -160,6 +168,7 @@ export function useKeyboardShortcuts() {
     document.addEventListener('keydown', blockKeyboardZoom);
     document.addEventListener('wheel', blockBrowserZoom, { passive: false });
     return () => {
+      document.removeEventListener('mousemove', trackMouse);
       document.removeEventListener('keydown', handler);
       document.removeEventListener('keydown', blockKeyboardZoom);
       document.removeEventListener('wheel', blockBrowserZoom);
