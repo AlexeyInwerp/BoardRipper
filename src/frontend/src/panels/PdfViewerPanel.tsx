@@ -290,19 +290,43 @@ export function invalidatePageCache(file?: string): void {
   }
 }
 
-/** Compute a text item's bounding rect in canvas-space */
+/** Transform a PDF-space point to canvas-pixel-space */
+function toCanvas(px: number, py: number, vpT: number[], scale: number): [number, number] {
+  return [
+    (vpT[0] * px + vpT[2] * py + vpT[4]) * scale,
+    (vpT[1] * px + vpT[3] * py + vpT[5]) * scale,
+  ];
+}
+
+/** Compute a text item's axis-aligned bounding rect in canvas-space.
+ *  Handles rotated/skewed text by projecting all 4 corners of the oriented
+ *  text rectangle through the viewport transform and taking the AABB. */
 function textItemRect(
   transform: number[], width: number, vpT: number[], scale: number,
 ): { x: number; y: number; w: number; h: number } {
-  const fontSize = pdfFontSize(transform);
-  const vx = vpT[0] * transform[4] + vpT[2] * transform[5] + vpT[4];
-  const vy = vpT[1] * transform[4] + vpT[3] * transform[5] + vpT[5];
-  return {
-    x: vx * scale,
-    y: vy * scale - fontSize * scale,
-    w: width * scale,
-    h: fontSize * scale * LINE_HEIGHT_RATIO,
-  };
+  const t = transform;
+  const fsx = Math.sqrt(t[0] * t[0] + t[1] * t[1]);
+  const fsy = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
+  const fontSize = fsy;
+  const h = fontSize * LINE_HEIGHT_RATIO;
+
+  const dx = fsx > 0 ? t[0] / fsx : 1;
+  const dy = fsx > 0 ? t[1] / fsx : 0;
+  const ux = fsy > 0 ? t[2] / fsy : 0;
+  const uy = fsy > 0 ? t[3] / fsy : 1;
+
+  const ex = t[4], ey = t[5];
+  const c0 = toCanvas(ex, ey, vpT, scale);
+  const c1 = toCanvas(ex + width * dx, ey + width * dy, vpT, scale);
+  const c2 = toCanvas(ex + h * ux, ey + h * uy, vpT, scale);
+  const c3 = toCanvas(ex + width * dx + h * ux, ey + width * dy + h * uy, vpT, scale);
+
+  const minX = Math.min(c0[0], c1[0], c2[0], c3[0]);
+  const minY = Math.min(c0[1], c1[1], c2[1], c3[1]);
+  const maxX = Math.max(c0[0], c1[0], c2[0], c3[0]);
+  const maxY = Math.max(c0[1], c1[1], c2[1], c3[1]);
+
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
 /** Compute zoom & pan to center a group of text items in the viewport */
@@ -729,17 +753,19 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (clean) {
       const tmpCanvas = acquireCanvas(offscreen.width, offscreen.height);
       const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
-      if (!tmpCtx) { releaseCanvas(offscreen); releaseCanvas(tmpCanvas); throw new Error('Canvas context failed for clean mode'); }
+      if (!tmpCtx) { offscreen.width = 1; offscreen.height = 1; releaseCanvas(tmpCanvas); throw new Error('Canvas context failed for clean mode'); }
       tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
       tmpCtx.drawImage(offscreen, 0, 0);
       const bitmap = await createImageBitmap(tmpCanvas);
-      releaseCanvas(offscreen);
-      releaseCanvas(tmpCanvas);
+      // Abandon pdf.js-rendered canvas (worker may still reference it)
+      offscreen.width = 1; offscreen.height = 1;
+      releaseCanvas(tmpCanvas); // tmpCanvas is safe to pool (only used for contrast filter)
       return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
     }
 
     const bitmap = await createImageBitmap(offscreen);
-    releaseCanvas(offscreen);
+    // Abandon pdf.js-rendered canvas (worker may still reference it)
+    offscreen.width = 1; offscreen.height = 1;
     return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
   }, [pdfFileName]);
 
@@ -858,31 +884,36 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         if (tmpCtx) {
           tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
           tmpCtx.drawImage(offscreen, 0, 0);
-          releaseCanvas(offscreen);
+          // Abandon offscreen to GC — pdf.js worker may still reference it
+          offscreen.width = 1; offscreen.height = 1;
           sourceCanvas = tmpCanvas;
         }
       }
 
-      // Create bitmap from offscreen BEFORE touching the visible canvas —
-      // this avoids the blank frame caused by canvas.width= clearing content.
-      let bitmap: ImageBitmap | null = null;
-      try { bitmap = await createImageBitmap(sourceCanvas); } catch { /* skip */ }
-      if (renderIdRef.current !== renderId) { releaseCanvas(sourceCanvas); bitmap?.close(); return; }
+      if (renderIdRef.current !== renderId) { releaseCanvas(sourceCanvas); return; }
 
-      // Atomic blit: resize + draw in one go, minimising the cleared-canvas window
+      // Blit to visible canvas SYNCHRONOUSLY from sourceCanvas — no async step
+      // between render completion and visible blit. This prevents any race with
+      // stale pdf.js worker operations or createImageBitmap orientation issues.
       const canvas = canvasRef.current;
       const highlight = highlightRef.current;
-      if (!canvas || !highlight) { releaseCanvas(sourceCanvas); bitmap?.close(); return; }
+      if (!canvas || !highlight) { releaseCanvas(sourceCanvas); return; }
 
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
-      releaseCanvas(sourceCanvas);
       const ctx = canvas.getContext('2d');
-      // Blit from bitmap (frozen snapshot) not sourceCanvas — avoids race with
-      // stale pdf.js worker draws that may still be queued on the offscreen canvas
-      if (ctx && bitmap) ctx.drawImage(bitmap, 0, 0);
+      if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
+
+      // Create bitmap AFTER the visible blit for cache storage only.
+      // sourceCanvas might get stale pdf.js draws during this await — that's
+      // fine because the visible canvas already has the correct content.
+      let bitmap: ImageBitmap | null = null;
+      try { bitmap = await createImageBitmap(sourceCanvas); } catch { /* skip */ }
+      // Don't pool sourceCanvas — abandon to GC (pdf.js worker may still reference it)
+      sourceCanvas.width = 1; sourceCanvas.height = 1;
+      if (renderIdRef.current !== renderId) { bitmap?.close(); return; }
       const tCopy = performance.now();
 
       scaleRef.current = baseScale;
