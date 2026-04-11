@@ -520,8 +520,16 @@ class PdfStore extends Emitter {
       const cached = await boardCache.getPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified);
       if (cached && cached.length === pdfDoc.pageCount) {
         // Ensure cached items have fontName (may be missing from older caches)
+        // Also filter degenerate whitespace items that slipped into older caches,
+        // and fix pdf.js false word breaks from kerning artifacts
         pdfDoc.textPages = cached.map(page =>
-          page.map(item => ({ ...item, fontName: (item as any).fontName ?? '' }))
+          page
+            .filter(item => item.str.trim() || item.width <= 100)
+            .map(item => ({
+              ...item,
+              str: item.str.replace(/(?<=\w) (?=\w)/g, ''),
+              fontName: (item as any).fontName ?? '',
+            }))
         );
         this.notify();
         return;
@@ -538,15 +546,23 @@ class PdfStore extends Emitter {
         const items: PdfTextItem[] = [];
         for (const item of content.items) {
           const ti = item as TextItem;
-          if (ti.str) {
-            items.push({
-              str: ti.str,
-              transform: ti.transform,
-              width: ti.width,
-              height: ti.height,
-              fontName: (ti as any).fontName ?? '',
-            });
-          }
+          if (!ti.str) continue;
+          // Skip degenerate whitespace-only items with absurd widths — pdf.js emits
+          // these as inter-column spacers in some PDFs and they cover the entire page,
+          // blocking click detection and polluting search results.
+          if (!ti.str.trim() && ti.width > 100) continue;
+          // Fix pdf.js false word breaks: large kerning adjustments (e.g. W→R, W→M)
+          // trigger pdf.js's word-break heuristic, inserting spaces into single text
+          // runs like "CPU_PWROK" → "CPU_PW ROK". Strip spaces between word chars
+          // within a single item — real word boundaries are between separate items.
+          const str = ti.str.replace(/(?<=\w) (?=\w)/g, '');
+          items.push({
+            str,
+            transform: ti.transform,
+            width: ti.width,
+            height: ti.height,
+            fontName: (ti as any).fontName ?? '',
+          });
         }
         pdfDoc.textPages.push(items);
         if (i % NOTIFY_INTERVAL === 0) this.notify(); // progress update
