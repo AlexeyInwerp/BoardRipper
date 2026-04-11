@@ -65,11 +65,20 @@ export interface PdfDocSnapshot {
 
 // Per-document snapshot cache: fileName → { version, snapshot }
 let docSnapshotVersion = 0;
+let lastPruneVersion = -1;
 pdfStore.subscribe(() => { docSnapshotVersion++; });
 
 const docSnapshots = new Map<string, { version: number; snapshot: PdfDocSnapshot }>();
 
 function getDocSnapshot(fileName: string): PdfDocSnapshot {
+  // Prune stale entries for documents that have been closed (at most once per version bump)
+  if (lastPruneVersion !== docSnapshotVersion) {
+    lastPruneVersion = docSnapshotVersion;
+    for (const key of docSnapshots.keys()) {
+      if (!pdfStore.isDocLoaded(key)) docSnapshots.delete(key);
+    }
+  }
+
   const cached = docSnapshots.get(fileName);
   if (cached && cached.version === docSnapshotVersion) return cached.snapshot;
 

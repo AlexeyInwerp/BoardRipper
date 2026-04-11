@@ -16,7 +16,9 @@
  */
 
 import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets } from './types';
+import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
+
+const decoder = new TextDecoder('utf-8');
 
 // ---------------------------------------------------------------------------
 // RC6 stream cipher (modified — byte-at-a-time, not standard block mode)
@@ -274,36 +276,6 @@ function parseContent(text: string, unitMul: number): { parts: FZPart[]; pins: F
   return { parts, pins, nails };
 }
 
-/**
- * Parse the tab-delimited description (BOM) section.
- * Returns a map of refdes → description.
- */
-function parseDescription(text: string): Map<string, string> {
-  const descMap = new Map<string, string>();
-  const lines = text.split(/\r?\n/);
-
-  // Skip first 2 lines (header + column names)
-  for (let i = 2; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line || line.startsWith('s')) continue; // skip lowercase-s lines
-
-    // <partno>\t<description>\t<quantity>\t<locations>\t<partno2>
-    const cols = line.split('\t');
-    if (cols.length < 4) continue;
-
-    const description = cols[1] ?? '';
-    const locations   = cols[3] ?? '';
-
-    // Locations is comma-separated list of reference designators
-    for (const loc of locations.split(',')) {
-      const refdes = loc.trim();
-      if (refdes) descMap.set(refdes, description);
-    }
-  }
-
-  return descMap;
-}
-
 // ---------------------------------------------------------------------------
 // Assembly: FZ parsed data → BoardData
 // ---------------------------------------------------------------------------
@@ -348,19 +320,7 @@ function assembleBoardData(
       };
     });
 
-    const pinPositions = pins.map(p => p.position);
-    let bounds = computeBBox(pinPositions);
-    let origin: Point;
-
-    if (pins.length > 0) {
-      origin = {
-        x: (bounds.minX + bounds.maxX) / 2,
-        y: (bounds.minY + bounds.maxY) / 2,
-      };
-    } else {
-      origin = { x: 0, y: 0 };
-      bounds = { minX: -50, minY: -50, maxX: 50, maxY: 50 };
-    }
+    const { origin, bounds } = computePartGeometry(pins);
 
     parts.push({
       name:   fzPart.name,
@@ -381,14 +341,7 @@ function assembleBoardData(
 
   // Generate rectangular outline from pin bounds (FZ has no explicit outline)
   const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
-  const margin = 20;
-  const globalBounds = computeBBox(allPoints);
-  const outline: Point[] = allPoints.length > 0 ? [
-    { x: globalBounds.minX - margin, y: globalBounds.minY - margin },
-    { x: globalBounds.maxX + margin, y: globalBounds.minY - margin },
-    { x: globalBounds.maxX + margin, y: globalBounds.maxY + margin },
-    { x: globalBounds.minX - margin, y: globalBounds.maxY + margin },
-  ] : [];
+  const outline = generateSyntheticOutline(allPoints);
 
   const bounds = computeBBox([...outline, ...allPoints]);
   const nets = buildNets(parts);
@@ -451,24 +404,14 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
   }
 
   const contentCompressed = data.subarray(contentStart, contentEnd);
-  const descrCompressed   = data.subarray(contentEnd, data.length - 4);
 
-  // Decompress both sections
+  // Decompress content section
   let contentText: string;
-  let descrText: string;
-  const decoder = new TextDecoder('utf-8');
 
   try {
     contentText = decoder.decode(await zlibInflate(contentCompressed));
   } catch (e) {
     throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
-  }
-
-  try {
-    descrText = descrCompressed.length > 0 ? decoder.decode(await zlibInflate(descrCompressed)) : '';
-  } catch {
-    // Description section may be empty or malformed — non-fatal
-    descrText = '';
   }
 
   // Parse unit multiplier
@@ -481,11 +424,7 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
     throw new Error('FZ file parsed but contains no parts or pins — file may be corrupted or empty');
   }
 
-  // Parse description (BOM) — cross-reference is informational only for now
-  // (BoardData doesn't have a mfgcode field yet)
-  if (descrText) {
-    parseDescription(descrText); // parsed but not used until BoardData supports it
-  }
+  // DESCR section ignored — BoardData does not support description yet
 
   return assembleBoardData(fzParts, fzPins, fzNails);
 }

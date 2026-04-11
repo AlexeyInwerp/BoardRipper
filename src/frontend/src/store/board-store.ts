@@ -114,6 +114,8 @@ class BoardStore extends Emitter {
   private _pdfFiles: Map<string, PdfEntry> = new Map();
   private _toasts: Toast[] = [];
   private _nextToastId = 1;
+  /** Guard against concurrent loadFile calls for the same file */
+  private _loading = new Set<string>();
   /** Callback fired when a new board tab is created (tabId, fileName) */
   onTabCreated: ((tabId: number, fileName: string) => void) | null = null;
   /** Callback fired when a board tab is closed (tabId) */
@@ -314,112 +316,120 @@ class BoardStore extends Emitter {
       return;
     }
 
-    const id = nextTabId++;
-    const vp = loadViewPrefs();
-    const tab: BoardTab = {
-      id,
-      fileName: file.name,
-      board: null,
-      selection: { ...emptySelection },
-      showTop: true,
-      showBottom: false,
-      butterfly: false,
-      searchQuery: '',
-      rotation: 0,
-      mirrorX: false,
-      mirrorY: false,
-      flipAxis: 'x',
-      showNetLines: vp.showNetLines,
-      showNetDim: vp.showNetDim,
-      showHoverInfo: vp.showHoverInfo,
-      followPdf: vp.followPdf,
-      showTraces: true,
-      showComponents: true,
-      showVias: false,
-      showPins: true,
-      showOutlines: true,
-      showLabels: true,
-      showGhosts: true,
-      layerStates: [],
-      pdfFileNames: [],
-      cacheKey: '',
-    };
-
-    this._tabs.push(tab);
-    this._activeTabId = id;
-    this.notify(); // notify immediately so existing renderers know the active tab changed
+    // Guard against concurrent loads of the same file
+    if (this._loading.has(file.name)) return;
+    this._loading.add(file.name);
 
     try {
-      const cached = await boardCache.get(file.name, file.size, file.lastModified);
-      if (cached) {
-        log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
-        tab.board = cached;
-        tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
-        tab.rotation = this.autoRotation(cached);
-        if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
-        const cachedFmt = getFormat(cached.format);
-        if (cachedFmt?.swapSides) {
+      const id = nextTabId++;
+      const vp = loadViewPrefs();
+      const tab: BoardTab = {
+        id,
+        fileName: file.name,
+        board: null,
+        selection: { ...emptySelection },
+        showTop: true,
+        showBottom: false,
+        butterfly: false,
+        searchQuery: '',
+        rotation: 0,
+        mirrorX: false,
+        mirrorY: false,
+        flipAxis: 'x',
+        showNetLines: vp.showNetLines,
+        showNetDim: vp.showNetDim,
+        showHoverInfo: vp.showHoverInfo,
+        followPdf: vp.followPdf,
+        showTraces: true,
+        showComponents: true,
+        showVias: false,
+        showPins: true,
+        showOutlines: true,
+        showLabels: true,
+        showGhosts: true,
+        layerStates: [],
+        pdfFileNames: [],
+        cacheKey: '',
+      };
+
+      this._tabs.push(tab);
+      this._activeTabId = id;
+      this.notify(); // notify immediately so existing renderers know the active tab changed
+
+      try {
+        const cached = await boardCache.get(file.name, file.size, file.lastModified);
+        if (cached) {
+          log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
+          tab.board = cached;
+          tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
+          tab.rotation = this.autoRotation(cached);
+          if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
+          const cachedFmt = getFormat(cached.format);
+          if (cachedFmt?.swapSides) {
+            tab.showTop = false;
+            tab.showBottom = true;
+          }
+          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, cachedFmt?.swapSides ? 'bottom' : 'top');
+          this.autoBindBoard(file.name);
+          // Create panel AFTER board + rotation are ready so the renderer sees correct state
+          this.onTabCreated?.(id, file.name);
+          this.notify();
+          return;
+        }
+
+        log.parser.log(`Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+        const t0 = performance.now();
+        const buffer = await file.arrayBuffer();
+        const board = await parseBoardFile(buffer, file.name);
+        const elapsed = (performance.now() - t0).toFixed(0);
+        log.parser.log(`Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
+
+        // Log side detection summary
+        const fmt = getFormat(board.format);
+        const topParts = board.parts.filter(p => p.side === 'top').length;
+        const botParts = board.parts.filter(p => p.side === 'bottom').length;
+        const topNails = board.nails.filter(n => n.side === 'top').length;
+        const botNails = board.nails.filter(n => n.side === 'bottom').length;
+        const topTP = board.parts.filter(p => p.side === 'top' && p.pins.length === 1).length;
+        const botTP = board.parts.filter(p => p.side === 'bottom' && p.pins.length === 1).length;
+        log.parser.log(
+          `Side detection: top=${topParts} parts/${topNails} nails, bottom=${botParts} parts/${botNails} nails` +
+          (topTP + botTP > 0 ? `, testpoints=${topTP}T/${botTP}B` : '') +
+          (fmt?.flipY ? ', flipY=ON' : '') +
+          (fmt?.swapSides ? ', swapSides=ON' : ''),
+        );
+
+        tab.board = board;
+        tab.rotation = this.autoRotation(board);
+        if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
+        if (fmt?.swapSides) {
           tab.showTop = false;
           tab.showBottom = true;
         }
-        if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, cachedFmt?.swapSides ? 'bottom' : 'top');
+        if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, fmt?.swapSides ? 'bottom' : 'top');
+
+        await boardCache.put(file.name, file.size, file.lastModified, board);
+
         this.autoBindBoard(file.name);
-        // Create panel AFTER board + rotation are ready so the renderer sees correct state
-        this.onTabCreated?.(id, file.name);
+      } catch (err) {
+        log.parser.error(`Failed to load ${file.name}:`, err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.addToast(`Failed to load ${file.name}: ${errMsg}`, 'error');
+        const idx = this._tabs.indexOf(tab);
+        if (idx !== -1) this._tabs.splice(idx, 1);
+        if (this._activeTabId === tab.id) {
+          this._activeTabId = this._tabs.length > 0 ? this._tabs[this._tabs.length - 1].id : null;
+        }
         this.notify();
         return;
       }
 
-      log.parser.log(`Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
-      const t0 = performance.now();
-      const buffer = await file.arrayBuffer();
-      const board = await parseBoardFile(buffer, file.name);
-      const elapsed = (performance.now() - t0).toFixed(0);
-      log.parser.log(`Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
-
-      // Log side detection summary
-      const fmt = getFormat(board.format);
-      const topParts = board.parts.filter(p => p.side === 'top').length;
-      const botParts = board.parts.filter(p => p.side === 'bottom').length;
-      const topNails = board.nails.filter(n => n.side === 'top').length;
-      const botNails = board.nails.filter(n => n.side === 'bottom').length;
-      const topTP = board.parts.filter(p => p.side === 'top' && p.pins.length === 1).length;
-      const botTP = board.parts.filter(p => p.side === 'bottom' && p.pins.length === 1).length;
-      log.parser.log(
-        `Side detection: top=${topParts} parts/${topNails} nails, bottom=${botParts} parts/${botNails} nails` +
-        (topTP + botTP > 0 ? `, testpoints=${topTP}T/${botTP}B` : '') +
-        (fmt?.flipY ? ', flipY=ON' : '') +
-        (fmt?.swapSides ? ', swapSides=ON' : ''),
-      );
-
-      tab.board = board;
-      tab.rotation = this.autoRotation(board);
-      if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
-      if (fmt?.swapSides) {
-        tab.showTop = false;
-        tab.showBottom = true;
-      }
-      if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, fmt?.swapSides ? 'bottom' : 'top');
-
-      await boardCache.put(file.name, file.size, file.lastModified, board);
-
-      this.autoBindBoard(file.name);
-    } catch (err) {
-      log.parser.error(`Failed to load ${file.name}:`, err);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      this.addToast(`Failed to load ${file.name}: ${errMsg}`, 'error');
-      const idx = this._tabs.indexOf(tab);
-      if (idx !== -1) this._tabs.splice(idx, 1);
-      if (this._activeTabId === tab.id) {
-        this._activeTabId = this._tabs.length > 0 ? this._tabs[this._tabs.length - 1].id : null;
-      }
+      // Create panel AFTER board + rotation are ready so the renderer sees correct state
+      this.onTabCreated?.(id, file.name);
       this.notify();
-      return;
+    } finally {
+      this._loading.delete(file.name);
     }
-
-    // Create panel AFTER board + rotation are ready so the renderer sees correct state
-    this.onTabCreated?.(id, file.name);
-    this.notify();
   }
 
   private autoRotation(board: BoardData): number {

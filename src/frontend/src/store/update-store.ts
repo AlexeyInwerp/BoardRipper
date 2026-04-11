@@ -1,4 +1,5 @@
 /** Reactive store for update checking — polls /api/update/status */
+import { Emitter } from './emitter';
 import { log } from './log-store';
 
 type UpdateState = {
@@ -23,51 +24,32 @@ type ProgressEntry = {
   status: 'info' | 'error' | 'done';
 };
 
-let state: UpdateState = {
-  current_version: 'dev',
-  has_update: false,
-  docker_available: false,
-};
+class UpdateStore extends Emitter {
+  private _state: UpdateState = {
+    current_version: 'dev',
+    has_update: false,
+    docker_available: false,
+  };
+  private _updating = false;
+  private _progress: ProgressEntry[] = [];
 
-let updating = false;
-let progress: ProgressEntry[] = [];
-const listeners = new Set<() => void>();
-let version = 0;
-let lastVer = -1;
-let cached: { state: UpdateState; updating: boolean; progress: ProgressEntry[] } | null = null;
-
-function notify() {
-  version++;
-  listeners.forEach(fn => fn());
-}
-
-export const updateStore = {
-  subscribe(fn: () => void) {
-    listeners.add(fn);
-    return () => { listeners.delete(fn); };
-  },
-
-  getSnapshot() {
-    if (lastVer !== version || !cached) {
-      cached = { state: { ...state }, updating, progress: [...progress] };
-      lastVer = version;
-    }
-    return cached;
-  },
+  get state(): UpdateState { return this._state; }
+  get updating(): boolean { return this._updating; }
+  get progress(): ProgressEntry[] { return this._progress; }
 
   async fetchStatus() {
     try {
       const res = await fetch('/api/update/status');
       if (!res.ok) return;
-      state = await res.json();
-      if (state.has_update) {
-        log.update.log(`Update available: ${state.current_version} → ${state.latest_version}`);
-      } else if (state.current_version !== 'dev') {
-        log.update.log(`Running ${state.current_version} (up to date)`);
+      this._state = await res.json();
+      if (this._state.has_update) {
+        log.update.log(`Update available: ${this._state.current_version} → ${this._state.latest_version}`);
+      } else if (this._state.current_version !== 'dev') {
+        log.update.log(`Running ${this._state.current_version} (up to date)`);
       }
-      notify();
+      this.notify();
     } catch { /* offline — dev mode or no backend */ }
-  },
+  }
 
   async check() {
     log.update.log('Checking for updates...');
@@ -77,40 +59,40 @@ export const updateStore = {
         log.update.error(`Check failed: HTTP ${res.status}`);
         return;
       }
-      state = await res.json();
-      if (state.has_update) {
-        log.update.log(`New version found: ${state.latest_version}`);
+      this._state = await res.json();
+      if (this._state.has_update) {
+        log.update.log(`New version found: ${this._state.latest_version}`);
       } else {
-        log.update.log(`Already on latest (${state.current_version})`);
+        log.update.log(`Already on latest (${this._state.current_version})`);
       }
-      notify();
+      this.notify();
     } catch (e) {
       log.update.error('Check failed:', e);
     }
-  },
+  }
 
   async apply() {
-    if (updating) return;
-    updating = true;
-    progress = [];
-    log.update.log(`Starting update to ${state.latest_version}...`);
-    notify();
+    if (this._updating) return;
+    this._updating = true;
+    this._progress = [];
+    log.update.log(`Starting update to ${this._state.latest_version}...`);
+    this.notify();
 
     try {
       const res = await fetch('/api/update/apply', { method: 'POST' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'unknown' }));
         log.update.error(`Apply failed: ${err.error}`);
-        progress.push({ time: new Date().toISOString(), message: err.error, status: 'error' });
-        updating = false;
-        notify();
+        this._progress.push({ time: new Date().toISOString(), message: err.error, status: 'error' });
+        this._updating = false;
+        this.notify();
         return;
       }
     } catch {
       log.update.error('Apply request failed');
-      progress.push({ time: new Date().toISOString(), message: 'Request failed', status: 'error' });
-      updating = false;
-      notify();
+      this._progress.push({ time: new Date().toISOString(), message: 'Request failed', status: 'error' });
+      this._updating = false;
+      this.notify();
       return;
     }
 
@@ -119,7 +101,7 @@ export const updateStore = {
     const es = new EventSource('/api/update/progress');
     es.onmessage = (e) => {
       const entry: ProgressEntry = JSON.parse(e.data);
-      progress.push(entry);
+      this._progress.push(entry);
 
       // Mirror progress to debug log
       if (entry.status === 'error') {
@@ -127,12 +109,12 @@ export const updateStore = {
       } else {
         log.update.log(entry.message);
       }
-      notify();
+      this.notify();
 
       if (entry.status === 'done' || entry.status === 'error') {
         es.close();
-        updating = false;
-        notify();
+        this._updating = false;
+        this.notify();
 
         // If update succeeded, auto-reload after 30s
         if (entry.status === 'done') {
@@ -144,11 +126,13 @@ export const updateStore = {
     es.onerror = () => {
       log.update.warn('SSE connection lost');
       es.close();
-      updating = false;
-      notify();
+      this._updating = false;
+      this.notify();
     };
-  },
-};
+  }
+}
+
+export const updateStore = new UpdateStore();
 
 // Initial fetch + periodic poll every 30 minutes (skip in test environments)
 if (typeof window !== 'undefined' && !import.meta.env.SSR) {

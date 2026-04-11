@@ -24,7 +24,7 @@
  */
 
 import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets } from './types';
+import { computeBBox, buildNets, computePartGeometry } from './types';
 
 // ---------------------------------------------------------------------------
 // Decoding
@@ -264,17 +264,7 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
       });
     }
 
-    let origin: Point;
-    let bounds = computeBBox(pins.map(p => p.position));
-    if (pins.length > 0) {
-      origin = {
-        x: (bounds.minX + bounds.maxX) / 2,
-        y: (bounds.minY + bounds.maxY) / 2,
-      };
-    } else {
-      origin = { x: 0, y: 0 };
-      bounds = { minX: -50, minY: -50, maxX: 50, maxY: 50 };
-    }
+    const { origin, bounds } = computePartGeometry(pins);
 
     parts.push({
       name:   partNames[i],
@@ -304,6 +294,10 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
       nails.push({ position: { x, y }, side, net });
     }
     ncount++;
+  }
+
+  if (parts.length === 0 && outline.length === 0) {
+    throw new Error('BRD file parsed but contains no parts or outline — file may be corrupt or empty');
   }
 
   // ---- Finalise -----------------------------------------------------------

@@ -98,6 +98,78 @@ export function computeBBox(points: Point[]): BBox {
   return { minX, minY, maxX, maxY };
 }
 
+/**
+ * Compute part origin (center of pin bounds) and bounding box from pin positions.
+ * If no pins, returns origin {0,0} with a small default bounding box.
+ */
+export function computePartGeometry(pins: Pin[]): { origin: Point; bounds: BBox } {
+  if (pins.length > 0) {
+    const bounds = computeBBox(pins.map(p => p.position));
+    const origin: Point = {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+    };
+    return { origin, bounds };
+  }
+  return {
+    origin: { x: 0, y: 0 },
+    bounds: { minX: -50, minY: -50, maxX: 50, maxY: 50 },
+  };
+}
+
+/**
+ * Generate a rectangular outline from a set of points with an optional margin.
+ * Returns an empty array if no points are provided.
+ */
+export function generateSyntheticOutline(points: Point[], margin = 20): Point[] {
+  if (points.length === 0) return [];
+  const b = computeBBox(points);
+  return [
+    { x: b.minX - margin, y: b.minY - margin },
+    { x: b.maxX + margin, y: b.minY - margin },
+    { x: b.maxX + margin, y: b.maxY + margin },
+    { x: b.minX - margin, y: b.maxY + margin },
+  ];
+}
+
+/**
+ * Greedy nearest-neighbor chain: connect line segments into a single ordered polygon.
+ * Each segment is a pair of points [start, end]. The algorithm picks the closest
+ * unvisited segment endpoint to the current chain tail and appends the far endpoint.
+ */
+export function chainSegments(segments: Array<[Point, Point]>): Point[] {
+  if (segments.length === 0) return [];
+
+  const used = new Uint8Array(segments.length);
+  const chain: Point[] = [];
+
+  // Start with segment 0: push both endpoints
+  chain.push(segments[0][0], segments[0][1]);
+  used[0] = 1;
+
+  for (let step = 1; step < segments.length; step++) {
+    const last = chain[chain.length - 1];
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    let bestFlip = false;
+
+    for (let j = 0; j < segments.length; j++) {
+      if (used[j]) continue;
+      const d0 = Math.hypot(last.x - segments[j][0].x, last.y - segments[j][0].y);
+      const d1 = Math.hypot(last.x - segments[j][1].x, last.y - segments[j][1].y);
+      if (d0 < bestDist) { bestDist = d0; bestIdx = j; bestFlip = false; }
+      if (d1 < bestDist) { bestDist = d1; bestIdx = j; bestFlip = true; }
+    }
+
+    if (bestIdx < 0) break;
+    used[bestIdx] = 1;
+    // Append the far endpoint (near endpoint ≈ current chain tail)
+    chain.push(bestFlip ? segments[bestIdx][0] : segments[bestIdx][1]);
+  }
+
+  return chain;
+}
+
 export function buildNets(parts: Part[]): Map<string, Net> {
   const nets = new Map<string, Net>();
   for (let pi = 0; pi < parts.length; pi++) {

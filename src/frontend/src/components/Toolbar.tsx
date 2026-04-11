@@ -1,7 +1,8 @@
-import { useRef, useEffect, useState, useSyncExternalStore } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useUpdateStore } from '../hooks/useUpdateStore';
 import { ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
 import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
@@ -10,7 +11,7 @@ import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 
 /** Dropdown showing release notes + update/download action */
-function UpdateBadge({ update }: { update: ReturnType<typeof updateStore.getSnapshot> }) {
+function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { state, updating, progress } = update;
@@ -108,7 +109,7 @@ export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis } = useBoardStore();
-  const update = useSyncExternalStore(updateStore.subscribe, updateStore.getSnapshot);
+  const update = useUpdateStore();
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
   const hasTraces = fmt?.hasTraces ?? false;

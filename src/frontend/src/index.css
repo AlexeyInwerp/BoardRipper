@@ -1301,6 +1301,14 @@ html, body, #root {
   color: var(--text-secondary);
   margin: 0 0 8px 0;
 }
+.pdf-quality-selector { margin-bottom: 12px; }
+.pdf-quality-details {
+  font-size: 0.75em;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  margin-top: 2px;
+}
+
 .scroll-bindings-editor {
   padding: 4px 0;
 }

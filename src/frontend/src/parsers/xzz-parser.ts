@@ -1,5 +1,5 @@
 import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets } from './types';
+import { computeBBox, buildNets, chainSegments } from './types';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -195,6 +195,7 @@ function desDecrypt(buf: Uint8Array): Uint8Array {
 
 const XZZ_SCALE  = 10000;
 const OUTLINE_LAYER = 28;
+const decoder = new TextDecoder('utf-8', { fatal: false });
 
 interface Segment { p1: Point; p2: Point; }
 
@@ -205,39 +206,7 @@ function ru32(d: Uint8Array, o: number): number {
 function ri32(d: Uint8Array, o: number): number { return ru32(d, o) | 0; }
 
 function rstr(d: Uint8Array, o: number, n: number): string {
-  return new TextDecoder('utf-8', { fatal: false }).decode(d.subarray(o, o + n)).replace(/\0/g, '').trim();
-}
-
-/** Greedy chain: connect line segments into a single ordered polygon.
- *  Always picks the nearest unvisited segment — no distance threshold,
- *  so the polygon stays continuous even if a few segments are missing.
- */
-function chainSegments(segs: Segment[]): Point[] {
-  if (!segs.length) return [];
-  const used = new Uint8Array(segs.length);
-  const chain: Point[] = [];
-
-  // Start with segment 0
-  chain.push({ ...segs[0].p1 }, { ...segs[0].p2 });
-  used[0] = 1;
-
-  for (let step = 1; step < segs.length; step++) {
-    const last = chain[chain.length - 1];
-    let bi = -1, bd = Infinity, flip = false;
-    for (let i = 0; i < segs.length; i++) {
-      if (used[i]) continue;
-      const d1 = Math.hypot(last.x - segs[i].p1.x, last.y - segs[i].p1.y);
-      const d2 = Math.hypot(last.x - segs[i].p2.x, last.y - segs[i].p2.y);
-      if (d1 < bd) { bd = d1; bi = i; flip = false; }
-      if (d2 < bd) { bd = d2; bi = i; flip = true; }
-    }
-    if (bi < 0) break;
-    // Append the far endpoint of the matched segment (near endpoint ≈ last point)
-    chain.push(flip ? { ...segs[bi].p1 } : { ...segs[bi].p2 });
-    used[bi] = 1;
-  }
-
-  return chain;
+  return decoder.decode(d.subarray(o, o + n)).replace(/\0/g, '').trim();
 }
 
 function parseNetBlock(data: Uint8Array): Map<number, string> {
@@ -816,7 +785,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
 
   // Build outline — chain segments into a continuous path.
   // Sub-paths separated by NaN pen-ups are kept as-is; drawOutline handles them.
-  const outline = chainSegments(segments);
+  const outline = chainSegments(segments.map(s => [s.p1, s.p2] as [Point, Point]));
 
   // Build parts
   const parts: Part[] = [];
@@ -837,6 +806,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     const raw2 = netDict.get(tp.netIndex) ?? '';
     return { position: { x: tp.x, y: tp.y }, side: 'top' as const, net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
   });
+
+  if (parts.length === 0 && outline.length === 0) {
+    throw new Error('XZZ file parsed but contains no parts or outline — file may be corrupt or empty');
+  }
 
   const allPts: Point[] = [...outline, ...parts.flatMap(p => p.pins.map(pi => pi.position))];
   const bounds = computeBBox(allPts.length > 0 ? allPts : [{ x: 0, y: 0 }]);
