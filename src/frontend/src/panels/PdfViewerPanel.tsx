@@ -170,14 +170,9 @@ function acquireCanvas(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 function releaseCanvas(c: HTMLCanvasElement): void {
-  if (_canvasPool.length < CANVAS_POOL_CAP) {
-    _canvasPool.push(c);
-    // Defer shrinking to next microtask — avoids blocking the main thread
-    queueMicrotask(() => { c.width = 1; c.height = 1; });
-  } else {
-    c.width = 1;
-    c.height = 1;
-  }
+  c.width = 1;
+  c.height = 1;
+  if (_canvasPool.length < CANVAS_POOL_CAP) _canvasPool.push(c);
 }
 
 /** Clamp a pdf.js render scale so the resulting canvas stays within GPU limits. */
@@ -699,8 +694,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const offCtx = offscreen.getContext('2d', { alpha: false });
     if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-
     // 'display' intent is significantly faster than 'print' for complex schematics
     const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
     const onAbort = () => task.cancel();
@@ -904,9 +897,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         setAdjTrigger(t => t + 1);
       }, qcfgRef.current.adjSettleMs);
 
-      // Ensure a preview (tier-1) exists for instant fallback on future renders
+      // Ensure a preview (tier-1) exists for instant fallback on future zoom.
+      // Skip if we just rendered at tier 1 — the hi-res cache already has it.
       const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
-      if (!getPreviewCache(pvKey)) {
+      if (resTier > 1 && !getPreviewCache(pvKey)) {
         renderPageToBitmap(currentPage, containerWidth, 1, cleanMode)
           .then(result => { putPreviewCache(pvKey, result); })
           .catch(() => {});
