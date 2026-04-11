@@ -131,8 +131,21 @@ export function loadPdfQuality(): PdfRenderQuality {
   return 'high';
 }
 
+/** Scale cache limits by device memory (navigator.deviceMemory).
+ *  Low-RAM devices (≤2GB) get halved pixel budgets to prevent OOM. */
+function applyDeviceMemoryScaling(cfg: PdfQualityConfig): PdfQualityConfig {
+  const mem = (navigator as { deviceMemory?: number }).deviceMemory;
+  if (!mem || mem >= 4) return cfg; // 4GB+ or unknown — use full config
+  const scale = mem <= 2 ? 0.5 : 0.75;
+  return {
+    ...cfg,
+    cacheMaxEntries: Math.max(4, Math.round(cfg.cacheMaxEntries * scale)),
+    cacheMaxPixels: Math.round(cfg.cacheMaxPixels * scale),
+  };
+}
+
 export function getPdfQualityConfig(q: PdfRenderQuality): PdfQualityConfig {
-  return QUALITY_CONFIGS[q];
+  return applyDeviceMemoryScaling(QUALITY_CONFIGS[q]);
 }
 
 const MAX_CANVAS_DIM = 4096;
@@ -989,36 +1002,48 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         setAdjTrigger(t => t + 1);
       }, qcfgRef.current.adjSettleMs);
 
-      // Ensure a preview (tier-1) exists for instant fallback on future zoom.
-      // Skip if we just rendered at tier 1 — the hi-res cache already has it.
-      const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
-      if (resTier > 1 && !getPreviewCache(pvKey)) {
-        renderPageToBitmap(currentPage, containerWidth, 1, cleanMode)
-          .then(result => { putPreviewCache(pvKey, result); })
-          .catch(() => {});
-      }
-
-      // Prefetch adjacent pages at adj tier (fire-and-forget)
+      // Defer all prefetch work to idle time so the main render doesn't
+      // compete with preview/adjacent renders for CPU/GPU. requestIdleCallback
+      // fires when the browser is idle (after paint, before next frame deadline).
       const pfId = ++prefetchIdRef.current;
       const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier));
-      const pagesToPrefetch = [currentPage + 1, currentPage - 1].filter(p => p >= 1 && p <= pageCount);
-      for (const pNum of pagesToPrefetch) {
-        const pfKey = pageCacheKey(pdfFileName, pNum, adjPfTier, cleanMode);
-        if (getPageCache(pfKey)) continue;
-        renderPageToBitmap(pNum, containerWidth, adjPfTier, cleanMode)
-          .then(result => {
-            if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
-            putPageCache(pfKey, result);
-            log.perf.log(`prefetched page ${pNum} tier=${adjPfTier}`);
-          })
-          .catch(() => {});
-        // Also prefetch preview for adjacent pages
-        const adjPvKey = previewCacheKey(pdfFileName, pNum, cleanMode);
-        if (!getPreviewCache(adjPvKey)) {
-          renderPageToBitmap(pNum, containerWidth, 1, cleanMode)
-            .then(result => { putPreviewCache(adjPvKey, result); })
+      const idlePrefetch = () => {
+        if (prefetchIdRef.current !== pfId) return; // stale
+
+        // Preview for current page (only if rendered at hi-res)
+        const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
+        if (resTier > 1 && !getPreviewCache(pvKey)) {
+          renderPageToBitmap(currentPage, containerWidth, 1, cleanMode)
+            .then(result => { putPreviewCache(pvKey, result); })
             .catch(() => {});
         }
+
+        // Adjacent pages: preview + hi-res
+        const pagesToPrefetch = [currentPage + 1, currentPage - 1].filter(p => p >= 1 && p <= pageCount);
+        for (const pNum of pagesToPrefetch) {
+          if (prefetchIdRef.current !== pfId) return;
+          const adjPvKey = previewCacheKey(pdfFileName, pNum, cleanMode);
+          if (!getPreviewCache(adjPvKey)) {
+            renderPageToBitmap(pNum, containerWidth, 1, cleanMode)
+              .then(result => { putPreviewCache(adjPvKey, result); })
+              .catch(() => {});
+          }
+          const pfKey = pageCacheKey(pdfFileName, pNum, adjPfTier, cleanMode);
+          if (!getPageCache(pfKey)) {
+            renderPageToBitmap(pNum, containerWidth, adjPfTier, cleanMode)
+              .then(result => {
+                if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
+                putPageCache(pfKey, result);
+                log.perf.log(`prefetched page ${pNum} tier=${adjPfTier}`);
+              })
+              .catch(() => {});
+          }
+        }
+      };
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(idlePrefetch, { timeout: 2000 });
+      } else {
+        setTimeout(idlePrefetch, 200); // fallback for Safari
       }
     } catch (err) {
       if (err instanceof Error && err.message?.includes('cancel')) {
@@ -1044,9 +1069,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     if (highlight.style.display === 'none') highlight.style.display = '';
 
+    // Skip redraw if zoom/tier haven't changed — highlights are drawn in canvas
+    // coordinates which only change with zoom, not with pan (CSS transform handles pan).
+    const currentZoomKey = scaleRef.current * renderTierRef.current;
+    if (lastHighlightZoomRef.current === currentZoomKey && blinkPhaseRef.current === 0) {
+      return; // zoom unchanged, no blink active — cached highlights are still valid
+    }
+    lastHighlightZoomRef.current = currentZoomKey;
+
     const hCtx = highlight.getContext('2d')!;
     hCtx.clearRect(0, 0, highlight.width, highlight.height);
-    const scale = scaleRef.current * renderTierRef.current ;
+    const scale = currentZoomKey;
     const vpT = viewportTransformRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1;
 

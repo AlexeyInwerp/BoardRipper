@@ -2247,11 +2247,13 @@ html, body, #root {
   overflow: hidden;
   position: relative;
   touch-action: none;
+  contain: layout style paint;
 }
 
 .pdf-page-wrapper {
   position: relative;
   flex-shrink: 0;
+  contain: layout style;
 }
 
 .pdf-page-wrapper canvas {
