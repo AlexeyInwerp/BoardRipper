@@ -161,6 +161,7 @@ function hysteresisFilter(rawTier: number): number {
 }
 
 // --- Offscreen canvas pool (avoids GC churn during fast zoom/page navigation) ---
+const CANVAS_POOL_CAP = 8;
 const _canvasPool: HTMLCanvasElement[] = [];
 function acquireCanvas(w: number, h: number): HTMLCanvasElement {
   const c = _canvasPool.pop() ?? document.createElement('canvas');
@@ -169,11 +170,14 @@ function acquireCanvas(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 function releaseCanvas(c: HTMLCanvasElement): void {
-  // Shrink canvas before pooling to release its backing store memory
-  c.width = 1;
-  c.height = 1;
-  // Cap pool size to avoid hoarding memory
-  if (_canvasPool.length < 4) _canvasPool.push(c);
+  if (_canvasPool.length < CANVAS_POOL_CAP) {
+    _canvasPool.push(c);
+    // Defer shrinking to next microtask — avoids blocking the main thread
+    queueMicrotask(() => { c.width = 1; c.height = 1; });
+  } else {
+    c.width = 1;
+    c.height = 1;
+  }
 }
 
 /** Clamp a pdf.js render scale so the resulting canvas stays within GPU limits. */
@@ -246,12 +250,36 @@ function getPageCache(key: string): CachedRender | undefined {
   return entry;
 }
 
+// --- Preview cache: always-available tier-1 renders (never evicted by hi-res) ---
+const PREVIEW_CACHE_MAX = 6;
+const _previewCache = new Map<string, CachedRender>();
+function previewCacheKey(file: string, page: number, clean: boolean): string {
+  return `${file}:${page}:${clean ? 1 : 0}`;
+}
+function putPreviewCache(key: string, entry: CachedRender): void {
+  if (_previewCache.size >= PREVIEW_CACHE_MAX && !_previewCache.has(key)) {
+    const oldest = _previewCache.keys().next().value!;
+    _previewCache.get(oldest)!.bitmap.close();
+    _previewCache.delete(oldest);
+  }
+  const existing = _previewCache.get(key);
+  if (existing) existing.bitmap.close();
+  _previewCache.set(key, entry);
+}
+function getPreviewCache(key: string): CachedRender | undefined {
+  const entry = _previewCache.get(key);
+  if (entry) { _previewCache.delete(key); _previewCache.set(key, entry); }
+  return entry;
+}
+
 /** Invalidate all cache entries for a given file (e.g. on clean mode toggle) */
 export function invalidatePageCache(file?: string): void {
   if (!file) {
     for (const e of _pageCache.values()) e.bitmap.close();
     _pageCache.clear();
     _pageCacheTotalPixels = 0;
+    for (const e of _previewCache.values()) e.bitmap.close();
+    _previewCache.clear();
     return;
   }
   for (const [k, v] of _pageCache) {
@@ -260,6 +288,9 @@ export function invalidatePageCache(file?: string): void {
       v.bitmap.close();
       _pageCache.delete(k);
     }
+  }
+  for (const [k, v] of _previewCache) {
+    if (k.startsWith(file + ':')) { v.bitmap.close(); _previewCache.delete(k); }
   }
 }
 
@@ -553,8 +584,49 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [adjTrigger, setAdjTrigger] = useState(0);
   const adjDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Clamp pan so the page stays within view boundaries */
+  const clampPan = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const containerW = container.clientWidth;
+    const containerH = container.clientHeight;
+    const zoom = zoomRef.current;
+    const cssH = pageCssHRef.current;
+    let { x, y } = panRef.current;
+
+    // --- X axis: keep page covering the container width ---
+    // Page screen width = containerW * zoom (CSS width is containerW, scaled by zoom).
+    // When page is narrower than container, center it.
+    // When wider, clamp so both edges stay reachable:
+    //   left edge on screen  = panX              → must be ≤ 0  (can't expose left gap)
+    //   right edge on screen = panX + pageW      → must be ≥ containerW (can't expose right gap)
+    const pageW = containerW * zoom;
+    if (pageW < containerW - 1) {
+      // Page fits — center horizontally
+      x = (containerW - pageW) / 2;
+    } else if (pageW > containerW + 1) {
+      // Page wider — clamp: right edge reachable, left edge reachable
+      const xMin = containerW - pageW; // most negative pan (scrolled fully right)
+      const xMax = 0;                  // most positive pan (left edge at container left)
+      x = Math.max(xMin, Math.min(xMax, x));
+    }
+    // else pageW ≈ containerW (zoom ≈ 1): don't clamp, allow smooth cursor-centric zoom
+
+    // --- Y axis: can't scroll past first/last page ---
+    if (cssH > 0) {
+      const pageH = cssH * zoom;
+      const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+      const total = pdfStore.getDocPageCount(pdfFileName);
+      if (curPage === 1) y = Math.min(y, 0);
+      if (curPage === total) y = Math.max(y, containerH - pageH);
+    }
+
+    panRef.current = { x, y };
+  }, [pdfFileName]);
+
   /** Push zoom/pan refs to DOM + throttled React state for toolbar */
   const syncTransform = useCallback(() => {
+    clampPan();
     applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current);
     if (!zoomDisplayRafRef.current) {
       zoomDisplayRafRef.current = requestAnimationFrame(() => {
@@ -562,7 +634,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         setZoomDisplay(zoomRef.current);
       });
     }
-  }, []);
+  }, [clampPan]);
 
   /** Schedule a re-render at exact zoom resolution.
    *  Adaptive throttle: renders at a rate the system can sustain (based on EMA of
@@ -610,8 +682,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Render a single page to an ImageBitmap (shared by main render + prefetch) */
   const renderPageToBitmap = useCallback(async (
     pageNum: number, containerWidth: number, tier: number, clean: boolean,
+    signal?: AbortSignal,
   ): Promise<{ bitmap: ImageBitmap; width: number; height: number; cssW: number; cssH: number; baseScale: number; vpHeight: number; vpTransform: number[] }> => {
     const page = await pdfStore.getPageFor(pdfFileName, pageNum);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const unscaledViewport = page.getViewport({ scale: 1 });
     const baseScale = containerWidth / unscaledViewport.width;
 
@@ -623,16 +697,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const cssH = unscaledViewport.height * baseScale;
 
     const offscreen = acquireCanvas(viewport.width, viewport.height);
-    const offCtx = offscreen.getContext('2d');
+    const offCtx = offscreen.getContext('2d', { alpha: false });
     if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
     // 'display' intent is significantly faster than 'print' for complex schematics
-    await page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' }).promise;
+    const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
+    const onAbort = () => task.cancel();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try { await task.promise; } catch (err) { releaseCanvas(offscreen); throw err; } finally { signal?.removeEventListener('abort', onAbort); }
+
+    if (signal?.aborted) { releaseCanvas(offscreen); throw new DOMException('Aborted', 'AbortError'); }
 
     // Apply contrast filter for clean mode before creating bitmap
     if (clean) {
       const tmpCanvas = acquireCanvas(offscreen.width, offscreen.height);
-      const tmpCtx = tmpCanvas.getContext('2d');
+      const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
       if (!tmpCtx) { releaseCanvas(offscreen); releaseCanvas(tmpCanvas); throw new Error('Canvas context failed for clean mode'); }
       tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
       tmpCtx.drawImage(offscreen, 0, 0);
@@ -660,7 +741,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
     canvas.style.width = `${entry.cssW}px`;
     canvas.style.height = `${entry.cssH}px`;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
 
@@ -710,9 +791,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         return;
       }
 
-      // Don't blit a low-res preview — it downgrades the current canvas content and
-      // causes a visible blur flash. The existing canvas (at whatever tier was last
-      // rendered) stays visible via CSS transform until the new tier is ready.
+      // Preview fallback: blit a tier-1 preview if available while hi-res renders
+      if (resTier > 1) {
+        const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
+        const preview = getPreviewCache(pvKey);
+        if (preview && preview.cssW === containerWidth) {
+          blitToCanvas(preview);
+          log.perf.log(`preview-fallback ${pvKey}`);
+        }
+      }
 
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
       if (renderIdRef.current !== renderId) return;
@@ -729,7 +816,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       // Render to pooled offscreen buffer
       const offscreen = acquireCanvas(viewport.width, viewport.height);
-      const offCtx = offscreen.getContext('2d');
+      const offCtx = offscreen.getContext('2d', { alpha: false });
       if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
       // 'display' intent is significantly faster than 'print' for complex schematics
@@ -744,7 +831,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       let sourceCanvas = offscreen;
       if (cleanMode) {
         const tmpCanvas = acquireCanvas(offscreen.width, offscreen.height);
-        const tmpCtx = tmpCanvas.getContext('2d');
+        const tmpCtx = tmpCanvas.getContext('2d', { alpha: false });
         if (tmpCtx) {
           tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
           tmpCtx.drawImage(offscreen, 0, 0);
@@ -768,7 +855,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.height = viewport.height;
       canvas.style.width = `${cssW}px`;
       canvas.style.height = `${cssH}px`;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false });
       if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
       releaseCanvas(sourceCanvas);
       const tCopy = performance.now();
@@ -818,6 +905,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         setAdjTrigger(t => t + 1);
       }, qcfgRef.current.adjSettleMs);
 
+      // Ensure a preview (tier-1) exists for instant fallback on future renders
+      const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
+      if (!getPreviewCache(pvKey)) {
+        renderPageToBitmap(currentPage, containerWidth, 1, cleanMode)
+          .then(result => { putPreviewCache(pvKey, result); })
+          .catch(() => {});
+      }
+
       // Prefetch adjacent pages at adj tier (fire-and-forget)
       const pfId = ++prefetchIdRef.current;
       const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier));
@@ -832,6 +927,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             log.perf.log(`prefetched page ${pNum} tier=${adjPfTier}`);
           })
           .catch(() => {});
+        // Also prefetch preview for adjacent pages
+        const adjPvKey = previewCacheKey(pdfFileName, pNum, cleanMode);
+        if (!getPreviewCache(adjPvKey)) {
+          renderPageToBitmap(pNum, containerWidth, 1, cleanMode)
+            .then(result => { putPreviewCache(adjPvKey, result); })
+            .catch(() => {});
+        }
       }
     } catch (err) {
       if (err instanceof Error && err.message?.includes('cancel')) {
@@ -942,7 +1044,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const pagesInView = Math.ceil(containerH / (cssH * zoom));
     const adjCount = Math.max(1, Math.ceil(pagesInView / 2) + 1);
 
-    let cancelled = false;
+    const ac = new AbortController();
     const adjMap = adjCanvasMapRef.current;
 
     // Determine which page numbers should have adjacent canvases
@@ -967,13 +1069,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       if (!entry) {
         try {
-          const result = await renderPageToBitmap(pageNum, containerWidth, tier, cleanMode);
-          if (cancelled) { result.bitmap.close(); return; }
+          const result = await renderPageToBitmap(pageNum, containerWidth, tier, cleanMode, ac.signal);
+          if (ac.signal.aborted) { result.bitmap.close(); return; }
           putPageCache(cacheKey, result);
           entry = result;
         } catch { return; }
       }
-      if (cancelled) return;
+      if (ac.signal.aborted) return;
 
       if (canvas.width !== entry.width || canvas.height !== entry.height) {
         canvas.width = entry.width;
@@ -985,7 +1087,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.style.left = '0';
       canvas.style.top = `${yOffset}px`;
       canvas.style.pointerEvents = 'none';
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false });
       if (ctx) ctx.drawImage(entry.bitmap, 0, 0);
 
       if (!canvas.parentElement) {
@@ -993,30 +1095,36 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
     };
 
-    // Render each wanted adjacent page
-    for (const pageNum of wantedPages) {
-      const offset = pageNum - currentPage;
-      const yOffset = offset * cssH;
-      let existing = adjMap.get(pageNum);
+    // Sort wanted pages by distance from current page (center-out priority)
+    const sortedPages = [...wantedPages].sort((a, b) => Math.abs(a - currentPage) - Math.abs(b - currentPage));
 
-      if (existing && existing.tier === tier) {
-        // Already rendered at correct tier — just reposition
-        existing.canvas.style.top = `${yOffset}px`;
-        continue;
+    // Render each wanted adjacent page sequentially (center-out)
+    (async () => {
+      for (const pageNum of sortedPages) {
+        if (ac.signal.aborted) break;
+        const offset = pageNum - currentPage;
+        const yOffset = offset * cssH;
+        let existing = adjMap.get(pageNum);
+
+        if (existing && existing.tier === tier) {
+          // Already rendered at correct tier — just reposition
+          existing.canvas.style.top = `${yOffset}px`;
+          continue;
+        }
+
+        // Need to render (new page or tier changed)
+        if (!existing) {
+          const canvas = document.createElement('canvas');
+          canvas.className = 'pdf-adjacent-page';
+          existing = { canvas, tier: 0 };
+          adjMap.set(pageNum, existing);
+        }
+        existing.tier = tier;
+        await blitAdjacentPage(pageNum, existing.canvas, yOffset);
       }
+    })();
 
-      // Need to render (new page or tier changed)
-      if (!existing) {
-        const canvas = document.createElement('canvas');
-        canvas.className = 'pdf-adjacent-page';
-        existing = { canvas, tier: 0 };
-        adjMap.set(pageNum, existing);
-      }
-      existing.tier = tier;
-      blitAdjacentPage(pageNum, existing.canvas, yOffset);
-    }
-
-    return () => { cancelled = true; };
+    return () => { ac.abort(); };
   }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap, adjTrigger]);
 
   // Sync search input when searchQuery changes externally (e.g. pre-populated from library)

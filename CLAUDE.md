@@ -73,6 +73,10 @@ Boardviewer/
 - **NEVER call `app.destroy()` on PixiJS v8 Applications** — `destroy()` triggers `GlobalResourceRegistry.clear()` which corrupts the module-level `batchPool` in `Batcher.mjs`, permanently breaking ALL other Application instances with `_DefaultBatcher2.break: Cannot read properties of null`. Instead, just remove the canvas from DOM and let GC reclaim the Application + WebGL context. See `BoardRenderer.teardownForReinit()`.
 - PDF panels use per-document state via `usePdfDoc(fileName)` hook, allowing multiple PDFs to render side-by-side. The singleton `pdfStore` tracks an "active" doc for mutations but each panel reads its own doc's state independently.
 
+## Safety Rules
+- **COMMIT before removing code.** Before deleting or replacing any significant block of code (>10 lines), commit the current working state first. A stray `git checkout` must never destroy hours of work.
+- **COMMIT at milestones.** When a feature, phase, or significant progress is complete and building, commit immediately — don't accumulate uncommitted work.
+
 ## Conventions
 - TypeScript strict mode
 - All coordinates internally in mils (thousandths of an inch)

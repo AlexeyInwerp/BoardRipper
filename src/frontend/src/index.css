@@ -2270,7 +2270,6 @@ html, body, #root {
   left: 0;
   pointer-events: none;
   display: block;
-  opacity: 0.85;
 }
 
 .pdf-clicked-text {
