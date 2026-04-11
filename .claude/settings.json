@@ -10,7 +10,17 @@
       "WebSearch",
       "NotebookEdit",
       "Skill",
-      "ExitPlanMode"
+      "ExitPlanMode",
+      "Read(//Users/besitzer/Downloads/**)",
+      "Edit(~/.claude/skills/boardripper-agent-master/**)",
+      "Edit(~/.claude/skills/boardripper-format-maint/**)",
+      "Edit(~/.claude/skills/boardripper-issue-triage/**)",
+      "Edit(~/.claude/skills/boardripper-ui/**)",
+      "Edit(~/.claude/skills/boardripper-pdf/**)",
+      "Edit(~/.claude/skills/boardripper-devops/**)",
+      "Edit(~/.claude/skills/boardripper-qa/**)",
+      "Edit(~/.claude/skills/boardripper-renderer/**)",
+      "Edit(~/.claude/skills/boardripper-backend/**)"
     ]
   },
   "defaultMode": "bypassPermissions"

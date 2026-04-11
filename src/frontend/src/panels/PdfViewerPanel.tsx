@@ -515,7 +515,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const lastDragTimeRef = useRef(0);
   const inertiaRafRef = useRef(0);
   const pdfInertiaRef = useRef(loadPdfInertia());
-  const lastRealWheelTimeRef = useRef(0);
   const tierDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last zoom level at which highlights were drawn — skip redraw on pan-only changes */
   const lastHighlightZoomRef = useRef(0);
@@ -1510,15 +1509,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-
-      // Suppress macOS trackpad momentum events when inertia is disabled
-      if (!pdfInertiaRef.current) {
-        const now = performance.now();
-        const gap = now - lastRealWheelTimeRef.current;
-        if (gap > 80 && lastRealWheelTimeRef.current > 0) return; // momentum → suppress
-        lastRealWheelTimeRef.current = now;
-      }
-
       pdfStore.switchTo(pdfFileName);
 
       // Trackpad pinch-to-zoom generates wheel events with ctrlKey=true.
