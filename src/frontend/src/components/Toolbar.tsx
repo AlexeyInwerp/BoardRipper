@@ -3,7 +3,7 @@ import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
-import { ensureUtilityPanel, ensureLibraryPanel } from '../store/dockview-api';
+import { showSidebarTab, toggleSidebar } from './Sidebar';
 import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
@@ -176,7 +176,7 @@ export function Toolbar() {
         data-testid="pdf-input"
       />
       <button
-        onClick={() => ensureLibraryPanel()}
+        onClick={() => showSidebarTab('library')}
         className="toolbar-btn toolbar-btn-icon"
         data-tooltip="Board library / databank"
       >
@@ -279,14 +279,14 @@ export function Toolbar() {
       <div className="toolbar-separator" />
 
       <button
-        onClick={() => ensureUtilityPanel('settings', 'settings', 'Settings')}
+        onClick={() => showSidebarTab('settings')}
         className="toolbar-btn toolbar-btn-icon"
         data-tooltip="Settings"
       >
         ⚙
       </button>
       <button
-        onClick={() => ensureUtilityPanel('debug', 'debug', 'Debug')}
+        onClick={() => showSidebarTab('debug')}
         className="toolbar-btn"
         data-tooltip="Debug log"
         style={{ fontFamily: 'monospace', fontSize: '0.85em' }}

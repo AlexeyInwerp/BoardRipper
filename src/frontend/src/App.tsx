@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import {
   DockviewReact,
 } from 'dockview-react';
@@ -10,12 +10,10 @@ import 'dockview-react/dist/styles/dockview.css';
 import { Toolbar } from './components/Toolbar';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
+import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide, getSidebarWidth } from './components/Sidebar';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
-import { SettingsPanel } from './panels/SettingsPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
-import { DebugPanel } from './panels/DebugPanel';
-import { LibraryPanel } from './panels/LibraryPanel';
-import { setDockviewApi, ensureBoardPanel, ensureLibraryPanel, boardPanelId, toggleSidebar, isSidebarCollapsed, onSidebarChange, getSidebarWidth, getSidebarElement, preserveSidebarWidth, persistSidebarWidth } from './store/dockview-api';
+import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
@@ -25,10 +23,7 @@ import { getAllExtensions, getFileExtension } from './parsers';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
-  settings: () => <SettingsPanel />,
   pdfViewer: (props) => <PdfViewerPanel {...props} />,
-  debug: () => <DebugPanel />,
-  library: () => <LibraryPanel />,
 };
 
 const BOARD_EXTS = new Set<string>(); // populated lazily
@@ -51,27 +46,11 @@ function App() {
   const { toasts } = useBoardStore();
   const [dragOver, setDragOver] = useState(false);
   const dragCounter = useRef(0);
-  const sidebarCollapsed = useSyncExternalStore(onSidebarChange, isSidebarCollapsed);
-  const [sidebarLeft, setSidebarLeft] = useState(0);
-
-  // Track sidebar group width to position the toggle button at its right edge
-  useEffect(() => {
-    const update = () => setSidebarLeft(getSidebarWidth());
-    // Use ResizeObserver on the sidebar group element to detect width changes
-    let ro: ResizeObserver | null = null;
-    const tryObserve = () => {
-      const el = getSidebarElement();
-      if (el && !ro) {
-        ro = new ResizeObserver(update);
-        ro.observe(el);
-      }
-    };
-    tryObserve();
-    // Also update immediately when sidebar state changes (toggle/collapse)
-    const unsub = onSidebarChange(() => { update(); tryObserve(); });
-    update();
-    return () => { ro?.disconnect(); unsub(); };
-  }, []);
+  // Subscribe to all sidebar changes (collapse, side flip, tab switch)
+  const [, sidebarTick] = useState(0);
+  useEffect(() => onSidebarChange(() => sidebarTick(n => n + 1)), []);
+  const sidebarCollapsed = isSidebarCollapsed();
+  const sidebarSide = getSidebarSide();
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -155,7 +134,6 @@ function App() {
           boardStore.closeTab(tabId);
         }
       } else if (e.id.startsWith('pdf-')) {
-        // Remove PDF binding from all board tabs that reference this PDF
         const pdfFileName = (e.params as Record<string, unknown>)?.pdfFileName as string | undefined;
         if (pdfFileName) {
           for (const tab of boardStore.tabs) {
@@ -163,22 +141,11 @@ function App() {
               boardStore.removePdfBinding(tab.id, pdfFileName);
             }
           }
-          // Release the PDF document from memory (ArrayBuffer, pdf.js proxy, text cache)
           pdfStore.closeFile(pdfFileName);
           boardStore.removePdf(pdfFileName);
         }
       }
-      // Restore sidebar width after Dockview redistributes space
-      preserveSidebarWidth();
     });
-
-    // Persist sidebar width when user manually resizes it
-    api.onDidLayoutChange(() => {
-      persistSidebarWidth();
-    });
-
-    // Auto-open Library as the first (leftmost) panel on page load
-    ensureLibraryPanel();
   }, []);
 
   return (
@@ -192,15 +159,18 @@ function App() {
     >
       <Toolbar />
       <div className="dockview-wrapper">
-        <button
-          className={`sidebar-toggle${sidebarCollapsed ? ' collapsed' : ''}`}
-          style={{ left: sidebarLeft }}
-          onClick={toggleSidebar}
-          title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
-        >
-          {sidebarCollapsed ? '\u25B6' : '\u25C0'}
-        </button>
-        <div className="dockview-container">
+        {sidebarCollapsed && (
+          <button
+            className={`sidebar-toggle collapsed sidebar-toggle-${sidebarSide}`}
+            style={{ order: sidebarSide === 'left' ? 0 : 2 }}
+            onClick={toggleSidebar}
+            title="Show sidebar"
+          >
+            {sidebarSide === 'left' ? '▶' : '◀'}
+          </button>
+        )}
+        <Sidebar />
+        <div className="dockview-container" style={{ order: sidebarSide === 'left' ? 1 : 0 }}>
           <DockviewReact
             className="dockview-theme-dark"
             onReady={onReady}
