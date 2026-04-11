@@ -17,7 +17,9 @@
  */
 
 import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets } from './types';
+import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
+
+const decoder = new TextDecoder('utf-8');
 
 // ---------------------------------------------------------------------------
 // Section extraction
@@ -175,7 +177,7 @@ function parseSignals(lines: string[]): Map<string, string> {
 // ---------------------------------------------------------------------------
 
 export function parseCAD(buffer: ArrayBuffer): BoardData {
-  const text = new TextDecoder('utf-8').decode(buffer);
+  const text = decoder.decode(buffer);
   const lines = text.split(/\r?\n/);
 
   // Parse sections
@@ -222,19 +224,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       });
     }
 
-    const pinPositions = pins.map(p => p.position);
-    let bounds = computeBBox(pinPositions);
-    let origin: Point;
-
-    if (pins.length > 0) {
-      origin = {
-        x: (bounds.minX + bounds.maxX) / 2,
-        y: (bounds.minY + bounds.maxY) / 2,
-      };
-    } else {
-      origin = { x: 0, y: 0 };
-      bounds = { minX: -50, minY: -50, maxX: 50, maxY: 50 };
-    }
+    const { origin, bounds } = computePartGeometry(pins);
 
     parts.push({
       name:   comp.name,
@@ -249,17 +239,14 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // No nails in GenCAD (test points would need $TESTPINS section)
   const nails: Nail[] = [];
 
+  if (parts.length === 0) {
+    throw new Error('CAD file parsed but contains no parts — file may be corrupt or empty');
+  }
+
   // Board outline — GenCAD $BOARD section can define it, but often empty.
   // Generate from pin bounds like FZ.
   const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
-  const margin = 20;
-  const globalBounds = computeBBox(allPoints);
-  const outline: Point[] = allPoints.length > 0 ? [
-    { x: globalBounds.minX - margin, y: globalBounds.minY - margin },
-    { x: globalBounds.maxX + margin, y: globalBounds.minY - margin },
-    { x: globalBounds.maxX + margin, y: globalBounds.maxY + margin },
-    { x: globalBounds.minX - margin, y: globalBounds.maxY + margin },
-  ] : [];
+  const outline = generateSyntheticOutline(allPoints);
 
   const bounds = computeBBox([...outline, ...allPoints]);
   const nets = buildNets(parts);

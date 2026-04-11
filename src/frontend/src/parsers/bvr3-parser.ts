@@ -1,5 +1,5 @@
 import type { BoardData, Part, Pin, Point } from './types';
-import { computeBBox, buildNets } from './types';
+import { computeBBox, buildNets, chainSegments } from './types';
 import { log } from '../store/log-store';
 
 /**
@@ -92,7 +92,7 @@ export function parseBVR3(text: string): BoardData {
           ]);
         }
         if (segments.length > 0) {
-          reconstructOutline(segments, outline);
+          outline.push(...chainSegments(segments));
         }
         break;
       }
@@ -212,33 +212,3 @@ export function parseBVR3(text: string): BoardData {
   return { format: 'BVR3', outline, parts, nails: [], nets, bounds };
 }
 
-function reconstructOutline(segments: Array<[Point, Point]>, outline: Point[]): void {
-  if (segments.length === 0) return;
-
-  const used = new Array(segments.length).fill(false);
-  used[0] = true;
-  outline.push(segments[0][0], segments[0][1]);
-
-  for (let count = 1; count < segments.length; count++) {
-    const last = outline[outline.length - 1];
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    let bestFlip = false;
-
-    for (let j = 0; j < segments.length; j++) {
-      if (used[j]) continue;
-      const d0 = Math.abs(last.x - segments[j][0].x) + Math.abs(last.y - segments[j][0].y);
-      const d1 = Math.abs(last.x - segments[j][1].x) + Math.abs(last.y - segments[j][1].y);
-      if (d0 < bestDist) { bestDist = d0; bestIdx = j; bestFlip = false; }
-      if (d1 < bestDist) { bestDist = d1; bestIdx = j; bestFlip = true; }
-    }
-
-    if (bestIdx === -1) break;
-    used[bestIdx] = true;
-    if (bestFlip) {
-      outline.push(segments[bestIdx][1], segments[bestIdx][0]);
-    } else {
-      outline.push(segments[bestIdx][0], segments[bestIdx][1]);
-    }
-  }
-}

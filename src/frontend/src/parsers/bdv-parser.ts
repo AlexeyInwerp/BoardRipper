@@ -17,6 +17,8 @@
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets } from './types';
 
+const decoder = new TextDecoder('utf-8');
+
 // ---------------------------------------------------------------------------
 // Section reader helper
 // ---------------------------------------------------------------------------
@@ -107,7 +109,7 @@ function readSections(text: string): Sections {
 // ---------------------------------------------------------------------------
 
 export function parseBDV(buffer: ArrayBuffer): BoardData {
-  const text = new TextDecoder('utf-8').decode(buffer);
+  const text = decoder.decode(buffer);
   const sec = readSections(text);
 
   // ---- Board outline -------------------------------------------------------
@@ -247,6 +249,10 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
     if (Math.abs(signedArea2) > 1) {
       flipY = signedArea2 > 0; // positive = CCW in Y-up = need flip
     }
+  }
+
+  if (parts.length === 0 && outline.length === 0) {
+    throw new Error('BDV file parsed but contains no parts or outline — file may be corrupt or empty');
   }
 
   // ---- Finalise -------------------------------------------------------------

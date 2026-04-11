@@ -51,9 +51,114 @@ export function loadScrollBindings(): ScrollBindings {
   return DEFAULT_SCROLL_BINDINGS;
 }
 
+// ---------------------------------------------------------------------------
+// PDF Render Quality Settings
+// ---------------------------------------------------------------------------
+// These control how pdf.js renders pages at different zoom levels.
+// The render pipeline works as follows:
+//
+//   1. User zooms to level Z (e.g. 5x)
+//   2. mainTierFromZoom(Z) computes the render tier: min(Z, maxTier)
+//   3. quantiseTier() snaps to discrete steps to maximize cache hits
+//   4. hysteresisFilter() prevents tier thrashing at boundaries
+//   5. pdf.js renders the page at baseScale * tier into an offscreen canvas
+//   6. The canvas is displayed via CSS transform: scale(Z / tier) for any gap
+//   7. Adjacent pages render after a settle delay at their own tier (adjTier)
+//
+// When "drawing optimization" (future work: tiled viewport rendering) is
+// implemented, the tier system will be replaced by fixed-size tiles rendered
+// only for the visible viewport region. The settings below will then control
+// tile size, tile budget, and tile priority — but the user-facing labels
+// (Quality / Performance / Battery) remain the same.
+// ---------------------------------------------------------------------------
+
+/**
+ * Render quality presets. Each preset balances sharpness vs GPU/CPU cost.
+ *
+ * - **max**:   Tier tracks zoom 1:1 up to 16×. Pixel-perfect text at all zoom
+ *              levels. High GPU memory and render time. Best for desktop with
+ *              dedicated GPU.
+ *
+ * - **high**:  Tier tracks zoom up to 8×. Crisp text in most scenarios.
+ *              Good balance for modern laptops. (Default)
+ *
+ * - **medium**: Tier capped at 4×. Text may soften above 400% zoom. Smooth
+ *              on integrated GPUs and tablets.
+ *
+ * - **low**:   Tier capped at 2×. Noticeable softness above 200% zoom. Best
+ *              for older machines or battery-sensitive contexts.
+ *
+ * When future optimizations land (OffscreenCanvas workers, tiled viewport
+ * rendering, WebGL tile compositing), these presets will be updated to also
+ * control tile budget and worker count, but the preset names stay stable.
+ */
+export type PdfRenderQuality = 'max' | 'high' | 'medium' | 'low';
+export const PDF_RENDER_QUALITY_OPTIONS: PdfRenderQuality[] = ['max', 'high', 'medium', 'low'];
+
+export interface PdfQualityConfig {
+  /** Max render tier for the main (current) page */
+  maxMainTier: number;
+  /** Max render tier for adjacent (prev/next) pages */
+  maxAdjTier: number;
+  /** Delay (ms) before adjacent pages re-render after zoom settles */
+  adjSettleMs: number;
+  /** Max entries in the page render cache */
+  cacheMaxEntries: number;
+  /** Max total pixels across all cached page bitmaps */
+  cacheMaxPixels: number;
+}
+
+const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
+  max:    { maxMainTier: 16, maxAdjTier: 8,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 160_000_000 },
+  high:   { maxMainTier: 8,  maxAdjTier: 4,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 80_000_000 },
+  medium: { maxMainTier: 4,  maxAdjTier: 2,  adjSettleMs: 250, cacheMaxEntries: 8,  cacheMaxPixels: 50_000_000 },
+  low:    { maxMainTier: 2,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000 },
+};
+
+export const PDF_QUALITY_KEY = 'boardripper-pdf-render-quality';
+
+export function loadPdfQuality(): PdfRenderQuality {
+  try {
+    const raw = localStorage.getItem(PDF_QUALITY_KEY) as PdfRenderQuality | null;
+    if (raw && raw in QUALITY_CONFIGS) return raw;
+  } catch { /* ignore */ }
+  return 'high';
+}
+
+export function getPdfQualityConfig(q: PdfRenderQuality): PdfQualityConfig {
+  return QUALITY_CONFIGS[q];
+}
+
 const MAX_CANVAS_DIM = 4096;
 const MAX_CANVAS_AREA = 4096 * 4096; // ~16M pixels — safe for mobile/tablet GPUs
 const TIER_DEBOUNCE_MS = 60; // trailing debounce — guarantees final crisp frame after zoom
+
+/** Compute main-page render tier from zoom, capped by quality config. */
+function mainTierFromZoom(zoom: number, maxTier: number): number {
+  return Math.max(1, Math.min(zoom, maxTier));
+}
+/** Quantise tier to half-integer steps to reduce cache key thrashing. */
+function quantiseTier(tier: number): number {
+  return Math.round(tier * 2) / 2;
+}
+
+/**
+ * Zoom hysteresis: prevent tier thrashing at quantisation boundaries.
+ * Upgrade eagerly (users notice blur), downgrade lazily (over-res is invisible).
+ * Returns the new tier, or the current tier if within the hysteresis band.
+ */
+const TIER_UP_THRESHOLD = 1.05;   // must exceed boundary by 5% to upgrade
+const TIER_DOWN_THRESHOLD = 0.90; // must drop 10% below boundary to downgrade
+let _lastCommittedTier = 1;
+function hysteresisFilter(rawTier: number): number {
+  if (rawTier > _lastCommittedTier * TIER_UP_THRESHOLD) {
+    _lastCommittedTier = rawTier;
+  } else if (rawTier < _lastCommittedTier * TIER_DOWN_THRESHOLD) {
+    _lastCommittedTier = rawTier;
+  }
+  // else: stay at _lastCommittedTier (within hysteresis band)
+  return _lastCommittedTier;
+}
 
 // --- Offscreen canvas pool (avoids GC churn during fast zoom/page navigation) ---
 const _canvasPool: HTMLCanvasElement[] = [];
@@ -99,8 +204,14 @@ interface CachedRender {
   vpHeight: number;
   vpTransform: number[];
 }
-const PAGE_CACHE_MAX = 10;
-const PAGE_CACHE_MAX_PIXELS = 80_000_000; // ~80M total pixels across all cached bitmaps
+// Cache limits are set dynamically from quality config via _pageCacheLimits
+let _pageCacheMaxEntries = 10;
+let _pageCacheMaxPixels = 80_000_000;
+/** Update cache limits from quality config (called when quality changes) */
+export function setPageCacheLimits(maxEntries: number, maxPixels: number): void {
+  _pageCacheMaxEntries = maxEntries;
+  _pageCacheMaxPixels = maxPixels;
+}
 const _pageCache = new Map<string, CachedRender>();
 let _pageCacheTotalPixels = 0;
 
@@ -113,7 +224,7 @@ function putPageCache(key: string, entry: CachedRender): void {
   // LRU eviction: enforce both entry count and total pixel area
   while (
     _pageCache.size > 0 &&
-    (_pageCache.size >= PAGE_CACHE_MAX || _pageCacheTotalPixels + entryPixels > PAGE_CACHE_MAX_PIXELS)
+    (_pageCache.size >= _pageCacheMaxEntries || _pageCacheTotalPixels + entryPixels > _pageCacheMaxPixels)
   ) {
     const oldest = _pageCache.keys().next().value!;
     const old = _pageCache.get(oldest)!;
@@ -377,6 +488,32 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => window.removeEventListener('pdf-scroll-bindings-changed', handler);
   }, []);
 
+  // PDF render quality — persisted, synced from Settings panel
+  const [pdfQuality, setPdfQuality] = useState<PdfRenderQuality>(loadPdfQuality);
+  const qcfg = getPdfQualityConfig(pdfQuality);
+  const qcfgRef = useRef(qcfg);
+  qcfgRef.current = qcfg;
+
+  // Apply cache limits on mount and quality change
+  useEffect(() => {
+    setPageCacheLimits(qcfg.cacheMaxEntries, qcfg.cacheMaxPixels);
+  }, [qcfg.cacheMaxEntries, qcfg.cacheMaxPixels]);
+
+  // Sync quality when changed from Settings panel
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent<PdfRenderQuality>).detail;
+      setPdfQuality(next);
+      const cfg = getPdfQualityConfig(next);
+      setPageCacheLimits(cfg.cacheMaxEntries, cfg.cacheMaxPixels);
+      invalidatePageCache(pdfFileName);
+      _lastCommittedTier = 1; // reset hysteresis
+      renderPageRef.current();
+    };
+    window.addEventListener('pdf-quality-changed', handler);
+    return () => window.removeEventListener('pdf-quality-changed', handler);
+  }, [pdfFileName]);
+
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
   const [glyphDebug, setGlyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
@@ -410,11 +547,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // --- Multi-page rendering (adjacent pages visible when zoomed out / panning) ---
   /** CSS height of the current page at zoom=1 */
   const pageCssHRef = useRef(0);
-  /** Imperatively managed canvases for previous and next pages */
-  const adjPrevRef = useRef<HTMLCanvasElement | null>(null);
-  const adjNextRef = useRef<HTMLCanvasElement | null>(null);
-  /** Track which page numbers are currently rendered in adjacent canvases */
-  const adjRenderedRef = useRef<{ prev: number; next: number }>({ prev: 0, next: 0 });
+  /** Imperatively managed canvases for adjacent pages, keyed by page number */
+  const adjCanvasMapRef = useRef<Map<number, { canvas: HTMLCanvasElement; tier: number }>>(new Map());
+  /** Bumped after zoom settles to trigger adjacent re-render (debounced, not per-render) */
+  const [adjTrigger, setAdjTrigger] = useState(0);
+  const adjDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** Push zoom/pan refs to DOM + throttled React state for toolbar */
   const syncTransform = useCallback(() => {
@@ -549,7 +686,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     setError(null);
 
     const renderId = ++renderIdRef.current;
-    const resTier = Math.max(1, zoomRef.current);
+    const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier)));
     renderTierRef.current = resTier;
     const t0 = performance.now();
 
@@ -673,17 +810,26 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const prev = renderTimeEmaRef.current;
       renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + totalMs * 0.3 : totalMs;
 
-      // Prefetch adjacent pages at base resolution (fire-and-forget)
+      // Debounced adjacent page re-render — wait until zoom settles to avoid
+      // re-rendering 4+ adjacent pages on every mid-zoom throttle render.
+      if (adjDebounceRef.current) clearTimeout(adjDebounceRef.current);
+      adjDebounceRef.current = setTimeout(() => {
+        adjDebounceRef.current = null;
+        setAdjTrigger(t => t + 1);
+      }, qcfgRef.current.adjSettleMs);
+
+      // Prefetch adjacent pages at adj tier (fire-and-forget)
       const pfId = ++prefetchIdRef.current;
+      const adjPfTier = quantiseTier(Math.min(resTier, qcfgRef.current.maxAdjTier));
       const pagesToPrefetch = [currentPage + 1, currentPage - 1].filter(p => p >= 1 && p <= pageCount);
       for (const pNum of pagesToPrefetch) {
-        const pfKey = pageCacheKey(pdfFileName, pNum, 1, cleanMode);
+        const pfKey = pageCacheKey(pdfFileName, pNum, adjPfTier, cleanMode);
         if (getPageCache(pfKey)) continue;
-        renderPageToBitmap(pNum, containerWidth, 1, cleanMode)
+        renderPageToBitmap(pNum, containerWidth, adjPfTier, cleanMode)
           .then(result => {
             if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
             putPageCache(pfKey, result);
-            log.perf.log(`prefetched page ${pNum}`);
+            log.perf.log(`prefetched page ${pNum} tier=${adjPfTier}`);
           })
           .catch(() => {});
       }
@@ -773,7 +919,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   useEffect(() => { renderPage(); }, [renderPage]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
 
-  // --- Adjacent page rendering (prev/next pages visible when panning / zoomed out) ---
+  // --- Adjacent page rendering (N pages visible when panning / zoomed out) ---
   useEffect(() => {
     if (!isLoaded || pageCount <= 1) return;
     const wrapper = wrapperRef.current;
@@ -786,25 +932,42 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const containerWidth = container.clientWidth;
     if (containerWidth === 0) return;
 
-    let cancelled = false;
+    // Adjacent pages render at main tier, capped by quality config.
+    // The debounce (adjDebounceRef) prevents mid-zoom cascade.
+    const tier = quantiseTier(Math.min(renderTierRef.current, qcfgRef.current.maxAdjTier));
 
-    const ensureCanvas = (ref: React.MutableRefObject<HTMLCanvasElement | null>, className: string): HTMLCanvasElement => {
-      if (!ref.current) {
-        ref.current = document.createElement('canvas');
-        ref.current.className = className;
+    // How many pages fit in the viewport at current zoom? Render enough to cover.
+    const zoom = zoomRef.current;
+    const containerH = container.clientHeight;
+    const pagesInView = Math.ceil(containerH / (cssH * zoom));
+    const adjCount = Math.max(1, Math.ceil(pagesInView / 2) + 1);
+
+    let cancelled = false;
+    const adjMap = adjCanvasMapRef.current;
+
+    // Determine which page numbers should have adjacent canvases
+    const wantedPages = new Set<number>();
+    for (let offset = -adjCount; offset <= adjCount; offset++) {
+      if (offset === 0) continue; // current page rendered by main canvas
+      const pageNum = currentPage + offset;
+      if (pageNum >= 1 && pageNum <= pageCount) wantedPages.add(pageNum);
+    }
+
+    // Remove canvases for pages no longer in range
+    for (const [pageNum, entry] of adjMap) {
+      if (!wantedPages.has(pageNum)) {
+        entry.canvas.remove();
+        adjMap.delete(pageNum);
       }
-      return ref.current;
-    };
+    }
 
     const blitAdjacentPage = async (pageNum: number, canvas: HTMLCanvasElement, yOffset: number) => {
-      // Check page cache first (tier 1, same as prefetch)
-      const cacheKey = pageCacheKey(pdfFileName, pageNum, 1, cleanMode);
+      const cacheKey = pageCacheKey(pdfFileName, pageNum, tier, cleanMode);
       let entry = getPageCache(cacheKey);
 
       if (!entry) {
-        // Render at base resolution
         try {
-          const result = await renderPageToBitmap(pageNum, containerWidth, 1, cleanMode);
+          const result = await renderPageToBitmap(pageNum, containerWidth, tier, cleanMode);
           if (cancelled) { result.bitmap.close(); return; }
           putPageCache(cacheKey, result);
           entry = result;
@@ -822,51 +985,39 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       canvas.style.left = '0';
       canvas.style.top = `${yOffset}px`;
       canvas.style.pointerEvents = 'none';
-      canvas.style.opacity = '0.85';
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(entry.bitmap, 0, 0);
 
-      // Insert into wrapper if not already there
       if (!canvas.parentElement) {
         wrapper.insertBefore(canvas, wrapper.firstChild);
       }
     };
 
-    // Render previous page (above current, at y = -cssH)
-    const prevPage = currentPage - 1;
-    const nextPage = currentPage + 1;
+    // Render each wanted adjacent page
+    for (const pageNum of wantedPages) {
+      const offset = pageNum - currentPage;
+      const yOffset = offset * cssH;
+      let existing = adjMap.get(pageNum);
 
-    if (prevPage >= 1) {
-      const prevCanvas = ensureCanvas(adjPrevRef, 'pdf-adjacent-page');
-      if (adjRenderedRef.current.prev !== prevPage) {
-        adjRenderedRef.current.prev = prevPage;
-        blitAdjacentPage(prevPage, prevCanvas, -cssH);
-      } else {
-        // Just reposition (page height may have changed)
-        prevCanvas.style.top = `${-cssH}px`;
+      if (existing && existing.tier === tier) {
+        // Already rendered at correct tier — just reposition
+        existing.canvas.style.top = `${yOffset}px`;
+        continue;
       }
-    } else if (adjPrevRef.current?.parentElement) {
-      adjPrevRef.current.remove();
-      adjRenderedRef.current.prev = 0;
+
+      // Need to render (new page or tier changed)
+      if (!existing) {
+        const canvas = document.createElement('canvas');
+        canvas.className = 'pdf-adjacent-page';
+        existing = { canvas, tier: 0 };
+        adjMap.set(pageNum, existing);
+      }
+      existing.tier = tier;
+      blitAdjacentPage(pageNum, existing.canvas, yOffset);
     }
 
-    if (nextPage <= pageCount) {
-      const nextCanvas = ensureCanvas(adjNextRef, 'pdf-adjacent-page');
-      if (adjRenderedRef.current.next !== nextPage) {
-        adjRenderedRef.current.next = nextPage;
-        blitAdjacentPage(nextPage, nextCanvas, cssH);
-      } else {
-        nextCanvas.style.top = `${cssH}px`;
-      }
-    } else if (adjNextRef.current?.parentElement) {
-      adjNextRef.current.remove();
-      adjRenderedRef.current.next = 0;
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap]);
+    return () => { cancelled = true; };
+  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap, adjTrigger]);
 
   // Sync search input when searchQuery changes externally (e.g. pre-populated from library)
   useEffect(() => {
@@ -1109,11 +1260,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const doc = pdfStore.getDocProxy(pdfFileName);
       clearFontCache(doc?.fingerprints[0] ?? undefined);
       pageGlyphDataRef.current = null;
-      adjPrevRef.current?.remove();
-      adjNextRef.current?.remove();
-      adjPrevRef.current = null;
-      adjNextRef.current = null;
-      adjRenderedRef.current = { prev: 0, next: 0 };
+      for (const entry of adjCanvasMapRef.current.values()) entry.canvas.remove();
+      adjCanvasMapRef.current.clear();
+      if (adjDebounceRef.current) clearTimeout(adjDebounceRef.current);
       if (scrubberFlashTimerRef.current) clearTimeout(scrubberFlashTimerRef.current);
     };
   }, [pdfFileName]);
@@ -1159,55 +1308,87 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 20));
         const ratio = newZoom / oldZoom;
         const oldPan = panRef.current;
+        let newPanY = mouseY - ratio * (mouseY - oldPan.y);
         panRef.current = {
           x: mouseX - ratio * (mouseX - oldPan.x),
-          y: mouseY - ratio * (mouseY - oldPan.y),
+          y: newPanY,
         };
         zoomRef.current = newZoom;
+
+        // Page boundary detection during zoom: when zoomed in and the viewport
+        // center has moved over an adjacent page, switch to it so it renders crisp.
+        if (cssH > 0) {
+          const pageH = cssH * newZoom;
+          const containerH = container.clientHeight;
+          const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+          const total = pdfStore.getDocPageCount(pdfFileName);
+
+          if (newPanY + pageH < containerH / 2 && curPage < total) {
+            skipResetRef.current = true;
+            pdfStore.goToPage(curPage + 1);
+            panRef.current = { x: panRef.current.x, y: newPanY + pageH };
+            flashScrubber();
+          } else if (newPanY > containerH / 2 && curPage > 1) {
+            skipResetRef.current = true;
+            pdfStore.goToPage(curPage - 1);
+            panRef.current = { x: panRef.current.x, y: newPanY - pageH };
+            flashScrubber();
+          }
+        }
+
         syncTransform();
         scheduleTierRender();
         return;
       }
 
       if (action === 'pan') {
-        // Continuous multi-page scrolling. Adjacent pages are rendered above/below
-        // the current page. When the viewport center crosses a page boundary,
-        // currentPage updates and panY is adjusted to maintain visual continuity.
+        // Omnidirectional multi-page scrolling. Two-finger scroll moves freely
+        // in X and Y. X is clamped to keep the page within view (can't scroll
+        // the page entirely off-screen horizontally). Y supports smooth page
+        // transitions when the viewport center crosses a page boundary.
         const cssH = pageCssHRef.current;
         if (cssH === 0) return;
         const zoom = zoomRef.current;
         const pageH = cssH * zoom; // page height in screen pixels
+        const containerW = container.clientWidth;
         const containerH = container.clientHeight;
 
+        const dx = -e.deltaX;
         const dy = -e.deltaY;
         const oldPan = panRef.current;
+
+        // --- X axis: free pan, clamped so the page stays partially visible ---
+        const pageW = containerW * zoom; // page width in screen pixels
+        // Allow panning until only 20% of the page is visible on each side
+        const xMin = containerW - pageW * 0.8;  // left edge: page right side at 80%
+        const xMax = pageW * 0.8 - pageW;       // right edge: page left side at 80%
+        // When page fits in container (zoom ≤ 1), center it — no X pan
+        let newX: number;
+        if (pageW <= containerW) {
+          newX = (containerW - pageW) / 2; // centered, ignore dx
+        } else {
+          newX = Math.max(Math.min(oldPan.x + dx, -xMax), xMin);
+        }
+
+        // --- Y axis: continuous multi-page scrolling with page transitions ---
         let newY = oldPan.y + dy;
 
         const curPage = pdfStore.getDocCurrentPage(pdfFileName);
         const total = pdfStore.getDocPageCount(pdfFileName);
 
-        // Current page top in container coords = newY (wrapper origin = page top-left)
-        // Current page bottom = newY + pageH
-        // Viewport center = containerH / 2
-        //
-        // Transition to next page when current page bottom is above viewport center
-        // (user scrolled down past the page). Transition to prev page when current
-        // page top is below viewport center (user scrolled up past the page).
         if (newY + pageH < containerH / 2 && curPage < total) {
-          // Crossed into next page — shift pan up by one page height
           skipResetRef.current = true;
           pdfStore.goToPage(curPage + 1);
           newY += pageH;
           flashScrubber();
         } else if (newY > containerH / 2 && curPage > 1) {
-          // Crossed into prev page — shift pan down by one page height
           skipResetRef.current = true;
           pdfStore.goToPage(curPage - 1);
           newY -= pageH;
           flashScrubber();
         }
 
-        panRef.current = { x: oldPan.x, y: newY };
+        panRef.current = { x: newX, y: newY };
         syncTransform();
         return;
       }
@@ -1239,7 +1420,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
    
-  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender]);
+  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber]);
 
   // --- Touch pinch-to-zoom state ---
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());

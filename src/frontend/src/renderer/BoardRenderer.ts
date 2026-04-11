@@ -29,6 +29,13 @@ import { log } from '../store/log-store';
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
 
+/** Shape of the event object emitted by pixi-viewport's `clicked` event. */
+interface ViewportClickEvent {
+  world: Point;
+  screen: { x: number; y: number };
+  event: unknown;
+}
+
 /** Point-in-convex-polygon test using cross-product winding. */
 function pointInConvexPoly(px: number, py: number, poly: [number, number][]): boolean {
   const n = poly.length;
@@ -618,8 +625,7 @@ export class BoardRenderer {
     });
     this.applyViewportPlugins();
     this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.viewport.on('clicked', (e: any) => { this.handleClick(e.world as Point); });
+    this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
     this.app.stage.addChild(this.viewport);
 
     // --- Recreate overlay Graphics (old ones were destroyed with the old app) ---
@@ -765,9 +771,8 @@ export class BoardRenderer {
     this.elevatedPinBg.visible = false;
     this.viewport.addChild(this.netLinesGfx);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.viewport.on('clicked', (e: any) => {
-      this.handleClick(e.world as Point);
+    this.viewport.on('clicked', (e: ViewportClickEvent) => {
+      this.handleClick(e.world);
     });
 
     this.boundContextMenu = (e: MouseEvent) => {

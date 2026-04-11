@@ -258,6 +258,8 @@ export function SettingsMockup({
     if (!el) return;
 
     let destroyed = false;
+    let onPointerMove: ((ev: PointerEvent) => void) | null = null;
+    let onDblClick: (() => void) | null = null;
     const app = new Application();
 
     app.init({
@@ -313,17 +315,19 @@ export function SettingsMockup({
 
       // Cursor updates
       const canvas = app.canvas as HTMLCanvasElement;
-      canvas.addEventListener('pointermove', (ev: PointerEvent) => {
+      onPointerMove = (ev: PointerEvent) => {
         const rect  = canvas.getBoundingClientRect();
         const world = viewport.toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
         const hit   = hitTestSection(world, settingsRef.current);
         canvas.style.cursor = hit ? 'pointer' : 'default';
-      });
+      };
+      canvas.addEventListener('pointermove', onPointerMove);
 
       // Double-click resets zoom/pan to fit
-      canvas.addEventListener('dblclick', () => {
+      onDblClick = () => {
         fitMockup(viewport);
-      });
+      };
+      canvas.addEventListener('dblclick', onDblClick);
 
       // Resize observer — also handles initial fit when container gets its real size
       let hasFitted = false;
@@ -364,6 +368,8 @@ export function SettingsMockup({
           state.sceneRoot.destroy({ children: true });
         }
         const canvas = state.app.canvas as HTMLCanvasElement;
+        if (onPointerMove) canvas.removeEventListener('pointermove', onPointerMove);
+        if (onDblClick) canvas.removeEventListener('dblclick', onDblClick);
         if (el.contains(canvas)) el.removeChild(canvas);
         // Do NOT call app.destroy() — PixiJS v8 destroy() corrupts the global
         // batch pool, breaking all other Application instances. Let GC reclaim.

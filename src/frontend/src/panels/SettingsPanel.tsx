@@ -8,8 +8,8 @@ import { getAllFormats, setFormatOverride } from '../parsers/registry';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings } from './PdfViewerPanel';
-import type { ScrollAction, ScrollBindings } from './PdfViewerPanel';
+import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig } from './PdfViewerPanel';
+import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
 
 /** Context that provides per-field override info to Slider/Toggle children */
 interface OverrideCtx {
@@ -696,6 +696,55 @@ function ScrollBindingsEditor() {
   );
 }
 
+// ---- PDF render quality selector ----
+
+const QUALITY_LABELS: Record<PdfRenderQuality, string> = {
+  max: 'Max',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+};
+
+const QUALITY_DESCRIPTIONS: Record<PdfRenderQuality, string> = {
+  max: 'Pixel-perfect at all zoom levels. High GPU usage. Desktop with dedicated GPU.',
+  high: 'Crisp text up to 800%. Good for modern laptops.',
+  medium: 'Softens above 400%. Smooth on integrated GPUs and tablets.',
+  low: 'Softens above 200%. Best for older machines or battery saving.',
+};
+
+function PdfQualitySelector() {
+  const [quality, setQuality] = useState<PdfRenderQuality>(loadPdfQuality);
+
+  const handleChange = useCallback((next: PdfRenderQuality) => {
+    setQuality(next);
+    try { localStorage.setItem(PDF_QUALITY_KEY, next); } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('pdf-quality-changed', { detail: next }));
+  }, []);
+
+  const cfg = getPdfQualityConfig(quality);
+
+  return (
+    <div className="pdf-quality-selector">
+      <div className="settings-btn-group">
+        {PDF_RENDER_QUALITY_OPTIONS.map(q => (
+          <button
+            key={q}
+            className={`settings-btn-option${quality === q ? ' active' : ''}`}
+            onClick={() => handleChange(q)}
+            title={QUALITY_DESCRIPTIONS[q]}
+          >
+            {QUALITY_LABELS[q]}
+          </button>
+        ))}
+      </div>
+      <p className="settings-hint">{QUALITY_DESCRIPTIONS[quality]}</p>
+      <div className="pdf-quality-details">
+        <span>Main tier: {cfg.maxMainTier}× | Adj tier: {cfg.maxAdjTier}× | Cache: {cfg.cacheMaxEntries} pages / {Math.round(cfg.cacheMaxPixels / 1_000_000)}MP</span>
+      </div>
+    </div>
+  );
+}
+
 // ---- Main panel ----
 
 const INITIALLY_OPEN: SectionId[] = [];
@@ -1104,6 +1153,8 @@ export function SettingsPanel() {
 
       <CollapsibleSection id="pdf" title="PDF Viewer" isOpen={openSections.has('pdf')}
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
+        <div className="settings-subsection-label">Render quality</div>
+        <PdfQualitySelector />
         <div className="settings-subsection-label">Scroll wheel behavior</div>
         <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
         <ScrollBindingsEditor />
