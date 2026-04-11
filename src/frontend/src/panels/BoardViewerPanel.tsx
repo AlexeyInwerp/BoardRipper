@@ -92,8 +92,12 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       if (e.isActive) {
         boardStore.switchTab(tabId);
         rendererRef.current?.resume();
-        // Board is active — clear PDF search ref so Cmd+F goes to board search
-        fileInputRefs.pdfSearch = null;
+        // Only clear pdfSearch when the user directly clicked the board panel —
+        // NOT when activated via linked panel from PDF (isLinkActivating).
+        // This preserves Space → fit-width when the PDF was the user's last click.
+        if (!isLinkActivating()) {
+          fileInputRefs.pdfSearch = null;
+        }
         // Activate linked PDF panel so it follows the board tab
         const tab = boardStore.tabs.find(t => t.id === tabId);
         if (tab && tab.pdfFileNames.length > 0) {
