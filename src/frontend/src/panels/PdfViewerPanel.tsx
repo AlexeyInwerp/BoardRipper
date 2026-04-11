@@ -300,7 +300,8 @@ function toCanvas(px: number, py: number, vpT: number[], scale: number): [number
 
 /** Compute a text item's axis-aligned bounding rect in canvas-space.
  *  Handles rotated/skewed text by projecting all 4 corners of the oriented
- *  text rectangle through the viewport transform and taking the AABB. */
+ *  text rectangle through the viewport transform and taking the AABB.
+ *  Baseline at (e,f): ascent = 1.0×fontSize up, descent = 0.2×fontSize down. */
 function textItemRect(
   transform: number[], width: number, vpT: number[], scale: number,
 ): { x: number; y: number; w: number; h: number } {
@@ -308,7 +309,8 @@ function textItemRect(
   const fsx = Math.sqrt(t[0] * t[0] + t[1] * t[1]);
   const fsy = Math.sqrt(t[2] * t[2] + t[3] * t[3]);
   const fontSize = fsy;
-  const h = fontSize * LINE_HEIGHT_RATIO;
+  const ascent = fontSize;                                // 1.0× up from baseline
+  const descent = (LINE_HEIGHT_RATIO - 1.0) * fontSize;  // 0.2× down from baseline
 
   const dx = fsx > 0 ? t[0] / fsx : 1;
   const dy = fsx > 0 ? t[1] / fsx : 0;
@@ -316,10 +318,10 @@ function textItemRect(
   const uy = fsy > 0 ? t[3] / fsy : 1;
 
   const ex = t[4], ey = t[5];
-  const c0 = toCanvas(ex, ey, vpT, scale);
-  const c1 = toCanvas(ex + width * dx, ey + width * dy, vpT, scale);
-  const c2 = toCanvas(ex + h * ux, ey + h * uy, vpT, scale);
-  const c3 = toCanvas(ex + width * dx + h * ux, ey + width * dy + h * uy, vpT, scale);
+  const c0 = toCanvas(ex - descent * ux,          ey - descent * uy,          vpT, scale);
+  const c1 = toCanvas(ex + width * dx - descent * ux, ey + width * dy - descent * uy, vpT, scale);
+  const c2 = toCanvas(ex + ascent * ux,            ey + ascent * uy,            vpT, scale);
+  const c3 = toCanvas(ex + width * dx + ascent * ux, ey + width * dy + ascent * uy, vpT, scale);
 
   const minX = Math.min(c0[0], c1[0], c2[0], c3[0]);
   const minY = Math.min(c0[1], c1[1], c2[1], c3[1]);
@@ -489,6 +491,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const viewportHeightRef = useRef(0);
   const renderTierRef = useRef(1);
   const viewportTransformRef = useRef<number[]>([1, 0, 0, -1, 0, 0]);
+  const [renderEpoch, setRenderEpoch] = useState(0); // bumped after each renderPage to sync overlays
   const [clickedText, setClickedText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -665,10 +668,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
    *  recent render times). Fast pages get near-instant crisp zoom; slow pages get
    *  CSS-only zoom with a trailing debounce for the final crisp frame. */
   const scheduleTierRender = useCallback(() => {
-    // Trailing debounce: always fires after zoom settles — guarantees final crisp frame
+    // Trailing debounce: always fires after zoom settles — guarantees final crisp frame.
+    // Resets hysteresis so the render uses the exact zoom tier, not a stale committed tier.
     if (tierDebounceRef.current) clearTimeout(tierDebounceRef.current);
     tierDebounceRef.current = setTimeout(() => {
       tierDebounceRef.current = null;
+      _lastCommittedTier = 0; // reset hysteresis — next render commits to exact tier
       renderPageRef.current();
     }, TIER_DEBOUNCE_MS);
 
@@ -687,8 +692,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (crispTimerRef.current) clearTimeout(crispTimerRef.current);
     crispTimerRef.current = setTimeout(() => {
       crispTimerRef.current = null;
-      forceFullTierRef.current = true;
-      renderPageRef.current();
+      // Only force full tier if zoom exceeds the preset cap — otherwise the
+      // interactive render is already at full quality and this would be a no-op.
+      const zoom = zoomRef.current;
+      const presetMax = qcfgRef.current.maxMainTier;
+      if (zoom > presetMax) {
+        forceFullTierRef.current = true;
+        log.perf.log(`crisp-render zoom=${zoom.toFixed(1)} preset-cap=${presetMax} → full tier`);
+        renderPageRef.current();
+      }
     }, CRISP_SETTLE_MS);
   }, []);
 
@@ -799,6 +811,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     pageCssHRef.current = entry.cssH;
 
     drawHighlightsRef.current();
+    setRenderEpoch(e => e + 1);
   }, []);
 
   const renderPage = useCallback(async () => {
@@ -927,6 +940,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       highlight.style.height = `${cssH}px`;
 
       drawHighlightsRef.current();
+      setRenderEpoch(e => e + 1);
 
       // Cache the pre-created bitmap for instant reuse
       if (bitmap) {
@@ -1456,7 +1470,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   }, [isOverlayActive, isTextItemsMode, isGlyphActive, isGlyphComposite, fontDataLoaded, isLoaded, isFiltered, pdfFileName, currentPage,
       glyphDebug.overlayMode, glyphDebug.simplifyEnabled, glyphDebug.simplifyTolerance,
-      glyphDebug.replaceEnabled, glyphDebug.replaceFont]);
+      glyphDebug.replaceEnabled, glyphDebug.replaceFont, renderEpoch]);
 
   // Clean up font cache + adjacent canvases on unmount
   useEffect(() => {
