@@ -833,7 +833,7 @@ function PdfInertiaToggle() {
     window.dispatchEvent(new CustomEvent('pdf-inertia-changed'));
   }, [enabled]);
   return (
-    <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing the drag. When disabled, panning stops immediately on release">
+    <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing the drag. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">
       <label className="settings-label">Inertia</label>
       <input type="checkbox" checked={enabled} onChange={toggle} />
     </div>
@@ -1228,8 +1228,11 @@ export function SettingsPanel() {
           title="Extra padding (screen pixels) added when fitting the board to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
 
         <div className="settings-subsection-label">Pan</div>
-        <Toggle label="Disable Inertia" value={draft.disableInertia} field="disableInertia" onUpdate={updateDraft}
-          title="Stop the board from sliding after you release a pan gesture. Panning stops immediately on release" />
+        <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing a drag gesture. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">
+          <label className="settings-label">Inertia</label>
+          <input type="checkbox" checked={!draft.disableInertia}
+            onChange={(e) => updateDraft({ disableInertia: !e.target.checked })} />
+        </div>
 
         <div className="settings-subsection-label">Click</div>
         <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft}
