@@ -1308,7 +1308,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 20));
         const ratio = newZoom / oldZoom;
         const oldPan = panRef.current;
-        let newPanY = mouseY - ratio * (mouseY - oldPan.y);
+        const newPanY = mouseY - ratio * (mouseY - oldPan.y);
         panRef.current = {
           x: mouseX - ratio * (mouseX - oldPan.x),
           y: newPanY,

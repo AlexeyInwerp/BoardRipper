@@ -9,7 +9,7 @@ const TEST_BVR1 = path.resolve(__dirname, '../public/samples/test-board.bvr');
 const REAL_BVR3 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const REAL_BRD = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
 const REAL_PDF_A = path.resolve(__dirname, '../../../samples/820-02016.pdf');
-const REAL_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
+const _REAL_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
 
 /** Helper: load a board and wait for stats to appear */
 async function loadBoard(page: import('@playwright/test').Page, filePath: string, expectedText?: string) {
