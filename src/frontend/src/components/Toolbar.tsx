@@ -29,6 +29,18 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
   const rel = state.release_info;
   const body = rel?.body ?? '';
 
+  /** Clean release body for display: strip Co-Authored-By, fix: prefixes, empty lines */
+  const formatBody = (raw: string): string[] => {
+    return raw.split('\n')
+      .filter(l => !l.startsWith('Co-Authored-By:') && l.trim() !== '')
+      .map(l => l
+        .replace(/^- (fix|feat|refactor|chore|perf|docs|style|test):\s*/i, '- ')
+        .replace(/^(fix|feat|refactor|chore|perf|docs|style|test):\s*/i, '')
+      );
+  };
+
+  const bodyLines = formatBody(body);
+
   return (
     <div className="update-badge-wrap" ref={ref}>
       <button
@@ -46,20 +58,20 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
             <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
           </div>
 
-          {state.has_update && body && (
+          {bodyLines.length > 0 && (
             <div className="update-dropdown-body">
-              {body.split('\n').map((line, i) => {
+              {!state.has_update && !updating && <h4>What&apos;s in this version</h4>}
+              {bodyLines.map((line, i) => {
                 if (line.startsWith('## ')) return <h3 key={i}>{line.slice(3)}</h3>;
                 if (line.startsWith('### ')) return <h4 key={i}>{line.slice(4)}</h4>;
                 if (line.startsWith('- ')) return <li key={i}>{line.slice(2)}</li>;
                 if (line.startsWith('| ') || line.startsWith('---')) return null;
-                if (!line.trim()) return <br key={i} />;
                 return <p key={i}>{line}</p>;
               })}
             </div>
           )}
 
-          {!state.has_update && !updating && (
+          {!state.has_update && !updating && bodyLines.length === 0 && (
             <div className="update-dropdown-body">
               <p>You are on the latest version.</p>
             </div>
