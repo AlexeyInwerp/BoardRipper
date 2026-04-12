@@ -2136,23 +2136,42 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </div>
 
         <div className="pdf-search-wrapper">
-          <form className="pdf-search-form" onSubmit={handleSearch}>
-            <input
-              ref={searchInputRef}
-              type="text"
-              className="pdf-search-input"
-              placeholder="Search (multi-term: 10UF 25V 0603)"
-              defaultValue={searchQuery}
-              onKeyDown={(e) => {
-                if (matches.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-                  e.preventDefault();
-                  pdfStore.switchTo(pdfFileName);
-                  if (e.key === 'ArrowDown') pdfStore.nextMatch();
-                  else pdfStore.prevMatch();
-                }
-              }}
-            />
-          </form>
+          <div className="pdf-search-bar">
+            <form className="pdf-search-form" onSubmit={handleSearch}>
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="pdf-search-input"
+                placeholder="Search (multi-term: 10UF 25V 0603)"
+                defaultValue={searchQuery}
+                onChange={(e) => {
+                  if (!e.target.value.trim()) {
+                    pdfStore.switchTo(pdfFileName);
+                    pdfStore.searchText('');
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (matches.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                    e.preventDefault();
+                    pdfStore.switchTo(pdfFileName);
+                    if (e.key === 'ArrowDown') pdfStore.nextMatch();
+                    else pdfStore.prevMatch();
+                  }
+                }}
+              />
+            </form>
+            {matches.length > 0 && (
+              <>
+                <button className="pdf-search-nav-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }} title="Previous match">&#9650;</button>
+                <span className="pdf-search-counter">
+                  {matchGroupCount > 0
+                    ? `${activeGroupIndex + 1}/${matchGroupCount}`
+                    : `${activeMatchIndex + 1}/${matches.length}`}
+                </span>
+                <button className="pdf-search-nav-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }} title="Next match">&#9660;</button>
+              </>
+            )}
+          </div>
           {isMultiTerm && (
             <div className="pdf-multiterm-dropdown">
               <div className="pdf-gap-row">
@@ -2179,20 +2198,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             </div>
           )}
         </div>
-        {matches.length > 0 && (
-          <span className="pdf-match-nav">
-            <span className="pdf-match-info">
-              {matchGroupCount > 0
-                ? `${activeGroupIndex + 1}/${matchGroupCount}`
-                : `${activeMatchIndex + 1}/${matches.length}`}
-            </span>
-            <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }}>&#9650;</button>
-            <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }}>&#9660;</button>
-            {showNavHint && (
-              <span className="pdf-nav-hint">Use ↑↓ keyboard to navigate</span>
-            )}
-          </span>
-        )}
 
         <div className="pdf-toolbar-spacer" />
 

@@ -2533,35 +2533,66 @@ html, body, #root {
   white-space: nowrap;
 }
 
+.pdf-search-wrapper {
+  position: relative;
+}
+
+.pdf-search-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  height: 24px;
+  overflow: hidden;
+}
+
 .pdf-search-form {
   display: flex;
+  flex: 1;
+  min-width: 0;
 }
 
 .pdf-search-input {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
   color: var(--text-primary);
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 0.85em;
-  width: 160px;
-  height: 26px;
+  padding: 2px 6px;
+  font-size: 11px;
+  width: 170px;
+  height: 22px;
   box-sizing: border-box;
+  outline: none;
 }
 
-.pdf-search-input:focus {
-  outline: none;
+.pdf-search-bar:focus-within {
   border-color: var(--accent);
 }
 
-.pdf-match-info {
-  font-size: 0.77em;
+.pdf-search-counter {
+  font-size: 10px;
   color: var(--text-secondary);
   font-family: monospace;
+  padding: 0 4px;
+  white-space: nowrap;
+  user-select: none;
 }
 
-.pdf-search-wrapper {
-  position: relative;
+.pdf-search-nav-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 8px;
+  line-height: 22px;
+  display: flex;
+  align-items: center;
+}
+
+.pdf-search-nav-btn:hover {
+  color: var(--accent);
+  background: var(--bg-tertiary);
 }
 
 .pdf-multiterm-dropdown {
@@ -2646,34 +2677,7 @@ html, body, #root {
   display: block;
 }
 
-.pdf-match-nav {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.pdf-nav-hint {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  font-size: 0.72em;
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 0px;
-  padding: 3px 8px;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: 10;
-  animation: pdf-nav-hint-fade 5s ease-out forwards;
-}
-
-@keyframes pdf-nav-hint-fade {
-  0%, 70% { opacity: 0.9; }
-  100% { opacity: 0; }
-}
+/* (pdf-match-nav and pdf-nav-hint removed — integrated into pdf-search-bar) */
 
 .pdf-click-highlight {
   position: absolute;
