@@ -784,6 +784,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!isLoaded) { scaleRef.current = 0; viewportHeightRef.current = 0; }
   }, [isLoaded]);
 
+  /** Remove all tile canvases from the DOM and clear the tile map */
+  const clearTileDom = useCallback(() => {
+    for (const canvas of tileContainerRef.current.values()) {
+      canvas.remove();
+    }
+    tileContainerRef.current.clear();
+  }, []);
+
   useEffect(() => {
     clearTileDom();
     if (skipResetRef.current) {
@@ -898,13 +906,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     setRenderEpoch(e => e + 1);
   }, []);
 
-  /** Remove all tile canvases from the DOM and clear the tile map */
-  const clearTileDom = useCallback(() => {
-    for (const canvas of tileContainerRef.current.values()) {
-      canvas.remove();
-    }
-    tileContainerRef.current.clear();
-  }, []);
 
   const renderPage = useCallback(async () => {
     if (!isLoaded) return;
@@ -2427,7 +2428,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 ref={searchInputRef}
                 type="text"
                 className="pdf-search-input"
-                placeholder="Search (multi-term: 10UF 25V 0603)"
+                placeholder="Search (multi-term: 10UF 25V)"
                 defaultValue={searchQuery}
                 onChange={(e) => {
                   if (!e.target.value.trim()) {
