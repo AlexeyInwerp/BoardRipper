@@ -328,7 +328,7 @@ class DatabankStore extends Emitter {
         this.notify();
       }
       return await res.json();
-    } catch (err) {
+    } catch {
       if (!this._backendWarned) {
         log.scan.warn('Backend unavailable — run the Docker container or backend on :8080');
         this._backendWarned = true;

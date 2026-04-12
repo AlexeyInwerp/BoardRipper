@@ -269,7 +269,6 @@ test.describe('PDF Search (Library)', () => {
     console.log(`Backend co-occur pages (rsc.io): ${backendArr.join(', ')}`);
 
     // --- 5. Verify: backend must be a superset of frontend spatial matches ---
-    const frontendSpatialPages = new Set(result!.spatialPages);
     const missedByBackend = result!.spatialPages.filter((p: number) => !backendPages.has(p));
     if (missedByBackend.length > 0) {
       console.error(`CRITICAL: Backend missed spatial pages: ${missedByBackend.join(', ')}`);

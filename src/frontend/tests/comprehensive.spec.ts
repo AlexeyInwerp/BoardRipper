@@ -199,7 +199,6 @@ test.describe('Comprehensive Board Tests', () => {
     await searchInput.fill('ZZZZNONEXISTENT');
     await expect(page.getByTestId('search-results')).toBeVisible({ timeout: 3000 });
     // Should show "no results" or empty state
-    const resultsText = await page.getByTestId('search-results').textContent();
     // Either shows "No results" or has no items
     const items = page.getByTestId('search-results').locator('.search-result-item');
     const count = await items.count();
