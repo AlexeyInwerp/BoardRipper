@@ -25,8 +25,7 @@ registerFormat(TVWFormat);
 export type { BoardData, Part, Pin, Net, Point, BBox, Trace, Via } from './types';
 export { computeBBox, buildNets } from './types';
 export type { FormatDescriptor, FormatId } from './registry';
-export { getFormat, getAllFormats, getAllExtensions, getFileExtension, setFormatOverride, getFormatOverrides } from './registry';
-export type { FormatOverrides } from './registry';
+export { getFormat, getAllFormats, getAllExtensions, getFileExtension } from './registry';
 export { exportToBVR3 } from './export-bvr3';
 
 export async function parseBoardFile(buffer: ArrayBuffer, fileName?: string): Promise<BoardData> {

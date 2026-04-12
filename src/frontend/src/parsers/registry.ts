@@ -56,79 +56,23 @@ export function registerFormat(fmt: FormatDescriptor): void {
   _formats.push(fmt);
 }
 
-/* ── Runtime format overrides (persisted in localStorage) ── */
-
-const FORMAT_OVERRIDES_KEY = 'boardviewer-format-overrides';
-
-export interface FormatOverrides {
-  flipY?: boolean;
-  swapSides?: boolean;
-}
-
-type OverridesMap = Record<FormatId, FormatOverrides>;
-
-let _overrides: OverridesMap = {};
-// v0.2.0-beta.1: clear stale overrides — parser defaults are now correct for all formats.
-const OVERRIDE_VERSION_KEY = 'boardviewer-format-overrides-version';
-const OVERRIDE_VERSION = 2; // bump to force-clear overrides on next load
-try {
-  const ver = Number(localStorage.getItem(OVERRIDE_VERSION_KEY)) || 0;
-  if (ver < OVERRIDE_VERSION) {
-    localStorage.removeItem(FORMAT_OVERRIDES_KEY);
-    localStorage.setItem(OVERRIDE_VERSION_KEY, String(OVERRIDE_VERSION));
-  } else {
-    const raw = localStorage.getItem(FORMAT_OVERRIDES_KEY);
-    if (raw) _overrides = JSON.parse(raw);
-  }
-} catch { /* ignore */ }
-
-/** Apply user overrides to a format descriptor (returns a new object). */
-function applyOverrides(fmt: FormatDescriptor): FormatDescriptor {
-  const ov = _overrides[fmt.id];
-  if (!ov) return fmt;
-  return {
-    ...fmt,
-    flipY: ov.flipY ?? fmt.flipY,
-    swapSides: ov.swapSides ?? fmt.swapSides,
-  };
-}
-
-export function getFormatOverrides(): OverridesMap {
-  return _overrides;
-}
-
-export function setFormatOverride(id: FormatId, key: keyof FormatOverrides, value: boolean): void {
-  if (!_overrides[id]) _overrides[id] = {};
-  const fmt = _formats.find(f => f.id === id);
-  const builtinValue = fmt ? fmt[key] ?? false : false;
-  if (value === builtinValue) {
-    // Matches built-in default — remove override
-    delete _overrides[id][key];
-    if (Object.keys(_overrides[id]).length === 0) delete _overrides[id];
-  } else {
-    _overrides[id][key] = value;
-  }
-  try { localStorage.setItem(FORMAT_OVERRIDES_KEY, JSON.stringify(_overrides)); } catch { /* ignore */ }
-}
-
 /**
  * Try each registered format's detect() in registration order.
  * Returns the first match, or null if none recognised.
  */
 export function detectFormat(header: Uint8Array): FormatDescriptor | null {
   for (const fmt of _formats) {
-    if (fmt.detect(header)) return applyOverrides(fmt);
+    if (fmt.detect(header)) return fmt;
   }
   return null;
 }
 
 export function getFormat(id: FormatId): FormatDescriptor | undefined {
-  const fmt = _formats.find(f => f.id === id);
-  return fmt ? applyOverrides(fmt) : undefined;
+  return _formats.find(f => f.id === id);
 }
 
 export function getAllFormats(): FormatDescriptor[] {
-  return _formats.map(applyOverrides);
+  return [..._formats];
 }
 
 /** All file extensions accepted across all registered formats. */
