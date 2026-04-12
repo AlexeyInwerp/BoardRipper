@@ -732,7 +732,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // than what's currently displayed. Zooming out should never replace a
     // high-res bitmap with a lower-res one — the CSS downscale looks sharp.
     const candidateTier = quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier));
-    if (candidateTier > renderTierRef.current) {
+    const isTiled = zoomRef.current > 1.05;
+    if (isTiled || candidateTier > renderTierRef.current) {
       const ema = renderTimeEmaRef.current;
       const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
       const now = performance.now();
