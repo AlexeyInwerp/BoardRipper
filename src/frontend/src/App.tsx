@@ -10,7 +10,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import { Toolbar } from './components/Toolbar';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
-import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide, getSidebarWidth } from './components/Sidebar';
+import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide } from './components/Sidebar';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
