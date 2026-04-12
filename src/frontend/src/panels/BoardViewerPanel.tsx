@@ -16,7 +16,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const rendererRef = useRef<BoardRenderer | null>(null);
   const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'nets' | 'search' | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
   const [sliderVisible, setSliderVisible] = useState(false);
   const sliderGroupRef = useRef<HTMLDivElement>(null);

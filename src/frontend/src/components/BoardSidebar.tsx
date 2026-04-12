@@ -1,9 +1,9 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 
-type SidebarTab = 'layers' | 'info' | 'nets' | 'search';
+type SidebarTab = 'layers' | 'info' | 'search';
 
 interface BoardSidebarProps {
   visible: boolean;
@@ -52,12 +52,6 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
             Info
           </button>
           <button
-            className={`board-sidebar-tab ${activeTab === 'nets' ? 'active' : ''}`}
-            onClick={() => setActiveTab('nets')}
-          >
-            Nets
-          </button>
-          <button
             className={`board-sidebar-tab ${activeTab === 'search' ? 'active' : ''}`}
             onClick={() => setActiveTab('search')}
           >
@@ -71,7 +65,6 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
       <div className="board-sidebar-content">
         {activeTab === 'layers' && <LayersTab />}
         {activeTab === 'info' && <InfoTab tabId={tabId} />}
-        {activeTab === 'nets' && <NetsTab tabId={tabId} />}
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
       </div>
     </div>
@@ -269,75 +262,168 @@ function InfoTab({ tabId }: { tabId: number }) {
   );
 }
 
-function NetsTab({ tabId }: { tabId: number }) {
-  const { tabs } = useBoardStore();
-  const tab = tabs.find(t => t.id === tabId);
-  const board = tab?.board ?? null;
-  const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
-  const searchQuery = tab?.searchQuery ?? '';
-
-  const nets = useMemo(
-    () => board ? Array.from(board.nets.entries()).sort((a, b) => a[0].localeCompare(b[0])) : [],
-    [board?.nets],
-  );
-
-  if (!board) return <div className="panel-empty">No board loaded</div>;
-
-  const filtered = searchQuery
-    ? nets.filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))
-    : nets;
-
-  return (
-    <div className="panel-content net-list" data-testid="net-list">
-      <div className="net-list-header">
-        <span>{filtered.length} nets</span>
-      </div>
-      <div className="net-list-container">
-        {filtered.map(([name, net]) => (
-          <div
-            key={name}
-            className={`net-item ${selection.highlightedNet === name ? 'net-highlighted' : ''}`}
-            onClick={() => boardStore.highlightNet(
-              selection.highlightedNet === name ? null : name
-            )}
-          >
-            <span className="net-name">{name}</span>
-            <span className="net-count">{net.pinIndices.length}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function SearchTab({ tabId }: { tabId: number }) {
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
-  const searchQuery = tab?.searchQuery ?? '';
-  const searchResults = boardStore.searchForTab(tabId);
+  const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
+
+  const [query, setQuery] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [componentsOpen, setComponentsOpen] = useState(true);
+  const [netsOpen, setNetsOpen] = useState(true);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Filter out placeholder/empty names
+  const isValidName = (name: string) => {
+    const trimmed = name.trim();
+    return trimmed !== '' && !/^\.+$/.test(trimmed);
+  };
+
+  // Build sorted lists for autocomplete
+  const allParts = useMemo(
+    () => board ? board.parts.map(p => p.name).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [],
+    [board?.parts],
+  );
+  const allNets = useMemo(
+    () => board ? Array.from(board.nets.keys()).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [],
+    [board?.nets],
+  );
+
+  // Compute filtered results (show all when no query)
+  const ql = query.toLowerCase();
+  const matchedParts = useMemo(() => {
+    if (!board) return [];
+    const valid = board.parts.filter(p => isValidName(p.name));
+    if (!ql) return valid.sort((a, b) => a.name.localeCompare(b.name));
+    return valid.filter(p => p.name.toLowerCase().includes(ql));
+  }, [board?.parts, ql]);
+
+  const matchedNets = useMemo(() => {
+    if (!board) return [];
+    const entries = Array.from(board.nets.entries())
+      .filter(([name]) => isValidName(name))
+      .sort((a, b) => a[0].localeCompare(b[0]));
+    if (!ql) return entries;
+    return entries.filter(([name]) => name.toLowerCase().includes(ql));
+  }, [board?.nets, ql]);
+
+  // Autocomplete suggestions (max 8)
+  const suggestions = useMemo(() => {
+    if (!ql) return [];
+    const items: { label: string; type: 'component' | 'net' }[] = [];
+    for (const name of allParts) {
+      if (name.toLowerCase().includes(ql)) items.push({ label: name, type: 'component' });
+      if (items.length >= 8) return items;
+    }
+    for (const name of allNets) {
+      if (name.toLowerCase().includes(ql)) items.push({ label: name, type: 'net' });
+      if (items.length >= 8) return items;
+    }
+    return items;
+  }, [ql, allParts, allNets]);
+
+  // Sync toolbar search with local query
+  const onQueryChange = useCallback((value: string) => {
+    setQuery(value);
+    boardStore.setSearch(value);
+  }, []);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node) &&
+          inputRef.current && !inputRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   if (!board) return <div className="panel-empty">No board loaded</div>;
-  if (!searchQuery) return <div className="panel-empty">Type in the search bar to find components</div>;
+
+  const totalResults = matchedParts.length + matchedNets.length;
 
   return (
-    <div className="panel-content search-results" data-testid="search-results">
-      <div className="search-results-header">
-        <span>{searchResults.length} results for &quot;{searchQuery}&quot;</span>
+    <div className="panel-content search-tab" data-testid="search-results">
+      <div className="search-tab-input-wrap">
+        <input
+          ref={inputRef}
+          type="text"
+          className="search-tab-input"
+          placeholder="Search components or nets..."
+          value={query}
+          onChange={(e) => { onQueryChange(e.target.value); setShowSuggestions(true); }}
+          onFocus={() => { if (query) setShowSuggestions(true); }}
+        />
+        {query && (
+          <button className="search-tab-clear" onClick={() => { onQueryChange(''); setShowSuggestions(false); }} title="Clear">×</button>
+        )}
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="search-tab-suggestions" ref={suggestionsRef}>
+            {suggestions.map((s, i) => (
+              <div key={i} className="search-tab-suggestion" onClick={() => {
+                onQueryChange(s.label);
+                setShowSuggestions(false);
+              }}>
+                <span className={`suggestion-type suggestion-type-${s.type}`}>{s.type === 'component' ? 'C' : 'N'}</span>
+                <span className="suggestion-label">{s.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="search-results-container">
-        {searchResults.map((part) => (
-            <div
-              key={part.name}
-              className="search-result-item"
-              onClick={() => boardStore.focusPart(part.name)}
-            >
-              <span className="result-name">{part.name}</span>
-              <span className={`badge badge-${part.side}`}>{part.side}</span>
-              <span className="result-pins">{part.pins.length} pins</span>
-            </div>
-        ))}
-      </div>
+
+      <div className="search-tab-results">
+        {query && <div className="search-results-summary">{totalResults} results for &quot;{query}&quot;</div>}
+
+          {/* Components section */}
+          <div className="search-section">
+            <button className="search-section-header" onClick={() => setComponentsOpen(!componentsOpen)}>
+              <span className="search-section-arrow">{componentsOpen ? '▾' : '▸'}</span>
+              <span className="search-section-title">Components</span>
+              <span className="search-section-count">{matchedParts.length}</span>
+            </button>
+            {componentsOpen && (
+              <div className="search-section-body">
+                {matchedParts.length === 0 && <div className="search-section-empty">No matching components</div>}
+                {matchedParts.map((part) => (
+                  <div key={part.name} className="search-result-item" onClick={() => boardStore.focusPart(part.name)}>
+                    <span className="result-name">{part.name}</span>
+                    <span className={`badge badge-${part.side}`}>{part.side}</span>
+                    <span className="result-pins">{part.pins.length} pins</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Nets section */}
+          <div className="search-section">
+            <button className="search-section-header" onClick={() => setNetsOpen(!netsOpen)}>
+              <span className="search-section-arrow">{netsOpen ? '▾' : '▸'}</span>
+              <span className="search-section-title">Nets</span>
+              <span className="search-section-count">{matchedNets.length}</span>
+            </button>
+            {netsOpen && (
+              <div className="search-section-body">
+                {matchedNets.length === 0 && <div className="search-section-empty">No matching nets</div>}
+                {matchedNets.map(([name, net]) => (
+                  <div
+                    key={name}
+                    className={`net-item ${selection.highlightedNet === name ? 'net-highlighted' : ''}`}
+                    onClick={() => boardStore.highlightNet(selection.highlightedNet === name ? null : name)}
+                  >
+                    <span className="net-name">{name}</span>
+                    <span className="net-count">{net.pinIndices.length}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
     </div>
   );
 }

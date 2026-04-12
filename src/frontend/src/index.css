@@ -743,18 +743,162 @@ html, body, #root {
   border-radius: 8px;
 }
 
-/* Search Results */
-.search-results-header {
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
+/* Search Tab */
+.search-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.search-tab-input-wrap {
+  position: relative;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+
+.search-tab-input {
+  width: 100%;
+  padding: 6px 28px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.search-tab-input:focus {
+  border-color: var(--accent);
+}
+
+.search-tab-clear {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
   color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1.1em;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.search-tab-suggestions {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.search-tab-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
   font-size: 0.85em;
 }
 
-.search-results-container {
-  overflow: auto;
-  max-height: calc(100% - 30px);
+.search-tab-suggestion:hover {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.suggestion-type {
+  font-size: 0.7em;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.suggestion-type-component {
+  background: rgba(74, 158, 255, 0.2);
+  color: var(--accent);
+}
+
+.suggestion-type-net {
+  background: rgba(255, 200, 50, 0.2);
+  color: #dda800;
+}
+
+.suggestion-label {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-tab-results {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.search-results-summary {
+  padding: 4px 8px 6px;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-section {
+  border-bottom: 1px solid var(--border);
+}
+
+.search-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.search-section-header:hover {
+  background: rgba(74, 158, 255, 0.05);
+}
+
+.search-section-arrow {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  width: 12px;
+}
+
+.search-section-count {
+  margin-left: auto;
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.search-section-body {
+  padding-bottom: 4px;
+}
+
+.search-section-empty {
+  padding: 4px 8px 4px 26px;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  font-style: italic;
 }
 
 .search-result-item {
@@ -2347,11 +2491,63 @@ html, body, #root {
   display: block;
 }
 
-.pdf-clicked-text {
-  font-size: 0.85em;
-  color: var(--accent);
-  font-family: monospace;
-  font-weight: 600;
+.pdf-match-nav {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pdf-nav-hint {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  font-size: 0.72em;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+  animation: pdf-nav-hint-fade 5s ease-out forwards;
+}
+
+@keyframes pdf-nav-hint-fade {
+  0%, 70% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+.pdf-click-highlight {
+  position: absolute;
+  border: 1px solid #ffaa00;
+  pointer-events: none;
+  z-index: 5;
+  box-sizing: border-box;
+  animation: pdf-click-hl-fade 4s ease-out forwards;
+}
+
+.pdf-click-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform-origin: bottom center;
+  background: rgba(0, 0, 0, 0.75);
+  color: #ffcc44;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+  animation: pdf-click-hl-fade 4s ease-out forwards;
+}
+
+@keyframes pdf-click-hl-fade {
+  0%, 60% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .pdf-toolbar-spacer {

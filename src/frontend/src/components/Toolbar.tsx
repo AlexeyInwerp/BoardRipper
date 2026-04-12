@@ -3,7 +3,7 @@ import { IconFlipHorizontal } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
-import { showSidebarTab } from './Sidebar';
+import { toggleSidebar } from './Sidebar';
 import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
@@ -176,9 +176,9 @@ export function Toolbar() {
         data-testid="pdf-input"
       />
       <button
-        onClick={() => showSidebarTab('library')}
+        onClick={toggleSidebar}
         className="toolbar-btn toolbar-btn-icon"
-        data-tooltip="Board library / databank"
+        data-tooltip="Toggle sidebar"
       >
         &#x2261;
       </button>
@@ -276,50 +276,25 @@ export function Toolbar() {
         data-testid="search-input"
       />
 
-      <div className="toolbar-separator" />
-
-      <button
-        onClick={() => showSidebarTab('settings')}
-        className="toolbar-btn toolbar-btn-icon"
-        data-tooltip="Settings"
-      >
-        ⚙
-      </button>
-      <button
-        onClick={() => showSidebarTab('debug')}
-        className="toolbar-btn"
-        data-tooltip="Debug log"
-        style={{ fontFamily: 'monospace', fontSize: '0.85em' }}
-      >
-        &gt;_
-      </button>
-
       <div className="toolbar-spacer" />
 
-      {board && (
-        <>
-          {board.format !== 'BVR3' && (
-            <button
-              className="toolbar-btn"
-              data-tooltip={`Save this ${board.format} board as BVR3 for archival`}
-              onClick={() => {
-                const bvr3 = exportToBVR3(board);
-                const blob = new Blob([bvr3], { type: 'text/plain' });
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                const base = boardStore.fileName.replace(/\.[^.]+$/, '');
-                a.download = `${base}.bvr`;
-                a.click();
-                URL.revokeObjectURL(a.href);
-              }}
-            >
-              Save as BVR3
-            </button>
-          )}
-          <span className="toolbar-stats" data-testid="file-name">
-            {board.parts.length} parts | {board.nets.size} nets
-          </span>
-        </>
+      {board && board.format !== 'BVR3' && (
+        <button
+          className="toolbar-btn"
+          data-tooltip={`Save this ${board.format} board as BVR3 for archival`}
+          onClick={() => {
+            const bvr3 = exportToBVR3(board);
+            const blob = new Blob([bvr3], { type: 'text/plain' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            const base = boardStore.fileName.replace(/\.[^.]+$/, '');
+            a.download = `${base}.bvr`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
+        >
+          Save as BVR3
+        </button>
       )}
 
       <UpdateBadge update={update} />
