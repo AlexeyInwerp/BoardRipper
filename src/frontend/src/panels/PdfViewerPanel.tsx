@@ -766,6 +766,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [isLoaded]);
 
   useEffect(() => {
+    clearTileDom();
     if (skipResetRef.current) {
       skipResetRef.current = false;
       return;
@@ -774,7 +775,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     panRef.current = { x: 0, y: 0 };
     renderTierRef.current = 1;
     syncTransform();
-  }, [currentPage, syncTransform]);
+  }, [currentPage, syncTransform, clearTileDom]);
+
+  useEffect(() => {
+    return () => {
+      clearTileDom();
+      invalidateTileCache(pdfFileName);
+    };
+  }, [pdfFileName, clearTileDom]);
 
   const renderIdRef = useRef(0);
   const prefetchIdRef = useRef(0);
@@ -1309,6 +1317,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, clearTileDom]);
 
+  /** Route to tiled or full-page render based on zoom level */
+  const renderActive = useCallback(() => {
+    if (zoomRef.current > 1.05) {
+      renderTiledPage();
+    } else {
+      clearTileDom();
+      const mainCanvas = canvasRef.current;
+      if (mainCanvas) mainCanvas.style.display = '';
+      renderPage();
+    }
+  }, [renderPage, renderTiledPage, clearTileDom]);
+
   const drawHighlights = useCallback(() => {
     if (!highlightRef.current || !isLoaded) return;
     const highlight = highlightRef.current;
@@ -1379,12 +1399,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   }, [pdfFileName, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
 
-  const renderPageRef = useRef(renderPage);
-  renderPageRef.current = renderPage;
+  const renderPageRef = useRef(renderActive);
+  renderPageRef.current = renderActive;
   const drawHighlightsRef = useRef(drawHighlights);
   drawHighlightsRef.current = drawHighlights;
 
-  useEffect(() => { renderPage(); }, [renderPage]);
+  useEffect(() => { renderActive(); }, [renderActive]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
 
   // --- Adjacent page rendering (N pages visible when panning / zoomed out) ---
