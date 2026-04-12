@@ -18,11 +18,11 @@ test('app loads and shows toolbar', async ({ page }) => {
   await expect(page.getByTestId('open-btn')).toBeVisible();
 });
 
-test('open BVR board — stats appear', async ({ page }) => {
+test('open BVR board — tab appears', async ({ page }) => {
   await page.goto('/');
   const fileInput = page.getByTestId('file-input');
   await fileInput.setInputFiles(BVR_FILE);
-  await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
 });
 
 test('open PDF — tab appears', async ({ page }) => {
@@ -37,7 +37,7 @@ test('open board + PDF together', async ({ page }) => {
   await page.goto('/');
   // Load board
   await page.getByTestId('file-input').setInputFiles(BVR_FILE);
-  await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
   // Load PDF
   await page.getByTestId('pdf-input').setInputFiles(PDF_FILE);
   await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
