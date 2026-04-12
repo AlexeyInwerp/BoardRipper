@@ -18,10 +18,14 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: 'debug', label: 'Debug' },
 ];
 
+const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
+
 function loadWidth(): number {
   try {
     const v = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-    return v ? Math.max(MIN_WIDTH, parseInt(v, 10)) : DEFAULT_WIDTH;
+    if (!v) return DEFAULT_WIDTH;
+    const maxPx = Math.round(window.innerWidth * MAX_WIDTH_RATIO);
+    return Math.min(maxPx, Math.max(MIN_WIDTH, parseInt(v, 10)));
   } catch { return DEFAULT_WIDTH; }
 }
 
@@ -96,13 +100,17 @@ export function Sidebar() {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }, [width]);
 
+  const clampWidth = useCallback((raw: number) => {
+    const maxPx = Math.round(window.innerWidth * MAX_WIDTH_RATIO);
+    return Math.min(maxPx, Math.max(MIN_WIDTH, raw));
+  }, []);
+
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragging.current) return;
     const rawDelta = e.clientX - startX.current;
     const delta = _side === 'left' ? rawDelta : -rawDelta;
-    const newWidth = Math.max(MIN_WIDTH, startWidth.current + delta);
-    setWidth(newWidth);
-  }, []);
+    setWidth(clampWidth(startWidth.current + delta));
+  }, [clampWidth]);
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     if (!dragging.current) return;
@@ -110,11 +118,11 @@ export function Sidebar() {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     const rawDelta = e.clientX - startX.current;
     const delta = _side === 'left' ? rawDelta : -rawDelta;
-    const newWidth = Math.max(MIN_WIDTH, startWidth.current + delta);
+    const newWidth = clampWidth(startWidth.current + delta);
     setWidth(newWidth);
     saveWidth(newWidth);
     _listeners.forEach(fn => fn());
-  }, []);
+  }, [clampWidth]);
 
   if (_collapsed) return null;
 

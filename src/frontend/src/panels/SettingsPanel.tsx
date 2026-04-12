@@ -4,7 +4,6 @@ import type { RenderSettings, LabelSize, NetColorRule, PartTypeOverride, PadShap
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
-import { getAllFormats, setFormatOverride } from '../parsers/registry';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
@@ -30,7 +29,7 @@ function useOverride(field: keyof RenderSettings) {
   return { isOverride, resetValue: gv as number & boolean };
 }
 
-type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'formats' | 'partTypeOverrides' | 'server' | 'pdf';
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'pdf';
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
@@ -345,49 +344,6 @@ function PartTypeOverridesSection({ overrides, actions }: { overrides: Record<st
   );
 }
 
-// ---- Format settings table ----
-
-function FormatSettingsTable() {
-  const [, forceUpdate] = useState(0);
-  const formats = getAllFormats();
-
-  const toggle = (id: string, key: 'flipY' | 'swapSides', current: boolean) => {
-    setFormatOverride(id, key, !current);
-    forceUpdate(n => n + 1);
-  };
-
-  return (
-    <>
-      <table className="formats-table">
-        <thead>
-          <tr>
-            <th>Format</th>
-            <th>Extensions</th>
-            <th>Flip Y</th>
-            <th>Swap Sides</th>
-          </tr>
-        </thead>
-        <tbody>
-          {formats.map(fmt => (
-            <tr key={fmt.id}>
-              <td title={fmt.description}>{fmt.name}</td>
-              <td>{fmt.extensions.join(', ')}</td>
-              <td>
-                <input type="checkbox" checked={fmt.flipY ?? false}
-                  onChange={() => toggle(fmt.id, 'flipY', fmt.flipY ?? false)} />
-              </td>
-              <td>
-                <input type="checkbox" checked={fmt.swapSides ?? false}
-                  onChange={() => toggle(fmt.id, 'swapSides', fmt.swapSides ?? false)} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="color-rule-hint">Changes apply to newly opened boards. Reload a board to see the effect.</div>
-    </>
-  );
-}
 
 // ---- Library folder setting (Docker mode) ----
 
@@ -892,7 +848,6 @@ export function SettingsPanel() {
   const navigationRef = useRef<HTMLDivElement>(null);
   const performanceRef = useRef<HTMLDivElement>(null);
   const shortcutsRef = useRef<HTMLDivElement>(null);
-  const formatsRef = useRef<HTMLDivElement>(null);
   const partTypeOverridesRef = useRef<HTMLDivElement>(null);
   const zoomLodRef = useRef<HTMLDivElement>(null);
   const serverRef = useRef<HTMLDivElement>(null);
@@ -901,7 +856,7 @@ export function SettingsPanel() {
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, navigation: navigationRef,
-    performance: performanceRef, shortcuts: shortcutsRef, formats: formatsRef,
+    performance: performanceRef, shortcuts: shortcutsRef,
     partTypeOverrides: partTypeOverridesRef, server: serverRef, pdf: pdfRef,
   });
 
@@ -1249,11 +1204,6 @@ export function SettingsPanel() {
           title="Show numbered markers at each board outline vertex. Yellow = unique, orange = duplicate coordinates. Works for all board formats" />
         <Toggle label="[Debug] Label Size Tiers" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft}
           title="Color part labels by their computed font-size tier: blue = small, yellow = medium, green = large. Useful for tuning the Small/Medium/Large size thresholds" />
-      </CollapsibleSection>
-
-      <CollapsibleSection id="formats" title="Supported Formats" isOpen={openSections.has('formats')}
-        onToggle={toggleSection} sectionRef={formatsRef} isFocused={focusedSection === 'formats'}>
-        <FormatSettingsTable />
       </CollapsibleSection>
 
       <CollapsibleSection id="pdf" title="PDF Viewer" isOpen={openSections.has('pdf')}
