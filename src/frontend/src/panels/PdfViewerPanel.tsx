@@ -1091,6 +1091,224 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas]);
 
+  // --- Tiled viewport rendering (zoom > 1) ---
+  const renderTiledPage = useCallback(async () => {
+    if (!isLoaded) return;
+    renderTaskRef.current?.cancel();
+
+    const tileRenderId = ++tileRenderIdRef.current;
+    const zoom = zoomRef.current;
+    const maxTier = qcfgRef.current.maxMainTier;
+    const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoom, maxTier)));
+    renderTierRef.current = resTier;
+
+    const container = containerRef.current;
+    const wrapper = wrapperRef.current;
+    if (!container || !wrapper) return;
+    const containerWidth = container.clientWidth;
+    const containerH = container.clientHeight;
+    if (containerWidth === 0) return;
+
+    try {
+      const page = await pdfStore.getPageFor(pdfFileName, currentPage);
+      if (tileRenderIdRef.current !== tileRenderId) return;
+
+      const unscaledVp = page.getViewport({ scale: 1 });
+      const baseScale = containerWidth / unscaledVp.width;
+      const dpr = window.devicePixelRatio || 1;
+      let renderScale = baseScale * resTier * dpr;
+      renderScale = clampCanvasScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+
+      const cssW = containerWidth;
+      const cssH = unscaledVp.height * baseScale;
+      scaleRef.current = baseScale;
+      hiresScaleRef.current = renderScale;
+      viewportHeightRef.current = unscaledVp.height;
+      viewportTransformRef.current = unscaledVp.transform;
+      pageCssHRef.current = cssH;
+
+      const grid = computeTileGrid(unscaledVp.width, unscaledVp.height, renderScale);
+      const prevGrid = tileGridRef.current;
+      tileGridRef.current = grid;
+
+      if (!prevGrid || prevGrid.renderScale !== grid.renderScale) {
+        clearTileDom();
+      }
+
+      const mainCanvas = canvasRef.current;
+      if (mainCanvas) mainCanvas.style.display = 'none';
+
+      // Size highlight canvas for tiled mode
+      const highlight = highlightRef.current;
+      if (highlight) {
+        const hlScale = clampCanvasScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+        highlight.width = Math.ceil(unscaledVp.width * hlScale);
+        highlight.height = Math.ceil(unscaledVp.height * hlScale);
+        highlight.style.width = `${cssW}px`;
+        highlight.style.height = `${cssH}px`;
+        highlight.style.display = '';
+      }
+
+      const vp = viewportToPagePixels(
+        panRef.current.x, panRef.current.y, zoom,
+        containerWidth, containerH, baseScale, renderScale,
+      );
+      const PAD = TILE_SIZE;
+      const tiles = visibleTiles(
+        vp.x - PAD, vp.y - PAD, vp.w + PAD * 2, vp.h + PAD * 2, grid,
+      );
+
+      const cssTileW = TILE_SIZE / (renderScale / baseScale);
+      const cssTileH = TILE_SIZE / (renderScale / baseScale);
+
+      const visibleKeys = new Set<string>();
+      const toRender: { col: number; row: number }[] = [];
+
+      for (const t of tiles) {
+        const key = `${t.col}:${t.row}`;
+        visibleKeys.add(key);
+
+        let tileCanvas = tileContainerRef.current.get(key);
+        const cached = getTileCached(pdfFileName, currentPage, t.col, t.row, renderScale);
+
+        if (cached) {
+          if (!tileCanvas) {
+            tileCanvas = document.createElement('canvas');
+            tileCanvas.className = 'pdf-tile';
+            tileCanvas.width = cached.bitmap.width;
+            tileCanvas.height = cached.bitmap.height;
+            tileCanvas.style.width = `${cssTileW}px`;
+            tileCanvas.style.height = `${cssTileH}px`;
+            tileCanvas.style.left = `${t.col * cssTileW}px`;
+            tileCanvas.style.top = `${t.row * cssTileH}px`;
+            wrapper.appendChild(tileCanvas);
+            tileContainerRef.current.set(key, tileCanvas);
+          }
+          const ctx = tileCanvas.getContext('2d');
+          if (ctx) ctx.drawImage(cached.bitmap, 0, 0);
+          tileCanvas.style.display = '';
+        } else {
+          const best = getBestTileCached(pdfFileName, currentPage, t.col, t.row);
+          if (best && tileCanvas) {
+            tileCanvas.style.display = '';
+          }
+          toRender.push(t);
+        }
+      }
+
+      for (const [key, canvas] of tileContainerRef.current) {
+        if (!visibleKeys.has(key)) {
+          canvas.style.display = 'none';
+        }
+      }
+
+      // Evict hidden tile canvases if too many in DOM
+      const MAX_TILE_DOM = 50;
+      if (tileContainerRef.current.size > MAX_TILE_DOM) {
+        const toEvict: string[] = [];
+        for (const [key, canvas] of tileContainerRef.current) {
+          if (canvas.style.display === 'none') toEvict.push(key);
+        }
+        for (const key of toEvict) {
+          if (tileContainerRef.current.size <= MAX_TILE_DOM) break;
+          const canvas = tileContainerRef.current.get(key)!;
+          canvas.remove();
+          tileContainerRef.current.delete(key);
+        }
+      }
+
+      const t0 = performance.now();
+      for (const t of toRender) {
+        if (tileRenderIdRef.current !== tileRenderId) return;
+
+        const req = tileRenderRequest(t.col, t.row, grid);
+        const offscreen = acquireCanvas(req.pixelW, req.pixelH);
+        const offCtx = offscreen.getContext('2d', { alpha: false });
+        if (!offCtx) { releaseCanvas(offscreen); continue; }
+
+        const tileViewport = page.getViewport({
+          scale: renderScale,
+          offsetX: -req.srcX * renderScale,
+          offsetY: -req.srcY * renderScale,
+        });
+        const task = page.render({
+          canvas: offscreen, canvasContext: offCtx,
+          viewport: tileViewport, intent: 'display',
+        });
+        renderTaskRef.current = { cancel: () => task.cancel() };
+
+        try {
+          await task.promise;
+        } catch {
+          offscreen.width = 1; offscreen.height = 1;
+          continue;
+        }
+
+        if (tileRenderIdRef.current !== tileRenderId) {
+          offscreen.width = 1; offscreen.height = 1;
+          return;
+        }
+
+        let srcCanvas = offscreen;
+        if (cleanMode) {
+          const tmp = acquireCanvas(req.pixelW, req.pixelH);
+          const tmpCtx = tmp.getContext('2d', { alpha: false });
+          if (tmpCtx) {
+            tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
+            tmpCtx.drawImage(offscreen, 0, 0);
+            offscreen.width = 1; offscreen.height = 1;
+            srcCanvas = tmp;
+          }
+        }
+
+        try {
+          const bitmap = await createImageBitmap(srcCanvas);
+          srcCanvas.width = 1; srcCanvas.height = 1;
+
+          putTileCached(pdfFileName, currentPage, {
+            bitmap, col: t.col, row: t.row, scale: renderScale,
+          });
+
+          if (tileRenderIdRef.current === tileRenderId) {
+            const key = `${t.col}:${t.row}`;
+            let tileCanvas = tileContainerRef.current.get(key);
+            if (!tileCanvas) {
+              tileCanvas = document.createElement('canvas');
+              tileCanvas.className = 'pdf-tile';
+              tileCanvas.width = req.pixelW;
+              tileCanvas.height = req.pixelH;
+              tileCanvas.style.width = `${cssTileW}px`;
+              tileCanvas.style.height = `${cssTileH}px`;
+              tileCanvas.style.left = `${t.col * cssTileW}px`;
+              tileCanvas.style.top = `${t.row * cssTileH}px`;
+              wrapper.appendChild(tileCanvas);
+              tileContainerRef.current.set(key, tileCanvas);
+            }
+            const ctx = tileCanvas.getContext('2d');
+            if (ctx) ctx.drawImage(bitmap, 0, 0);
+            tileCanvas.style.display = '';
+          }
+        } catch {
+          srcCanvas.width = 1; srcCanvas.height = 1;
+        }
+      }
+
+      drawHighlightsRef.current();
+      setRenderEpoch(e => e + 1);
+
+      const totalMs = performance.now() - t0;
+      if (toRender.length > 0) {
+        log.perf.log(`tiled-render page=${currentPage} tiles=${toRender.length}/${tiles.length} ${Math.round(totalMs)}ms scale=${renderScale.toFixed(1)}`);
+        const prev = renderTimeEmaRef.current;
+        renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + totalMs * 0.3 : totalMs;
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message?.includes('cancel')) return;
+      log.pdf.error('renderTiledPage failed:', err);
+      setError(String(err));
+    }
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, clearTileDom]);
+
   const drawHighlights = useCallback(() => {
     if (!highlightRef.current || !isLoaded) return;
     const highlight = highlightRef.current;
