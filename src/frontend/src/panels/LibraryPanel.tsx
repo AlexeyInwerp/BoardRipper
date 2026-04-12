@@ -52,7 +52,7 @@ export function LibraryPanel() {
     files, folderTree, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loading, metadataTree,
     autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
-    libraryPath, electronMode, verboseScan, showPreviews,
+    libraryPath, electronMode,
     browseMode, browseResult, browsing,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
