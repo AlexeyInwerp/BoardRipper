@@ -10,30 +10,46 @@ import { pdfStore } from '../store/pdf-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 
+// Per-tab handlers for toolbar search → board sidebar integration
+const _boardSearchHandlers = new Map<number, (query: string) => void>();
+export function openBoardSearch(query: string, tabId?: number): void {
+  if (tabId != null) {
+    _boardSearchHandlers.get(tabId)?.(query);
+  } else {
+    // Fallback: use active tab's handler
+    const activeId = boardStore.activeTabId;
+    if (activeId != null) _boardSearchHandlers.get(activeId)?.(query);
+  }
+}
+
 export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: number }>) {
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
-  const { tabs, searchQuery, activeTabId, showNetLines, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
+  const { tabs, activeTabId, showNetLines, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
   const [sliderVisible, setSliderVisible] = useState(false);
   const sliderGroupRef = useRef<HTMLDivElement>(null);
-  const prevSearchRef = useRef('');
   const prevLayerCountRef = useRef(0);
 
-  // Auto-open sidebar to search tab when search query changes on this panel's tab
   const isActivePanel = activeTabId === tabId;
-  if (isActivePanel && searchQuery !== prevSearchRef.current) {
-    prevSearchRef.current = searchQuery;
-    if (searchQuery) {
-      if (!sidebarOpen) setSidebarOpen(true);
+
+  // Register per-tab handler for toolbar → board search
+  useEffect(() => {
+    if (tabId == null) return;
+    const handler = (query: string) => {
+      boardStore.switchTab(tabId);
+      boardStore.setSearch(query);
+      setSidebarOpen(true);
       setSidebarTab('search');
-    } else {
-      setSidebarTab(null);
-    }
-  }
+      // Activate this panel in dockview
+      props.api.setActive();
+    };
+    _boardSearchHandlers.set(tabId, handler);
+    return () => { _boardSearchHandlers.delete(tabId); };
+  }, [tabId, props.api]);
 
   // Auto-open sidebar to layers tab when a multi-layer board is loaded
   if (isActivePanel && layerStates.length > 0 && prevLayerCountRef.current === 0) {

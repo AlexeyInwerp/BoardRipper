@@ -2131,7 +2131,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }}>&#9650;</button>
             <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }}>&#9660;</button>
             {showNavHint && (
-              <span className="pdf-nav-hint">Use ↑↓ keyboard to navigate</span>
+              <span className="pdf-nav-hint">↑↓ Use keyboard to navigate</span>
             )}
           </span>
         )}
@@ -2210,7 +2210,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 />
               )}
 
-              <div className="pdf-glyph-debug-wrapper">
+              <div className="pdf-glyph-debug-wrapper" style={{ display: 'none' }}>
                 <button
                   className={`pdf-toolbar-btn${isGlyphActive ? ' active' : ''}`}
                   onClick={() => setGlyphMenuOpen(v => !v)}
@@ -2321,6 +2321,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 className="pdf-toolbar-btn"
                 onClick={() => pdfStore.dumpTextToNewTab(pdfFileName)}
                 title="Dump extracted text to new tab (debug)"
+                style={{ display: 'none' }}
               >
                 Dump Text
               </button>

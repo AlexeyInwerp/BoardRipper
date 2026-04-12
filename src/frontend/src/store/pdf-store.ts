@@ -953,6 +953,20 @@ class PdfStore extends Emitter {
     return this._documents.get(fileName)?.textPages[pageIndex] ?? [];
   }
 
+  /** Count text items containing `query` across all pages of a loaded document. */
+  countTextMatches(fileName: string, query: string): number {
+    const doc = this._documents.get(fileName);
+    if (!doc?.textPages || !query) return 0;
+    const ql = query.toLowerCase();
+    let count = 0;
+    for (const pageItems of doc.textPages) {
+      for (const item of pageItems) {
+        if (item.str.toLowerCase().includes(ql)) count++;
+      }
+    }
+    return count;
+  }
+
   getDocMatchesForPage(fileName: string, pageIndex: number): PdfTextMatch[] {
     return this._documents.get(fileName)?.matchesByPage.get(pageIndex) ?? [];
   }

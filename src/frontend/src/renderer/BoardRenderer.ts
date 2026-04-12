@@ -149,6 +149,7 @@ export class BoardRenderer {
   private containerEl: HTMLDivElement;
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
+  private boundDblClick: ((e: MouseEvent) => void) | null = null;
   private tooltipEl: HTMLDivElement | null = null;
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
@@ -782,6 +783,9 @@ export class BoardRenderer {
       this.handleRightClick(e);
     };
     this.containerEl.addEventListener('contextmenu', this.boundContextMenu);
+
+    this.boundDblClick = (e: MouseEvent) => { this.handleDblClick(e); };
+    this.containerEl.addEventListener('dblclick', this.boundDblClick);
 
     // Hover tooltip — listens directly on the PixiJS canvas (the actual event target)
     this.tooltipEl = document.createElement('div');
@@ -3253,6 +3257,17 @@ export class BoardRenderer {
     boardStore.selectPart(null);
   }
 
+  /** Double-click on a component → search it in the linked PDF (like follow mode). */
+  private handleDblClick(e: MouseEvent) {
+    if (!this.board) return;
+    const rect = this.containerEl.getBoundingClientRect();
+    const worldPoint = this.viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const hit = this.hitTest(worldPoint);
+    if (!hit) return;
+    const part = this.board.parts[hit.partIndex];
+    if (part) this.triggerFollowPdf(part);
+  }
+
   private handleRightClick(e: MouseEvent) {
     if (!this.board) return;
     const rect = this.containerEl.getBoundingClientRect();
@@ -3342,6 +3357,10 @@ export class BoardRenderer {
     }
     if (this.boundContextMenu) {
       this.containerEl.removeEventListener('contextmenu', this.boundContextMenu);
+    }
+    if (this.boundDblClick) {
+      this.containerEl.removeEventListener('dblclick', this.boundDblClick);
+      this.boundDblClick = null;
     }
     if (this.tooltipCanvas && this.boundHover) {
       this.tooltipCanvas.removeEventListener('pointermove', this.boundHover);
