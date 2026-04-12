@@ -16,6 +16,12 @@ import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
 import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand } from '@tabler/icons-react';
+import {
+  TILE_SIZE, computeTileGrid, visibleTiles, tileRenderRequest,
+  viewportToPagePixels, getTileCached, putTileCached, invalidateTileCache,
+  setTileCacheLimit, getBestTileCached,
+} from '../pdf/tile-manager';
+import type { TileGridInfo } from '../pdf/tile-manager';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -522,6 +528,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [clickHighlight, setClickHighlight] = useState<{ word: string; rect: { x: number; y: number; w: number; h: number }; key: number } | null>(null);
   const clickHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickHighlightKeyRef = useRef(0);
+  // Tile DOM management
+  const tileGridRef = useRef<TileGridInfo | null>(null);
+  const tileRenderIdRef = useRef(0);
+  const tileContainerRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blinkPhaseRef = useRef(0);
@@ -589,6 +599,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Apply cache limits on mount and quality change
   useEffect(() => {
     setPageCacheLimits(qcfg.cacheMaxEntries, qcfg.cacheMaxPixels);
+    setTileCacheLimit(qcfg.cacheMaxPixels);
   }, [qcfg.cacheMaxEntries, qcfg.cacheMaxPixels]);
 
   // Sync quality when changed from Settings panel
@@ -602,6 +613,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       qcfgRef.current = cfg;
       setPageCacheLimits(cfg.cacheMaxEntries, cfg.cacheMaxPixels);
       invalidatePageCache(pdfFileName);
+      setTileCacheLimit(cfg.cacheMaxPixels);
+      invalidateTileCache(pdfFileName);
       _lastCommittedTier = 1; // reset hysteresis
       renderPageRef.current();
     };
@@ -856,6 +869,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     drawHighlightsRef.current();
     setRenderEpoch(e => e + 1);
+  }, []);
+
+  /** Remove all tile canvases from the DOM and clear the tile map */
+  const clearTileDom = useCallback(() => {
+    for (const canvas of tileContainerRef.current.values()) {
+      canvas.remove();
+    }
+    tileContainerRef.current.clear();
   }, []);
 
   const renderPage = useCallback(async () => {
