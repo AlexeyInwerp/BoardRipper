@@ -511,7 +511,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderTierRef = useRef(1);
   const viewportTransformRef = useRef<number[]>([1, 0, 0, -1, 0, 0]);
   const [renderEpoch, setRenderEpoch] = useState(0); // bumped after each renderPage to sync overlays
-  const [clickedText, setClickedText] = useState<string | null>(null);
+  const [showNavHint, setShowNavHint] = useState(false);
+  const navHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navHintShownRef = useRef(false);
+  // Click-to-lookup overlay state
+  const [clickHighlight, setClickHighlight] = useState<{ word: string; rect: { x: number; y: number; w: number; h: number }; key: number } | null>(null);
+  const clickHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clickHighlightKeyRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blinkPhaseRef = useRef(0);
@@ -1771,18 +1777,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     syncTransform();
   }, [syncTransform]);
 
-  const handleTextClick = useCallback((e: React.MouseEvent) => {
-    if (!isLoaded) return;
-
+  /** Find the word + its page-space rect under a click. Shared by single & double click. */
+  const hitTestWord = useCallback((e: React.MouseEvent): { word: string; rect: { x: number; y: number; w: number; h: number } } | null => {
+    if (!isLoaded) return null;
     const container = containerRef.current;
-    const canvas = canvasRef.current;
-    if (!container || !canvas) return;
+    if (!container) return null;
 
     const containerRect = container.getBoundingClientRect();
-    const screenX = e.clientX - containerRect.left;
-    const screenY = e.clientY - containerRect.top;
-    const clickX = (screenX - panRef.current.x) / zoomRef.current;
-    const clickY = (screenY - panRef.current.y) / zoomRef.current;
+    const clickX = (e.clientX - containerRect.left - panRef.current.x) / zoomRef.current;
+    const clickY = (e.clientY - containerRect.top - panRef.current.y) / zoomRef.current;
 
     const scale = scaleRef.current;
     const vpT = viewportTransformRef.current;
@@ -1790,30 +1793,69 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const items = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
 
     for (const item of items) {
-      const { x, y, w, h } = textItemRect(item.transform, item.width, vpT, scale);
-
-      if (clickX >= x && clickX <= x + w && clickY >= y && clickY <= y + h) {
-        const charWidth = w / item.str.length;
-        const charIndex = Math.floor((clickX - x) / charWidth);
+      const r = textItemRect(item.transform, item.width, vpT, scale);
+      if (clickX >= r.x && clickX <= r.x + r.w && clickY >= r.y && clickY <= r.y + r.h) {
+        const charWidth = r.w / item.str.length;
+        const charIndex = Math.floor((clickX - r.x) / charWidth);
         const word = extractWord(item.str, charIndex);
-
         if (word) {
-          setClickedText(word);
-
-          const board = boardStore.board;
-          if (board) {
-            const upper = word.toUpperCase();
-            if (board.parts.some(p => p.name.toUpperCase() === upper)) {
-              boardStore.focusPart(word);
-            } else {
-              boardStore.focusNet(word);
-            }
-          }
+          // Compute the word's sub-rect within the text item
+          const wordStart = item.str.toUpperCase().indexOf(word.toUpperCase(), Math.max(0, charIndex - word.length));
+          const wx = r.x + (wordStart >= 0 ? wordStart * charWidth : 0);
+          const ww = word.length * charWidth;
+          return { word, rect: { x: wx, y: r.y, w: ww, h: r.h } };
         }
-        return;
       }
     }
+    return null;
   }, [pdfFileName, isLoaded, currentPage]);
+
+  const handleTextClick = useCallback((e: React.MouseEvent) => {
+    const hit = hitTestWord(e);
+    if (!hit) { setClickHighlight(null); return; }
+
+    // Show highlight + tooltip overlay
+    setClickHighlight({ ...hit, key: ++clickHighlightKeyRef.current });
+    if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
+    clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 4000);
+
+
+
+    // Focus part/net on board
+    const board = boardStore.board;
+    if (board) {
+      const upper = hit.word.toUpperCase();
+      if (board.parts.some(p => p.name.toUpperCase() === upper)) {
+        boardStore.focusPart(hit.word);
+      } else {
+        boardStore.focusNet(hit.word);
+      }
+    }
+  }, [hitTestWord, pdfFileName]);
+
+  const handleTextDblClick = useCallback((e: React.MouseEvent) => {
+    const hit = hitTestWord(e);
+    if (!hit) return;
+
+    // Double-click always overrides search
+    if (searchInputRef.current) {
+      searchInputRef.current.value = hit.word;
+      pdfStore.switchTo(pdfFileName);
+      pdfStore.searchText(hit.word);
+      navHintShownRef.current = false;
+    }
+    setClickHighlight(null);
+
+    const board = boardStore.board;
+    if (board) {
+      const upper = hit.word.toUpperCase();
+      if (board.parts.some(p => p.name.toUpperCase() === upper)) {
+        boardStore.focusPart(hit.word);
+      } else {
+        boardStore.focusNet(hit.word);
+      }
+    }
+  }, [hitTestWord, pdfFileName]);
 
   const handleTextClickRef = useRef(handleTextClick);
   handleTextClickRef.current = handleTextClick;
@@ -1866,7 +1908,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     e.preventDefault();
     pdfStore.switchTo(pdfFileName);
     pdfStore.searchText(searchInputRef.current?.value ?? '');
+    // Show nav hint once per search session
+    navHintShownRef.current = false;
   };
+
+  // Show ↑↓ navigation hint once when matches first appear
+  if (matches.length > 0 && !navHintShownRef.current) {
+    navHintShownRef.current = true;
+    if (!showNavHint) setShowNavHint(true);
+    if (navHintTimerRef.current) clearTimeout(navHintTimerRef.current);
+    navHintTimerRef.current = setTimeout(() => setShowNavHint(false), 5000);
+  }
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -2070,7 +2122,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           )}
         </div>
         {matches.length > 0 && (
-          <>
+          <span className="pdf-match-nav">
             <span className="pdf-match-info">
               {matchGroupCount > 0
                 ? `${activeGroupIndex + 1}/${matchGroupCount}`
@@ -2078,17 +2130,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             </span>
             <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }}>&#9650;</button>
             <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }}>&#9660;</button>
-          </>
+            {showNavHint && (
+              <span className="pdf-nav-hint">Use ↑↓ keyboard to navigate</span>
+            )}
+          </span>
         )}
 
-        {clickedText && (
-          <>
-            <div className="pdf-toolbar-separator" />
-            <span className="pdf-clicked-text" title="Clicked text">
-              {clickedText}
-            </span>
-          </>
-        )}
 
         <div className="pdf-toolbar-separator" />
         <button
@@ -2316,6 +2363,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         onPointerUp={handlePointerUp}
         onPointerCancel={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
         onPointerLeave={(e) => { activeTouchesRef.current.delete(e.pointerId); isDraggingRef.current = false; wasDragRef.current = false; }}
+        onDoubleClick={handleTextDblClick}
         onContextMenu={handleContextMenu}
         style={{ cursor: isDraggingRef.current ? 'grabbing' : 'crosshair', filter: nightMode ? 'invert(1)' : undefined }}
       >
@@ -2328,6 +2376,28 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <canvas ref={canvasRef} style={isGlyphComposite && !glyphLoading && !isFiltered ? { visibility: 'hidden' } : undefined} />
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
           <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
+          {clickHighlight && (() => {
+            const z = zoomRef.current || 1;
+            const pad = 2 / z;
+            const bw = 1.5 / z;
+            return (
+              <div
+                key={clickHighlight.key}
+                className="pdf-click-highlight"
+                style={{
+                  left: clickHighlight.rect.x - pad,
+                  top: clickHighlight.rect.y - pad,
+                  width: clickHighlight.rect.w + pad * 2,
+                  height: clickHighlight.rect.h + pad * 2,
+                  borderWidth: bw,
+                }}
+              >
+                <span className="pdf-click-tooltip" style={{ transform: `translateX(-50%) scale(${1 / z})` }}>
+                  Double-click to search
+                </span>
+              </div>
+            );
+          })()}
         </div>
         {pageCount > 1 && (
           <PageScrubber

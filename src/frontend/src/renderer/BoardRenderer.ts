@@ -159,6 +159,8 @@ export class BoardRenderer {
   private hoverNet: string | null = null;
   /** Bound wheel wake-up handler for cleanup */
   private boundWheelWake: ((e: WheelEvent) => void) | null = null;
+  /** Bound shift+wheel handler — intercepts before pixi-viewport to implement scroll bindings */
+  private boundShiftWheel: ((e: WheelEvent) => void) | null = null;
   /** Timer to re-pause ticker after wheel activity on an unfocused panel */
   private wheelIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private hudEl: HTMLDivElement | null = null;
@@ -200,8 +202,6 @@ export class BoardRenderer {
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
-  /** Part label whose tint was boosted by selection — reset on next renderSelection */
-  private highlightedPartLabel: import('pixi.js').BitmapText | null = null;
 
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
@@ -624,6 +624,7 @@ export class BoardRenderer {
       events: this.app.renderer.events,
     });
     this.applyViewportPlugins();
+    this.installShiftWheelHandler();
     this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
     this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
     this.app.stage.addChild(this.viewport);
@@ -727,6 +728,7 @@ export class BoardRenderer {
     });
 
     this.applyViewportPlugins();
+    this.installShiftWheelHandler();
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
     this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
@@ -1881,6 +1883,56 @@ export class BoardRenderer {
     }
   }
 
+  /**
+   * Install a capture-phase wheel listener that intercepts Shift+Scroll before
+   * pixi-viewport sees it, implementing the scroll-binding swap shown in Settings.
+   *
+   * pixi-viewport has no shift-key awareness — its Wheel plugin always zooms
+   * (using deltaY, which is 0 when shift is held) and its Drag plugin always
+   * pans.  This handler provides the missing modifier-key dispatch so the
+   * BoardScrollBindingsEditor UI actually works.
+   */
+  private installShiftWheelHandler(): void {
+    // Remove previous listener if viewport was recreated (e.g. context-loss reinit)
+    if (this.boundShiftWheel) {
+      this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
+    }
+    this.boundShiftWheel = (e: WheelEvent) => {
+      // Only intercept pure Shift+scroll — let Ctrl/Meta combos (trackpad pinch,
+      // browser zoom) pass through to pixi-viewport / browser defaults.
+      if (!e.shiftKey || e.ctrlKey || e.metaKey) return;
+
+      const s = renderSettingsStore.settings;
+
+      if (s.twoFingerPan) {
+        // Default mode: bare scroll = pan, shift+scroll should = zoom.
+        // Perform mouse-centered zoom using whichever delta is non-zero.
+        const raw = e.deltaY || e.deltaX; // browser may swap axes on shift
+        const factor = Math.pow(2, (1 + 0.3) * (-raw / 500));
+        const point = { x: e.offsetX, y: e.offsetY };
+        const before = this.viewport.toWorld(point.x, point.y);
+        this.viewport.scale.set(
+          Math.max(0.001, Math.min(10, this.viewport.scale.x * factor)),
+          Math.max(0.001, Math.min(10, this.viewport.scale.y * factor)),
+        );
+        const after = this.viewport.toWorld(point.x, point.y);
+        this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
+        this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
+      } else {
+        // Alternate mode: bare scroll = zoom, shift+scroll should = pan.
+        // Use whichever delta the browser provides (macOS swaps on shift).
+        const dx = e.deltaX || e.deltaY; // horizontal pan from either axis
+        this.viewport.x -= dx;
+      }
+
+      this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
+      this.needsRender = true;
+      this.netLinesDirty = true;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    this.containerEl.addEventListener('wheel', this.boundShiftWheel, { capture: true, passive: false });
+  }
 
   private onSettingsUpdate() {
     if (!this.board || this.contextLost || this.reinitializing) return;
@@ -1978,11 +2030,6 @@ export class BoardRenderer {
       this.selectionBlinkTimer = null;
     }
     this.selectionBlinkPhase = 0;
-    // Reset previously highlighted part label tint to neutral (no color shift)
-    if (this.highlightedPartLabel) {
-      this.highlightedPartLabel.tint = 0xffffff;
-      this.highlightedPartLabel = null;
-    }
     this.netDimGfx.clear();
     // Hide all pooled net labels instead of removing (avoids GC churn)
     for (let i = 0; i < this.netLabelLayer.children.length; i++) {
@@ -1999,26 +2046,17 @@ export class BoardRenderer {
     const sel = boardStore.selection;
     const butterfly = boardStore.butterfly && !!this.activeScene?.butterflyRoot;
 
-    // Brighten the selected part's in-scene name label via BitmapText tint.
-    // BitmapText renders from a pre-baked atlas — style.fill has no runtime effect.
-    // Tint multiplies: result = atlas_color × tint / 255.
-    // Atlas is white (0xffffff) with fill=0xcccccc applied via tint internally.
-    // To brighten: override tint to push the label toward full white.
+    // Highlight the selected part's in-scene name label by cloning it as a white
+    // BitmapText into netLabelLayer (zIndex 20, above board content at zIndex 0).
+    // This is the same mechanism used by the net dim code when a pin is selected —
+    // acquireNetLabel creates a fill:0xffffff clone at the same position, so the
+    // visual result is identical regardless of whether a pin or only a part is selected.
+    // (BitmapText style.fill has no runtime effect and tint can't brighten past fill,
+    // so modifying the original label in-place cannot achieve full white.)
     if (sel.partIndex !== null && this.activeScene) {
       const lbl = this.activeScene.partLabelByIndex.get(sel.partIndex);
-      if (lbl) {
-        // For default 0xcccccc labels: tint 0xffffff/0xcccccc ≈ 1.25× per channel.
-        // We want ~20-30% brighter, so compute a tint that achieves that.
-        const fill = lbl.style.fill as number;
-        const r = (fill >> 16) & 0xff;
-        const g = (fill >> 8) & 0xff;
-        const b = fill & 0xff;
-        // Target: each channel + 50, clamped to 255. Tint = target * 255 / fill.
-        const tr = r > 0 ? Math.min(255, Math.round(Math.min(255, r + 50) * 255 / r)) : 255;
-        const tg = g > 0 ? Math.min(255, Math.round(Math.min(255, g + 50) * 255 / g)) : 255;
-        const tb = b > 0 ? Math.min(255, Math.round(Math.min(255, b + 50) * 255 / b)) : 255;
-        lbl.tint = (tr << 16) | (tg << 8) | tb;
-        this.highlightedPartLabel = lbl;
+      if (lbl && lbl.visible) {
+        this.acquireNetLabel(lbl);
       }
     }
 
@@ -3298,6 +3336,10 @@ export class BoardRenderer {
     this.unsubscribeSettings?.();
     this.unsubscribeViewCommands?.();
     this.resizeObserver?.disconnect();
+    if (this.boundShiftWheel) {
+      this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
+      this.boundShiftWheel = null;
+    }
     if (this.boundContextMenu) {
       this.containerEl.removeEventListener('contextmenu', this.boundContextMenu);
     }
