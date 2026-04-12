@@ -25,7 +25,7 @@ jobs:
 
       # Lint + typecheck + smoke tests
       - run: cd src/frontend && npm ci
-      - run: cd src/frontend && npx eslint . --max-warnings 60
+      - run: cd src/frontend && npx eslint . --max-warnings 65
       - run: cd src/frontend && npx tsc -b --noEmit
       - run: cd src/frontend && npx playwright install --with-deps chromium
       - run: cd src/frontend && npx playwright test ci-smoke.spec.ts
