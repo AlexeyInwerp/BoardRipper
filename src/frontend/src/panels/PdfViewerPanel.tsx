@@ -273,6 +273,24 @@ function getPageCache(key: string): CachedRender | undefined {
   return entry;
 }
 
+/** Find the best (highest-tier) cached render for a page, regardless of tier. */
+function getBestPageCache(file: string, page: number, clean: boolean): CachedRender | undefined {
+  let best: { key: string; entry: CachedRender; tier: number } | undefined;
+  for (const [key, entry] of _pageCache) {
+    if (key.startsWith(`${file}:${page}:`) && key.endsWith(`:${clean ? 1 : 0}`)) {
+      const tier = parseFloat(key.split(':')[2]);
+      if (!best || tier > best.tier) {
+        best = { key, entry, tier };
+      }
+    }
+  }
+  if (best) {
+    _pageCache.delete(best.key);
+    _pageCache.set(best.key, best.entry);
+  }
+  return best?.entry;
+}
+
 // --- Preview cache: always-available tier-1 renders (never evicted by hi-res) ---
 const PREVIEW_CACHE_MAX = 6;
 const _previewCache = new Map<string, CachedRender>();
@@ -918,6 +936,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + tHit * 0.3 : tHit;
         log.perf.log(`cache-hit ${cacheKey} ${Math.round(tHit)}ms`);
         return;
+      }
+
+      // Best-available fallback: show highest-tier cached version while rendering
+      // (prevents blur flash when zooming out — sharp CSS downscale is better than tier-1 preview)
+      const bestCached = getBestPageCache(pdfFileName, currentPage, cleanMode);
+      if (bestCached && bestCached.cssW === containerWidth) {
+        blitToCanvas(bestCached);
       }
 
       // Preview fallback: blit a tier-1 preview if available while hi-res renders
