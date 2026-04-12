@@ -15,7 +15,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand } from '@tabler/icons-react';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -112,14 +112,16 @@ export interface PdfQualityConfig {
   cacheMaxEntries: number;
   /** Max total pixels across all cached page bitmaps */
   cacheMaxPixels: number;
+  /** Max canvas dimension (px) — controls render resolution ceiling */
+  maxCanvasDim: number;
 }
 
-// Higher tiers = crisper text. Cache budgets sized for comfort.
+// Higher tiers = crisper text. maxCanvasDim controls the resolution ceiling per preset.
 const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
-  max:    { maxMainTier: 10, maxAdjTier: 4,  adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 200_000_000 },
-  high:   { maxMainTier: 10, maxAdjTier: 4,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 120_000_000 },
-  medium: { maxMainTier: 8,  maxAdjTier: 2,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000 },
-  low:    { maxMainTier: 4,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000 },
+  max:    { maxMainTier: 16, maxAdjTier: 6,  adjSettleMs: 100, cacheMaxEntries: 24, cacheMaxPixels: 200_000_000, maxCanvasDim: 16384 },
+  high:   { maxMainTier: 10, maxAdjTier: 4,  adjSettleMs: 150, cacheMaxEntries: 16, cacheMaxPixels: 120_000_000, maxCanvasDim: 8192  },
+  medium: { maxMainTier: 6,  maxAdjTier: 2,  adjSettleMs: 200, cacheMaxEntries: 10, cacheMaxPixels: 60_000_000,  maxCanvasDim: 4096  },
+  low:    { maxMainTier: 4,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000,  maxCanvasDim: 2048  },
 };
 
 export const PDF_QUALITY_KEY = 'boardripper-pdf-render-quality';
@@ -149,8 +151,6 @@ export function getPdfQualityConfig(q: PdfRenderQuality): PdfQualityConfig {
   return applyDeviceMemoryScaling(QUALITY_CONFIGS[q]);
 }
 
-const MAX_CANVAS_DIM = 4096;
-const MAX_CANVAS_AREA = 4096 * 4096; // ~16M pixels — safe for mobile/tablet GPUs
 const TIER_DEBOUNCE_MS = 60; // trailing debounce — guarantees final crisp frame after zoom
 
 /** Compute main-page render tier from zoom, capped by quality config. */
@@ -196,18 +196,19 @@ function releaseCanvas(c: HTMLCanvasElement): void {
 }
 
 /** Clamp a pdf.js render scale so the resulting canvas stays within GPU limits. */
-function clampCanvasScale(pageW: number, pageH: number, scale: number): number {
+function clampCanvasScale(pageW: number, pageH: number, scale: number, maxDim: number): number {
+  const maxArea = maxDim * maxDim;
   let w = pageW * scale;
   let h = pageH * scale;
   // Clamp individual dimensions
-  if (w > MAX_CANVAS_DIM || h > MAX_CANVAS_DIM) {
-    scale *= Math.min(MAX_CANVAS_DIM / w, MAX_CANVAS_DIM / h);
+  if (w > maxDim || h > maxDim) {
+    scale *= Math.min(maxDim / w, maxDim / h);
     w = pageW * scale;
     h = pageH * scale;
   }
   // Clamp total pixel area
-  if (w * h > MAX_CANVAS_AREA) {
-    scale *= Math.sqrt(MAX_CANVAS_AREA / (w * h));
+  if (w * h > maxArea) {
+    scale *= Math.sqrt(maxArea / (w * h));
   }
   return scale;
 }
@@ -220,6 +221,7 @@ interface CachedRender {
   cssW: number;
   cssH: number;
   baseScale: number;
+  hiresScale: number;
   vpHeight: number;
   vpTransform: number[];
 }
@@ -507,6 +509,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
   const scaleRef = useRef(1);
+  /** Actual canvas render scale (after clamping) — used for highlight positioning */
+  const hiresScaleRef = useRef(1);
   const viewportHeightRef = useRef(0);
   const renderTierRef = useRef(1);
   const viewportTransformRef = useRef<number[]>([1, 0, 0, -1, 0, 0]);
@@ -537,7 +541,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const pdfInertiaRef = useRef(loadPdfInertia());
   const tierDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Last zoom level at which highlights were drawn — skip redraw on pan-only changes */
-  const lastHighlightZoomRef = useRef(0);
+  const lastHighlightZoomRef = useRef('');
   /** Adaptive zoom: exponential moving average of pdf.js render time (ms) */
   const renderTimeEmaRef = useRef(0);
   /** Adaptive zoom: timestamp of last throttled render start */
@@ -711,13 +715,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       renderPageRef.current();
     }, TIER_DEBOUNCE_MS);
 
-    // Adaptive throttle: if enough time has passed since the last render, fire now.
-    const ema = renderTimeEmaRef.current;
-    const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
-    const now = performance.now();
-    if (now - lastThrottleRenderRef.current >= throttleMs) {
-      lastThrottleRenderRef.current = now;
-      renderPageRef.current();
+    // Adaptive throttle: only re-render during zoom if the new tier is HIGHER
+    // than what's currently displayed. Zooming out should never replace a
+    // high-res bitmap with a lower-res one — the CSS downscale looks sharp.
+    const candidateTier = quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier));
+    if (candidateTier > renderTierRef.current) {
+      const ema = renderTimeEmaRef.current;
+      const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
+      const now = performance.now();
+      if (now - lastThrottleRenderRef.current >= throttleMs) {
+        lastThrottleRenderRef.current = now;
+        renderPageRef.current();
+      }
     }
 
     // Schedule full-quality crisp render after zoom fully settles (500ms).
@@ -761,15 +770,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderPageToBitmap = useCallback(async (
     pageNum: number, containerWidth: number, tier: number, clean: boolean,
     signal?: AbortSignal,
-  ): Promise<{ bitmap: ImageBitmap; width: number; height: number; cssW: number; cssH: number; baseScale: number; vpHeight: number; vpTransform: number[] }> => {
+  ): Promise<CachedRender> => {
     const page = await pdfStore.getPageFor(pdfFileName, pageNum);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const unscaledViewport = page.getViewport({ scale: 1 });
     const baseScale = containerWidth / unscaledViewport.width;
 
-    let hiresScale = baseScale * tier;
-    // Clamp to safe canvas dimensions and total pixel area
-    hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale);
+    const dpr = window.devicePixelRatio || 1;
+    let hiresScale = baseScale * tier * dpr;
+    hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
     const viewport = page.getViewport({ scale: hiresScale });
     const cssW = containerWidth;
     const cssH = unscaledViewport.height * baseScale;
@@ -806,13 +815,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Abandon pdf.js-rendered canvas (worker may still reference it)
       offscreen.width = 1; offscreen.height = 1;
       releaseCanvas(tmpCanvas); // tmpCanvas is safe to pool (only used for contrast filter)
-      return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
+      return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, hiresScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
     }
 
     const bitmap = await createImageBitmap(offscreen);
     // Abandon pdf.js-rendered canvas (worker may still reference it)
     offscreen.width = 1; offscreen.height = 1;
-    return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
+    return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, hiresScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
   }, [pdfFileName]);
 
   /** Blit a cached or freshly rendered bitmap to the visible canvas */
@@ -840,6 +849,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     highlight.style.height = `${entry.cssH}px`;
 
     scaleRef.current = entry.baseScale;
+    hiresScaleRef.current = entry.hiresScale;
     viewportHeightRef.current = entry.vpHeight;
     viewportTransformRef.current = entry.vpTransform;
     pageCssHRef.current = entry.cssH;
@@ -855,10 +865,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     setError(null);
 
     const renderId = ++renderIdRef.current;
-    // During active zoom: cap tier by quality preset for smooth interaction.
-    // After settle (forceFullTierRef): render at full zoom tier for crisp text.
-    const maxTier = forceFullTierRef.current ? 10 : qcfgRef.current.maxMainTier;
-    forceFullTierRef.current = false;
+    const maxTier = qcfgRef.current.maxMainTier;
     const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoomRef.current, maxTier)));
     renderTierRef.current = resTier;
     const t0 = performance.now();
@@ -900,8 +907,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const unscaledViewport = page.getViewport({ scale: 1 });
       const baseScale = containerWidth / unscaledViewport.width;
 
-      let hiresScale = baseScale * resTier;
-      hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale);
+      const dpr = window.devicePixelRatio || 1;
+      let hiresScale = baseScale * resTier * dpr;
+      hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
       const viewport = page.getViewport({ scale: hiresScale });
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
@@ -964,6 +972,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const tCopy = performance.now();
 
       scaleRef.current = baseScale;
+      hiresScaleRef.current = hiresScale;
       viewportHeightRef.current = unscaledViewport.height;
       viewportTransformRef.current = unscaledViewport.transform;
       pageCssHRef.current = cssH;
@@ -980,7 +989,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (bitmap) {
         putPageCache(cacheKey, {
           bitmap, width: viewport.width, height: viewport.height,
-          cssW, cssH, baseScale, vpHeight: unscaledViewport.height,
+          cssW, cssH, baseScale, hiresScale, vpHeight: unscaledViewport.height,
           vpTransform: unscaledViewport.transform,
         });
       }
@@ -1071,22 +1080,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // Hide highlight canvas entirely when no matches — avoids compositing an empty layer
     if (pageMatches.length === 0 && matches.length === 0) {
       highlight.style.display = 'none';
-      lastHighlightZoomRef.current = 0;
+      lastHighlightZoomRef.current = '';
       return;
     }
     if (highlight.style.display === 'none') highlight.style.display = '';
 
-    // Skip redraw if zoom/tier haven't changed — highlights are drawn in canvas
-    // coordinates which only change with zoom, not with pan (CSS transform handles pan).
-    const currentZoomKey = scaleRef.current * renderTierRef.current;
-    if (lastHighlightZoomRef.current === currentZoomKey && blinkPhaseRef.current === 0) {
-      return; // zoom unchanged, no blink active — cached highlights are still valid
-    }
-    lastHighlightZoomRef.current = currentZoomKey;
+    const scale = hiresScaleRef.current;
 
     const hCtx = highlight.getContext('2d')!;
     hCtx.clearRect(0, 0, highlight.width, highlight.height);
-    const scale = currentZoomKey;
     const vpT = viewportTransformRef.current;
     const blinkHide = blinkPhaseRef.current % 2 === 1;
 
@@ -1200,7 +1202,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           entry = result;
         } catch { return; }
       }
-      if (ac.signal.aborted) return;
+      if (ac.signal.aborted || !entry) return;
 
       // Always reset canvas dimensions to clear stale content and ensure
       // getContext returns a fresh context with correct alpha setting.
@@ -1341,7 +1343,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
   }, [isLoaded, activeMatchIndex, matches, currentPage]);
 
-  // Follow target: zoom to a location without highlighting (triggered by board follow mode)
+  // Follow target: zoom + highlight location (triggered by board follow mode / click-to-lookup)
   useEffect(() => {
     const target = pdfStore.consumeFollowTarget();
     if (!target || !isLoaded) return;
@@ -1351,18 +1353,42 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       skipResetRef.current = true;
     }
 
+    let retries = 0;
     const applyFollowZoom = () => {
       const baseScale = scaleRef.current;
-      if (baseScale === 0 || !containerRef.current) return;
+      if (baseScale === 0 || !containerRef.current) {
+        if (retries++ < 5) setTimeout(applyFollowZoom, 100);
+        return;
+      }
 
       const { zoom, pan } = zoomToItemGroup(
         target.items, viewportTransformRef.current, baseScale,
         containerRef.current.clientWidth, containerRef.current.clientHeight, 0.25,
       );
-      zoomRef.current = zoom;
+      // Ensure readable zoom — at least 2x for single-item lookups
+      const minZoom = target.items.length <= 2 ? 2 : 1.5;
+      zoomRef.current = Math.max(zoom, minZoom);
       panRef.current = pan;
+      // Recalculate pan for the adjusted zoom (re-center)
+      if (zoomRef.current !== zoom) {
+        const r = textItemRect(target.items[0].transform, target.items[0].width, viewportTransformRef.current, baseScale);
+        const cx = r.x + r.w / 2;
+        const cy = r.y + r.h / 2;
+        panRef.current = {
+          x: containerRef.current.clientWidth / 2 - cx * zoomRef.current,
+          y: containerRef.current.clientHeight / 2 - cy * zoomRef.current,
+        };
+      }
       syncTransform();
       renderPageRef.current();
+
+      // Show highlight on the first item for visual feedback
+      if (target.items.length > 0) {
+        const r = textItemRect(target.items[0].transform, target.items[0].width, viewportTransformRef.current, baseScale);
+        setClickHighlight({ word: '', rect: { x: r.x, y: r.y, w: r.w, h: r.h }, key: ++clickHighlightKeyRef.current });
+        if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
+        clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 3000);
+      }
     };
 
     // Defer to ensure the page has rendered first
@@ -1814,22 +1840,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const hit = hitTestWord(e);
     if (!hit) { setClickHighlight(null); return; }
 
-    // Show highlight + tooltip overlay
+    // Show highlight + tooltip overlay on any text
     setClickHighlight({ ...hit, key: ++clickHighlightKeyRef.current });
     if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
     clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 4000);
 
-
-
-    // Focus part/net on board
+    // Focus part/net on board if it matches
     const board = boardStore.board;
     if (board) {
       const upper = hit.word.toUpperCase();
-      if (board.parts.some(p => p.name.toUpperCase() === upper)) {
-        boardStore.focusPart(hit.word);
-      } else {
-        boardStore.focusNet(hit.word);
-      }
+      const isPart = board.parts.some(p => p.name.toUpperCase() === upper);
+      if (isPart) boardStore.focusPart(hit.word);
+      else if ([...board.nets.keys()].some(n => n.toUpperCase() === upper)) boardStore.focusNet(hit.word);
     }
   }, [hitTestWord, pdfFileName]);
 
@@ -2046,36 +2068,72 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </span>
         <div className="pdf-toolbar-separator" />
 
-        <button
-          className="pdf-toolbar-btn"
-          onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(currentPage - 1); }}
-          disabled={currentPage <= 1}
-        >
-          &lt;
-        </button>
-        <input
-          className="pdf-page-input"
-          type="text"
-          value={currentPage}
-          onChange={e => {
-            const n = parseInt(e.target.value, 10);
-            if (!isNaN(n)) { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(n); }
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
-          onFocus={e => e.target.select()}
-        />
-        <span className="pdf-page-info">/ {pageCount}</span>
-        <button
-          className="pdf-toolbar-btn"
-          onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(currentPage + 1); }}
-          disabled={currentPage >= pageCount}
-        >
-          &gt;
-        </button>
+        <div className="pdf-toolbar-group">
+          <button
+            className="pdf-toolbar-btn"
+            onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(currentPage - 1); }}
+            disabled={currentPage <= 1}
+          >
+            ◀
+          </button>
+          <input
+            className="pdf-page-input"
+            type="text"
+            value={currentPage}
+            onChange={e => {
+              const n = parseInt(e.target.value, 10);
+              if (!isNaN(n)) { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(n); }
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
+            onFocus={e => e.target.select()}
+          />
+          <span className="pdf-page-info">/ {pageCount}</span>
+          <button
+            className="pdf-toolbar-btn"
+            onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(currentPage + 1); }}
+            disabled={currentPage >= pageCount}
+          >
+            ▶
+          </button>
+        </div>
 
         <div className="pdf-toolbar-separator" />
+        <div className="pdf-toolbar-group">
+          <button
+            className="pdf-toolbar-btn pdf-bookmark-add"
+            onClick={handleAddBookmark}
+            title="Bookmark current view"
+          >
+            <IconBookmarkPlus size={14} />
+          </button>
+          {bookmarks.map(bm => (
+            editingBookmarkId === bm.id ? (
+              <input
+                key={bm.id}
+                className="pdf-bookmark-edit"
+                value={editingLabel}
+                onChange={e => setEditingLabel(e.target.value)}
+                onKeyDown={e => handleLabelEditKeyDown(e, bm.id)}
+                onBlur={() => handleLabelEditSubmit(bm.id)}
+                autoFocus
+              />
+            ) : (
+              <button
+                key={bm.id}
+                className={`pdf-toolbar-btn pdf-bookmark-pill${bm.page === currentPage ? ' active' : ''}`}
+                onClick={e => { if (!e.altKey) handleBookmarkClick(bm.id); }}
+                onDoubleClick={() => handleBookmarkDblClick(bm.id)}
+                onContextMenu={e => handleBookmarkRightClick(e, bm.id)}
+                onMouseDown={e => handleBookmarkMiddleClick(e, bm.id)}
+                title={`Page ${bm.page} @ ${Math.round(bm.zoom * 100)}%\nClick: go | Dbl-click: update | Right-click: delete | Opt/Middle-click: rename`}
+              >
+                {bm.label}
+              </button>
+            )
+          ))}
+        </div>
 
         <div className="pdf-search-wrapper">
           <form className="pdf-search-form" onSubmit={handleSearch}>
@@ -2131,84 +2189,49 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }}>&#9650;</button>
             <button className="pdf-toolbar-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }}>&#9660;</button>
             {showNavHint && (
-              <span className="pdf-nav-hint">↑↓ Use keyboard to navigate</span>
+              <span className="pdf-nav-hint">Use ↑↓ keyboard to navigate</span>
             )}
           </span>
         )}
 
-
-        <div className="pdf-toolbar-separator" />
-        <button
-          className="pdf-toolbar-btn pdf-bookmark-add"
-          onClick={handleAddBookmark}
-          title="Bookmark current view"
-        >
-          +
-        </button>
-        {bookmarks.map(bm => (
-          editingBookmarkId === bm.id ? (
-            <input
-              key={bm.id}
-              className="pdf-bookmark-edit"
-              value={editingLabel}
-              onChange={e => setEditingLabel(e.target.value)}
-              onKeyDown={e => handleLabelEditKeyDown(e, bm.id)}
-              onBlur={() => handleLabelEditSubmit(bm.id)}
-              autoFocus
-            />
-          ) : (
-            <button
-              key={bm.id}
-              className={`pdf-bookmark-pill${bm.page === currentPage ? ' active' : ''}`}
-              onClick={e => { if (!e.altKey) handleBookmarkClick(bm.id); }}
-              onDoubleClick={() => handleBookmarkDblClick(bm.id)}
-              onContextMenu={e => handleBookmarkRightClick(e, bm.id)}
-              onMouseDown={e => handleBookmarkMiddleClick(e, bm.id)}
-              title={`Page ${bm.page} @ ${Math.round(bm.zoom * 100)}%\nClick: go | Dbl-click: update | Right-click: delete | Opt/Middle-click: rename`}
-            >
-              {bm.label}
-            </button>
-          )
-        ))}
-
         <div className="pdf-toolbar-spacer" />
 
-        <div className="pdf-corrector-wrapper">
-          <button
-            className={`pdf-toolbar-btn pdf-corrector-btn${correctorOpen ? ' active' : ''}${(cleanMode || isGlyphActive) ? ' has-active' : ''}`}
-            onClick={() => setCorrectorOpen(v => !v)}
-            title="PDF corrector tools"
-          >
-            &#x229E;
-          </button>
+        <div className="pdf-toolbar-group">
+          <div className="pdf-corrector-wrapper">
+            <button
+              className={`pdf-toolbar-btn pdf-corrector-btn${correctorOpen ? ' active' : ''}${cleanMode ? ' has-active' : ''}`}
+              onClick={() => setCorrectorOpen(v => !v)}
+              title="Watermark cleaner"
+            >
+              <IconWand size={14} />
+            </button>
           {correctorOpen && (
             <div className="pdf-corrector-strip">
-              <button
-                className={`pdf-toolbar-btn${cleanMode ? ' active' : ''}`}
-                onClick={() => pdfStore.toggleClean(pdfFileName, !cleanMode)}
-                title="Strip watermark images"
-              >
-                Clean
-              </button>
-              {cleanMode && (
-                <input
-                  className="pdf-clean-slider"
-                  type="range"
-                  min={1}
-                  max={10}
-                  step={0.1}
-                  value={cleanContrast}
-                  onChange={e => setCleanContrast(Number(e.target.value))}
-                  onPointerUp={e => {
-                    const v = Number((e.target as HTMLInputElement).value);
-                    cleanContrastRef.current = v;
-                    try { localStorage.setItem(CLEAN_CONTRAST_KEY, String(v)); } catch { /* ignore */ }
-                    invalidatePageCache(pdfFileName);
-                    renderPageRef.current();
-                  }}
-                  title={`Contrast: ${cleanContrast}`}
-                />
-              )}
+              <input
+                className="pdf-clean-slider"
+                type="range"
+                min={0}
+                max={10}
+                step={0.1}
+                value={cleanContrast}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  setCleanContrast(v);
+                  // Toggle clean mode based on slider position
+                  const shouldBeClean = v > 0;
+                  if (shouldBeClean !== cleanMode) {
+                    pdfStore.toggleClean(pdfFileName, shouldBeClean);
+                  }
+                }}
+                onPointerUp={e => {
+                  const v = Number((e.target as HTMLInputElement).value);
+                  cleanContrastRef.current = v;
+                  try { localStorage.setItem(CLEAN_CONTRAST_KEY, String(v)); } catch { /* ignore */ }
+                  invalidatePageCache(pdfFileName);
+                  renderPageRef.current();
+                }}
+                title={cleanContrast === 0 ? 'Clean: off' : `Clean: ${cleanContrast}`}
+              />
 
               <div className="pdf-glyph-debug-wrapper" style={{ display: 'none' }}>
                 <button
@@ -2327,27 +2350,27 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               </button>
             </div>
           )}
+          </div>
+          <button
+            className={`pdf-toolbar-btn pdf-night-btn${nightMode ? ' active' : ''}`}
+            onClick={() => setNightMode(v => {
+              const next = !v;
+              try { localStorage.setItem(NIGHT_MODE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+              return next;
+            })}
+            title="Toggle night mode (invert colors)"
+          >
+            &#x25D0;
+          </button>
         </div>
-
         <button
-          className={`pdf-toolbar-btn pdf-night-btn${nightMode ? ' active' : ''}`}
-          onClick={() => setNightMode(v => {
-            const next = !v;
-            try { localStorage.setItem(NIGHT_MODE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
-            return next;
-          })}
-          title="Toggle night mode (invert colors)"
-        >
-          &#x25D0;
-        </button>
-        <button
-          className="pdf-toolbar-btn pdf-fit-width-btn"
+          className="pdf-toolbar-btn pdf-zoom-group"
           onClick={handleFitWidth}
           title="Fit to page width (Space)"
         >
-          <IconArrowAutofitWidth size={16} />
+          <IconArrowAutofitWidth size={14} />
+          <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
         </button>
-        <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
       </div>
 
       {textExtracting && (

@@ -558,9 +558,9 @@ function DatabaseInfoSection() {
 // ---- PDF Scroll Bindings Editor (drag-and-drop) ----
 
 const MODIFIER_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
-const MODIFIER_LABELS: Record<keyof ScrollBindings, string> = {
+const MODIFIER_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
   bare: 'Scroll',
-  shift: 'Shift + Scroll',
+  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
   meta: navigator.platform?.includes('Mac') ? '⌘ + Scroll' : 'Ctrl + Scroll',
 };
 const ACTION_LABELS: Record<ScrollAction, string> = { zoom: 'Zoom', pan: 'Pan', switch: 'Page' };
@@ -710,9 +710,9 @@ const BOARD_ACTION_COLORS: Record<BoardScrollAction, string> = { zoom: '#00d4ff'
 
 const BOARD_MODIFIER_KEYS = ['bare', 'shift'] as const;
 type BoardModifier = typeof BOARD_MODIFIER_KEYS[number];
-const BOARD_MODIFIER_LABELS: Record<BoardModifier, string> = {
+const BOARD_MODIFIER_LABELS: Record<BoardModifier, React.ReactNode> = {
   bare: 'Scroll',
-  shift: 'Shift + Scroll',
+  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
 };
 
 function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: boolean; onUpdate: DraftUpdater }) {
@@ -773,7 +773,6 @@ function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: b
           );
         })}
       </div>
-      <p className="settings-hint" style={{ marginTop: 4 }}>Pinch-to-zoom always works regardless of scroll assignment.</p>
     </div>
   );
 }
