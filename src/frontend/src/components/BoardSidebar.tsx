@@ -263,13 +263,20 @@ function InfoTab({ tabId }: { tabId: number }) {
 }
 
 function SearchTab({ tabId }: { tabId: number }) {
-  const { tabs } = useBoardStore();
+  const { tabs, searchQuery: storeQuery } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
 
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(storeQuery || '');
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Sync from toolbar search → sidebar search tab
+  const prevStoreQueryRef = useRef('');
+  if (storeQuery !== prevStoreQueryRef.current) {
+    prevStoreQueryRef.current = storeQuery;
+    if (storeQuery !== query) setQuery(storeQuery);
+  }
   const [componentsOpen, setComponentsOpen] = useState(true);
   const [netsOpen, setNetsOpen] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);

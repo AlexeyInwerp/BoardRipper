@@ -47,6 +47,12 @@ function tailTruncate(s: string, max = 60) {
   return s.length > max ? '...' + s.slice(-(max - 3)) : s;
 }
 
+// Global setter for toolbar search integration
+let _externalSearchSetter: ((q: string) => void) | null = null;
+export function setLibrarySearch(query: string): void {
+  _externalSearchSetter?.(query);
+}
+
 export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
@@ -56,6 +62,12 @@ export function LibraryPanel() {
     browseMode, browseResult, browsing,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
+
+  // Register external setter
+  useEffect(() => {
+    _externalSearchSetter = setLocalSearch;
+    return () => { if (_externalSearchSetter === setLocalSearch) _externalSearchSetter = null; };
+  }, []);
   const [pdfSearchMode, setPdfSearchMode] = useState(false);
 
   // Client-side filter: match filename, board_number, manufacturer, model (case-insensitive)

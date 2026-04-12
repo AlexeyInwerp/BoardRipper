@@ -114,6 +114,35 @@ html, body, #root {
   justify-content: center;
 }
 
+.toolbar-group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--bg-primary);
+  padding: 2px 3px;
+  border: 1px solid var(--border);
+  height: 28px;
+}
+
+.toolbar-group .toolbar-btn,
+.toolbar-group .toolbar-btn-icon {
+  border: none;
+  background: transparent;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.toolbar-group .toolbar-btn:hover,
+.toolbar-group .toolbar-btn-icon:hover {
+  background: var(--accent);
+}
+
+.toolbar-group .toolbar-btn.active {
+  background: var(--accent);
+  border: none;
+}
+
 .toolbar-separator {
   width: 1px;
   height: 20px;
@@ -125,14 +154,98 @@ html, body, #root {
   border: 1px solid var(--border);
   color: var(--text-primary);
   padding: 4px 10px;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 0.9em;
   width: 240px;
+  height: 28px;
+  box-sizing: border-box;
 }
 
 .toolbar-search:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.toolbar-search-wrap {
+  position: relative;
+}
+
+.toolbar-search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar-search-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.85em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toolbar-search-option:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.toolbar-search-count {
+  font-family: monospace;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  min-width: 24px;
+  text-align: right;
+}
+
+.toolbar-search-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-search-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 8px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.toolbar-search-tag-board {
+  background: var(--green);
+  color: #000;
+}
+
+.toolbar-search-tag-pdf {
+  background: var(--red);
+  color: #fff;
+}
+
+.toolbar-search-tag-library {
+  background: var(--accent);
+  color: #fff;
+}
+
+.toolbar-search-option:hover .toolbar-search-count {
+  color: #fff;
 }
 
 /* Bind link icon + dropdown (shared between board tabs and PDF toolbar) */
@@ -2376,6 +2489,7 @@ html, body, #root {
   color: var(--text-secondary);
   font-family: monospace;
   text-align: center;
+  white-space: nowrap;
 }
 
 .pdf-search-form {
@@ -2507,7 +2621,7 @@ html, body, #root {
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0px;
   padding: 3px 8px;
   white-space: nowrap;
   pointer-events: none;
@@ -2534,11 +2648,12 @@ html, body, #root {
   bottom: 100%;
   left: 50%;
   transform-origin: bottom center;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.6);
   color: #ffcc44;
   font-size: 10px;
   line-height: 1;
   padding: 2px 5px;
+  opacity: 0.8;
   white-space: nowrap;
   pointer-events: none;
   z-index: 10;
