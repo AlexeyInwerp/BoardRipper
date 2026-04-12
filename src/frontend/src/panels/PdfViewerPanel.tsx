@@ -16,6 +16,12 @@ import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
 import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand } from '@tabler/icons-react';
+import {
+  TILE_SIZE, computeTileGrid, visibleTiles, tileRenderRequest,
+  viewportToPagePixels, getTileCached, putTileCached, invalidateTileCache,
+  setTileCacheLimit, getBestTileCached,
+} from '../pdf/tile-manager';
+import type { TileGridInfo } from '../pdf/tile-manager';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -265,6 +271,24 @@ function getPageCache(key: string): CachedRender | undefined {
     _pageCache.set(key, entry);
   }
   return entry;
+}
+
+/** Find the best (highest-tier) cached render for a page, regardless of tier. */
+function getBestPageCache(file: string, page: number, clean: boolean): CachedRender | undefined {
+  let best: { key: string; entry: CachedRender; tier: number } | undefined;
+  for (const [key, entry] of _pageCache) {
+    if (key.startsWith(`${file}:${page}:`) && key.endsWith(`:${clean ? 1 : 0}`)) {
+      const tier = parseFloat(key.split(':')[2]);
+      if (!best || tier > best.tier) {
+        best = { key, entry, tier };
+      }
+    }
+  }
+  if (best) {
+    _pageCache.delete(best.key);
+    _pageCache.set(best.key, best.entry);
+  }
+  return best?.entry;
 }
 
 // --- Preview cache: always-available tier-1 renders (never evicted by hi-res) ---
@@ -522,6 +546,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [clickHighlight, setClickHighlight] = useState<{ word: string; rect: { x: number; y: number; w: number; h: number }; key: number } | null>(null);
   const clickHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickHighlightKeyRef = useRef(0);
+  // Tile DOM management
+  const tileGridRef = useRef<TileGridInfo | null>(null);
+  const tileRenderIdRef = useRef(0);
+  const tileContainerRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blinkPhaseRef = useRef(0);
@@ -589,6 +617,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Apply cache limits on mount and quality change
   useEffect(() => {
     setPageCacheLimits(qcfg.cacheMaxEntries, qcfg.cacheMaxPixels);
+    setTileCacheLimit(qcfg.cacheMaxPixels);
   }, [qcfg.cacheMaxEntries, qcfg.cacheMaxPixels]);
 
   // Sync quality when changed from Settings panel
@@ -602,6 +631,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       qcfgRef.current = cfg;
       setPageCacheLimits(cfg.cacheMaxEntries, cfg.cacheMaxPixels);
       invalidatePageCache(pdfFileName);
+      setTileCacheLimit(cfg.cacheMaxPixels);
+      invalidateTileCache(pdfFileName);
       _lastCommittedTier = 1; // reset hysteresis
       renderPageRef.current();
     };
@@ -719,7 +750,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // than what's currently displayed. Zooming out should never replace a
     // high-res bitmap with a lower-res one — the CSS downscale looks sharp.
     const candidateTier = quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier));
-    if (candidateTier > renderTierRef.current) {
+    const isTiled = zoomRef.current > 1.05;
+    if (isTiled || candidateTier > renderTierRef.current) {
       const ema = renderTimeEmaRef.current;
       const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
       const now = performance.now();
@@ -753,6 +785,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [isLoaded]);
 
   useEffect(() => {
+    clearTileDom();
     if (skipResetRef.current) {
       skipResetRef.current = false;
       return;
@@ -761,7 +794,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     panRef.current = { x: 0, y: 0 };
     renderTierRef.current = 1;
     syncTransform();
-  }, [currentPage, syncTransform]);
+  }, [currentPage, syncTransform, clearTileDom]);
+
+  useEffect(() => {
+    return () => {
+      clearTileDom();
+      invalidateTileCache(pdfFileName);
+    };
+  }, [pdfFileName, clearTileDom]);
 
   const renderIdRef = useRef(0);
   const prefetchIdRef = useRef(0);
@@ -858,6 +898,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     setRenderEpoch(e => e + 1);
   }, []);
 
+  /** Remove all tile canvases from the DOM and clear the tile map */
+  const clearTileDom = useCallback(() => {
+    for (const canvas of tileContainerRef.current.values()) {
+      canvas.remove();
+    }
+    tileContainerRef.current.clear();
+  }, []);
+
   const renderPage = useCallback(async () => {
     if (!isLoaded) return;
 
@@ -888,6 +936,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + tHit * 0.3 : tHit;
         log.perf.log(`cache-hit ${cacheKey} ${Math.round(tHit)}ms`);
         return;
+      }
+
+      // Best-available fallback: show highest-tier cached version while rendering
+      // (prevents blur flash when zooming out — sharp CSS downscale is better than tier-1 preview)
+      const bestCached = getBestPageCache(pdfFileName, currentPage, cleanMode);
+      if (bestCached && bestCached.cssW === containerWidth) {
+        blitToCanvas(bestCached);
       }
 
       // Preview fallback: blit a tier-1 preview if available while hi-res renders
@@ -1070,6 +1125,236 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas]);
 
+  // --- Tiled viewport rendering (zoom > 1) ---
+  const renderTiledPage = useCallback(async () => {
+    if (!isLoaded) return;
+    renderTaskRef.current?.cancel();
+
+    const tileRenderId = ++tileRenderIdRef.current;
+    const zoom = zoomRef.current;
+    const maxTier = qcfgRef.current.maxMainTier;
+    const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoom, maxTier)));
+    renderTierRef.current = resTier;
+
+    const container = containerRef.current;
+    const wrapper = wrapperRef.current;
+    if (!container || !wrapper) return;
+    const containerWidth = container.clientWidth;
+    const containerH = container.clientHeight;
+    if (containerWidth === 0) return;
+
+    try {
+      const page = await pdfStore.getPageFor(pdfFileName, currentPage);
+      if (tileRenderIdRef.current !== tileRenderId) return;
+
+      const unscaledVp = page.getViewport({ scale: 1 });
+      const baseScale = containerWidth / unscaledVp.width;
+      const dpr = window.devicePixelRatio || 1;
+      let renderScale = baseScale * resTier * dpr;
+      renderScale = clampCanvasScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+
+      const cssW = containerWidth;
+      const cssH = unscaledVp.height * baseScale;
+      scaleRef.current = baseScale;
+      hiresScaleRef.current = renderScale;
+      viewportHeightRef.current = unscaledVp.height;
+      viewportTransformRef.current = unscaledVp.transform;
+      pageCssHRef.current = cssH;
+
+      const grid = computeTileGrid(unscaledVp.width, unscaledVp.height, renderScale);
+      const prevGrid = tileGridRef.current;
+      tileGridRef.current = grid;
+
+      if (!prevGrid || prevGrid.renderScale !== grid.renderScale) {
+        clearTileDom();
+      }
+
+      const mainCanvas = canvasRef.current;
+      if (mainCanvas) mainCanvas.style.display = 'none';
+
+      // Size highlight canvas for tiled mode
+      const highlight = highlightRef.current;
+      if (highlight) {
+        const hlScale = clampCanvasScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+        highlight.width = Math.ceil(unscaledVp.width * hlScale);
+        highlight.height = Math.ceil(unscaledVp.height * hlScale);
+        highlight.style.width = `${cssW}px`;
+        highlight.style.height = `${cssH}px`;
+        highlight.style.display = '';
+      }
+
+      const vp = viewportToPagePixels(
+        panRef.current.x, panRef.current.y, zoom,
+        containerWidth, containerH, baseScale, renderScale,
+      );
+      const PAD = TILE_SIZE;
+      const tiles = visibleTiles(
+        vp.x - PAD, vp.y - PAD, vp.w + PAD * 2, vp.h + PAD * 2, grid,
+      );
+
+      const cssTileW = TILE_SIZE / (renderScale / baseScale);
+      const cssTileH = TILE_SIZE / (renderScale / baseScale);
+
+      const visibleKeys = new Set<string>();
+      const toRender: { col: number; row: number }[] = [];
+
+      for (const t of tiles) {
+        const key = `${t.col}:${t.row}`;
+        visibleKeys.add(key);
+
+        let tileCanvas = tileContainerRef.current.get(key);
+        const cached = getTileCached(pdfFileName, currentPage, t.col, t.row, renderScale);
+
+        if (cached) {
+          if (!tileCanvas) {
+            tileCanvas = document.createElement('canvas');
+            tileCanvas.className = 'pdf-tile';
+            tileCanvas.width = cached.bitmap.width;
+            tileCanvas.height = cached.bitmap.height;
+            tileCanvas.style.width = `${cssTileW}px`;
+            tileCanvas.style.height = `${cssTileH}px`;
+            tileCanvas.style.left = `${t.col * cssTileW}px`;
+            tileCanvas.style.top = `${t.row * cssTileH}px`;
+            wrapper.appendChild(tileCanvas);
+            tileContainerRef.current.set(key, tileCanvas);
+          }
+          const ctx = tileCanvas.getContext('2d');
+          if (ctx) ctx.drawImage(cached.bitmap, 0, 0);
+          tileCanvas.style.display = '';
+        } else {
+          const best = getBestTileCached(pdfFileName, currentPage, t.col, t.row);
+          if (best && tileCanvas) {
+            tileCanvas.style.display = '';
+          }
+          toRender.push(t);
+        }
+      }
+
+      for (const [key, canvas] of tileContainerRef.current) {
+        if (!visibleKeys.has(key)) {
+          canvas.style.display = 'none';
+        }
+      }
+
+      // Evict hidden tile canvases if too many in DOM
+      const MAX_TILE_DOM = 50;
+      if (tileContainerRef.current.size > MAX_TILE_DOM) {
+        const toEvict: string[] = [];
+        for (const [key, canvas] of tileContainerRef.current) {
+          if (canvas.style.display === 'none') toEvict.push(key);
+        }
+        for (const key of toEvict) {
+          if (tileContainerRef.current.size <= MAX_TILE_DOM) break;
+          const canvas = tileContainerRef.current.get(key)!;
+          canvas.remove();
+          tileContainerRef.current.delete(key);
+        }
+      }
+
+      const t0 = performance.now();
+      for (const t of toRender) {
+        if (tileRenderIdRef.current !== tileRenderId) return;
+
+        const req = tileRenderRequest(t.col, t.row, grid);
+        const offscreen = acquireCanvas(req.pixelW, req.pixelH);
+        const offCtx = offscreen.getContext('2d', { alpha: false });
+        if (!offCtx) { releaseCanvas(offscreen); continue; }
+
+        const tileViewport = page.getViewport({
+          scale: renderScale,
+          offsetX: -req.srcX * renderScale,
+          offsetY: -req.srcY * renderScale,
+        });
+        const task = page.render({
+          canvas: offscreen, canvasContext: offCtx,
+          viewport: tileViewport, intent: 'display',
+        });
+        renderTaskRef.current = { cancel: () => task.cancel() };
+
+        try {
+          await task.promise;
+        } catch {
+          offscreen.width = 1; offscreen.height = 1;
+          continue;
+        }
+
+        if (tileRenderIdRef.current !== tileRenderId) {
+          offscreen.width = 1; offscreen.height = 1;
+          return;
+        }
+
+        let srcCanvas = offscreen;
+        if (cleanMode) {
+          const tmp = acquireCanvas(req.pixelW, req.pixelH);
+          const tmpCtx = tmp.getContext('2d', { alpha: false });
+          if (tmpCtx) {
+            tmpCtx.filter = `contrast(${cleanContrastRef.current})`;
+            tmpCtx.drawImage(offscreen, 0, 0);
+            offscreen.width = 1; offscreen.height = 1;
+            srcCanvas = tmp;
+          }
+        }
+
+        try {
+          const bitmap = await createImageBitmap(srcCanvas);
+          srcCanvas.width = 1; srcCanvas.height = 1;
+
+          putTileCached(pdfFileName, currentPage, {
+            bitmap, col: t.col, row: t.row, scale: renderScale,
+          });
+
+          if (tileRenderIdRef.current === tileRenderId) {
+            const key = `${t.col}:${t.row}`;
+            let tileCanvas = tileContainerRef.current.get(key);
+            if (!tileCanvas) {
+              tileCanvas = document.createElement('canvas');
+              tileCanvas.className = 'pdf-tile';
+              tileCanvas.width = req.pixelW;
+              tileCanvas.height = req.pixelH;
+              tileCanvas.style.width = `${cssTileW}px`;
+              tileCanvas.style.height = `${cssTileH}px`;
+              tileCanvas.style.left = `${t.col * cssTileW}px`;
+              tileCanvas.style.top = `${t.row * cssTileH}px`;
+              wrapper.appendChild(tileCanvas);
+              tileContainerRef.current.set(key, tileCanvas);
+            }
+            const ctx = tileCanvas.getContext('2d');
+            if (ctx) ctx.drawImage(bitmap, 0, 0);
+            tileCanvas.style.display = '';
+          }
+        } catch {
+          srcCanvas.width = 1; srcCanvas.height = 1;
+        }
+      }
+
+      drawHighlightsRef.current();
+      setRenderEpoch(e => e + 1);
+
+      const totalMs = performance.now() - t0;
+      if (toRender.length > 0) {
+        log.perf.log(`tiled-render page=${currentPage} tiles=${toRender.length}/${tiles.length} ${Math.round(totalMs)}ms scale=${renderScale.toFixed(1)}`);
+        const prev = renderTimeEmaRef.current;
+        renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + totalMs * 0.3 : totalMs;
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message?.includes('cancel')) return;
+      log.pdf.error('renderTiledPage failed:', err);
+      setError(String(err));
+    }
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, clearTileDom]);
+
+  /** Route to tiled or full-page render based on zoom level */
+  const renderActive = useCallback(() => {
+    if (zoomRef.current > 1.05) {
+      renderTiledPage();
+    } else {
+      clearTileDom();
+      const mainCanvas = canvasRef.current;
+      if (mainCanvas) mainCanvas.style.display = '';
+      renderPage();
+    }
+  }, [renderPage, renderTiledPage, clearTileDom]);
+
   const drawHighlights = useCallback(() => {
     if (!highlightRef.current || !isLoaded) return;
     const highlight = highlightRef.current;
@@ -1140,12 +1425,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   }, [pdfFileName, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
 
-  const renderPageRef = useRef(renderPage);
-  renderPageRef.current = renderPage;
+  const renderPageRef = useRef(renderActive);
+  renderPageRef.current = renderActive;
   const drawHighlightsRef = useRef(drawHighlights);
   drawHighlightsRef.current = drawHighlights;
 
-  useEffect(() => { renderPage(); }, [renderPage]);
+  useEffect(() => { renderActive(); }, [renderActive]);
   useEffect(() => { drawHighlights(); }, [drawHighlights]);
 
   // --- Adjacent page rendering (N pages visible when panning / zoomed out) ---
