@@ -1750,7 +1750,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Skip the zoom only if we're ALREADY zoomed in enough AND the match is
       // visible. At low zooms the whole page is "in view" which would wrongly
       // leave the user at 100% — enforce the 300% floor instead.
-      let alreadyInView = z >= 3.0 && matchPageNow === currentPage && items.some(isItemInView);
+      const alreadyInView = z >= 3.0 && matchPageNow === currentPage && items.some(isItemInView);
 
       // If not in view but we're on the same page, try to relocate to a
       // different match on this page that IS visible (handles "multiple U5
