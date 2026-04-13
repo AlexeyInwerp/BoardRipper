@@ -17,8 +17,8 @@ import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
 import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand } from '@tabler/icons-react';
 import {
-  TILE_SIZE, computeTileGrid, visibleTiles, tileRenderRequest,
-  viewportToPagePixels, getTileCached, putTileCached, invalidateTileCache,
+  TILE_SIZE, computeTileGrid, tileRenderRequest,
+  getTileCached, putTileCached, invalidateTileCache,
   setTileCacheLimit,
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
@@ -1181,14 +1181,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         highlight.style.display = '';
       }
 
-      const vp = viewportToPagePixels(
-        panRef.current.x, panRef.current.y, zoom,
-        containerWidth, containerH, baseScale, renderScale,
-      );
-      const PAD = TILE_SIZE;
-      const tiles = visibleTiles(
-        vp.x - PAD, vp.y - PAD, vp.w + PAD * 2, vp.h + PAD * 2, grid,
-      );
+      // Render ALL tiles for the page — no viewport culling.
+      // A typical page has 4-12 tiles. The overhead of a few extra tiles is
+      // negligible vs the visual glitches from stale viewport calculations
+      // (zoom/pan refs change during async rendering).
+      const tiles: { col: number; row: number }[] = [];
+      for (let row = 0; row < grid.rows; row++) {
+        for (let col = 0; col < grid.cols; col++) {
+          tiles.push({ col, row });
+        }
+      }
 
       const pxPerCss = renderScale / baseScale;
       const cssTileW = TILE_SIZE / pxPerCss;
@@ -1304,8 +1306,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       // Batch display: blit all rendered tiles to DOM in one frame
       if (tileRenderIdRef.current === tileRenderId && rendered.length > 0) {
-        // Collect keys of newly rendered tiles for stale cleanup
+        const renderedForPage = currentPage; // capture which page these tiles are for
         requestAnimationFrame(() => {
+          // Re-check render ID inside rAF — a newer render may have started
+          if (tileRenderIdRef.current !== tileRenderId) return;
+          // Check if page changed since we started rendering
+          const nowPage = pdfStore.getDocCurrentPage(pdfFileName);
+          if (nowPage !== renderedForPage) {
+            log.pdf.log(`tile-rAF BLOCKED: rendered for page ${renderedForPage} but now on page ${nowPage}`);
+            return; // don't display tiles for wrong page
+          }
           for (const r of rendered) {
             let tileCanvas = tileContainerRef.current.get(r.key);
             if (!tileCanvas) {
@@ -1324,15 +1334,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             if (ctx) ctx.drawImage(r.bitmap, 0, 0);
             tileCanvas.style.display = '';
           }
-          // Remove stale tiles (wrong scale or off-screen) — cap at MAX_TILE_DOM
-          const MAX_TILE_DOM = 50;
-          if (tileContainerRef.current.size > MAX_TILE_DOM) {
-            for (const [key, canvas] of tileContainerRef.current) {
-              if (tileContainerRef.current.size <= MAX_TILE_DOM) break;
-              if (!visibleKeys.has(key)) {
-                canvas.remove();
-                tileContainerRef.current.delete(key);
-              }
+          // Remove tiles from other render scales (stale after zoom change).
+          // Keep tiles at the current scale even if off-screen (cheap, avoids blank on re-pan).
+          const currentScaleSuffix = `:${renderScale}`;
+          for (const [key, canvas] of tileContainerRef.current) {
+            if (!key.endsWith(currentScaleSuffix)) {
+              canvas.remove();
+              tileContainerRef.current.delete(key);
             }
           }
           // Hide main canvas after tiles cover it
@@ -1927,11 +1935,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
           if (newPanY + pageH < containerH / 2 && curPage < total) {
             skipResetRef.current = true;
+            ++tileRenderIdRef.current;
             pdfStore.goToPage(curPage + 1);
             panRef.current = { x: panRef.current.x, y: newPanY + pageH };
             flashScrubber();
           } else if (newPanY > containerH / 2 && curPage > 1) {
             skipResetRef.current = true;
+            ++tileRenderIdRef.current;
             pdfStore.goToPage(curPage - 1);
             panRef.current = { x: panRef.current.x, y: newPanY - pageH };
             flashScrubber();
@@ -1961,11 +1971,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
         if (newY + pageH < containerH / 2 && curPage < total) {
           skipResetRef.current = true;
+          ++tileRenderIdRef.current; // invalidate pending tile rAFs immediately
           pdfStore.goToPage(curPage + 1);
           newY += pageH;
           flashScrubber();
         } else if (newY > containerH / 2 && curPage > 1) {
           skipResetRef.current = true;
+          ++tileRenderIdRef.current;
           pdfStore.goToPage(curPage - 1);
           newY -= pageH;
           flashScrubber();
