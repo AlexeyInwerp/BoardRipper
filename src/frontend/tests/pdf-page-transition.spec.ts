@@ -159,7 +159,7 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
             const px = ctx.getImageData(c.width / 2, c.height / 2, 1, 1).data;
             return `${px[0]},${px[1]},${px[2]}`;
           }
-        } catch {}
+        } catch { /* ignore */ }
       }
     }
     return '';
