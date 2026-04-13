@@ -203,19 +203,33 @@ function releaseCanvas(c: HTMLCanvasElement): void {
 }
 
 /** Clamp a pdf.js render scale so the resulting canvas stays within GPU limits. */
+/** Per-(pageW:pageH:maxDim) throttle so we log each distinct clamp once per
+ *  session rather than on every tile/render. */
+const _clampLogged = new Set<string>();
+
 function clampCanvasScale(pageW: number, pageH: number, scale: number, maxDim: number): number {
   const maxArea = maxDim * maxDim;
+  const requested = scale;
   let w = pageW * scale;
   let h = pageH * scale;
-  // Clamp individual dimensions
   if (w > maxDim || h > maxDim) {
     scale *= Math.min(maxDim / w, maxDim / h);
     w = pageW * scale;
     h = pageH * scale;
   }
-  // Clamp total pixel area
   if (w * h > maxArea) {
     scale *= Math.sqrt(maxArea / (w * h));
+  }
+  if (scale < requested) {
+    const key = `${Math.round(pageW)}:${Math.round(pageH)}:${maxDim}`;
+    if (!_clampLogged.has(key)) {
+      _clampLogged.add(key);
+      log.perf.warn(
+        `clampCanvasScale: ${Math.round(pageW)}×${Math.round(pageH)} pt @ requested=${requested.toFixed(2)} ` +
+        `clamped=${scale.toFixed(2)} (${Math.round((scale / requested) * 100)}%, maxDim=${maxDim}). ` +
+        `Page too large for target tier — visible result will be softer than quality preset implies.`
+      );
+    }
   }
   return scale;
 }
@@ -787,14 +801,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Schedule a re-render at exact zoom resolution.
    *  Adaptive throttle: renders at a rate the system can sustain (based on EMA of
    *  recent render times). Fast pages get near-instant crisp zoom; slow pages get
-   *  CSS-only zoom with a trailing debounce for the final crisp frame. */
+   *  CSS-only zoom with a trailing debounce for the final crisp frame.
+   *
+   *  Hysteresis invariant: `_lastCommittedTier` is module-global and held through
+   *  intermediate renders so mid-zoom re-renders don't thrash tier boundaries.
+   *  The trailing debounce below is the single place where we reset it — so the
+   *  final settle render always commits to the exact requested tier, not a stale
+   *  one. If the debounce is cleared and rescheduled before firing (new zoom
+   *  event arrives) the reset is deferred, which is fine: the reset only matters
+   *  for the final frame, and there's always a final frame. */
   const scheduleTierRender = useCallback(() => {
-    // Trailing debounce: always fires after zoom settles — guarantees final crisp frame.
-    // Resets hysteresis so the render uses the exact zoom tier, not a stale committed tier.
     if (tierDebounceRef.current) clearTimeout(tierDebounceRef.current);
     tierDebounceRef.current = setTimeout(() => {
       tierDebounceRef.current = null;
-      _lastCommittedTier = 0; // reset hysteresis — next render commits to exact tier
+      _lastCommittedTier = 0;
       renderPageRef.current();
     }, TIER_DEBOUNCE_MS);
 
