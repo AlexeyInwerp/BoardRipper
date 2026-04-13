@@ -4,6 +4,7 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { viewCommands } from '../store/view-commands';
 import { fileInputRefs } from '../store/file-inputs';
+import { ensurePdfPanel, getDockviewApi } from '../store/dockview-api';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -19,26 +20,72 @@ export function useKeyboardShortcuts() {
     document.addEventListener('mousemove', trackMouse, { passive: true });
 
     const handler = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+F → focus PDF search if a PDF panel is active, otherwise board search.
-      // If a component is currently selected (either clicked on board or in PDF text),
-      // prefill the PDF search with that component's name and trigger the search.
+      // Cmd/Ctrl+F — routing:
+      //   1. Active board tab has a linked PDF → activate the PDF panel, prefill
+      //      its search with the selected component/net name (if any), focus it.
+      //   2. A PDF panel is already active (ref set) → focus its search.
+      //   3. Otherwise → fall back to top-bar board search.
       const focusSearch = getShortcut('focusSearch');
       if (focusSearch && matchesShortcut(e, focusSearch)) {
+        // Standard behavior: if the PDF search field is already focused with a
+        // query, repeat Cmd+F steps to the next match (Shift reverses direction).
+        if (fileInputRefs.pdfSearch
+            && document.activeElement === fileInputRefs.pdfSearch
+            && fileInputRefs.pdfSearch.value.trim()) {
+          e.preventDefault();
+          if (e.shiftKey) pdfStore.prevMatch();
+          else pdfStore.nextMatch();
+          return;
+        }
+
+        const tab = boardStore.activeTab;
+        const linkedPdf = tab?.pdfFileNames?.[0];
+        const sel = tab?.selection;
+        const partIdx = sel?.partIndex;
+        const selectedPart = (partIdx != null && tab?.board)
+          ? tab.board.parts[partIdx]
+          : null;
+        // Priority: pin-selected (→ net name) > part-only (→ component name) > net-only
+        // From board panel context. For PDF panel context, override below.
+        let prefillText: string | null = null;
+        if (sel?.pinIndex != null && sel.pinIndex >= 0 && sel.highlightedNet) {
+          prefillText = sel.highlightedNet;
+        } else if (selectedPart) {
+          prefillText = selectedPart.name;
+        } else if (sel?.highlightedNet) {
+          prefillText = sel.highlightedNet;
+        }
+
+        // If the currently active dockview panel is a PDF panel, prefer its
+        // last-clicked word over the board selection.
+        const api = getDockviewApi();
+        const activePanelId = api?.activePanel?.id ?? '';
+        if (activePanelId.startsWith('pdf-')) {
+          const pdfClicked = pdfStore.lastClickedWord;
+          if (pdfClicked) prefillText = pdfClicked;
+        }
+
+        if (linkedPdf) {
+          e.preventDefault();
+          ensurePdfPanel(linkedPdf);
+          pdfStore.switchTo(linkedPdf);
+          if (prefillText) {
+            pdfStore.searchText(prefillText, 'lookup');
+          }
+          // Wait a tick for the PDF panel's onDidActiveChange effect to register
+          // searchInputRef.current into fileInputRefs.pdfSearch.
+          setTimeout(() => {
+            const input = fileInputRefs.pdfSearch;
+            if (!input) return;
+            if (prefillText) input.value = prefillText;
+            input.focus();
+            input.select();
+          }, 0);
+          return;
+        }
+
         if (fileInputRefs.pdfSearch) {
           e.preventDefault();
-          const tab = boardStore.activeTab;
-          const partIdx = tab?.selection.partIndex;
-          const selectedPart = (partIdx != null && tab?.board)
-            ? tab.board.parts[partIdx]
-            : null;
-          // Only prefill if the board tab is linked to a PDF. No link → silently
-          // fall through to a plain focus (no side effects, no errors).
-          const linkedPdf = tab?.pdfFileNames?.[0];
-          if (selectedPart && linkedPdf) {
-            pdfStore.switchTo(linkedPdf);
-            pdfStore.searchText(selectedPart.name, 'lookup');
-            fileInputRefs.pdfSearch.value = selectedPart.name;
-          }
           fileInputRefs.pdfSearch.focus();
           fileInputRefs.pdfSearch.select();
           return;

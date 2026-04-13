@@ -390,6 +390,7 @@ function zoomToItemGroup(
   vpT: number[], baseScale: number,
   cw: number, ch: number,
   targetFraction: number,
+  floorZoom: number = 0.5,
 ): { zoom: number; pan: { x: number; y: number } } {
   let gx1 = Infinity, gy1 = Infinity, gx2 = -Infinity, gy2 = -Infinity;
   for (const item of items) {
@@ -405,7 +406,11 @@ function zoomToItemGroup(
   const groupH = Math.max(gy2 - gy1, 1);
   const zoomByW = (cw * targetFraction) / groupW;
   const zoomByH = (ch * targetFraction) / groupH;
-  const zoom = Math.max(0.5, Math.min(Math.min(zoomByW, zoomByH), 3));
+  const fit = Math.min(zoomByW, zoomByH);
+  // Cap fit at 300% so we don't over-zoom tiny matches; then enforce a floor so
+  // the caller can guarantee "at least floorZoom" (e.g. keep current zoom when
+  // navigating matches).
+  const zoom = Math.max(floorZoom, Math.min(fit, 3));
   return { zoom, pan: { x: cw / 2 - mcx * zoom, y: ch / 2 - mcy * zoom } };
 }
 
@@ -1720,14 +1725,56 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       const container = containerRef.current;
       const items = groupMatches.map(m => m.item);
-      const { zoom: newZoom, pan: newPan } = zoomToItemGroup(
-        items, viewportTransformRef.current, baseScale,
-        container.clientWidth, container.clientHeight, 0.2,
-      );
 
-      zoomRef.current = newZoom;
-      panRef.current = newPan;
-      syncTransform();
+      // If the active match is already visible in the current viewport AND we're
+      // already on its page, don't snap — the user already sees it (e.g. Cmd+F
+      // on a selected component that's under the cursor). Just blink it.
+      const matchPageNow = match.pageIndex + 1;
+      const vpT = viewportTransformRef.current;
+      const z = zoomRef.current;
+      const px = panRef.current.x;
+      const py = panRef.current.y;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const isItemInView = (it: { transform: number[]; width: number }): boolean => {
+        const r = textItemRect(it.transform, it.width, vpT, baseScale);
+        const sx = r.x * z + px;
+        const sy = r.y * z + py;
+        const sw = r.w * z;
+        const sh = r.h * z;
+        return sx + sw > 0 && sy + sh > 0 && sx < cw && sy < ch;
+      };
+      let alreadyInView = matchPageNow === currentPage && items.some(isItemInView);
+
+      // If not in view but we're on the same page, try to relocate to a
+      // different match on this page that IS visible (handles "multiple U5
+      // instances on the page, user is looking at one of them" case).
+      if (!alreadyInView && matchPageNow === currentPage && !activeGroup) {
+        for (let i = 0; i < matches.length; i++) {
+          if (i === activeMatchIndex) continue;
+          if (matches[i].pageIndex !== match.pageIndex) continue;
+          if (isItemInView(matches[i].item)) {
+            pdfStore.setActiveMatchIndex(i);
+            return; // effect will re-run with the new index
+          }
+        }
+      }
+
+      if (!alreadyInView) {
+        // Match navigation: enforce a floor of max(currentZoom, 3.0) so we never
+        // zoom OUT when stepping between matches — stay at ≥300% or keep higher
+        // zoom if the user was already zoomed in further.
+        const floor = Math.max(zoomRef.current, 3.0);
+        const { zoom: newZoom, pan: newPan } = zoomToItemGroup(
+          items, viewportTransformRef.current, baseScale,
+          container.clientWidth, container.clientHeight, 0.2,
+          floor,
+        );
+
+        zoomRef.current = newZoom;
+        panRef.current = newPan;
+        syncTransform();
+      }
 
       renderPageRef.current();
 
@@ -1781,24 +1828,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         return;
       }
 
+      // Board→PDF lookup: match the match-nav behavior — floor zoom at 3.0
+      // (or keep higher current zoom) and center on the target group.
+      const floor = Math.max(zoomRef.current, 3.0);
       const { zoom, pan } = zoomToItemGroup(
         target.items, viewportTransformRef.current, baseScale,
         containerRef.current.clientWidth, containerRef.current.clientHeight, 0.25,
+        floor,
       );
-      // Ensure readable zoom — at least 2x for single-item lookups
-      const minZoom = target.items.length <= 2 ? 2 : 1.5;
-      zoomRef.current = Math.max(zoom, minZoom);
+      zoomRef.current = zoom;
       panRef.current = pan;
-      // Recalculate pan for the adjusted zoom (re-center)
-      if (zoomRef.current !== zoom) {
-        const r = textItemRect(target.items[0].transform, target.items[0].width, viewportTransformRef.current, baseScale);
-        const cx = r.x + r.w / 2;
-        const cy = r.y + r.h / 2;
-        panRef.current = {
-          x: containerRef.current.clientWidth / 2 - cx * zoomRef.current,
-          y: containerRef.current.clientHeight / 2 - cy * zoomRef.current,
-        };
-      }
       syncTransform();
       renderPageRef.current();
 
@@ -2255,7 +2294,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [syncTransform]);
 
   /** Find the word + its page-space rect under a click. Shared by single & double click. */
-  const hitTestWord = useCallback((e: React.MouseEvent): { word: string; rect: { x: number; y: number; w: number; h: number } } | null => {
+  const hitTestWord = useCallback((e: React.MouseEvent): { word: string; rect: { x: number; y: number; w: number; h: number }; pageIndex: number; itemIndex: number } | null => {
     if (!isLoaded) return null;
     const container = containerRef.current;
     if (!container) return null;
@@ -2272,9 +2311,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // Collect all matching items at the click point, pick the smallest font.
     // Watermark filter: skip text items matching any configured watermark term.
     const wmFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
-    let bestHit: { word: string; rect: { x: number; y: number; w: number; h: number }; fontSize: number } | null = null;
+    let bestHit: { word: string; rect: { x: number; y: number; w: number; h: number }; fontSize: number; itemIndex: number } | null = null;
 
-    for (const item of items) {
+    for (let ii = 0; ii < items.length; ii++) {
+      const item = items[ii];
       if (isPdfWatermarkText(item.str, wmFilter)) continue;
       const r = textItemRect(item.transform, item.width, vpT, scale);
       if (clickX >= r.x && clickX <= r.x + r.w && clickY >= r.y && clickY <= r.y + r.h) {
@@ -2290,17 +2330,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             const fontH = fontSize * LINE_HEIGHT_RATIO * scale;
             const h = Math.min(r.h, fontH);
             const y = r.y + (r.h - h) / 2;
-            bestHit = { word, rect: { x: wx, y, w: ww, h }, fontSize };
+            bestHit = { word, rect: { x: wx, y, w: ww, h }, fontSize, itemIndex: ii };
           }
         }
       }
     }
-    return bestHit ? { word: bestHit.word, rect: bestHit.rect } : null;
+    return bestHit ? { word: bestHit.word, rect: bestHit.rect, pageIndex, itemIndex: bestHit.itemIndex } : null;
   }, [pdfFileName, isLoaded, currentPage]);
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
     const hit = hitTestWord(e);
     if (!hit) { setClickHighlight(null); return; }
+
+    // Remember last clicked word + location for Cmd+F prefill / exact-match pick
+    pdfStore.setLastClickedWord(hit.word);
+    pdfStore.setLastClickedLocation({ fileName: pdfFileName, pageIndex: hit.pageIndex, itemIndex: hit.itemIndex });
 
     // Show highlight + tooltip overlay on any text
     setClickHighlight({ ...hit, key: ++clickHighlightKeyRef.current, zoom: zoomRef.current });
@@ -2325,6 +2369,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (searchInputRef.current) {
       searchInputRef.current.value = hit.word;
       pdfStore.switchTo(pdfFileName);
+      // Set location so searchText picks the exact clicked occurrence
+      pdfStore.setLastClickedLocation({ fileName: pdfFileName, pageIndex: hit.pageIndex, itemIndex: hit.itemIndex });
       pdfStore.searchText(hit.word);
       navHintShownRef.current = false;
     }
@@ -2605,6 +2651,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 type="text"
                 className="pdf-search-input"
                 placeholder="Search (multi-term: 10UF 25V)"
+                title="Up/Down arrows — move through results. Cmd/Ctrl+F — next match, Shift+Cmd/Ctrl+F — previous."
                 defaultValue={searchQuery}
                 onChange={(e) => {
                   if (!e.target.value.trim()) {
@@ -2638,6 +2685,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             <div className="pdf-lookup-hint">
               Double-click <b>{lookupHint}</b> to search
             </div>
+          )}
+          {showNavHint && (
+            <div className="pdf-nav-hint">Use ↑↓ keyboard to navigate</div>
           )}
           {isMultiTerm && (
             <div className="pdf-multiterm-dropdown">
