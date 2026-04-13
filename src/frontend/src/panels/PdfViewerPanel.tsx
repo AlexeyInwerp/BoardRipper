@@ -19,7 +19,7 @@ import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand } from '@tabler/icons
 import {
   TILE_SIZE, computeTileGrid, visibleTiles, tileRenderRequest,
   viewportToPagePixels, getTileCached, putTileCached, invalidateTileCache,
-  setTileCacheLimit, getBestTileCached,
+  setTileCacheLimit,
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
 
@@ -1163,20 +1163,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       pageCssHRef.current = cssH;
 
       const grid = computeTileGrid(unscaledVp.width, unscaledVp.height, renderScale);
-      const prevGrid = tileGridRef.current;
       tileGridRef.current = grid;
+      // Tile keys include renderScale — old/new tiles don't collide in the map.
 
-      if (!prevGrid || prevGrid.renderScale !== grid.renderScale) {
-        clearTileDom();
-      }
-
-      const mainCanvas = canvasRef.current;
-      if (mainCanvas) mainCanvas.style.display = 'none';
+      // Keep main canvas visible as blurry backdrop while tiles load on top
+      // (tiles have z-index: 1, main canvas has no z-index — tiles cover it)
 
       // Size highlight canvas for tiled mode
       const highlight = highlightRef.current;
       if (highlight) {
-        const hlScale = clampCanvasScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+        // Use hiresScaleRef for highlight canvas so drawHighlights coords match
+        const hlScale = hiresScaleRef.current;
         highlight.width = Math.ceil(unscaledVp.width * hlScale);
         highlight.height = Math.ceil(unscaledVp.height * hlScale);
         highlight.style.width = `${cssW}px`;
@@ -1193,66 +1190,63 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         vp.x - PAD, vp.y - PAD, vp.w + PAD * 2, vp.h + PAD * 2, grid,
       );
 
-      const cssTileW = TILE_SIZE / (renderScale / baseScale);
-      const cssTileH = TILE_SIZE / (renderScale / baseScale);
+      const pxPerCss = renderScale / baseScale;
+      const cssTileW = TILE_SIZE / pxPerCss;
+      const cssTileH = TILE_SIZE / pxPerCss;
 
       const visibleKeys = new Set<string>();
       const toRender: { col: number; row: number }[] = [];
 
       for (const t of tiles) {
-        const key = `${t.col}:${t.row}`;
+        const key = `${t.col}:${t.row}:${renderScale}`;
         visibleKeys.add(key);
 
         let tileCanvas = tileContainerRef.current.get(key);
         const cached = getTileCached(pdfFileName, currentPage, t.col, t.row, renderScale);
 
+        // Per-tile CSS size — edge tiles may be smaller than TILE_SIZE
+        const req = tileRenderRequest(t.col, t.row, grid);
+        const tileCssW = req.pixelW / pxPerCss;
+        const tileCssH = req.pixelH / pxPerCss;
+
         if (cached) {
           if (!tileCanvas) {
             tileCanvas = document.createElement('canvas');
             tileCanvas.className = 'pdf-tile';
-            tileCanvas.width = cached.bitmap.width;
-            tileCanvas.height = cached.bitmap.height;
-            tileCanvas.style.width = `${cssTileW}px`;
-            tileCanvas.style.height = `${cssTileH}px`;
-            tileCanvas.style.left = `${t.col * cssTileW}px`;
-            tileCanvas.style.top = `${t.row * cssTileH}px`;
             wrapper.appendChild(tileCanvas);
             tileContainerRef.current.set(key, tileCanvas);
           }
+          tileCanvas.width = cached.bitmap.width;
+          tileCanvas.height = cached.bitmap.height;
+          tileCanvas.style.width = `${tileCssW}px`;
+          tileCanvas.style.height = `${tileCssH}px`;
+          tileCanvas.style.left = `${t.col * cssTileW}px`;
+          tileCanvas.style.top = `${t.row * cssTileH}px`;
           const ctx = tileCanvas.getContext('2d');
           if (ctx) ctx.drawImage(cached.bitmap, 0, 0);
           tileCanvas.style.display = '';
         } else {
-          const best = getBestTileCached(pdfFileName, currentPage, t.col, t.row);
-          if (best && tileCanvas) {
+          if (tileCanvas) {
+            tileCanvas.style.width = `${tileCssW}px`;
+            tileCanvas.style.height = `${tileCssH}px`;
+            tileCanvas.style.left = `${t.col * cssTileW}px`;
+            tileCanvas.style.top = `${t.row * cssTileH}px`;
             tileCanvas.style.display = '';
           }
           toRender.push(t);
         }
       }
 
-      for (const [key, canvas] of tileContainerRef.current) {
-        if (!visibleKeys.has(key)) {
-          canvas.style.display = 'none';
-        }
-      }
+      // Don't hide old tiles here — they stay visible as backdrop.
+      // Out-of-viewport tiles are clipped by overflow:hidden on the container.
+      // Cleanup happens in the batch display rAF after new tiles are shown.
 
-      // Evict hidden tile canvases if too many in DOM
-      const MAX_TILE_DOM = 50;
-      if (tileContainerRef.current.size > MAX_TILE_DOM) {
-        const toEvict: string[] = [];
-        for (const [key, canvas] of tileContainerRef.current) {
-          if (canvas.style.display === 'none') toEvict.push(key);
-        }
-        for (const key of toEvict) {
-          if (tileContainerRef.current.size <= MAX_TILE_DOM) break;
-          const canvas = tileContainerRef.current.get(key)!;
-          canvas.remove();
-          tileContainerRef.current.delete(key);
-        }
-      }
-
+      // Phase 2: render missing tiles sequentially (pdf.js can't handle concurrent
+      // renders on the same page — parallel calls cause flipped/mirrored tiles).
+      // Tiles are rendered to bitmaps first, then batch-displayed in one rAF.
       const t0 = performance.now();
+      const rendered: { key: string; bitmap: ImageBitmap; col: number; row: number; pixelW: number; pixelH: number }[] = [];
+
       for (const t of toRender) {
         if (tileRenderIdRef.current !== tileRenderId) return;
 
@@ -1299,33 +1293,52 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         try {
           const bitmap = await createImageBitmap(srcCanvas);
           srcCanvas.width = 1; srcCanvas.height = 1;
-
           putTileCached(pdfFileName, currentPage, {
             bitmap, col: t.col, row: t.row, scale: renderScale,
           });
-
-          if (tileRenderIdRef.current === tileRenderId) {
-            const key = `${t.col}:${t.row}`;
-            let tileCanvas = tileContainerRef.current.get(key);
-            if (!tileCanvas) {
-              tileCanvas = document.createElement('canvas');
-              tileCanvas.className = 'pdf-tile';
-              tileCanvas.width = req.pixelW;
-              tileCanvas.height = req.pixelH;
-              tileCanvas.style.width = `${cssTileW}px`;
-              tileCanvas.style.height = `${cssTileH}px`;
-              tileCanvas.style.left = `${t.col * cssTileW}px`;
-              tileCanvas.style.top = `${t.row * cssTileH}px`;
-              wrapper.appendChild(tileCanvas);
-              tileContainerRef.current.set(key, tileCanvas);
-            }
-            const ctx = tileCanvas.getContext('2d');
-            if (ctx) ctx.drawImage(bitmap, 0, 0);
-            tileCanvas.style.display = '';
-          }
+          rendered.push({ key: `${t.col}:${t.row}:${renderScale}`, bitmap, col: t.col, row: t.row, pixelW: req.pixelW, pixelH: req.pixelH });
         } catch {
           srcCanvas.width = 1; srcCanvas.height = 1;
         }
+      }
+
+      // Batch display: blit all rendered tiles to DOM in one frame
+      if (tileRenderIdRef.current === tileRenderId && rendered.length > 0) {
+        // Collect keys of newly rendered tiles for stale cleanup
+        requestAnimationFrame(() => {
+          for (const r of rendered) {
+            let tileCanvas = tileContainerRef.current.get(r.key);
+            if (!tileCanvas) {
+              tileCanvas = document.createElement('canvas');
+              tileCanvas.className = 'pdf-tile';
+              wrapper.appendChild(tileCanvas);
+              tileContainerRef.current.set(r.key, tileCanvas);
+            }
+            tileCanvas.width = r.pixelW;
+            tileCanvas.height = r.pixelH;
+            tileCanvas.style.width = `${r.pixelW / pxPerCss}px`;
+            tileCanvas.style.height = `${r.pixelH / pxPerCss}px`;
+            tileCanvas.style.left = `${r.col * cssTileW}px`;
+            tileCanvas.style.top = `${r.row * cssTileH}px`;
+            const ctx = tileCanvas.getContext('2d');
+            if (ctx) ctx.drawImage(r.bitmap, 0, 0);
+            tileCanvas.style.display = '';
+          }
+          // Remove stale tiles (wrong scale or off-screen) — cap at MAX_TILE_DOM
+          const MAX_TILE_DOM = 50;
+          if (tileContainerRef.current.size > MAX_TILE_DOM) {
+            for (const [key, canvas] of tileContainerRef.current) {
+              if (tileContainerRef.current.size <= MAX_TILE_DOM) break;
+              if (!visibleKeys.has(key)) {
+                canvas.remove();
+                tileContainerRef.current.delete(key);
+              }
+            }
+          }
+          // Hide main canvas after tiles cover it
+          const mainCanvas = canvasRef.current;
+          if (mainCanvas) mainCanvas.style.visibility = 'hidden';
+        });
       }
 
       drawHighlightsRef.current();
@@ -1333,7 +1346,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       const totalMs = performance.now() - t0;
       if (toRender.length > 0) {
-        log.perf.log(`tiled-render page=${currentPage} tiles=${toRender.length}/${tiles.length} ${Math.round(totalMs)}ms scale=${renderScale.toFixed(1)}`);
+        log.perf.log(`tiled-render page=${currentPage} tiles=${rendered.length}/${tiles.length} ${Math.round(totalMs)}ms scale=${renderScale.toFixed(1)}`);
         const prev = renderTimeEmaRef.current;
         renderTimeEmaRef.current = prev > 0 ? prev * 0.7 + totalMs * 0.3 : totalMs;
       }
@@ -1351,7 +1364,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     } else {
       clearTileDom();
       const mainCanvas = canvasRef.current;
-      if (mainCanvas) mainCanvas.style.display = '';
+      if (mainCanvas) mainCanvas.style.visibility = '';
       renderPage();
     }
   }, [renderPage, renderTiledPage, clearTileDom]);
