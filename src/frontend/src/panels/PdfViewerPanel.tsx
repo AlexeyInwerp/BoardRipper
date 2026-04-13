@@ -1213,7 +1213,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const wrapper = wrapperRef.current;
     if (!container || !wrapper) return;
     const containerWidth = container.clientWidth;
-    const containerH = container.clientHeight;
     if (containerWidth === 0) return;
 
     try {
