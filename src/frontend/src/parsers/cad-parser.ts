@@ -89,7 +89,57 @@ function parseShapes(lines: string[]): Map<string, Shape> {
     }
   }
 
+  // Some exports (e.g. concatenated/panelised .cad files) list each pin name
+  // multiple times within one SHAPE block, once per merged revision. The
+  // duplicate pin positions are not shape-local — they're residuals from the
+  // source design's world placement — so blindly keeping them all produces a
+  // huge bounding box and a diagonally-skewed part outline. Collapse each
+  // pin-name group to the single position that lies closest to the shape's
+  // local origin (the only cluster that is truly shape-relative).
+  for (const shape of shapes.values()) {
+    if (shape.pins.length > 0) {
+      shape.pins = dedupeShapePins(shape.pins);
+    }
+  }
+
   return shapes;
+}
+
+/**
+ * Collapse duplicate pin-name entries to one representative per pin name.
+ * For shapes with no duplicates, returns the input pins in original order (no-op).
+ */
+function dedupeShapePins(pins: ShapePin[]): ShapePin[] {
+  const groups = new Map<string, ShapePin[]>();
+  for (const p of pins) {
+    const g = groups.get(p.name);
+    if (g) g.push(p); else groups.set(p.name, [p]);
+  }
+
+  // No duplicates? Preserve original order and return as-is.
+  let hasDup = false;
+  for (const g of groups.values()) if (g.length > 1) { hasDup = true; break; }
+  if (!hasDup) return pins;
+
+  // Pick the "near-origin" representative for each pin-name group. Shape-local
+  // coordinates cluster around (0,0) for a real footprint; revision residuals
+  // sit far from origin. Distance to (0,0) is a robust tie-breaker.
+  const picked: ShapePin[] = [];
+  const seen = new Set<string>();
+  for (const p of pins) {
+    if (seen.has(p.name)) continue;
+    seen.add(p.name);
+    const group = groups.get(p.name)!;
+    let best = group[0];
+    let bestDist = best.x * best.x + best.y * best.y;
+    for (let i = 1; i < group.length; i++) {
+      const q = group[i];
+      const d = q.x * q.x + q.y * q.y;
+      if (d < bestDist) { best = q; bestDist = d; }
+    }
+    picked.push(best);
+  }
+  return picked;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +191,33 @@ function parseComponents(lines: string[]): Component[] {
   }
   if (current?.name) components.push(current as Component);
 
-  return components;
+  // Some exporters accumulate every prior revision of the board into the
+  // same .cad file as a sequence of concatenated passes. Example:
+  // V382_20.cad = [rev1.1 pass] [rev1.0 additions pass] [rev2.0 pass].
+  // Each pass is a complete component list for that revision, and
+  // refdes can be repurposed between revisions (e.g. U503 is a QFN033
+  // DRMOS in rev1.x but a DFN10 current-sense amp in rev2.0). Keeping
+  // any mix of passes produces ghost placements and wrong packages.
+  //
+  // The canonical revision is always the *last* pass — that's the one
+  // the file is named after. Detect pass boundaries by resetting the
+  // per-pass seen-set the first time a refdes repeats, then keep only
+  // components assigned to the highest pass number. Clean files with
+  // no duplicates stay in pass 1 and pass through unchanged.
+  let pass = 1;
+  let seen = new Set<string>();
+  const passOf: number[] = new Array(components.length);
+  for (let i = 0; i < components.length; i++) {
+    const name = components[i].name;
+    if (seen.has(name)) {
+      pass++;
+      seen = new Set();
+    }
+    seen.add(name);
+    passOf[i] = pass;
+  }
+  if (pass === 1) return components;
+  return components.filter((_, i) => passOf[i] === pass);
 }
 
 // ---------------------------------------------------------------------------
