@@ -2614,6 +2614,23 @@ html, body, #root {
   100% { opacity: 0; }
 }
 
+.pdf-nav-hint {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+  animation: pdf-lookup-hint-fade 5s ease-out forwards;
+}
+
 .pdf-multiterm-dropdown {
   position: absolute;
   top: 100%;

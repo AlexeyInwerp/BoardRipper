@@ -443,6 +443,17 @@ class PdfStore extends Emitter {
   private _loading = false;
   /** Consumable follow target — PDF viewer zooms to this location without highlighting */
   private _followTarget: FollowTarget | null = null;
+  /** Last word clicked in any PDF panel — read by Cmd+F handler when a PDF is focused */
+  private _lastClickedWord: string | null = null;
+  /** Location of the last clicked word — used by searchText to pick the exact
+   *  match under the click rather than heuristic "nearest page". */
+  private _lastClickedLocation: { fileName: string; pageIndex: number; itemIndex: number } | null = null;
+
+  get lastClickedWord(): string | null { return this._lastClickedWord; }
+  setLastClickedWord(word: string | null): void { this._lastClickedWord = word; }
+  setLastClickedLocation(loc: { fileName: string; pageIndex: number; itemIndex: number } | null): void {
+    this._lastClickedLocation = loc;
+  }
 
   private get _active(): PdfDocument | null {
     return this._activeFileName ? this._documents.get(this._activeFileName) ?? null : null;
@@ -757,6 +768,10 @@ class PdfStore extends Emitter {
     const active = this._active;
     if (!active) return;
 
+    // Remember position before wiping state — used to pick a starting match
+    // near the user's current view instead of always jumping to match 0.
+    const prevPage = active.currentPage;
+
     active.searchQuery = query;
     active.searchSource = query ? source : null;
     active.lookupHint = null; // any new search clears pending hint
@@ -792,9 +807,44 @@ class PdfStore extends Emitter {
     }
 
     if (active.matches.length > 0) {
-      active.activeMatchIndex = 0;
-      active.activeGroupIndex = active.matchGroups.length > 0 ? 0 : -1;
-      active.currentPage = active.matches[0].pageIndex + 1;
+      // Exact match pick: if the caller just clicked a word in this PDF, that
+      // word's location IS the target — pick the match at that exact
+      // (pageIndex, itemIndex). No heuristic needed.
+      let bestIdx = -1;
+      const loc = this._lastClickedLocation;
+      if (loc && loc.fileName === active.fileName) {
+        for (let i = 0; i < active.matches.length; i++) {
+          const m = active.matches[i];
+          if (m.pageIndex === loc.pageIndex && m.itemIndex === loc.itemIndex) {
+            bestIdx = i;
+            break;
+          }
+        }
+        this._lastClickedLocation = null; // consume
+      }
+
+      if (bestIdx < 0) {
+        // Fallback: pick the match closest to the user's previous page so the
+        // view doesn't snap far away on a typed search.
+        const prevPageIdx = prevPage - 1;
+        bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < active.matches.length; i++) {
+          const dist = Math.abs(active.matches[i].pageIndex - prevPageIdx);
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; if (dist === 0) break; }
+        }
+      }
+
+      if (active.matchGroups.length > 0) {
+        // Remap: find the group containing bestIdx
+        const g = active.matchGroups.findIndex(group => group.includes(bestIdx));
+        active.activeGroupIndex = g >= 0 ? g : 0;
+        active.activeMatchIndex = active.matchGroups[active.activeGroupIndex][0];
+      } else {
+        active.activeMatchIndex = bestIdx;
+        active.activeGroupIndex = -1;
+      }
+      active.currentPage = active.matches[active.activeMatchIndex].pageIndex + 1;
     }
     this._rebuildActiveIndicesCache(active);
     this.notify();
@@ -998,6 +1048,20 @@ class PdfStore extends Emitter {
 
   nextMatch() { this._stepMatch(1); }
   prevMatch() { this._stepMatch(-1); }
+
+  /** Set the active match to a specific index (silent — won't re-trigger nav UI). */
+  setActiveMatchIndex(idx: number) {
+    const d = this._active;
+    if (!d || idx < 0 || idx >= d.matches.length) return;
+    d.activeMatchIndex = idx;
+    if (d.matchGroups.length > 0) {
+      const g = d.matchGroups.findIndex(group => group.includes(idx));
+      if (g >= 0) d.activeGroupIndex = g;
+    }
+    d.currentPage = d.matches[idx].pageIndex + 1;
+    this._rebuildActiveIndicesCache(d);
+    this.notify();
+  }
 
   private _stepMatch(delta: 1 | -1) {
     const d = this._active;
