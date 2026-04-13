@@ -668,15 +668,40 @@ class PdfStore extends Emitter {
     void this._prewarmWatermarkSkipSets(pdfDoc.fileName);
   }
 
+  /** Background prewarm runs one page per idle callback so it yields to
+   *  user-interactive renders on the shared pdf.js worker queue. Falls back
+   *  to setTimeout(0) in browsers without requestIdleCallback (Safari). */
   private async _prewarmWatermarkSkipSets(fileName: string): Promise<void> {
     const doc = this._documents.get(fileName);
     if (!doc) return;
     const filter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
     if (!filter || filter.length === 0) return;
-    for (let i = 0; i < doc.pageCount; i++) {
-      if (this._documents.get(fileName) !== doc) return; // document replaced/closed
-      try { await this.getWatermarkSkipSet(fileName, i); } catch { /* ignore */ }
-    }
+
+    // Use requestIdleCallback when available; otherwise fall back to setTimeout.
+    // We don't care about the deadline — we process exactly one page per tick and
+    // let the browser decide when a tick fires. The whole loop yields the worker
+    // queue between pages so user renders can slip in.
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    };
+    const scheduleTick = (cb: () => void) => {
+      if (w.requestIdleCallback) {
+        w.requestIdleCallback(cb, { timeout: 2000 });
+      } else {
+        setTimeout(cb, 0);
+      }
+    };
+
+    let i = 0;
+    const step = async () => {
+      // Abort if document was closed or replaced
+      if (this._documents.get(fileName) !== doc) return;
+      if (i >= doc.pageCount) return;
+      const pageIndex = i++;
+      try { await this.getWatermarkSkipSet(fileName, pageIndex); } catch { /* ignore */ }
+      scheduleTick(() => { void step(); });
+    };
+    scheduleTick(() => { void step(); });
   }
 
   /** Return the effective PDFDocumentProxy (stripped if clean mode is on). */
