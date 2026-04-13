@@ -640,7 +640,7 @@ export class BoardRenderer {
     this.netDimGfx = new Graphics();
     this.netDimGfx.zIndex = 10;
     this.netLabelLayer = new Container();
-    this.netLabelLayer.zIndex = 20;
+    this.netLabelLayer.zIndex = 35;
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
     this.crossSideGhostGfx = new Graphics();
@@ -742,15 +742,15 @@ export class BoardRenderer {
     // zIndex values define the render order — higher = rendered later = on top.
     //   0        board content (outline, layers, pins, labels) — default zIndex
     //   10       netDimGfx          — dim/fade non-selected nets
-    //   20       netLabelLayer      — net name labels at pin positions
     //   30       selectionGfx       — yellow highlight rectangles around selected parts/pins
+    //   35       netLabelLayer      — net/pin labels raised above dim + selection
     //   100-103  elevated labels    — part/pin name badges, always topmost
     this.selectionGfx = new Graphics();
     this.selectionGfx.zIndex = 30;
     this.netDimGfx = new Graphics();
     this.netDimGfx.zIndex = 10;
     this.netLabelLayer = new Container();
-    this.netLabelLayer.zIndex = 20;
+    this.netLabelLayer.zIndex = 35;
     this.butterflySelectionGfx = new Graphics();
     this.netLinesGfx = new Graphics();
     this.crossSideGhostGfx = new Graphics();
