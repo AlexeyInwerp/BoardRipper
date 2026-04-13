@@ -182,6 +182,9 @@ export class BoardRenderer {
   private elevatedPartBg: Graphics | null = null;
   private elevatedPinLabel: BitmapText | null = null;
   private elevatedPinBg: Graphics | null = null;
+  // Pin labels raised above the ambient dim overlay for the selected part.
+  // Each entry remembers where to put the child back on the next update.
+  private raisedPinLabels: { child: Container; parent: Container; index: number }[] = [];
 
   // On-demand rendering: only render when something changed
   private needsRender = true;
@@ -2054,6 +2057,19 @@ export class BoardRenderer {
     }
     this.selectionBlinkPhase = 0;
     this.netDimGfx.clear();
+    // Restore any pin labels previously raised above the dim overlay back to
+    // their original parents (top/bottom pin layers inside the part container).
+    if (this.raisedPinLabels.length > 0) {
+      for (let i = this.raisedPinLabels.length - 1; i >= 0; i--) {
+        const { child, parent, index } = this.raisedPinLabels[i];
+        if (child.parent === this.netLabelLayer) {
+          this.netLabelLayer.removeChild(child);
+        }
+        const insertAt = Math.min(index, parent.children.length);
+        parent.addChildAt(child, insertAt);
+      }
+      this.raisedPinLabels.length = 0;
+    }
     // Hide all pooled net labels instead of removing (avoids GC churn)
     for (let i = 0; i < this.netLabelLayer.children.length; i++) {
       this.netLabelLayer.children[i].visible = false;
@@ -2182,6 +2198,76 @@ export class BoardRenderer {
       const cy = (b.minY + b.maxY) / 2;
       this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
       this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+
+      // Part-only selection under ambient dim: the whole board is dimmed but
+      // the `effectiveNet` branch below won't run, so the selected part's pins
+      // and label would stay faded. Re-draw them above the dim here.
+      if (sel.partIndex !== null) {
+        const selPart = this.board.parts[sel.partIndex];
+        if (selPart && this.isPartVisible(selPart)) {
+          const gfx = gfxFor(selPart);
+          const isBotGfx = gfx === this.butterflySelectionGfx;
+          const pinDrawsByColor = new Map<number, (() => void)[]>();
+          const storedPads = selPart.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(sel.partIndex) : null;
+          const clamp = this.activeScene?.pinRadiusClamp.get(sel.partIndex) ?? Infinity;
+
+          for (let pi = 0; pi < selPart.pins.length; pi++) {
+            const pin = selPart.pins[pi];
+            const isPin1 = pi === 0 && selPart.pins.length > 2;
+            const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
+            let arr = pinDrawsByColor.get(pinColor);
+            if (!arr) { arr = []; pinDrawsByColor.set(pinColor, arr); }
+            if (storedPads && storedPads[pi]) {
+              const padPoly = storedPads[pi];
+              arr.push(() => drawPoly(gfx, padPoly));
+            } else {
+              const r = Math.min(computePinRadius(s, pin.radius), clamp);
+              arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+            }
+          }
+          for (const [color, fns] of pinDrawsByColor) {
+            for (const fn of fns) fn();
+            gfx.fill({ color, alpha: 1.0 });
+          }
+
+          // Clone the selected part's in-scene label above the dim so it
+          // reads at full brightness. Mirrors the netDim label-clone path.
+          // In butterfly mode, skip bottom labels — they live in butterflyRoot
+          // and would render mirrored if cloned into scene.root.
+          if (this.activeScene) {
+            const labelSrc = selPart.side === 'bottom'
+              ? (butterfly ? null : this.activeScene.bottomLabels)
+              : this.activeScene.topLabels;
+            if (labelSrc) {
+              for (const srcLabel of labelSrc) {
+                if (srcLabel.visible && srcLabel.text === selPart.name) {
+                  this.acquireNetLabel(srcLabel);
+                  break;
+                }
+              }
+            }
+
+            // Raise the selected part's pin labels (numbers + net names)
+            // above the dim overlay by reparenting them into netLabelLayer.
+            // Skip in butterfly mode for bottom-side parts — their labels live
+            // in butterflyRoot and would render mirrored if moved.
+            const skipRaise = butterfly && selPart.side === 'bottom';
+            if (!skipRaise) {
+              const pinLabels = this.activeScene.pinLabelsByPartIndex.get(sel.partIndex);
+              if (pinLabels) {
+                for (const child of pinLabels) {
+                  if (!child.visible || !child.parent) continue;
+                  const parent = child.parent as Container;
+                  const index = parent.getChildIndex(child);
+                  this.raisedPinLabels.push({ child, parent, index });
+                  parent.removeChild(child);
+                  this.netLabelLayer.addChild(child);
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     if (effectiveNet) {
@@ -2332,6 +2418,27 @@ export class BoardRenderer {
         for (const fn of botHighlights) fn();
         if (botHighlights.length > 0) {
           this.butterflySelectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
+        }
+
+        // Raise the selected part's pin labels above the dim overlay so pin
+        // numbers and pin net names read at full brightness (matches the
+        // part-only ambient dim path above).
+        if (showDim && sel.partIndex !== null && this.activeScene) {
+          const selPart = this.board.parts[sel.partIndex];
+          const skipRaise = butterfly && selPart?.side === 'bottom';
+          if (selPart && this.isPartVisible(selPart) && !skipRaise) {
+            const pinLabels = this.activeScene.pinLabelsByPartIndex.get(sel.partIndex);
+            if (pinLabels) {
+              for (const child of pinLabels) {
+                if (!child.visible || !child.parent) continue;
+                const parent = child.parent as Container;
+                const index = parent.getChildIndex(child);
+                this.raisedPinLabels.push({ child, parent, index });
+                parent.removeChild(child);
+                this.netLabelLayer.addChild(child);
+              }
+            }
+          }
         }
 
         // ── Highlight PCB traces belonging to the selected net ──────────

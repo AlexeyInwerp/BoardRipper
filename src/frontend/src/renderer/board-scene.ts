@@ -111,6 +111,9 @@ export interface BoardSceneGraph {
   /** Pin number labels (and net-name wrappers), tracked for zoom-based LoD */
   topPinLabels:    Container[];
   bottomPinLabels: Container[];
+  /** Part-index → its pin labels (numbers + net names). Used by the renderer
+   *  to un-dim a selected part's pin labels above the ambient dim overlay. */
+  pinLabelsByPartIndex: Map<number, Container[]>;
   /** Batched border Graphics per layer — rebuilt on zoom with minimum-width enforcement */
   borderBatches: BorderBatch[];
   /** Labels grouped by font-size bucket for efficient LoD visibility */
@@ -348,6 +351,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const bottomLabels: BitmapText[] = [];
   const topPinLabels: Container[] = [];
   const bottomPinLabels: Container[] = [];
+  const pinLabelsByPartIndex: Map<number, Container[]> = new Map();
   // Group A: pin numbers + net names on circle/1-pin parts (smallest text, highest zoom threshold).
   const topCircleLabelLayer    = new Container();
   const bottomCircleLabelLayer = new Container();
@@ -524,6 +528,15 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     // Resolve per-type override — prefix match, longest key wins (e.g. 'FB' beats 'F' for FB1)
     const override = resolvePartTypeOverride(part.name, s);
     if (override?.hidden) continue;
+
+    // Push helper: adds a pin label to both the flat side-array and the
+    // per-part index (used by the renderer to un-dim selected parts).
+    const pushPinLabel = (isBot: boolean, c: Container) => {
+      (isBot ? bottomPinLabels : topPinLabels).push(c);
+      let arr = pinLabelsByPartIndex.get(pi);
+      if (!arr) { arr = []; pinLabelsByPartIndex.set(pi, arr); }
+      arr.push(c);
+    };
 
     const partContainer = new Container();
     partContainer.cullable = true;
@@ -772,7 +785,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           } else {
             deferredCircleNumTexts.push(pinLabel);
           }
-          (isBottom ? bottomPinLabels : topPinLabels).push(pinLabel);
+          pushPinLabel(isBottom, pinLabel);
         }
       }
 
@@ -851,10 +864,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
               wrapper.addChild(bg);
               wrapper.addChild(netLabel);
               deferredTwoPinTexts.push(wrapper);
-              (isBottom ? bottomPinLabels : topPinLabels).push(wrapper);
+              pushPinLabel(isBottom, wrapper);
             } else {
               deferredTwoPinTexts.push(netLabel);
-              (isBottom ? bottomPinLabels : topPinLabels).push(netLabel);
+              pushPinLabel(isBottom, netLabel);
             }
           } else {
             if (s.pinNetLabelBg) {
@@ -871,10 +884,10 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
               wrapper.addChild(bg);
               wrapper.addChild(netLabel);
               deferredCircleNetTexts.push(wrapper);
-              (isBottom ? bottomPinLabels : topPinLabels).push(wrapper);
+              pushPinLabel(isBottom, wrapper);
             } else {
               deferredCircleNetTexts.push(netLabel);
-              (isBottom ? bottomPinLabels : topPinLabels).push(netLabel);
+              pushPinLabel(isBottom, netLabel);
             }
           }
         }
@@ -1354,5 +1367,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
 }
