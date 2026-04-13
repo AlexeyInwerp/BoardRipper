@@ -558,6 +558,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
   const [zoomDisplay, setZoomDisplay] = useState(1);
+  const [tiledMode, setTiledMode] = useState(false);
   const zoomDisplayRafRef = useRef(0);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -1149,6 +1150,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (containerWidth === 0) return;
 
     try {
+      // Guard: don't render if the store's current page doesn't match our closure.
+      // This catches stale calls from scheduleTierRender firing before React commits.
+      const storePage = pdfStore.getDocCurrentPage(pdfFileName);
+      if (storePage !== currentPage) {
+        log.pdf.log(`renderTiledPage: stale closure page=${currentPage}, store=${storePage} — skipping`);
+        return;
+      }
+
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
       if (tileRenderIdRef.current !== tileRenderId) return;
 
@@ -1204,7 +1213,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const toRender: { col: number; row: number }[] = [];
 
       for (const t of tiles) {
-        const key = `${t.col}:${t.row}:${renderScale}`;
+        const key = `${currentPage}:${t.col}:${t.row}:${renderScale}`;
         visibleKeys.add(key);
 
         let tileCanvas = tileContainerRef.current.get(key);
@@ -1302,7 +1311,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           putTileCached(pdfFileName, currentPage, {
             bitmap, col: t.col, row: t.row, scale: renderScale,
           });
-          rendered.push({ key: `${t.col}:${t.row}:${renderScale}`, bitmap, col: t.col, row: t.row, pixelW: req.pixelW, pixelH: req.pixelH });
+          rendered.push({ key: `${currentPage}:${t.col}:${t.row}:${renderScale}`, bitmap, col: t.col, row: t.row, pixelW: req.pixelW, pixelH: req.pixelH });
         } catch {
           srcCanvas.width = 1; srcCanvas.height = 1;
         }
@@ -1353,9 +1362,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               }
             }
           }
-          // Hide main canvas after tiles cover it
-          const mainCanvas = canvasRef.current;
-          if (mainCanvas) mainCanvas.style.visibility = 'hidden';
+          // Main canvas visibility is controlled by React via tiledMode state
         });
       }
 
@@ -1382,17 +1389,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const renderActive = useCallback(() => {
     const zoom = zoomRef.current;
     if (zoom > 1.05) {
+      setTiledMode(true);
       renderTiledPage();
     } else {
-      const mainCanvas = canvasRef.current;
-      if (mainCanvas) mainCanvas.style.visibility = '';
+      setTiledMode(false);
       renderPage();
-      // Only clear tiles if zoom is genuinely ≤ 1 AND no page boundary
-      // crossing is in progress. During transitions, the effect chain may
-      // fire with a stale zoom (e.g., StrictMode re-run or initial mount).
-      if (tileContainerRef.current.size > 0 && !skipResetRef.current) {
+      if (tileContainerRef.current.size > 0) {
         requestAnimationFrame(() => {
-          // Double-check zoom is still ≤ 1 at rAF time
           if (zoomRef.current <= 1.05) clearTileDom();
         });
       }
@@ -1966,15 +1969,26 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           if (newPanY + pageH < containerH / 2 && curPage < total) {
             skipResetRef.current = true;
             ++tileRenderIdRef.current;
+            // Cancel stale timers — they have closures over old currentPage
+            if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
+            if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
+            for (const c of tileContainerRef.current.values()) c.style.display = 'none';
             pdfStore.goToPage(curPage + 1);
             panRef.current = { x: panRef.current.x, y: newPanY + pageH };
             flashScrubber();
+            syncTransform();
+            return;
           } else if (newPanY > containerH / 2 && curPage > 1) {
             skipResetRef.current = true;
             ++tileRenderIdRef.current;
+            if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
+            if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
+            for (const c of tileContainerRef.current.values()) c.style.display = 'none';
             pdfStore.goToPage(curPage - 1);
             panRef.current = { x: panRef.current.x, y: newPanY - pageH };
             flashScrubber();
+            syncTransform();
+            return;
           }
         }
 
@@ -2001,13 +2015,25 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
         if (newY + pageH < containerH / 2 && curPage < total) {
           skipResetRef.current = true;
-          ++tileRenderIdRef.current; // invalidate pending tile rAFs immediately
+          ++tileRenderIdRef.current;
+          if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
+          if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
+          for (const c of tileContainerRef.current.values()) c.style.display = 'none';
+          // Reposition the adjacent canvas for the target page to wrapper origin.
+          // After pan shift it stays at the correct visual position as backdrop.
+          const adj = adjCanvasMapRef.current.get(curPage + 1);
+          if (adj) adj.canvas.style.top = '0px';
           pdfStore.goToPage(curPage + 1);
           newY += pageH;
           flashScrubber();
         } else if (newY > containerH / 2 && curPage > 1) {
           skipResetRef.current = true;
           ++tileRenderIdRef.current;
+          if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
+          if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
+          for (const c of tileContainerRef.current.values()) c.style.display = 'none';
+          const adj = adjCanvasMapRef.current.get(curPage - 1);
+          if (adj) adj.canvas.style.top = '0px';
           pdfStore.goToPage(curPage - 1);
           newY -= pageH;
           flashScrubber();
@@ -2748,7 +2774,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           className="pdf-page-wrapper"
           style={{ transformOrigin: '0 0', willChange: 'transform' }}
         >
-          <canvas ref={canvasRef} style={isGlyphComposite && !glyphLoading && !isFiltered ? { visibility: 'hidden' } : undefined} />
+          <canvas ref={canvasRef} style={(tiledMode || (isGlyphComposite && !glyphLoading && !isFiltered)) ? { visibility: 'hidden' } : undefined} />
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
           <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
           {clickHighlight && (() => {
