@@ -146,7 +146,7 @@ class BoardStore extends Emitter {
     return this._tabs.find(t => t.id === tabId) ?? null;
   }
 
-  private get activeTab(): BoardTab | null {
+  get activeTab(): BoardTab | null {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
   }
 
