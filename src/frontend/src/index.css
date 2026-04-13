@@ -2595,6 +2595,25 @@ html, body, #root {
   background: var(--bg-tertiary);
 }
 
+.pdf-lookup-hint {
+  font-size: 10px;
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-top: 2px;
+  white-space: nowrap;
+  animation: pdf-lookup-hint-fade 4s ease-out forwards;
+}
+.pdf-lookup-hint b {
+  color: var(--accent);
+}
+@keyframes pdf-lookup-hint-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .pdf-multiterm-dropdown {
   position: absolute;
   top: 100%;

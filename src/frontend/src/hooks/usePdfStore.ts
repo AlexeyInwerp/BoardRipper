@@ -61,6 +61,8 @@ export interface PdfDocSnapshot {
   textExtractProgress: number;
   bookmarks: PdfBookmark[];
   cleanMode: boolean;
+  searchSource: 'user' | 'lookup' | null;
+  lookupHint: string | null;
 }
 
 // Per-document snapshot cache: fileName → { version, snapshot }
@@ -99,6 +101,8 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     textExtractProgress: pdfStore.getDocTextExtractProgress(fileName),
     bookmarks: pdfStore.getDocBookmarks(fileName),
     cleanMode: pdfStore.isDocClean(fileName),
+    searchSource: pdfStore.getDocSearchSource(fileName),
+    lookupHint: pdfStore.getDocLookupHint(fileName),
   };
   docSnapshots.set(fileName, { version: docSnapshotVersion, snapshot });
   return snapshot;

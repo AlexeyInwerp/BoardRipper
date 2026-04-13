@@ -1812,7 +1812,12 @@ export class BoardRenderer {
   }
 
   /** Build a search query and trigger PDF text search for the given part. */
-  private triggerFollowPdf(part: Part): void {
+  /**
+   * Trigger PDF follow for a selected component.
+   * @param force If true, always overwrites the PDF search field (used by double-click).
+   *              If false (single click), respects user-typed search and shows a hint instead.
+   */
+  private triggerFollowPdf(part: Part, force = false): void {
     const tab = boardStore.tabs.find(t => t.id === this.tabId);
     const pdfNames = tab?.pdfFileNames ?? [];
     if (pdfNames.length === 0) return;
@@ -1832,19 +1837,33 @@ export class BoardRenderer {
     }
 
     // Use @-syntax: net@component (find net on same page as component)
-    const query = nets.size > 0
+    const navQuery = nets.size > 0
       ? [[...nets][0], part.name].join('@')
       : part.name;
 
-    if (query === this.lastFollowQuery) {
-      log.render.log(`skip duplicate query: "${query}"`);
+    if (navQuery === this.lastFollowQuery && !force) {
+      log.render.log(`skip duplicate query: "${navQuery}"`);
       return;
     }
-    this.lastFollowQuery = query;
+    this.lastFollowQuery = navQuery;
 
-    log.render.log(`triggerFollowPdf: query="${query}" pdf="${pdfNames[0]}"`);
-    pdfStore.switchTo(pdfNames[0]);
-    pdfStore.navigateToText(query);
+    const pdfName = pdfNames[0];
+    pdfStore.switchTo(pdfName);
+
+    // Check if the PDF search field has user-typed content
+    const searchSource = pdfStore.getDocSearchSource(pdfName);
+
+    if (force || searchSource !== 'user') {
+      // Empty, lookup-filled, or force → overwrite search with component name
+      // searchText handles page navigation to first match; no selection rectangle needed.
+      log.render.log(`triggerFollowPdf: search query="${part.name}" pdf="${pdfName}" force=${force}`);
+      pdfStore.searchText(part.name, 'lookup');
+    } else {
+      // User-typed search → navigate + selection rectangle + tooltip for double-click
+      log.render.log(`triggerFollowPdf: navigate-only query="${navQuery}" pdf="${pdfName}" (user search preserved)`);
+      pdfStore.navigateToText(navQuery);
+      pdfStore.setLookupHint(pdfName, part.name);
+    }
   }
 
   /** Schedule a debounced follow-PDF lookup after viewport movement settles. */
@@ -3257,7 +3276,7 @@ export class BoardRenderer {
     boardStore.selectPart(null);
   }
 
-  /** Double-click on a component → search it in the linked PDF (like follow mode). */
+  /** Double-click on a component → force-search it in the linked PDF (overwrites user search). */
   private handleDblClick(e: MouseEvent) {
     if (!this.board) return;
     const rect = this.containerEl.getBoundingClientRect();
@@ -3265,7 +3284,7 @@ export class BoardRenderer {
     const hit = this.hitTest(worldPoint);
     if (!hit) return;
     const part = this.board.parts[hit.partIndex];
-    if (part) this.triggerFollowPdf(part);
+    if (part) this.triggerFollowPdf(part, true);
   }
 
   private handleRightClick(e: MouseEvent) {

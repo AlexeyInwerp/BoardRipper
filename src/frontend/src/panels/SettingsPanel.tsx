@@ -701,6 +701,36 @@ function PdfQualitySelector() {
   );
 }
 
+function PdfWatermarkFilterEditor() {
+  const [value, setValue] = useState(() =>
+    renderSettingsStore.globalSettings.pdfWatermarkFilter.join(', ')
+  );
+
+  const commit = useCallback((raw: string) => {
+    const terms = raw.split(',').map(t => t.trim()).filter(t => t.length > 0);
+    const current = renderSettingsStore.globalSnapshot();
+    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: terms });
+  }, []);
+
+  return (
+    <div className="pdf-watermark-filter">
+      <input
+        type="text"
+        className="settings-text-input"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={e => commit(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        placeholder="comma-separated terms"
+      />
+      <p className="settings-hint">
+        Comma-separated. Matches ignore case and whitespace (so "www.chinafix.com" catches "w w w . c h i n a f i x . c o m").
+        Matching text is erased before rendering.
+      </p>
+    </div>
+  );
+}
+
 // ---- Board scroll bindings editor (drag-and-drop pills) ----
 
 type BoardScrollAction = 'zoom' | 'pan';
@@ -1209,6 +1239,8 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
         <div className="settings-subsection-label">Render quality</div>
         <PdfQualitySelector />
+        <div className="settings-subsection-label">Watermark filter</div>
+        <PdfWatermarkFilterEditor />
         <div className="settings-subsection-label">Navigation</div>
         <PdfInertiaToggle />
         <div className="settings-subsection-label">Shortcuts (when PDF panel is active)</div>

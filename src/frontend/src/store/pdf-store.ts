@@ -5,6 +5,7 @@ import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, 
 import { boardCache } from './board-cache';
 import { Emitter } from './emitter';
 import { log } from './log-store';
+import { renderSettingsStore, isPdfWatermarkText } from './render-settings';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
 if (typeof Uint8Array.prototype.toHex !== 'function') {
@@ -42,6 +43,63 @@ if (window.location.protocol === 'file:') {
   });
 } else {
   pdfjsLib.GlobalWorkerOptions.workerSrc = _workerUrl;
+}
+
+// pdf.js operator codes (OPS enum in pdfjs-dist/build/pdf.mjs).
+// Only the ones we need for text-operator scanning.
+const OP_BEGIN_TEXT = 31;
+const OP_SET_FONT = 37;
+const OP_SET_TEXT_MATRIX = 42;
+const OP_SHOW_TEXT = 44;
+const OP_SHOW_SPACED_TEXT = 45;
+const OP_NEXT_LINE_SHOW_TEXT = 46;
+const OP_NEXT_LINE_SET_SPACING_SHOW_TEXT = 47;
+
+/** Scan a pdf.js operator list and return the set of indices for glyph-drawing
+ *  operators whose effective font size matches any watermark item. Runs
+ *  once per page at load/filter-change time. */
+function scanOperatorListForWatermarkGlyphs(
+  opList: { fnArray: number[]; argsArray: (readonly unknown[] | null)[] },
+  watermarkFontSizes: readonly number[],
+): Set<number> {
+  const skip = new Set<number>();
+  if (watermarkFontSizes.length === 0) return skip;
+
+  const EPS_REL = 0.05; // 5% relative tolerance
+  let textMatrixScale = 1;
+  let fontSize = 1;
+
+  const { fnArray, argsArray } = opList;
+  for (let i = 0; i < fnArray.length; i++) {
+    const op = fnArray[i];
+    const args = argsArray[i];
+    switch (op) {
+      case OP_BEGIN_TEXT:
+        textMatrixScale = 1;
+        break;
+      case OP_SET_FONT:
+        if (args && typeof args[1] === 'number') fontSize = args[1];
+        break;
+      case OP_SET_TEXT_MATRIX:
+        if (args && args.length >= 4) {
+          const a = Number(args[0]);
+          const b = Number(args[1]);
+          textMatrixScale = Math.hypot(a, b) || 1;
+        }
+        break;
+      case OP_SHOW_TEXT:
+      case OP_SHOW_SPACED_TEXT:
+      case OP_NEXT_LINE_SHOW_TEXT:
+      case OP_NEXT_LINE_SET_SPACING_SHOW_TEXT: {
+        const eff = textMatrixScale * Math.abs(fontSize);
+        for (const wmSize of watermarkFontSizes) {
+          if (Math.abs(eff - wmSize) / wmSize < EPS_REL) { skip.add(i); break; }
+        }
+        break;
+      }
+    }
+  }
+  return skip;
 }
 
 export interface PdfTextItem {
@@ -350,6 +408,11 @@ interface PdfDocument {
   pageCount: number;
   currentPage: number;
   textPages: PdfTextItem[][];
+  /** Per-page watermark skip sets — operator indices to exclude from rendering.
+   *  Index is pageIndex (0-based). null = not yet computed. Signature is the
+   *  joined filter terms at compute time; mismatching signature triggers recompute. */
+  watermarkSkipSets: (Set<number> | null)[];
+  watermarkSkipFilterSig: string;
   searchQuery: string;
   matches: PdfTextMatch[];
   activeMatchIndex: number;
@@ -358,6 +421,10 @@ interface PdfDocument {
   activeMatchIndicesCache: Set<number>;
   matchesByPage: Map<number, PdfTextMatch[]>;
   bookmarks: PdfBookmark[];
+  /** Who last filled the search field: 'user' (typed/word-click), 'lookup' (board follow), or null (empty). */
+  searchSource: 'user' | 'lookup' | null;
+  /** Component name pending double-click confirmation — shown as tooltip when user search would be overwritten. */
+  lookupHint: string | null;
 }
 
 /** Follow target: a location to zoom to without highlighting */
@@ -436,6 +503,8 @@ class PdfStore extends Emitter {
   isDocAtSyntax(fileName: string): boolean {
     return (this._documents.get(fileName)?.searchQuery ?? '').includes('@');
   }
+  getDocSearchSource(fileName: string): 'user' | 'lookup' | null { return this._documents.get(fileName)?.searchSource ?? null; }
+  getDocLookupHint(fileName: string): string | null { return this._documents.get(fileName)?.lookupHint ?? null; }
   getDocTextExtracting(fileName: string): boolean {
     const d = this._documents.get(fileName);
     return d != null && d.textPages.length < d.pageCount;
@@ -487,7 +556,11 @@ class PdfStore extends Emitter {
         pageCount: doc.numPages,
         currentPage: 1,
         textPages: [],
+        watermarkSkipSets: new Array(doc.numPages).fill(null),
+        watermarkSkipFilterSig: '',
         searchQuery: '',
+        searchSource: null,
+        lookupHint: null,
         matches: [],
         activeMatchIndex: -1,
         matchGroups: [],
@@ -577,6 +650,22 @@ class PdfStore extends Emitter {
     if (pdfDoc.textPages.length === pdfDoc.pageCount) {
       boardCache.putPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified, pdfDoc.textPages).catch(() => {});
     }
+
+    // Pre-warm watermark skip sets in the background so every render path
+    // (main, tiles, adjacent pages) sees them as instantly ready. Errors are
+    // ignored — skip sets are computed lazily on first use as a fallback.
+    void this._prewarmWatermarkSkipSets(pdfDoc.fileName);
+  }
+
+  private async _prewarmWatermarkSkipSets(fileName: string): Promise<void> {
+    const doc = this._documents.get(fileName);
+    if (!doc) return;
+    const filter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+    if (!filter || filter.length === 0) return;
+    for (let i = 0; i < doc.pageCount; i++) {
+      if (this._documents.get(fileName) !== doc) return; // document replaced/closed
+      try { await this.getWatermarkSkipSet(fileName, i); } catch { /* ignore */ }
+    }
   }
 
   /** Return the effective PDFDocumentProxy (stripped if clean mode is on). */
@@ -664,11 +753,13 @@ class PdfStore extends Emitter {
     this.notify();
   }
 
-  searchText(query: string) {
+  searchText(query: string, source: 'user' | 'lookup' = 'user') {
     const active = this._active;
     if (!active) return;
 
     active.searchQuery = query;
+    active.searchSource = query ? source : null;
+    active.lookupHint = null; // any new search clears pending hint
     active.matches = [];
     active.matchGroups = [];
     active.activeMatchIndex = -1;
@@ -933,9 +1024,9 @@ class PdfStore extends Emitter {
   }
 
   private _rerunMultiTerm() {
-    const query = this._active?.searchQuery;
-    if (query && this.isMultiTerm) {
-      this.searchText(query);
+    const active = this._active;
+    if (active?.searchQuery && this.isMultiTerm) {
+      this.searchText(active.searchQuery, active.searchSource ?? 'user');
     } else {
       this.notify();
     }
@@ -951,6 +1042,73 @@ class PdfStore extends Emitter {
 
   getDocTextItemsForPage(fileName: string, pageIndex: number): PdfTextItem[] {
     return this._documents.get(fileName)?.textPages[pageIndex] ?? [];
+  }
+
+  /** Get (and lazily compute) the watermark skip set for a page.
+   *  Returns a Set of pdf.js operator indices to exclude from rendering.
+   *  The set is computed once per (file, page, filterSig) and cached until
+   *  the filter changes. Returns empty Set when the filter is empty. */
+  async getWatermarkSkipSet(fileName: string, pageIndex: number): Promise<Set<number>> {
+    const doc = this._documents.get(fileName);
+    if (!doc) return new Set();
+
+    const filter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+    const sig = (filter ?? []).join('|');
+
+    // Filter changed — drop all cached sets for this doc
+    if (doc.watermarkSkipFilterSig !== sig) {
+      doc.watermarkSkipFilterSig = sig;
+      doc.watermarkSkipSets = new Array(doc.pageCount).fill(null);
+    }
+
+    if (!filter || filter.length === 0) return new Set();
+
+    const cached = doc.watermarkSkipSets[pageIndex];
+    if (cached) return cached;
+
+    // Compute watermark font sizes from text items on this page
+    const items = doc.textPages[pageIndex] ?? [];
+    const sizes: number[] = [];
+    for (const item of items) {
+      if (!isPdfWatermarkText(item.str, filter)) continue;
+      const size = Math.hypot(item.transform[2], item.transform[3]);
+      if (size > 0) sizes.push(size);
+    }
+
+    if (sizes.length === 0) {
+      const empty = new Set<number>();
+      doc.watermarkSkipSets[pageIndex] = empty;
+      return empty;
+    }
+
+    // Fetch operator list and scan for glyph-drawing ops at watermark font sizes
+    const page = await this._effectiveDoc(doc).getPage(pageIndex + 1);
+    const opList = await page.getOperatorList();
+    const skip = scanOperatorListForWatermarkGlyphs(opList, sizes);
+    doc.watermarkSkipSets[pageIndex] = skip;
+    return skip;
+  }
+
+  /** Invalidate watermark skip sets for a document (or all). Called when
+   *  the user changes the filter. Re-triggers background prewarm so the
+   *  first render after toggling ON doesn't freeze waiting for getOperatorList. */
+  invalidateWatermarkSkipSets(fileName?: string): void {
+    const reset = (doc: PdfDocument) => {
+      doc.watermarkSkipSets = new Array(doc.pageCount).fill(null);
+      doc.watermarkSkipFilterSig = '';
+    };
+    if (fileName) {
+      const doc = this._documents.get(fileName);
+      if (doc) {
+        reset(doc);
+        void this._prewarmWatermarkSkipSets(fileName);
+      }
+    } else {
+      for (const [name, doc] of this._documents) {
+        reset(doc);
+        void this._prewarmWatermarkSkipSets(name);
+      }
+    }
   }
 
   /** Count text items containing `query` across all pages of a loaded document. */
@@ -1061,6 +1219,22 @@ class PdfStore extends Emitter {
     } else {
       log.pdf.log(`navigateToText: no match found for "${component}"`);
     }
+  }
+
+  /** Show a "double-click to search" tooltip for a specific PDF document. */
+  setLookupHint(fileName: string, componentName: string): void {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    d.lookupHint = componentName;
+    this.notify();
+  }
+
+  /** Clear the lookup hint (e.g. on timeout or user interaction). */
+  clearLookupHint(fileName: string): void {
+    const d = this._documents.get(fileName);
+    if (!d || !d.lookupHint) return;
+    d.lookupHint = null;
+    this.notify();
   }
 
   /** Consume the follow target (called by PdfViewerPanel after zooming). */

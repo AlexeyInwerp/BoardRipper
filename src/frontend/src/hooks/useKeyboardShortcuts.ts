@@ -19,11 +19,26 @@ export function useKeyboardShortcuts() {
     document.addEventListener('mousemove', trackMouse, { passive: true });
 
     const handler = (e: KeyboardEvent) => {
-      // Cmd/Ctrl+F → focus PDF search if a PDF panel is active, otherwise board search
+      // Cmd/Ctrl+F → focus PDF search if a PDF panel is active, otherwise board search.
+      // If a component is currently selected (either clicked on board or in PDF text),
+      // prefill the PDF search with that component's name and trigger the search.
       const focusSearch = getShortcut('focusSearch');
       if (focusSearch && matchesShortcut(e, focusSearch)) {
         if (fileInputRefs.pdfSearch) {
           e.preventDefault();
+          const tab = boardStore.activeTab;
+          const partIdx = tab?.selection.partIndex;
+          const selectedPart = (partIdx != null && tab?.board)
+            ? tab.board.parts[partIdx]
+            : null;
+          // Only prefill if the board tab is linked to a PDF. No link → silently
+          // fall through to a plain focus (no side effects, no errors).
+          const linkedPdf = tab?.pdfFileNames?.[0];
+          if (selectedPart && linkedPdf) {
+            pdfStore.switchTo(linkedPdf);
+            pdfStore.searchText(selectedPart.name, 'lookup');
+            fileInputRefs.pdfSearch.value = selectedPart.name;
+          }
           fileInputRefs.pdfSearch.focus();
           fileInputRefs.pdfSearch.select();
           return;

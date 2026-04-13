@@ -115,6 +115,11 @@ export interface RenderSettings {
    */
   twoPinLabelGapFactor: number;
 
+  /** PDF watermark filter — list of terms to erase from rendered PDF pages.
+   *  Matching is case-insensitive and whitespace-insensitive (so "w w w . c h i n a f i x . c o m"
+   *  matches "www.chinafix.com"). */
+  pdfWatermarkFilter: string[];
+
   /** Debug: draw a crosshair at each pin's exact file coordinates */
   showPadVertices: boolean;
   /** Debug: show numbered markers at each outline vertex */
@@ -227,6 +232,8 @@ export const DEFAULTS: RenderSettings = {
   twoPinNetLabelBg: true,
   bgaLabelGapFactor: 0.15,
   twoPinLabelGapFactor: 0.6,
+
+  pdfWatermarkFilter: ['www.chinafix.com', 'NotebookSchematics.com'],
 
   showPadVertices: false,
   showVertexNumbers: false,
@@ -797,6 +804,21 @@ class RenderSettingsStore extends Emitter {
 }
 
 export const renderSettingsStore = new RenderSettingsStore();
+
+function normalizeForWatermark(s: string): string {
+  return s.replace(/\s+/g, '').toLowerCase();
+}
+
+export function isPdfWatermarkText(str: string, filter: string[]): boolean {
+  if (!filter || filter.length === 0) return false;
+  const norm = normalizeForWatermark(str);
+  if (!norm) return false;
+  for (const term of filter) {
+    const nTerm = normalizeForWatermark(term);
+    if (nTerm && norm.includes(nTerm)) return true;
+  }
+  return false;
+}
 
 // ── Dev utility: export current settings as DEFAULTS constant ─────────────
 

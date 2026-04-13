@@ -22,6 +22,7 @@ import {
   setTileCacheLimit,
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
+import { renderSettingsStore, isPdfWatermarkText } from '../store/render-settings';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -376,6 +377,13 @@ function textItemRect(
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
+/** Build render() options for the pdf.js watermark filter. Returns an empty
+ *  object when there's nothing to skip, so spreading is a no-op. */
+function wmFilterProps(skipSet: Set<number>): { operationsFilter?: (idx: number) => boolean } {
+  if (skipSet.size === 0) return {};
+  return { operationsFilter: (idx: number) => !skipSet.has(idx) };
+}
+
 /** Compute zoom & pan to center a group of text items in the viewport */
 function zoomToItemGroup(
   items: { transform: number[]; width: number }[],
@@ -474,7 +482,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
 
   // Switch pdfStore to this panel's document on activation (for mutations)
@@ -543,7 +551,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const navHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navHintShownRef = useRef(false);
   // Click-to-lookup overlay state
-  const [clickHighlight, setClickHighlight] = useState<{ word: string; rect: { x: number; y: number; w: number; h: number }; key: number } | null>(null);
+  const [clickHighlight, setClickHighlight] = useState<{ word: string; rect: { x: number; y: number; w: number; h: number }; key: number; zoom: number } | null>(null);
   const clickHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickHighlightKeyRef = useRef(0);
   // Tile DOM management
@@ -584,7 +592,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [nightMode, setNightMode] = useState(() => {
     try { return localStorage.getItem(NIGHT_MODE_KEY) === '1'; } catch { return false; }
   });
-  const [cleanContrast, setCleanContrast] = useState(() => {
+  const [cleanContrast] = useState(() => {
     try { const v = localStorage.getItem(CLEAN_CONTRAST_KEY); return v ? Number(v) : DEFAULT_CLEAN_CONTRAST; } catch { return DEFAULT_CLEAN_CONTRAST; }
   });
   const cleanContrastRef = useRef(cleanContrast);
@@ -641,17 +649,55 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => window.removeEventListener('pdf-quality-changed', handler);
   }, [pdfFileName]);
 
+  // Sync wand button + caches with the store's watermark filter. Runs on
+  // every render-settings change, but the filter's own reference identity
+  // is the fast guard — no stringify per notify.
+  useEffect(() => {
+    let prevFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+    const unsub = renderSettingsStore.subscribe(() => {
+      const curFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+      if (curFilter === prevFilter) return;
+      prevFilter = curFilter;
+      setWmFilterActive((curFilter?.length ?? 0) > 0);
+      pdfStore.invalidateWatermarkSkipSets(pdfFileName);
+      invalidatePageCache(pdfFileName);
+      invalidateTileCache(pdfFileName);
+      renderPageRef.current();
+    });
+    return unsub;
+  }, [pdfFileName]);
+
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
-  const [glyphDebug, setGlyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
-  const [correctorOpen, setCorrectorOpen] = useState(false);
-  const [glyphMenuOpen, setGlyphMenuOpen] = useState(false);
+  const [glyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
+
+  // Watermark filter toggle. `wmFilterActive` is driven from the store so
+  // edits via SettingsPanel's editor keep the wand button in sync.
+  const [wmFilterActive, setWmFilterActive] = useState(() =>
+    (renderSettingsStore.globalSettings.pdfWatermarkFilter?.length ?? 0) > 0
+  );
+  const savedWmFilterRef = useRef<string[]>(
+    renderSettingsStore.globalSettings.pdfWatermarkFilter?.length
+      ? [...renderSettingsStore.globalSettings.pdfWatermarkFilter]
+      : ['www.chinafix.com', 'NotebookSchematics.com']
+  );
+  const toggleWatermarkFilter = useCallback(() => {
+    const current = renderSettingsStore.globalSnapshot();
+    const active = (current.pdfWatermarkFilter?.length ?? 0) > 0;
+    if (active) {
+      savedWmFilterRef.current = [...current.pdfWatermarkFilter];
+      renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: [] });
+    } else {
+      renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: savedWmFilterRef.current });
+    }
+  }, []);
+  // glyphMenuOpen/glyphMenuTimerRef removed — legacy glyph-debug menu was
+  // rendered inside the now-commented cleaner popup.
   const [fontDataLoaded, setFontDataLoaded] = useState(false);
   const [glyphLoading, setGlyphLoading] = useState(false);
   const glyphCanvasRef = useRef<HTMLCanvasElement>(null);
   const pageGlyphDataRef = useRef<PageGlyphData | null>(null);
   const simplifyStatsRef = useRef<SimplifyStats | null>(null);
-  const glyphMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isTextItemsMode = glyphDebug.overlayMode === 'textItems';
   const isGlyphActive = (glyphDebug.overlayMode !== 'off' && !isTextItemsMode) || glyphDebug.simplifyEnabled || glyphDebug.replaceEnabled;
@@ -840,8 +886,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const offCtx = offscreen.getContext('2d', { alpha: false });
     if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
+    // Watermark filter — same skip set used by main + tile render paths.
+    const skipSet = await pdfStore.getWatermarkSkipSet(pdfFileName, pageNum - 1);
+    if (signal?.aborted) { offscreen.width = 1; offscreen.height = 1; throw new DOMException('Aborted', 'AbortError'); }
+
     // 'display' intent is significantly faster than 'print' for complex schematics
-    const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
+    const task = page.render({
+      canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display',
+      ...wmFilterProps(skipSet),
+    });
     const onAbort = () => task.cancel();
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
@@ -980,8 +1033,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const offCtx = offscreen.getContext('2d', { alpha: false });
       if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
+      // Watermark filter: compute skip set (operator indices to exclude).
+      // Uses pdf.js public `operationsFilter` — glyph draw ops in the set
+      // are skipped entirely at dispatch, leaving underlying paths untouched.
+      const skipSet = await pdfStore.getWatermarkSkipSet(pdfFileName, currentPage - 1);
+      if (renderIdRef.current !== renderId) { releaseCanvas(offscreen); return; }
+
       // 'display' intent is significantly faster than 'print' for complex schematics
-      const task = page.render({ canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display' });
+      const task = page.render({
+        canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display',
+        ...wmFilterProps(skipSet),
+      });
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
 
@@ -1262,6 +1324,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const t0 = performance.now();
       const rendered: { key: string; bitmap: ImageBitmap; col: number; row: number; pixelW: number; pixelH: number }[] = [];
 
+      // Watermark skip set — computed once per page, shared by all tiles.
+      // Uses pdf.js public `operationsFilter` callback to skip glyph ops.
+      const skipSet = await pdfStore.getWatermarkSkipSet(pdfFileName, currentPage - 1);
+      if (tileRenderIdRef.current !== tileRenderId) return;
+
       for (const t of toRender) {
         if (tileRenderIdRef.current !== tileRenderId) return;
 
@@ -1278,6 +1345,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const task = page.render({
           canvas: offscreen, canvasContext: offCtx,
           viewport: tileViewport, intent: 'display',
+          ...wmFilterProps(skipSet),
         });
         renderTaskRef.current = { cancel: () => task.cancel() };
 
@@ -1363,6 +1431,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             }
           }
           // Main canvas visibility is controlled by React via tiledMode state
+          // Clean up transition backdrop canvases (adjacent canvases kept during page switch)
+          wrapper.querySelectorAll('[data-transition-backdrop]').forEach(c => c.remove());
         });
       }
 
@@ -1515,19 +1585,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
 
     // Remove canvases for pages no longer in range.
-    // Defer removal by one rAF so tiles have a chance to render first,
-    // avoiding a blank flash during page boundary crossings.
-    const toRemove: HTMLCanvasElement[] = [];
+    // Backdrop canvases (data-transition-backdrop) stay in DOM temporarily —
+    // renderTiledPage's batch display rAF removes them after tiles cover them.
     for (const [pageNum, entry] of adjMap) {
       if (!wantedPages.has(pageNum)) {
-        toRemove.push(entry.canvas);
-        adjMap.delete(pageNum);
+        if (entry.canvas.dataset.transitionBackdrop) {
+          adjMap.delete(pageNum); // detach from map, keep in DOM
+        } else {
+          entry.canvas.remove();
+          adjMap.delete(pageNum);
+        }
       }
-    }
-    if (toRemove.length > 0) {
-      requestAnimationFrame(() => {
-        for (const c of toRemove) c.remove();
-      });
     }
 
     const blitAdjacentPage = async (pageNum: number, canvas: HTMLCanvasElement, yOffset: number) => {
@@ -1600,6 +1668,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       searchInputRef.current.value = searchQuery;
     }
   }, [searchQuery]);
+
+  // Auto-clear lookup hint after 4 seconds
+  useEffect(() => {
+    if (!lookupHint) return;
+    const timer = setTimeout(() => pdfStore.clearLookupHint(pdfFileName), 4000);
+    return () => clearTimeout(timer);
+  }, [lookupHint, pdfFileName]);
 
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
@@ -1730,7 +1805,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Show highlight on the first item for visual feedback
       if (target.items.length > 0) {
         const r = textItemRect(target.items[0].transform, target.items[0].width, viewportTransformRef.current, baseScale);
-        setClickHighlight({ word: '', rect: { x: r.x, y: r.y, w: r.w, h: r.h }, key: ++clickHighlightKeyRef.current });
+        setClickHighlight({ word: '', rect: { x: r.x, y: r.y, w: r.w, h: r.h }, key: ++clickHighlightKeyRef.current, zoom: zoomRef.current });
         if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
         clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 3000);
       }
@@ -2019,10 +2094,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
           if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
           for (const c of tileContainerRef.current.values()) c.style.display = 'none';
-          // Reposition the adjacent canvas for the target page to wrapper origin.
-          // After pan shift it stays at the correct visual position as backdrop.
-          const adj = adjCanvasMapRef.current.get(curPage + 1);
-          if (adj) adj.canvas.style.top = '0px';
+          // In tiled mode: reposition the adjacent canvas as backdrop until tiles render.
+          // In full-page mode: renderPage blits from cache instantly, no backdrop needed.
+          if (zoom > 1.05) {
+            const adj = adjCanvasMapRef.current.get(curPage + 1);
+            if (adj) { adj.canvas.style.top = '0px'; adj.canvas.dataset.transitionBackdrop = '1'; }
+          }
           pdfStore.goToPage(curPage + 1);
           newY += pageH;
           flashScrubber();
@@ -2032,8 +2109,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
           if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
           for (const c of tileContainerRef.current.values()) c.style.display = 'none';
-          const adj = adjCanvasMapRef.current.get(curPage - 1);
-          if (adj) adj.canvas.style.top = '0px';
+          if (zoom > 1.05) {
+            const adj = adjCanvasMapRef.current.get(curPage - 1);
+            if (adj) { adj.canvas.style.top = '0px'; adj.canvas.dataset.transitionBackdrop = '1'; }
+          }
           pdfStore.goToPage(curPage - 1);
           newY -= pageH;
           flashScrubber();
@@ -2190,22 +2269,33 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const pageIndex = currentPage - 1;
     const items = pdfStore.getDocTextItemsForPage(pdfFileName, pageIndex);
 
+    // Collect all matching items at the click point, pick the smallest font.
+    // Watermark filter: skip text items matching any configured watermark term.
+    const wmFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+    let bestHit: { word: string; rect: { x: number; y: number; w: number; h: number }; fontSize: number } | null = null;
+
     for (const item of items) {
+      if (isPdfWatermarkText(item.str, wmFilter)) continue;
       const r = textItemRect(item.transform, item.width, vpT, scale);
       if (clickX >= r.x && clickX <= r.x + r.w && clickY >= r.y && clickY <= r.y + r.h) {
         const charWidth = r.w / item.str.length;
         const charIndex = Math.floor((clickX - r.x) / charWidth);
         const word = extractWord(item.str, charIndex);
         if (word) {
-          // Compute the word's sub-rect within the text item
-          const wordStart = item.str.toUpperCase().indexOf(word.toUpperCase(), Math.max(0, charIndex - word.length));
-          const wx = r.x + (wordStart >= 0 ? wordStart * charWidth : 0);
-          const ww = word.length * charWidth;
-          return { word, rect: { x: wx, y: r.y, w: ww, h: r.h } };
+          const fontSize = Math.sqrt(item.transform[2] ** 2 + item.transform[3] ** 2);
+          if (!bestHit || fontSize < bestHit.fontSize) {
+            const wordStart = item.str.toUpperCase().indexOf(word.toUpperCase(), Math.max(0, charIndex - word.length));
+            const wx = r.x + (wordStart >= 0 ? wordStart * charWidth : 0);
+            const ww = word.length * charWidth;
+            const fontH = fontSize * LINE_HEIGHT_RATIO * scale;
+            const h = Math.min(r.h, fontH);
+            const y = r.y + (r.h - h) / 2;
+            bestHit = { word, rect: { x: wx, y, w: ww, h }, fontSize };
+          }
         }
       }
     }
-    return null;
+    return bestHit ? { word: bestHit.word, rect: bestHit.rect } : null;
   }, [pdfFileName, isLoaded, currentPage]);
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
@@ -2213,7 +2303,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!hit) { setClickHighlight(null); return; }
 
     // Show highlight + tooltip overlay on any text
-    setClickHighlight({ ...hit, key: ++clickHighlightKeyRef.current });
+    setClickHighlight({ ...hit, key: ++clickHighlightKeyRef.current, zoom: zoomRef.current });
     if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
     clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 4000);
 
@@ -2544,6 +2634,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               </>
             )}
           </div>
+          {lookupHint && (
+            <div className="pdf-lookup-hint">
+              Double-click <b>{lookupHint}</b> to search
+            </div>
+          )}
           {isMultiTerm && (
             <div className="pdf-multiterm-dropdown">
               <div className="pdf-gap-row">
@@ -2576,157 +2671,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         <div className="pdf-toolbar-group">
           <div className="pdf-corrector-wrapper">
             <button
-              className={`pdf-toolbar-btn pdf-corrector-btn${correctorOpen ? ' active' : ''}${cleanMode ? ' has-active' : ''}`}
-              onClick={() => setCorrectorOpen(v => !v)}
-              title="Watermark cleaner"
+              className={`pdf-toolbar-btn pdf-corrector-btn${wmFilterActive ? ' has-active' : ''}`}
+              onClick={toggleWatermarkFilter}
+              title={wmFilterActive ? 'Watermark filter ON — click to disable' : 'Watermark filter OFF — click to enable'}
             >
               <IconWand size={14} />
             </button>
-          {correctorOpen && (
-            <div className="pdf-corrector-strip">
-              <input
-                className="pdf-clean-slider"
-                type="range"
-                min={0}
-                max={10}
-                step={0.1}
-                value={cleanContrast}
-                onChange={e => {
-                  const v = Number(e.target.value);
-                  setCleanContrast(v);
-                  // Toggle clean mode based on slider position
-                  const shouldBeClean = v > 0;
-                  if (shouldBeClean !== cleanMode) {
-                    pdfStore.toggleClean(pdfFileName, shouldBeClean);
-                  }
-                }}
-                onPointerUp={e => {
-                  const v = Number((e.target as HTMLInputElement).value);
-                  cleanContrastRef.current = v;
-                  try { localStorage.setItem(CLEAN_CONTRAST_KEY, String(v)); } catch { /* ignore */ }
-                  invalidatePageCache(pdfFileName);
-                  renderPageRef.current();
-                }}
-                title={cleanContrast === 0 ? 'Clean: off' : `Clean: ${cleanContrast}`}
-              />
-
-              <div className="pdf-glyph-debug-wrapper" style={{ display: 'none' }}>
-                <button
-                  className={`pdf-toolbar-btn${isGlyphActive ? ' active' : ''}`}
-                  onClick={() => setGlyphMenuOpen(v => !v)}
-                  title="Glyph debug & optimization"
-                >
-                  Glyphs
-                </button>
-                {glyphMenuOpen && (
-                  <div
-                    className="pdf-glyph-debug-menu"
-                    onMouseEnter={() => { if (glyphMenuTimerRef.current) { clearTimeout(glyphMenuTimerRef.current); glyphMenuTimerRef.current = null; } }}
-                    onMouseLeave={() => { glyphMenuTimerRef.current = setTimeout(() => setGlyphMenuOpen(false), 300); }}
-                  >
-                    {(['off', 'textItems', 'boxes', 'outlines'] as const).map(mode => (
-                      <label key={mode}>
-                        <input
-                          type="radio"
-                          name="glyphOverlay"
-                          checked={glyphDebug.overlayMode === mode}
-                          onChange={() => setGlyphDebug(s => ({ ...s, overlayMode: mode }))}
-                        />
-                        {mode === 'off' ? 'Off' : mode === 'textItems' ? 'Text Items' : mode === 'boxes' ? 'Glyph Boxes' : 'Glyph Outlines'}
-                      </label>
-                    ))}
-                    <hr />
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={glyphDebug.simplifyEnabled}
-                        onChange={() => setGlyphDebug(s => ({
-                          ...s,
-                          simplifyEnabled: !s.simplifyEnabled,
-                          replaceEnabled: !s.simplifyEnabled ? false : s.replaceEnabled,
-                        }))}
-                      />
-                      Simplify Glyphs
-                    </label>
-                    {glyphDebug.simplifyEnabled && (
-                      <div className="pdf-glyph-slider-row">
-                        <span>Tol</span>
-                        <input
-                          type="range"
-                          min={0.1}
-                          max={5}
-                          step={0.1}
-                          value={glyphDebug.simplifyTolerance}
-                          onChange={e => setGlyphDebug(s => ({ ...s, simplifyTolerance: Number(e.target.value) }))}
-                        />
-                        <span>{glyphDebug.simplifyTolerance.toFixed(1)}</span>
-                      </div>
-                    )}
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={glyphDebug.replaceEnabled}
-                        onChange={() => setGlyphDebug(s => ({
-                          ...s,
-                          replaceEnabled: !s.replaceEnabled,
-                          simplifyEnabled: !s.replaceEnabled ? false : s.simplifyEnabled,
-                        }))}
-                      />
-                      Monospace Replace
-                    </label>
-                    {glyphDebug.replaceEnabled && (
-                      <div className="pdf-glyph-slider-row">
-                        <span>Font</span>
-                        <select
-                          value={glyphDebug.replaceFont}
-                          onChange={e => setGlyphDebug(s => ({ ...s, replaceFont: e.target.value }))}
-                        >
-                          <option value="Courier New">Courier New</option>
-                          <option value="Courier">Courier</option>
-                          <option value="monospace">monospace</option>
-                        </select>
-                      </div>
-                    )}
-                    {(() => {
-                      const pd = pageGlyphDataRef.current;
-                      if (!pd || pd.items.length === 0) return null;
-                      let totalGlyphs = 0, totalVerts = 0, type3Count = 0;
-                      for (const item of pd.items) {
-                        if (item.isType3) { type3Count++; continue; }
-                        if (!item.glyphs) continue;
-                        for (const g of item.glyphs) {
-                          totalGlyphs++;
-                          totalVerts += g.vertexCount;
-                        }
-                      }
-                      const avgVerts = totalGlyphs > 0 ? (totalVerts / totalGlyphs).toFixed(1) : '0';
-                      const ss = simplifyStatsRef.current;
-                      const reduction = ss && ss.totalBefore > 0 ? Math.round((1 - ss.totalAfter / ss.totalBefore) * 100) : 0;
-                      return (
-                        <>
-                          <hr />
-                          <div className="pdf-glyph-summary">
-                            <div>{pd.fontNames.length} font{pd.fontNames.length !== 1 ? 's' : ''} · {pd.items.length} items · {totalGlyphs} glyphs</div>
-                            <div>avg {avgVerts} verts/glyph · {totalVerts} total</div>
-                            {ss && <div>{ss.totalBefore} → {ss.totalAfter} verts ({reduction}% reduced)</div>}
-                            {type3Count > 0 && <div>{type3Count} Type3 (skipped)</div>}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
-              </div>
-              <button
-                className="pdf-toolbar-btn"
-                onClick={() => pdfStore.dumpTextToNewTab(pdfFileName)}
-                title="Dump extracted text to new tab (debug)"
-                style={{ display: 'none' }}
-              >
-                Dump Text
-              </button>
-            </div>
-          )}
           </div>
           <button
             className={`pdf-toolbar-btn pdf-night-btn${nightMode ? ' active' : ''}`}
@@ -2778,7 +2728,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
           <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
           {clickHighlight && (() => {
-            const z = zoomRef.current || 1;
+            const z = clickHighlight.zoom || 1;
             const pad = 2 / z;
             const bw = 1.5 / z;
             return (
@@ -2794,7 +2744,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 }}
               >
                 <span className="pdf-click-tooltip" style={{ transform: `translateX(-50%) scale(${1 / z})` }}>
-                  Double-click to search
+                  {clickHighlight.word || 'Double-click to search'}
                 </span>
               </div>
             );
