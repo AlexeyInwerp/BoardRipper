@@ -1684,12 +1684,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
   const prevMatchIndexRef = useRef(-1);
+  const prevMatchesRef = useRef<typeof matches | null>(null);
   useEffect(() => {
     if (!isLoaded || activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
-    // Only snap-to-match on explicit navigation (activeMatchIndex changed),
-    // not on page changes during pan which would re-fire this effect.
-    if (activeMatchIndex === prevMatchIndexRef.current) return;
+    // Only snap-to-match on explicit navigation (activeMatchIndex OR matches
+    // array changed — a new search produces a fresh matches reference even if
+    // activeMatchIndex happens to land on the same number).
+    const isNewSearch = prevMatchesRef.current !== matches;
+    if (!isNewSearch && activeMatchIndex === prevMatchIndexRef.current) return;
     prevMatchIndexRef.current = activeMatchIndex;
+    prevMatchesRef.current = matches;
 
     const match = matches[activeMatchIndex];
     const matchPage = match.pageIndex + 1;
