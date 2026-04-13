@@ -34,7 +34,7 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
   const consoleLogs: string[] = [];
   page.on('console', msg => {
     const text = msg.text();
-    if (text.includes('[page-change]') || text.includes('tile-rAF') || text.includes('tiled-render')) {
+    if (text.includes('[page-change]') || text.includes('tile-rAF') || text.includes('tiled-render') || text.includes('renderActive') || text.includes('[clearTileDom]')) {
       consoleLogs.push(`${Date.now()} ${text}`);
     }
   });

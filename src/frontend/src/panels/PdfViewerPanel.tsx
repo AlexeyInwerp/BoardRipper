@@ -790,7 +790,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     tileContainerRef.current.clear();
   }, []);
 
+  const prevPageRef = useRef(currentPage);
   useEffect(() => {
+    const prevPage = prevPageRef.current;
+    prevPageRef.current = currentPage;
+    if (prevPage === currentPage) return; // no actual change (StrictMode re-run)
     if (skipResetRef.current) {
       // Page boundary crossing during pan/zoom — keep tiles, skip reset
       skipResetRef.current = false;
@@ -1334,13 +1338,19 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             if (ctx) ctx.drawImage(r.bitmap, 0, 0);
             tileCanvas.style.display = '';
           }
-          // Remove tiles from other render scales (stale after zoom change).
-          // Keep tiles at the current scale even if off-screen (cheap, avoids blank on re-pan).
-          const currentScaleSuffix = `:${renderScale}`;
-          for (const [key, canvas] of tileContainerRef.current) {
-            if (!key.endsWith(currentScaleSuffix)) {
-              canvas.remove();
-              tileContainerRef.current.delete(key);
+          // Cap total tile DOM elements — only evict when excessive.
+          // Don't eagerly remove old-scale tiles (they serve as backdrop during
+          // zoom changes and page transitions, preventing blank flashes).
+          const MAX_TILE_DOM = 80;
+          if (tileContainerRef.current.size > MAX_TILE_DOM) {
+            // Remove tiles not at current scale first (oldest insertion order)
+            const currentScaleSuffix = `:${renderScale}`;
+            for (const [key, canvas] of tileContainerRef.current) {
+              if (tileContainerRef.current.size <= MAX_TILE_DOM / 2) break;
+              if (!key.endsWith(currentScaleSuffix)) {
+                canvas.remove();
+                tileContainerRef.current.delete(key);
+              }
             }
           }
           // Hide main canvas after tiles cover it
@@ -1365,15 +1375,27 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, clearTileDom]);
 
-  /** Route to tiled or full-page render based on zoom level */
+  /** Route to tiled or full-page render based on zoom level.
+   *  Never clear tiles during a page boundary crossing — tiles may temporarily
+   *  show at the wrong zoom (effect chain fires renderActive with stale zoom).
+   *  Tiles are only cleared when explicitly zooming out to ≤ 1. */
   const renderActive = useCallback(() => {
-    if (zoomRef.current > 1.05) {
+    const zoom = zoomRef.current;
+    if (zoom > 1.05) {
       renderTiledPage();
     } else {
-      clearTileDom();
       const mainCanvas = canvasRef.current;
       if (mainCanvas) mainCanvas.style.visibility = '';
       renderPage();
+      // Only clear tiles if zoom is genuinely ≤ 1 AND no page boundary
+      // crossing is in progress. During transitions, the effect chain may
+      // fire with a stale zoom (e.g., StrictMode re-run or initial mount).
+      if (tileContainerRef.current.size > 0 && !skipResetRef.current) {
+        requestAnimationFrame(() => {
+          // Double-check zoom is still ≤ 1 at rAF time
+          if (zoomRef.current <= 1.05) clearTileDom();
+        });
+      }
     }
   }, [renderPage, renderTiledPage, clearTileDom]);
 
@@ -1489,12 +1511,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (pageNum >= 1 && pageNum <= pageCount) wantedPages.add(pageNum);
     }
 
-    // Remove canvases for pages no longer in range
+    // Remove canvases for pages no longer in range.
+    // Defer removal by one rAF so tiles have a chance to render first,
+    // avoiding a blank flash during page boundary crossings.
+    const toRemove: HTMLCanvasElement[] = [];
     for (const [pageNum, entry] of adjMap) {
       if (!wantedPages.has(pageNum)) {
-        entry.canvas.remove();
+        toRemove.push(entry.canvas);
         adjMap.delete(pageNum);
       }
+    }
+    if (toRemove.length > 0) {
+      requestAnimationFrame(() => {
+        for (const c of toRemove) c.remove();
+      });
     }
 
     const blitAdjacentPage = async (pageNum: number, canvas: HTMLCanvasElement, yOffset: number) => {
