@@ -746,12 +746,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       renderPageRef.current();
     }, TIER_DEBOUNCE_MS);
 
-    // Adaptive throttle: only re-render during zoom if the new tier is HIGHER
-    // than what's currently displayed. Zooming out should never replace a
-    // high-res bitmap with a lower-res one — the CSS downscale looks sharp.
+    // Adaptive throttle: re-render when zooming in (higher tier needed) or
+    // when in tiled mode and zoom level changed (new tiles needed for viewport).
     const candidateTier = quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier));
-    const isTiled = zoomRef.current > 1.05;
-    if (isTiled || candidateTier > renderTierRef.current) {
+    if (candidateTier > renderTierRef.current) {
       const ema = renderTimeEmaRef.current;
       const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
       const now = performance.now();
@@ -793,11 +791,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, []);
 
   useEffect(() => {
-    clearTileDom();
     if (skipResetRef.current) {
+      // Page boundary crossing during pan/zoom — keep tiles, skip reset
       skipResetRef.current = false;
       return;
     }
+    // Explicit page change (scrubber, nav) — full reset
+    clearTileDom();
     zoomRef.current = 1;
     panRef.current = { x: 0, y: 0 };
     renderTierRef.current = 1;
@@ -1562,8 +1562,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
+  const prevMatchIndexRef = useRef(-1);
   useEffect(() => {
     if (!isLoaded || activeMatchIndex < 0 || !matches[activeMatchIndex]) return;
+    // Only snap-to-match on explicit navigation (activeMatchIndex changed),
+    // not on page changes during pan which would re-fire this effect.
+    if (activeMatchIndex === prevMatchIndexRef.current) return;
+    prevMatchIndexRef.current = activeMatchIndex;
 
     const match = matches[activeMatchIndex];
     const matchPage = match.pageIndex + 1;
