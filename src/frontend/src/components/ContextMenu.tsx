@@ -4,6 +4,7 @@ import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel } from '../store/dockview-api';
+import { fileInputRefs } from '../store/file-inputs';
 
 let version = 0;
 let lastVer = -1;
@@ -79,6 +80,15 @@ export function ContextMenu() {
     pdfStore.searchText(query);
     ensurePdfPanel(pdfFileName);
     contextMenuStore.hide();
+    // Activate the PDF panel (ensurePdfPanel already does this) and focus
+    // the search input. Wait a tick for the panel's onDidActiveChange effect
+    // to register searchInputRef into fileInputRefs.pdfSearch.
+    setTimeout(() => {
+      const input = fileInputRefs.pdfSearch;
+      if (!input) return;
+      input.focus();
+      input.select();
+    }, 0);
   };
 
   // @ syntax: PIN@CHIP — "find pin F11 at chip UF400", whole-page co-occurrence
