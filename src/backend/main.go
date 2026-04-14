@@ -126,7 +126,25 @@ func main() {
 	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)
 	mux.HandleFunc("GET /api/update/progress", updateHandler.Progress)
 
-	// Serve static frontend files
+	// Serve static frontend files.
+	//
+	// Cache policy:
+	// - index.html + SPA fallback: multi-layered no-cache directives so
+	//   every deploy is picked up on the next request even if a
+	//   reverse-proxy (DSM, Cloudflare, etc.) silently drops one of
+	//   them. no-cache forces revalidation, no-store forbids any copy,
+	//   must-revalidate disables stale-while-revalidate, Pragma covers
+	//   HTTP/1.0 caches. Expires=0 is a legacy belt-and-suspenders.
+	// - hashed assets (/assets/*, worker files, etc.): immutable for a
+	//   year; filename hash auto-busts on content change.
+	// - robots.txt, favicon, etc.: same immutable rule — they're
+	//   non-hashed but change rarely, and a hard-reload still clears
+	//   them via Cache-Control: no-cache from the browser.
+	setNoCacheHeaders := func(w http.ResponseWriter) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+	}
 	fs := http.FileServer(http.Dir(staticDir))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve the file directly
@@ -134,13 +152,13 @@ func main() {
 		_, statErr := os.Stat(path)
 		if os.IsNotExist(statErr) {
 			// SPA fallback: serve index.html for client-side routing
-			w.Header().Set("Cache-Control", "no-store")
+			setNoCacheHeaders(w)
 			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
 			return
 		}
 		// index.html must never be cached; hashed assets can be cached forever
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			w.Header().Set("Cache-Control", "no-store")
+			setNoCacheHeaders(w)
 		} else {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}

@@ -181,6 +181,11 @@ class BoardStore extends Emitter {
   private _nextToastId = 1;
   /** Guard against concurrent loadFile calls for the same file */
   private _loading = new Set<string>();
+  /** Original File objects for currently-open board tabs, keyed by fileName.
+   *  Kept so "reparse current board" can re-read the raw bytes without
+   *  re-prompting the user. Cleared when a tab closes. File references are
+   *  cheap Blob handles — memory cost is negligible. */
+  private _openFiles: Map<string, File> = new Map();
   /** Callback fired when a new board tab is created (tabId, fileName) */
   onTabCreated: ((tabId: number, fileName: string) => void) | null = null;
   /** Callback fired when a board tab is closed (tabId) */
@@ -424,6 +429,7 @@ class BoardStore extends Emitter {
       this.notify(); // notify immediately so existing renderers know the active tab changed
 
       try {
+        this._openFiles.set(file.name, file);
         const cached = await boardCache.get(file.name, file.size, file.lastModified);
         if (cached) {
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
@@ -445,6 +451,7 @@ class BoardStore extends Emitter {
         }
 
         log.parser.log(`Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+        this._openFiles.set(file.name, file);
         const t0 = performance.now();
         const buffer = await file.arrayBuffer();
         const board = await parseBoardFile(buffer, file.name);
@@ -546,6 +553,12 @@ class BoardStore extends Emitter {
     // Clear search cache if it referenced the closed tab's board
     if (this._cachedSearchBoard && tab.board === this._cachedSearchBoard) {
       this._cachedSearchBoard = null;
+    }
+
+    // Drop the File reference if no other tab holds it (file names are unique
+    // per tab today, but keep the guard in case that changes).
+    if (!this._tabs.some(t => t.id !== tabId && t.fileName === tab.fileName)) {
+      this._openFiles.delete(tab.fileName);
     }
 
     this._tabs.splice(idx, 1);
@@ -674,6 +687,96 @@ class BoardStore extends Emitter {
       ?? syntheticRevisionFromBoard(tab.board);
     tab.board = buildRenderedBoard(tab.board, rev, next);
     tab.selection = emptySelection;
+    this.notify();
+  }
+
+  // ── Cache control actions ────────────────────────────────────────────
+  //
+  // Scoped reset operations exposed to the UI. Each one targets a specific
+  // cache layer so the user can pick the minimum they need rather than
+  // wiping the whole database.
+
+  /** Re-parse the active tab's board from its original File bytes. Deletes
+   *  its IDB cache entry first, then runs parseBoardFile and swaps the new
+   *  BoardData into tab.board (new reference → renderer auto-rebuilds).
+   *  Selection/search reset. Most common reset: "I just updated the parser,
+   *  show me the effect on this board." Returns false if no active tab or
+   *  the original File reference was lost (e.g. after a full page reload). */
+  async reparseActiveBoard(): Promise<boolean> {
+    const tab = this.activeTab;
+    if (!tab) return false;
+    const file = this._openFiles.get(tab.fileName);
+    if (!file) {
+      log.cache.error(`reparse: no File reference for ${tab.fileName}`);
+      this.addToast(`Cannot re-parse ${tab.fileName} — original file not in memory. Drag-and-drop it again.`, 'error');
+      return false;
+    }
+    try {
+      await boardCache.deleteEntry(boardCache.makeCacheKey(file.name, file.size, file.lastModified));
+      log.parser.log(`Re-parsing ${file.name}…`);
+      const t0 = performance.now();
+      const buffer = await file.arrayBuffer();
+      const board = await parseBoardFile(buffer, file.name);
+      log.parser.log(`Re-parsed in ${(performance.now() - t0).toFixed(0)}ms`);
+      tab.board = board;
+      tab.selection = emptySelection;
+      tab.searchQuery = '';
+      await boardCache.put(file.name, file.size, file.lastModified, board);
+      this.notify();
+      return true;
+    } catch (err) {
+      log.parser.error(`Re-parse failed for ${tab.fileName}:`, err);
+      this.addToast(`Re-parse failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      return false;
+    }
+  }
+
+  /** Clear ALL cached parsed boards (IDB boards store) and re-parse every
+   *  currently-open tab from its original File. Useful after a parser fix
+   *  that affects multiple formats. PDF caches are left alone. */
+  async resetBoardCaches(): Promise<void> {
+    await boardCache.clear();
+    log.cache.log('Board cache cleared');
+    let reparsed = 0;
+    let skipped = 0;
+    for (const tab of this._tabs) {
+      const file = this._openFiles.get(tab.fileName);
+      if (!file) { skipped++; continue; }
+      try {
+        const buffer = await file.arrayBuffer();
+        const board = await parseBoardFile(buffer, file.name);
+        tab.board = board;
+        tab.selection = emptySelection;
+        tab.searchQuery = '';
+        await boardCache.put(file.name, file.size, file.lastModified, board);
+        reparsed++;
+      } catch (err) {
+        log.parser.error(`Re-parse failed for ${tab.fileName}:`, err);
+      }
+    }
+    log.cache.log(`Re-parsed ${reparsed} open tab(s)${skipped ? `, skipped ${skipped} (no File ref)` : ''}`);
+    this.addToast(
+      reparsed > 0
+        ? `Re-parsed ${reparsed} open board${reparsed === 1 ? '' : 's'}.`
+        : 'Board cache cleared.',
+      'info',
+    );
+    this.notify();
+  }
+
+  /** Clear all PDF-related caches: IDB pdf-text store, in-memory tile
+   *  bitmap cache, glyph/font cache, and per-document watermark skip
+   *  sets. Board caches are left alone. */
+  async resetPdfCaches(): Promise<void> {
+    const { pdfStore } = await import('./pdf-store');
+    const { invalidateTileCache } = await import('../pdf/tile-manager');
+    const { clearFontCache } = await import('../pdf/glyph-extractor');
+    await boardCache.clearPdfText();
+    invalidateTileCache();
+    clearFontCache();
+    pdfStore.invalidateWatermarkSkipSets();
+    log.cache.log('PDF caches cleared');
+    this.addToast('PDF caches cleared.', 'info');
     this.notify();
   }
 

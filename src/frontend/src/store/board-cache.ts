@@ -1,11 +1,26 @@
 import type { BoardData, BoardRevision, GhostComponent, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 34; // bumped: cad recentering only for small SMD shapes with off-origin bbox
+// DB_VERSION is ONLY bumped for schema changes (new/removed object stores,
+// incompatible field renames). Parser output changes are handled by the
+// per-entry PARSER_VERSION constant below — a mismatch on read returns
+// a cache miss, triggering a fresh parse. This lets us fix parser bugs
+// without wiping every cached board on every release.
+const DB_VERSION = 35;
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 const MAX_BOARD_ENTRIES = 20;
 const MAX_PDF_TEXT_ENTRIES = 30;
+
+/**
+ * Parser output version. Bump this (not DB_VERSION) whenever a format
+ * parser changes its output in a way that invalidates cached BoardData.
+ * Entries cached with an older version are ignored on read; only the
+ * freshly-parsed board is written back at the new version. Clean
+ * separation from DB_VERSION means parser fixes don't nuke the
+ * pdf-text cache or require any data migration.
+ */
+const PARSER_VERSION = 1;
 
 interface CachedBoard {
   key: string;
@@ -13,6 +28,8 @@ interface CachedBoard {
   fileSize: number;
   lastModified: number;
   timestamp: number;
+  /** PARSER_VERSION at which this entry was generated. Missing = legacy pre-v0.4.5 entry. */
+  parserVersion?: number;
   data: SerializedBoardData;
 }
 
@@ -156,7 +173,15 @@ class BoardCache {
         const req = store.get(key);
         req.onsuccess = () => {
           const result = req.result as CachedBoard | undefined;
-          resolve(result ? deserialize(result.data) : null);
+          if (!result) { resolve(null); return; }
+          // Miss on parser-version mismatch so the caller re-parses
+          // with the current parser. Legacy entries (undefined version)
+          // from before PARSER_VERSION was introduced are also rejected.
+          if (result.parserVersion !== PARSER_VERSION) {
+            resolve(null);
+            return;
+          }
+          resolve(deserialize(result.data));
           // deserialize returns null on schema mismatch — caller falls back to re-parsing
         };
         req.onerror = () => reject(req.error);
@@ -191,6 +216,42 @@ class BoardCache {
       });
     } catch {
       // non-critical
+    }
+  }
+
+  /** Wipe the pdf-text object store only (leaves parsed boards alone). */
+  async clearPdfText(): Promise<void> {
+    try {
+      const db = await this.openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(PDF_TEXT_STORE, 'readwrite');
+        const req = tx.objectStore(PDF_TEXT_STORE).clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      // non-critical
+    }
+  }
+
+  /** Entry counts for UI surfaces that want to show "X boards / Y pdfs cached". */
+  async stats(): Promise<{ boards: number; pdfTexts: number }> {
+    try {
+      const db = await this.openDB();
+      const count = (storeName: string): Promise<number> =>
+        new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const req = tx.objectStore(storeName).count();
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      const [boards, pdfTexts] = await Promise.all([
+        count(BOARD_STORE),
+        count(PDF_TEXT_STORE),
+      ]);
+      return { boards, pdfTexts };
+    } catch {
+      return { boards: 0, pdfTexts: 0 };
     }
   }
 
@@ -233,6 +294,7 @@ class BoardCache {
         fileSize,
         lastModified,
         timestamp: Date.now(),
+        parserVersion: PARSER_VERSION,
         data: serialize(board),
       };
       return new Promise((resolve, reject) => {
