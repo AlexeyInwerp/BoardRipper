@@ -5,10 +5,15 @@ import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { boardStore } from '../store/board-store';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
 import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
+
+/** Silently disable the SettingsMockup render preview without removing
+ *  it from the tree. Flip to true to bring the preview back in one line. */
+const SHOW_MOCKUP_PREVIEW = false;
 
 /** Context that provides per-field override info to Slider/Toggle children */
 interface OverrideCtx {
@@ -831,6 +836,53 @@ const INITIALLY_OPEN: SectionId[] = [];
 
 type SettingsMode = 'global' | 'board';
 
+/**
+ * Prominent cache-control bar at the top of the Settings panel. Three
+ * scoped actions so the user doesn't have to wipe the whole database to
+ * see the effect of a parser fix or a stale render.
+ */
+function CacheControlBar({ hasBoard }: { hasBoard: boolean }) {
+  const [busy, setBusy] = useState<null | 'reparse' | 'boards' | 'pdf'>(null);
+
+  const run = async (tag: 'reparse' | 'boards' | 'pdf', fn: () => Promise<unknown>) => {
+    if (busy) return;
+    setBusy(tag);
+    try { await fn(); } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="settings-cache-bar" role="group" aria-label="Cache control">
+      <div className="settings-cache-bar-title">Cache</div>
+      <div className="settings-cache-bar-buttons">
+        <button
+          className="settings-cache-btn"
+          onClick={() => run('reparse', () => boardStore.reparseActiveBoard())}
+          disabled={!hasBoard || busy !== null}
+          title="Delete the cache entry for the current board and re-run the parser on it. Fastest way to pick up a parser fix on the file you're looking at."
+        >
+          {busy === 'reparse' ? 'Re-parsing…' : 'Re-parse current'}
+        </button>
+        <button
+          className="settings-cache-btn"
+          onClick={() => run('boards', () => boardStore.resetBoardCaches())}
+          disabled={busy !== null}
+          title="Clear all cached parsed boards from IndexedDB and re-parse every open tab. PDF caches are left alone."
+        >
+          {busy === 'boards' ? 'Clearing…' : 'Reset board caches'}
+        </button>
+        <button
+          className="settings-cache-btn"
+          onClick={() => run('pdf', () => boardStore.resetPdfCaches())}
+          disabled={busy !== null}
+          title="Clear cached PDF text, tile bitmaps, font glyphs, and watermark skip sets. Board parses are left alone."
+        >
+          {busy === 'pdf' ? 'Clearing…' : 'Reset PDF caches'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPanel() {
   const { fileName: activeFileName } = useBoardStore();
   const hasBoard = !!activeFileName;
@@ -1046,6 +1098,9 @@ export function SettingsPanel() {
   return (
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
+        {/* ── Cache control — prominent, quick-access ── */}
+        <CacheControlBar hasBoard={hasBoard} />
+
         {/* ── Mode switch: Global vs Board ── */}
         <div className="settings-mode-switch">
           <button
@@ -1065,7 +1120,10 @@ export function SettingsPanel() {
             : 'Changes apply to all boards'}
         </div>
 
-        <SettingsMockup settings={draft} onElementClick={focusSection} />
+        {/* Render preview (SettingsMockup) is silently disabled for now —
+            kept in the tree via the import so we can flip it back quickly
+            by toggling SHOW_MOCKUP_PREVIEW to true. */}
+        {SHOW_MOCKUP_PREVIEW && <SettingsMockup settings={draft} onElementClick={focusSection} />}
         <div className="settings-footer">
           <button
             className={`settings-action-btn ${previewing ? 'active' : ''}`}

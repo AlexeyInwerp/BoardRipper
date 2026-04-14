@@ -1053,6 +1053,53 @@ html, body, #root {
   padding: 10px 10px 0;
 }
 
+/* ── Cache control bar (quick-access reset buttons) ── */
+.settings-cache-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.settings-cache-bar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.settings-cache-bar-buttons {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.settings-cache-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.settings-cache-btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+.settings-cache-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── Mode switch: Global / Board ── */
 .settings-mode-switch {
   display: flex;
