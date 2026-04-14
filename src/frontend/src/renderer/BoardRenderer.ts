@@ -73,6 +73,9 @@ interface BoardScene {
   bottomLabels: import('pixi.js').BitmapText[];
   topPinLabels: Container[];
   bottomPinLabels: Container[];
+  /** Pin labels per part index — used by selection highlight to brighten only
+   *  the labels of the selected part. */
+  pinLabelsByPartIndex: Map<number, Container[]>;
   borderBatches: BorderBatch[];
   fontSizeGroups: import('./board-scene').FontSizeGroup[];
   /** Group A: pin numbers + net names on circle/1-pin parts */
@@ -2206,7 +2209,6 @@ export class BoardRenderer {
         const selPart = this.board.parts[sel.partIndex];
         if (selPart && this.isPartVisible(selPart)) {
           const gfx = gfxFor(selPart);
-          const isBotGfx = gfx === this.butterflySelectionGfx;
           const pinDrawsByColor = new Map<number, (() => void)[]>();
           const storedPads = selPart.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(sel.partIndex) : null;
           const clamp = this.activeScene?.pinRadiusClamp.get(sel.partIndex) ?? Infinity;
