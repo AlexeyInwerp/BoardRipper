@@ -77,6 +77,51 @@ export interface BoardData {
   butterflyFoldAxis?: 'x' | 'y';
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
   flipY?: boolean;
+  /** Multi-revision payload for files that accumulate prior revisions of the
+   *  same board (e.g. some V382 .cad exports). When present and length > 1,
+   *  the UI exposes a revision picker. The revision currently mirrored into
+   *  the top-level parts/bounds/outline fields is identified by activeRevision. */
+  revisions?: BoardRevision[];
+  /** 1-based index into revisions[] of the currently rendered revision. */
+  activeRevision?: number;
+  /** Stale/ghost components that overlap with a "dominator" part on the same
+   *  side AND whose net set is a subset of the dominator's. Likely leftover
+   *  refdes from a prior revision that the source CAD tool failed to remove
+   *  (e.g. J8 left in place after being upgraded to J4008). Surfaced in the
+   *  UI so the user can verify against the physical board, never auto-pruned. */
+  ghosts?: GhostComponent[];
+}
+
+export interface GhostComponent {
+  /** Index into parts[] of the suspected stale component. */
+  partIndex: number;
+  /** Index into parts[] of the larger overlapping component that subsumes it. */
+  dominatorIndex: number;
+  /** Refdes of the suspected stale component (cached for UI display). */
+  partName: string;
+  /** Refdes of the dominator (cached for UI display). */
+  dominatorName: string;
+  /** Centre-to-centre distance in mils between the two parts. */
+  distance: number;
+}
+
+export interface BoardRevision {
+  /** 1-based index. */
+  index: number;
+  /** Human-readable label, e.g. "rev 1", "rev 3 (current)". */
+  label: string;
+  /** Component count for this revision. */
+  componentCount: number;
+  /** Parts in this revision (with pins resolved against the shared shape table). */
+  parts: Part[];
+  /** Bounding box for this revision's parts + outline. */
+  bounds: BBox;
+  /** Outline for this revision (re-synthesised from this revision's pins). */
+  outline: Point[];
+  /** Net connectivity for this revision (refdes-keyed). */
+  nets: Map<string, Net>;
+  /** Suspected stale components for this revision (see BoardData.ghosts). */
+  ghosts: GhostComponent[];
 }
 
 /** Display ID for a pin: prefer name, then number, then 1-based index fallback. */
@@ -115,6 +160,128 @@ export function computePartGeometry(pins: Pin[]): { origin: Point; bounds: BBox 
     origin: { x: 0, y: 0 },
     bounds: { minX: -50, minY: -50, maxX: 50, maxY: 50 },
   };
+}
+
+/**
+ * Common power/ground rail-name patterns. Components that overlap with only
+ * power-rail nets in common are usually heatsinks, EMI shields, or thermal
+ * pads — physically valid stacks, not ghosts.
+ */
+function isPowerRail(net: string): boolean {
+  if (!net) return true;
+  const upper = net.toUpperCase();
+  return (
+    upper === 'GND' ||
+    upper === 'AGND' ||
+    upper === 'DGND' ||
+    upper === 'PGND' ||
+    upper === 'EARTH' ||
+    upper === 'CHASSIS' ||
+    upper === 'VCC' ||
+    upper === 'VDD' ||
+    upper === 'VSS' ||
+    upper === 'VEE' ||
+    upper.startsWith('GND_') ||
+    upper.startsWith('VCC_') ||
+    upper.startsWith('VDD_') ||
+    upper.startsWith('VSS_') ||
+    /^[+-]\d/.test(upper)            // +12V, -5V, +3V3, +1V8, etc.
+  );
+}
+
+/**
+ * Detect "ghost" components — overlapping pairs on the same side where one
+ * part's net set is a subset of the other's AND the shared connectivity goes
+ * beyond power/ground rails (so heatsinks and EMI shields don't trip the
+ * detector). Strong indicator that a refdes was left in the source design
+ * after being replaced by a different one in a later revision (e.g. J8 left
+ * in place after J4008 was added). Pure detection; the caller decides
+ * whether to display, hide, or remove.
+ */
+export function detectGhostComponents(parts: Part[]): GhostComponent[] {
+  const ghosts: GhostComponent[] = [];
+
+  // Per-part net set (drop empty nets — they don't constrain anything).
+  const netSets: Set<string>[] = parts.map(p => {
+    const s = new Set<string>();
+    for (const pin of p.pins) if (pin.net) s.add(pin.net);
+    return s;
+  });
+  // Per-part: does the part have any non-power signal? Heatsinks and EMI
+  // shields connect only to GND/power, so they can't be ghost candidates.
+  const hasSignal: boolean[] = netSets.map(s => {
+    for (const n of s) if (!isPowerRail(n)) return true;
+    return false;
+  });
+
+  // Bucket parts by side so we don't compare top-vs-bottom (no physical conflict).
+  // "both" parts (through-hole connectors etc.) are checked against parts on
+  // either side because they physically occupy both layers.
+  const topIdx: number[] = [];
+  const botIdx: number[] = [];
+  parts.forEach((p, i) => {
+    if (p.side === 'bottom') botIdx.push(i);
+    else if (p.side === 'top') topIdx.push(i);
+    else { topIdx.push(i); botIdx.push(i); }
+  });
+
+  function bboxOverlap(a: BBox, b: BBox): boolean {
+    return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+  }
+  function isSubset(small: Set<string>, large: Set<string>): boolean {
+    if (small.size === 0 || small.size > large.size) return false;
+    for (const n of small) if (!large.has(n)) return false;
+    return true;
+  }
+
+  // Track flagged ghost-pair signatures so a "both"-side part doesn't get
+  // listed twice (once via topIdx and once via botIdx).
+  const flagged = new Set<string>();
+  for (const side of [topIdx, botIdx]) {
+    for (let i = 0; i < side.length; i++) {
+      const ai = side[i];
+      const a = parts[ai];
+      const aBB = a.bounds;
+      const aNets = netSets[ai];
+      for (let j = i + 1; j < side.length; j++) {
+        const bi = side[j];
+        const b = parts[bi];
+        if (!bboxOverlap(aBB, b.bounds)) continue;
+        const bNets = netSets[bi];
+
+        // Determine dominator: the part with strictly more pins. If both have
+        // identical pin counts but one's nets strictly subsume the other's,
+        // still flag — they cannot physically coexist on the same side.
+        let dominator: number, ghost: number;
+        if (a.pins.length > b.pins.length) { dominator = ai; ghost = bi; }
+        else if (b.pins.length > a.pins.length) { dominator = bi; ghost = ai; }
+        else continue; // equal pin counts: ambiguous — skip
+
+        const small = parts[ghost].pins.length === a.pins.length ? aNets : bNets;
+        const large = parts[dominator].pins.length === b.pins.length ? bNets : aNets;
+        if (!isSubset(small, large)) continue;
+
+        // The smaller part must have at least one non-power signal —
+        // otherwise it's likely a heatsink / EMI shield / thermal pad
+        // overlapping a real chip on shared GND.
+        if (!hasSignal[ghost]) continue;
+
+        const sig = ghost < dominator ? `${ghost}-${dominator}` : `${dominator}-${ghost}`;
+        if (flagged.has(sig)) continue;
+        flagged.add(sig);
+        const dx = a.origin.x - b.origin.x;
+        const dy = a.origin.y - b.origin.y;
+        ghosts.push({
+          partIndex:      ghost,
+          dominatorIndex: dominator,
+          partName:       parts[ghost].name,
+          dominatorName:  parts[dominator].name,
+          distance:       Math.sqrt(dx * dx + dy * dy),
+        });
+      }
+    }
+  }
+  return ghosts;
 }
 
 /**

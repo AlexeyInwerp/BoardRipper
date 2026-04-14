@@ -16,8 +16,8 @@
  * Reference: GenCAD 1.4 specification, OpenBoardView GenCADFile.cpp
  */
 
-import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
+import type { BoardData, BoardRevision, Part, Pin, Nail, Point } from './types';
+import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents } from './types';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -280,7 +280,15 @@ interface Component {
   deviceName: string;
 }
 
-function parseComponents(lines: string[]): Component[] {
+interface ParsedComponents {
+  components: Component[];
+  /** 1-based pass index per component (same length as components). */
+  passOf: number[];
+  /** Total number of detected passes. 1 = clean file, no revisions. */
+  passCount: number;
+}
+
+function parseComponents(lines: string[]): ParsedComponents {
   const components: Component[] = [];
   let current: Partial<Component> | null = null;
 
@@ -320,14 +328,13 @@ function parseComponents(lines: string[]): Component[] {
   // V382_20.cad = [rev1.1 pass] [rev1.0 additions pass] [rev2.0 pass].
   // Each pass is a complete component list for that revision, and
   // refdes can be repurposed between revisions (e.g. U503 is a QFN033
-  // DRMOS in rev1.x but a DFN10 current-sense amp in rev2.0). Keeping
-  // any mix of passes produces ghost placements and wrong packages.
+  // DRMOS in rev1.x but a DFN10 current-sense amp in rev2.0).
   //
-  // The canonical revision is always the *last* pass — that's the one
-  // the file is named after. Detect pass boundaries by resetting the
-  // per-pass seen-set the first time a refdes repeats, then keep only
-  // components assigned to the highest pass number. Clean files with
-  // no duplicates stay in pass 1 and pass through unchanged.
+  // We keep every component but tag each with its pass number so the
+  // caller can build per-revision part lists and expose a revision
+  // picker. Pass boundaries are detected by resetting a per-pass
+  // seen-refdes set the first time a refdes repeats. Clean files with
+  // no duplicates stay in pass 1 throughout.
   let pass = 1;
   let seen = new Set<string>();
   const passOf: number[] = new Array(components.length);
@@ -340,8 +347,7 @@ function parseComponents(lines: string[]): Component[] {
     seen.add(name);
     passOf[i] = pass;
   }
-  if (pass === 1) return components;
-  return components.filter((_, i) => passOf[i] === pass);
+  return { components, passOf, passCount: pass };
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +390,8 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // Note: UNITS USER 1000 means "1000 units per inch" = coordinates are in mils.
   // Our internal coordinate system is mils, so no conversion needed.
   const shapes     = parseShapes(extractSection(lines, 'SHAPES'));
-  const components = parseComponents(extractSection(lines, 'COMPONENTS'));
+  const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'));
+  const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
 
   // Some shapes in V382-style exports are left with stale world
@@ -404,14 +411,32 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     if (!list) { list = []; shapeUsers.set(c.shapeName, list); }
     list.push(c);
   }
-  const CENTROID_TOL_SQ = 100 * 100;
+  // A shape qualifies for recentering only when:
+  //   (a) it's physically small  — max bbox dimension < 500 mils, i.e. an
+  //       SMD package, not a connector or heatsink, AND
+  //   (b) the footprint sits clearly off-origin — bbox center is more than
+  //       2× its own half-extent away in at least one axis.
+  // Connectors and large mechanical parts legitimately have asymmetric
+  // pin layouts whose centroid is offset; they must NOT be recentered or
+  // the part visually shifts away from its PLACE coordinate.
+  const SMALL_SHAPE_LIMIT = 500;
   for (const [name, shape] of shapes.entries()) {
     if (shape.pins.length === 0) continue;
-    let sx = 0, sy = 0;
-    for (const p of shape.pins) { sx += p.x; sy += p.y; }
-    const cx = sx / shape.pins.length;
-    const cy = sy / shape.pins.length;
-    if (cx * cx + cy * cy < CENTROID_TOL_SQ) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of shape.pins) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const w = maxX - minX, h = maxY - minY;
+    if (Math.max(w, h) >= SMALL_SHAPE_LIMIT) continue;
+    const halfW = w * 0.5 || 1;
+    const halfH = h * 0.5 || 1;
+    const bcx = (minX + maxX) * 0.5;
+    const bcy = (minY + maxY) * 0.5;
+    const offsetRatio = Math.max(Math.abs(bcx) / halfW, Math.abs(bcy) / halfH);
+    if (offsetRatio < 2) continue;
     const users = shapeUsers.get(name);
     if (!users) continue;
     let anyPlaced = false;
@@ -419,19 +444,28 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       if (u.placeX !== 0 || u.placeY !== 0) { anyPlaced = true; break; }
     }
     if (!anyPlaced) continue;
+    // Subtract the centroid (mean of pin coords) — for shapes where bbox
+    // center matches centroid, this is equivalent. Using centroid handles
+    // shapes with one outlier pin (e.g. thermal pad) more gracefully.
+    let sx = 0, sy = 0;
+    for (const p of shape.pins) { sx += p.x; sy += p.y; }
+    const cx = sx / shape.pins.length;
+    const cy = sy / shape.pins.length;
     for (const p of shape.pins) { p.x -= cx; p.y -= cy; }
   }
 
-  // Assemble parts
-  const parts: Part[] = [];
+  // Assemble parts grouped by pass so we can emit one BoardRevision per
+  // detected revision. Pass 1 is the "base" pass for clean files (no
+  // duplicates) and is the only pass for every other format/sample.
+  const partsByPass: Part[][] = Array.from({ length: parsedComps.passCount }, () => []);
 
-  for (const comp of components) {
+  for (let i = 0; i < components.length; i++) {
+    const comp = components[i];
     const shape = shapes.get(comp.shapeName);
     if (!shape) continue;
 
     const pins: Pin[] = [];
     for (const sp of shape.pins) {
-      // Apply component placement offset + rotation
       let px = sp.x, py = sp.y;
       if (comp.rotation !== 0) {
         const rad = (comp.rotation * Math.PI) / 180;
@@ -443,7 +477,6 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       px += comp.placeX;
       py += comp.placeY;
 
-      // Look up net
       const netKey = `${comp.name}.${sp.name}`;
       const net = pinNetMap.get(netKey) ?? '';
 
@@ -461,7 +494,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
     const { origin, bounds } = computePartGeometry(pins);
 
-    parts.push({
+    partsByPass[parsedComps.passOf[i] - 1].push({
       name:   comp.name,
       side:   comp.layer,
       type:   shape.insertType,
@@ -474,17 +507,51 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // No nails in GenCAD (test points would need $TESTPINS section)
   const nails: Nail[] = [];
 
-  if (parts.length === 0) {
+  // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
+  const revisions: BoardRevision[] = partsByPass.map((parts, idx) => {
+    const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
+    const outline = generateSyntheticOutline(allPoints);
+    const bounds = computeBBox([...outline, ...allPoints]);
+    const nets = buildNets(parts);
+    const ghosts = detectGhostComponents(parts);
+    const total = partsByPass.length;
+    const isCurrent = idx === total - 1;
+    const label = total === 1
+      ? `rev ${idx + 1}`
+      : `rev ${idx + 1}${isCurrent ? ' (current)' : ''}`;
+    return {
+      index: idx + 1,
+      label,
+      componentCount: parts.length,
+      parts,
+      bounds,
+      outline,
+      nets,
+      ghosts,
+    };
+  });
+
+  // Default active = last pass (the canonical revision the file is named after).
+  const active = revisions[revisions.length - 1];
+  if (!active || active.parts.length === 0) {
     throw new Error('CAD file parsed but contains no parts — file may be corrupt or empty');
   }
 
-  // Board outline — GenCAD $BOARD section can define it, but often empty.
-  // Generate from pin bounds like FZ.
-  const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
-  const outline = generateSyntheticOutline(allPoints);
-
-  const bounds = computeBBox([...outline, ...allPoints]);
-  const nets = buildNets(parts);
-
-  return { format: 'CAD', outline, parts, nails, nets, bounds };
+  // For clean single-pass files we don't expose the revisions UI — the
+  // top-level fields alone are sufficient. Keep BoardData identical to
+  // what the previous parser returned in that case.
+  const board: BoardData = {
+    format: 'CAD',
+    outline: active.outline,
+    parts:   active.parts,
+    nails,
+    nets:    active.nets,
+    bounds:  active.bounds,
+  };
+  if (active.ghosts.length > 0) board.ghosts = active.ghosts;
+  if (revisions.length > 1) {
+    board.revisions = revisions;
+    board.activeRevision = active.index;
+  }
+  return board;
 }
