@@ -1,7 +1,7 @@
-import type { BoardData, Net, Trace, Via } from '../parsers';
+import type { BoardData, BoardRevision, GhostComponent, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 29; // bumped: cad-parser revision-dedup + shape recentering
+const DB_VERSION = 34; // bumped: cad recentering only for small SMD shapes with off-origin bbox
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 const MAX_BOARD_ENTRIES = 20;
@@ -28,6 +28,20 @@ interface SerializedBoardData {
   vias?: Via[];
   layerNames?: string[];
   butterflyFoldAxis?: 'x' | 'y';
+  revisions?: SerializedRevision[];
+  activeRevision?: number;
+  ghosts?: GhostComponent[];
+}
+
+interface SerializedRevision {
+  index: number;
+  label: string;
+  componentCount: number;
+  parts: BoardRevision['parts'];
+  bounds: BoardRevision['bounds'];
+  outline: BoardRevision['outline'];
+  nets: Array<[string, Net]>;
+  ghosts: GhostComponent[];
 }
 
 function makeCacheKey(name: string, size: number, modified: number): string {
@@ -47,6 +61,18 @@ function serialize(board: BoardData): SerializedBoardData {
     vias: board.vias,
     layerNames: board.layerNames,
     butterflyFoldAxis: board.butterflyFoldAxis,
+    revisions: board.revisions?.map(r => ({
+      index: r.index,
+      label: r.label,
+      componentCount: r.componentCount,
+      parts: r.parts,
+      bounds: r.bounds,
+      outline: r.outline,
+      nets: Array.from(r.nets.entries()),
+      ghosts: r.ghosts,
+    })),
+    activeRevision: board.activeRevision,
+    ghosts: board.ghosts,
   };
 }
 
@@ -66,6 +92,18 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       vias: data.vias,
       layerNames: data.layerNames,
       butterflyFoldAxis: data.butterflyFoldAxis,
+      revisions: data.revisions?.map(r => ({
+        index: r.index,
+        label: r.label,
+        componentCount: r.componentCount,
+        parts: r.parts,
+        bounds: r.bounds,
+        outline: r.outline,
+        nets: new Map(r.nets),
+        ghosts: r.ghosts ?? [],
+      })),
+      activeRevision: data.activeRevision,
+      ghosts: data.ghosts,
     };
   } catch {
     return null;

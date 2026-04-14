@@ -1,7 +1,8 @@
-import type { BoardData, Part, Pin } from '../parsers';
+import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
+import { computeBBox, generateSyntheticOutline, detectGhostComponents } from '../parsers/types';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
@@ -43,6 +44,10 @@ export interface BoardTab {
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
+  /** When true, parts flagged in board.ghosts are filtered from the rendered
+   *  parts list. Set via toggleHideGhosts(). Persists across revision switches
+   *  on the same tab. */
+  hideGhosts: boolean;
 }
 
 export interface PdfEntry {
@@ -87,6 +92,66 @@ interface ViewPrefs {
 }
 
 const DEFAULT_VIEW_PREFS: ViewPrefs = { showNetLines: false, showNetDim: true, showHoverInfo: true, followPdf: false };
+
+/**
+ * Build a renderable BoardData from a base board + a chosen revision +
+ * the current "hide ghosts" state. When hideGhosts is on, ghost-flagged
+ * parts are filtered out and bounds/outline are recomputed from the
+ * remaining geometry. When off, the revision's full part list is used.
+ * Returns a NEW object reference so the renderer's identity check fires.
+ */
+function buildRenderedBoard(
+  base: BoardData,
+  rev: BoardRevision,
+  hideGhosts: boolean,
+): BoardData {
+  if (!hideGhosts || rev.ghosts.length === 0) {
+    return {
+      ...base,
+      parts: rev.parts,
+      bounds: rev.bounds,
+      outline: rev.outline,
+      nets: rev.nets,
+      ghosts: rev.ghosts.length > 0 ? rev.ghosts : undefined,
+      activeRevision: rev.index,
+    };
+  }
+  const drop = new Set<number>(rev.ghosts.map(g => g.partIndex));
+  const filteredParts: Part[] = [];
+  for (let i = 0; i < rev.parts.length; i++) {
+    if (!drop.has(i)) filteredParts.push(rev.parts[i]);
+  }
+  const allPoints = filteredParts.flatMap(p => p.pins.map(pin => pin.position));
+  const outline = generateSyntheticOutline(allPoints);
+  const bounds = computeBBox([...outline, ...allPoints]);
+  // Re-detect ghosts on the filtered set so the panel keeps showing the
+  // (now resolved) entries — they reference original indices though, so we
+  // keep the original ghost list for the UI to render with strikethroughs.
+  return {
+    ...base,
+    parts: filteredParts,
+    bounds,
+    outline,
+    nets: rev.nets,
+    ghosts: rev.ghosts,
+    activeRevision: rev.index,
+  };
+}
+
+/** Synthesize a BoardRevision from a single-revision board so that
+ *  buildRenderedBoard can run uniformly for files without revisions[]. */
+function syntheticRevisionFromBoard(b: BoardData): BoardRevision {
+  return {
+    index: 1,
+    label: 'rev 1',
+    componentCount: b.parts.length,
+    parts: b.parts,
+    bounds: b.bounds,
+    outline: b.outline,
+    nets: b.nets,
+    ghosts: b.ghosts ?? detectGhostComponents(b.parts),
+  };
+}
 
 function loadViewPrefs(): ViewPrefs {
   try {
@@ -169,6 +234,7 @@ class BoardStore extends Emitter {
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
+  get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -350,6 +416,7 @@ class BoardStore extends Emitter {
         layerStates: [],
         pdfFileNames: [],
         cacheKey: '',
+        hideGhosts: false,
       };
 
       this._tabs.push(tab);
@@ -572,6 +639,44 @@ class BoardStore extends Emitter {
   }
 
   /** Set arbitrary rotation in degrees (from trackpad gesture or other free input). */
+  /**
+   * Switch the active board to a different revision (multi-revision .cad
+   * files only). Builds a new BoardData object reference so that the
+   * renderer's reference-equality check fires and a fresh scene is built.
+   * Selection is reset because part/pin indices change between revisions.
+   */
+  setActiveRevision(index: number) {
+    const tab = this.activeTab;
+    if (!tab || !tab.board || !tab.board.revisions) return;
+    const target = tab.board.revisions.find(r => r.index === index);
+    if (!target) return;
+    if (tab.board.activeRevision === index && !tab.hideGhosts) return;
+    tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts);
+    tab.selection = emptySelection;
+    tab.searchQuery = '';
+    this.notify();
+  }
+
+  /**
+   * Toggle whether parts flagged as suspicious overlaps (board.ghosts) are
+   * hidden from the rendered parts list. Rebuilds the BoardData reference
+   * so the renderer picks up the change. Selection resets to avoid dangling
+   * indices into the filtered array.
+   */
+  toggleHideGhosts() {
+    const tab = this.activeTab;
+    if (!tab || !tab.board) return;
+    const next = !tab.hideGhosts;
+    tab.hideGhosts = next;
+    // Find the current revision (or build from the existing top-level fields
+    // for single-revision .cad files where revisions is unset).
+    const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
+      ?? syntheticRevisionFromBoard(tab.board);
+    tab.board = buildRenderedBoard(tab.board, rev, next);
+    tab.selection = emptySelection;
+    this.notify();
+  }
+
   setRotationFree(degrees: number) {
     const tab = this.activeTab;
     if (!tab) return;
