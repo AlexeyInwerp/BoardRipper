@@ -54,7 +54,7 @@ export const shortcuts: Shortcut[] = [
     category: 'file',
     key: 'f',
     mod: true,
-    description: 'Focus PDF search (when PDF active) or board search bar',
+    description: 'Prefill PDF search with selection (or focus it). Repeat Cmd/Ctrl+F = next, Shift+Cmd/Ctrl+F = previous. Enter = next, Shift+Enter = previous. Up/Down = next/previous.',
   },
 
   // --- View ---
