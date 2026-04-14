@@ -1664,17 +1664,11 @@ export class BoardRenderer {
         this.prevShowTop = boardStore.showTop;
         this.prevShowBottom = boardStore.showBottom;
 
-        // Capture the scene-local point under the viewport center BEFORE the
-        // flip so we can re-center the viewport on the same physical board
-        // region afterwards (without this the flipped-mirror scene puts the
-        // user on a different part of the board).
-        let preFlipLocal: Point | null = null;
-        if (flipped && boardStore.selection.partIndex === null) {
-          const sceneRoot = this.activeScene.root;
-          const vpCenter = this.viewport.center;
-          const tmp = new Point(vpCenter.x, vpCenter.y);
-          preFlipLocal = sceneRoot.toLocal(tmp, this.viewport);
-        }
+        // Capture the viewport's world center + old flipX/flipY state before
+        // applyFlips so we can mirror the center around the board center and
+        // keep the same physical region visible.
+        const oldVpCenter = flipped ? { x: this.viewport.center.x, y: this.viewport.center.y } : null;
+        const oldScale = flipped ? { x: this.activeScene.root.scale.x, y: this.activeScene.root.scale.y } : null;
 
         // Same board — update layer visibility + flips
         this.activeScene.topLayer.visible = this.isTopVisible;
@@ -1691,14 +1685,19 @@ export class BoardRenderer {
             const eb = computePartRenderBounds(part, s);
             this.zoomToBounds({ minX: eb.px, minY: eb.py, maxX: eb.px + eb.pw, maxY: eb.py + eb.ph }, this.rootForPart(part), 0.25);
           }
-        } else if (flipped && preFlipLocal) {
-          // Nothing selected — keep the same local region under the screen
-          // center by converting the saved local point forward through the
-          // NEW scene transform and panning the viewport there.
-          const sceneRoot = this.activeScene.root;
-          const worldAfter = sceneRoot.toGlobal(preFlipLocal, undefined, false);
-          const vpLocal = this.viewport.toLocal(worldAfter);
-          this.viewport.moveCenter(vpLocal.x, vpLocal.y);
+        } else if (flipped && oldVpCenter && oldScale) {
+          // Nothing selected — mirror the viewport center around the board
+          // center for each axis whose scale sign flipped. scene.root uses
+          // pivot=(cx,cy), position=(cx,cy), so a sign flip mirrors points
+          // about (cx,cy). If the sign didn't change on an axis, leave it.
+          const newScale = this.activeScene.root.scale;
+          const cx = (board.bounds.minX + board.bounds.maxX) / 2;
+          const cy = (board.bounds.minY + board.bounds.maxY) / 2;
+          let nx = oldVpCenter.x;
+          let ny = oldVpCenter.y;
+          if (Math.sign(newScale.x) !== Math.sign(oldScale.x)) nx = 2 * cx - nx;
+          if (Math.sign(newScale.y) !== Math.sign(oldScale.y)) ny = 2 * cy - ny;
+          this.viewport.moveCenter(nx, ny);
         }
       }
 
