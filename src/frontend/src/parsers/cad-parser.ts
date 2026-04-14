@@ -107,39 +107,163 @@ function parseShapes(lines: string[]): Map<string, Shape> {
 
 /**
  * Collapse duplicate pin-name entries to one representative per pin name.
- * For shapes with no duplicates, returns the input pins in original order (no-op).
+ *
+ * A corrupted shape has each pin name listed multiple times, once per
+ * coordinate frame (one per merged revision). Picking nearest-to-origin
+ * per pin name independently scrambles multi-pin footprints (e.g. BGAs)
+ * because different pin names can have their "nearest" entry in
+ * different frames, producing a grid mixed from several revisions.
+ *
+ * Two-pass strategy:
+ *
+ * 1. Delta-based (handles the common 2-frame case, e.g. V382_20 QFNs
+ *    and BGAs). Every pin with two distinct positions has them
+ *    separated by the same revision-shift vector δ. Find the
+ *    dominant δ across all pin-name pairs, then for every pin pick
+ *    either the "low" or the "high" entry along δ consistently.
+ *    Compare the two candidate frames by centroid-distance to
+ *    origin; the winner is the shape-local frame.
+ *
+ * 2. Anchor-based fallback (handles 3+ frame cases like SO8_THERMAL
+ *    where clusters are spatially distant). Try each entry of the
+ *    most-duplicated pin as an anchor; for every other pin pick the
+ *    entry closest to the anchor; score each candidate by centroid
+ *    distance to origin and keep the best. Works when inter-cluster
+ *    distance is much larger than the package span.
+ *
+ * Clean shapes with no duplicates return the input pins unchanged.
  */
 function dedupeShapePins(pins: ShapePin[]): ShapePin[] {
   const groups = new Map<string, ShapePin[]>();
+  const order: string[] = [];
   for (const p of pins) {
-    const g = groups.get(p.name);
-    if (g) g.push(p); else groups.set(p.name, [p]);
+    let g = groups.get(p.name);
+    if (!g) { g = []; groups.set(p.name, g); order.push(p.name); }
+    g.push(p);
   }
 
-  // No duplicates? Preserve original order and return as-is.
   let hasDup = false;
   for (const g of groups.values()) if (g.length > 1) { hasDup = true; break; }
   if (!hasDup) return pins;
 
-  // Pick the "near-origin" representative for each pin-name group. Shape-local
-  // coordinates cluster around (0,0) for a real footprint; revision residuals
-  // sit far from origin. Distance to (0,0) is a robust tie-breaker.
-  const picked: ShapePin[] = [];
-  const seen = new Set<string>();
-  for (const p of pins) {
-    if (seen.has(p.name)) continue;
-    seen.add(p.name);
-    const group = groups.get(p.name)!;
-    let best = group[0];
-    let bestDist = best.x * best.x + best.y * best.y;
-    for (let i = 1; i < group.length; i++) {
-      const q = group[i];
-      const d = q.x * q.x + q.y * q.y;
-      if (d < bestDist) { best = q; bestDist = d; }
+  const deltaResult = pickByDelta(groups, order);
+  if (deltaResult) return deltaResult;
+
+  return pickByAnchor(groups, order) ?? pins;
+}
+
+/** Unique-positions helper: dedupe (x, y) tuples with sub-mil tolerance. */
+function uniquePositions(entries: ShapePin[]): ShapePin[] {
+  const out: ShapePin[] = [];
+  for (const e of entries) {
+    let seen = false;
+    for (const q of out) {
+      if (Math.abs(q.x - e.x) < 0.01 && Math.abs(q.y - e.y) < 0.01) { seen = true; break; }
     }
-    picked.push(best);
+    if (!seen) out.push(e);
   }
-  return picked;
+  return out;
+}
+
+/**
+ * 2-frame delta-based dedup. Returns null if no consistent δ is found.
+ */
+function pickByDelta(
+  groups: Map<string, ShapePin[]>,
+  order: string[],
+): ShapePin[] | null {
+  // Bucket deltas between paired distinct entries. Tolerance 0.5 mil
+  // absorbs float rounding between instances of the same vector.
+  const TOL = 0.5;
+  const deltas = new Map<string, { dx: number; dy: number; count: number }>();
+  let totalPairs = 0;
+  for (const name of order) {
+    const uniq = uniquePositions(groups.get(name)!);
+    if (uniq.length !== 2) continue;
+    let dx = uniq[1].x - uniq[0].x;
+    let dy = uniq[1].y - uniq[0].y;
+    if (dx < 0 || (dx === 0 && dy < 0)) { dx = -dx; dy = -dy; }
+    const bx = Math.round(dx / TOL) * TOL;
+    const by = Math.round(dy / TOL) * TOL;
+    const key = bx + ':' + by;
+    const prev = deltas.get(key);
+    if (prev) prev.count++;
+    else deltas.set(key, { dx: bx, dy: by, count: 1 });
+    totalPairs++;
+  }
+  if (totalPairs === 0) return null;
+
+  let best: { dx: number; dy: number; count: number } | null = null;
+  for (const d of deltas.values()) if (!best || d.count > best.count) best = d;
+  if (!best || best.count / totalPairs < 0.8) return null;
+
+  const { dx, dy } = best;
+  const pickLow: ShapePin[] = [];
+  const pickHigh: ShapePin[] = [];
+  let lowX = 0, lowY = 0, highX = 0, highY = 0;
+  for (const name of order) {
+    const g = groups.get(name)!;
+    let lo = g[0], hi = g[0];
+    let loDot = lo.x * dx + lo.y * dy;
+    let hiDot = loDot;
+    for (let i = 1; i < g.length; i++) {
+      const q = g[i];
+      const qd = q.x * dx + q.y * dy;
+      if (qd < loDot) { lo = q; loDot = qd; }
+      if (qd > hiDot) { hi = q; hiDot = qd; }
+    }
+    pickLow.push(lo); pickHigh.push(hi);
+    lowX += lo.x; lowY += lo.y;
+    highX += hi.x; highY += hi.y;
+  }
+  const n = order.length;
+  const loScore = (lowX / n) ** 2 + (lowY / n) ** 2;
+  const hiScore = (highX / n) ** 2 + (highY / n) ** 2;
+  return loScore <= hiScore ? pickLow : pickHigh;
+}
+
+/**
+ * Anchor-based dedup. Used for 3+ frame cases (SO8 and similar)
+ * where clusters are spatially distant (intra-cluster distance ≪
+ * inter-cluster distance), so nearest-neighbor from an anchor
+ * reliably stays in the same frame.
+ */
+function pickByAnchor(
+  groups: Map<string, ShapePin[]>,
+  order: string[],
+): ShapePin[] | null {
+  let anchorName = order[0];
+  let maxEntries = 0;
+  for (const name of order) {
+    const n = groups.get(name)!.length;
+    if (n > maxEntries) { maxEntries = n; anchorName = name; }
+  }
+
+  const anchorCandidates = groups.get(anchorName)!;
+  let bestResult: ShapePin[] | null = null;
+  let bestScore = Infinity;
+  for (const anchor of anchorCandidates) {
+    const picked: ShapePin[] = [];
+    let sumX = 0, sumY = 0;
+    for (const name of order) {
+      const g = groups.get(name)!;
+      let best = g[0];
+      let bestD = (best.x - anchor.x) ** 2 + (best.y - anchor.y) ** 2;
+      for (let i = 1; i < g.length; i++) {
+        const q = g[i];
+        const d = (q.x - anchor.x) ** 2 + (q.y - anchor.y) ** 2;
+        if (d < bestD) { best = q; bestD = d; }
+      }
+      picked.push(best);
+      sumX += best.x;
+      sumY += best.y;
+    }
+    const cx = sumX / picked.length;
+    const cy = sumY / picked.length;
+    const score = cx * cx + cy * cy;
+    if (score < bestScore) { bestScore = score; bestResult = picked; }
+  }
+  return bestResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +386,41 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const shapes     = parseShapes(extractSection(lines, 'SHAPES'));
   const components = parseComponents(extractSection(lines, 'COMPONENTS'));
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
+
+  // Some shapes in V382-style exports are left with stale world
+  // coordinates leaked from a previous instance (e.g. PDFN8/DFN8 in
+  // V382_20.cad whose 9 pins sit near (-1829, -910) instead of at
+  // origin). These aren't revision duplicates — each pin has a
+  // single entry — so dedup never touches them. We recenter them
+  // here by subtracting the centroid. Quanta-style files use the
+  // opposite convention (shape pins in world coords, components at
+  // PLACE 0 0), so we only recenter a shape if at least one of its
+  // referring components is placed at a non-zero PLACE. That keeps
+  // world-absolute files untouched while fixing broken shape-local
+  // definitions.
+  const shapeUsers = new Map<string, Component[]>();
+  for (const c of components) {
+    let list = shapeUsers.get(c.shapeName);
+    if (!list) { list = []; shapeUsers.set(c.shapeName, list); }
+    list.push(c);
+  }
+  const CENTROID_TOL_SQ = 100 * 100;
+  for (const [name, shape] of shapes.entries()) {
+    if (shape.pins.length === 0) continue;
+    let sx = 0, sy = 0;
+    for (const p of shape.pins) { sx += p.x; sy += p.y; }
+    const cx = sx / shape.pins.length;
+    const cy = sy / shape.pins.length;
+    if (cx * cx + cy * cy < CENTROID_TOL_SQ) continue;
+    const users = shapeUsers.get(name);
+    if (!users) continue;
+    let anyPlaced = false;
+    for (const u of users) {
+      if (u.placeX !== 0 || u.placeY !== 0) { anyPlaced = true; break; }
+    }
+    if (!anyPlaced) continue;
+    for (const p of shape.pins) { p.x -= cx; p.y -= cy; }
+  }
 
   // Assemble parts
   const parts: Part[] = [];

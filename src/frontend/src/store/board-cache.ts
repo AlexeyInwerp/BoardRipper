@@ -1,7 +1,7 @@
 import type { BoardData, Net, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
-const DB_VERSION = 28; // bumped: removed initialMirrorY (derived from butterflyFoldAxis)
+const DB_VERSION = 29; // bumped: cad-parser revision-dedup + shape recentering
 const BOARD_STORE = 'boards';
 const PDF_TEXT_STORE = 'pdf-text';
 const MAX_BOARD_ENTRIES = 20;
