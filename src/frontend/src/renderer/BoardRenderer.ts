@@ -1662,6 +1662,18 @@ export class BoardRenderer {
         this.prevShowTop = boardStore.showTop;
         this.prevShowBottom = boardStore.showBottom;
 
+        // Capture the scene-local point under the viewport center BEFORE the
+        // flip so we can re-center the viewport on the same physical board
+        // region afterwards (without this the flipped-mirror scene puts the
+        // user on a different part of the board).
+        let preFlipLocal: Point | null = null;
+        if (flipped && boardStore.selection.partIndex === null) {
+          const sceneRoot = this.activeScene.root;
+          const vpCenter = this.viewport.center;
+          const tmp = new Point(vpCenter.x, vpCenter.y);
+          preFlipLocal = sceneRoot.toLocal(tmp, this.viewport);
+        }
+
         // Same board — update layer visibility + flips
         this.activeScene.topLayer.visible = this.isTopVisible;
         this.activeScene.bottomLayer.visible = this.isBottomVisible;
@@ -1677,6 +1689,14 @@ export class BoardRenderer {
             const eb = computePartRenderBounds(part, s);
             this.zoomToBounds({ minX: eb.px, minY: eb.py, maxX: eb.px + eb.pw, maxY: eb.py + eb.ph }, this.rootForPart(part), 0.25);
           }
+        } else if (flipped && preFlipLocal) {
+          // Nothing selected — keep the same local region under the screen
+          // center by converting the saved local point forward through the
+          // NEW scene transform and panning the viewport there.
+          const sceneRoot = this.activeScene.root;
+          const worldAfter = sceneRoot.toGlobal(preFlipLocal, undefined, false);
+          const vpLocal = this.viewport.toLocal(worldAfter);
+          this.viewport.moveCenter(vpLocal.x, vpLocal.y);
         }
       }
 
