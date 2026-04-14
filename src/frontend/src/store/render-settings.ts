@@ -391,6 +391,13 @@ export function computeDiagonalOBB(
   const len = Math.hypot(ux, uy);
   if (len < 1e-6) return null;
   ux /= len; uy /= len;
+  // Reject near-axis-aligned principal axes. ux*uy = sin(2θ)/2, so
+  // |ux*uy| < 0.15 corresponds to ~9° from horizontal/vertical. Parts
+  // placed at multiples of 90° (most of them) have axis-aligned bboxes
+  // and don't need an OBB at all — but slight pin asymmetry in
+  // connectors etc. produces a tiny non-zero covariance term that
+  // would otherwise yield a visibly skewed parallelogram outline.
+  if (Math.abs(ux * uy) < 0.15) return null;
   const vx = -uy, vy = ux;
 
   // Project all pins onto principal axes
