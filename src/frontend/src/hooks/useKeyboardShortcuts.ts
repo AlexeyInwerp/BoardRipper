@@ -5,6 +5,8 @@ import { pdfStore } from '../store/pdf-store';
 import { viewCommands } from '../store/view-commands';
 import { fileInputRefs } from '../store/file-inputs';
 import { ensurePdfPanel, getDockviewApi } from '../store/dockview-api';
+import { openBoardSearch } from '../panels/BoardViewerPanel';
+import { focusBoardSearchInput } from '../components/BoardSidebar';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -65,6 +67,17 @@ export function useKeyboardShortcuts() {
           if (pdfClicked) prefillText = pdfClicked;
         }
 
+        // Board panel active with NO selection → open BoardSidebar search tab.
+        // Board panel active WITH selection → fall through to PDF lookup.
+        if (activePanelId.startsWith('board-') && !prefillText) {
+          e.preventDefault();
+          const tabIdStr = activePanelId.slice('board-'.length);
+          const boardTabId = parseInt(tabIdStr, 10);
+          openBoardSearch('', isNaN(boardTabId) ? undefined : boardTabId);
+          focusBoardSearchInput();
+          return;
+        }
+
         if (linkedPdf) {
           e.preventDefault();
           ensurePdfPanel(linkedPdf);
@@ -102,6 +115,32 @@ export function useKeyboardShortcuts() {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if ((e.target as HTMLElement)?.isContentEditable) return;
+
+      // Tab — jump between active board panel and its linked PDF (both directions).
+      if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        const api = getDockviewApi();
+        const activeId = api?.activePanel?.id ?? '';
+        if (activeId.startsWith('board-')) {
+          const linked = boardStore.activeTab?.pdfFileNames?.[0];
+          if (linked) {
+            e.preventDefault();
+            ensurePdfPanel(linked);
+            pdfStore.switchTo(linked);
+          }
+          return;
+        }
+        if (activeId.startsWith('pdf-')) {
+          const activeTabId = boardStore.activeTabId;
+          if (activeTabId != null) {
+            const boardPanel = api?.getPanel('board-' + activeTabId);
+            if (boardPanel) {
+              e.preventDefault();
+              boardPanel.api.setActive();
+            }
+          }
+          return;
+        }
+      }
 
       // Arrow keys in PDF context: navigate matches if they exist, otherwise scroll pages
       if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
