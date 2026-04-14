@@ -238,7 +238,12 @@ jobs:
     needs: [build-binaries, build-desktop-mac, build-desktop-win, build-docker]
     runs-on: ubuntu-latest
     steps:
+      # Full history + tags needed so the changelog step can diff against
+      # the previous tag.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/download-artifact@v4
         with:
@@ -263,6 +268,37 @@ jobs:
       - name: Rename Docker image
         run: mv artifacts/boardripper-docker.tar.gz artifacts/boardripper-docker-${{ github.ref_name }}.tar.gz
 
+      # Build real changelog from commits since the previous tag.
+      # Skip "release:" meta-commits (they don't describe user-visible changes).
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${{ github.ref_name }}"
+          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          {
+            echo "## BoardRipper ${TAG}"
+            echo
+            if [ -n "${PREV}" ]; then
+              echo "### Changes since ${PREV}"
+              echo
+              git log --no-merges --pretty=format:'- %s' "${PREV}..${TAG}" \
+                | grep -Ev '^- release:|^- chore\(release\):' \
+                || echo "- (no non-release commits)"
+              echo
+            else
+              echo "### Initial release"
+              echo
+            fi
+            echo
+            echo "### Downloads"
+            echo "- \`boardripper-docker-${TAG}.tar.gz\` — server / NAS"
+            echo "- \`boardripper-{linux,macos,windows}-{amd64,arm64}-${TAG}\` — standalone"
+            echo "- \`BoardRipper-macOS-universal-${TAG}.zip\` — desktop (unsigned, see README)"
+            echo "- \`BoardRipper-Windows-x64-${TAG}.zip\` — desktop (unsigned, see README)"
+          } > RELEASE_NOTES.md
+          echo "---- generated release notes ----"
+          cat RELEASE_NOTES.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -273,14 +309,5 @@ jobs:
             artifacts/boardripper-macos-arm64-*.tar.gz
             artifacts/boardripper-windows-amd64-*.zip
             artifacts/boardripper-docker-*.tar.gz
-          body: |
-            ## BoardRipper ${{ github.ref_name }}
-
-            ### Desktop apps (recommended)
-            - **macOS**: `BoardRipper-macOS-universal-${{ github.ref_name }}.zip` — universal (Intel + Apple Silicon)
-            - **Windows**: `BoardRipper-Windows-x64-${{ github.ref_name }}.zip` — x64
-
-            ### Server deployment
-            - **Docker**: `boardripper-docker-${{ github.ref_name }}.tar.gz`
-            - **Standalone** (Go server + static files, requires manual setup): linux/macos/windows tarballs
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
