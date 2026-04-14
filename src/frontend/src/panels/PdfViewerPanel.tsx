@@ -2462,10 +2462,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    pdfStore.switchTo(pdfFileName);
-    pdfStore.searchText(searchInputRef.current?.value ?? '');
-    // Show nav hint once per search session
-    navHintShownRef.current = false;
+    // No-op: Enter is handled by the input's onKeyDown so we can read
+    // shiftKey to decide between next/prev and a fresh search.
   };
 
   // Show ↑↓ navigation hint once when matches first appear
@@ -2677,7 +2675,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 type="text"
                 className="pdf-search-input"
                 placeholder="Search (multi-term: 10UF 25V)"
-                title="Up/Down arrows — move through results. Cmd/Ctrl+F — next match, Shift+Cmd/Ctrl+F — previous."
+                title="Enter / ↓ / Cmd+F — next match. Shift+Enter / ↑ / Shift+Cmd+F — previous match."
                 defaultValue={searchQuery}
                 onChange={(e) => {
                   if (!e.target.value.trim()) {
@@ -2691,6 +2689,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                     pdfStore.switchTo(pdfFileName);
                     if (e.key === 'ArrowDown') pdfStore.nextMatch();
                     else pdfStore.prevMatch();
+                    return;
+                  }
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const value = (e.target as HTMLInputElement).value;
+                    pdfStore.switchTo(pdfFileName);
+                    // Query unchanged + have matches → step next/prev (Shift = prev).
+                    if (value && value === searchQuery && matches.length > 0) {
+                      if (e.shiftKey) pdfStore.prevMatch();
+                      else pdfStore.nextMatch();
+                      return;
+                    }
+                    pdfStore.searchText(value);
+                    navHintShownRef.current = false;
                   }
                 }}
               />
@@ -2713,7 +2725,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             </div>
           )}
           {showNavHint && (
-            <div className="pdf-nav-hint">Use ↑↓ keyboard to navigate</div>
+            <div className="pdf-nav-hint">Enter / ↑↓ to navigate results</div>
           )}
           {isMultiTerm && (
             <div className="pdf-multiterm-dropdown">
