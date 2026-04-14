@@ -25,6 +25,8 @@ import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, cle
 import type { BorderBatch } from './board-scene';
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
+import { ensurePdfPanel } from '../store/dockview-api';
+import { fileInputRefs } from '../store/file-inputs';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -1889,6 +1891,21 @@ export class BoardRenderer {
       log.render.log(`triggerFollowPdf: navigate-only query="${navQuery}" pdf="${pdfName}" (user search preserved)`);
       pdfStore.navigateToText(navQuery);
       pdfStore.setLookupHint(pdfName, part.name);
+    }
+
+    // Explicit user action (double-click) → activate the PDF panel and focus
+    // the search field. Passive follow mode (force=false) stays silent so
+    // board clicks don't constantly steal focus.
+    if (force) {
+      ensurePdfPanel(pdfName);
+      // Wait a tick for the PDF panel onDidActiveChange effect to register
+      // searchInputRef.current into fileInputRefs.pdfSearch.
+      setTimeout(() => {
+        const input = fileInputRefs.pdfSearch;
+        if (!input) return;
+        input.focus();
+        input.select();
+      }, 0);
     }
   }
 
