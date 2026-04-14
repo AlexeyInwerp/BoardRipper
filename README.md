@@ -62,60 +62,21 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 
 ## Quick Start
 
-### Desktop app (recommended for end users)
+BoardRipper is primarily a **server** you run on a NAS or host machine and
+access from any browser on your network. Standalone binaries and desktop
+Electron wrappers are available as alternatives.
 
-Download the standalone Electron app from [GitHub Releases](https://github.com/AlexeyInwerp/BoardRipper/releases/latest):
-
-- **macOS**: `BoardRipper-macOS-universal-<version>.zip` — universal (Intel + Apple Silicon)
-- **Windows**: `BoardRipper-Windows-x64-<version>.zip` — x64
-
-No Docker, no setup, no command line — just extract and launch.
-
-#### ⚠️ macOS — running the unsigned app
-
-BoardRipper is currently **not code-signed or notarized**, so macOS Gatekeeper will block it on first launch with a message like:
-> "BoardRipper.app" cannot be opened because Apple cannot check it for malicious software.
-> — or —
-> "BoardRipper.app" is damaged and can't be opened. You should move it to the Trash.
-
-This is normal for unsigned apps. To run it, pick **one** of the following:
-
-**Option 1 — Remove quarantine attribute (easiest, one command):**
-```bash
-# After unzipping, before first launch:
-xattr -cr /Applications/BoardRipper.app
-# or, if you extracted it elsewhere:
-xattr -cr ~/Downloads/BoardRipper.app
-```
-Then double-click the app normally.
-
-**Option 2 — Right-click → Open (macOS < 15):**
-1. Unzip the archive
-2. Drag `BoardRipper.app` to `/Applications`
-3. **Right-click** (or Ctrl-click) `BoardRipper.app` → **Open**
-4. Click **Open** in the warning dialog
-5. After the first launch, double-click works normally
-
-> On macOS 15 Sequoia and newer, Apple removed the right-click-Open bypass. Use Option 1 (`xattr`) instead.
-
-**Option 3 — System Settings override:**
-1. Double-click the app (it will fail with a warning)
-2. Open **System Settings → Privacy & Security**
-3. Scroll to the security section and click **Open Anyway** next to the BoardRipper notice
-4. Confirm with your password
-
-#### Windows — SmartScreen
-
-Windows SmartScreen may show "Windows protected your PC" on first launch. Click **More info → Run anyway**.
-
-### Docker (recommended for NAS/server)
+### Docker (typical deployment)
 
 ```bash
 docker compose up --build -d
 # → http://localhost:8081
 ```
 
-### Standalone binary (advanced / self-hosted)
+Mount your board-file folders under `/library` to expose them in the Library
+panel — see the Docker Setup section below.
+
+### Standalone binary
 
 ```bash
 # Download boardripper-<platform>-<version>.tar.gz from GitHub Releases, then:
@@ -219,9 +180,25 @@ docker load < boardripper-docker-<new-version>.tar.gz
 docker compose down && docker compose up -d
 ```
 
-## Electron Desktop App
+## Electron Desktop Wrapper (optional)
 
-Build standalone desktop apps (no Docker needed):
+Prebuilt Electron wrappers are published with every release
+(`BoardRipper-macOS-universal-<version>.zip`, `BoardRipper-Windows-x64-<version>.zip`).
+They run the same Go backend + React frontend inside an Electron shell. The
+Docker / server path is the primary way to deploy BoardRipper; the desktop
+wrapper is here for single-machine use.
+
+The wrappers are **unsigned**, so macOS Gatekeeper and Windows SmartScreen
+will warn on first launch:
+
+- **macOS** — after unzipping, run `xattr -cr /Applications/BoardRipper.app`
+  (or wherever you extracted it), then double-click. On macOS < 15 you can
+  also right-click → Open → Open once, or use System Settings → Privacy &
+  Security → Open Anyway after the first failed launch.
+- **Windows** — SmartScreen shows "Windows protected your PC". Click
+  **More info → Run anyway**.
+
+### Building the wrappers locally
 
 ```bash
 cd desktop
