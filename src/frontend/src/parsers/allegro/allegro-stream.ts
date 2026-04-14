@@ -119,17 +119,16 @@ export class AllegroStream {
   // ── Floating-point ───────────────────────────────────────────────────────
 
   /**
-   * Reads arc center/radius: two consecutive u32 words interpreted as a
-   * big-endian IEEE 754 double (Allegro stores these in a non-standard layout).
-   * Word order: high word first, then low word — big-endian 64-bit float.
+   * Reads arc center/radius: two little-endian u32 halves ordered [high, low],
+   * reassembled as a big-endian IEEE 754 double. Each 32-bit half is stored
+   * LE in memory; the pair forms the f64 in (high, low) order.
    */
   allegroFloat(): number {
     this.ensure(8);
-    const hi = this.view.getUint32(this.pos, false);      // big-endian high word
-    const lo = this.view.getUint32(this.pos + 4, false);  // big-endian low word
+    const hi = this.view.getUint32(this.pos, true);       // LE high word
+    const lo = this.view.getUint32(this.pos + 4, true);   // LE low word
     this.pos += 8;
 
-    // Reassemble as IEEE 754 double via reusable scratch buffer
     this.tmpView.setUint32(0, hi, false);
     this.tmpView.setUint32(4, lo, false);
     return this.tmpView.getFloat64(0, false);
