@@ -420,6 +420,18 @@ function RevisionsTab() {
   );
 }
 
+let _activeSearchInput: HTMLInputElement | null = null;
+let _pendingFocus = false;
+export function focusBoardSearchInput(): void {
+  if (_activeSearchInput) {
+    _activeSearchInput.focus();
+    _activeSearchInput.select();
+    return;
+  }
+  // SearchTab not mounted yet — flag it so the mount effect focuses on arrival
+  _pendingFocus = true;
+}
+
 function SearchTab({ tabId }: { tabId: number }) {
   const { tabs, searchQuery: storeQuery } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
@@ -439,6 +451,19 @@ function SearchTab({ tabId }: { tabId: number }) {
   const [netsOpen, setNetsOpen] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Expose input to module-level ref while mounted, for external focus requests
+  useEffect(() => {
+    _activeSearchInput = inputRef.current;
+    if (_pendingFocus && inputRef.current) {
+      _pendingFocus = false;
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+    return () => {
+      if (_activeSearchInput === inputRef.current) _activeSearchInput = null;
+    };
+  }, []);
 
   // Filter out placeholder/empty names
   const isValidName = (name: string) => {
