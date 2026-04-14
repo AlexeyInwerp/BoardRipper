@@ -3,7 +3,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 
-type SidebarTab = 'layers' | 'info' | 'search';
+type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
 
 interface BoardSidebarProps {
   visible: boolean;
@@ -17,8 +17,11 @@ interface BoardSidebarProps {
 }
 
 export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
-  const { layerStates } = useBoardStore();
+  const { layerStates, board } = useBoardStore();
   const hasLayers = layerStates.length > 0;
+  const hasRevisions = (board?.revisions?.length ?? 0) > 1;
+  const hasGhosts = (board?.ghosts?.length ?? 0) > 0;
+  const showRevisionsTab = hasRevisions || hasGhosts;
   const [activeTab, setActiveTab] = useState<SidebarTab>(hasLayers ? 'layers' : 'info');
 
   // Apply external tab request (one-shot, rAF defers setState to satisfy lint rule)
@@ -30,6 +33,19 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
     });
     return () => cancelAnimationFrame(frame);
   }, [requestedTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fall back to Info if the currently selected tab is no longer available
+  // (e.g. user switched from a multi-revision board to a clean one). rAF
+  // defers the setState to the next frame to avoid cascading renders.
+  useEffect(() => {
+    if (
+      (activeTab === 'revisions' && !showRevisionsTab) ||
+      (activeTab === 'layers' && !hasLayers)
+    ) {
+      const frame = requestAnimationFrame(() => setActiveTab('info'));
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [activeTab, showRevisionsTab, hasLayers]);
 
   if (!visible) return null;
 
@@ -57,6 +73,19 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
           >
             Search
           </button>
+          {showRevisionsTab && (
+            <button
+              className={`board-sidebar-tab ${activeTab === 'revisions' ? 'active' : ''}`}
+              onClick={() => setActiveTab('revisions')}
+              title={
+                hasRevisions
+                  ? 'Multiple board revisions detected in this file'
+                  : 'Suspicious overlapping components detected'
+              }
+            >
+              Revisions{hasGhosts && <span className="tab-badge">!</span>}
+            </button>
+          )}
         </div>
         <button className="board-sidebar-close" onClick={onClose} title="Close sidebar">
           ×
@@ -66,6 +95,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
         {activeTab === 'layers' && <LayersTab />}
         {activeTab === 'info' && <InfoTab tabId={tabId} />}
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
+        {activeTab === 'revisions' && showRevisionsTab && <RevisionsTab />}
       </div>
     </div>
   );
@@ -258,6 +288,134 @@ function InfoTab({ tabId }: { tabId: number }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function RevisionsTab() {
+  const { board, fileName, hideGhosts } = useBoardStore();
+  const revisions = board?.revisions;
+  const ghosts = board?.ghosts;
+  const active = board?.activeRevision ?? (revisions && revisions.length > 0
+    ? revisions[revisions.length - 1].index
+    : 0);
+
+  // Hooks must run unconditionally — keep useMemo above any early return.
+  const activeRev = revisions?.find(r => r.index === active);
+  const activeRefdes = useMemo(
+    () => new Set(activeRev?.parts.map(p => p.name) ?? []),
+    [activeRev],
+  );
+
+  const hasRevisions = (revisions?.length ?? 0) > 1;
+  const hasGhosts = (ghosts?.length ?? 0) > 0;
+  if (!hasRevisions && !hasGhosts) {
+    return <div className="panel-empty">Nothing to report</div>;
+  }
+
+  return (
+    <div className="panel-content revisions-panel" data-testid="revisions-panel">
+      {hasRevisions && revisions && (
+        <>
+          <div className="revisions-header">
+            <div className="revisions-title">Multiple revisions</div>
+            <div className="revisions-subtitle" title={fileName}>
+              {revisions.length} revisions detected in this file
+            </div>
+          </div>
+
+          <div className="revisions-list">
+            {revisions.map(rev => {
+              const isActive = rev.index === active;
+              const refdes = new Set(rev.parts.map(p => p.name));
+              let added = 0, removed = 0;
+              for (const r of refdes) if (!activeRefdes.has(r)) added++;
+              for (const r of activeRefdes) if (!refdes.has(r)) removed++;
+              return (
+                <button
+                  key={rev.index}
+                  className={`revision-item ${isActive ? 'active' : ''}`}
+                  onClick={() => boardStore.setActiveRevision(rev.index)}
+                >
+                  <div className="revision-radio">{isActive ? '●' : '○'}</div>
+                  <div className="revision-meta">
+                    <div className="revision-label">{rev.label}</div>
+                    <div className="revision-stats">
+                      {rev.componentCount} components
+                      {!isActive && (added > 0 || removed > 0) && (
+                        <span className="revision-diff">
+                          {added > 0 && <span className="diff-add"> +{added}</span>}
+                          {removed > 0 && <span className="diff-rem"> −{removed}</span>}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="revisions-help">
+            Some CAD exports accumulate every prior revision of the board into the
+            same file. Switch revisions to compare layouts. The last revision is
+            the canonical one for this file.
+          </div>
+        </>
+      )}
+
+      {hasGhosts && ghosts && (
+        <div className="ghosts-section">
+          <div className="ghosts-header">
+            <div className="ghosts-title">⚠ Suspicious overlaps</div>
+            <div className="ghosts-subtitle">
+              {ghosts.length} component{ghosts.length === 1 ? '' : 's'} overlap
+              another part with a superset of the same nets — likely stale
+              refdes left from an earlier revision.
+            </div>
+            <button
+              className={`ghost-hide-toggle ${hideGhosts ? 'on' : ''}`}
+              onClick={() => boardStore.toggleHideGhosts()}
+              title={hideGhosts ? 'Show stale parts' : 'Hide all stale parts from the board'}
+            >
+              {hideGhosts ? '◉ Hidden' : '○ Hide all stale'}
+            </button>
+          </div>
+          <div className="ghosts-list">
+            {ghosts.map(g => (
+              <div key={`${g.partIndex}-${g.dominatorIndex}`} className="ghost-item">
+                <button
+                  className="ghost-name ghost-stale"
+                  onClick={() => {
+                    if (hideGhosts) boardStore.toggleHideGhosts();
+                    boardStore.focusPart(g.partName);
+                  }}
+                  title={hideGhosts
+                    ? 'Show & focus the stale part'
+                    : 'Focus the suspected stale part'}
+                >
+                  {g.partName}
+                </button>
+                <span className="ghost-arrow">↔</span>
+                <button
+                  className="ghost-name ghost-keep"
+                  onClick={() => boardStore.focusPart(g.dominatorName)}
+                  title="Focus the dominator part (likely the real one)"
+                >
+                  {g.dominatorName}
+                </button>
+                <span className="ghost-distance">{Math.round(g.distance)} mils</span>
+              </div>
+            ))}
+          </div>
+          <div className="revisions-help">
+            Verify against the physical board: the part on the left is likely
+            absent in real life (e.g. an older refdes the source CAD failed to
+            delete after replacement). Click either side to focus it on the
+            board, or use Hide all to filter the strikethrough parts out of
+            the rendered scene.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
