@@ -1772,10 +1772,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // leave the user at 100% — enforce the 300% floor instead.
       const alreadyInView = z >= 3.0 && matchPageNow === currentPage && items.some(isItemInView);
 
-      // If not in view but we're on the same page, try to relocate to a
-      // different match on this page that IS visible (handles "multiple U5
-      // instances on the page, user is looking at one of them" case).
-      if (!alreadyInView && matchPageNow === currentPage && !activeGroup) {
+      // On a FRESH search only, try to relocate the active match to a
+      // different visible match on the same page (handles "multiple U5
+      // instances on the page, user is looking at one of them" when Cmd+F
+      // runs a lookup from a selection). NOT on stepwise navigation — that
+      // would bounce back and forth as the user presses Down.
+      if (isNewSearch && !alreadyInView && matchPageNow === currentPage && !activeGroup) {
         for (let i = 0; i < matches.length; i++) {
           if (i === activeMatchIndex) continue;
           if (matches[i].pageIndex !== match.pageIndex) continue;
