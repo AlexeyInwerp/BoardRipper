@@ -29,3 +29,12 @@ Also: earlier pool/alpha fixes landed in cb3b309 / b77a38c / 2e155da (pre-window
   - Tile-key invariant called out
   - No-sign-flip rule
   - `pdf-page-transition.spec.ts` as exit gate for any tile/page-change fix (added in 1a4054d)
+
+---
+
+## 2026-04-15 — format-maint
+**Error:** Misleading legacy comment in BoardRenderer.ts:1108-1110
+**Context:** Auditing BVR3 flipY semantics for the consistency matrix.
+**Root cause:** Comment reads "BVR files use Y-up math convention. Screen uses Y-down. Always flip Y to convert, matching OpenBoardView's CoordToScreen (ty = -1 * ...)." — but the actual code on line 1114 returns `fmt.flipY ?? false`, and BVR1/BVR3 descriptors do not set flipY, so the renderer never flips BVR. The comment contradicts observed behavior.
+**Resolution:** Unresolved (doc-only; renderer agent should update the comment to reflect actual semantics, e.g., "Defer to descriptor flipY; BVR/BRD are screen-space Y-down and need no flip"). No data-path or rendering bug — just a stale comment that would mislead future maintainers.
+**Lesson:** When a comment disagrees with its code, trust the code and a long production history over the comment.

@@ -22,3 +22,11 @@ Append-only. Most recent entries at the bottom.
 **Commit:** uncommitted (staged, docs only)
 **Files touched:** docs/agents/{agent-master,backend,devops,format-maint,issue-triage,pdf,qa,renderer,ui}/FILE_MAP.md, docs/agents/format-maint/MEMORY.md, docs/agents/WORK_LOG.md, docs/agents/ERROR_LOG.md
 
+
+---
+
+## 2026-04-15 — format-maint
+**Action:** Resolved 3 open ambiguities in consistency matrix — Allegro traces/vias/layerNames coverage, Allegro arc sweep orientation, BVR3 flipY semantics. All three moved from PARTIAL/OPEN to CLOSED.
+**Reasoning:** (1) Audited `allegro-assembler.ts` directly — `extractTraces`/`extractVias`/`extractLayerNames` are all implemented, uniform across v16.0–17.4, and their outputs are set on `BoardData` (assembler.ts:85-87). No version gates skip them. (2) Arc sweep: `linearizeArc` (assembler.ts:330-393) correctly reads `subType & 0x40` per spec, computes wrapped sweep, steps ~10°; `parseBlock0x01` has no version-conditional around `subType` so behavior is invariant. Arcs are pre-linearized to `Trace[]` before rendering, so no renderer-side convention is involved. (3) BVR3 flipY: `bvr3-parser.ts` reads Y verbatim, descriptor defaults to false — same as BVR1 and BRD. The BoardRenderer.ts:1108 comment claiming BVR is Y-up is legacy/misleading; runtime actually does not flip and has not for a long time. Empirically correct.
+**Commit:** uncommitted (docs only, no src changes)
+**Files touched:** docs/agents/format-maint/MEMORY.md, docs/agents/WORK_LOG.md, docs/agents/ERROR_LOG.md
