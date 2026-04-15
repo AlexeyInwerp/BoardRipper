@@ -1,7 +1,7 @@
 # Backend Agent — File Map
 
-**git_hash:** a7bbb79
-**last_updated:** 2026-04-11
+**git_hash:** a5a2f8e
+**last_updated:** 2026-04-15
 
 ## Staleness Check
 
@@ -102,3 +102,10 @@ git log --oneline a7bbb79..HEAD -- src/backend/ "Board Database/"
 
 - Board database integration: 9 tasks from design spec (boarddb package, API, UI)
 - Backend test coverage expansion (databank scanner, PDF extraction, board resolution)
+
+## Recent churn (a7bbb79..a5a2f8e)
+
+- 93d78e3 — feat(cache): granular cache control — per-entry parser versioning + scoped reset UI (primarily frontend; may touch backend cache-header hints in static serving)
+
+Backend is very low-churn in this window — no direct handler/databank/boarddb/updater changes.
+

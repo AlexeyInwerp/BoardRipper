@@ -1,12 +1,12 @@
 # Format Maintenance — File Map
 
-**git_hash:** a7bbb79
-**last_updated:** 2026-04-11
+**git_hash:** a5a2f8e
+**last_updated:** 2026-04-15
 
 ## Staleness Check
 
 ```bash
-git log --oneline bd6c1dc..HEAD -- src/frontend/src/parsers/ docs/formats/
+git log --oneline a5a2f8e..HEAD -- src/frontend/src/parsers/ docs/formats/
 ```
 
 If any output, re-scan changed files before working.
@@ -17,9 +17,9 @@ If any output, re-scan changed files before working.
 
 | File | Lines | Role |
 |------|-------|------|
-| `types.ts` | 189 | BoardData, Part, Pin, Net, Nail, Trace, Via, BBox, utility functions (buildNets, computeBBox, computePartGeometry, generateSyntheticOutline, chainSegments) |
-| `registry.ts` | 151 | FormatDescriptor interface, format registration, content-based detection, `identifyFormat()` |
-| `index.ts` | 46 | Imports all formats, exports `parseBoardFile()`. Detection order: BVR1 → BVR3 → BDV → Allegro → BRD → FZ → CAD → XZZ → TVW |
+| `types.ts` | 356 | BoardData, Part, Pin, Net, Nail, Trace, Via, BBox, utility functions (buildNets, computeBBox, computePartGeometry, generateSyntheticOutline, chainSegments); now also CAD revision types |
+| `registry.ts` | 95 | FormatDescriptor interface, format registration, content-based detection, `identifyFormat()` (parserVersion tracked for cache) |
+| `index.ts` | 45 | Imports all formats, exports `parseBoardFile()`. Detection order: BVR1 → BVR3 → BDV → Allegro → BRD → FZ → CAD → XZZ → TVW |
 | `export-bvr3.ts` | 47 | Export BoardData back to BVR3 format |
 
 ### Format Descriptors (`*-format.ts`)
@@ -47,9 +47,9 @@ Each implements `FormatDescriptor`: id, name, extensions, detect(), parse refere
 | `brd-parser.ts` | 312 | Sync | Byte deobfuscation. `detectSideInversion()` heuristic. swapSides flag |
 | `bdv-parser.ts` | 267 | Sync | Per-file flipY via shoelace winding. Y-mirror detection |
 | `fz-parser.ts` | 430 | **Async** | RC6 decrypt + zlib decompress. Unit multiplier (mils or mm) |
-| `cad-parser.ts` | 255 | Sync | GenCAD 1.4 text. $SIGNALS for pin-net mapping |
-| `xzz-parser.ts` | 821 | **Async** | DES decrypt. XOR obfuscation variant |
-| `tvw-parser.ts` | 1387 | **Async** | Multi-layer binary. Traces, vias, butterfly layout. Per-layer outlines |
+| `cad-parser.ts` | 557 | Sync | GenCAD 1.4 text. $SIGNALS for pin-net mapping. Multi-revision support with delta-based dedup + shape-local recenter (see 5b319e6, 17e572e, 980aa92) |
+| `xzz-parser.ts` | 821 | **Async** | DES decrypt. XOR obfuscation variant. Butterfly fold: dual-side layout derived from signal clustering |
+| `tvw-parser.ts` | 1467 | **Async** | Multi-layer binary. Traces, vias, butterfly layout. Per-layer outlines |
 
 ### Allegro Subsystem (`allegro/`)
 
@@ -59,11 +59,11 @@ Each implements `FormatDescriptor`: id, name, extensions, detect(), parse refere
 | `allegro-assembler.ts` | 566 | Reassembles blocks → BoardData |
 | `allegro-blocks.ts` | 1774 | Block-level binary parsing |
 | `allegro-header.ts` | 317 | File header, version detection |
-| `allegro-stream.ts` | 196 | Binary stream reader utilities |
+| `allegro-stream.ts` | 195 | Binary stream reader utilities (allegroFloat endianness corrected in 5de2b24) |
 | `allegro-db.ts` | 173 | Database structure parsing |
 | `allegro-types.ts` | 1088 | Type definitions, enums, structures |
 
-**Total parsers code: 8,645 lines**
+**Total parsers code: ~9,136 lines**
 
 ## Domain: `docs/formats/`
 
@@ -104,4 +104,13 @@ Each implements `FormatDescriptor`: id, name, extensions, detect(), parse refere
 | `computeBBox(points)` | All 9 | Bounding box from point array |
 | `computePartGeometry(part)` | BRD, FZ, CAD, TVW, Allegro | Origin + bounds from pin positions |
 | `generateSyntheticOutline(points)` | FZ, CAD, Allegro | Rectangular outline from all points |
-| `chainSegments(segments)` | BVR3 only | Connect line segments into polygon |
+| `chainSegments(segments)` | BVR3, XZZ | Connect line segments into polygon |
+
+## Recent churn (a7bbb79..a5a2f8e)
+
+- 5de2b24 — fix(allegro): correct allegroFloat endianness for arc center/radius
+- 5b319e6 — feat(cad): expose accumulated revisions in BoardData + smarter shape recentering
+- 17e572e — fix(cad): delta-based shape dedup + recenter stale shape-local frames
+- 980aa92 — fix(cad): dedupe accumulated revisions in multi-rev .cad exports
+- 0355f93 — refactor: remove format overrides system, clamp sidebar width (touches parsers indirectly via registry/flipY)
+

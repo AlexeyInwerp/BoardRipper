@@ -1,7 +1,7 @@
 # Issue Triage — File Map
 
-**git_hash:** a7bbb79
-**last_updated:** 2026-04-11
+**git_hash:** a5a2f8e
+**last_updated:** 2026-04-15
 
 ## Repository
 
@@ -40,3 +40,13 @@
 - `docs/agents/WORK_LOG.md` — recent agent activity
 - `docs/agents/ERROR_LOG.md` — failures that might surface as issues
 - `docs/agents/agent-master/FILE_MAP.md` — agent → domain mapping
+
+## Recent churn (a7bbb79..a5a2f8e)
+
+Two new issues referenced by commit titles in this window (not re-snapshotted — live GitHub state should be requeried at next triage run):
+
+- #9 — "extract sidebar from Dockview into standalone fixed-width component" — CLOSED by 03c871d
+- #10 — "Part Types grouping" — CLOSED by 696cbe2
+
+No agent-infrastructure files were modified in this window; the issue snapshot above reflects 2026-04-11 state and should be refreshed on next triage pass.
+

@@ -1,7 +1,7 @@
 # Renderer Agent — File Map
 
-**git_hash:** a7bbb79
-**last_updated:** 2026-04-11
+**git_hash:** a5a2f8e
+**last_updated:** 2026-04-15
 
 ## Staleness Check
 
@@ -13,17 +13,17 @@ git log --oneline a7bbb79..HEAD -- src/frontend/src/renderer/ src/frontend/src/s
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `BoardRenderer.ts` | 3,403 | Main PixiJS Application + Viewport. Scene lifecycle, multi-tab, selection, butterfly, net lines, LoD, WebGL context recovery |
-| `board-scene.ts` | 1,358 | **Shared pure function** `buildBoardScene()` — outlines, parts, pins, labels, traces, vias. Spatial grid culling, color batching, BitmapText atlases |
+| `BoardRenderer.ts` | 3,607 | Main PixiJS Application + Viewport. Scene lifecycle, multi-tab, selection, butterfly, net lines, LoD, WebGL context recovery, board-flip keeps-view-centered (be40ade, b8faf59), ambient-dim preserves selection+labels (5c91f95, b3465ac), ghost-hide for multi-rev CAD (176cced, 32b9efc) |
+| `board-scene.ts` | 1,371 | **Shared pure function** `buildBoardScene()` — outlines, parts, pins, labels, traces, vias. Spatial grid culling, color batching, BitmapText atlases, OBB skip for near-axis-aligned parts (4df9295), `pinLabelsByPartIndex` on BoardScene (93ab00d) |
 | `mockup-data.ts` | 72 | Static fake board (U1+R1+C1) for SettingsMockup preview |
 
-**Total: 4,833 lines**
+**Total: ~5,050 lines**
 
 ## Domain: Settings Store
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `render-settings.ts` | 853 | `RenderSettings` interface (50+ fields), `renderSettingsStore` singleton, pin/part geometry helpers, net color rules, per-board overrides |
+| `render-settings.ts` | 949 | `RenderSettings` interface, `renderSettingsStore` singleton, pin/part geometry helpers, net color rules. Part Type prefixes grouped under categories (696cbe2), MOSFET→Transistor rename (a5a2f8e). Format overrides system removed (0355f93). |
 | `layer-store.ts` | 63 | `LayerState` type, `DEFAULT_LAYER_PALETTE` (15 colors), layer creation helpers |
 
 ## Key Exports
@@ -60,3 +60,17 @@ Grouped: Outline, Parts, Labels, Pins, Selection, Net Lines, Board, Zoom, Debug,
 - `BoardViewerPanel.tsx` — instantiates BoardRenderer
 - `SettingsMockup.tsx` — calls buildBoardScene() for live preview
 - `SettingsPanel.tsx` — imports renderSettingsStore
+
+## Recent churn (a7bbb79..a5a2f8e)
+
+- a5a2f8e — refactor(settings): rename Part Type MOSFET → Transistor
+- 696cbe2 — feat(settings): Part Types — group prefixes under component categories (#10)
+- b8faf59 — fix: board flip with no selection now actually flips
+- be40ade — fix: board flip keeps view centered + search nav no longer jiggles
+- 93ab00d — fix(ci): pinLabelsByPartIndex on BoardScene + remove unused isBotGfx
+- 4df9295 — fix(render): skip diagonal OBB when principal axis is near-axis-aligned
+- b3465ac — fix: raised pin labels were hidden behind selection-drawn pin circles
+- 5c91f95 — fix: selected part pins + pin labels stay dimmed under ambient dim
+- 0355f93 — refactor: remove format overrides system
+- 95c6480 — fix: remove broken momentum suppression, consistent inertia UI
+

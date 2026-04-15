@@ -1,7 +1,7 @@
 # Agent Master — File Map
 
-**git_hash:** a7bbb79
-**last_updated:** 2026-04-11
+**git_hash:** a5a2f8e
+**last_updated:** 2026-04-15
 
 ## Domain
 
@@ -53,6 +53,17 @@ docs/agents/
 | pdf | `src/frontend/src/pdf/`, `panels/PdfViewerPanel.tsx`, `store/pdf-store.ts` | Active — skill + map + memory created |
 | devops | `Dockerfile`, `.github/`, `desktop/`, `scripts/` | Active — skill + map + memory created |
 | qa | `src/frontend/tests/`, `src/backend/**_test.go` | Active — skill + map + memory created |
+
+## Recent churn (a7bbb79..a5a2f8e)
+
+Scope: `docs/agents/` only (this domain). Cross-agent churn is tracked per-agent below.
+
+- 95c6480 — fix: remove broken momentum suppression, consistent inertia UI (work-log only)
+- 681add8 — chore: update backend file map with precise line counts from explorer
+- 0f6dc47 — feat: complete agent team — all 9 agents active with skills, file maps, memories
+
+Agent infrastructure itself is low-churn; drift is coming from source code in each agent's own domain. See individual FILE_MAPs.
+
 
 ## Skill Locations
 

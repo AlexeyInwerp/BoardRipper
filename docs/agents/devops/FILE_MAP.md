@@ -1,7 +1,7 @@
 # DevOps Agent — File Map
 
-**git_hash:** a7bbb79
-**last_updated:** 2026-04-11
+**git_hash:** a5a2f8e
+**last_updated:** 2026-04-15
 
 ## Staleness Check
 
@@ -55,3 +55,13 @@ Check for NASdeploy.sh and any automation scripts.
 - Windows SmartScreen: NOT DONE
 - No health check in docker-compose (test: NONE)
 - Desktop test coverage: ZERO
+
+## Recent churn (a7bbb79..a5a2f8e)
+
+- 7e7a713 — release: v0.4.5 — cache control, CAD parser polish, real changelog in releases
+- 973d9b1 — chore: lint fix + bump eslint max-warnings to 80
+- 6699bc0 — fix: bump eslint warning threshold to 65 for CI
+- e030e64 — fix: resolve CI lint warnings — bump eslint threshold, fix unused vars
+
+Plus release tags in the window: v0.4.0, v0.4.1, v0.4.2-pdf-beta, v0.4.2-pdf-beta.1, v0.4.3, v0.4.4, v0.4.5.
+
