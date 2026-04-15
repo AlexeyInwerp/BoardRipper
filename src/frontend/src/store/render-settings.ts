@@ -277,7 +277,7 @@ export const DEFAULTS: RenderSettings = {
     { id: 'inductor',  label: 'Inductor',   prefixes: ['L', 'PL', 'B'],        color: '#7a7a7a', padShape: 'natural', bodyShape: 'square',  hidden: false },
     { id: 'diode',     label: 'Diode',      prefixes: ['D', 'PD', 'Z', 'PZ'],  color: '#2255aa', padShape: 'natural', bodyShape: 'natural', hidden: false },
     { id: 'crystal',   label: 'Crystal',    prefixes: ['Y', 'X'],              color: '#e2ee00', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'mosfet',    label: 'MOSFET',     prefixes: ['Q', 'PQ'],             color: '#0d6b55', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'transistor', label: 'Transistor', prefixes: ['Q', 'PQ'],             color: '#0d6b55', padShape: 'natural', bodyShape: 'natural', hidden: false },
     { id: 'ic',        label: 'IC',         prefixes: ['U', 'PU'],             color: '#5a2090', padShape: 'natural', bodyShape: 'natural', hidden: false },
     { id: 'connector', label: 'Connector',  prefixes: ['J', 'SW'],             color: '#2a5080', padShape: 'natural', bodyShape: 'natural', hidden: false },
     { id: 'fuse',      label: 'Fuse',       prefixes: ['F'],                   color: '#efefef', padShape: 'natural', bodyShape: 'natural', hidden: false },
@@ -701,6 +701,14 @@ function loadFromStorage(): RenderSettings {
         result.partTypes = parsed.partTypes.length > 0
           ? parsed.partTypes
           : structuredClone(DEFAULTS.partTypes);
+        // In-place rename: id 'mosfet' → 'transistor' (label too) from the
+        // first Part Types commit. Preserves user customizations.
+        for (const t of result.partTypes) {
+          if (t.id === 'mosfet') {
+            t.id = 'transistor';
+            if (t.label === 'MOSFET') t.label = 'Transistor';
+          }
+        }
       } else {
         // Legacy format — migrate prefix-keyed overrides into types.
         result.partTypes = migrateLegacyPartTypes(parsed.partTypeOverrides);
