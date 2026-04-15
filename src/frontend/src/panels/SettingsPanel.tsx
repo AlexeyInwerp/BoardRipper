@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useMemo, useEffect, createContext, useContext } from 'react';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
-import type { RenderSettings, LabelSize, NetColorRule, PartTypeOverride, PadShape, BodyShape } from '../store/render-settings';
+import type { RenderSettings, LabelSize, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
@@ -253,98 +253,105 @@ function NcNetPatternsSection({ patterns, onChange }: { patterns: string[]; onCh
   );
 }
 
-// ---- Part type overrides ----
+// ---- Part types (grouped component categories, issue #10) ----
 
-type OverrideActions = {
-  update: (key: string, o: PartTypeOverride) => void;
-  rename: (oldKey: string, newKey: string) => void;
-  remove: (key: string) => void;
-  add: () => void;
+type PartTypeActions = {
+  update: (id: string, patch: Partial<PartType>) => void;
 };
-
-const EMPTY_OVERRIDE: PartTypeOverride = { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '' };
 
 const PAD_SHAPES: PadShape[]  = ['natural', 'round', 'square'];
 const BODY_SHAPES: BodyShape[] = ['natural', 'rect', 'square'];
 
-function OverrideRow({ rowKey, override: o, actions }: { rowKey: string; override: PartTypeOverride; actions: OverrideActions }) {
-  const [editKey, setEditKey] = useState(rowKey);
+function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeActions }) {
+  // Track the prefix text locally so the user can type commas/spaces freely.
+  const [editPrefixes, setEditPrefixes] = useState(t.prefixes.join(', '));
 
-  // Keep local edit key in sync if parent renames it externally
-  const prevKeyRef = useRef(rowKey);
-  if (prevKeyRef.current !== rowKey) { prevKeyRef.current = rowKey; setEditKey(rowKey); }
+  // Keep local text in sync if the parent list changes (e.g. reset).
+  const prevJoinedRef = useRef(t.prefixes.join(', '));
+  const joined = t.prefixes.join(', ');
+  if (prevJoinedRef.current !== joined) {
+    prevJoinedRef.current = joined;
+    setEditPrefixes(joined);
+  }
 
-  const commitRename = () => {
-    const trimmed = editKey.trim().toUpperCase();
-    if (!trimmed) { setEditKey(rowKey); return; }
-    if (trimmed !== rowKey) actions.rename(rowKey, trimmed);
+  const commitPrefixes = () => {
+    const parsed = editPrefixes
+      .split(/[\s,]+/)
+      .map(p => p.trim().toUpperCase())
+      .filter(p => p.length > 0);
+    // Deduplicate while preserving order.
+    const seen = new Set<string>();
+    const unique = parsed.filter(p => seen.has(p) ? false : (seen.add(p), true));
+    if (unique.join(',') !== t.prefixes.join(',')) {
+      actions.update(t.id, { prefixes: unique });
+    }
+    setEditPrefixes(unique.join(', '));
   };
 
   return (
-    <div className="part-type-override-row">
+    <div className="part-type-row">
+      <span className="pt-label" title={t.id}>{t.label}</span>
       <input
-        className="pto-key-input"
-        value={editKey}
-        onChange={e => setEditKey(e.target.value.toUpperCase())}
-        onBlur={commitRename}
-        onKeyDown={e => e.key === 'Enter' && commitRename()}
-        title="Prefix mask (e.g. R, FB, SW)"
-        maxLength={8}
+        className="pt-prefixes-input"
+        value={editPrefixes}
+        onChange={e => setEditPrefixes(e.target.value)}
+        onBlur={commitPrefixes}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        title="Comma-separated prefixes (e.g. R, PR, PH)"
+        placeholder="R, PR, PH"
       />
-      <div className="pto-col-pad settings-btn-group">
+      <div className="pt-col-pad settings-btn-group">
         {PAD_SHAPES.map(shape => (
           <button key={shape}
-            className={`settings-btn-option${o.padShape === shape ? ' active' : ''}`}
-            onClick={() => actions.update(rowKey, { ...o, padShape: shape })}
+            className={`settings-btn-option${t.padShape === shape ? ' active' : ''}`}
+            onClick={() => actions.update(t.id, { padShape: shape })}
             title={shape}
           >
             {shape === 'natural' ? '~' : shape === 'round' ? '●' : '■'}
           </button>
         ))}
       </div>
-      <div className="pto-col-body settings-btn-group">
+      <div className="pt-col-body settings-btn-group">
         {BODY_SHAPES.map(shape => (
           <button key={shape}
-            className={`settings-btn-option${o.bodyShape === shape ? ' active' : ''}`}
-            onClick={() => actions.update(rowKey, { ...o, bodyShape: shape })}
+            className={`settings-btn-option${t.bodyShape === shape ? ' active' : ''}`}
+            onClick={() => actions.update(t.id, { bodyShape: shape })}
             title={shape}
           >
             {shape === 'natural' ? '~' : shape === 'rect' ? '▭' : '□'}
           </button>
         ))}
       </div>
-      <span className="pto-col-color">
+      <span className="pt-col-color">
         <input type="color" className="pto-color-input"
-          value={o.color || '#000000'}
-          onChange={e => actions.update(rowKey, { ...o, color: e.target.value })}
+          value={t.color || '#000000'}
+          onChange={e => actions.update(t.id, { color: e.target.value })}
         />
       </span>
-      <span className="pto-col-hide">
-        <input type="checkbox" checked={o.hidden}
-          onChange={e => actions.update(rowKey, { ...o, hidden: e.target.checked })}
+      <span className="pt-col-hide">
+        <input type="checkbox" checked={t.hidden}
+          onChange={e => actions.update(t.id, { hidden: e.target.checked })}
         />
       </span>
-      <button className="pto-remove-btn" onClick={() => actions.remove(rowKey)} title="Remove">×</button>
     </div>
   );
 }
 
-function PartTypeOverridesSection({ overrides, actions }: { overrides: Record<string, PartTypeOverride>; actions: OverrideActions }) {
+function PartTypesSection({ types, actions }: { types: PartType[]; actions: PartTypeActions }) {
   return (
-    <div className="part-type-overrides">
-      <div className="part-type-overrides-header">
-        <span>Mask</span>
+    <div className="part-types">
+      <div className="part-types-header">
+        <span>Type</span>
+        <span>Prefixes</span>
         <span>Pads</span>
         <span>Body</span>
         <span>Fill</span>
         <span>Hide</span>
-        <span></span>
       </div>
-      {Object.entries(overrides).map(([key, o]) => (
-        <OverrideRow key={key} rowKey={key} override={o} actions={actions} />
+      {types.map(t => (
+        <PartTypeRow key={t.id} type={t} actions={actions} />
       ))}
-      <button className="color-rule-add-btn pto-add-btn" onClick={actions.add} title="Add override">+</button>
-      <div className="color-rule-hint">Prefix match, longest wins (e.g. FB beats F for FB1).</div>
+      <div className="color-rule-hint">Longest prefix wins across all types (e.g. FB beats F for FB1).</div>
     </div>
   );
 }
@@ -1004,41 +1011,11 @@ export function SettingsPanel() {
     setDirty(true);
   }, []);
 
-  const overrideActions: OverrideActions = useMemo(() => ({
-    update(key, o) {
+  const partTypeActions: PartTypeActions = useMemo(() => ({
+    update(id, patch) {
       setDraft(prev => {
-        const next = { ...prev, partTypeOverrides: { ...prev.partTypeOverrides, [key]: o } };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-    rename(oldKey, newKey) {
-      setDraft(prev => {
-        const entries = Object.entries(prev.partTypeOverrides);
-        const idx = entries.findIndex(([k]) => k === oldKey);
-        if (idx === -1 || prev.partTypeOverrides[newKey]) return prev;
-        entries[idx] = [newKey, entries[idx][1]];
-        const next = { ...prev, partTypeOverrides: Object.fromEntries(entries) };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-    remove(key) {
-      setDraft(prev => {
-        const { [key]: _, ...rest } = prev.partTypeOverrides;
-        const next = { ...prev, partTypeOverrides: rest };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-    add() {
-      setDraft(prev => {
-        let key = 'NEW'; let i = 1;
-        while (prev.partTypeOverrides[key]) key = `NEW${i++}`;
-        const next = { ...prev, partTypeOverrides: { ...prev.partTypeOverrides, [key]: { ...EMPTY_OVERRIDE } } };
+        const partTypes = prev.partTypes.map(t => t.id === id ? { ...t, ...patch } : t);
+        const next = { ...prev, partTypes };
         if (previewingRef.current) renderSettingsStore.applySettings(next);
         return next;
       });
@@ -1207,9 +1184,9 @@ export function SettingsPanel() {
           title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
       </CollapsibleSection>
 
-      <CollapsibleSection id="partTypeOverrides" title="Part Type Overrides" isOpen={openSections.has('partTypeOverrides')}
+      <CollapsibleSection id="partTypeOverrides" title="Part Types" isOpen={openSections.has('partTypeOverrides')}
         onToggle={toggleSection} sectionRef={partTypeOverridesRef} isFocused={focusedSection === 'partTypeOverrides'}>
-        <PartTypeOverridesSection overrides={draft.partTypeOverrides} actions={overrideActions} />
+        <PartTypesSection types={draft.partTypes} actions={partTypeActions} />
       </CollapsibleSection>
 
       <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}

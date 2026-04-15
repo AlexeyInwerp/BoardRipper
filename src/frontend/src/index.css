@@ -4304,6 +4304,87 @@ html, body, #root {
   font-size: 0.8em;
 }
 
+/* Part Types (grouped — issue #10) */
+.part-types {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.part-types-header,
+.part-type-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 80px 78px 26px 26px;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+}
+
+.part-types-header {
+  font-size: 0.72em;
+  color: var(--text-secondary);
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.pt-label {
+  font-size: 0.82em;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-prefixes-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.78em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.pt-prefixes-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pt-col-pad,
+.pt-col-body {
+  margin-top: 0 !important;
+}
+
+.pt-col-color {
+  display: flex;
+  justify-content: center;
+}
+
+.pt-col-hide {
+  display: flex;
+  justify-content: center;
+}
+
+.pt-col-hide input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+}
+
+.part-type-row .settings-btn-group {
+  margin-top: 0;
+}
+
+.part-type-row .settings-btn-option {
+  padding: 2px 4px;
+  font-size: 0.8em;
+}
+
 /* PDF Corrector flyout */
 .pdf-corrector-wrapper {
   position: relative;

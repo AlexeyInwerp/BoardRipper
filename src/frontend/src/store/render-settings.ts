@@ -14,13 +14,33 @@ export type PadShape = 'natural' | 'round' | 'square';
  */
 export type BodyShape = 'natural' | 'rect' | 'square';
 
-/** Per-component-type rendering overrides (keyed by first letter of part name) */
+/** Per-component-type rendering overrides — shape returned by resolvePartTypeOverride */
 export interface PartTypeOverride {
   padShape: PadShape;
   bodyShape: BodyShape;
   hidden: boolean;
   /** Fill color as CSS hex string (e.g. '#7a7a7a'). Empty = no fill. */
   color: string;
+}
+
+/**
+ * Part Type — groups one or more reference-designator prefixes under a named
+ * category (Resistor, Capacitor, …). A single color / shape override applies
+ * to every prefix in the group. Replaces the legacy prefix-keyed overrides
+ * map (see GitHub issue #10).
+ */
+export interface PartType {
+  /** Stable id — used for migration + rule ordering. */
+  id: string;
+  /** Display label shown in the Settings UI. */
+  label: string;
+  /** Uppercase prefix list (longest-match wins at resolve time). */
+  prefixes: string[];
+  /** Fill color as CSS hex (empty = no fill). */
+  color: string;
+  padShape: PadShape;
+  bodyShape: BodyShape;
+  hidden: boolean;
 }
 
 export interface NetColorRule {
@@ -147,8 +167,8 @@ export interface RenderSettings {
    *  Patterns are case-insensitive. Supports trailing `*` wildcard (e.g. `NC_*` matches `NC_PAD`). */
   ncNetPatterns: string[];
 
-  /** Per-type rendering overrides, keyed by uppercase first letter (e.g. 'L', 'R', 'C') */
-  partTypeOverrides: Record<string, PartTypeOverride>;
+  /** Part Types — ordered list of component categories with prefix rules. */
+  partTypes: PartType[];
 }
 
 /** Check if a net name matches any NC (no-connect) pattern in settings.
@@ -251,15 +271,19 @@ export const DEFAULTS: RenderSettings = {
 
   ncNetPatterns: ['NC', 'NC_*', 'N/C', 'NO CONNECT'],
 
-  partTypeOverrides: {
-    R: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#222222' },
-    C: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#9a5a35' },
-    L: { padShape: 'natural', bodyShape: 'square',  hidden: false, color: '#7a7a7a' },
-    U: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#5a2090' },
-    Q: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#0d6b55' },
-    D: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#2255aa' },
-    J: { padShape: 'natural', bodyShape: 'natural', hidden: false, color: '#2a5080' },
-  },
+  partTypes: [
+    { id: 'resistor',  label: 'Resistor',   prefixes: ['R', 'PR', 'PH'],       color: '#222222', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'capacitor', label: 'Capacitor',  prefixes: ['C', 'PC'],             color: '#9a5a35', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'inductor',  label: 'Inductor',   prefixes: ['L', 'PL', 'B'],        color: '#7a7a7a', padShape: 'natural', bodyShape: 'square',  hidden: false },
+    { id: 'diode',     label: 'Diode',      prefixes: ['D', 'PD', 'Z', 'PZ'],  color: '#2255aa', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'crystal',   label: 'Crystal',    prefixes: ['Y', 'X'],              color: '#e2ee00', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'mosfet',    label: 'MOSFET',     prefixes: ['Q', 'PQ'],             color: '#0d6b55', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'ic',        label: 'IC',         prefixes: ['U', 'PU'],             color: '#5a2090', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'connector', label: 'Connector',  prefixes: ['J', 'SW'],             color: '#2a5080', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'fuse',      label: 'Fuse',       prefixes: ['F'],                   color: '#efefef', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'testpoint', label: 'Test Point', prefixes: ['TP'],                  color: '#4a9060', padShape: 'round',   bodyShape: 'natural', hidden: false },
+    { id: 'shield',    label: 'Shield',     prefixes: ['SH'],                  color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false },
+  ],
 };
 
 /** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */
@@ -544,17 +568,29 @@ export function computePartRenderPoly(
   return computeDiagonalOBB(part.pins, s);
 }
 
-/** Resolve the matching part-type override for a part name (prefix match, longest key wins) */
+/** Resolve the matching part-type override for a part name by scanning every
+ *  prefix in every PartType (longest prefix wins, ties broken by type order). */
 export function resolvePartTypeOverride(partName: string, s: RenderSettings): PartTypeOverride | undefined {
   const upper = partName.toUpperCase();
-  let best: PartTypeOverride | undefined;
+  let bestType: PartType | undefined;
   let bestLen = 0;
-  for (const [key, ov] of Object.entries(s.partTypeOverrides)) {
-    if (key && upper.startsWith(key.toUpperCase()) && key.length > bestLen) {
-      bestLen = key.length; best = ov;
+  for (const type of s.partTypes) {
+    for (const rawPrefix of type.prefixes) {
+      const p = rawPrefix.trim().toUpperCase();
+      if (!p) continue;
+      if (upper.startsWith(p) && p.length > bestLen) {
+        bestLen = p.length;
+        bestType = type;
+      }
     }
   }
-  return best;
+  if (!bestType) return undefined;
+  return {
+    padShape: bestType.padShape,
+    bodyShape: bestType.bodyShape,
+    hidden: bestType.hidden,
+    color: bestType.color,
+  };
 }
 
 /**
@@ -631,18 +667,44 @@ function saveBoardOverridesMap(m: Record<string, Partial<RenderSettings>>) {
 
 // ── Global settings persistence ──────────────────────────────────────────
 
+/** Migrate legacy `partTypeOverrides` (prefix-keyed map) into the new
+ *  `partTypes` array. For each default type, copy color/shape from the
+ *  first matching legacy entry so user customizations survive. */
+function migrateLegacyPartTypes(
+  legacy: Record<string, Partial<PartTypeOverride>> | undefined,
+): PartType[] {
+  const types = structuredClone(DEFAULTS.partTypes);
+  if (!legacy) return types;
+  for (const type of types) {
+    for (const prefix of type.prefixes) {
+      const old = legacy[prefix] ?? legacy[prefix.toUpperCase()];
+      if (old) {
+        if (old.color) type.color = old.color;
+        if (old.padShape) type.padShape = old.padShape;
+        if (old.bodyShape) type.bodyShape = old.bodyShape;
+        if (typeof old.hidden === 'boolean') type.hidden = old.hidden;
+        break;
+      }
+    }
+  }
+  return types;
+}
+
 function loadFromStorage(): RenderSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       const result: RenderSettings = { ...structuredClone(DEFAULTS), ...parsed };
-      // Deep-merge partTypeOverrides so new default entries survive old stored data.
-      const mergedOverrides: Record<string, PartTypeOverride> = structuredClone(DEFAULTS.partTypeOverrides);
-      for (const [key, stored] of Object.entries(parsed.partTypeOverrides ?? {})) {
-        mergedOverrides[key] = { ...(mergedOverrides[key] ?? {} as PartTypeOverride), ...(stored as PartTypeOverride) };
+      if (Array.isArray(parsed.partTypes)) {
+        // New format — trust stored list but fall back to defaults if empty.
+        result.partTypes = parsed.partTypes.length > 0
+          ? parsed.partTypes
+          : structuredClone(DEFAULTS.partTypes);
+      } else {
+        // Legacy format — migrate prefix-keyed overrides into types.
+        result.partTypes = migrateLegacyPartTypes(parsed.partTypeOverrides);
       }
-      result.partTypeOverrides = mergedOverrides;
       return result;
     }
   } catch { /* ignore corrupt data */ }
@@ -659,15 +721,11 @@ function saveToStorage(s: RenderSettings) {
 function mergeSettings(global: RenderSettings, overrides: Partial<RenderSettings>): RenderSettings {
   if (!overrides || Object.keys(overrides).length === 0) return global;
   const merged = { ...global, ...overrides };
-  // Deep-merge partTypeOverrides when both sides have them
-  if (overrides.partTypeOverrides) {
-    const base: Record<string, PartTypeOverride> = structuredClone(global.partTypeOverrides);
-    for (const [key, ov] of Object.entries(overrides.partTypeOverrides)) {
-      base[key] = { ...(base[key] ?? {} as PartTypeOverride), ...ov };
-    }
-    merged.partTypeOverrides = base;
+  // partTypes: board overrides fully replace the global list when present
+  // (same "replace entirely" semantics as netColorRules).
+  if (overrides.partTypes) {
+    merged.partTypes = structuredClone(overrides.partTypes);
   }
-  // Deep-merge netColorRules: board overrides replace entirely (not merged per-rule)
   return merged;
 }
 
@@ -839,7 +897,7 @@ export function exportSettingsAsDefaults(): string {
   const lines: string[] = ['export const DEFAULTS: RenderSettings = {'];
 
   for (const [key, val] of Object.entries(s)) {
-    if (key === 'netColorRules' || key === 'ncNetPatterns' || key === 'partTypeOverrides') continue;
+    if (key === 'netColorRules' || key === 'ncNetPatterns' || key === 'partTypes') continue;
     if (typeof val === 'string') {
       lines.push(`  ${key}: '${val}',`);
     } else if (typeof val === 'number' && key.toLowerCase().includes('color') && val > 255) {
@@ -861,13 +919,14 @@ export function exportSettingsAsDefaults(): string {
   lines.push('');
   lines.push(`  ncNetPatterns: ${JSON.stringify(s.ncNetPatterns)},`);
 
-  // partTypeOverrides
+  // partTypes
   lines.push('');
-  lines.push('  partTypeOverrides: {');
-  for (const [key, ov] of Object.entries(s.partTypeOverrides)) {
-    lines.push(`    ${key}: { padShape: '${ov.padShape}', bodyShape: '${ov.bodyShape}', hidden: ${ov.hidden}, color: '${ov.color}' },`);
+  lines.push('  partTypes: [');
+  for (const t of s.partTypes) {
+    const prefixes = JSON.stringify(t.prefixes);
+    lines.push(`    { id: '${t.id}', label: '${t.label}', prefixes: ${prefixes}, color: '${t.color}', padShape: '${t.padShape}', bodyShape: '${t.bodyShape}', hidden: ${t.hidden} },`);
   }
-  lines.push('  },');
+  lines.push('  ],');
   lines.push('};');
 
   const result = lines.join('\n');
