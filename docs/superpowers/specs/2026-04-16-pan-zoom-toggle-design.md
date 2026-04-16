@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-16
 **Status:** Draft — awaiting user review
-**Scope:** Small, additive UI change. No refactors. The existing Settings-panel binding editor is left untouched.
+**Scope:** Small, additive UI change. No refactors. The existing 3-slot binding editor in Settings is left untouched; a single new checkbox ("Mouse wheel detection") is added adjacent to it in the same subsection.
 
 ## Problem
 
@@ -22,10 +22,11 @@ The only way to change either is to open Settings. That is too far for a setting
 
 ## Non-Goals
 
-- Changing the Settings-panel `BoardScrollBindingsEditor` ([SettingsPanel.tsx:760](../../../src/frontend/src/panels/SettingsPanel.tsx#L760)) or the 3-slot PDF binding UI.
+- Changing the `BoardScrollBindingsEditor` ([SettingsPanel.tsx:760](../../../src/frontend/src/panels/SettingsPanel.tsx#L760)) or the 3-slot PDF binding UI itself. One sibling checkbox row is added in the same subsection for the wheel-detection toggle — no edits to the existing editor component.
 - Unifying the two storage mechanisms (`twoFingerPan` in render-settings vs. `boardripper-pdf-scroll-bindings` localStorage key). Two stores remain; the button writes to both.
 - New keyboard shortcut (can be added later).
 - Introducing a "canonical pair" concept. The button is an **inverter**, not a preset.
+- Per-event device profiling beyond a conservative "looks like a classic mouse wheel" heuristic (see Safety net below).
 
 ## Design
 
@@ -131,6 +132,55 @@ Reusing the `board-netlines-toggle` class keeps it visually uniform with its nei
 
 14px icon to match the other `pdf-toolbar-btn` buttons.
 
+### Safety net for mouse-wheel events
+
+Pan-on-bare on a physical mouse wheel produces jerky 100px-per-notch pan jumps — the "looks and acts very dumb" case. To prevent it without weakening the explicit toggle, a narrow per-event heuristic can override pan→zoom only for events that unmistakably look like a classic mouse wheel.
+
+**New setting:** `wheelDetection: boolean` added to `RenderSettings` in [render-settings.ts](../../../src/frontend/src/store/render-settings.ts). Default: `true`. Persisted with the rest of render-settings.
+
+**Heuristic (single utility function):**
+
+```ts
+// Returns true if the event has the signature of a classic mouse wheel —
+// large, integer, single-axis, no pinch modifier. Fine-grained scroll wheels
+// (Logitech MX, Magic Mouse) and trackpad two-finger gestures do NOT match.
+export function looksLikeMouseWheel(e: WheelEvent): boolean {
+  return (
+    !e.ctrlKey &&
+    e.deltaX === 0 &&
+    Math.abs(e.deltaY) >= 50 &&
+    Number.isInteger(e.deltaY)
+  );
+}
+```
+
+**Application rule** (in both wheel handlers):
+- If `wheelDetection === false` → never override, honor the configured binding exactly.
+- If `wheelDetection === true` and the resolved action is `pan` and `looksLikeMouseWheel(e)` → treat this single event as `zoom` instead.
+- Zoom mode is never overridden. Trackpad pinch (`ctrlKey=true`) is never overridden (the existing hard-coded pinch-always-zooms rule in PDF stays as-is).
+- The override does not write anything back to settings; it only reinterprets a single event.
+
+**Where the hook lives:**
+- **PDF**: inside the existing `handleWheel` in [PdfViewerPanel.tsx:2067](../../../src/frontend/src/panels/PdfViewerPanel.tsx#L2067), after `action` is resolved from bindings. If the safety net fires, substitute `'zoom'` for the switch branch.
+- **BoardViewer**: pixi-viewport's `.drag({ wheel: true })` + `.wheel()` plugins handle the wheel event internally. The existing `installShiftWheelHandler` in [BoardRenderer](../../../src/frontend/src/renderer/BoardRenderer.ts#L1980) pattern (capture-phase interceptor) is extended: when `twoFingerPan && wheelDetection && looksLikeMouseWheel(e)`, the interceptor swallows the event and forwards it to pixi-viewport's zoom handler directly, or applies zoom manually via `viewport.zoomPercent`. Concrete wiring is an implementation detail for the plan phase.
+
+**Settings-panel checkbox** — sibling row inside the existing "Scroll wheel behavior" subsection ([SettingsPanel.tsx:1239-1241](../../../src/frontend/src/panels/SettingsPanel.tsx#L1239-L1241)):
+
+```tsx
+<div className="settings-subsection-label">Scroll wheel behavior</div>
+<p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
+<BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateDraft} />
+<Toggle
+  label="Mouse wheel detection"
+  value={draft.wheelDetection}
+  field="wheelDetection"
+  onUpdate={updateDraft}
+  title="When scroll is set to pan, override mouse-wheel events to zoom instead. Avoids jerky single-axis pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
+/>
+```
+
+Uses the existing `Toggle` component — no new UI primitives.
+
 ### Reactivity
 
 - BoardViewer already reads render-settings through its existing subscription — no new wiring needed beyond consuming `twoFingerPan`.
@@ -144,6 +194,9 @@ Reusing the `board-netlines-toggle` class keeps it visually uniform with its nei
 2. **Manual (preservation)**: in Settings, configure PDF bindings to `{ bare: 'pan', shift: 'switch', meta: 'zoom' }`. Click the button. Expect `{ bare: 'switch', shift: 'pan', meta: 'zoom' }` — `meta` untouched.
 3. **Fresh install**: clear `localStorage` + render-settings store, reload; both viewers start in pan-on-bare; single click on either button flips both to zoom-on-bare.
 4. **Settings-editor coexistence**: change binding via Settings editor → button icon updates. Click button → Settings editor shows swapped values if reopened.
+5. **Wheel detection ON (default)**: pan mode + a synthesized wheel event with `deltaY: 100, deltaX: 0` → zooms (override fires). Pan mode + `deltaY: 8.3, deltaX: 2` → pans (override skipped, trackpad-like).
+6. **Wheel detection OFF**: uncheck the setting. Pan mode + `deltaY: 100, deltaX: 0` → pans (override disabled, user's explicit choice honored).
+7. **Trackpad pinch**: event with `ctrlKey: true` → always zooms regardless of mode or detection setting (existing hard rule, unchanged).
 
 ## Rollout
 
