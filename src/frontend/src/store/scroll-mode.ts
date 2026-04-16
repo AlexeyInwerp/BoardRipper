@@ -36,19 +36,42 @@ export function invertScrollBindings(): void {
  * Used by the safety net to avoid jerky pan when the configured mode is
  * pan-on-bare but the user is actually on a scroll wheel.
  *
- * Conservative: only fires for obviously-discrete wheels.
- *   - no ctrlKey (pinch-to-zoom handled elsewhere)
- *   - no deltaX (trackpads often emit both axes)
- *   - |deltaY| >= 50 (fine-grained wheels stay under this threshold)
- *   - integer deltaY (macOS trackpads commonly emit fractional values)
+ * Strategy — per-event signature plus a "trackpad mode" time-decay flag:
+ * any event that is clearly not a classic wheel (fractional deltaY, non-zero
+ * deltaX, ctrlKey=pinch, small deltaY) flips trackpad mode on for 500 ms.
+ * While the flag is active, even events that look wheel-shaped in isolation
+ * are treated as trackpad — this suppresses the misclassification that
+ * happens in the middle of a fast trackpad gesture where individual events
+ * occasionally hit all four wheel-signature conditions.
  */
+const TRACKPAD_MODE_MS = 500;
+let trackpadModeUntil = 0;
+
 export function looksLikeMouseWheel(e: WheelEvent): boolean {
-  return (
-    !e.ctrlKey &&
-    e.deltaX === 0 &&
-    Math.abs(e.deltaY) >= 50 &&
-    Number.isInteger(e.deltaY)
-  );
+  const now = performance.now();
+
+  // Trackpad-signature detection: any of these → definitely not a classic wheel.
+  const trackpadSignature =
+    !Number.isInteger(e.deltaY) ||
+    e.deltaX !== 0 ||
+    e.ctrlKey ||
+    Math.abs(e.deltaY) < 50;
+
+  if (trackpadSignature) {
+    trackpadModeUntil = now + TRACKPAD_MODE_MS;
+    return false;
+  }
+
+  // Tail of a recent trackpad gesture — do not override pan.
+  if (now < trackpadModeUntil) return false;
+
+  // Looks like an isolated classic wheel click.
+  return true;
+}
+
+/** Test/diagnostic helper: reset trackpad-mode state between scenarios. */
+export function _resetTrackpadMode(): void {
+  trackpadModeUntil = 0;
 }
 
 /** React hook returning the current bare scroll action. Re-renders on change. */
