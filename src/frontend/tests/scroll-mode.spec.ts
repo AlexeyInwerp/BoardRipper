@@ -79,20 +79,27 @@ test.describe('Pan/zoom scroll-mode toggle', () => {
 });
 
 test.describe('looksLikeMouseWheel heuristic', () => {
-  test('classifies wheel events correctly in browser context', async ({ page }) => {
+  test('classifies isolated events by signature', async ({ page }) => {
     await page.goto('/');
 
     const results = await page.evaluate(async () => {
       const mod = await import('/src/store/scroll-mode.ts');
       const mk = (opts: WheelEventInit) => new WheelEvent('wheel', opts);
-      return {
-        classicWheel: mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 0 })),
-        bigNegative:  mod.looksLikeMouseWheel(mk({ deltaY: -120, deltaX: 0 })),
-        smallWheel:   mod.looksLikeMouseWheel(mk({ deltaY: 10, deltaX: 0 })),
-        withDeltaX:   mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 5 })),
-        pinchCtrl:    mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 0, ctrlKey: true })),
-        fractional:   mod.looksLikeMouseWheel(mk({ deltaY: 83.3, deltaX: 0 })),
-      };
+
+      const out: Record<string, boolean> = {};
+      mod._resetTrackpadMode();
+      out.classicWheel = mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 0 }));
+      mod._resetTrackpadMode();
+      out.bigNegative  = mod.looksLikeMouseWheel(mk({ deltaY: -120, deltaX: 0 }));
+      mod._resetTrackpadMode();
+      out.smallWheel   = mod.looksLikeMouseWheel(mk({ deltaY: 10, deltaX: 0 }));
+      mod._resetTrackpadMode();
+      out.withDeltaX   = mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 5 }));
+      mod._resetTrackpadMode();
+      out.pinchCtrl    = mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 0, ctrlKey: true }));
+      mod._resetTrackpadMode();
+      out.fractional   = mod.looksLikeMouseWheel(mk({ deltaY: 83.3, deltaX: 0 }));
+      return out;
     });
 
     expect(results.classicWheel).toBe(true);
@@ -101,5 +108,24 @@ test.describe('looksLikeMouseWheel heuristic', () => {
     expect(results.withDeltaX).toBe(false);
     expect(results.pinchCtrl).toBe(false);
     expect(results.fractional).toBe(false);
+  });
+
+  test('trackpad-mode latch suppresses wheel classification for 500ms', async ({ page }) => {
+    await page.goto('/');
+
+    const results = await page.evaluate(async () => {
+      const mod = await import('/src/store/scroll-mode.ts');
+      const mk = (opts: WheelEventInit) => new WheelEvent('wheel', opts);
+      mod._resetTrackpadMode();
+
+      // A trackpad-shaped event primes trackpad mode.
+      const primer = mod.looksLikeMouseWheel(mk({ deltaY: 7.3, deltaX: 0 }));
+      // Immediately after, a wheel-shaped event must not classify as wheel.
+      const masked = mod.looksLikeMouseWheel(mk({ deltaY: 100, deltaX: 0 }));
+      return { primer, masked };
+    });
+
+    expect(results.primer).toBe(false);
+    expect(results.masked).toBe(false);
   });
 });
