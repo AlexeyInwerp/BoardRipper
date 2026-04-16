@@ -13,6 +13,7 @@ import { ContextMenu } from './components/ContextMenu';
 import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide } from './components/Sidebar';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
+import { BoardTab } from './components/BoardTab';
 import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
@@ -24,6 +25,10 @@ import { getAllExtensions, getFileExtension } from './parsers';
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
   pdfViewer: (props) => <PdfViewerPanel {...props} />,
+};
+
+const tabComponents = {
+  boardTab: BoardTab,
 };
 
 const BOARD_EXTS = new Set<string>(); // populated lazily
@@ -175,6 +180,7 @@ function App() {
             className="dockview-theme-dark"
             onReady={onReady}
             components={components}
+            tabComponents={tabComponents}
             disableFloatingGroups={false}
           />
         </div>

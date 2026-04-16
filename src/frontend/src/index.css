@@ -1944,12 +1944,21 @@ html, body, #root {
   backdrop-filter: blur(4px);
 }
 
-.board-link-indicator {
-  font-size: 14px;
+.board-tab-link-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  margin-right: 5px;
+  border-radius: 8px;
+  background: rgba(0, 255, 204, 0.18);
   color: var(--accent);
-  padding: 0 6px;
-  pointer-events: none;
-  line-height: 28px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
 }
 
 .board-netlines-toggle {

@@ -204,14 +204,6 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       </div>
       <div className="board-status-indicators">
         <div className="board-button-group">
-          {linkedPdfs.length > 0 && (
-            <div
-              className="board-link-indicator"
-              title={`Linked PDFs: ${linkedPdfs.join(', ')}`}
-            >
-              ∞{linkedPdfs.length > 1 ? ` ${linkedPdfs.length}` : ''}
-            </div>
-          )}
           <button
             className={`board-netlines-toggle ${followPdf ? 'active' : ''}`}
             onClick={() => boardStore.toggleFollowPdf()}
