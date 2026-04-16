@@ -11,114 +11,121 @@ BoardViewer and PDF viewer have **opposite defaults** for what bare scroll does:
 - BoardViewer ([render-settings.ts:268](../../../src/frontend/src/store/render-settings.ts#L268)): `twoFingerPan: true` → bare scroll = **pan**, Shift+scroll = zoom
 - PDF ([PdfViewerPanel.tsx:53](../../../src/frontend/src/panels/PdfViewerPanel.tsx#L53)): `DEFAULT_SCROLL_BINDINGS = { bare: 'zoom', shift: 'pan', meta: 'switch' }` → bare scroll = **zoom**
 
-The only way to change either is to open Settings. That is too far for a setting users sometimes flip multiple times per session (e.g. reviewing a schematic on a mouse, then switching to a trackpad).
+The only way to change either is to open Settings. That is too far for a setting users sometimes flip multiple times per session — e.g. a laptop trackpad with a broken pinch gesture is suddenly unusable for zoom and the user wants scroll-to-zoom *now*.
 
 ## Goals
 
-1. Make the two viewers' defaults consistent.
-2. Give the user a **one-click toggle** in both the BoardViewer toolbar and the PDF toolbar that flips between "scroll = pan" and "scroll = zoom".
-3. Do not disturb the existing Settings editor or the PDF's 3-slot binding model — advanced users can still configure `switch` placement etc. there.
+1. Make the two viewers' **defaults** consistent.
+2. Give the user a **one-click inverter** in both the BoardViewer toolbar and the PDF toolbar that swaps the bare and shift slots in place.
+3. Do not disturb the existing Settings editor or the PDF's 3-slot binding model — the editor stays the source of truth for the *shape* of the binding; the button only *inverts* what is configured.
 4. Keep the change small enough that the button can be removed or relocated later without disruption.
 
 ## Non-Goals
 
 - Changing the Settings-panel `BoardScrollBindingsEditor` ([SettingsPanel.tsx:760](../../../src/frontend/src/panels/SettingsPanel.tsx#L760)) or the 3-slot PDF binding UI.
-- Unifying the two storage mechanisms (`twoFingerPan` in render-settings vs. `boardripper-pdf-scroll-bindings` localStorage key). Two stores remain, the toggle writes to both.
+- Unifying the two storage mechanisms (`twoFingerPan` in render-settings vs. `boardripper-pdf-scroll-bindings` localStorage key). Two stores remain; the button writes to both.
 - New keyboard shortcut (can be added later).
+- Introducing a "canonical pair" concept. The button is an **inverter**, not a preset.
 
 ## Design
 
-### Single source of "mode"
+### Button semantics — inverter, not setter
 
-Two canonical pairs, represented by one boolean:
+The button does one thing: **swap `bare` ↔ `shift`**.
 
-| Mode | BoardViewer (`twoFingerPan`) | PDF `ScrollBindings` |
-|---|---|---|
-| **Pan mode** | `true` → bare=pan, shift=zoom | `{ bare: 'pan', shift: 'zoom', meta: 'switch' }` |
-| **Zoom mode** | `false` → bare=zoom, shift=pan | `{ bare: 'zoom', shift: 'pan', meta: 'switch' }` |
+- BoardViewer: `twoFingerPan` is a two-state boolean; toggling it *is* a bare↔shift swap in the board's world.
+- PDF: `bare` and `shift` slots in `ScrollBindings` are exchanged; `meta` is **never touched** by the button, preserving user customization (e.g. `meta: 'switch'` or any alternate assignment the user configured in Settings).
 
-PDF's `meta` slot stays `'switch'` in both pairs. If a user has customized `meta` elsewhere, this button leaves `meta` alone and only rewrites `bare`/`shift`.
+If a user has set up an unusual binding like `{ bare: 'switch', shift: 'pan', meta: 'zoom' }`, clicking the button yields `{ bare: 'pan', shift: 'switch', meta: 'zoom' }`. The settings editor remains the right tool for reshaping the binding; the button only flips what is currently on `bare` with what is currently on `shift`.
+
+The swap is persisted (written back to render-settings / localStorage), not transient. Next session starts from the last-inverted state, consistent with "this is just another way to edit the setting".
+
+**Note on edge-case divergence:** if a user has configured PDF `bare='switch'` via the Settings editor, a single click swaps PDF `bare`↔`shift` (producing e.g. `bare='pan', shift='switch'`) while simultaneously toggling board `twoFingerPan`. The two stores can end up describing different things because they started from different shapes. This is accepted: the button serves the common pan↔zoom use case, and the Settings editor is the right place to reshape exotic bindings.
 
 ### Default alignment
 
-Change PDF's `DEFAULT_SCROLL_BINDINGS` from `{ bare: 'zoom', shift: 'pan', meta: 'switch' }` to **`{ bare: 'pan', shift: 'zoom', meta: 'switch' }`** so a fresh install starts with both viewers in pan mode. This is a one-line change and only affects users who have never customized PDF bindings (i.e. their `loadScrollBindings()` returns the default). Existing customized installs are untouched.
+Change PDF's `DEFAULT_SCROLL_BINDINGS` from `{ bare: 'zoom', shift: 'pan', meta: 'switch' }` to **`{ bare: 'pan', shift: 'zoom', meta: 'switch' }`** so a fresh install starts with both viewers in pan-on-bare. One-line change, only affects users who have never customized PDF bindings. Existing customized installs are untouched because `loadScrollBindings()` reads from localStorage first.
 
 Rationale for picking pan-on-bare as the shared default: matches the existing BoardViewer default (no regression for current board users), trackpad-friendly, and is the primary laptop use case for BoardRipper.
 
-### The toggle button
+### The toggle helper
 
-**Shared helper** in `store/render-settings.ts` (or a small sibling file `store/scroll-mode.ts`):
+**Shared helper** lives in a new small file `store/scroll-mode.ts` to keep render-settings free of PDF concerns:
 
 ```ts
-// Effective "mode" read from the two existing stores
-export function getScrollMode(): 'pan' | 'zoom' {
-  // Board is authoritative for read — single boolean, no ambiguity
+import { renderSettingsStore } from './render-settings';
+import {
+  loadScrollBindings,
+  SCROLL_BINDINGS_KEY,
+  type ScrollBindings,
+} from '../panels/PdfViewerPanel';
+
+/**
+ * Current "bare" scroll action. Derived from board `twoFingerPan` — board is
+ * authoritative for the icon state because it only has two possible values
+ * (pan | zoom) while PDF can also have `switch` on bare (edge case, handled
+ * by the button tooltip but not the icon).
+ */
+export function getBareScrollAction(): 'pan' | 'zoom' {
   return renderSettingsStore.globalSettings.twoFingerPan ? 'pan' : 'zoom';
 }
 
-// Flip both stores to the canonical pair
-export function toggleScrollMode() {
+/** Swap bare and shift in BOTH stores. Preserves meta on the PDF side. */
+export function invertScrollBindings() {
+  // 1. Board side — boolean toggle is the swap.
   const cur = renderSettingsStore.globalSnapshot();
-  const next: 'pan' | 'zoom' = cur.twoFingerPan ? 'zoom' : 'pan';
+  renderSettingsStore.applyGlobal({ ...cur, twoFingerPan: !cur.twoFingerPan });
 
-  // 1. Board side — full settings object required by applyGlobal
-  renderSettingsStore.applyGlobal({ ...cur, twoFingerPan: next === 'pan' });
-
-  // 2. PDF side — preserve meta, rewrite bare/shift
-  const bindings = loadScrollBindings();
-  const newBindings: ScrollBindings = {
-    ...bindings,
-    bare: next,
-    shift: next === 'pan' ? 'zoom' : 'pan',
-  };
-  localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(newBindings));
-  window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: newBindings }));
+  // 2. PDF side — literal bare↔shift swap. meta untouched.
+  const b = loadScrollBindings();
+  const next: ScrollBindings = { bare: b.shift, shift: b.bare, meta: b.meta };
+  localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next));
+  window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
 }
 ```
 
-Implementation note: the store exposes `applyGlobal(full)` not a partial updater, so we take a `globalSnapshot()` and spread it. This is the same pattern the Settings panel already uses when committing draft settings.
-
-- Read side is deliberately simple: the button reflects `twoFingerPan`. If a user has manually set PDF `bare='zoom'` while board is in pan mode, the button shows "pan" (board state). This is acceptable because the button's job is to flip to the opposite canonical pair; it is not an indicator of PDF-specific state.
-- Write side updates both stores atomically so the two viewers stay in sync after a click.
+Implementation notes:
+- `applyGlobal(full)` is the real mutator on `RenderSettingsStore`; there is no partial updater, so we snapshot-and-spread. Same pattern as the Settings panel draft-commit.
+- Read side uses `twoFingerPan` only. This is intentional: the button's icon is a one-bit indicator, and the board cannot hold `switch` on bare. If a PDF power user has `bare='switch'` configured, the icon still reflects board state; the tooltip clarifies.
 
 ### Button UI
 
-**Two-state icon, icon-only, tooltip carries the explanation** (matches the existing toolbar rhythm — no visible text, the surrounding buttons are icon-only too).
+**Two-state icon, icon-only, tooltip carries the explanation** (matches the existing toolbar rhythm — the surrounding buttons are icon-only too).
 
-| State | Icon | Tooltip |
+| `twoFingerPan` | Icon | Tooltip |
 |---|---|---|
-| Pan mode active | `IconHandMove` from `@tabler/icons-react` | `"Scroll: Pan · Shift+Scroll: Zoom — click to switch to Zoom"` |
-| Zoom mode active | `IconZoomIn` from `@tabler/icons-react` | `"Scroll: Zoom · Shift+Scroll: Pan — click to switch to Pan"` |
+| `true` (bare = pan) | `IconHandMove` | `"Scroll: Pan · Shift+Scroll: Zoom — click to swap"` |
+| `false` (bare = zoom) | `IconZoomIn` | `"Scroll: Zoom · Shift+Scroll: Pan — click to swap"` |
 
-The button is **not** rendered as `active`/highlighted — it is a mode indicator, both states are equally valid.
+The button is **not** rendered as `active`/highlighted — both states are equally valid, it is an indicator + inverter, not a mode-on/mode-off affordance.
 
 ### Placements
 
-Both viewers get the button wired to the same `toggleScrollMode()`. Both re-render when the state changes (BoardViewer already subscribes to render-settings; PDF already listens to `pdf-scroll-bindings-changed`).
+Both viewers render the same button wired to `invertScrollBindings()`. Both re-render when state changes (BoardViewer subscribes to render-settings; PDF listens to `pdf-scroll-bindings-changed`; both events fire on each click).
 
 **BoardViewer** — inside the existing `board-status-indicators` row ([BoardViewerPanel.tsx:203-255](../../../src/frontend/src/panels/BoardViewerPanel.tsx#L203-L255)), **immediately after the `IconObjectScan` fit-to-board button**:
 
 ```tsx
 <button
   className="board-netlines-toggle"
-  onClick={toggleScrollMode}
-  title={...}
+  onClick={invertScrollBindings}
+  title={tooltip}
 >
-  {scrollMode === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
+  {bareAction === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
 </button>
 ```
 
-Reusing the `board-netlines-toggle` CSS class keeps it visually uniform with its neighbors (size, padding, hover state).
+Reusing the `board-netlines-toggle` class keeps it visually uniform with its neighbors.
 
 **PDF** — inside `pdf-toolbar` ([PdfViewerPanel.tsx:2792-2799](../../../src/frontend/src/panels/PdfViewerPanel.tsx#L2792-L2799)), **immediately left of the `pdf-zoom-group` fit-to-width button**:
 
 ```tsx
 <button
   className="pdf-toolbar-btn"
-  onClick={toggleScrollMode}
-  title={...}
+  onClick={invertScrollBindings}
+  title={tooltip}
 >
-  {scrollMode === 'pan' ? <IconHandMove size={14} /> : <IconZoomIn size={14} />}
+  {bareAction === 'pan' ? <IconHandMove size={14} /> : <IconZoomIn size={14} />}
 </button>
 ```
 
@@ -126,18 +133,21 @@ Reusing the `board-netlines-toggle` CSS class keeps it visually uniform with its
 
 ### Reactivity
 
-- BoardViewer reads `twoFingerPan` via the existing render-settings subscription — no new hook needed.
-- PDF already listens to `pdf-scroll-bindings-changed`. The button reads state via a small `useSyncExternalStore`-based hook over the same event, or by polling `loadScrollBindings()` on toolbar mount plus re-rendering on the event. Simplest: a tiny `useScrollMode()` hook that returns `'pan' | 'zoom'` derived from `twoFingerPan`.
+- BoardViewer already reads render-settings through its existing subscription — no new wiring needed beyond consuming `twoFingerPan`.
+- A tiny `useBareScrollAction()` hook wraps the two reactivity sources into one React value:
+  - Subscribe to the render-settings store (for `twoFingerPan` changes made from anywhere: button, Settings panel, board).
+  - Since board is authoritative for read, one subscription is sufficient. The `pdf-scroll-bindings-changed` event is fired by the inverter for PDF's own listeners (`PdfViewerPanel`) — the button itself doesn't need it.
 
 ## Testing
 
-1. **Playwright**: open a board and a PDF side-by-side, click the PDF toggle, verify the board toolbar icon also flips; verify actual scroll wheel behavior changes in both.
-2. **Manual**: customize PDF bindings in Settings (e.g. put `switch` on `shift`); confirm the toggle preserves `meta` but rewrites `bare`/`shift`.
-3. **Fresh install**: clear localStorage, reload; both viewers start in pan mode; scroll wheel pans in both.
+1. **Playwright**: open a board and a PDF side-by-side, click the PDF button, verify (a) the board toolbar icon also flips, (b) scroll wheel on the board switches behavior, (c) scroll wheel on the PDF switches behavior.
+2. **Manual (preservation)**: in Settings, configure PDF bindings to `{ bare: 'pan', shift: 'switch', meta: 'zoom' }`. Click the button. Expect `{ bare: 'switch', shift: 'pan', meta: 'zoom' }` — `meta` untouched.
+3. **Fresh install**: clear `localStorage` + render-settings store, reload; both viewers start in pan-on-bare; single click on either button flips both to zoom-on-bare.
+4. **Settings-editor coexistence**: change binding via Settings editor → button icon updates. Click button → Settings editor shows swapped values if reopened.
 
 ## Rollout
 
-Single small PR. No migration, no version gate. If the button proves redundant, removing it is a straightforward revert of these specific files — the underlying stores stay intact.
+Single small PR. No migration, no version gate. If the button proves redundant, revert of the specific files removes it; the underlying stores and the Settings editor stay intact.
 
 ## Open questions
 
