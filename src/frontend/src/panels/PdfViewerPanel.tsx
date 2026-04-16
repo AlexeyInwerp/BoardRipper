@@ -2798,23 +2798,25 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             &#x25D0;
           </button>
         </div>
-        <button
-          className="pdf-toolbar-btn"
-          onClick={invertScrollBindings}
-          title={bareAction === 'pan'
-            ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
-            : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
-        >
-          {bareAction === 'pan' ? <IconHandMove size={14} /> : <IconZoomIn size={14} />}
-        </button>
-        <button
-          className="pdf-toolbar-btn pdf-zoom-group"
-          onClick={handleFitWidth}
-          title="Fit to page width (Space)"
-        >
-          <IconArrowAutofitWidth size={14} />
-          <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
-        </button>
+        <div className="pdf-viewport-group">
+          <button
+            className="pdf-toolbar-btn"
+            onClick={invertScrollBindings}
+            title={bareAction === 'pan'
+              ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
+              : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
+          >
+            {bareAction === 'pan' ? <IconHandMove size={14} /> : <IconZoomIn size={14} />}
+          </button>
+          <button
+            className="pdf-toolbar-btn pdf-zoom-group"
+            onClick={handleFitWidth}
+            title="Fit to page width (Space)"
+          >
+            <IconArrowAutofitWidth size={14} />
+            <span className="pdf-zoom-info">{Math.round(zoomDisplay * 100)}%</span>
+          </button>
+        </div>
       </div>
 
       {textExtracting && (

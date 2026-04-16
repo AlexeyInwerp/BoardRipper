@@ -1929,25 +1929,35 @@ html, body, #root {
   left: 8px;
   z-index: 10;
   display: flex;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
+}
+
+.board-button-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(15, 15, 26, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
 }
 
 .board-link-indicator {
   font-size: 14px;
   color: var(--accent);
-  background: rgba(0, 0, 0, 0.45);
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: 0 6px;
   pointer-events: none;
+  line-height: 28px;
 }
 
 .board-netlines-toggle {
   width: 28px;
   height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: rgba(15, 15, 26, 0.8);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 16px;
   cursor: pointer;
@@ -1960,12 +1970,13 @@ html, body, #root {
 
 .board-netlines-toggle:hover {
   color: var(--text-primary);
-  background: rgba(26, 26, 46, 0.9);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .board-netlines-toggle.active {
   color: var(--accent);
-  border-color: var(--accent);
+  background: rgba(0, 255, 204, 0.12);
+  border-color: rgba(0, 255, 204, 0.25);
 }
 
 .board-netlines-toggle:disabled {
@@ -2994,6 +3005,29 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.pdf-viewport-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  height: 26px;
+  box-sizing: border-box;
+}
+
+.pdf-viewport-group .pdf-toolbar-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  height: 20px;
+}
+
+.pdf-viewport-group .pdf-toolbar-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
 }
 
 .pdf-zoom-info {

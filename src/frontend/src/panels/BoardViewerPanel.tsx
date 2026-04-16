@@ -203,66 +203,70 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         )}
       </div>
       <div className="board-status-indicators">
-        {linkedPdfs.length > 0 && (
-          <div
-            className="board-link-indicator"
-            title={`Linked PDFs: ${linkedPdfs.join(', ')}`}
+        <div className="board-button-group">
+          {linkedPdfs.length > 0 && (
+            <div
+              className="board-link-indicator"
+              title={`Linked PDFs: ${linkedPdfs.join(', ')}`}
+            >
+              ∞{linkedPdfs.length > 1 ? ` ${linkedPdfs.length}` : ''}
+            </div>
+          )}
+          <button
+            className={`board-netlines-toggle ${followPdf ? 'active' : ''}`}
+            onClick={() => boardStore.toggleFollowPdf()}
+            disabled={linkedPdfs.length === 0}
+            title={followPdf ? 'PDF follow: ON' : 'PDF follow: OFF'}
           >
-            ∞{linkedPdfs.length > 1 ? ` ${linkedPdfs.length}` : ''}
-          </div>
-        )}
-        <button
-          className={`board-netlines-toggle ${followPdf ? 'active' : ''}`}
-          onClick={() => boardStore.toggleFollowPdf()}
-          disabled={linkedPdfs.length === 0}
-          title={followPdf ? 'PDF follow: ON' : 'PDF follow: OFF'}
-        >
-          ⇶
-        </button>
-        <button
-          className="board-netlines-toggle"
-          onClick={() => rendererRef.current?.fitToBoard()}
-          title="Zoom to fit board"
-        >
-          <IconObjectScan size={16} />
-        </button>
-        <button
-          className="board-netlines-toggle"
-          onClick={invertScrollBindings}
-          title={bareAction === 'pan'
-            ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
-            : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
-        >
-          {bareAction === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
-        </button>
-        <button
-          className={`board-netlines-toggle ${showHoverInfo ? 'active' : ''}`}
-          onClick={() => boardStore.toggleHoverInfo()}
-          title={showHoverInfo ? 'Hover info: ON' : 'Hover info: OFF'}
-        >
-          <IconTooltip size={16} />
-        </button>
-        <button
-          className={`board-netlines-toggle ${showNetDim ? 'active' : ''}`}
-          onClick={() => boardStore.toggleNetDim()}
-          title={showNetDim ? 'Selection dimming: ON' : 'Selection dimming: OFF'}
-        >
-          ◐
-        </button>
-        <button
-          className={`board-netlines-toggle ${showNetLines ? 'active' : ''}`}
-          onClick={() => boardStore.toggleNetLines()}
-          title={showNetLines ? 'Net lines: ON' : 'Net lines: OFF'}
-        >
-          <IconHierarchy size={16} />
-        </button>
-        <button
-          className={`board-netlines-toggle ${showGhosts ? 'active' : ''}`}
-          onClick={() => boardStore.toggleGhosts()}
-          title={showGhosts ? 'Hidden-side ghosts: ON' : 'Hidden-side ghosts: OFF'}
-        >
-          <IconGhost2 size={16} />
-        </button>
+            ⇶
+          </button>
+          <button
+            className="board-netlines-toggle"
+            onClick={invertScrollBindings}
+            title={bareAction === 'pan'
+              ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
+              : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
+          >
+            {bareAction === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
+          </button>
+          <button
+            className="board-netlines-toggle"
+            onClick={() => rendererRef.current?.fitToBoard()}
+            title="Zoom to fit board"
+          >
+            <IconObjectScan size={16} />
+          </button>
+        </div>
+        <div className="board-button-group">
+          <button
+            className={`board-netlines-toggle ${showHoverInfo ? 'active' : ''}`}
+            onClick={() => boardStore.toggleHoverInfo()}
+            title={showHoverInfo ? 'Hover info: ON' : 'Hover info: OFF'}
+          >
+            <IconTooltip size={16} />
+          </button>
+          <button
+            className={`board-netlines-toggle ${showNetDim ? 'active' : ''}`}
+            onClick={() => boardStore.toggleNetDim()}
+            title={showNetDim ? 'Selection dimming: ON' : 'Selection dimming: OFF'}
+          >
+            ◐
+          </button>
+          <button
+            className={`board-netlines-toggle ${showNetLines ? 'active' : ''}`}
+            onClick={() => boardStore.toggleNetLines()}
+            title={showNetLines ? 'Net lines: ON' : 'Net lines: OFF'}
+          >
+            <IconHierarchy size={16} />
+          </button>
+          <button
+            className={`board-netlines-toggle ${showGhosts ? 'active' : ''}`}
+            onClick={() => boardStore.toggleGhosts()}
+            title={showGhosts ? 'Hidden-side ghosts: ON' : 'Hidden-side ghosts: OFF'}
+          >
+            <IconGhost2 size={16} />
+          </button>
+        </div>
       </div>
       <BoardSidebar
         visible={sidebarOpen}
