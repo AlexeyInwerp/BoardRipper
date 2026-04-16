@@ -15,7 +15,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn } from '@tabler/icons-react';
 import {
   TILE_SIZE, computeTileGrid, tileRenderRequest,
   getTileCached, putTileCached, invalidateTileCache,
@@ -23,7 +23,7 @@ import {
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
 import { renderSettingsStore, isPdfWatermarkText } from '../store/render-settings';
-import { looksLikeMouseWheel } from '../store/scroll-mode';
+import { looksLikeMouseWheel, invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -624,6 +624,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [scrollBindings, setScrollBindings] = useState<ScrollBindings>(loadScrollBindings);
   const scrollBindingsRef = useRef(scrollBindings);
   scrollBindingsRef.current = scrollBindings;
+  const bareAction = useBareScrollAction();
 
   // Sync scroll bindings when changed from Settings panel
   useEffect(() => {
@@ -2797,6 +2798,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             &#x25D0;
           </button>
         </div>
+        <button
+          className="pdf-toolbar-btn"
+          onClick={invertScrollBindings}
+          title={bareAction === 'pan'
+            ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
+            : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
+        >
+          {bareAction === 'pan' ? <IconHandMove size={14} /> : <IconZoomIn size={14} />}
+        </button>
         <button
           className="pdf-toolbar-btn pdf-zoom-group"
           onClick={handleFitWidth}
