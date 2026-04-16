@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
-import { IconHierarchy, IconTooltip, IconObjectScan, IconGhost2 } from '@tabler/icons-react';
+import { IconHierarchy, IconTooltip, IconObjectScan, IconGhost2, IconHandMove, IconZoomIn } from '@tabler/icons-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -9,6 +9,7 @@ import { pdfPanelId, isLinkActivating, activateLinkedPanel, isAutoSwitchLinked }
 import { pdfStore } from '../store/pdf-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
+import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
 
 // Per-tab handlers for toolbar search → board sidebar integration
 const _boardSearchHandlers = new Map<number, (query: string) => void>();
@@ -27,6 +28,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
   const { tabs, activeTabId, showNetLines, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
+  const bareAction = useBareScrollAction();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
@@ -223,6 +225,15 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           title="Zoom to fit board"
         >
           <IconObjectScan size={16} />
+        </button>
+        <button
+          className="board-netlines-toggle"
+          onClick={invertScrollBindings}
+          title={bareAction === 'pan'
+            ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
+            : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
+        >
+          {bareAction === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
         </button>
         <button
           className={`board-netlines-toggle ${showHoverInfo ? 'active' : ''}`}
