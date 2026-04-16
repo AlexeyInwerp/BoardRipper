@@ -715,15 +715,12 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     if (!list) { list = []; shapeUsers.set(c.shapeName, list); }
     list.push(c);
   }
-  // A shape qualifies for recentering only when:
-  //   (a) it's physically small  — max bbox dimension < 500 mils, i.e. an
-  //       SMD package, not a connector or heatsink, AND
-  //   (b) the footprint sits clearly off-origin — bbox center is more than
-  //       2× its own half-extent away in at least one axis.
-  // Connectors and large mechanical parts legitimately have asymmetric
-  // pin layouts whose centroid is offset; they must NOT be recentered or
-  // the part visually shifts away from its PLACE coordinate.
-  const SMALL_SHAPE_LIMIT = 500;
+  // A shape qualifies for recentering when its pin centroid sits clearly
+  // off-origin — more than 2× the shape's own half-extent in at least one
+  // axis. This catches shapes with stale world coordinates from concatenated
+  // exports (common in Teradyne GenCAM files) regardless of package size.
+  // Connectors and mechanical parts with legitimately asymmetric pin layouts
+  // have centroids close to their extent, so the ratio check leaves them alone.
   for (const [name, shape] of shapes.entries()) {
     if (shape.pins.length === 0) continue;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -734,7 +731,6 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       if (p.y > maxY) maxY = p.y;
     }
     const w = maxX - minX, h = maxY - minY;
-    if (Math.max(w, h) >= SMALL_SHAPE_LIMIT) continue;
     const halfW = w * 0.5 || 1;
     const halfH = h * 0.5 || 1;
     const bcx = (minX + maxX) * 0.5;
@@ -818,6 +814,41 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const nails: Nail[] = [...testpins, ...powerpins];
 
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
+  const hasTraces = routes.traces.length > 0;
+  const hasMultiplePasses = parsedComps.passCount > 1;
+
+  // Detect merged-board files: if the overlap between passes is low
+  // relative to the smaller pass, these are likely different boards
+  // concatenated rather than revisions of one board.
+  let isMergedBoards = false;
+  if (hasMultiplePasses) {
+    const passNames: Set<string>[] = partsByPass.map(
+      parts => new Set(parts.map(p => p.name)),
+    );
+    // Check each adjacent pair
+    for (let i = 1; i < passNames.length; i++) {
+      const prev = passNames[i - 1];
+      const curr = passNames[i];
+      const smaller = Math.min(prev.size, curr.size);
+      let shared = 0;
+      for (const n of curr) if (prev.has(n)) shared++;
+      // If less than 90% of the smaller set is shared, these are
+      // different boards rather than revisions of the same board.
+      if (smaller > 0 && shared / smaller < 0.9) { isMergedBoards = true; break; }
+    }
+  }
+
+  // Assign traces per-revision when multiple passes exist.
+  // Uses connected-component analysis: for each net's trace graph,
+  // find connected subgraphs and assign each to the revision whose
+  // pin positions it physically touches.
+  const perRevTraces: Trace[][] | null = (hasMultiplePasses && hasTraces)
+    ? assignTracesToRevisions(routes.traces, partsByPass, isMergedBoards)
+    : null;
+  const perRevVias: Via[][] | null = (hasMultiplePasses && routes.vias.length > 0)
+    ? assignViasToRevisions(routes.vias, partsByPass, isMergedBoards)
+    : null;
+
   const revisions: BoardRevision[] = partsByPass.map((parts, idx) => {
     const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
     const outline = generateSyntheticOutline(allPoints);
@@ -826,10 +857,15 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     const ghosts = detectGhostComponents(parts);
     const total = partsByPass.length;
     const isCurrent = idx === total - 1;
-    const label = total === 1
-      ? `rev ${idx + 1}`
-      : `rev ${idx + 1}${isCurrent ? ' (current)' : ''}`;
-    return {
+    let label: string;
+    if (total === 1) {
+      label = 'rev 1';
+    } else if (isMergedBoards) {
+      label = `Board ${String.fromCharCode(65 + idx)}`;
+    } else {
+      label = `rev ${idx + 1}${isCurrent ? ' (current)' : ''}`;
+    }
+    const rev: BoardRevision = {
       index: idx + 1,
       label,
       componentCount: parts.length,
@@ -839,6 +875,20 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       nets,
       ghosts,
     };
+    if (perRevTraces) rev.traces = perRevTraces[idx];
+    if (perRevVias) {
+      const revVias = perRevVias[idx];
+      if (idx === total - 1) {
+        // Add mech holes to the last revision
+        rev.vias = [...revVias, ...mechHoles];
+      } else {
+        rev.vias = revVias;
+      }
+    }
+    if (hasTraces && routes.layerNames.length > 0) {
+      rev.layerNames = routes.layerNames;
+    }
+    return rev;
   });
 
   // Default active = last pass (the canonical revision the file is named after).
@@ -855,8 +905,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   }
 
   // For clean single-pass files we don't expose the revisions UI — the
-  // top-level fields alone are sufficient. Keep BoardData identical to
-  // what the previous parser returned in that case.
+  // top-level fields alone are sufficient.
   const board: BoardData = {
     format: 'CAD',
     outline: active.outline,
@@ -871,21 +920,160 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     board.activeRevision = active.index;
   }
 
-  // Multilayer fields — only set when data exists (normal CADs stay unchanged)
-  // For multi-revision files, drop traces whose net has no pins in the active
-  // revision — these are orphan traces from older revisions (e.g. components
-  // that moved or were removed).
-  const activeTraces = parsedComps.passCount > 1
-    ? routes.traces.filter(t => !t.net || active.nets.has(t.net))
-    : routes.traces;
+  // Multilayer fields on top-level board (from active revision or global)
+  const activeTraces = active.traces ?? routes.traces;
   if (activeTraces.length > 0) {
     board.traces = activeTraces;
-    const allVias = [...routes.vias, ...mechHoles];
+    const allVias = active.vias ?? [...routes.vias, ...mechHoles];
     if (allVias.length > 0) board.vias = allVias;
-    if (routes.layerNames.length > 0) board.layerNames = routes.layerNames;
+    const layerNames = active.layerNames ?? (routes.layerNames.length > 0 ? routes.layerNames : undefined);
+    if (layerNames) board.layerNames = layerNames;
   } else if (mechHoles.length > 0) {
     board.vias = mechHoles;
   }
 
   return board;
+}
+
+// ---------------------------------------------------------------------------
+// Per-revision trace assignment via connected-component pin proximity
+// ---------------------------------------------------------------------------
+
+const PROX_TOL = 20; // mils — bucket size for spatial hashing
+
+function buildPinBuckets(parts: Part[]): Set<string> {
+  const s = new Set<string>();
+  for (const p of parts) {
+    for (const pin of p.pins) {
+      const kx = Math.round(pin.position.x / PROX_TOL);
+      const ky = Math.round(pin.position.y / PROX_TOL);
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++)
+          s.add((kx + dx) + ',' + (ky + dy));
+    }
+  }
+  return s;
+}
+
+function traceKey(x: number, y: number): string {
+  return Math.round(x / PROX_TOL) + ',' + Math.round(y / PROX_TOL);
+}
+
+/**
+ * Assign traces to revisions using connected-component analysis.
+ * For each net, build a graph of trace endpoints, find connected subgraphs,
+ * then assign each subgraph to the revision whose pin positions it touches.
+ *
+ * For true revisions: multi-touch subgraphs go to the last (current) revision.
+ * For merged boards: multi-touch subgraphs are duplicated to ALL touching boards.
+ */
+function assignTracesToRevisions(
+  traces: Trace[],
+  partsByPass: Part[][],
+  merged: boolean,
+): Trace[][] {
+  const passCount = partsByPass.length;
+  const result: Trace[][] = Array.from({ length: passCount }, () => []);
+  const pinSets = partsByPass.map(buildPinBuckets);
+
+  // Group traces by net
+  const byNet = new Map<string, Trace[]>();
+  for (const t of traces) {
+    let arr = byNet.get(t.net);
+    if (!arr) { arr = []; byNet.set(t.net, arr); }
+    arr.push(t);
+  }
+
+  for (const [, netTraces] of byNet) {
+    if (netTraces.length === 0) continue;
+
+    // Union-Find on bucketed endpoints
+    const parent = new Map<string, string>();
+    function find(x: string): string {
+      let r = x;
+      while (parent.get(r) !== r) r = parent.get(r)!;
+      let c = x;
+      while (c !== r) { const n = parent.get(c)!; parent.set(c, r); c = n; }
+      return r;
+    }
+    function union(a: string, b: string) {
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    }
+
+    // Build union-find from trace endpoints
+    const traceRoots: string[] = [];
+    for (const t of netTraces) {
+      const sk = traceKey(t.start.x, t.start.y);
+      const ek = traceKey(t.end.x, t.end.y);
+      if (!parent.has(sk)) parent.set(sk, sk);
+      if (!parent.has(ek)) parent.set(ek, ek);
+      union(sk, ek);
+      traceRoots.push(find(sk));
+    }
+
+    // Collect all points per connected component
+    const compPoints = new Map<string, string[]>();
+    for (const [k] of parent) {
+      const root = find(k);
+      let arr = compPoints.get(root);
+      if (!arr) { arr = []; compPoints.set(root, arr); }
+      arr.push(k);
+    }
+
+    // Determine which revision(s) each component touches
+    const compRevisions = new Map<string, number[]>();
+    for (const [root, points] of compPoints) {
+      const touches: number[] = [];
+      for (let r = 0; r < passCount; r++) {
+        for (const p of points) {
+          if (pinSets[r].has(p)) { touches.push(r); break; }
+        }
+      }
+      compRevisions.set(root, touches.length > 0 ? touches : [passCount - 1]);
+    }
+
+    // Assign each trace to its component's revision(s)
+    for (let i = 0; i < netTraces.length; i++) {
+      const root = find(traceRoots[i]);
+      const revs = compRevisions.get(root) ?? [passCount - 1];
+      if (revs.length === 1 || !merged) {
+        // Single touch, or true-revision mode: assign to one revision
+        result[revs[revs.length - 1]].push(netTraces[i]);
+      } else {
+        // Merged boards: duplicate trace to all touching boards
+        for (const r of revs) result[r].push(netTraces[i]);
+      }
+    }
+  }
+
+  return result;
+}
+
+/** Assign vias to revisions by pin proximity. */
+function assignViasToRevisions(
+  vias: Via[],
+  partsByPass: Part[][],
+  merged: boolean,
+): Via[][] {
+  const passCount = partsByPass.length;
+  const result: Via[][] = Array.from({ length: passCount }, () => []);
+  const pinSets = partsByPass.map(buildPinBuckets);
+
+  for (const via of vias) {
+    const key = traceKey(via.position.x, via.position.y);
+    const touches: number[] = [];
+    for (let r = 0; r < passCount; r++) {
+      if (pinSets[r].has(key)) touches.push(r);
+    }
+    if (touches.length === 0) {
+      result[passCount - 1].push(via);
+    } else if (touches.length === 1 || !merged) {
+      result[touches[touches.length - 1]].push(via);
+    } else {
+      for (const r of touches) result[r].push(via);
+    }
+  }
+
+  return result;
 }
