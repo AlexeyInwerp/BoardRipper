@@ -50,7 +50,7 @@ export function loadPdfInertia(): boolean {
 }
 
 export const SCROLL_BINDINGS_KEY = 'boardripper-pdf-scroll-bindings';
-export const DEFAULT_SCROLL_BINDINGS: ScrollBindings = { bare: 'zoom', shift: 'pan', meta: 'switch' };
+export const DEFAULT_SCROLL_BINDINGS: ScrollBindings = { bare: 'pan', shift: 'zoom', meta: 'switch' };
 
 export function loadScrollBindings(): ScrollBindings {
   try {
