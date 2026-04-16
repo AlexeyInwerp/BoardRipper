@@ -236,6 +236,9 @@ export class BoardRenderer {
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
   private sceneCache = new Map<BoardData, BoardScene>();
   private activeScene: BoardScene | null = null;
+  /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
+   *  to skip full scene rebuilds when only interaction-only fields changed. */
+  private lastSettingsSnapshot: import('../store/render-settings').RenderSettings | null = null;
 
   // Spatial hash for O(1) hit-testing — maps grid cell keys to part indices.
   // Cached per-board to avoid expensive rebuild on tab switch.
@@ -2018,6 +2021,38 @@ export class BoardRenderer {
     if (!this.board || this.contextLost || this.reinitializing) return;
     // onSettingsUpdate — no logging (fires on every settings change)
     try {
+      const cur = renderSettingsStore.settings;
+      const prev = this.lastSettingsSnapshot;
+
+      // Fast path: if only interaction-only fields differ, skip the expensive
+      // scene rebuild and just reconfigure viewport plugins. Interaction-only
+      // fields (twoFingerPan etc.) affect input handling but never the scene.
+      // applyGlobal structuredClones the settings, so object/array fields get
+      // fresh references each call — use JSON equality for deep comparison.
+      const INTERACTION_ONLY = new Set<string>([
+        'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia',
+      ]);
+      if (prev) {
+        let visualChanged = false;
+        for (const k of Object.keys(cur) as Array<keyof typeof cur>) {
+          if (INTERACTION_ONLY.has(k as string)) continue;
+          const a = cur[k];
+          const b = prev[k];
+          if (a === b) continue;
+          if (typeof a === 'object' && a !== null) {
+            if (JSON.stringify(a) !== JSON.stringify(b)) { visualChanged = true; break; }
+          } else {
+            visualChanged = true;
+            break;
+          }
+        }
+        if (!visualChanged) {
+          this.applyViewportPlugins();
+          this.lastSettingsSnapshot = cur;
+          return;
+        }
+      }
+
       // Cancel any pending zoom-settle timers (scene is about to be rebuilt)
       if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
 
@@ -2032,6 +2067,7 @@ export class BoardRenderer {
       this.renderSelection();
       // Force LoD re-evaluation on next tick (new scene, thresholds may have changed)
       this.lastLodScale = -1;
+      this.lastSettingsSnapshot = cur;
     } catch (err) {
       log.render.error(`onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
       // activeScene may be null after invalidateAllScenes + failed activateScene.
