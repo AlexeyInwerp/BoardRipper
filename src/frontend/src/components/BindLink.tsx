@@ -9,13 +9,19 @@ interface BindLinkProps {
   onToggle: (name: string | null) => void;
   /** Tooltip for the link icon */
   title?: string;
+  /** Optional header item shown above the bindings list (e.g. "auto-open boardview" toggle) */
+  headerItem?: {
+    label: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+  };
 }
 
 /**
  * Link icon that opens a dropdown to manage board↔PDF associations.
  * Multi-select: boards can link multiple PDFs.
  */
-export function BindLink({ boundNames, options, onToggle, title }: BindLinkProps) {
+export function BindLink({ boundNames, options, onToggle, title, headerItem }: BindLinkProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -65,6 +71,15 @@ export function BindLink({ boundNames, options, onToggle, title }: BindLinkProps
       </button>
       {open && (
         <div className="bind-link-dropdown">
+          {headerItem && (
+            <div
+              className="bind-link-option bind-link-header"
+              onClick={(e) => { e.stopPropagation(); headerItem.onChange(!headerItem.checked); resetTimer(); }}
+            >
+              <span className="bind-link-check">{headerItem.checked ? '✓' : '\u00A0'}</span>
+              {headerItem.label}
+            </div>
+          )}
           <div
             className="bind-link-option bind-link-clear"
             onClick={handleClear}

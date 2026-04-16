@@ -273,6 +273,9 @@ interface TvwPart {
   layer: number;  // 1=top-ish, 2=bottom-ish (but varies — eagleview uses 3/12)
   value: string;
   pins: TvwPin[];
+  /** Second pin list for dual-sided edge connectors (Landrex variant).
+   *  These pins resolve to pads on the opposite copper layer from `pins`. */
+  pinsExt?: TvwPin[];
 }
 
 interface TvwBoard {
@@ -650,12 +653,12 @@ function loadLayer(r: TvwReader): TvwLayer | null {
 
 // ─── Parts Parsing ──────────────────────────────────────────────────────────
 
-function loadPin(r: TvwReader): TvwPin {
+function loadPin(r: TvwReader, trailing = true): TvwPin {
   const handle = r.readU32();
   r.readU32(); // z1 = 0
   const id = r.readU32();
   const name = r.readPStr();
-  r.readU32(); // z2 = 0
+  if (trailing) r.readU32(); // z2 = 0
   return { handle, id, name };
 }
 
@@ -687,7 +690,38 @@ function loadPart(r: TvwReader): TvwPart {
     pins.push(loadPin(r));
   }
 
-  return { name, bboxMin, bboxMax, pos, angle, partType, layer, value, pins };
+  // Landrex-variant extension: edge-connector parts (e.g., "MPCIE1" PCIe x16)
+  // with partType == 0xFFFFFFFF carry a second pin list for the OPPOSITE copper
+  // layer. After the first pin list: (contFlag:u32, reserved:u32) then `pinCount`
+  // more pins. The *last* pin of the extension has no trailing z2 — the writer
+  // packs the next part's pstr there. Detected via peek to avoid triggering on
+  // normal 0xFFFFFFFF parts in LianBao samples. Extension pins are kept in a
+  // separate list so the converter can look them up in the opposite layer.
+  let pinsExt: TvwPin[] | undefined;
+  if (partType === 0xFFFFFFFF && pinCount > 0 && looksLikePinExtension(r)) {
+    r.readU32(); // contFlag
+    r.readU32(); // reserved
+    pinsExt = [];
+    for (let i = 0; i < pinCount; i++) {
+      pinsExt.push(loadPin(r, i !== pinCount - 1));
+    }
+  }
+
+  return { name, bboxMin, bboxMax, pos, angle, partType, layer, value, pins, pinsExt };
+}
+
+/** Peek ahead to detect a dual-list extension after a pin list.
+ *  Returns true iff bytes at current+8 look like a valid pin record
+ *  (handle ≠ 0, z1 == 0, id plausibly small). */
+function looksLikePinExtension(r: TvwReader): boolean {
+  const contFlag = r.peekU32(0);
+  const reserved = r.peekU32(4);
+  if (reserved !== 0) return false;
+  if (contFlag === 0 || contFlag > 16) return false;
+  if (r.peekU32(12) !== 0) return false; // z1
+  if (r.peekU32(8) === 0) return false;   // handle
+  if (r.peekU32(16) > 100000) return false; // id
+  return true;
 }
 
 // ─── Probe/Fixture/Mysterious Block Skipping ────────────────────────────────
@@ -812,7 +846,21 @@ function skipMysteriousBlock(r: TvwReader): void {
   r.skip(16);  // p7x (4 × u32)
   r.skip(6);   // flags (6 bools)
   r.skip(16);  // p8, p9, p10, p11
-  r.skip(2);   // p12, p13
+  // p12, p13 (trailing u16) exists in LianBao-variant TVWs but not Landrex-variant.
+  // Peek the next 8 bytes as (partCount, skip) and skip the u16 only if the
+  // layout without it looks implausible.
+  const c1 = r.peekU32(0);
+  const c1skip = r.peekU32(4);
+  const c2 = r.peekU32(2);
+  const c2skip = r.peekU32(6);
+  const plausible = (n: number, s: number) => n > 0 && n < 200000 && s >= 0 && s < 0x100;
+  if (plausible(c1, c1skip)) {
+    // Landrex variant: no trailing u16
+  } else if (plausible(c2, c2skip)) {
+    r.skip(2); // LianBao variant: consume p12, p13
+  } else {
+    r.skip(2); // default to eagleview layout
+  }
 }
 
 // ─── Decal Skipping ─────────────────────────────────────────────────────────
@@ -894,7 +942,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   const type = decodeString(r.readPStr());
   r.readU32(); // const1
   const customer = decodeString(r.readPStr());
-  r.readU8(); // const2 = 0
+  r.readPStr(); // password pstr — usually empty; non-empty on protected files (see inflex notvwpwd.py)
   const date = decodeString(r.readPStr());
   r.readBytes(3); // const3
   r.readU32(); // size1
@@ -1142,6 +1190,29 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     if (globalIdx >= 0) layerIdxToCol.set(globalIdx, col);
   }
 
+  // Find TOP and BOTTOM layer global indices — used to resolve dual-sided
+  // edge-connector pin extensions (Landrex variant).
+  const topLayerGlobalIdx = tvw.layers.findIndex(l => l.layerType === TvwLayerType.Top);
+  const botLayerGlobalIdx = tvw.layers.findIndex(l => l.layerType === TvwLayerType.Bottom);
+
+  const resolvePin = (tvwPin: TvwPin, padLayer: TvwLayer, side: 'top' | 'bottom'): Pin | null => {
+    const pads = padLayer.objType === TvwObjectType.Logic ? (padLayer as TvwLogicLayer).pads : [];
+    const padIdx = Math.floor(tvwPin.handle / 8);
+    const pad = padIdx >= 0 && padIdx < pads.length ? pads[padIdx] : null;
+    if (!pad) return null;
+    const netName = getNetName(tvw.nets, pad.net);
+    const rawRadius = pad.shapeRef ? Math.max(pad.shapeRef.width, pad.shapeRef.height) / 2 : 15;
+    const radius = Math.min(Math.max(rawRadius, 5), MAX_PIN_RADIUS);
+    return {
+      name: tvwPin.name,
+      number: String(tvwPin.id),
+      position: { x: pad.pos.x, y: pad.pos.y },
+      radius,
+      side,
+      net: netName,
+    };
+  };
+
   // Place parts — no offset, all layers stacked at native coordinates
   for (const tvwPart of tvw.parts) {
     const col = layerIdxToCol.get(tvwPart.layer);
@@ -1149,51 +1220,60 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
 
     const layer = copperLayers[col];
     const side = sideFromLayerType(layer.layerType);
+    const oppositeSide: 'top' | 'bottom' = side === 'top' ? 'bottom' : 'top';
+    const oppositeLayerGlobalIdx = side === 'top' ? botLayerGlobalIdx : topLayerGlobalIdx;
 
-    const pins: Pin[] = [];
     const padLayer = tvw.layers[tvwPart.layer];
-    const pads = padLayer.objType === TvwObjectType.Logic ? (padLayer as TvwLogicLayer).pads : [];
 
+    const primaryPins: Pin[] = [];
     for (const tvwPin of tvwPart.pins) {
-      const padIdx = Math.floor(tvwPin.handle / 8);
-      const pad = padIdx >= 0 && padIdx < pads.length ? pads[padIdx] : null;
-      if (!pad) {
-        log.parser.log(`pin "${tvwPin.name}" handle=${tvwPin.handle} → padIdx=${padIdx} not found in ${pads.length} pads`);
-        continue;
-      }
-
-      const netName = getNetName(tvw.nets, pad.net);
-      const rawRadius = pad.shapeRef ? Math.max(pad.shapeRef.width, pad.shapeRef.height) / 2 : 15;
-      const radius = Math.min(Math.max(rawRadius, 5), MAX_PIN_RADIUS);
-
-      pins.push({
-        name: tvwPin.name,
-        number: String(tvwPin.id),
-        position: { x: pad.pos.x, y: pad.pos.y },
-        radius,
-        side,
-        net: netName,
-      });
+      const p = resolvePin(tvwPin, padLayer, side);
+      if (p) primaryPins.push(p);
+      else log.parser.log(`pin "${tvwPin.name}" handle=${tvwPin.handle} not found in primary layer`);
     }
 
-    if (pins.length === 0) continue;
+    // Extension pins (dual-sided edge connectors) — resolve in the opposite layer
+    const extPins: Pin[] = [];
+    if (tvwPart.pinsExt && oppositeLayerGlobalIdx >= 0) {
+      const oppLayer = tvw.layers[oppositeLayerGlobalIdx];
+      for (const tvwPin of tvwPart.pinsExt) {
+        const p = resolvePin(tvwPin, oppLayer, oppositeSide);
+        if (p) extPins.push(p);
+      }
+    }
 
-    // Use pin-only bounds (like BRD parser) so the renderer controls padding.
-    // Native part bboxes from TVW files are often oversized.
-    const bounds = computeBBox(pins.map(p => p.position));
+    if (primaryPins.length === 0 && extPins.length === 0) continue;
+
     const cx = tvwPart.pos.x;
     const cy = tvwPart.pos.y;
     const origin: Point = { x: cx, y: cy };
 
-    allParts.push({
-      name: tvwPart.name,
-      side,
-      type: 'smd',
-      origin,
-      pins,
-      bounds,
-      layer: col,
-    });
+    // Primary side
+    if (primaryPins.length > 0) {
+      allParts.push({
+        name: tvwPart.name,
+        side,
+        type: 'smd',
+        origin,
+        pins: primaryPins,
+        bounds: computeBBox(primaryPins.map(p => p.position)),
+        layer: col,
+      });
+    }
+
+    // Opposite side (edge-connector extension) — emit as a separate part instance
+    if (extPins.length > 0) {
+      const oppCol = layerIdxToCol.get(oppositeLayerGlobalIdx);
+      allParts.push({
+        name: tvwPart.name,
+        side: oppositeSide,
+        type: 'smd',
+        origin,
+        pins: extPins,
+        bounds: computeBBox(extPins.map(p => p.position)),
+        layer: oppCol ?? col,
+      });
+    }
   }
 
   // Inner copper layers: show pads as nails (test-point-like)

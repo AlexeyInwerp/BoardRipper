@@ -326,6 +326,12 @@ html, body, #root {
   font-style: italic;
 }
 
+.bind-link-header {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
 /* PDF binding picker */
 .toolbar-pdf-bind {
   position: relative;

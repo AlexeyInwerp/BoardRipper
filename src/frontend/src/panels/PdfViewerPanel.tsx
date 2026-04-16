@@ -1,11 +1,11 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useSyncExternalStore } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { usePdfDoc } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
-import { boardPanelId, activateLinkedPanel } from '../store/dockview-api';
+import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked, setAutoSwitchLinked, onAutoSwitchChange } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
@@ -503,6 +503,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const pdfFileName = props.params.pdfFileName ?? '';
   const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
+  const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
   // Switch pdfStore to this panel's document on activation (for mutations)
   useEffect(() => {
@@ -515,8 +516,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         // Register this panel's search input for global Cmd+F routing
         fileInputRefs.pdfSearch = searchInputRef.current;
         // Activate linked board panel so it follows the PDF tab
-        const linkedTab = boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName));
-        log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} bindings=${JSON.stringify(boardStore.tabs.map(t => ({ id: t.id, pdfs: t.pdfFileNames })))}`);
+        // Gated by auto-switch flag (toggled via BindLink dropdown header).
+        const linkedTab = isAutoSwitchLinked()
+          ? boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName))
+          : null;
+        log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} autoSwitch=${isAutoSwitchLinked()}`);
         if (linkedTab) {
           const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
           log.pdf.log(`activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
@@ -2595,6 +2599,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             options={boardTabNames}
             onToggle={handleBindBoard}
             title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'No board linked'}
+            headerItem={{
+              label: 'auto-open boardview',
+              checked: autoSwitchLinked,
+              onChange: setAutoSwitchLinked,
+            }}
           />
         )}
         <span className="pdf-filename" title={boundBoardTabs.length > 0 ? boundBoardTabs.map(t => t.fileName).join(', ') : 'No board linked'}>

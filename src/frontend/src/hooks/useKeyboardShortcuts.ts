@@ -62,7 +62,10 @@ export function useKeyboardShortcuts() {
         // last-clicked word over the board selection.
         const api = getDockviewApi();
         const activePanelId = api?.activePanel?.id ?? '';
-        if (activePanelId.startsWith('pdf-')) {
+        const activePdfFile: string | null = activePanelId.startsWith('pdf-')
+          ? (api?.activePanel?.params as { pdfFileName?: string } | undefined)?.pdfFileName ?? null
+          : null;
+        if (activePdfFile) {
           const pdfClicked = pdfStore.lastClickedWord;
           if (pdfClicked) prefillText = pdfClicked;
         }
@@ -78,10 +81,15 @@ export function useKeyboardShortcuts() {
           return;
         }
 
-        if (linkedPdf) {
+        // Route target PDF: if a PDF panel is the active dockview panel, use
+        // THAT panel's PDF — even if the board tab has a different linked PDF.
+        // Cmd+F must always focus the search field of the tab the user is in.
+        const targetPdf = activePdfFile ?? linkedPdf ?? null;
+
+        if (targetPdf) {
           e.preventDefault();
-          ensurePdfPanel(linkedPdf);
-          pdfStore.switchTo(linkedPdf);
+          ensurePdfPanel(targetPdf);
+          pdfStore.switchTo(targetPdf);
           if (prefillText) {
             pdfStore.searchText(prefillText, 'lookup');
           }

@@ -8,6 +8,27 @@ let _linkActivating = false;
 export function isLinkActivating(): boolean { return _linkActivating; }
 export function setLinkActivating(v: boolean): void { _linkActivating = v; }
 
+// --- Auto-switch between linked board and PDF panels ---
+// When true, activating a board panel also activates its linked PDF panel
+// (and vice versa). When false, each panel is activated independently.
+// Persisted to localStorage.
+const AUTO_SWITCH_KEY = 'boardripper-auto-switch-linked';
+let _autoSwitchLinked = (() => {
+  try { return localStorage.getItem(AUTO_SWITCH_KEY) !== '0'; }
+  catch { return true; }
+})();
+const _autoSwitchListeners = new Set<() => void>();
+export function isAutoSwitchLinked(): boolean { return _autoSwitchLinked; }
+export function setAutoSwitchLinked(v: boolean): void {
+  _autoSwitchLinked = v;
+  try { localStorage.setItem(AUTO_SWITCH_KEY, v ? '1' : '0'); } catch { /* ignore */ }
+  _autoSwitchListeners.forEach(fn => fn());
+}
+export function onAutoSwitchChange(fn: () => void): () => void {
+  _autoSwitchListeners.add(fn);
+  return () => { _autoSwitchListeners.delete(fn); };
+}
+
 export function setDockviewApi(api: DockviewApi) {
   _api = api;
 }
@@ -28,18 +49,45 @@ export function ensureBoardPanel(tabId: number, fileName: string): void {
     const existing = api.getPanel(id);
     if (existing) {
       existing.api.setActive();
-    } else {
-      const existingBoard = api.panels.find(p => p.id.startsWith('board-'));
+      return;
+    }
+    // Placement priority:
+    //   1. Tab into an existing board group (so multiple boards stack in tabs)
+    //   2. Split from an existing PDF panel (board to the left/above — the
+    //      LEFT/ABOVE direction is deliberate so board+PDF are distinct groups)
+    //   3. Standalone (first panel ever)
+    const existingBoard = api.panels.find(p => p.id.startsWith('board-'));
+    if (existingBoard) {
       api.addPanel({
         id,
         component: 'boardViewer',
         title: fileName,
         params: { boardTabId: tabId },
-        position: existingBoard
-          ? { referencePanel: existingBoard.id }
-          : undefined,
+        position: { referencePanel: existingBoard.id },
       });
+      return;
     }
+    const existingPdf = api.panels.find(p => p.id.startsWith('pdf-'));
+    if (existingPdf) {
+      const isLandscape = api.width >= api.height;
+      api.addPanel({
+        id,
+        component: 'boardViewer',
+        title: fileName,
+        params: { boardTabId: tabId },
+        position: {
+          referencePanel: existingPdf.id,
+          direction: isLandscape ? 'left' : 'above',
+        },
+      });
+      return;
+    }
+    api.addPanel({
+      id,
+      component: 'boardViewer',
+      title: fileName,
+      params: { boardTabId: tabId },
+    });
   } catch (err) {
     log.ui.error('Failed to open board panel:', err);
   }
