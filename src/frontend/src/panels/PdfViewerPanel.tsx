@@ -2652,41 +2652,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </div>
 
         <div className="pdf-toolbar-separator" />
-        <div className="pdf-toolbar-group">
-          <button
-            className="pdf-toolbar-btn pdf-bookmark-add"
-            onClick={handleAddBookmark}
-            title="Bookmark current view"
-          >
-            <IconBookmarkPlus size={14} />
-          </button>
-          {bookmarks.map(bm => (
-            editingBookmarkId === bm.id ? (
-              <input
-                key={bm.id}
-                className="pdf-bookmark-edit"
-                value={editingLabel}
-                onChange={e => setEditingLabel(e.target.value)}
-                onKeyDown={e => handleLabelEditKeyDown(e, bm.id)}
-                onBlur={() => handleLabelEditSubmit(bm.id)}
-                autoFocus
-              />
-            ) : (
-              <button
-                key={bm.id}
-                className={`pdf-toolbar-btn pdf-bookmark-pill${bm.page === currentPage ? ' active' : ''}`}
-                onClick={e => { if (!e.altKey) handleBookmarkClick(bm.id); }}
-                onDoubleClick={() => handleBookmarkDblClick(bm.id)}
-                onContextMenu={e => handleBookmarkRightClick(e, bm.id)}
-                onMouseDown={e => handleBookmarkMiddleClick(e, bm.id)}
-                title={`Page ${bm.page} @ ${Math.round(bm.zoom * 100)}%\nClick: go | Dbl-click: update | Right-click: delete | Opt/Middle-click: rename`}
-              >
-                {bm.label}
-              </button>
-            )
-          ))}
-        </div>
-
         <div className="pdf-search-wrapper">
           <div className="pdf-search-bar">
             <form className="pdf-search-form" onSubmit={handleSearch}>
@@ -2772,6 +2737,41 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               </span>
             </div>
           )}
+        </div>
+
+        <div className="pdf-toolbar-group">
+          <button
+            className="pdf-toolbar-btn pdf-bookmark-add"
+            onClick={handleAddBookmark}
+            title="Bookmark current view"
+          >
+            <IconBookmarkPlus size={14} />
+          </button>
+          {bookmarks.map(bm => (
+            editingBookmarkId === bm.id ? (
+              <input
+                key={bm.id}
+                className="pdf-bookmark-edit"
+                value={editingLabel}
+                onChange={e => setEditingLabel(e.target.value)}
+                onKeyDown={e => handleLabelEditKeyDown(e, bm.id)}
+                onBlur={() => handleLabelEditSubmit(bm.id)}
+                autoFocus
+              />
+            ) : (
+              <button
+                key={bm.id}
+                className={`pdf-toolbar-btn pdf-bookmark-pill${bm.page === currentPage ? ' active' : ''}`}
+                onClick={e => { if (!e.altKey) handleBookmarkClick(bm.id); }}
+                onDoubleClick={() => handleBookmarkDblClick(bm.id)}
+                onContextMenu={e => handleBookmarkRightClick(e, bm.id)}
+                onMouseDown={e => handleBookmarkMiddleClick(e, bm.id)}
+                title={`Page ${bm.page} @ ${Math.round(bm.zoom * 100)}%\nClick: go | Dbl-click: update | Right-click: delete | Opt/Middle-click: rename`}
+              >
+                {bm.label}
+              </button>
+            )
+          ))}
         </div>
 
         <div className="pdf-toolbar-spacer" />
