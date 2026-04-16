@@ -108,7 +108,7 @@ export interface GhostComponent {
 export interface BoardRevision {
   /** 1-based index. */
   index: number;
-  /** Human-readable label, e.g. "rev 1", "rev 3 (current)". */
+  /** Human-readable label, e.g. "rev 1", "rev 3 (current)", "Board A". */
   label: string;
   /** Component count for this revision. */
   componentCount: number;
@@ -122,6 +122,12 @@ export interface BoardRevision {
   nets: Map<string, Net>;
   /** Suspected stale components for this revision (see BoardData.ghosts). */
   ghosts: GhostComponent[];
+  /** Per-revision traces (when traces differ between revisions). */
+  traces?: Trace[];
+  /** Per-revision vias. */
+  vias?: Via[];
+  /** Per-revision layer names. */
+  layerNames?: string[];
 }
 
 /** Display ID for a pin: prefer name, then number, then 1-based index fallback. */

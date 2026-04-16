@@ -105,9 +105,16 @@ function buildRenderedBoard(
   rev: BoardRevision,
   hideGhosts: boolean,
 ): BoardData {
+  // Per-revision traces/vias/layerNames override global ones when present
+  const traceOverrides: Partial<BoardData> = {};
+  if (rev.traces)     traceOverrides.traces = rev.traces;
+  if (rev.vias)       traceOverrides.vias = rev.vias;
+  if (rev.layerNames) traceOverrides.layerNames = rev.layerNames;
+
   if (!hideGhosts || rev.ghosts.length === 0) {
     return {
       ...base,
+      ...traceOverrides,
       parts: rev.parts,
       bounds: rev.bounds,
       outline: rev.outline,
@@ -124,11 +131,9 @@ function buildRenderedBoard(
   const allPoints = filteredParts.flatMap(p => p.pins.map(pin => pin.position));
   const outline = generateSyntheticOutline(allPoints);
   const bounds = computeBBox([...outline, ...allPoints]);
-  // Re-detect ghosts on the filtered set so the panel keeps showing the
-  // (now resolved) entries — they reference original indices though, so we
-  // keep the original ghost list for the UI to render with strikethroughs.
   return {
     ...base,
+    ...traceOverrides,
     parts: filteredParts,
     bounds,
     outline,
