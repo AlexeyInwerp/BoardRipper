@@ -23,6 +23,7 @@ import {
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
 import { renderSettingsStore, isPdfWatermarkText } from '../store/render-settings';
+import { looksLikeMouseWheel } from '../store/scroll-mode';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -2081,7 +2082,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         : e.shiftKey ? bindings.shift
         : bindings.bare;
 
-      if (action === 'zoom') {
+      // Safety net: classic mouse wheel + pan mode = unusable jerky pan.
+      // Reinterpret this single event as zoom. Does not write back to settings.
+      const wheelDetection = renderSettingsStore.settings.wheelDetection;
+      const effectiveAction: ScrollAction = (
+        wheelDetection && action === 'pan' && looksLikeMouseWheel(e)
+      ) ? 'zoom' : action;
+
+      if (effectiveAction === 'zoom') {
         const rect = container.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
@@ -2143,7 +2151,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         return;
       }
 
-      if (action === 'pan') {
+      if (effectiveAction === 'pan') {
         // Omnidirectional multi-page scrolling. Two-finger scroll moves freely
         // in X and Y. syncTransform → clampPan handles all boundary clamping.
         const cssH = pageCssHRef.current;
