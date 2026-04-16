@@ -2450,20 +2450,20 @@ html, body, #root {
   margin-top: 1px;
 }
 
-/* Selection overlay (big centered component/net name) */
+/* Selection overlay (big centered component/net name) — pinned to top edge */
 .board-selection-overlay {
   position: absolute;
-  top: 8px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   font-family: monospace;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
-  padding: 4px 16px;
-  border-radius: 8px;
+  padding: 3px 14px;
+  border-radius: 0 0 8px 8px;
   pointer-events: none;
   z-index: 10;
   white-space: nowrap;
