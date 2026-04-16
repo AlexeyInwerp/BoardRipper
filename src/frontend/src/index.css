@@ -3013,13 +3013,13 @@ html, body, #root {
 .pdf-zoom-group {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
 }
 
 .pdf-viewport-group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   padding: 2px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -3032,6 +3032,7 @@ html, body, #root {
   border: 1px solid transparent;
   background: transparent;
   height: 20px;
+  padding: 2px 4px;
 }
 
 .pdf-viewport-group .pdf-toolbar-btn:hover:not(:disabled) {
@@ -3043,6 +3044,9 @@ html, body, #root {
   font-size: 0.77em;
   color: var(--text-secondary);
   font-family: monospace;
+  min-width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .pdf-zoom-group:hover .pdf-zoom-info {
