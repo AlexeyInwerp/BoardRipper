@@ -16,7 +16,7 @@
  * Reference: GenCAD 1.4 specification, OpenBoardView GenCADFile.cpp
  */
 
-import type { BoardData, BoardRevision, Part, Pin, Nail, Point } from './types';
+import type { BoardData, BoardRevision, Part, Pin, Nail, Point, Trace, Via } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents } from './types';
 
 const decoder = new TextDecoder('utf-8');
@@ -379,6 +379,310 @@ function parseSignals(lines: string[]): Map<string, string> {
 }
 
 // ---------------------------------------------------------------------------
+// Track width table ($TRACKS)
+// ---------------------------------------------------------------------------
+
+function parseTracks(lines: string[]): Map<string, number> {
+  const tracks = new Map<string, number>();
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line.startsWith('TRACK ')) continue;
+    const parts = line.split(/\s+/);
+    if (parts.length >= 3) {
+      const width = parseFloat(parts[2]);
+      if (!isNaN(width)) tracks.set(parts[1], width);
+    }
+  }
+  return tracks;
+}
+
+// ---------------------------------------------------------------------------
+// Routes parsing ($ROUTES) — multilayer traces + vias
+// ---------------------------------------------------------------------------
+
+interface RoutesResult {
+  traces: Trace[];
+  vias: Via[];
+  layerNames: string[];
+}
+
+function parseRoutes(lines: string[], tracks: Map<string, number>, passCount: number): RoutesResult {
+  // Multi-revision CAD files (e.g. V382_20) concatenate each revision's
+  // route data WITHIN each ROUTE block. A single ROUTE block for net X
+  // contains [rev1 VIAs+traces][rev2 VIAs+traces][rev3 VIAs+traces].
+  // Revision boundaries are marked by a VIA whose position already appeared
+  // earlier in the same ROUTE block. We only keep the last revision pass
+  // per route block, matching the component pass convention.
+  //
+  // Strategy: two-pass per ROUTE block.
+  //   Pass 1: scan for VIA-coordinate repeats to find last-pass start index.
+  //   Pass 2: parse only from that index onward.
+
+  // First, split lines into per-route blocks: [startIdx, endIdx) pairs.
+  const routeBlocks: { net: string; start: number; end: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('ROUTE ')) {
+      if (routeBlocks.length > 0) routeBlocks[routeBlocks.length - 1].end = i;
+      routeBlocks.push({ net: line.substring(6).trim(), start: i, end: lines.length });
+    }
+  }
+  if (routeBlocks.length > 0) routeBlocks[routeBlocks.length - 1].end = lines.length;
+
+  const allTraces: Trace[] = [];
+  const allVias: Via[] = [];
+  const layerNameOrder: string[] = [];
+  const layerIndexOf = new Map<string, number>();
+
+  function ensureLayer(name: string): number {
+    let idx = layerIndexOf.get(name);
+    if (idx === undefined) {
+      idx = layerNameOrder.length;
+      layerNameOrder.push(name.charAt(0).toUpperCase() + name.slice(1).toLowerCase());
+      layerIndexOf.set(name, idx);
+    }
+    return idx;
+  }
+
+  for (const block of routeBlocks) {
+    // Find last revision pass start within this route block.
+    // Multi-revision files concatenate each revision's routing inside the
+    // same ROUTE block. Boundaries are detected two ways:
+    //   1. A VIA coordinate that already appeared earlier (same VIA set
+    //      re-declared for a new revision).
+    //   2. A VIA or TRACK line appearing after trace content (LINE/ARC)
+    //      has already been emitted — indicates a new routing pass.
+    // Scan for revision boundaries. Three markers:
+    //  (a) VIA coordinate repeat (same VIA declared again for new pass)
+    //  (b) VIA appearing after trace content, IF more traces follow it
+    //      (distinguishes V382's "VIA-before-new-pass" from Avalon7's
+    //       "VIA-at-end-of-route")
+    //  (c) TRACK after trace content in multi-revision files only
+    //      (handles no-VIA routes like XTALOUT; safe because single-rev
+    //       files have passCount=1 and skip this rule)
+    const isMultiRev = passCount > 1;
+    const seenViaCoords = new Set<string>();
+    let lastPassStart = block.start + 1;
+    let hasTraceContent = false;
+    for (let i = block.start + 1; i < block.end; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('LINE ') || line.startsWith('ARC ')) {
+        hasTraceContent = true;
+        continue;
+      }
+      if (line.startsWith('VIA ')) {
+        const p = line.split(/\s+/);
+        if (p.length >= 4) {
+          const key = `${p[2]},${p[3]}`;
+          const isRepeat = seenViaCoords.has(key);
+          if (isRepeat || hasTraceContent) {
+            // Check if traces follow this VIA group (look ahead past VIAs)
+            let hasMoreTraces = false;
+            for (let j = i + 1; j < block.end; j++) {
+              const ahead = lines[j].trim();
+              if (ahead.startsWith('VIA ')) continue;
+              if (ahead.startsWith('LINE ') || ahead.startsWith('ARC ')) { hasMoreTraces = true; break; }
+              if (ahead.startsWith('TRACK ') || ahead.startsWith('LAYER ')) continue;
+              break;
+            }
+            if (isRepeat || hasMoreTraces) {
+              lastPassStart = i;
+              seenViaCoords.clear();
+              hasTraceContent = false;
+            }
+          }
+          seenViaCoords.add(key);
+        }
+        continue;
+      }
+      // In multi-rev files, a TRACK switch after traces = revision boundary
+      // for routes that have no VIAs (e.g. XTALOUT). Single-rev files
+      // legitimately switch tracks mid-route, so this rule is gated.
+      if (isMultiRev && hasTraceContent && line.startsWith('TRACK ')) {
+        lastPassStart = i;
+        hasTraceContent = false;
+      }
+    }
+
+    // For multi-rev routes with no VIA and no TRACK change (e.g.
+    // UNNAMED_37_CAP_I169_A), the block is N identical copies of
+    // the route. Split by dividing trace lines evenly by passCount.
+    if (isMultiRev && lastPassStart === block.start + 1) {
+      let traceLineCount = 0;
+      for (let i = block.start + 1; i < block.end; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('LINE ') || line.startsWith('ARC ')) traceLineCount++;
+      }
+      if (traceLineCount > 0 && traceLineCount % passCount === 0) {
+        const perPass = traceLineCount / passCount;
+        const skipLines = perPass * (passCount - 1);
+        let skipped = 0;
+        for (let i = block.start + 1; i < block.end; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('LINE ') || line.startsWith('ARC ')) {
+            skipped++;
+            if (skipped === skipLines) { lastPassStart = i + 1; break; }
+          }
+        }
+      }
+    }
+
+    // Parse only from lastPassStart onward
+    let currentLayerIdx = 0;
+    let currentWidth = 5;
+    for (let i = lastPassStart; i < block.end; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      if (line.startsWith('LAYER ')) {
+        currentLayerIdx = ensureLayer(line.substring(6).trim().toUpperCase());
+      } else if (line.startsWith('TRACK ')) {
+        const trackName = line.split(/\s+/)[1] ?? '';
+        currentWidth = tracks.get(trackName) ?? 5;
+      } else if (line.startsWith('LINE ')) {
+        const p = line.split(/\s+/);
+        if (p.length >= 5) {
+          const x1 = parseFloat(p[1]), y1 = parseFloat(p[2]);
+          const x2 = parseFloat(p[3]), y2 = parseFloat(p[4]);
+          if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2)) {
+            allTraces.push({
+              start: { x: x1, y: y1 },
+              end: { x: x2, y: y2 },
+              width: currentWidth,
+              net: block.net,
+              layer: currentLayerIdx,
+            });
+          }
+        }
+      } else if (line.startsWith('ARC ')) {
+        const p = line.split(/\s+/);
+        if (p.length >= 7) {
+          const x1 = parseFloat(p[1]), y1 = parseFloat(p[2]);
+          const x2 = parseFloat(p[3]), y2 = parseFloat(p[4]);
+          const cx = parseFloat(p[5]), cy = parseFloat(p[6]);
+          if (!isNaN(x1) && !isNaN(cx)) {
+            tessellateArc(x1, y1, x2, y2, cx, cy, currentWidth, block.net, currentLayerIdx, allTraces);
+          }
+        }
+      } else if (line.startsWith('VIA ')) {
+        const p = line.split(/\s+/);
+        if (p.length >= 4) {
+          const padstack = p[1];
+          const x = parseFloat(p[2]), y = parseFloat(p[3]);
+          if (!isNaN(x) && !isNaN(y)) {
+            const diameter = drillFromPadstack(padstack);
+            allVias.push({
+              position: { x, y },
+              diameter,
+              net: block.net,
+              layers: [],
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Deduplicate traces with identical coordinates (multi-rev files without
+  // VIAs or TRACK switches produce exact duplicates from concatenated passes).
+  const seen = new Set<string>();
+  const dedupedTraces: Trace[] = [];
+  for (const t of allTraces) {
+    const key = `${t.net},${t.layer},${t.start.x},${t.start.y},${t.end.x},${t.end.y}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      dedupedTraces.push(t);
+    }
+  }
+
+  return { traces: dedupedTraces, vias: allVias, layerNames: layerNameOrder };
+}
+
+function drillFromPadstack(name: string): number {
+  // PAD_VIA22D12 → drill=12, PAD_VIA20D10A32 → drill=10
+  const m = name.match(/D(\d+)(?:[A-Z_]|$)/i);
+  return m ? parseFloat(m[1]) : 10;
+}
+
+function tessellateArc(
+  x1: number, y1: number, x2: number, y2: number,
+  cx: number, cy: number,
+  width: number, net: string, layer: number,
+  out: Trace[],
+): void {
+  const radius = Math.sqrt((x1 - cx) ** 2 + (y1 - cy) ** 2);
+  if (radius <= 0) {
+    out.push({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, width, net, layer });
+    return;
+  }
+
+  const startAngle = Math.atan2(y1 - cy, x1 - cx);
+  const endAngle = Math.atan2(y2 - cy, x2 - cx);
+
+  // GenCAD convention: shorter arc (CCW by default)
+  let sweep = endAngle - startAngle;
+  if (sweep > Math.PI) sweep -= 2 * Math.PI;
+  if (sweep < -Math.PI) sweep += 2 * Math.PI;
+
+  const steps = Math.max(2, Math.ceil(Math.abs(sweep) / (Math.PI / 18)));
+  const dAngle = sweep / steps;
+
+  let prevX = x1, prevY = y1;
+  for (let i = 1; i <= steps; i++) {
+    const nx = i === steps ? x2 : cx + radius * Math.cos(startAngle + dAngle * i);
+    const ny = i === steps ? y2 : cy + radius * Math.sin(startAngle + dAngle * i);
+    out.push({ start: { x: prevX, y: prevY }, end: { x: nx, y: ny }, width, net, layer });
+    prevX = nx;
+    prevY = ny;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test pins + power pins ($TESTPINS, $POWERPINS)
+// ---------------------------------------------------------------------------
+
+function parseTestpins(lines: string[]): Nail[] {
+  const nails: Nail[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line.startsWith('TESTPIN ') && !line.startsWith('POWERPIN ')) continue;
+    const p = line.split(/\s+/);
+    // TESTPIN <name> <x> <y> <net> <altName> <code> <type> <side>
+    if (p.length >= 5) {
+      const x = parseFloat(p[2]), y = parseFloat(p[3]);
+      const net = p[4] ?? '';
+      const sideStr = (p[p.length - 1] ?? '').toUpperCase();
+      const side: 'top' | 'bottom' = sideStr === 'TOP' ? 'top' : 'bottom';
+      if (!isNaN(x) && !isNaN(y)) {
+        nails.push({ position: { x, y }, side, net });
+      }
+    }
+  }
+  return nails;
+}
+
+// ---------------------------------------------------------------------------
+// Mechanical features ($MECH)
+// ---------------------------------------------------------------------------
+
+function parseMech(lines: string[]): Via[] {
+  const holes: Via[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line.startsWith('FHOLE ')) continue;
+    const p = line.split(/\s+/);
+    if (p.length >= 4) {
+      const x = parseFloat(p[1]), y = parseFloat(p[2]);
+      const diameter = parseFloat(p[3]);
+      if (!isNaN(x) && !isNaN(y) && !isNaN(diameter)) {
+        holes.push({ position: { x, y }, diameter, net: '', layers: [] });
+      }
+    }
+  }
+  return holes;
+}
+
+// ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
 
@@ -504,8 +808,14 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     });
   }
 
-  // No nails in GenCAD (test points would need $TESTPINS section)
-  const nails: Nail[] = [];
+  // Multilayer data (additive — no-ops for files without these sections)
+  const trackWidths = parseTracks(extractSection(lines, 'TRACKS'));
+  const routes      = parseRoutes(extractSection(lines, 'ROUTES'), trackWidths, parsedComps.passCount);
+  const testpins    = parseTestpins(extractSection(lines, 'TESTPINS'));
+  const powerpins   = parseTestpins(extractSection(lines, 'POWERPINS'));
+  const mechHoles   = parseMech(extractSection(lines, 'MECH'));
+
+  const nails: Nail[] = [...testpins, ...powerpins];
 
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
   const revisions: BoardRevision[] = partsByPass.map((parts, idx) => {
@@ -537,6 +847,13 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     throw new Error('CAD file parsed but contains no parts — file may be corrupt or empty');
   }
 
+  // Ensure nail-only nets are registered in the active revision's net map
+  for (const nail of nails) {
+    if (nail.net && !active.nets.has(nail.net)) {
+      active.nets.set(nail.net, { name: nail.net, pinIndices: [] });
+    }
+  }
+
   // For clean single-pass files we don't expose the revisions UI — the
   // top-level fields alone are sufficient. Keep BoardData identical to
   // what the previous parser returned in that case.
@@ -553,5 +870,22 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     board.revisions = revisions;
     board.activeRevision = active.index;
   }
+
+  // Multilayer fields — only set when data exists (normal CADs stay unchanged)
+  // For multi-revision files, drop traces whose net has no pins in the active
+  // revision — these are orphan traces from older revisions (e.g. components
+  // that moved or were removed).
+  const activeTraces = parsedComps.passCount > 1
+    ? routes.traces.filter(t => !t.net || active.nets.has(t.net))
+    : routes.traces;
+  if (activeTraces.length > 0) {
+    board.traces = activeTraces;
+    const allVias = [...routes.vias, ...mechHoles];
+    if (allVias.length > 0) board.vias = allVias;
+    if (routes.layerNames.length > 0) board.layerNames = routes.layerNames;
+  } else if (mechHoles.length > 0) {
+    board.vias = mechHoles;
+  }
+
   return board;
 }

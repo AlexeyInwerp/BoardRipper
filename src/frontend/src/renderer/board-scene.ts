@@ -51,6 +51,9 @@ export const BOARD_COLORS = {
 
 const LABEL_FONT_FAMILY = 'monospace';
 
+/** Clamp trace stroke width to prevent power pours from visually dominating signal traces */
+const MAX_TRACE_WIDTH = 30;
+
 /** Choose grid resolution based on total pin count — returns 1 (no grid) for small boards */
 function computeGridSize(pinCount: number): number {
   if (pinCount < 1000) return 1;
@@ -422,7 +425,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
             gfx.moveTo(t.start.x, t.start.y);
             gfx.lineTo(t.end.x, t.end.y);
           }
-          gfx.stroke({ width, color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
+          gfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
         }
         layerContainer.addChild(gfx);
         traceLayer.addChild(layerContainer);
@@ -446,7 +449,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           traceGfx.moveTo(t.start.x, t.start.y);
           traceGfx.lineTo(t.end.x, t.end.y);
         }
-        traceGfx.stroke({ width, color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
+        traceGfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
       }
       traceLayer.addChild(traceGfx);
       root.addChild(traceLayer);
