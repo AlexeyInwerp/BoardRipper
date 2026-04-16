@@ -3013,7 +3013,7 @@ html, body, #root {
 .pdf-zoom-group {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
 }
 
 .pdf-viewport-group {
@@ -3043,8 +3043,7 @@ html, body, #root {
 .pdf-zoom-info {
   font-size: 0.77em;
   color: var(--text-secondary);
-  font-family: monospace;
-  min-width: 38px;
+  min-width: 34px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
