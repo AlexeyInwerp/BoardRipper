@@ -18,6 +18,7 @@ import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
+import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
@@ -1971,15 +1972,19 @@ export class BoardRenderer {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
     }
     this.boundShiftWheel = (e: WheelEvent) => {
-      // Only intercept pure Shift+scroll — let Ctrl/Meta combos (trackpad pinch,
-      // browser zoom) pass through to pixi-viewport / browser defaults.
-      if (!e.shiftKey || e.ctrlKey || e.metaKey) return;
+      // Let Ctrl/Meta combos (trackpad pinch, browser zoom) pass through.
+      if (e.ctrlKey || e.metaKey) return;
 
       const s = renderSettingsStore.settings;
 
-      if (s.twoFingerPan) {
-        // Default mode: bare scroll = pan, shift+scroll should = zoom.
-        // Perform mouse-centered zoom using whichever delta is non-zero.
+      // Safety net: classic mouse wheel in pan mode would pan jerkily. Route
+      // it to the same mouse-centered zoom path as Shift+scroll when the
+      // wheelDetection heuristic matches.
+      const safetyNetFires =
+        s.wheelDetection && s.twoFingerPan && !e.shiftKey && looksLikeMouseWheel(e);
+
+      if ((e.shiftKey && s.twoFingerPan) || safetyNetFires) {
+        // Mouse-centered zoom using whichever delta is non-zero.
         const raw = e.deltaY || e.deltaX; // browser may swap axes on shift
         const factor = Math.pow(2, (1 + 0.3) * (-raw / 500));
         const point = { x: e.offsetX, y: e.offsetY };
@@ -1991,11 +1996,13 @@ export class BoardRenderer {
         const after = this.viewport.toWorld(point.x, point.y);
         this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
         this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
-      } else {
-        // Alternate mode: bare scroll = zoom, shift+scroll should = pan.
-        // Use whichever delta the browser provides (macOS swaps on shift).
-        const dx = e.deltaX || e.deltaY; // horizontal pan from either axis
+      } else if (e.shiftKey && !s.twoFingerPan) {
+        // Alternate mode: bare = zoom, shift+scroll = pan.
+        const dx = e.deltaX || e.deltaY;
         this.viewport.x -= dx;
+      } else {
+        // No modifier and safety net did not fire — let pixi-viewport handle it.
+        return;
       }
 
       this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
