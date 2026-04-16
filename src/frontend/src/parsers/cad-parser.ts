@@ -690,6 +690,17 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const text = decoder.decode(buffer);
   const lines = text.split(/\r?\n/);
 
+  // Extract GENCAD version from header (e.g. "GENCAD 1.4")
+  const headerLines = extractSection(lines, 'HEADER');
+  let formatVersion: string | undefined;
+  for (const raw of headerLines) {
+    const line = raw.trim();
+    if (line.startsWith('GENCAD ')) {
+      formatVersion = line;
+      break;
+    }
+  }
+
   // Parse sections
   // Note: UNITS USER 1000 means "1000 units per inch" = coordinates are in mils.
   // Our internal coordinate system is mils, so no conversion needed.
@@ -914,6 +925,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     nets:    active.nets,
     bounds:  active.bounds,
   };
+  if (formatVersion) board.formatVersion = formatVersion;
   if (active.ghosts.length > 0) board.ghosts = active.ghosts;
   if (revisions.length > 1) {
     board.revisions = revisions;
