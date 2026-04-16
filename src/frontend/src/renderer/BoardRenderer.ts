@@ -1677,15 +1677,23 @@ export class BoardRenderer {
         this.applyFlips(board, this.activeScene);
         this.needsRender = true;
 
-        // After flip: re-center on selected component so the user keeps focus
-        if (flipped && boardStore.selection.partIndex !== null) {
-          const part = board.parts[boardStore.selection.partIndex];
-          if (part) {
-            const s = renderSettingsStore.settings;
-            const eb = computePartRenderBounds(part, s);
-            this.zoomToBounds({ minX: eb.px, minY: eb.py, maxX: eb.px + eb.pw, maxY: eb.py + eb.ph }, this.rootForPart(part), 0.25);
-          }
-        } else if (flipped && oldVpCenter && oldScale) {
+        // After flip: re-center on selected component so the user keeps focus.
+        // NOTE: zoomToBounds disabled for now — it over-zooms tiny selections
+        // (testpoints, single pads) because 0.25 view-fraction × small bounds
+        // = massive zoom-in. Keep the code path around for a future cap-aware
+        // version; for now the mirror-about-center branch below handles the
+        // no-selection case and the selected case just falls through (scene
+        // mirror keeps the part under the viewport since its position also
+        // reflects about the board center when we're already centered on it).
+        // if (flipped && boardStore.selection.partIndex !== null) {
+        //   const part = board.parts[boardStore.selection.partIndex];
+        //   if (part) {
+        //     const s = renderSettingsStore.settings;
+        //     const eb = computePartRenderBounds(part, s);
+        //     this.zoomToBounds({ minX: eb.px, minY: eb.py, maxX: eb.px + eb.pw, maxY: eb.py + eb.ph }, this.rootForPart(part), 0.25);
+        //   }
+        // } else
+        if (flipped && oldVpCenter && oldScale) {
           // Nothing selected — mirror the viewport center around the board
           // center for each axis whose scale sign flipped. scene.root uses
           // pivot=(cx,cy), position=(cx,cy), so a sign flip mirrors points
