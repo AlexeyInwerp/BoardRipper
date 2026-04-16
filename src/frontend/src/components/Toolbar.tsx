@@ -265,6 +265,12 @@ export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis } = useBoardStore();
+
+  // For files where the label convention is inverted (primarySide='bottom'),
+  // the UI presents the physical CPU side as "Top". The store's showTop flag
+  // still tracks the file's side='top' layer, so swap the active highlight.
+  const uiShowTop    = board?.primarySide === 'bottom' ? showBottom : showTop;
+  const uiShowBottom = board?.primarySide === 'bottom' ? showTop    : showBottom;
   const update = useUpdateStore();
   const fmt = board ? getFormat(board.format) : undefined;
   const hasLayers = fmt?.hasLayers ?? false;
@@ -340,7 +346,7 @@ export function Toolbar() {
       <div className="toolbar-group">
         <button
           onClick={(e) => boardStore.selectTop(e.shiftKey)}
-          className={`toolbar-btn ${showTop ? 'active' : ''}`}
+          className={`toolbar-btn ${uiShowTop ? 'active' : ''}`}
           data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
         >
           Top
@@ -355,7 +361,7 @@ export function Toolbar() {
         </button>
         <button
           onClick={(e) => boardStore.selectBottom(e.shiftKey)}
-          className={`toolbar-btn ${showBottom ? 'active' : ''}`}
+          className={`toolbar-btn ${uiShowBottom ? 'active' : ''}`}
           data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
         >
           Bottom

@@ -344,6 +344,29 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
 - **Empty net names**: BOUNDARY shapes with an unnamed net should get a synthetic
   name `Net_<code>` to avoid collapsing into UNCONNECTED during zone-fill matching.
 
+- **Board outline — flat-scan required**: Many Allegro files (confirmed on Quanta
+  Y0D, Z8I, Acer Z8IA; V_165 and V_172) do **not** link the real board outline
+  `0x28` shape into `LL_Shapes`. KiCad's reference importer walks three linked
+  lists (`LL_Shapes`, `LL_0x24_0x28`, `LL_0x14`); even that is insufficient in
+  these files. BoardRipper's `extractOutline` flat-scans `db.blocks.values()` for
+  all `0x28` blocks matching the outline filter (BOUNDARY class, or
+  BOARD_GEOMETRY/DRAWING_FORMAT + subclass `0xEA/0xFD`) and picks the largest by
+  segment count. Minimal-risk — the filter predicate is unchanged, only the
+  traversal scope widened.
+
+- **`inst.layer` side-label inversion**: KiCad's `backSide = inst.m_Layer != 0`
+  check is mathematically correct, but some Allegro exports (Quanta laptop
+  motherboards) use the opposite convention: big chips (CPU, SoC, DIMMs) sit on
+  `inst.layer=1` while the ETCH layer-name table labels layer 0 as "TOP". The
+  geometry and bottom-frame coordinate convention are preserved; only the user-
+  facing side label is reversed. BoardRipper detects this by pin-count majority
+  (if >55% of pins are on `side='bottom'`, set `BoardData.primarySide='bottom'`).
+  The renderer, scene graph, and coordinate frames stay untouched; the fix lives
+  purely at the UI layer: `selectTop`/`selectBottom` swap which store flag they
+  set, and the Toolbar swaps which button highlights as active. The initial
+  view on open also uses `showBottom=true` so the file loads onto the CPU side.
+  Single-sided boards and normally-laid-out boards (tvk336169) are untouched.
+
 ---
 
 ## References

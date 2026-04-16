@@ -49,6 +49,28 @@ export function assembleBoard(db: AllegroDb): BoardData {
   // Extract components + pins
   const { parts, allPinPositions } = extractComponents(db, ver, div, netAssignMap);
 
+  // Detect files where the `inst.layer` convention is inverted relative to
+  // the physical top side. Some Allegro exports (Quanta Y0D/Z8I/Z8IA) place
+  // big chips (CPU/SoC/chipset) on layer=1 despite the ETCH layer-name
+  // table labelling layer 0 as "TOP". KiCad's `layer != 0 → bottom` check
+  // keeps the geometry right but mislabels sides from a user perspective.
+  // Pin-count majority reliably identifies the physical-top side for
+  // laptop/desktop motherboards (big chips always top-heavy).
+  const pinsOnTop = parts.filter(p => p.side === 'top')
+    .reduce((n, p) => n + p.pins.length, 0);
+  const pinsOnBottom = parts.filter(p => p.side === 'bottom')
+    .reduce((n, p) => n + p.pins.length, 0);
+  const totalPins = pinsOnTop + pinsOnBottom;
+  const primarySide: 'top' | 'bottom' =
+    (totalPins > 0 && pinsOnBottom / totalPins > 0.55) ? 'bottom' : 'top';
+  if (primarySide === 'bottom') {
+    dbg.log(
+      `Side inversion detected: pin majority on side='bottom' ` +
+      `(${pinsOnBottom}) vs side='top' (${pinsOnTop}). ` +
+      `Setting primarySide='bottom'; renderer will swap scene layers.`,
+    );
+  }
+
   // Extract traces
   const traces = extractTraces(db, ver, div, netAssignMap);
 
@@ -86,6 +108,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
+    primarySide: primarySide === 'bottom' ? 'bottom' : undefined,
   };
 }
 

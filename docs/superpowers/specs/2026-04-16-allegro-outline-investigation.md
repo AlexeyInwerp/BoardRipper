@@ -147,3 +147,62 @@ If downstream users report visual misclassification on Y0D/Z8I, the follow-up in
 ### Risk assessment
 
 Changing the side-detection heuristic at this point would create divergence from KiCad's importer and would almost certainly *introduce* bugs on files currently working correctly (e.g. the Acer Z8IA sample already has reasonable layer0/layer1 ratios). Do not modify `allegro-assembler.ts` without first obtaining an independent per-refdes ground-truth list (a BDV or `.pcb` boardview of the same board identifying which refdes are top vs bottom) and showing a concrete per-refdes disagreement between our output and that truth. Until such disagreement is demonstrated, the current code is correct.
+
+## Appendix C — Side detection follow-up (2026-04-16)
+
+User reports Y0D/Z8I viewer shows the CPU side when labeled "BOTTOM" and the back side when labeled "TOP" — geometry renders correctly, only the label is swapped. Appendix B said "don't change without ground truth"; this appendix provides the ground truth.
+
+### Big-part evidence — `/tmp/allegro-side-check.ts`
+
+CPUs, PCH chipsets, GPUs, VRAM and DIMM connectors sit on the **top** of a laptop motherboard. Dump of the 10 largest footprint instances by pin count:
+
+| File | Top 3 biggest refdes : pins : `inst.layer` | layer0 pins | layer1 pins |
+|---|---|---|---|
+| **Y0D**  | `U10=1168 L1`, `PU4=203 L1`, `U20=178 L1` (CPU + PMIC + VRAM on layer 1) | 553 | 6140 |
+| **Z8I**  | `U1=1528 L1`, `U8=595 L1`, `JDIM1=264 L1` (CPU + PCH + DIMM on layer 1) | 4205 | 6379 |
+| **Z8IA** | `U6539=1449 L1`, `U8=595 L1`, `JDIM02=264 L1` (same pattern) | 4679 | 6544 |
+| **tvk336169** (reference) | all 174 parts on layer 0, `X1=80 L0`, ... | 1347 | 0 |
+
+`U10` (1168 pins, Y0D) and `U1`/`U6539` (1500+ pins, Z8I/Z8IA) are unambiguously the main SoC/CPU packages. DIMM sockets (`JDIM*`) are also always on the top side — they have to be accessible for memory replacement. Both sit on `inst.layer===1` in all three laptop boards.
+
+### Conclusion: the current code IS inverted for Y0D/Z8I/Z8IA
+
+Appendix B's reasoning ("KiCad's `m_Layer != 0` means bottom") was correct *as an Allegro-convention statement* but wrong as a UI-semantics statement for these files. In Y0D/Z8I/Z8IA, Allegro's `m_Layer=0` layer corresponds to the **"TOP" string layer name** in the layer table but physically the CPU/DIMM/PCH live on `m_Layer=1`. Either (a) these boards were authored with `TOP`/`BOTTOM` layer names mapped to the *opposite* `m_Layer` byte convention Quanta/Acer expect, or (b) the Allegro layer-name table is an independent labeling from the `m_Layer` byte and our parser is assuming they line up 1:1 when they don't.
+
+tvk336169 doesn't disprove anything: it's single-sided (layer=0 only), so it cannot distinguish "layer 0 = top" from "layer 0 = whichever side parts are on".
+
+Appendix B's "alternate signals are not reliable" remains correct — pad ETCH class is useless (always `PIN`), `inst.flags` bit 0x10000 is uncorrelated, rotation is uniform. The reliable signal is the **pin-count majority**: on a populated double-sided laptop motherboard the side with the SoC is always the side with more total pins.
+
+### OpenBoardView cross-reference
+
+`gh api repos/OpenBoardView/OpenBoardView/contents/src/openboardview/FileFormats/BRDAllegroFile.h` — OpenBoardView has no Allegro parser; `BRDAllegroFile` is a stub that refuses the file with an error message. No upstream to borrow a flip hint from.
+
+### Header-level hints checked
+
+Every scalar field in `FileHeader` was dumped for all four files. The only systematic differences between tvk336169 (single-sided, "works") and the three dual-sided files are size/counts and version. No field named or positioned like a global "mirror" or "primary side" flag exists in the header or the layerMap (entries 0–14 look structurally identical across files). `allegroVersion` strings differ in build number only. There is **no boolean file-level flip flag** we can read.
+
+### Recommended heuristic (not implemented — report only)
+
+Per-file, after loading the DB and before emitting `Part.side`, compute pin counts per `inst.layer`:
+
+```
+pins_by_layer = Map<layer, int>
+for inst in footprint_instances:
+  pins_by_layer[inst.layer] += inst.pinCount
+top_layer_byte = argmax(pins_by_layer)     // 0 or 1
+// Assign sides:
+side = (inst.layer === top_layer_byte) ? 'top' : 'bottom'
+```
+
+For tvk336169 (only layer 0): `top_layer_byte=0`, assignment is unchanged (everything is top).
+For Y0D/Z8I/Z8IA: `top_layer_byte=1`, current assignment flips → matches user's physical observation.
+
+Edge case: a board where both sides have near-equal pin counts (rare; placeholder populated boards only). Guard: require a clear majority (e.g. > 55%) before trusting the heuristic; fall back to `inst.layer === 0 → top` if ambiguous.
+
+### Alternative hypothesis worth ruling out first
+
+Before implementing the flip, verify the issue is labeling and not a downstream Y-axis mirror in the renderer. Take any refdes that appears on both top and bottom physically (e.g. U8 on Z8I is on layer 1), check whether the BoardViewer shows it on the correct *geometric* side (left vs right of the board in a known orientation). The user's description — "in TOP mode I see the BACK of the physical board" — is ambiguous between "side label is swapped" and "viewer is mirrored when switching sides". If geometry is correct and only the label is wrong, the pin-count heuristic is the right fix. If the renderer mirrors the wrong axis on side-switch, the heuristic would mask that bug rather than solve it.
+
+### Status
+
+No code change made. Evidence strongly supports inverted `inst.layer → side` assignment for Y0D/Z8I/Z8IA. Recommended next step: user confirmation that fixing the labels (without changing geometry) resolves the complaint, then implement the pin-count-majority heuristic in `extractComponents` / `extractPins`.

@@ -79,6 +79,12 @@ export interface BoardData {
   butterflyFoldAxis?: 'x' | 'y';
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
   flipY?: boolean;
+  /** Which part.side value the user perceives as "top" (CPU side). Defaults to 'top'.
+   *  When 'bottom', the renderer swaps which scene layer each part goes into so that
+   *  pressing "Top" shows parts whose parser-assigned side is 'bottom'. Set when the
+   *  file's pin-majority lands on side='bottom' (e.g. Quanta Allegro files where the
+   *  inst.layer byte convention is inverted relative to the label table). */
+  primarySide?: 'top' | 'bottom';
   /** Multi-revision payload for files that accumulate prior revisions of the
    *  same board (e.g. some V382 .cad exports). When present and length > 1,
    *  the UI exposes a revision picker. The revision currently mirrored into
