@@ -87,6 +87,7 @@ export function ensureBoardPanel(tabId: number, fileName: string): void {
     api.addPanel({
       id,
       component: 'boardViewer',
+      tabComponent: 'boardTab',
       title: fileName,
       params: { boardTabId: tabId },
     });

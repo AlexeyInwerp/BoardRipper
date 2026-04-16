@@ -345,6 +345,7 @@ class BoardStore extends Emitter {
       tab.pdfFileNames.push(pdfFileName);
       const entry = this._pdfFiles.get(pdfFileName);
       if (entry) entry.boundTabIds.add(tab.id);
+      this.notify();
     }
   }
 
@@ -358,6 +359,7 @@ class BoardStore extends Emitter {
       tab.pdfFileNames.push(match);
       const entry = this._pdfFiles.get(match);
       if (entry) entry.boundTabIds.add(tab.id);
+      this.notify();
     }
   }
 
