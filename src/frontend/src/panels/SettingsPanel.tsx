@@ -1239,6 +1239,13 @@ export function SettingsPanel() {
         <div className="settings-subsection-label">Scroll wheel behavior</div>
         <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
         <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateDraft} />
+        <Toggle
+          label="Mouse wheel detection"
+          value={draft.wheelDetection}
+          field="wheelDetection"
+          onUpdate={updateDraft}
+          title="When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
+        />
 
         <div className="settings-subsection-label">Zoom</div>
         <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
