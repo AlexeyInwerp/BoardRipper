@@ -10,6 +10,12 @@ export function StatusBar() {
     <div className="statusbar" data-testid="statusbar">
       {board ? (
         <>
+          <span title="Board file format">
+            {board.format}{board.formatVersion ? ` (${board.formatVersion})` : ''}
+          </span>
+          <span className="statusbar-sep">|</span>
+          <span title="BoardRipper version">v{__APP_VERSION__}</span>
+          <span className="statusbar-sep">|</span>
           <span>Components: {board.parts.length}</span>
           <span className="statusbar-sep">|</span>
           <span>Nets: {board.nets.size}</span>
@@ -17,6 +23,12 @@ export function StatusBar() {
             <>
               <span className="statusbar-sep">|</span>
               <span>Nails: {board.nails.length}</span>
+            </>
+          )}
+          {board.traces && board.traces.length > 0 && (
+            <>
+              <span className="statusbar-sep">|</span>
+              <span>Traces: {board.traces.length}</span>
             </>
           )}
           {selectedPart && (

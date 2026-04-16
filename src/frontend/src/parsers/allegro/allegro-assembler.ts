@@ -77,6 +77,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
 
   return {
     format: 'ALLEGRO_BRD',
+    formatVersion: fmtVerLabel(ver),
     outline,
     parts,
     nails: [],
@@ -86,6 +87,21 @@ export function assembleBoard(db: AllegroDb): BoardData {
     vias: vias.length > 0 ? vias : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
   };
+}
+
+function fmtVerLabel(v: FmtVer): string | undefined {
+  switch (v) {
+    case FmtVer.V_160: return '16.0';
+    case FmtVer.V_162: return '16.2';
+    case FmtVer.V_164: return '16.4';
+    case FmtVer.V_165: return '16.5';
+    case FmtVer.V_166: return '16.6';
+    case FmtVer.V_172: return '17.2';
+    case FmtVer.V_174: return '17.4';
+    case FmtVer.V_175: return '17.5';
+    case FmtVer.V_180: return '18.0';
+    default: return undefined;
+  }
 }
 
 // ── Net assignment map ────────────────────────────────────────────────────────

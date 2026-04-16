@@ -61,6 +61,8 @@ export interface Via {
 
 export interface BoardData {
   format: string; // format ID from FormatDescriptor.id (e.g. 'BVR1', 'BVR3', 'BRD')
+  /** Format-specific version extracted from file (e.g. "GENCAD 1.4", "17.2", "v7"). */
+  formatVersion?: string;
   outline: Point[];
   parts: Part[];
   nails: Nail[];
