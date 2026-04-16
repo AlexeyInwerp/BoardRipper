@@ -443,11 +443,15 @@ class BoardStore extends Emitter {
           tab.rotation = this.autoRotation(cached);
           if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
           const cachedFmt = getFormat(cached.format);
-          if (cachedFmt?.swapSides) {
+          // Initial side = user's perception of "top". For inverted files
+          // (primarySide='bottom'), the user's "Top" button is mapped to the
+          // file's side='bottom' in selectTop, so set showBottom=true on open.
+          const wantsBottomOnOpen = cachedFmt?.swapSides || cached.primarySide === 'bottom';
+          if (wantsBottomOnOpen) {
             tab.showTop = false;
             tab.showBottom = true;
           }
-          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, cachedFmt?.swapSides ? 'bottom' : 'top');
+          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, wantsBottomOnOpen ? 'bottom' : 'top');
           this.autoBindBoard(file.name);
           // Create panel AFTER board + rotation are ready so the renderer sees correct state
           this.onTabCreated?.(id, file.name);
@@ -481,11 +485,12 @@ class BoardStore extends Emitter {
         tab.board = board;
         tab.rotation = this.autoRotation(board);
         if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
-        if (fmt?.swapSides) {
+        const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
+        if (wantsBottomOnOpen) {
           tab.showTop = false;
           tab.showBottom = true;
         }
-        if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, fmt?.swapSides ? 'bottom' : 'top');
+        if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, wantsBottomOnOpen ? 'bottom' : 'top');
 
         await boardCache.put(file.name, file.size, file.lastModified, board);
 
@@ -612,7 +617,17 @@ class BoardStore extends Emitter {
     if (both) {
       this.updateActiveTab({ showTop: true, showBottom: true, butterfly: false });
     } else {
-      this.updateActiveTab({ showTop: true, showBottom: false, butterfly: false });
+      // When the board's primarySide is 'bottom', the file labels sides inverted
+      // relative to the user's expectation. The user pressing "Top" wants to see
+      // the physical CPU side, which lives under side='bottom' in the file — so
+      // we trigger the bottom-view rendering (scene.root is auto-mirrored there,
+      // which correctly un-mirrors the bottom-frame coordinates into physical view).
+      const swap = tab.board?.primarySide === 'bottom';
+      this.updateActiveTab({
+        showTop: swap ? false : true,
+        showBottom: swap ? true : false,
+        butterfly: false,
+      });
     }
     this.notify();
   }
@@ -623,7 +638,12 @@ class BoardStore extends Emitter {
     if (both) {
       this.updateActiveTab({ showTop: true, showBottom: true, butterfly: false });
     } else {
-      this.updateActiveTab({ showTop: false, showBottom: true, butterfly: false });
+      const swap = tab.board?.primarySide === 'bottom';
+      this.updateActiveTab({
+        showTop: swap ? true : false,
+        showBottom: swap ? false : true,
+        butterfly: false,
+      });
     }
     this.notify();
   }
