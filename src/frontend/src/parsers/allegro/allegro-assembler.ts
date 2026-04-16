@@ -429,20 +429,24 @@ function extractVias(
 // ── Board outline ─────────────────────────────────────────────────────────────
 
 function extractOutline(db: AllegroDb, _ver: FmtVer, div: number): Point[] {
-  const points: Point[] = [];
+  // Flat scan over all 0x28 blocks rather than walking LL_Shapes only.
+  // Many Allegro files (Quanta Y0D, Z8I, Acer Z8IA) don't link the real
+  // board outline shape into LL_Shapes — it exists in the block pool but
+  // is threaded on no known linked list. KiCad's reference importer
+  // walks three separate lists; flat iteration is simpler and catches
+  // every case without sensitivity to which LL the outline lives on.
+  //
+  // Filter (unchanged): BOUNDARY class (0x15), or BOARD_GEOMETRY (0x01)
+  // / DRAWING_FORMAT (0x04) with subclass 0xEA (BGEOM_OUTLINE) or 0xFD
+  // (BGEOM_DESIGN_OUTLINE). Pick the shape with the most segments — the
+  // board edge is the largest polygon matching the filter. Prefer 0xEA
+  // over 0xFD as a tiebreaker (matches KiCad's convention).
+  let best: Point[] = [];
+  let bestScore = -1;
 
-  // Walk LL_Shapes → 0x28 shapes
-  const shapes = db.walkLinkedList(
-    db.header.LL_Shapes,
-    (blk) => (blk as Blk0x28Shape).next,
-  );
-
-  for (const shapeBlk of shapes) {
-    if (shapeBlk.blockType !== 0x28) continue;
-    const shape = shapeBlk as Blk0x28Shape;
-
-    // Filter: BOUNDARY class (0x15), or BOARD_GEOMETRY (0x01) / DRAWING_FORMAT (0x04)
-    // with subclass 0xEA or 0xFD
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x28) continue;
+    const shape = blk as Blk0x28Shape;
     const cc = shape.layer.classCode;
     const sc = shape.layer.subclass;
 
@@ -450,18 +454,18 @@ function extractOutline(db: AllegroDb, _ver: FmtVer, div: number): Point[] {
     const isBoardGeomOutline =
       (cc === LayerClass.BOARD_GEOMETRY || cc === LayerClass.DRAWING_FORMAT) &&
       (sc === 0xEA || sc === 0xFD);
-
     if (!isBoundary && !isBoardGeomOutline) continue;
 
-    // Walk segment chain → lines + arcs → point array
-    const shapePoints = walkSegmentChain(db, shape.firstSegmentPtr, div);
-    for (const p of shapePoints) points.push(p);
-
-    // If we found outline points, stop (use first matching shape)
-    if (points.length > 0) break;
+    const pts = walkSegmentChain(db, shape.firstSegmentPtr, div);
+    // Tie-breaker bias: prefer 0xEA by a small margin when point counts tie
+    const score = pts.length * 10 + (sc === 0xEA ? 1 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = pts;
+    }
   }
 
-  return points;
+  return best;
 }
 
 /**
