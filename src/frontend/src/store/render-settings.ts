@@ -160,6 +160,13 @@ export interface RenderSettings {
   wheelSmooth: number;
   /** Require two fingers for panning (one finger does nothing); useful for trackpad users */
   twoFingerPan: boolean;
+  /**
+   * When scroll is configured to pan, override classic mouse-wheel events
+   * (large integer deltaY, no deltaX, no ctrl) to zoom instead — avoids
+   * jerky one-notch-equals-100px pan behavior. Trackpads and fine-grained
+   * wheels are unaffected by the heuristic. Default: true.
+   */
+  wheelDetection: boolean;
 
   netColorRules: NetColorRule[];
 
@@ -266,6 +273,7 @@ export const DEFAULTS: RenderSettings = {
   disableInertia: true,
   wheelSmooth: 5,
   twoFingerPan: true,
+  wheelDetection: true,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
 
