@@ -7,6 +7,8 @@
  */
 import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
+import { fileInputRefs } from './file-inputs';
+import { openBoardSearch } from '../panels/BoardViewerPanel';
 
 /**
  * Count substring (case-insensitive) matches of `term` across the given
@@ -39,4 +41,43 @@ export function countInPdf(term: string, fileName: string): number {
   const t = term.trim().toLowerCase();
   if (!t) return 0;
   return pdfStore.countTextMatches(fileName, t);
+}
+
+/**
+ * Switch to the given board tab, auto-select the part whose refdes equals
+ * `term` (case-insensitive exact match) if one exists, and open the Board
+ * Search panel with the query populated.
+ *
+ * Auto-select uses boardStore.focusPart() which also auto-flips the board
+ * to the correct side and sets a focus request consumed by BoardRenderer
+ * to recenter the viewport.
+ *
+ * The count reported by countInBoardTab is substring-based and can exceed
+ * 1 (e.g. "R1" matches "R1", "R10", "R100") — but auto-select is strict
+ * equality, so no silent mis-selection.
+ */
+export function findInBoardTab(term: string, tabId: number): void {
+  const t = term.trim();
+  if (!t) return;
+  boardStore.switchTab(tabId);
+  boardStore.focusPart(t);
+  openBoardSearch(t, tabId);
+}
+
+/**
+ * Switch the active PDF to `fileName`, set the PDF search query, and focus
+ * the PDF search input. Lifted from the inline body that
+ * GlobalSearch.runSearch used to carry.
+ */
+export function findInPdf(term: string, fileName: string): void {
+  const t = term.trim();
+  if (!t) return;
+  pdfStore.switchTo(fileName);
+  pdfStore.searchText(t);
+  setTimeout(() => {
+    if (fileInputRefs.pdfSearch) {
+      fileInputRefs.pdfSearch.value = t;
+      fileInputRefs.pdfSearch.focus();
+    }
+  }, 50);
 }
