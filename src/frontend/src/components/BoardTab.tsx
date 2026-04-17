@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useSyncExternalStore } from 'react';
 import type { IDockviewPanelHeaderProps } from 'dockview-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 
-/** Replicates dockview's useTitle hook — keeps tab title reactive to api title changes. */
+/** Subscribes to dockview title changes via useSyncExternalStore — avoids the
+ *  effect-setState race that dockview's own useTitle has (also avoids the
+ *  react-hooks/set-state-in-effect lint error). */
 function useTitle(api: IDockviewPanelHeaderProps['api']): string {
-  const [title, setTitle] = useState(api.title ?? '');
-  useEffect(() => {
-    const disposable = api.onDidTitleChange((e) => setTitle(e.title ?? ''));
-    if (title !== api.title) setTitle(api.title ?? '');
-    return () => disposable.dispose();
-  }, [api]);
-  return title;
+  return useSyncExternalStore(
+    (cb) => {
+      const disposable = api.onDidTitleChange(cb);
+      return () => disposable.dispose();
+    },
+    () => api.title ?? '',
+  );
 }
 
 /**
