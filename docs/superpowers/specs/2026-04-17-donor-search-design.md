@@ -173,26 +173,29 @@ User right-clicks text in PDF A
 
 ## Testing
 
+The project has no Vitest/Jest infrastructure — all tests are Playwright E2E. The `cross-target-search` module is small and mostly composes existing store primitives, so E2E coverage is sufficient. If a clear need for pure-unit testing arises later (e.g. counts become non-trivial), Vitest can be added; not now.
+
 ### Playwright E2E — `src/frontend/tests/donor-search.spec.ts`
 
-One new spec covering the donor workflow:
+One new spec covering the donor workflow end-to-end:
 
-1. Load two different board fixtures into two tabs (reuse existing test fixtures).
-2. Switch to tab A, right-click a known part (e.g. a refdes that exists in both).
-3. Assert the context menu shows a "Board" section with tab B's entry.
+1. Open two different board fixtures into two tabs (reuse samples under `samples/`).
+2. From tab A, programmatically show the context menu over a refdes that exists in both via `window.__testHooks.showContextMenu(componentName)` — avoids brittle canvas coordinate clicks against PixiJS hit-testing.
+3. Assert the context menu renders a "Board" section whose entries reference tab B.
 4. Click the entry that searches in B.
-5. Assert: active tab is now B, the part is selected (`boardStore.activeTab.selection.partIndex` matches), and the search panel shows the query.
-6. Add a third tab C whose board does not contain that refdes.
-7. Reopen the right-click menu on A, hover B's and C's submenus — assert C's query row has count `(0)` and carries the `disabled` class.
+5. Assert:
+   - Active tab is now B (`boardStore.activeTabId === B.id`, readable via a test hook).
+   - The part is selected on B (`boardStore.activeTab.selection.partIndex` is not null and matches the expected index).
+   - The board-search sidebar on B is open with the query populated.
+6. Open a third tab C whose board does not contain that refdes; re-open the menu and assert C's submenu row for that query shows `(0)` count and carries the `disabled` class.
+7. Exercise the global-search path with the same refdes — assert the auto-select fires when clicking the corresponding board row in the dropdown (covers the refactor's behavioral change).
 
-### Unit test — `src/frontend/src/store/cross-target-search.test.ts`
+A minimal test-only hook surface is added to `src/frontend/src/main.tsx` (or a dedicated `test-hooks.ts` loaded only in dev/test builds) exposing:
 
-Small unit test against in-memory `BoardData` fixtures:
+- `showContextMenu(componentName: string, pinId?: string, netName?: string)` → calls `contextMenuStore.show(100, 100, componentName, pinId ?? null, netName ?? null)`
+- Read-only getters on `boardStore` state (already accessible via `window.__boardStore` if such a hook exists; otherwise add minimal read accessors).
 
-- `findInBoardTab` with exact-match term → asserts `switchTab` and `focusPart` called, selection moves to the expected part.
-- `findInBoardTab` with substring-only term (`R1` when no literal `R1` exists, only `R10`/`R100`) → asserts `focusPart` runs but selection is unchanged; `openBoardSearch` still called.
-- `findInBoardTab` with missing term → asserts `switchTab` still called, selection unchanged, `openBoardSearch` still called with the term.
-- `countInBoardTab` numeric correctness for parts-only, nets-only, and mixed matches.
+These hooks are cheap, mirror patterns the existing Playwright specs already rely on to avoid canvas-coordinate fragility, and are guarded by `import.meta.env.DEV` so they do not ship in the production bundle.
 
 ### Manual verification
 
@@ -205,10 +208,10 @@ Small unit test against in-memory `BoardData` fixtures:
 | File | Change |
 | --- | --- |
 | `src/frontend/src/store/cross-target-search.ts` | New. ~60 LOC. |
-| `src/frontend/src/store/cross-target-search.test.ts` | New. Unit tests. |
 | `src/frontend/src/components/ContextMenu.tsx` | Add Board section. ~80 LOC delta. |
 | `src/frontend/src/components/Toolbar.tsx` | Replace inline scans/actions in `runSearch` with calls into `cross-target-search`. ~-30 / +10 LOC. |
-| `src/frontend/src/panels/BoardViewerPanel.tsx` | Minor — `openBoardSearch` may need an optional flag if any caller wants to skip the auto-select upgrade. (Defer: decide during implementation; current call sites look fine with the upgrade unconditional.) |
+| `src/frontend/src/panels/BoardViewerPanel.tsx` | No functional change. Note: `openBoardSearch` already calls `boardStore.switchTab` internally; `findInBoardTab` layers `boardStore.focusPart` on top. The two switchTab calls are idempotent — `board-store.ts:548` guards with `!== tabId`. |
+| `src/frontend/src/main.tsx` (or new `test-hooks.ts`) | Add dev/test-only hooks on `window` for Playwright. Gated by `import.meta.env.DEV`. |
 | `src/frontend/tests/donor-search.spec.ts` | New Playwright spec. |
 
 No parser changes, no renderer changes, no backend changes.
