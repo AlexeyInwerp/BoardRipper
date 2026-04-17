@@ -2,7 +2,7 @@
 
 Web-based PCB boardview file viewer and inspector for board-level repair. GPU-accelerated WebGL rendering of 9 board formats with integrated PDF schematics viewer, dockable panel system, and board library — all in a ~15MB Docker image with self-update.
 
-![Main View — BVR board with library panel](docs/screenshots/main-view.png)
+![Boardview and PDF schematic side by side — instant cross-reference](docs/screenshots/01-board-pdf-lookup.png)
 
 ## Features
 
@@ -17,7 +17,7 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 - **Search** — find components and nets by name with instant results
 - **Context menu** — right-click to copy name, highlight net, search in PDF
 
-![Selection with context menu and top bar overlay](docs/screenshots/context-menu.png)
+![Multi-layer Allegro BRD with layer sidebar — toggle signal, power, and ground planes independently](docs/screenshots/03-multi-layer.png)
 
 - **Panel system** — Dockview: dockable, floating, and popout-to-new-window panels
   - Component Info (pins list, metadata)
@@ -32,7 +32,7 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 - **Electron desktop app** — standalone macOS (universal + legacy) and Windows builds
 - **IndexedDB cache** — instant re-open without re-parsing
 
-![Multi-format — Apple BRD file with multi-tab view](docs/screenshots/brd-format.png)
+![Multiple boards of different formats open simultaneously in tabs — BVR, BRD, FZ, TVW, XZZ](docs/screenshots/02-format-support.png)
 
 ## Supported File Formats
 
@@ -47,6 +47,8 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 | **XZZ** | XZZ PCB (DES-encrypted boardview) | [XZZ_FORMAT.md](docs/formats/XZZ_FORMAT.md) |
 | **TVW** | Teboview binary (multi-layer, traces, drill data) | [TVW_FORMAT.md](docs/formats/TVW_FORMAT.md) |
 | **Allegro BRD** | Cadence Allegro binary PCB (v16.0–17.4) | [ALLEGRO_BRD_FORMAT.md](docs/formats/ALLEGRO_BRD_FORMAT.md) |
+
+![Obscure CAD file with multiple boards stacked into one document — all outlines and components rendered correctly alongside the matching PDF](docs/screenshots/04-stacked-boards.png)
 
 ## Stack
 
