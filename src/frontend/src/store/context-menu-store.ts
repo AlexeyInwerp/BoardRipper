@@ -31,3 +31,8 @@ class ContextMenuStore extends Emitter {
 }
 
 export const contextMenuStore = new ContextMenuStore();
+
+// Expose for integration tests (Playwright) — DEV builds only
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as { __contextMenuStore?: typeof contextMenuStore }).__contextMenuStore = contextMenuStore;
+}
