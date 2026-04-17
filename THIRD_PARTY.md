@@ -1,0 +1,120 @@
+# Third-Party Notices
+
+BoardRipper is released under the **GNU Affero General Public License v3.0**
+(see [LICENSE](LICENSE)).
+
+It incorporates, links against, or was informed by the following third-party
+works. Each entry lists the upstream project, its license, and how it is used
+in BoardRipper.
+
+---
+
+## Code and Algorithm References
+
+### KiCad — `pcbnew/pcb_io/allegro/`
+- **License:** GNU General Public License v3.0 (GPL-3.0)
+- **Upstream:** https://gitlab.com/kicad/code/kicad
+- **Used in:** `src/frontend/src/parsers/allegro/` (allegro-types.ts, allegro-header.ts, allegro-blocks.ts, allegro-assembler.ts, allegro-db.ts)
+- **Nature of use:** The Cadence Allegro BRD parser in BoardRipper is a TypeScript re-implementation derived from KiCad's C++ Allegro importer. Block-type definitions, version-detection logic, three-phase parsing architecture, and coordinate transforms are transliterated from KiCad. GPL-3.0 obligations propagate to BoardRipper, which is why BoardRipper as a whole is licensed under AGPL-3.0 (a GPL-3.0-compatible upgrade).
+- **Spec:** [docs/formats/ALLEGRO_BRD_FORMAT.md](docs/formats/ALLEGRO_BRD_FORMAT.md)
+
+### OpenBoardView
+- **License:** MIT
+- **Upstream:** https://github.com/OpenBoardView/OpenBoardView
+- **Used in:** `src/frontend/src/parsers/` — BVR1, BVR3, BRD, BDV, FZ, CAD, XZZ parsers
+- **Nature of use:** OpenBoardView's C++ parsers (BVRFile.cpp, BVR3File.cpp, BRDFile.cpp, FZFile.cpp, GenCADFile.cpp, XZZPCBFile.cpp) were consulted as reference implementations to reverse-engineer format behavior. BoardRipper's TypeScript parsers are independent re-implementations written against the format specifications in `docs/formats/`; no verbatim OpenBoardView code is present.
+- **Specs:** `docs/formats/BVR_FORMAT.md`, `docs/formats/BRD_FORMAT.md`, `docs/formats/BDV_FORMAT.md`, `docs/formats/FZ_FORMAT.md`, `docs/formats/CAD_FORMAT.md`, `docs/formats/XZZ_FORMAT.md`
+
+### eagleview — Pavel Kovalenko
+- **License:** MIT
+- **Upstream:** https://github.com/nitrocaster/eagleview
+- **Used in:** `src/frontend/src/parsers/tvw-parser.ts`
+- **Nature of use:** The Teboview (TVW) parser is a TypeScript port of eagleview's C++ reference implementation. A copy of the upstream MIT license is retained at [docs/formats/tvw-reference/eagleview-LICENSE](docs/formats/tvw-reference/eagleview-LICENSE).
+- **Spec:** [docs/formats/TVW_FORMAT.md](docs/formats/TVW_FORMAT.md)
+
+### brd_parser — Jeff Wheeler
+- **License:** MIT
+- **Upstream:** https://github.com/bernayigit/brd_parser
+- **Used in:** cross-validation reference for `src/frontend/src/parsers/allegro/`
+- **Nature of use:** Consulted alongside KiCad for secondary block-type hints and byte-layout validation during Allegro parser development.
+
+### Cryptographic standards
+- **RC6 stream cipher** (used in `src/frontend/src/parsers/fz-parser.ts`): RC6 algorithm by Rivest, Robshaw, Sidney, and Yin. Public algorithm, implementation written from the published design.
+- **DES (FIPS PUB 46-3)** (used in `src/frontend/src/parsers/xzz-parser.ts`): standard FIPS lookup tables (IP, FP, S-boxes, P-box, expansion, PC-1, PC-2) are reproductions of the public specification; key schedule and round function written from the standard.
+- **GenCAD 1.4 specification** (used in `src/frontend/src/parsers/cad-parser.ts`): public interchange format specification.
+
+---
+
+## Runtime Dependencies (npm, bundled at build time)
+
+| Package | License | Role |
+|---|---|---|
+| react, react-dom | MIT | UI runtime |
+| vite | MIT | Build tool, dev server |
+| typescript | Apache-2.0 | Type system |
+| pixi.js | MIT | WebGL rendering engine |
+| pixi-viewport | MIT | Pan/zoom/culling viewport |
+| dockview, dockview-react | MIT | Dockable panel system |
+| pdfjs-dist | Apache-2.0 | PDF rendering and text extraction (Mozilla) |
+| pdf-lib | MIT | PDF manipulation |
+| opentype.js | MIT | Font glyph extraction |
+| @tabler/icons-react | MIT | UI icon set |
+
+A complete, version-pinned inventory is generated from `src/frontend/package.json`
+and `src/frontend/package-lock.json`.
+
+---
+
+## Backend Dependencies (Go)
+
+| Package | License | Role |
+|---|---|---|
+| Go standard library (net/http, crypto, encoding, …) | BSD-3-Clause | HTTP server, crypto, encoding primitives |
+| modernc.org/sqlite | BSD-3-Clause | Pure-Go SQLite driver (board reference database) |
+| rsc.io/pdf | BSD-3-Clause | PDF text extraction for the databank indexer |
+
+Version-pinned inventory: `src/backend/go.mod`, `src/backend/go.sum`.
+
+---
+
+## Desktop Wrapper Dependencies (Electron)
+
+| Package | License | Role |
+|---|---|---|
+| electron | MIT | Desktop application shell |
+| @electron/packager | MIT | Build pipeline |
+| @electron/universal | MIT | macOS universal binary packaging |
+
+Version-pinned inventory: `desktop/package.json`, `desktop/package-lock.json`.
+
+---
+
+## Sample Files
+
+The files under [`samples/`](samples/) are real-world boardview and PDF files
+from third-party hardware manufacturers (Apple, ASUS, Quanta, Lenovo, and
+others), used as format-compatibility test fixtures. They are not authored by
+the BoardRipper project and no copyright is claimed over them. They are
+retained here because the corresponding file formats are proprietary and
+difficult to reproduce synthetically.
+
+If you are a rights holder and would like a sample file removed, please open
+an issue on the BoardRipper GitHub repository and it will be deleted
+promptly.
+
+---
+
+## Format Specifications
+
+The documents under [`docs/formats/`](docs/formats/) are original technical
+write-ups authored by the BoardRipper project. Where the understanding of a
+format was informed by an external reference implementation, that reference
+is cited in the document header (see individual format docs for details).
+
+---
+
+## Questions / Corrections
+
+If you believe a source has been omitted, misattributed, or that any part of
+BoardRipper violates an upstream license, please open an issue on GitHub.
+Attribution corrections are welcomed and handled as priority fixes.
