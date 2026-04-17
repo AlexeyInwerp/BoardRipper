@@ -212,4 +212,13 @@ Output in `desktop/out/` (macOS), `desktop/out-legacy/` (macOS legacy), `desktop
 
 ## License
 
-Private — not open-source.
+BoardRipper is released under the **GNU Affero General Public License v3.0**
+(AGPL-3.0). See [LICENSE](LICENSE) for the full text.
+
+This project incorporates code derived from KiCad (GPL-3.0), which is why
+AGPL-3.0 was chosen — it is compatible with GPL-3.0 and additionally closes
+the "SaaS loophole" by requiring source availability to users who interact
+with a hosted instance over a network.
+
+For a complete list of third-party sources, libraries, and attributions, see
+[THIRD_PARTY.md](THIRD_PARTY.md).

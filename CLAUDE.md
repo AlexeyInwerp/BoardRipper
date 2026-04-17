@@ -3,6 +3,15 @@
 ## Project Overview
 BoardRipper — web-based PCB boardview file viewer and inspector. Hosted via Docker on NAS.
 
+## License
+AGPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY.md](THIRD_PARTY.md). AGPL was
+chosen because the Allegro parser (`src/frontend/src/parsers/allegro/`) is a
+TypeScript re-implementation derived from KiCad (GPL-3.0), which forces the
+whole project to be GPL-3.0-compatible. AGPL additionally closes the SaaS
+loophole. All other parsers (BVR/BRD/BDV/FZ/CAD/XZZ) draw from OpenBoardView
+(MIT); TVW draws from eagleview (MIT). All runtime dependencies are
+MIT/Apache-2.0/BSD.
+
 ## Tech Stack
 - **Rendering:** PixiJS v8 (WebGL) + pixi-viewport v6 (pan/zoom/culling/deceleration)
 - **Frontend:** React 19 + TypeScript + Vite 7
