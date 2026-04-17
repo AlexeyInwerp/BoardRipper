@@ -12,7 +12,7 @@ import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
-import { openBoardSearch } from '../panels/BoardViewerPanel';
+import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 
 /** Dropdown showing release notes + update/download action */
 function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) {
@@ -157,36 +157,21 @@ function GlobalSearch() {
     // Board tabs: count matching parts + nets per tab
     for (const tab of boardStore.tabs) {
       if (!tab.board) continue;
-      let count = 0;
-      for (const p of tab.board.parts) {
-        if (p.name.toLowerCase().includes(ql)) count++;
-      }
-      for (const [name] of tab.board.nets) {
-        if (name.toLowerCase().includes(ql)) count++;
-      }
+      const count = countInBoardTab(ql, tab.id);
       const label = tab.fileName.replace(/\.[^.]+$/, '');
       items.push({
         label, count, group: 'Board',
-        action: () => { openBoardSearch(q, tab.id); },
+        action: () => { findInBoardTab(q, tab.id); },
       });
     }
 
     // PDF tabs: count matches per open document
     for (const fileName of pdfStore.loadedFileNames) {
-      const count = pdfStore.countTextMatches(fileName, ql);
+      const count = countInPdf(ql, fileName);
       const label = fileName.replace(/\.[^.]+$/, '');
       items.push({
         label, count, group: 'PDF',
-        action: () => {
-          pdfStore.switchTo(fileName);
-          pdfStore.searchText(q);
-          setTimeout(() => {
-            if (fileInputRefs.pdfSearch) {
-              fileInputRefs.pdfSearch.value = q;
-              fileInputRefs.pdfSearch.focus();
-            }
-          }, 50);
-        },
+        action: () => { findInPdf(q, fileName); },
       });
     }
 
