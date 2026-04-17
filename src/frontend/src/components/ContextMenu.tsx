@@ -5,6 +5,7 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
+import { findInBoardTab, countInBoardTab } from '../store/cross-target-search';
 
 let version = 0;
 let lastVer = -1;
@@ -27,6 +28,11 @@ function subscribe(cb: () => void) {
 /** Strip extension for shorter display labels */
 function shortPdfName(fileName: string): string {
   return fileName.replace(/\.pdf$/i, '');
+}
+
+/** Strip extension for shorter board display labels */
+function shortBoardName(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '');
 }
 
 export function ContextMenu() {
@@ -73,6 +79,18 @@ export function ContextMenu() {
   // Get the active board tab's bound PDF names
   const activeTab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
   const boundPdfNames = activeTab?.pdfFileNames ?? [];
+
+  // Other board tabs (for donor-search submenu). Only include tabs with a
+  // loaded board — donor rows won't render until the target is ready.
+  const otherBoardTabs = boardStore.tabs.filter(
+    t => t.id !== boardStore.activeTabId && t.board !== null,
+  );
+
+  const doBoardSearch = (e: React.MouseEvent, tabId: number, query: string) => {
+    e.stopPropagation();
+    findInBoardTab(query, tabId);
+    contextMenuStore.hide();
+  };
 
   const doSearch = (e: React.MouseEvent, pdfFileName: string, query: string) => {
     e.stopPropagation();
@@ -122,6 +140,51 @@ export function ContextMenu() {
       )}
     </>
   );
+
+  /** Flat items for the single-other-board case */
+  const renderBoardFlatItems = (tabId: number, boardLabel: string) => (
+    <>
+      <div
+        className="context-menu-item"
+        onClick={(e) => doBoardSearch(e, tabId, state.componentName)}
+      >
+        Search &apos;{state.componentName}&apos; in {boardLabel}
+      </div>
+      {netName && (
+        <div
+          className="context-menu-item"
+          onClick={(e) => doBoardSearch(e, tabId, netName)}
+        >
+          Search net &apos;{netName}&apos; in {boardLabel}
+        </div>
+      )}
+    </>
+  );
+
+  /** Submenu items for a single other board (multi-board case).
+   *  Each row is suffixed with a match count; zero-count rows are disabled. */
+  const renderBoardSubmenuItems = (tabId: number) => {
+    const partCount = countInBoardTab(state.componentName, tabId);
+    const netCount = netName ? countInBoardTab(netName, tabId) : 0;
+    return (
+      <>
+        <div
+          className={`context-menu-item context-submenu-item${partCount === 0 ? ' disabled' : ''}`}
+          onClick={partCount === 0 ? undefined : (e) => doBoardSearch(e, tabId, state.componentName)}
+        >
+          {state.componentName} ({partCount})
+        </div>
+        {netName && (
+          <div
+            className={`context-menu-item context-submenu-item${netCount === 0 ? ' disabled' : ''}`}
+            onClick={netCount === 0 ? undefined : (e) => doBoardSearch(e, tabId, netName)}
+          >
+            net {netName} ({netCount})
+          </div>
+        )}
+      </>
+    );
+  };
 
   // Multi-PDF submenu items for a single PDF
   const renderSubmenuItems = (pdfFileName: string) => (
@@ -193,6 +256,47 @@ export function ContextMenu() {
               )}
             </div>
           ))}
+        </>
+      )}
+      {otherBoardTabs.length > 0 && (
+        <>
+          <div className="context-menu-separator" />
+          {otherBoardTabs.length === 1 ? (
+            renderBoardFlatItems(otherBoardTabs[0].id, shortBoardName(otherBoardTabs[0].fileName))
+          ) : (
+            <>
+              {/* Quick search: component name in first other board tab */}
+              <div
+                className="context-menu-item"
+                onClick={(e) => doBoardSearch(e, otherBoardTabs[0].id, state.componentName)}
+              >
+                Search &apos;{state.componentName}&apos; in Board
+              </div>
+              <div className="context-menu-separator" />
+              {/* Per-board submenus with all query options */}
+              {otherBoardTabs.map(tab => {
+                const submenuKey = `board-${tab.id}`;
+                return (
+                  <div
+                    key={submenuKey}
+                    className="context-menu-submenu-trigger"
+                    onMouseEnter={() => setOpenSubmenu(submenuKey)}
+                    onMouseLeave={() => setOpenSubmenu(null)}
+                  >
+                    <div className="context-menu-item context-menu-has-submenu">
+                      {shortBoardName(tab.fileName)}
+                      <span className="context-submenu-arrow">▸</span>
+                    </div>
+                    {openSubmenu === submenuKey && (
+                      <div className="context-submenu">
+                        {renderBoardSubmenuItems(tab.id)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
         </>
       )}
     </div>
