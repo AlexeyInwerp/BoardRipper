@@ -162,21 +162,14 @@ function bitmapFontResolution(fontSize: number): number {
   return fontSize < 8 ? 4 : 8;
 }
 
-/** Track which fonts have been installed to avoid re-installing */
+// BitmapFont atlases are globally registered in PixiJS and shared across every
+// open tab/Application. They must NOT be uninstalled on per-tab scene teardown
+// — tearing down tab A's fonts destroys the TextureStyle that BitmapText in
+// tabs B/C/D still references, causing a later "addressModeU of null" crash in
+// GlTextureSystem.updateStyle. Atlases are keyed by content (board-shadow-N-v3,
+// board-pin-N), idempotently cached, and cheap to leak for the app lifetime.
 const installedShadowFonts = new Set<string>();
 const installedPinFonts = new Set<string>();
-
-/** Uninstall all managed BitmapFonts and free their GPU atlas textures */
-export function cleanupShadowFonts(): void {
-  for (const name of installedShadowFonts) {
-    try { BitmapFont.uninstall(name); } catch { /* already removed */ }
-  }
-  installedShadowFonts.clear();
-  for (const name of installedPinFonts) {
-    try { BitmapFont.uninstall(name); } catch { /* already removed */ }
-  }
-  installedPinFonts.clear();
-}
 
 /** Install (once) a plain BitmapFont atlas for pin number labels at a specific quantized size */
 function ensurePinFont(fontSize: number): string {
