@@ -307,7 +307,16 @@ test('flat rows carry scope badges on both board and PDF donor groups', async ({
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // Flat rows for Other PDFs carry the [P] badge.
+  // With 2 unbound PDFs in "Other PDFs", the group is a collapsed spoiler.
+  // Verify that collapsed-by-default (no PDF rows visible yet).
+  const beforeExpand = await menu.locator('.context-menu-item .toolbar-search-tag-pdf').count();
+  expect(beforeExpand).toBe(0);
+
+  const spoiler = menu.locator('.context-menu-spoiler-header', { hasText: 'Other PDFs' });
+  await expect(spoiler).toBeVisible();
+  await spoiler.click();
+
+  // Expanded rows carry the [P] badge.
   const pdfBadge = menu.locator('.context-menu-item .toolbar-search-tag-pdf').first();
   await expect(pdfBadge).toBeVisible();
   await expect(pdfBadge).toHaveText('P');

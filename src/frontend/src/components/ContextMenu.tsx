@@ -28,10 +28,16 @@ import { SearchScopeBadge } from './SearchScopeBadge';
  *  PDF right-click always has exactly one query, so its body is always the
  *  single-variant form. Board right-click varies with pin/net context.
  *
+ *  Secondary "Other X" groups (Other Boards / Other PDFs) collapse under
+ *  a clickable spoiler header when they have 2+ donors; 1-donor secondary
+ *  groups stay inline. Primary "Bound X" groups are always expanded —
+ *  they're the most relevant donors for the current context. Spoiler
+ *  state resets when the menu is reopened.
+ *
  *  When changing one body (row format, group structure, badge placement,
- *  click behavior) update the other so the two right-click modes stay
- *  visually and behaviorally consistent. The symmetry is load-bearing for
- *  the user's mental model.
+ *  click behavior, spoiler rules) update the other so the two right-click
+ *  modes stay visually and behaviorally consistent. The symmetry is
+ *  load-bearing for the user's mental model.
  * ============================================================================
  */
 
@@ -66,6 +72,14 @@ function shortBoardName(fileName: string): string {
 export function ContextMenu() {
   const state = useSyncExternalStore(subscribe, getSnapshot);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [expandedSpoilers, setExpandedSpoilers] = useState<Set<string>>(new Set());
+  const toggleSpoiler = (key: string) => {
+    setExpandedSpoilers(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   // Clamp menu position to viewport after render
   useEffect(() => {
@@ -78,11 +92,12 @@ export function ContextMenu() {
     if (rect.bottom > maxY) el.style.top = `${state.screenY - (rect.bottom - maxY)}px`;
   }, [state.visible, state.screenX, state.screenY]);
 
-  // Track visibility transitions so the one-time reset hook mirrors board.
-  // Kept for parity with the previous design — no open-submenu state exists
-  // anymore since both bodies render flat rows.
+  // Reset spoiler state each time the menu opens — default-collapsed UX.
   const [trackedVisible, setTrackedVisible] = useState(false);
-  if (state.visible !== trackedVisible) setTrackedVisible(state.visible);
+  if (state.visible !== trackedVisible) {
+    setTrackedVisible(state.visible);
+    if (state.visible && expandedSpoilers.size > 0) setExpandedSpoilers(new Set());
+  }
 
   useEffect(() => {
     if (!state.visible) return;
@@ -198,6 +213,46 @@ export function ContextMenu() {
     </div>
   );
 
+  /** Render a secondary group ("Other PDFs" / "Other Boards").
+   *  • 0 items → nothing.
+   *  • 1 item  → plain group header + inline rows (no spoiler).
+   *  • 2+ items → spoiler header, collapsed by default; click to toggle.
+   *  `renderRows()` emits the donor rows when expanded. */
+  const renderSecondaryGroup = (
+    spoilerKey: string,
+    fragmentKey: string,
+    headerLabel: string,
+    items: unknown[],
+    renderRows: () => React.ReactNode,
+  ): React.ReactElement | null => {
+    if (items.length === 0) return null;
+
+    if (items.length === 1) {
+      return (
+        <React.Fragment key={fragmentKey}>
+          <div className="context-menu-separator" />
+          <div className="context-menu-group-header">{headerLabel}</div>
+          {renderRows()}
+        </React.Fragment>
+      );
+    }
+
+    const expanded = expandedSpoilers.has(spoilerKey);
+    return (
+      <React.Fragment key={fragmentKey}>
+        <div className="context-menu-separator" />
+        <div
+          className="context-menu-spoiler-header"
+          onClick={(e) => { e.stopPropagation(); toggleSpoiler(spoilerKey); }}
+        >
+          <span>{headerLabel} ({items.length})</span>
+          <span className="context-menu-spoiler-arrow">{expanded ? '▾' : '▸'}</span>
+        </div>
+        {expanded && renderRows()}
+      </React.Fragment>
+    );
+  };
+
   // ── Board right-click body ──────────────────────────────────────────────
   // Query variants available from a component right-click:
   //   - componentName (always, e.g. "UF400")
@@ -309,24 +364,22 @@ export function ContextMenu() {
         </React.Fragment>,
       );
     }
-    if (otherPdfNames.length > 0) {
-      sections.push(
-        <React.Fragment key="other-pdfs">
-          <div className="context-menu-separator" />
-          <div className="context-menu-group-header">Other PDFs</div>
-          {otherPdfNames.flatMap(name => pdfRowsFor(name, 'other-pdf'))}
-        </React.Fragment>,
-      );
-    }
-    if (otherBoardTabs.length > 0) {
-      sections.push(
-        <React.Fragment key="other-boards">
-          <div className="context-menu-separator" />
-          <div className="context-menu-group-header">Other Boards</div>
-          {otherBoardTabs.flatMap(tab => boardRowsFor(tab, 'other-board'))}
-        </React.Fragment>,
-      );
-    }
+    const otherPdfsNode = renderSecondaryGroup(
+      'board:other-pdfs',
+      'other-pdfs',
+      'Other PDFs',
+      otherPdfNames,
+      () => otherPdfNames.flatMap(name => pdfRowsFor(name, 'other-pdf')),
+    );
+    if (otherPdfsNode) sections.push(otherPdfsNode);
+    const otherBoardsNode = renderSecondaryGroup(
+      'board:other-boards',
+      'other-boards',
+      'Other Boards',
+      otherBoardTabs,
+      () => otherBoardTabs.flatMap(tab => boardRowsFor(tab, 'other-board')),
+    );
+    if (otherBoardsNode) sections.push(otherBoardsNode);
 
     return <>{sections}</>;
   };
@@ -365,38 +418,37 @@ export function ContextMenu() {
         </React.Fragment>,
       );
     }
-    if (otherBoardsForPdf.length > 0) {
-      sections.push(
-        <React.Fragment key="other-boards">
-          <div className="context-menu-separator" />
-          <div className="context-menu-group-header">Other Boards</div>
-          {otherBoardsForPdf.map(tab => renderDonorRow(
-            `pdf-other-board:${tab.id}`,
-            'board',
-            shortBoardName(tab.fileName),
-            state.query,
-            countInBoardTab(state.query, tab.id),
-            (e) => doBoardSearch(e, tab.id, state.query),
-          ))}
-        </React.Fragment>,
-      );
-    }
-    if (otherPdfsForPdf.length > 0) {
-      sections.push(
-        <React.Fragment key="other-pdfs">
-          <div className="context-menu-separator" />
-          <div className="context-menu-group-header">Other PDFs</div>
-          {otherPdfsForPdf.map(name => renderDonorRow(
-            `pdf-other-pdf:${name}`,
-            'pdf',
-            shortPdfName(name),
-            state.query,
-            pdfStore.countTextMatches(name, state.query.toLowerCase()),
-            (e) => doPdfDonorFromPdf(e, name),
-          ))}
-        </React.Fragment>,
-      );
-    }
+    const otherBoardsNode = renderSecondaryGroup(
+      'pdf:other-boards',
+      'other-boards',
+      'Other Boards',
+      otherBoardsForPdf,
+      () => otherBoardsForPdf.map(tab => renderDonorRow(
+        `pdf-other-board:${tab.id}`,
+        'board',
+        shortBoardName(tab.fileName),
+        state.query,
+        countInBoardTab(state.query, tab.id),
+        (e) => doBoardSearch(e, tab.id, state.query),
+      )),
+    );
+    if (otherBoardsNode) sections.push(otherBoardsNode);
+
+    const otherPdfsNode = renderSecondaryGroup(
+      'pdf:other-pdfs',
+      'other-pdfs',
+      'Other PDFs',
+      otherPdfsForPdf,
+      () => otherPdfsForPdf.map(name => renderDonorRow(
+        `pdf-other-pdf:${name}`,
+        'pdf',
+        shortPdfName(name),
+        state.query,
+        pdfStore.countTextMatches(name, state.query.toLowerCase()),
+        (e) => doPdfDonorFromPdf(e, name),
+      )),
+    );
+    if (otherPdfsNode) sections.push(otherPdfsNode);
 
     return <>{sections}</>;
   };
