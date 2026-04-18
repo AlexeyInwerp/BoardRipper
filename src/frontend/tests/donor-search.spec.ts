@@ -354,12 +354,14 @@ test('PDF right-click menu lists Bound Boards and Other PDFs', async ({ page }) 
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
+  // New flat row format: [B] 820-02016 — UF400 (N)
   await expect(menu.locator('.context-menu-item', {
-    hasText: `Search 'UF400' in 820-02016`,
+    hasText: /820-02016 — UF400 \(\d+\)/,
   }).first()).toBeVisible();
 
+  // Other PDFs row: [P] 820-02935 051-08286 — UF400 (N)
   await expect(menu.locator('.context-menu-item', {
-    hasText: /Search 'UF400' in 820-02935 051-08286/,
+    hasText: /820-02935 051-08286.*— UF400 \(\d+\)/,
   }).first()).toBeVisible();
 });
 
@@ -411,9 +413,10 @@ test('PDF menu board entry jumps to the board tab + auto-selects', async ({ page
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
+  // New flat row: [B] 820-02016 — <firstPart> (<count>)
   const entry = menu.locator('.context-menu-item', {
-    hasText: `Search '${info.firstPart}' in 820-02016`,
-  });
+    hasText: `820-02016 — ${info.firstPart}`,
+  }).first();
   await expect(entry).toBeVisible();
   await entry.click();
 
@@ -502,4 +505,61 @@ test('PDF hit-test picks the text item under the cursor', async ({ page }) => {
   });
   expect(state.source).toBe('pdf');
   expect(state.query).toBe(str.trim());
+});
+
+test('PDF menu zero-count row stays clickable (jump + manual tweak)', async ({ page }) => {
+  await page.goto('/');
+
+  // Load board A and its bound PDF, plus a second unrelated PDF
+  await page.getByTestId('file-input').setInputFiles(BOARD_A);
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
+
+  await page.getByTestId('pdf-input').setInputFiles(path.join(SAMPLES, '820-02016.pdf'));
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
+
+  await page.getByTestId('pdf-input').setInputFiles(path.join(SAMPLES, '820-02935 051-08286 Rev 5.0.3.pdf'));
+  await expect(page.locator('.dv-tab', { hasText: /820-02935 051-08286/ })).toBeVisible({ timeout: 10000 });
+
+  await page.waitForFunction(() => {
+    const ps = (window as unknown as { __pdfStore?: { loadedFileNames: string[] } }).__pdfStore;
+    return !!ps && ps.loadedFileNames.length >= 2;
+  }, null, { timeout: 15000 });
+
+  // Pick an obviously-absent query string. The Other PDFs group renders
+  // the 820-02935 PDF; with a gibberish query, its count is 0.
+  const missingQuery = 'ZZXYZNOPE';
+  const pdfName = await page.evaluate(() => {
+    const ps = (window as unknown as { __pdfStore: { loadedFileNames: string[] } }).__pdfStore;
+    return ps.loadedFileNames.find(n => n.includes('820-02016'))!;
+  });
+
+  await page.evaluate(({ q, origin }) => {
+    const cms = (window as unknown as {
+      __contextMenuStore: { showPdf: (x: number, y: number, q: string, origin: string) => void };
+    }).__contextMenuStore;
+    cms.showPdf(200, 200, q, origin);
+  }, { q: missingQuery, origin: pdfName });
+
+  const menu = page.locator('.context-menu');
+  await expect(menu).toBeVisible();
+
+  const zeroRow = menu.locator('.context-menu-item', {
+    hasText: new RegExp(`820-02935 051-08286.*— ${missingQuery} \\(0\\)`),
+  }).first();
+  await expect(zeroRow).toBeVisible();
+  // Must NOT carry the disabled class
+  await expect(zeroRow).not.toHaveClass(/disabled/);
+
+  await zeroRow.click();
+
+  // PDF store should have switched to the other PDF with the query applied.
+  // _activeFileName is private on PdfStore; in the DEV hook we can still
+  // read it by index.
+  const after = await page.evaluate(() => {
+    const ps = (window as unknown as {
+      __pdfStore: { _activeFileName?: string | null };
+    }).__pdfStore;
+    return { active: ps._activeFileName ?? null };
+  });
+  expect(after.active).toContain('820-02935 051-08286');
 });

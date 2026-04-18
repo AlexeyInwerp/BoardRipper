@@ -2613,6 +2613,16 @@ html, body, #root {
   margin: 3px 8px;
 }
 
+.context-menu-group-header {
+  padding: 2px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
 .context-menu-submenu-trigger {
   position: relative;
 }
