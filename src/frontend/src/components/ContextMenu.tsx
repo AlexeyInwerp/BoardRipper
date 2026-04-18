@@ -349,13 +349,8 @@ export function ContextMenu() {
     </>
   );
 
-  return (
-    <div
-      className="context-menu"
-      ref={menuRef}
-      style={{ left: state.screenX, top: state.screenY }}
-      onClick={(e) => e.stopPropagation()}
-    >
+  const renderBoardBody = () => (
+    <>
       {boundOpen.length === 0 && otherPdfNames.length === 0 && (
         <div className="context-menu-item disabled">
           Search &apos;{state.componentName}&apos; in PDF (none linked)
@@ -421,6 +416,21 @@ export function ContextMenu() {
         setOpenSubmenu,
         state.componentName,
       )}
+    </>
+  );
+
+  const renderPdfBody = () => (
+    <div className="context-menu-item disabled">No text at this point</div>
+  );
+
+  return (
+    <div
+      className="context-menu"
+      ref={menuRef}
+      style={{ left: state.screenX, top: state.screenY }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {state.source === 'board' ? renderBoardBody() : renderPdfBody()}
     </div>
   );
 }
