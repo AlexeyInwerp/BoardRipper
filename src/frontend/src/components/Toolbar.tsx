@@ -427,7 +427,8 @@ export function Toolbar() {
       {board && board.format !== 'BVR3' && (
         <button
           className="toolbar-btn"
-          data-tooltip={`Save this ${board.format} board as BVR3 for archival`}
+          data-tooltip="Not yet implemented"
+          disabled
           onClick={() => {
             const bvr3 = exportToBVR3(board);
             const blob = new Blob([bvr3], { type: 'text/plain' });
