@@ -2623,6 +2623,25 @@ html, body, #root {
   user-select: none;
 }
 
+/* Donor header for multi-variant entries — donor name + badge, not
+ * clickable. The query-variant rows beneath it are the actions. */
+.context-menu-donor-header {
+  padding: 3px 12px 1px 12px;
+  font-size: 12px;
+  opacity: 0.85;
+  cursor: default;
+  user-select: none;
+}
+.context-menu-donor-header:hover {
+  background: transparent;
+}
+
+/* Indented variant row under a donor header. Clickable. */
+.context-menu-variant-row {
+  padding: 2px 12px 2px 28px;
+  font-size: 12px;
+}
+
 .context-menu-submenu-trigger {
   position: relative;
 }

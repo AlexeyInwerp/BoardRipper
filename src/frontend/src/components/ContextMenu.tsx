@@ -11,11 +11,22 @@ import { SearchScopeBadge } from './SearchScopeBadge';
 /**
  * ============================================================================
  *  KEEP IN SYNC — renderBoardBody() and renderPdfBody() share a UI contract:
- *    • Flat one-liner rows, never submenus or umbrellas
- *    • Row format: [scope-badge] <donor-short-name> — <query-label> (<count>)
- *    • Grouped under muted .context-menu-group-header labels with separators
+ *    • Never submenus or umbrella collapse — all rows visible.
+ *    • Grouped under muted .context-menu-group-header labels with separators.
  *    • Zero-count rows stay clickable — users may jump to a target and tweak
  *      the query there. Do not add `disabled` based on count.
+ *
+ *  Single-variant donor → one flat row:
+ *      [scope-badge] <donor-short-name> — <query-label> (<count>)
+ *
+ *  Multi-variant donor (board right-click with net, chip@pin, etc.) →
+ *  non-clickable donor header + indented variant rows:
+ *      [scope-badge] <donor-short-name>
+ *          <query-label> (<count>)           ← clickable
+ *          net <net-name> (<count>)          ← clickable
+ *
+ *  PDF right-click always has exactly one query, so its body is always the
+ *  single-variant form. Board right-click varies with pin/net context.
  *
  *  When changing one body (row format, group structure, badge placement,
  *  click behavior) update the other so the two right-click modes stay
@@ -139,8 +150,10 @@ export function ContextMenu() {
     contextMenuStore.hide();
   };
 
-  // ── Generic flat-row renderer ───────────────────────────────────────────
-  /** [scope-badge] <donorLabel> — <queryLabel> (<count>). Always clickable. */
+  // ── Row renderers ────────────────────────────────────────────────────────
+  /** One-line row: [scope-badge] <donorLabel> — <queryLabel> (<count>).
+   *  Used for single-variant donors (always-one-query PDF mode, or
+   *  board-mode donors with just a component name). Always clickable. */
   const renderDonorRow = (
     key: string,
     scope: 'board' | 'pdf',
@@ -156,6 +169,32 @@ export function ContextMenu() {
     >
       <SearchScopeBadge scope={scope} />
       {' '}{donorLabel} — {queryLabel} ({count})
+    </div>
+  );
+
+  /** Non-clickable donor header used when a donor has multiple query
+   *  variants. The variant rows render below. */
+  const renderDonorHeader = (key: string, scope: 'board' | 'pdf', donorLabel: string) => (
+    <div key={key} className="context-menu-donor-header">
+      <SearchScopeBadge scope={scope} />
+      {' '}{donorLabel}
+    </div>
+  );
+
+  /** Indented clickable variant row under a donor header. No badge (badge
+   *  is on the header). Zero-count rows stay clickable. */
+  const renderVariantRow = (
+    key: string,
+    queryLabel: string,
+    count: number,
+    onClick: (e: React.MouseEvent) => void,
+  ) => (
+    <div
+      key={key}
+      className="context-menu-item context-menu-variant-row"
+      onClick={onClick}
+    >
+      {queryLabel} ({count})
     </div>
   );
 
@@ -184,58 +223,81 @@ export function ContextMenu() {
 
     const sections: React.ReactNode[] = [];
 
-    // Helper: emit PDF-donor rows for one file (component, chip@pin, net).
+    // Helper: emit rows for one PDF donor. If there's only one query
+    // variant (component name) we render a single flat row. With multiple
+    // variants (chip@pin or net added), we render a donor header plus
+    // indented variant rows so the donor name doesn't repeat.
     const pdfRowsFor = (name: string, keyPrefix: string) => {
       const short = shortPdfName(name);
       const lower = componentName.toLowerCase();
       const compCount = pdfStore.countTextMatches(name, lower);
-      const rows: React.ReactNode[] = [
-        renderDonorRow(
+      const multiVariant = !!chipPinQuery || !!netName;
+
+      if (!multiVariant) {
+        return [renderDonorRow(
           `${keyPrefix}:${name}:comp`,
           'pdf', short, componentName, compCount,
+          (e) => doPdfSearch(e, name, componentName),
+        )];
+      }
+
+      const rows: React.ReactElement[] = [
+        renderDonorHeader(`${keyPrefix}:${name}:hdr`, 'pdf', short),
+        renderVariantRow(
+          `${keyPrefix}:${name}:comp`,
+          componentName, compCount,
           (e) => doPdfSearch(e, name, componentName),
         ),
       ];
       if (chipPinQuery) {
         const ccount = pdfStore.countTextMatches(name, chipPinQuery.toLowerCase());
-        rows.push(renderDonorRow(
+        rows.push(renderVariantRow(
           `${keyPrefix}:${name}:chip`,
-          'pdf', short, chipPinQuery, ccount,
+          chipPinQuery, ccount,
           (e) => doPdfSearch(e, name, chipPinQuery),
         ));
       }
       if (netName) {
         const ncount = pdfStore.countTextMatches(name, netName.toLowerCase());
-        rows.push(renderDonorRow(
+        rows.push(renderVariantRow(
           `${keyPrefix}:${name}:net`,
-          'pdf', short, `net ${netName}`, ncount,
+          `net ${netName}`, ncount,
           (e) => doPdfSearch(e, name, netName),
         ));
       }
       return rows;
     };
 
-    // Helper: emit Board-donor rows for one tab (component + net — chip@pin
-    // is a PDF-text idiom that doesn't apply to board data).
+    // Helper: emit rows for one Board donor. Same pattern — single variant
+    // stays one flat row, multi-variant gets header + indented rows.
+    // chip@pin is a PDF-text idiom and doesn't apply to board data.
     const boardRowsFor = (tab: { id: number; fileName: string }, keyPrefix: string) => {
       const short = shortBoardName(tab.fileName);
       const compCount = countInBoardTab(componentName, tab.id);
-      const rows: React.ReactNode[] = [
-        renderDonorRow(
+      const multiVariant = !!netName;
+
+      if (!multiVariant) {
+        return [renderDonorRow(
           `${keyPrefix}:${tab.id}:comp`,
           'board', short, componentName, compCount,
           (e) => doBoardSearch(e, tab.id, componentName),
+        )];
+      }
+
+      const ncount = countInBoardTab(netName, tab.id);
+      return [
+        renderDonorHeader(`${keyPrefix}:${tab.id}:hdr`, 'board', short),
+        renderVariantRow(
+          `${keyPrefix}:${tab.id}:comp`,
+          componentName, compCount,
+          (e) => doBoardSearch(e, tab.id, componentName),
+        ),
+        renderVariantRow(
+          `${keyPrefix}:${tab.id}:net`,
+          `net ${netName}`, ncount,
+          (e) => doBoardSearch(e, tab.id, netName),
         ),
       ];
-      if (netName) {
-        const ncount = countInBoardTab(netName, tab.id);
-        rows.push(renderDonorRow(
-          `${keyPrefix}:${tab.id}:net`,
-          'board', short, `net ${netName}`, ncount,
-          (e) => doBoardSearch(e, tab.id, netName),
-        ));
-      }
-      return rows;
     };
 
     if (boundOpen.length > 0) {
