@@ -1716,17 +1716,37 @@ export class BoardRenderer {
         //   }
         // } else
         if (flipped && oldVpCenter && oldScale) {
-          // Nothing selected — mirror the viewport center around the board
-          // center for each axis whose scale sign flipped. scene.root uses
-          // pivot=(cx,cy), position=(cx,cy), so a sign flip mirrors points
-          // about (cx,cy). If the sign didn't change on an axis, leave it.
+          // Mirror the viewport center around the board center to keep the
+          // user's physical focus in view after the flip.
+          //
+          // scene.root's transform is  world = (cx,cy) + R · S · (P - (cx,cy))
+          // with R = rotation, S = diag(sx, sy). The world-space "delta
+          // vector" before/after a sign flip is related by
+          //   v_world_new = R · (S_new · S_old^-1) · R^-1 · v_world_old
+          //
+          // For any 90°-multiple rotation, R · diag(±1, ±1) · R^-1 is again a
+          // diagonal ±1 matrix. Specifically:
+          //   • 0° / 180° (axes NOT swapped):  (flipScene.x, flipScene.y)
+          //                                    → (flipWorld.x, flipWorld.y)
+          //   • 90° / 270° (axes SWAPPED):     (flipScene.x, flipScene.y)
+          //                                    → (flipWorld.y, flipWorld.x)
+          //
+          // The old code assumed the 0°/180° mapping uniformly and broke the
+          // preservation on rotated boards (the viewport would mirror around
+          // the wrong axis).
           const newScale = this.activeScene.root.scale;
           const cx = (board.bounds.minX + board.bounds.maxX) / 2;
           const cy = (board.bounds.minY + board.bounds.maxY) / 2;
+          const dxFlipped = Math.sign(newScale.x) !== Math.sign(oldScale.x);
+          const dyFlipped = Math.sign(newScale.y) !== Math.sign(oldScale.y);
+          const rot90 = Math.round(boardStore.rotation / 90) % 4;
+          const swapped = rot90 === 1 || rot90 === 3;
+          const mirrorWorldX = swapped ? dyFlipped : dxFlipped;
+          const mirrorWorldY = swapped ? dxFlipped : dyFlipped;
           let nx = oldVpCenter.x;
           let ny = oldVpCenter.y;
-          if (Math.sign(newScale.x) !== Math.sign(oldScale.x)) nx = 2 * cx - nx;
-          if (Math.sign(newScale.y) !== Math.sign(oldScale.y)) ny = 2 * cy - ny;
+          if (mirrorWorldX) nx = 2 * cx - nx;
+          if (mirrorWorldY) ny = 2 * cy - ny;
           this.viewport.moveCenter(nx, ny);
         }
       }
