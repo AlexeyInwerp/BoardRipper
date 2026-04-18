@@ -172,7 +172,6 @@ export function ContextMenu() {
   const allOpenPdfNames = pdfStore.loadedFileNames;
   const boundOpen = boundPdfNames.filter(n => allOpenPdfNames.includes(n));
   const otherPdfNames = allOpenPdfNames.filter(n => !boundOpen.includes(n));
-  void boundOpen; void otherPdfNames; // Task 4 wires these into JSX
 
   const doBoardSearch = (e: React.MouseEvent, tabId: number, query: string) => {
     e.stopPropagation();
@@ -309,42 +308,50 @@ export function ContextMenu() {
       style={{ left: state.screenX, top: state.screenY }}
       onClick={(e) => e.stopPropagation()}
     >
-      {boundPdfNames.length === 0 ? (
+      {boundOpen.length === 0 && otherPdfNames.length === 0 && (
         <div className="context-menu-item disabled">
           Search &apos;{state.componentName}&apos; in PDF (none linked)
         </div>
-      ) : boundPdfNames.length === 1 ? (
-        renderFlatItems(boundPdfNames[0], ' in PDF')
-      ) : (
-        <>
-          {/* Quick search: component name in first (bound) PDF */}
-          <div
-            className="context-menu-item"
-            onClick={(e) => doSearch(e, boundPdfNames[0], state.componentName)}
-          >
-            Search &apos;{state.componentName}&apos; in PDF
-          </div>
-          <div className="context-menu-separator" />
-          {/* Per-PDF submenus with all query options */}
-          {boundPdfNames.map(name => (
-            <div
-              key={name}
-              className="context-menu-submenu-trigger"
-              onMouseEnter={() => setOpenSubmenu(name)}
-              onMouseLeave={() => setOpenSubmenu(null)}
-            >
-              <div className="context-menu-item context-menu-has-submenu">
-                {shortPdfName(name)}
-                <span className="context-submenu-arrow">▸</span>
-              </div>
-              {openSubmenu === name && (
-                <div className="context-submenu">
-                  {renderSubmenuItems(name)}
-                </div>
-              )}
-            </div>
-          ))}
-        </>
+      )}
+      {/* Bound PDFs: explicitly linked to the active board tab */}
+      {renderDonorGroup(
+        {
+          scope: 'pdf',
+          keyPrefix: 'pdf-bound',
+          quickSearchLabel: 'PDF',
+          umbrellaLabel: 'Bound PDFs',
+          items: boundOpen,
+          itemKey: (name) => name,
+          itemLabel: (name) => shortPdfName(name),
+          onQuickSearch: (name) => {
+            doSearch({ stopPropagation: () => {} } as React.MouseEvent, name, state.componentName);
+          },
+          renderSubmenu: (name) => renderSubmenuItems(name),
+          renderFlatItems: (name) => renderFlatItems(name, ' in PDF'),
+        },
+        openSubmenu,
+        setOpenSubmenu,
+        state.componentName,
+      )}
+      {/* Other PDFs: unbound or bound to a different board tab */}
+      {renderDonorGroup(
+        {
+          scope: 'pdf',
+          keyPrefix: 'pdf-other',
+          quickSearchLabel: 'Other PDFs',
+          umbrellaLabel: 'Other PDFs',
+          items: otherPdfNames,
+          itemKey: (name) => name,
+          itemLabel: (name) => shortPdfName(name),
+          onQuickSearch: (name) => {
+            doSearch({ stopPropagation: () => {} } as React.MouseEvent, name, state.componentName);
+          },
+          renderSubmenu: (name) => renderSubmenuItems(name),
+          renderFlatItems: (name) => renderFlatItems(name, ` in ${shortPdfName(name)}`),
+        },
+        openSubmenu,
+        setOpenSubmenu,
+        state.componentName,
       )}
       {renderDonorGroup(
         {
