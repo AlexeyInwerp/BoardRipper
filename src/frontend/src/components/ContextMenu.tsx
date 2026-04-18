@@ -6,6 +6,7 @@ import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab } from '../store/cross-target-search';
+import { SearchScopeBadge } from './SearchScopeBadge';
 
 let version = 0;
 let lastVer = -1;
@@ -33,6 +34,85 @@ function shortPdfName(fileName: string): string {
 /** Strip extension for shorter board display labels */
 function shortBoardName(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
+}
+
+interface DonorGroup<T> {
+  /** Scope for the shared badge component */
+  scope: 'board' | 'pdf';
+  /** Stable key prefix so submenu keys from different groups never collide */
+  keyPrefix: string;
+  /** Label shown on the quick-search row (1-or-2-item case), e.g. "Board" */
+  quickSearchLabel: string;
+  /** Umbrella label shown when the group collapses (≥3 items — Task 5) */
+  umbrellaLabel: string;
+  /** Items to render (board tabs, PDF file names, etc.) */
+  items: T[];
+  /** Unique key per item for React + submenu state */
+  itemKey: (item: T) => string;
+  /** Short display label (extension-stripped) for submenu trigger rows */
+  itemLabel: (item: T) => string;
+  /** Click target for the quick-search row (component-name query on items[0]) */
+  onQuickSearch: (item: T) => void;
+  /** Content of the per-item expanded submenu (query variants) */
+  renderSubmenu: (item: T) => React.ReactNode;
+  /** Items for the 1-item flat case (full query variants inline) */
+  renderFlatItems: (item: T) => React.ReactNode;
+}
+
+function renderDonorGroup<T>(
+  g: DonorGroup<T>,
+  openSubmenu: string | null,
+  setOpenSubmenu: (k: string | null) => void,
+  componentName: string,
+): React.ReactNode {
+  if (g.items.length === 0) return null;
+
+  // 1 item → flat query variants inline
+  if (g.items.length === 1) {
+    return (
+      <>
+        <div className="context-menu-separator" />
+        {g.renderFlatItems(g.items[0])}
+      </>
+    );
+  }
+
+  // 2+ items → top-level per-item submenu triggers (Task 5 upgrades ≥3 to umbrella)
+  return (
+    <>
+      <div className="context-menu-separator" />
+      <div
+        className="context-menu-item"
+        onClick={() => g.onQuickSearch(g.items[0])}
+      >
+        <SearchScopeBadge scope={g.scope} />
+        {' '}Search &apos;{componentName}&apos; in {g.quickSearchLabel}
+      </div>
+      <div className="context-menu-separator" />
+      {g.items.map(item => {
+        const key = `${g.keyPrefix}:${g.itemKey(item)}`;
+        return (
+          <div
+            key={key}
+            className="context-menu-submenu-trigger"
+            onMouseEnter={() => setOpenSubmenu(key)}
+            onMouseLeave={() => setOpenSubmenu(null)}
+          >
+            <div className="context-menu-item context-menu-has-submenu">
+              <SearchScopeBadge scope={g.scope} />
+              {' '}{g.itemLabel(item)}
+              <span className="context-submenu-arrow">▸</span>
+            </div>
+            {openSubmenu === key && (
+              <div className="context-submenu">
+                {g.renderSubmenu(item)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 export function ContextMenu() {
@@ -266,46 +346,25 @@ export function ContextMenu() {
           ))}
         </>
       )}
-      {otherBoardTabs.length > 0 && (
-        <>
-          <div className="context-menu-separator" />
-          {otherBoardTabs.length === 1 ? (
-            renderBoardFlatItems(otherBoardTabs[0].id, shortBoardName(otherBoardTabs[0].fileName))
-          ) : (
-            <>
-              {/* Quick search: component name in first other board tab */}
-              <div
-                className="context-menu-item"
-                onClick={(e) => doBoardSearch(e, otherBoardTabs[0].id, state.componentName)}
-              >
-                Search &apos;{state.componentName}&apos; in Board
-              </div>
-              <div className="context-menu-separator" />
-              {/* Per-board submenus with all query options */}
-              {otherBoardTabs.map(tab => {
-                const submenuKey = `board-${tab.id}`;
-                return (
-                  <div
-                    key={submenuKey}
-                    className="context-menu-submenu-trigger"
-                    onMouseEnter={() => setOpenSubmenu(submenuKey)}
-                    onMouseLeave={() => setOpenSubmenu(null)}
-                  >
-                    <div className="context-menu-item context-menu-has-submenu">
-                      {shortBoardName(tab.fileName)}
-                      <span className="context-submenu-arrow">▸</span>
-                    </div>
-                    {openSubmenu === submenuKey && (
-                      <div className="context-submenu">
-                        {renderBoardSubmenuItems(tab.id)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </>
-          )}
-        </>
+      {renderDonorGroup(
+        {
+          scope: 'board',
+          keyPrefix: 'board',
+          quickSearchLabel: 'Board',
+          umbrellaLabel: 'Other Boards',
+          items: otherBoardTabs,
+          itemKey: (tab) => String(tab.id),
+          itemLabel: (tab) => shortBoardName(tab.fileName),
+          onQuickSearch: (tab) => {
+            findInBoardTab(state.componentName, tab.id);
+            contextMenuStore.hide();
+          },
+          renderSubmenu: (tab) => renderBoardSubmenuItems(tab.id),
+          renderFlatItems: (tab) => renderBoardFlatItems(tab.id, shortBoardName(tab.fileName)),
+        },
+        openSubmenu,
+        setOpenSubmenu,
+        state.componentName,
       )}
     </div>
   );
