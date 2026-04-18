@@ -127,8 +127,11 @@ export class BoardRenderer {
   /** Whether bottom layer should be visible (accounts for butterfly mode) */
   private get isBottomVisible() { return boardStore.showBottom || boardStore.butterfly; }
   /** Whether a part should be visible given its side and current view mode.
-   *  'both' parts live in topLayer, so they follow top-side visibility. */
-  private isPartVisible(part: { side: string }): boolean {
+   *  'both' parts live in topLayer, so they follow top-side visibility.
+   *  Parts flagged `hidden: true` by `deriveBoardView` (outside the selected
+   *  board) are never visible. */
+  private isPartVisible(part: { side: string; hidden?: boolean }): boolean {
+    if (part.hidden) return false;
     if (part.side === 'bottom') return this.isBottomVisible;
     return this.isTopVisible; // 'top' and 'both'
   }
@@ -234,7 +237,18 @@ export class BoardRenderer {
   private netLineSettleTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
-  private sceneCache = new Map<BoardData, BoardScene>();
+  private sceneCache = new Map<string, BoardScene>();
+  private boardRefs = new WeakMap<BoardData, number>();
+  private boardRefCounter = 0;
+  private sceneCacheKey(_board: BoardData): string {
+    // Key on the raw board ref + filter state. Derived boards come and go on
+    // each filter toggle, so keying on them would leak cache entries. Keying
+    // on rawBoard lets repeated toggles reuse the same scene slots.
+    const raw = boardStore.rawBoard ?? _board;
+    let ref = this.boardRefs.get(raw);
+    if (ref == null) { ref = ++this.boardRefCounter; this.boardRefs.set(raw, ref); }
+    return `${ref}|${boardStore.foldMode}|${boardStore.selectedBoardIndex ?? 'all'}`;
+  }
   private activeScene: BoardScene | null = null;
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
    *  to skip full scene rebuilds when only interaction-only fields changed. */
@@ -526,7 +540,7 @@ export class BoardRenderer {
       return;
     }
     // Evict cached scene so buildBoardScene runs fresh, then re-activate directly
-    this.sceneCache.delete(board);
+    this.sceneCache.delete(this.sceneCacheKey(board));
     this.hitGridCache.delete(board);
     this.activateScene(board);
     this.board = board;
@@ -1440,10 +1454,10 @@ export class BoardRenderer {
   }
 
   private getOrBuildScene(board: BoardData): BoardScene {
-    let scene = this.sceneCache.get(board);
+    let scene = this.sceneCache.get(this.sceneCacheKey(board));
     if (!scene) {
       scene = this.buildScene(board);
-      this.sceneCache.set(board, scene);
+      this.sceneCache.set(this.sceneCacheKey(board), scene);
     }
     return scene;
   }
@@ -1632,6 +1646,11 @@ export class BoardRenderer {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
+    // boardStore.board now returns a DERIVED BoardData (filtered/folded) —
+    // its reference changes whenever foldMode or selectedBoardIndex changes,
+    // so the `boardStore.board !== this.board` check below naturally triggers
+    // a scene rebuild on toggle. No separate filter-state tracking needed.
+
     // Notify settings store which board is active so per-board overrides take effect
     renderSettingsStore.setActiveBoard(boardStore.fileName);
     log.render.log('onBoardUpdate', 'tab=' + this.tabId,
@@ -1697,33 +1716,37 @@ export class BoardRenderer {
         //   }
         // } else
         if (flipped && oldVpCenter && oldScale) {
-          // Nothing selected — keep the same scene point under the viewport
-          // center by mirroring the viewport around (cx, cy) on each axis
-          // whose scale sign flipped. scene.root uses pivot=(cx,cy),
-          // position=(cx,cy), so the world-space image of a scene point P is
-          // R_θ · S · (P - c) + c. At θ ∈ {0°, 180°} a flip of scene scale.x
-          // mirrors the world.x coord around cx (and scale.y → world.y); at
-          // θ ∈ {90°, 270°} the scene↔world axes are swapped, so scale.x
-          // flips world.y and scale.y flips world.x. Without this swap,
-          // viewing an off-center part on a 270°-rotated board (e.g. CAD
-          // butterfly files) jumps the wrong direction on side flip,
-          // proportionally to (vp - c).
+          // Mirror the viewport center around the board center to keep the
+          // user's physical focus in view after the flip.
+          //
+          // scene.root's transform is  world = (cx,cy) + R · S · (P - (cx,cy))
+          // with R = rotation, S = diag(sx, sy). The world-space "delta
+          // vector" before/after a sign flip is related by
+          //   v_world_new = R · (S_new · S_old^-1) · R^-1 · v_world_old
+          //
+          // For any 90°-multiple rotation, R · diag(±1, ±1) · R^-1 is again a
+          // diagonal ±1 matrix. Specifically:
+          //   • 0° / 180° (axes NOT swapped):  (flipScene.x, flipScene.y)
+          //                                    → (flipWorld.x, flipWorld.y)
+          //   • 90° / 270° (axes SWAPPED):     (flipScene.x, flipScene.y)
+          //                                    → (flipWorld.y, flipWorld.x)
+          //
+          // The old code assumed the 0°/180° mapping uniformly and broke the
+          // preservation on rotated boards (the viewport would mirror around
+          // the wrong axis).
           const newScale = this.activeScene.root.scale;
           const cx = (board.bounds.minX + board.bounds.maxX) / 2;
           const cy = (board.bounds.minY + board.bounds.maxY) / 2;
+          const dxFlipped = Math.sign(newScale.x) !== Math.sign(oldScale.x);
+          const dyFlipped = Math.sign(newScale.y) !== Math.sign(oldScale.y);
           const rot90 = Math.round(boardStore.rotation / 90) % 4;
-          const axesSwapped = rot90 === 1 || rot90 === 3;
-          const xFlipped = Math.sign(newScale.x) !== Math.sign(oldScale.x);
-          const yFlipped = Math.sign(newScale.y) !== Math.sign(oldScale.y);
+          const swapped = rot90 === 1 || rot90 === 3;
+          const mirrorWorldX = swapped ? dyFlipped : dxFlipped;
+          const mirrorWorldY = swapped ? dxFlipped : dyFlipped;
           let nx = oldVpCenter.x;
           let ny = oldVpCenter.y;
-          if (axesSwapped) {
-            if (yFlipped) nx = 2 * cx - nx;
-            if (xFlipped) ny = 2 * cy - ny;
-          } else {
-            if (xFlipped) nx = 2 * cx - nx;
-            if (yFlipped) ny = 2 * cy - ny;
-          }
+          if (mirrorWorldX) nx = 2 * cx - nx;
+          if (mirrorWorldY) ny = 2 * cy - ny;
           this.viewport.moveCenter(nx, ny);
         }
       }
@@ -3213,6 +3236,7 @@ export class BoardRenderer {
 
     for (let pi = 0; pi < board.parts.length; pi++) {
       const part = board.parts[pi];
+      if (part.hidden) continue; // skip parts filtered out by deriveBoardView
       // Use part bounds (authoritative, already includes pin positions)
       const b = part.bounds;
       if (b.minX === b.maxX && b.minY === b.maxY && part.pins.length === 0) continue;
@@ -3512,7 +3536,7 @@ export class BoardRenderer {
         const pin = hit.pinIndex >= 0 ? part.pins[hit.pinIndex] : null;
         const pinId = pin ? pinDisplayId(pin, hit.pinIndex) : null;
         const netName = pin?.net || null;
-        contextMenuStore.showBoard(e.clientX, e.clientY, part.name, pinId, netName);
+        contextMenuStore.show(e.clientX, e.clientY, part.name, pinId, netName);
       }
     }
   }

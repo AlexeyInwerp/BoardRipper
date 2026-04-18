@@ -28,6 +28,12 @@ export interface Part {
   bounds: BBox;
   /** Layer index for multi-layer boards (0-based). Undefined = single-layer. */
   layer?: number;
+  /** Present only on the `deriveBoardView()` output when a board-selection
+   *  filter is active — marks parts outside the selected board so the
+   *  renderer, hit-grid, net highlight, and label passes skip them. The array
+   *  index is preserved so `selection.partIndex` stays consistent across
+   *  filter changes. Never set by parsers. */
+  hidden?: boolean;
 }
 
 export interface Nail {
@@ -77,6 +83,48 @@ export interface BoardData {
    *  When 'x', the board store also sets mirrorY on load to correct orientation.
    *  'x' = fold was vertical (left/right split), 'y' = fold was horizontal (top/bottom split). */
   butterflyFoldAxis?: 'x' | 'y';
+
+  /** Pre-fold outline geometry. Present whenever the parser considered folding,
+   *  regardless of whether it actually folded. Same NaN-break convention as
+   *  `outline`. Absent for formats that never fold (e.g. BVR3, BRD). */
+  rawOutline?: Point[];
+
+  /** Outline-component bboxes from the clustering step, in pre-fold coords.
+   *  Used by the fold-resolution UI to let the user see how the file's raw
+   *  layout decomposed. */
+  foldComponents?: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>;
+
+  /** Describes the fold the parser applied, if any. Also carries a
+   *  human-readable summary for UI display. `lowerIsBottom` records which
+   *  half the parser mirrored (matches the parser's `FoldResult.lowerIsBottom`)
+   *  so the renderer can reverse the mirror per trace-midpoint when
+   *  re-unfolding for the "Show all sides" view. Absent when no fold was applied. */
+  foldInfo?: {
+    dim: 'x' | 'y';
+    axis: number;
+    lowerIsBottom: boolean;
+    source: string;
+    summary: string;
+  };
+
+  /** Outline components grouped into "boards" using an exact geometry match
+   *  heuristic: two components with the same (width, height, segCount) are
+   *  treated as top/bottom sides of one physical board. For each 2-component
+   *  group we also compute a butterfly fold axis so the renderer can fold
+   *  that individual board on demand. Absent when `foldComponents` is empty. */
+  boardGroups?: Array<{
+    components: number[];                 // indices into foldComponents
+    fold?: {
+      dim: 'x' | 'y';
+      axis: number;                        // already normalised to the outline coord space
+      lowerIsBottom: boolean;              // which half gets mirrored onto the other when folding
+    };
+    /** Optional human-readable name derived from the most common `groupName`
+     *  among parts in the group. Examples: "RF Board", "AP", "SUB". Absent
+     *  when the file doesn't tag parts or when dominant-name lookup failed. */
+    name?: string;
+  }>;
+
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
   flipY?: boolean;
   /** Per-board default flip axis for bottom-view rendering. 'x' = hinge on horizontal

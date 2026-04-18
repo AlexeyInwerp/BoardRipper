@@ -6,6 +6,7 @@ import { computeBBox, generateSyntheticOutline, detectGhostComponents } from '..
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
+import { deriveBoardView } from './derive-board-view';
 
 
 export interface SelectionState {
@@ -48,6 +49,18 @@ export interface BoardTab {
    *  parts list. Set via toggleHideGhosts(). Persists across revision switches
    *  on the same tab. */
   hideGhosts: boolean;
+  /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
+   *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
+  foldMode: 'suggested' | 'all-sides';
+  /** XZZ multi-board selection. null = show all boards. An index selects the
+   *  group at that position in `board.boardGroups`. */
+  selectedBoardIndex: number | null;
+  /** Cached presented view of `board` — computed from (board, foldMode,
+   *  selectedBoardIndex) via `deriveBoardView`. Invalidated whenever any of
+   *  those inputs change. Consumers should read `boardStore.board` (which
+   *  returns this) rather than `tab.board` directly. */
+  _derivedBoard?: BoardData;
+  _derivedBoardKey?: string;
 }
 
 export interface PdfEntry {
@@ -62,6 +75,73 @@ export interface FocusRequest {
 }
 
 const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
+
+/** Compute (or return the cached) derived BoardData for a tab. Re-derives
+ *  only when the inputs change so `useSyncExternalStore` gets a stable
+ *  reference on unchanged state. */
+function ensureDerivedBoard(tab: BoardTab): BoardData | null {
+  if (!tab.board) return null;
+  const key = `${tab.foldMode}|${tab.selectedBoardIndex ?? 'all'}`;
+  if (tab._derivedBoard && tab._derivedBoardKey === key) return tab._derivedBoard;
+  tab._derivedBoard = deriveBoardView(tab.board, tab.foldMode, tab.selectedBoardIndex);
+  tab._derivedBoardKey = key;
+  return tab._derivedBoard;
+}
+/** Force re-derivation on next read (used after tab.board itself changes). */
+function invalidateDerivedBoard(tab: BoardTab): void {
+  tab._derivedBoard = undefined;
+  tab._derivedBoardKey = undefined;
+}
+
+/** Pick `flipAxis` so the on-screen flip is always a top-bottom mirror
+ *  (hinge = horizontal screen axis), regardless of how the board is rotated.
+ *
+ *  - Unrotated (0°/180°):  scale.y=-1 flips Y directly in screen space →
+ *    need `flipAxis='x'` (which sets `flipY` sign).
+ *  - Rotated (90°/270°):   scene X maps to screen Y after rotation, so we
+ *    need `scale.x=-1` instead → `flipAxis='y'` (which sets `flipX` sign).
+ */
+function flipAxisForRotation(rotationDeg: number): 'x' | 'y' {
+  const rot90 = Math.round(rotationDeg / 90) % 4;
+  const axesSwapped = rot90 === 1 || rot90 === 3;
+  return axesSwapped ? 'y' : 'x';
+}
+
+/** Re-calibrate view orientation for the currently-derived board.
+ *
+ *  When a multi-board selection or fold mode changes, the derived BoardData
+ *  can have a very different aspect ratio and fold axis than the raw file.
+ *  Re-run the same heuristics `loadFile` uses on first open:
+ *
+ *  - `rotation` — auto-rotate tall boards so they display wide on screen
+ *    (matches `autoRotation` logic on raw-board load).
+ *  - `flipAxis` — pick based on the *screen* aspect (after rotation), so
+ *    pressing "flip" mirrors along the board's visibly-longest side
+ *    regardless of how the file stored the board.
+ *  - `mirrorY` / `mirrorX` — match the X-fold → mirrorY=true convention
+ *    used for natively-butterfly files.
+ */
+function syncMirrorsToDerivedFold(tab: BoardTab): void {
+  const derived = ensureDerivedBoard(tab);
+  if (!derived) return;
+
+  // Auto-rotation matches the loadFile heuristic (inlined to avoid plumbing
+  // an instance method through module-level code).
+  const w = derived.bounds.maxX - derived.bounds.minX;
+  const h = derived.bounds.maxY - derived.bounds.minY;
+  let rotation = 0;
+  if (h > w) {
+    const flipY = derived.flipY ?? getFormat(derived.format)?.flipY ?? false;
+    rotation = flipY ? 270 : 90;
+  }
+  tab.rotation = rotation;
+
+  tab.flipAxis = flipAxisForRotation(rotation);
+
+  const axis = derived.butterflyFoldAxis ?? null;
+  tab.mirrorY = axis === 'x';
+  tab.mirrorX = axis === 'y';
+}
 
 /** Extract a "820-XXXXX" board code (5 digits) from a file name, or null if absent. */
 function extract820Code(fileName: string): string | null {
@@ -225,7 +305,15 @@ class BoardStore extends Emitter {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
   }
 
-  get board(): BoardData | null { return this.activeTab?.board ?? null; }
+  get board(): BoardData | null {
+    const tab = this.activeTab;
+    if (!tab?.board) return null;
+    return ensureDerivedBoard(tab);
+  }
+  /** Untransformed board as emitted by the parser. Most code should use
+   *  `board` (the derived view) instead — this exists only for places that
+   *  genuinely need the full parts array (e.g. serialising the cache). */
+  get rawBoard(): BoardData | null { return this.activeTab?.board ?? null; }
   get fileName(): string { return this.activeTab?.fileName ?? ''; }
   get selection(): SelectionState { return this.activeTab?.selection ?? emptySelection; }
   get showTop(): boolean { return this.activeTab?.showTop ?? true; }
@@ -245,6 +333,8 @@ class BoardStore extends Emitter {
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
+  get foldMode(): 'suggested' | 'all-sides' { return this.activeTab?.foldMode ?? 'suggested'; }
+  get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -429,6 +519,8 @@ class BoardStore extends Emitter {
         pdfFileNames: [],
         cacheKey: '',
         hideGhosts: false,
+        foldMode: 'suggested',
+        selectedBoardIndex: null,
       };
 
       this._tabs.push(tab);
@@ -441,8 +533,10 @@ class BoardStore extends Emitter {
         if (cached) {
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
           tab.board = cached;
+          invalidateDerivedBoard(tab);
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
+          tab.flipAxis = flipAxisForRotation(tab.rotation);
           if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
           if (cached.flipAxis) tab.flipAxis = cached.flipAxis;
           const cachedFmt = getFormat(cached.format);
@@ -486,7 +580,9 @@ class BoardStore extends Emitter {
         );
 
         tab.board = board;
+        invalidateDerivedBoard(tab);
         tab.rotation = this.autoRotation(board);
+        tab.flipAxis = flipAxisForRotation(tab.rotation);
         if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
         if (board.flipAxis) tab.flipAxis = board.flipAxis;
         const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
@@ -694,6 +790,7 @@ class BoardStore extends Emitter {
     if (!target) return;
     if (tab.board.activeRevision === index && !tab.hideGhosts) return;
     tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts);
+    invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     tab.searchQuery = '';
     this.notify();
@@ -715,8 +812,50 @@ class BoardStore extends Emitter {
     const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
       ?? syntheticRevisionFromBoard(tab.board);
     tab.board = buildRenderedBoard(tab.board, rev, next);
+    invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     this.notify();
+  }
+
+  setFoldMode(mode: 'suggested' | 'all-sides'): void {
+    const tab = this.activeTab;
+    if (!tab || tab.foldMode === mode) return;
+    this.updateActiveTab({ foldMode: mode });
+    invalidateDerivedBoard(tab);
+    // Clear any stale selection so it doesn't point at a now-hidden part.
+    tab.selection = { ...emptySelection };
+    // NOTE: we deliberately do NOT call `syncMirrorsToDerivedFold` here.
+    // For butterfly files (1 detected board) toggling fold mode flips
+    // between the parser's pre-folded view and the raw side-by-side view,
+    // but the user's preferred screen orientation (rotation/mirrorY/flipAxis)
+    // shouldn't change with that toggle — the load-time defaults remain
+    // correct. Only selection changes warrant a full orientation re-sync.
+    this.requestFitDerivedBoard(tab);
+    this.notify();
+  }
+
+  setSelectedBoardIndex(idx: number | null): void {
+    const tab = this.activeTab;
+    if (!tab || tab.selectedBoardIndex === idx) return;
+    this.updateActiveTab({ selectedBoardIndex: idx });
+    invalidateDerivedBoard(tab);
+    tab.selection = { ...emptySelection };
+    syncMirrorsToDerivedFold(tab);
+    this.requestFitDerivedBoard(tab);
+    this.notify();
+  }
+
+  /** Ask the renderer (on its next onBoardUpdate) to fit the derived board
+   *  into view. Uses the existing focus-request plumbing: the renderer picks
+   *  it up and calls zoomToBounds which fits and centers. Prevents the
+   *  post-selection viewport from ending up stranded where the previous
+   *  all-boards view used to show a different board — and also gives the
+   *  flip-preservation math a sane starting point (centered inside the
+   *  new derived bounds). */
+  private requestFitDerivedBoard(tab: BoardTab): void {
+    const derived = ensureDerivedBoard(tab);
+    if (!derived) return;
+    this._focusRequest = { partIndex: null, bounds: { ...derived.bounds } };
   }
 
   // ── Cache control actions ────────────────────────────────────────────
@@ -748,6 +887,7 @@ class BoardStore extends Emitter {
       const board = await parseBoardFile(buffer, file.name);
       log.parser.log(`Re-parsed in ${(performance.now() - t0).toFixed(0)}ms`);
       tab.board = board;
+      invalidateDerivedBoard(tab);
       tab.selection = emptySelection;
       tab.searchQuery = '';
       await boardCache.put(file.name, file.size, file.lastModified, board);
@@ -775,6 +915,7 @@ class BoardStore extends Emitter {
         const buffer = await file.arrayBuffer();
         const board = await parseBoardFile(buffer, file.name);
         tab.board = board;
+        invalidateDerivedBoard(tab);
         tab.selection = emptySelection;
         tab.searchQuery = '';
         await boardCache.put(file.name, file.size, file.lastModified, board);
