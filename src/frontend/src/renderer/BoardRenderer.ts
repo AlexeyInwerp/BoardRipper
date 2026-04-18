@@ -1697,17 +1697,33 @@ export class BoardRenderer {
         //   }
         // } else
         if (flipped && oldVpCenter && oldScale) {
-          // Nothing selected — mirror the viewport center around the board
-          // center for each axis whose scale sign flipped. scene.root uses
-          // pivot=(cx,cy), position=(cx,cy), so a sign flip mirrors points
-          // about (cx,cy). If the sign didn't change on an axis, leave it.
+          // Nothing selected — keep the same scene point under the viewport
+          // center by mirroring the viewport around (cx, cy) on each axis
+          // whose scale sign flipped. scene.root uses pivot=(cx,cy),
+          // position=(cx,cy), so the world-space image of a scene point P is
+          // R_θ · S · (P - c) + c. At θ ∈ {0°, 180°} a flip of scene scale.x
+          // mirrors the world.x coord around cx (and scale.y → world.y); at
+          // θ ∈ {90°, 270°} the scene↔world axes are swapped, so scale.x
+          // flips world.y and scale.y flips world.x. Without this swap,
+          // viewing an off-center part on a 270°-rotated board (e.g. CAD
+          // butterfly files) jumps the wrong direction on side flip,
+          // proportionally to (vp - c).
           const newScale = this.activeScene.root.scale;
           const cx = (board.bounds.minX + board.bounds.maxX) / 2;
           const cy = (board.bounds.minY + board.bounds.maxY) / 2;
+          const rot90 = Math.round(boardStore.rotation / 90) % 4;
+          const axesSwapped = rot90 === 1 || rot90 === 3;
+          const xFlipped = Math.sign(newScale.x) !== Math.sign(oldScale.x);
+          const yFlipped = Math.sign(newScale.y) !== Math.sign(oldScale.y);
           let nx = oldVpCenter.x;
           let ny = oldVpCenter.y;
-          if (Math.sign(newScale.x) !== Math.sign(oldScale.x)) nx = 2 * cx - nx;
-          if (Math.sign(newScale.y) !== Math.sign(oldScale.y)) ny = 2 * cy - ny;
+          if (axesSwapped) {
+            if (yFlipped) nx = 2 * cx - nx;
+            if (xFlipped) ny = 2 * cy - ny;
+          } else {
+            if (xFlipped) nx = 2 * cx - nx;
+            if (yFlipped) ny = 2 * cy - ny;
+          }
           this.viewport.moveCenter(nx, ny);
         }
       }
