@@ -6,6 +6,7 @@ import { computeBBox, generateSyntheticOutline, detectGhostComponents } from '..
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
+import { deriveBoardView } from './derive-board-view';
 
 
 export interface SelectionState {
@@ -54,6 +55,12 @@ export interface BoardTab {
   /** XZZ multi-board selection. null = show all boards. An index selects the
    *  group at that position in `board.boardGroups`. */
   selectedBoardIndex: number | null;
+  /** Cached presented view of `board` — computed from (board, foldMode,
+   *  selectedBoardIndex) via `deriveBoardView`. Invalidated whenever any of
+   *  those inputs change. Consumers should read `boardStore.board` (which
+   *  returns this) rather than `tab.board` directly. */
+  _derivedBoard?: BoardData;
+  _derivedBoardKey?: string;
 }
 
 export interface PdfEntry {
@@ -68,6 +75,23 @@ export interface FocusRequest {
 }
 
 const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
+
+/** Compute (or return the cached) derived BoardData for a tab. Re-derives
+ *  only when the inputs change so `useSyncExternalStore` gets a stable
+ *  reference on unchanged state. */
+function ensureDerivedBoard(tab: BoardTab): BoardData | null {
+  if (!tab.board) return null;
+  const key = `${tab.foldMode}|${tab.selectedBoardIndex ?? 'all'}`;
+  if (tab._derivedBoard && tab._derivedBoardKey === key) return tab._derivedBoard;
+  tab._derivedBoard = deriveBoardView(tab.board, tab.foldMode, tab.selectedBoardIndex);
+  tab._derivedBoardKey = key;
+  return tab._derivedBoard;
+}
+/** Force re-derivation on next read (used after tab.board itself changes). */
+function invalidateDerivedBoard(tab: BoardTab): void {
+  tab._derivedBoard = undefined;
+  tab._derivedBoardKey = undefined;
+}
 
 /** Extract a "820-XXXXX" board code (5 digits) from a file name, or null if absent. */
 function extract820Code(fileName: string): string | null {
@@ -231,7 +255,15 @@ class BoardStore extends Emitter {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
   }
 
-  get board(): BoardData | null { return this.activeTab?.board ?? null; }
+  get board(): BoardData | null {
+    const tab = this.activeTab;
+    if (!tab?.board) return null;
+    return ensureDerivedBoard(tab);
+  }
+  /** Untransformed board as emitted by the parser. Most code should use
+   *  `board` (the derived view) instead — this exists only for places that
+   *  genuinely need the full parts array (e.g. serialising the cache). */
+  get rawBoard(): BoardData | null { return this.activeTab?.board ?? null; }
   get fileName(): string { return this.activeTab?.fileName ?? ''; }
   get selection(): SelectionState { return this.activeTab?.selection ?? emptySelection; }
   get showTop(): boolean { return this.activeTab?.showTop ?? true; }
@@ -451,6 +483,7 @@ class BoardStore extends Emitter {
         if (cached) {
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
           tab.board = cached;
+          invalidateDerivedBoard(tab);
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
           if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
@@ -495,6 +528,7 @@ class BoardStore extends Emitter {
         );
 
         tab.board = board;
+        invalidateDerivedBoard(tab);
         tab.rotation = this.autoRotation(board);
         if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
         const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
@@ -702,6 +736,7 @@ class BoardStore extends Emitter {
     if (!target) return;
     if (tab.board.activeRevision === index && !tab.hideGhosts) return;
     tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts);
+    invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     tab.searchQuery = '';
     this.notify();
@@ -723,6 +758,7 @@ class BoardStore extends Emitter {
     const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
       ?? syntheticRevisionFromBoard(tab.board);
     tab.board = buildRenderedBoard(tab.board, rev, next);
+    invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     this.notify();
   }
@@ -731,6 +767,9 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab || tab.foldMode === mode) return;
     this.updateActiveTab({ foldMode: mode });
+    invalidateDerivedBoard(tab);
+    // Clear any stale selection so it doesn't point at a now-hidden part.
+    tab.selection = { ...emptySelection };
     this.notify();
   }
 
@@ -738,6 +777,8 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab || tab.selectedBoardIndex === idx) return;
     this.updateActiveTab({ selectedBoardIndex: idx });
+    invalidateDerivedBoard(tab);
+    tab.selection = { ...emptySelection };
     this.notify();
   }
 
@@ -770,6 +811,7 @@ class BoardStore extends Emitter {
       const board = await parseBoardFile(buffer, file.name);
       log.parser.log(`Re-parsed in ${(performance.now() - t0).toFixed(0)}ms`);
       tab.board = board;
+      invalidateDerivedBoard(tab);
       tab.selection = emptySelection;
       tab.searchQuery = '';
       await boardCache.put(file.name, file.size, file.lastModified, board);
@@ -797,6 +839,7 @@ class BoardStore extends Emitter {
         const buffer = await file.arrayBuffer();
         const board = await parseBoardFile(buffer, file.name);
         tab.board = board;
+        invalidateDerivedBoard(tab);
         tab.selection = emptySelection;
         tab.searchQuery = '';
         await boardCache.put(file.name, file.size, file.lastModified, board);
