@@ -11,33 +11,34 @@ import { SearchScopeBadge } from './SearchScopeBadge';
 /**
  * ============================================================================
  *  KEEP IN SYNC — renderBoardBody() and renderPdfBody() share a UI contract:
- *    • Never submenus or umbrella collapse — all rows visible.
- *    • Grouped under muted .context-menu-group-header labels with separators.
- *    • Zero-count rows stay clickable — users may jump to a target and tweak
- *      the query there. Do not add `disabled` based on count.
+ *    • Groups render under muted .context-menu-group-header labels with
+ *      separators. Group headers are non-interactive — purely informative.
+ *    • Donor rows are one per donor. Row format:
+ *          [scope-badge] <donor-short-name> (<default-count>)   [▸]
+ *      Clicking the row triggers the default query lookup (component name
+ *      in board mode, cursor text in PDF mode). A ▸ spoiler arrow appears
+ *      only when extra query variants exist; clicking it expands inline
+ *      indented variant rows below.
+ *    • Variant rows (only in board mode with pin+net context) render
+ *      <queryLabel> (<count>) — no badge; the donor row's badge covers
+ *      the whole group.
+ *    • Zero-count rows stay clickable — users may jump to a target and
+ *      tweak the query there. Do not add `disabled` based on count.
+ *    • Spoiler expansion state resets each time the menu reopens.
  *
- *  Single-variant donor → one flat row:
- *      [scope-badge] <donor-short-name> — <query-label> (<count>)
+ *  Board right-click:
+ *      • Default query = componentName.
+ *      • Extra variants (under spoiler, PDF donors only): chip@pin, net.
+ *      • Extra variants (under spoiler, board donors): net.
+ *      • When neither chip@pin nor net applies, no spoiler arrow shows.
  *
- *  Multi-variant donor (board right-click with net, chip@pin, etc.) →
- *  non-clickable donor header + indented variant rows:
- *      [scope-badge] <donor-short-name>
- *          <query-label> (<count>)           ← clickable
- *          net <net-name> (<count>)          ← clickable
- *
- *  PDF right-click always has exactly one query, so its body is always the
- *  single-variant form. Board right-click varies with pin/net context.
- *
- *  Secondary "Other X" groups (Other Boards / Other PDFs) collapse under
- *  a clickable spoiler header when they have 2+ donors; 1-donor secondary
- *  groups stay inline. Primary "Bound X" groups are always expanded —
- *  they're the most relevant donors for the current context. Spoiler
- *  state resets when the menu is reopened.
+ *  PDF right-click:
+ *      • Default query = cursor text item. No extra variants. Ever.
+ *      • Donor rows never carry a spoiler arrow — always flat click-to-go.
  *
  *  When changing one body (row format, group structure, badge placement,
- *  click behavior, spoiler rules) update the other so the two right-click
- *  modes stay visually and behaviorally consistent. The symmetry is
- *  load-bearing for the user's mental model.
+ *  spoiler rules, click behavior) update the other so the two right-click
+ *  modes stay consistent.
  * ============================================================================
  */
 
@@ -166,44 +167,54 @@ export function ContextMenu() {
   };
 
   // ── Row renderers ────────────────────────────────────────────────────────
-  /** One-line row: [scope-badge] <donorLabel> — <queryLabel> (<count>).
-   *  Used for single-variant donors (always-one-query PDF mode, or
-   *  board-mode donors with just a component name). Always clickable. */
+  /** Default-action donor row:
+   *      [badge] <donorLabel> (<defaultCount>)    [▸]
+   *
+   *  Clicking the row itself triggers the default lookup (component-name
+   *  search, or in PDF mode the query text). If `extraVariants` is
+   *  non-empty, a ▸/▾ spoiler arrow appears; clicking it toggles inline
+   *  variant rows below. Row stays clickable regardless of spoiler state.
+   *
+   *  Zero-count rows are still clickable — user may want to jump and tweak. */
   const renderDonorRow = (
     key: string,
     scope: 'board' | 'pdf',
     donorLabel: string,
-    queryLabel: string,
-    count: number,
-    onClick: (e: React.MouseEvent) => void,
-  ) => (
-    <div
-      key={key}
-      className="context-menu-item"
-      onClick={onClick}
-    >
-      <SearchScopeBadge scope={scope} />
-      {' '}{donorLabel} — {queryLabel} ({count})
-    </div>
-  );
+    defaultCount: number,
+    onDefaultClick: (e: React.MouseEvent) => void,
+    extraVariants: React.ReactElement[] = [],
+  ): React.ReactElement => {
+    const hasVariants = extraVariants.length > 0;
+    const expanded = expandedSpoilers.has(key);
+    return (
+      <React.Fragment key={key}>
+        <div className="context-menu-item context-menu-donor-row" onClick={onDefaultClick}>
+          <span>
+            <SearchScopeBadge scope={scope} />
+            {' '}{donorLabel} ({defaultCount})
+          </span>
+          {hasVariants && (
+            <span
+              className="context-menu-donor-row-arrow"
+              onClick={(e) => { e.stopPropagation(); toggleSpoiler(key); }}
+            >
+              {expanded ? '▾' : '▸'}
+            </span>
+          )}
+        </div>
+        {hasVariants && expanded && extraVariants}
+      </React.Fragment>
+    );
+  };
 
-  /** Non-clickable donor header used when a donor has multiple query
-   *  variants. The variant rows render below. */
-  const renderDonorHeader = (key: string, scope: 'board' | 'pdf', donorLabel: string) => (
-    <div key={key} className="context-menu-donor-header">
-      <SearchScopeBadge scope={scope} />
-      {' '}{donorLabel}
-    </div>
-  );
-
-  /** Indented clickable variant row under a donor header. No badge (badge
-   *  is on the header). Zero-count rows stay clickable. */
+  /** Indented clickable variant row under a donor row's spoiler. No badge
+   *  (badge is on the donor row). Zero-count rows stay clickable. */
   const renderVariantRow = (
     key: string,
     queryLabel: string,
     count: number,
     onClick: (e: React.MouseEvent) => void,
-  ) => (
+  ): React.ReactElement => (
     <div
       key={key}
       className="context-menu-item context-menu-variant-row"
@@ -212,46 +223,6 @@ export function ContextMenu() {
       {queryLabel} ({count})
     </div>
   );
-
-  /** Render a secondary group ("Other PDFs" / "Other Boards").
-   *  • 0 items → nothing.
-   *  • 1 item  → plain group header + inline rows (no spoiler).
-   *  • 2+ items → spoiler header, collapsed by default; click to toggle.
-   *  `renderRows()` emits the donor rows when expanded. */
-  const renderSecondaryGroup = (
-    spoilerKey: string,
-    fragmentKey: string,
-    headerLabel: string,
-    items: unknown[],
-    renderRows: () => React.ReactNode,
-  ): React.ReactElement | null => {
-    if (items.length === 0) return null;
-
-    if (items.length === 1) {
-      return (
-        <React.Fragment key={fragmentKey}>
-          <div className="context-menu-separator" />
-          <div className="context-menu-group-header">{headerLabel}</div>
-          {renderRows()}
-        </React.Fragment>
-      );
-    }
-
-    const expanded = expandedSpoilers.has(spoilerKey);
-    return (
-      <React.Fragment key={fragmentKey}>
-        <div className="context-menu-separator" />
-        <div
-          className="context-menu-spoiler-header"
-          onClick={(e) => { e.stopPropagation(); toggleSpoiler(spoilerKey); }}
-        >
-          <span>{headerLabel} ({items.length})</span>
-          <span className="context-menu-spoiler-arrow">{expanded ? '▾' : '▸'}</span>
-        </div>
-        {expanded && renderRows()}
-      </React.Fragment>
-    );
-  };
 
   // ── Board right-click body ──────────────────────────────────────────────
   // Query variants available from a component right-click:
@@ -278,108 +249,75 @@ export function ContextMenu() {
 
     const sections: React.ReactNode[] = [];
 
-    // Helper: emit rows for one PDF donor. If there's only one query
-    // variant (component name) we render a single flat row. With multiple
-    // variants (chip@pin or net added), we render a donor header plus
-    // indented variant rows so the donor name doesn't repeat.
-    const pdfRowsFor = (name: string, keyPrefix: string) => {
+    // Helper: emit one donor row for a PDF. The row click triggers the
+    // default (component-name) search; the ▸ spoiler (if variants exist)
+    // reveals chip@pin and net variants below.
+    const pdfRowFor = (name: string, keyPrefix: string) => {
       const short = shortPdfName(name);
-      const lower = componentName.toLowerCase();
-      const compCount = pdfStore.countTextMatches(name, lower);
-      const multiVariant = !!chipPinQuery || !!netName;
+      const key = `${keyPrefix}:${name}`;
+      const compCount = pdfStore.countTextMatches(name, componentName.toLowerCase());
 
-      if (!multiVariant) {
-        return [renderDonorRow(
-          `${keyPrefix}:${name}:comp`,
-          'pdf', short, componentName, compCount,
-          (e) => doPdfSearch(e, name, componentName),
-        )];
-      }
-
-      const rows: React.ReactElement[] = [
-        renderDonorHeader(`${keyPrefix}:${name}:hdr`, 'pdf', short),
-        renderVariantRow(
-          `${keyPrefix}:${name}:comp`,
-          componentName, compCount,
-          (e) => doPdfSearch(e, name, componentName),
-        ),
-      ];
+      const extras: React.ReactElement[] = [];
       if (chipPinQuery) {
         const ccount = pdfStore.countTextMatches(name, chipPinQuery.toLowerCase());
-        rows.push(renderVariantRow(
-          `${keyPrefix}:${name}:chip`,
-          chipPinQuery, ccount,
+        extras.push(renderVariantRow(
+          `${key}:chip`, chipPinQuery, ccount,
           (e) => doPdfSearch(e, name, chipPinQuery),
         ));
       }
       if (netName) {
         const ncount = pdfStore.countTextMatches(name, netName.toLowerCase());
-        rows.push(renderVariantRow(
-          `${keyPrefix}:${name}:net`,
-          `net ${netName}`, ncount,
+        extras.push(renderVariantRow(
+          `${key}:net`, `net ${netName}`, ncount,
           (e) => doPdfSearch(e, name, netName),
         ));
       }
-      return rows;
+
+      return renderDonorRow(
+        key, 'pdf', short, compCount,
+        (e) => doPdfSearch(e, name, componentName),
+        extras,
+      );
     };
 
-    // Helper: emit rows for one Board donor. Same pattern — single variant
-    // stays one flat row, multi-variant gets header + indented rows.
-    // chip@pin is a PDF-text idiom and doesn't apply to board data.
-    const boardRowsFor = (tab: { id: number; fileName: string }, keyPrefix: string) => {
+    // Helper: emit one donor row for a board. Default click = component
+    // search; spoiler variants = net (chip@pin is a PDF-text idiom only).
+    const boardRowFor = (tab: { id: number; fileName: string }, keyPrefix: string) => {
       const short = shortBoardName(tab.fileName);
+      const key = `${keyPrefix}:${tab.id}`;
       const compCount = countInBoardTab(componentName, tab.id);
-      const multiVariant = !!netName;
 
-      if (!multiVariant) {
-        return [renderDonorRow(
-          `${keyPrefix}:${tab.id}:comp`,
-          'board', short, componentName, compCount,
-          (e) => doBoardSearch(e, tab.id, componentName),
-        )];
+      const extras: React.ReactElement[] = [];
+      if (netName) {
+        const ncount = countInBoardTab(netName, tab.id);
+        extras.push(renderVariantRow(
+          `${key}:net`, `net ${netName}`, ncount,
+          (e) => doBoardSearch(e, tab.id, netName),
+        ));
       }
 
-      const ncount = countInBoardTab(netName, tab.id);
-      return [
-        renderDonorHeader(`${keyPrefix}:${tab.id}:hdr`, 'board', short),
-        renderVariantRow(
-          `${keyPrefix}:${tab.id}:comp`,
-          componentName, compCount,
-          (e) => doBoardSearch(e, tab.id, componentName),
-        ),
-        renderVariantRow(
-          `${keyPrefix}:${tab.id}:net`,
-          `net ${netName}`, ncount,
-          (e) => doBoardSearch(e, tab.id, netName),
-        ),
-      ];
+      return renderDonorRow(
+        key, 'board', short, compCount,
+        (e) => doBoardSearch(e, tab.id, componentName),
+        extras,
+      );
     };
 
-    if (boundOpen.length > 0) {
+    const groups: Array<[string, string, React.ReactElement[]]> = [
+      ['bound-pdfs', 'Bound PDFs', boundOpen.map(name => pdfRowFor(name, 'bound-pdf'))],
+      ['other-pdfs', 'Other PDFs', otherPdfNames.map(name => pdfRowFor(name, 'other-pdf'))],
+      ['other-boards', 'Other Boards', otherBoardTabs.map(tab => boardRowFor(tab, 'other-board'))],
+    ];
+    for (const [key, label, rows] of groups) {
+      if (rows.length === 0) continue;
       sections.push(
-        <React.Fragment key="bound-pdfs">
+        <React.Fragment key={key}>
           <div className="context-menu-separator" />
-          <div className="context-menu-group-header">Bound PDFs</div>
-          {boundOpen.flatMap(name => pdfRowsFor(name, 'bound-pdf'))}
+          <div className="context-menu-group-header">{label}</div>
+          {rows}
         </React.Fragment>,
       );
     }
-    const otherPdfsNode = renderSecondaryGroup(
-      'board:other-pdfs',
-      'other-pdfs',
-      'Other PDFs',
-      otherPdfNames,
-      () => otherPdfNames.flatMap(name => pdfRowsFor(name, 'other-pdf')),
-    );
-    if (otherPdfsNode) sections.push(otherPdfsNode);
-    const otherBoardsNode = renderSecondaryGroup(
-      'board:other-boards',
-      'other-boards',
-      'Other Boards',
-      otherBoardTabs,
-      () => otherBoardTabs.flatMap(tab => boardRowsFor(tab, 'other-board')),
-    );
-    if (otherBoardsNode) sections.push(otherBoardsNode);
 
     return <>{sections}</>;
   };
@@ -402,53 +340,38 @@ export function ContextMenu() {
 
     const sections: React.ReactNode[] = [];
 
-    if (boundBoardTabs.length > 0) {
+    // PDF mode has exactly one query per right-click, so donor rows are
+    // flat (no spoiler, no variants). Each row = click = jump + search.
+    const groups: Array<[string, string, React.ReactElement[]]> = [
+      ['bound-boards', 'Bound Boards', boundBoardTabs.map(tab => renderDonorRow(
+        `pdf-bound:${tab.id}`, 'board',
+        shortBoardName(tab.fileName),
+        countInBoardTab(state.query, tab.id),
+        (e) => doBoardSearch(e, tab.id, state.query),
+      ))],
+      ['other-boards', 'Other Boards', otherBoardsForPdf.map(tab => renderDonorRow(
+        `pdf-other-board:${tab.id}`, 'board',
+        shortBoardName(tab.fileName),
+        countInBoardTab(state.query, tab.id),
+        (e) => doBoardSearch(e, tab.id, state.query),
+      ))],
+      ['other-pdfs', 'Other PDFs', otherPdfsForPdf.map(name => renderDonorRow(
+        `pdf-other-pdf:${name}`, 'pdf',
+        shortPdfName(name),
+        pdfStore.countTextMatches(name, state.query.toLowerCase()),
+        (e) => doPdfDonorFromPdf(e, name),
+      ))],
+    ];
+    for (const [key, label, rows] of groups) {
+      if (rows.length === 0) continue;
       sections.push(
-        <React.Fragment key="bound-boards">
+        <React.Fragment key={key}>
           <div className="context-menu-separator" />
-          <div className="context-menu-group-header">Bound Boards</div>
-          {boundBoardTabs.map(tab => renderDonorRow(
-            `pdf-bound:${tab.id}`,
-            'board',
-            shortBoardName(tab.fileName),
-            state.query,
-            countInBoardTab(state.query, tab.id),
-            (e) => doBoardSearch(e, tab.id, state.query),
-          ))}
+          <div className="context-menu-group-header">{label}</div>
+          {rows}
         </React.Fragment>,
       );
     }
-    const otherBoardsNode = renderSecondaryGroup(
-      'pdf:other-boards',
-      'other-boards',
-      'Other Boards',
-      otherBoardsForPdf,
-      () => otherBoardsForPdf.map(tab => renderDonorRow(
-        `pdf-other-board:${tab.id}`,
-        'board',
-        shortBoardName(tab.fileName),
-        state.query,
-        countInBoardTab(state.query, tab.id),
-        (e) => doBoardSearch(e, tab.id, state.query),
-      )),
-    );
-    if (otherBoardsNode) sections.push(otherBoardsNode);
-
-    const otherPdfsNode = renderSecondaryGroup(
-      'pdf:other-pdfs',
-      'other-pdfs',
-      'Other PDFs',
-      otherPdfsForPdf,
-      () => otherPdfsForPdf.map(name => renderDonorRow(
-        `pdf-other-pdf:${name}`,
-        'pdf',
-        shortPdfName(name),
-        state.query,
-        pdfStore.countTextMatches(name, state.query.toLowerCase()),
-        (e) => doPdfDonorFromPdf(e, name),
-      )),
-    );
-    if (otherPdfsNode) sections.push(otherPdfsNode);
 
     return <>{sections}</>;
   };
