@@ -14,7 +14,7 @@ import { SearchScopeBadge } from './SearchScopeBadge';
  *    • Groups render under muted .context-menu-group-header labels with
  *      separators. Group headers are non-interactive — purely informative.
  *    • Donor rows are one per donor. Row format:
- *          [scope-badge] <donor-short-name> (<default-count>)   [▸]
+ *          [scope-badge] <donor-short-name> | <default-query> (<default-count>)   [▸]
  *      Clicking the row triggers the default query lookup (component name
  *      in board mode, cursor text in PDF mode). A ▸ spoiler arrow appears
  *      only when extra query variants exist; clicking it expands inline
@@ -168,18 +168,21 @@ export function ContextMenu() {
 
   // ── Row renderers ────────────────────────────────────────────────────────
   /** Default-action donor row:
-   *      [badge] <donorLabel> (<defaultCount>)    [▸]
+   *      [badge] <donorLabel> | <defaultQuery> (<defaultCount>)    [▸]
    *
    *  Clicking the row itself triggers the default lookup (component-name
-   *  search, or in PDF mode the query text). If `extraVariants` is
-   *  non-empty, a ▸/▾ spoiler arrow appears; clicking it toggles inline
-   *  variant rows below. Row stays clickable regardless of spoiler state.
+   *  search in board mode, cursor text in PDF mode). If `extraVariants`
+   *  is non-empty, a ▸/▾ spoiler arrow appears; clicking it toggles
+   *  inline variant rows below. Row stays clickable regardless of
+   *  spoiler state.
    *
-   *  Zero-count rows are still clickable — user may want to jump and tweak. */
+   *  Zero-count rows are still clickable — user may want to jump and
+   *  tweak. */
   const renderDonorRow = (
     key: string,
     scope: 'board' | 'pdf',
     donorLabel: string,
+    defaultQuery: string,
     defaultCount: number,
     onDefaultClick: (e: React.MouseEvent) => void,
     extraVariants: React.ReactElement[] = [],
@@ -191,7 +194,7 @@ export function ContextMenu() {
         <div className="context-menu-item context-menu-donor-row" onClick={onDefaultClick}>
           <span>
             <SearchScopeBadge scope={scope} />
-            {' '}{donorLabel} ({defaultCount})
+            {' '}{donorLabel} | {defaultQuery} ({defaultCount})
           </span>
           {hasVariants && (
             <span
@@ -274,7 +277,7 @@ export function ContextMenu() {
       }
 
       return renderDonorRow(
-        key, 'pdf', short, compCount,
+        key, 'pdf', short, componentName, compCount,
         (e) => doPdfSearch(e, name, componentName),
         extras,
       );
@@ -297,7 +300,7 @@ export function ContextMenu() {
       }
 
       return renderDonorRow(
-        key, 'board', short, compCount,
+        key, 'board', short, componentName, compCount,
         (e) => doBoardSearch(e, tab.id, componentName),
         extras,
       );
@@ -346,18 +349,21 @@ export function ContextMenu() {
       ['bound-boards', 'Bound Boards', boundBoardTabs.map(tab => renderDonorRow(
         `pdf-bound:${tab.id}`, 'board',
         shortBoardName(tab.fileName),
+        state.query,
         countInBoardTab(state.query, tab.id),
         (e) => doBoardSearch(e, tab.id, state.query),
       ))],
       ['other-boards', 'Other Boards', otherBoardsForPdf.map(tab => renderDonorRow(
         `pdf-other-board:${tab.id}`, 'board',
         shortBoardName(tab.fileName),
+        state.query,
         countInBoardTab(state.query, tab.id),
         (e) => doBoardSearch(e, tab.id, state.query),
       ))],
       ['other-pdfs', 'Other PDFs', otherPdfsForPdf.map(name => renderDonorRow(
         `pdf-other-pdf:${name}`, 'pdf',
         shortPdfName(name),
+        state.query,
         pdfStore.countTextMatches(name, state.query.toLowerCase()),
         (e) => doPdfDonorFromPdf(e, name),
       ))],

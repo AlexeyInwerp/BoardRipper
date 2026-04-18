@@ -64,9 +64,9 @@ test('donor submenu renders and jumps to donor board', async ({ page }) => {
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // Donor row: [B] 820-02935-05 (<count>)  — click triggers default (component) search
+  // Donor row: [B] 820-02935-05 | <query> (<count>)  — click triggers default (component) search
   const entry = menu.locator('.context-menu-item', {
-    hasText: /820-02935-05 \(\d+\)/,
+    hasText: /820-02935-05 \| \S+ \(\d+\)/,
   }).first();
   await expect(entry).toBeVisible();
 
@@ -218,9 +218,9 @@ test('other PDFs surface: unbound PDF appears in menu', async ({ page }) => {
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // Donor row: [P] 820-02016 (<count>)  — click triggers default search
+  // Donor row: [P] 820-02016 | <query> (<count>)  — click triggers default search
   const otherRow = menu.locator('.context-menu-item', {
-    hasText: /820-02016 \(\d+\)/,
+    hasText: /820-02016 \| \S+ \(\d+\)/,
   }).first();
   await expect(otherRow).toBeVisible();
 });
@@ -354,14 +354,13 @@ test('PDF right-click menu lists Bound Boards and Other PDFs', async ({ page }) 
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // PDF-mode donor rows: [B] 820-02016 (N) and [P] 820-02935 051-08286 (N).
-  // No em-dash query text — PDF mode has a single query and uses flat rows.
+  // PDF-mode donor rows: [B] 820-02016 | UF400 (N) and [P] 820-02935 051-08286 | UF400 (N).
   await expect(menu.locator('.context-menu-item', {
-    hasText: /820-02016 \(\d+\)/,
+    hasText: /820-02016 \| UF400 \(\d+\)/,
   }).first()).toBeVisible();
 
   await expect(menu.locator('.context-menu-item', {
-    hasText: /820-02935 051-08286.*\(\d+\)/,
+    hasText: /820-02935 051-08286.*\| UF400 \(\d+\)/,
   }).first()).toBeVisible();
 });
 
@@ -413,9 +412,9 @@ test('PDF menu board entry jumps to the board tab + auto-selects', async ({ page
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // PDF-mode donor row for the bound board: [B] 820-02016 (<count>)
+  // PDF-mode donor row for the bound board: [B] 820-02016 | <firstPart> (<count>)
   const entry = menu.locator('.context-menu-item', {
-    hasText: /820-02016 \(\d+\)/,
+    hasText: /820-02016 \| \S+ \(\d+\)/,
   }).first();
   await expect(entry).toBeVisible();
   await entry.click();
@@ -543,9 +542,9 @@ test('PDF menu zero-count row stays clickable (jump + manual tweak)', async ({ p
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // PDF-mode donor row for the other PDF: [P] 820-02935 051-08286 (0)
+  // PDF-mode donor row for the other PDF: [P] 820-02935 051-08286 | <missingQuery> (0)
   const zeroRow = menu.locator('.context-menu-item', {
-    hasText: /820-02935 051-08286.*\(0\)/,
+    hasText: new RegExp(`820-02935 051-08286.*\\| ${missingQuery} \\(0\\)`),
   }).first();
   await expect(zeroRow).toBeVisible();
   // Must NOT carry the disabled class
