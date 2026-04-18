@@ -77,6 +77,30 @@ export interface BoardData {
    *  When 'x', the board store also sets mirrorY on load to correct orientation.
    *  'x' = fold was vertical (left/right split), 'y' = fold was horizontal (top/bottom split). */
   butterflyFoldAxis?: 'x' | 'y';
+
+  /** Pre-fold outline geometry. Present whenever the parser considered folding,
+   *  regardless of whether it actually folded. Same NaN-break convention as
+   *  `outline`. Absent for formats that never fold (e.g. BVR3, BRD). */
+  rawOutline?: Point[];
+
+  /** Outline-component bboxes from the clustering step, in pre-fold coords.
+   *  Used by the fold-resolution UI to let the user see how the file's raw
+   *  layout decomposed. */
+  foldComponents?: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>;
+
+  /** Describes the fold the parser applied, if any. Also carries a
+   *  human-readable summary for UI display. `lowerIsBottom` records which
+   *  half the parser mirrored (matches the parser's `FoldResult.lowerIsBottom`)
+   *  so the renderer can reverse the mirror per trace-midpoint when
+   *  re-unfolding for the "Show all sides" view. Absent when no fold was applied. */
+  foldInfo?: {
+    dim: 'x' | 'y';
+    axis: number;
+    lowerIsBottom: boolean;
+    source: string;
+    summary: string;
+  };
+
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
   flipY?: boolean;
   /** Which part.side value the user perceives as "top" (CPU side). Defaults to 'top'.
