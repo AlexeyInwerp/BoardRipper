@@ -102,7 +102,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
 }
 
 function LayersTab() {
-  const { layerStates, showComponents, showVias, showTraces, showPins, showOutlines, showLabels, board, selection, foldMode } = useBoardStore();
+  const { layerStates, showComponents, showVias, showTraces, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
   const [componentsExpanded, setComponentsExpanded] = useState(true);
 
   // Compute which layers have traces for the currently highlighted net
@@ -130,18 +130,45 @@ function LayersTab() {
             side-by-side. The parser picks a default; if it looks wrong, switch
             to "Show all sides".
           </p>
-          {board.foldComponents && board.foldComponents.length > 0 && (
-            <div className="fold-components">
-              <div className="fold-components-label">
-                Detected outline components: {board.foldComponents.length}
+          {board.boardGroups && board.boardGroups.length > 0 && (
+            <div className="fold-boards">
+              <div className="fold-boards-label">
+                Detected boards: {board.boardGroups.length}{board.foldComponents && ` (${board.foldComponents.length} components)`}
               </div>
-              <ul className="fold-components-list">
-                {board.foldComponents.map((c, i) => (
-                  <li key={i}>
-                    C{i} — {Math.round(c.maxX - c.minX)} × {Math.round(c.maxY - c.minY)} mils ({c.segCount} segs)
-                  </li>
-                ))}
-              </ul>
+              <div className="fold-boards-list">
+                <label className="fold-option">
+                  <input
+                    type="radio"
+                    name="selectedBoard"
+                    checked={selectedBoardIndex === null}
+                    onChange={() => boardStore.setSelectedBoardIndex(null)}
+                  />
+                  <span className="fold-option-label">All boards</span>
+                  <span className="fold-option-hint">Render every detected board together.</span>
+                </label>
+                {board.boardGroups.map((group, i) => {
+                  const firstComp = board.foldComponents?.[group.components[0]];
+                  const dims = firstComp
+                    ? `${Math.round(firstComp.maxX - firstComp.minX)} × ${Math.round(firstComp.maxY - firstComp.minY)} mils`
+                    : '';
+                  const sides = group.components.length;
+                  return (
+                    <label key={i} className="fold-option">
+                      <input
+                        type="radio"
+                        name="selectedBoard"
+                        checked={selectedBoardIndex === i}
+                        onChange={() => boardStore.setSelectedBoardIndex(i)}
+                      />
+                      <span className="fold-option-label">Board {i + 1}</span>
+                      <span className="fold-option-hint">
+                        {dims} · {sides} side{sides === 1 ? '' : 's'} (C{group.components.join(', C')})
+                        {group.fold && ` · ${group.fold.dim.toUpperCase()}-fold available`}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           )}
           <div className="fold-resolution">

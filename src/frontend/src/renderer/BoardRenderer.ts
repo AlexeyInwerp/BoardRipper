@@ -243,9 +243,10 @@ export class BoardRenderer {
     // full identity.
     let ref = this.boardRefs.get(board);
     if (ref == null) { ref = ++this.boardRefCounter; this.boardRefs.set(board, ref); }
-    return `${ref}|${boardStore.foldMode}`;
+    return `${ref}|${boardStore.foldMode}|${boardStore.selectedBoardIndex ?? 'all'}`;
   }
   private lastSeenFoldMode: 'suggested' | 'all-sides' | null = null;
+  private lastSeenSelectedBoardIndex: number | null | undefined = undefined; // undefined = not yet observed
   private activeScene: BoardScene | null = null;
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
    *  to skip full scene rebuilds when only interaction-only fields changed. */
@@ -1395,7 +1396,7 @@ export class BoardRenderer {
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings, { foldMode: boardStore.foldMode });
+      const graph = buildBoardScene(board, renderSettingsStore.settings, { foldMode: boardStore.foldMode, selectedBoardIndex: boardStore.selectedBoardIndex });
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
@@ -1643,13 +1644,19 @@ export class BoardRenderer {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
-    // Rebuild scene when foldMode changes (XZZ fold-resolution toggle)
+    // Rebuild scene when foldMode or selectedBoardIndex changes (XZZ fold-resolution toggle)
     const currentFoldMode = boardStore.foldMode;
-    if (this.board != null && this.lastSeenFoldMode != null && this.lastSeenFoldMode !== currentFoldMode) {
-      log.render.log(`foldMode changed: ${this.lastSeenFoldMode} -> ${currentFoldMode}; rebuilding scene`);
-      this.activateScene(this.board);
+    const currentSelectedBoard = boardStore.selectedBoardIndex;
+    if (this.board != null) {
+      const foldModeChanged = this.lastSeenFoldMode != null && this.lastSeenFoldMode !== currentFoldMode;
+      const selectedBoardChanged = this.lastSeenSelectedBoardIndex !== undefined && this.lastSeenSelectedBoardIndex !== currentSelectedBoard;
+      if (foldModeChanged || selectedBoardChanged) {
+        log.render.log(`fold state changed: foldMode=${this.lastSeenFoldMode}->${currentFoldMode} selectedBoard=${this.lastSeenSelectedBoardIndex}->${currentSelectedBoard}; rebuilding scene`);
+        this.activateScene(this.board);
+      }
     }
     this.lastSeenFoldMode = currentFoldMode;
+    this.lastSeenSelectedBoardIndex = currentSelectedBoard;
 
     // Notify settings store which board is active so per-board overrides take effect
     renderSettingsStore.setActiveBoard(boardStore.fileName);
