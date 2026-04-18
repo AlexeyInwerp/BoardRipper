@@ -24,7 +24,11 @@ export function parseBVR1(text: string): BoardData {
       continue;
     }
 
-    const fields = line.split('\t');
+    // OpenBoardView's reference parser uses strtol/strtod + isspace(), which
+    // tolerates runs of any whitespace. Some real-world BVR1 files (e.g.
+    // 820-01700.bvr) are space-delimited rather than tab-delimited, so match
+    // that leniency rather than failing silently.
+    const fields = line.split(/\s+/);
 
     switch (section) {
       case 'Layout': {
