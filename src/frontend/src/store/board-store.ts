@@ -444,6 +444,7 @@ class BoardStore extends Emitter {
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
           if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
+          if (cached.flipAxis) tab.flipAxis = cached.flipAxis;
           const cachedFmt = getFormat(cached.format);
           // Initial side = user's perception of "top". For inverted files
           // (primarySide='bottom'), the user's "Top" button is mapped to the
@@ -487,6 +488,7 @@ class BoardStore extends Emitter {
         tab.board = board;
         tab.rotation = this.autoRotation(board);
         if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
+        if (board.flipAxis) tab.flipAxis = board.flipAxis;
         const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
         if (wantsBottomOnOpen) {
           tab.showTop = false;
