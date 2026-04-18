@@ -56,9 +56,9 @@ test('donor submenu renders and jumps to donor board', async ({ page }) => {
 
   await page.evaluate(({ refdes }) => {
     const cms = (window as unknown as {
-      __contextMenuStore: { show: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
+      __contextMenuStore: { showBoard: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
     }).__contextMenuStore;
-    cms.show(200, 200, refdes, null, null);
+    cms.showBoard(200, 200, refdes, null, null);
   }, { refdes: firstPart });
 
   const menu = page.locator('.context-menu');
@@ -156,9 +156,9 @@ test('donor submenu hides when only one board is open', async ({ page }) => {
 
   await page.evaluate(({ refdes }) => {
     const cms = (window as unknown as {
-      __contextMenuStore: { show: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
+      __contextMenuStore: { showBoard: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
     }).__contextMenuStore;
-    cms.show(200, 200, refdes, null, null);
+    cms.showBoard(200, 200, refdes, null, null);
   }, { refdes: firstPart });
 
   const menu = page.locator('.context-menu');
@@ -209,9 +209,9 @@ test('other PDFs surface: unbound PDF appears in menu', async ({ page }) => {
 
   await page.evaluate(({ refdes }) => {
     const cms = (window as unknown as {
-      __contextMenuStore: { show: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
+      __contextMenuStore: { showBoard: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
     }).__contextMenuStore;
-    cms.show(200, 200, refdes, null, null);
+    cms.showBoard(200, 200, refdes, null, null);
   }, { refdes: firstPart });
 
   const menu = page.locator('.context-menu');
@@ -299,9 +299,9 @@ test('board submenu triggers carry [B] badge in 2-other-boards case', async ({ p
 
   await page.evaluate(({ refdes }) => {
     const cms = (window as unknown as {
-      __contextMenuStore: { show: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
+      __contextMenuStore: { showBoard: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
     }).__contextMenuStore;
-    cms.show(200, 200, refdes, null, null);
+    cms.showBoard(200, 200, refdes, null, null);
   }, { refdes: firstPart });
 
   const menu = page.locator('.context-menu');
