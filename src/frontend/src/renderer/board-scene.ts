@@ -248,28 +248,49 @@ function ensureShadowFont(fontSize: number): string {
 }
 
 /** Draw the board outline path into a Graphics object.
- *  Points with NaN coords act as sub-path separators — closePath + moveTo.
+ *  Points with NaN coords act as sub-path separators. Sub-paths whose start
+ *  and end points coincide (within `CLOSE_EPS` mils) are closed with
+ *  `closePath()`; open sub-paths are left open so they don't render a spurious
+ *  diagonal closing line (previously turned every L-bracket feature on a
+ *  `.pcb` file into a filled triangle).
  *  Duplicate consecutive points are skipped to keep the polygon clean.
  */
+const CLOSE_EPS = 2.0;
 export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings): void {
-  // Filter to valid, deduplicated points; NaN → sub-path break
   const pts = board.outline;
   if (pts.length <= 1) return;
 
   let penDown = false;
   let prevX = NaN, prevY = NaN;
+  let firstX = NaN, firstY = NaN;
+  const closeIfMatchingStart = () => {
+    if (!penDown) return;
+    // Only close the sub-path if it is geometrically a closed loop. For open
+    // chains, closing here would draw an unwanted stroke from the chain's end
+    // back to its start — visible as a long diagonal across the board.
+    if (Math.hypot(prevX - firstX, prevY - firstY) < CLOSE_EPS) {
+      gfx.closePath();
+    }
+  };
   for (const pt of pts) {
     if (isNaN(pt.x) || isNaN(pt.y)) {
-      if (penDown) { gfx.closePath(); penDown = false; prevX = prevY = NaN; }
+      closeIfMatchingStart();
+      penDown = false;
+      prevX = prevY = firstX = firstY = NaN;
       continue;
     }
     // Skip duplicate consecutive points
     if (pt.x === prevX && pt.y === prevY) continue;
-    if (!penDown) { gfx.moveTo(pt.x, pt.y); penDown = true; }
-    else gfx.lineTo(pt.x, pt.y);
+    if (!penDown) {
+      gfx.moveTo(pt.x, pt.y);
+      penDown = true;
+      firstX = pt.x; firstY = pt.y;
+    } else {
+      gfx.lineTo(pt.x, pt.y);
+    }
     prevX = pt.x; prevY = pt.y;
   }
-  if (penDown) gfx.closePath();
+  closeIfMatchingStart();
 
   if (s.boardFillAlpha > 0) {
     gfx.fill({ color: 0xffffff, alpha: s.boardFillAlpha });

@@ -1,5 +1,5 @@
-import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets, chainSegments } from './types';
+import type { BoardData, Part, Pin, Nail, Point, Trace } from './types';
+import { computeBBox, buildNets } from './types';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -199,6 +199,184 @@ const decoder = new TextDecoder('utf-8', { fatal: false });
 
 interface Segment { p1: Point; p2: Point; }
 
+/** Group outline segments into connected components via endpoint-proximity union-find.
+ *  Two segments share a component if any endpoint-pair is within `eps` mils. */
+function clusterSegments(segments: Segment[], eps = 1.0): number[][] {
+  const n = segments.length;
+  if (n === 0) return [];
+  const parent = new Int32Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
+  function find(i: number): number {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  }
+  function union(a: number, b: number) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+  for (let i = 0; i < n; i++) {
+    const si = segments[i];
+    for (let j = i + 1; j < n; j++) {
+      const sj = segments[j];
+      if (Math.hypot(si.p1.x - sj.p1.x, si.p1.y - sj.p1.y) < eps ||
+          Math.hypot(si.p1.x - sj.p2.x, si.p1.y - sj.p2.y) < eps ||
+          Math.hypot(si.p2.x - sj.p1.x, si.p2.y - sj.p1.y) < eps ||
+          Math.hypot(si.p2.x - sj.p2.x, si.p2.y - sj.p2.y) < eps) union(i, j);
+    }
+  }
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    let g = groups.get(r);
+    if (!g) { g = []; groups.set(r, g); }
+    g.push(i);
+  }
+  return [...groups.values()];
+}
+
+/** Walk a connected component's segments by endpoint topology instead of
+ *  greedy nearest-neighbor. Produces one sub-path per open walk; closed loops
+ *  produce one closed chain. `eps` is the endpoint-proximity tolerance used to
+ *  decide if two segments share a vertex — must match `clusterSegments()`, or
+ *  the walker will emit sub-chains that aren't actually disconnected (closing
+ *  them produces stray triangles under `gfx.closePath()`).
+ *
+ *  The shared `chainSegments()` in `types.ts` picks the globally-nearest unused
+ *  segment at each step, which zigzags across the board whenever two unrelated
+ *  segments happen to be closer than the true topological neighbor. This
+ *  walker only follows segments that *share* the current endpoint (within
+ *  `eps` mils), so cross-board jumps are impossible.
+ *
+ *  Bi-directional walking: every chain is grown from BOTH ends of its seed
+ *  segment. This is load-bearing — without it, a seed segment picked from the
+ *  middle of a long chain whose neighbor on one side was already consumed by
+ *  an earlier walk emits as a 2-point chain and the rest of the linked arc
+ *  becomes a sequence of orphan 2-point sub-paths (one per segment). Visible
+ *  as scattered stray lines along rounded-corner arcs on iPhone .pcb files.
+ */
+function chainComponent(segIdxs: number[], segments: Segment[], eps = 1.0): Point[][] {
+  // Bucket endpoints on a coarse grid for O(1) lookup, but verify the exact
+  // Euclidean distance ≤ eps before accepting a match (a bucket overlaps up
+  // to sqrt(2)·cell on the diagonal, so bucket-alone would over-match).
+  const cell = eps;
+  const keyOf = (x: number, y: number): string =>
+    `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
+  interface EpEntry { segIdx: number; end: 0 | 1; x: number; y: number; }
+  const buckets = new Map<string, EpEntry[]>();
+  function addEndpoint(segIdx: number, end: 0 | 1, x: number, y: number) {
+    const k = keyOf(x, y);
+    let arr = buckets.get(k);
+    if (!arr) { arr = []; buckets.set(k, arr); }
+    arr.push({ segIdx, end, x, y });
+  }
+  for (const si of segIdxs) {
+    const s = segments[si];
+    addEndpoint(si, 0, s.p1.x, s.p1.y);
+    addEndpoint(si, 1, s.p2.x, s.p2.y);
+  }
+  // Find unused segment sharing an endpoint at (x,y) — checks the 9 buckets
+  // covering the eps-disk and filters by exact distance.
+  function findAdjacent(x: number, y: number, used: Set<number>): EpEntry | null {
+    const bx = Math.floor(x / cell), by = Math.floor(y / cell);
+    let best: EpEntry | null = null, bestD = eps;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const arr = buckets.get(`${bx + dx},${by + dy}`);
+        if (!arr) continue;
+        for (const e of arr) {
+          if (used.has(e.segIdx)) continue;
+          const d = Math.hypot(e.x - x, e.y - y);
+          if (d <= bestD) { bestD = d; best = e; }
+        }
+      }
+    }
+    return best;
+  }
+  // Extend a chain by walking from `fromPt` through unused adjacent segments.
+  // Appends each new far-endpoint to `out`. Mutates `used` as it goes.
+  function walkFrom(fromPt: Point, used: Set<number>, out: Point[]): void {
+    let curX = fromPt.x, curY = fromPt.y;
+    while (true) {
+      const next = findAdjacent(curX, curY, used);
+      if (!next) break;
+      used.add(next.segIdx);
+      const ns = segments[next.segIdx];
+      const far = next.end === 0 ? ns.p2 : ns.p1;
+      out.push(far);
+      curX = far.x; curY = far.y;
+    }
+  }
+
+  const used = new Set<number>();
+  const chains: Point[][] = [];
+
+  // Prioritise seeds whose endpoints include a degree-1 (leaf) vertex so open
+  // walks run leaf-to-leaf rather than starting from the middle. Degree counts
+  // all endpoints at a location (used + unused); endpoints at an interior of a
+  // shared vertex have degree ≥ 2. Tied across the whole component, the rest
+  // goes in insertion order.
+  function degreeAtBuckets(x: number, y: number): number {
+    const bx = Math.floor(x / cell), by = Math.floor(y / cell);
+    let n = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const arr = buckets.get(`${bx + dx},${by + dy}`);
+        if (!arr) continue;
+        for (const e of arr) {
+          if (Math.hypot(e.x - x, e.y - y) <= eps) n++;
+        }
+      }
+    }
+    return n;
+  }
+  const degreeOneFirst: number[] = [];
+  const rest: number[] = [];
+  for (const si of segIdxs) {
+    const s = segments[si];
+    if (degreeAtBuckets(s.p1.x, s.p1.y) === 1 || degreeAtBuckets(s.p2.x, s.p2.y) === 1) {
+      degreeOneFirst.push(si);
+    } else {
+      rest.push(si);
+    }
+  }
+
+  for (const startIdx of [...degreeOneFirst, ...rest]) {
+    if (used.has(startIdx)) continue;
+    used.add(startIdx);
+    const s0 = segments[startIdx];
+    // Grow from both endpoints. Without this, a start segment whose neighbor
+    // on one side was already consumed emits as len-2 and the rest of the
+    // adjacent arc sprays out as orphan 2-point chains.
+    const forward: Point[] = [];
+    const backward: Point[] = [];
+    walkFrom(s0.p2, used, forward);
+    walkFrom(s0.p1, used, backward);
+    const chain: Point[] = [...backward.slice().reverse(), s0.p1, s0.p2, ...forward];
+    chains.push(chain);
+  }
+  return chains;
+}
+
+/** Chain segments per connected component; emit NaN pen-ups between components
+ *  so the renderer draws each as its own closed sub-path. Without this, a
+ *  single greedy chain jumps long distances between unrelated features (board
+ *  halves, fiducial clusters), producing "spaghetti" lines across the board. */
+function chainByComponent(segments: Segment[]): Point[] {
+  if (segments.length === 0) return [];
+  const groups = clusterSegments(segments);
+  const out: Point[] = [];
+  const NAN_BREAK: Point = { x: NaN, y: NaN };
+  for (const idxs of groups) {
+    const subChains = chainComponent(idxs, segments);
+    for (const chain of subChains) {
+      if (chain.length < 2) continue;
+      if (out.length > 0) out.push(NAN_BREAK);
+      out.push(...chain);
+    }
+  }
+  return out;
+}
+
 function ru32(d: Uint8Array, o: number): number {
   return ((d[o] | (d[o+1] << 8) | (d[o+2] << 16) | (d[o+3] << 24)) >>> 0);
 }
@@ -395,13 +573,21 @@ function detectOutlineComponentFold(segments: Segment[]): { axis: number; dim: '
 
 /** Find the fold axis in XZZ butterfly layout.
  *
+ *  Returns null when no butterfly signal is present. The .pcb format is used for
+ *  at least three layout styles, and only the first is an unfolded butterfly:
+ *  1. Unfolded butterfly — one PCB split into top/bottom halves placed side-by-side
+ *     (MacBook M1/M2 boardviews). Detectable by two mirror-image outline components.
+ *  2. Multi-board assembly — two distinct PCBs side-by-side (iPhone AP+BB,
+ *     MB+SUB). The outline is noisy (many disconnected feature fragments), halves
+ *     are not mirror images. Must NOT be folded.
+ *  3. Flat single-sided board — one connected outline, no fold. Must NOT be folded.
+ *
  *  Detection priority:
- *  1. Outline connectivity — two disconnected outline groups = definitive butterfly.
- *     Handles boards where the gap between halves is tiny (e.g. 20 mils in a 9000-mil board).
- *  2. Part centroid gap — two dense clusters separated by a clear void.
- *  3. Outline coordinate gap — fallback when <8 parts are available.
- *  4. Default Y fold at midpoint — last resort for boards that look like butterfly but
- *     have no detectable gap.
+ *  1. Outline connectivity — exactly two disconnected outline groups with similar
+ *     extents = definitive butterfly.
+ *  2. Part centroid gap — two dense clusters separated by a clear void, validated
+ *     by outline mirror-symmetry check.
+ *  3. Otherwise return null (preserve native layout).
  *
  *  Side determination: lower coordinate = top side (XZZ uses screen coords, Y down).
  */
@@ -500,24 +686,17 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
     }
   }
 
-  // Default fold: X axis (horizontal fold line, dim='y') at Y midpoint.
-  // Almost all .PCB boards are butterfly layouts; fall back when gap detection fails.
+  // Only fold when we have a strong signal. Falling back to a midpoint fold
+  // fabricates butterfly on flat / multi-board files, mirroring real parts into
+  // nonexistent "bottom" positions and clipping half the outline.
   let dim: 'x' | 'y';
   let axis: number;
   if (compFold) {
-    // Outline connectivity is the strongest signal — two separate board outlines
     dim = compFold.dim;
     axis = compFold.axis;
   } else if (detectedDim !== null) {
     dim = detectedDim;
     axis = detectedAxis;
-  } else if (cys.length >= 2) {
-    dim = 'y';
-    axis = (Math.min(...cys) + Math.max(...cys)) / 2;
-  } else if (segments.length >= 2) {
-    dim = 'y';
-    const ys = segments.flatMap(s => [s.p1.y, s.p2.y]);
-    axis = (Math.min(...ys) + Math.max(...ys)) / 2;
   } else {
     return null;
   }
@@ -602,6 +781,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   const segments: Segment[] = [];
   const partDataList: PartData[] = [];
   const testPads: TestPadData[] = [];
+  // Raw trace segments collected by source layer id. We assign 0-based
+  // Trace.layer indices after we've seen every layer the file uses.
+  const rawTraces: Array<{ rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number }> = [];
 
   while (ptr + 5 <= mainEnd && ptr + 5 <= raw.length) {
     const blockType = raw[ptr]; ptr += 1;
@@ -611,31 +793,64 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     ptr += blockSize;
 
     switch (blockType) {
-      case 0x01: { // Arc
-        if (blockData.length < 24 || ru32(blockData, 0) !== OUTLINE_LAYER) break;
+      case 0x01: { // Arc — 8×u32: layer, cx, cy, r, angStart, angEnd, width, netIdx
+        if (blockData.length < 24) break;
+        const layer = ru32(blockData, 0);
         const cx = ri32(blockData, 4)  / XZZ_SCALE;
         const cy = ri32(blockData, 8)  / XZZ_SCALE;
         const r  = Math.abs(ri32(blockData, 12) / XZZ_SCALE);
-        const startDeg = ri32(blockData, 16) / 10;
-        const endDeg   = ri32(blockData, 20) / 10;
+        // Angles are stored as deg × XZZ_SCALE (same scale as coordinates),
+        // NOT deg × 10. OBV reference: XZZPCBFile.cpp:258-260 divides by
+        // XZZ_GLOBAL_SCALE (10000). The wrong divisor wrapped arcs through
+        // Math.cos/sin to produce random geometry — the "star bursts" seen in
+        // the rendered outline on iPhone files.
+        let startDeg = ri32(blockData, 16) / XZZ_SCALE;
+        let endDeg   = ri32(blockData, 20) / XZZ_SCALE;
+        if (startDeg > endDeg) [startDeg, endDeg] = [endDeg, startDeg];
+        if (endDeg - startDeg > 180) startDeg += 360;
         const sRad = startDeg * Math.PI / 180;
         const eRad = endDeg   * Math.PI / 180;
-        for (let i = 0; i < 12; i++) {
-          const t0 = sRad + (eRad - sRad) * i / 12;
-          const t1 = sRad + (eRad - sRad) * (i + 1) / 12;
-          segments.push({
-            p1: { x: cx + r * Math.cos(t0), y: cy + r * Math.sin(t0) },
-            p2: { x: cx + r * Math.cos(t1), y: cy + r * Math.sin(t1) },
-          });
+        // Trace width + net index live past the core arc fields (blocks are
+        // 32 bytes = 8×u32 on multi-layer files). Read when present.
+        const width    = blockData.length >= 28 ? ru32(blockData, 24) / XZZ_SCALE : 0;
+        const netIndex = blockData.length >= 32 ? ru32(blockData, 28) : 0;
+        const N = 9; // 9 sub-segments (10 points) — matches OBV numPoints
+        if (layer === OUTLINE_LAYER) {
+          for (let i = 0; i < N; i++) {
+            const t0 = sRad + (eRad - sRad) * i / N;
+            const t1 = sRad + (eRad - sRad) * (i + 1) / N;
+            segments.push({
+              p1: { x: cx + r * Math.cos(t0), y: cy + r * Math.sin(t0) },
+              p2: { x: cx + r * Math.cos(t1), y: cy + r * Math.sin(t1) },
+            });
+          }
+        } else if (layer >= 1 && layer <= 17) {
+          // Trace arc on a copper / silkscreen / mask layer — linearize into
+          // trace segments with the arc's width + net-index attached.
+          let px = cx + r * Math.cos(sRad), py = cy + r * Math.sin(sRad);
+          for (let i = 1; i <= N; i++) {
+            const t = sRad + (eRad - sRad) * i / N;
+            const nx = cx + r * Math.cos(t), ny = cy + r * Math.sin(t);
+            rawTraces.push({ rawLayer: layer, x1: px, y1: py, x2: nx, y2: ny, width, netIndex });
+            px = nx; py = ny;
+          }
         }
         break;
       }
-      case 0x05: { // Line segment
-        if (blockData.length < 20 || ru32(blockData, 0) !== OUTLINE_LAYER) break;
-        segments.push({
-          p1: { x: ri32(blockData, 4)  / XZZ_SCALE, y: ri32(blockData, 8)  / XZZ_SCALE },
-          p2: { x: ri32(blockData, 12) / XZZ_SCALE, y: ri32(blockData, 16) / XZZ_SCALE },
-        });
+      case 0x05: { // Line segment — 7×u32: layer, x1, y1, x2, y2, width, netIdx
+        if (blockData.length < 20) break;
+        const layer = ru32(blockData, 0);
+        const x1 = ri32(blockData, 4)  / XZZ_SCALE;
+        const y1 = ri32(blockData, 8)  / XZZ_SCALE;
+        const x2 = ri32(blockData, 12) / XZZ_SCALE;
+        const y2 = ri32(blockData, 16) / XZZ_SCALE;
+        if (layer === OUTLINE_LAYER) {
+          segments.push({ p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 } });
+        } else if (layer >= 1 && layer <= 17) {
+          const width    = blockData.length >= 24 ? ru32(blockData, 20) / XZZ_SCALE : 0;
+          const netIndex = blockData.length >= 28 ? ru32(blockData, 24) : 0;
+          rawTraces.push({ rawLayer: layer, x1, y1, x2, y2, width, netIndex });
+        }
         break;
       }
       case 0x07: { // Part (DES-encrypted)
@@ -667,6 +882,22 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         } else {
           for (const p of pd.pins) p.y = 2 * fold.axis - p.y;
         }
+      }
+    }
+    // Mirror traces that sit in the "bottom" half. A segment is classified by
+    // its midpoint. Without this, butterfly files (narrow iPhone sub-boards
+    // like iPhone16E BB) render traces in the pre-fold layout while parts are
+    // in the post-fold layout — they no longer line up.
+    for (const t of rawTraces) {
+      const mid = fold.dim === 'x' ? (t.x1 + t.x2) / 2 : (t.y1 + t.y2) / 2;
+      const isBottom = fold.lowerIsBottom ? mid < fold.axis : mid > fold.axis;
+      if (!isBottom) continue;
+      if (fold.dim === 'x') {
+        t.x1 = 2 * fold.axis - t.x1;
+        t.x2 = 2 * fold.axis - t.x2;
+      } else {
+        t.y1 = 2 * fold.axis - t.y1;
+        t.y2 = 2 * fold.axis - t.y2;
       }
     }
     // Keep only the "top" half of the outline (discard the bottom half).
@@ -764,6 +995,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       ` | parts: top=${topParts} bottom=${botParts}` +
       ` | outline: ${segsBefore}→${segments.length} segs (removed=${removed} clipped=${clipped})`,
     );
+  } else {
+    log.parser.log(
+      `(pcb flat) no butterfly signal — preserving native layout ` +
+      `| parts=${partDataList.length} outline=${segments.length} segs`,
+    );
   }
 
   // Normalize coordinates to origin
@@ -782,10 +1018,14 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   for (const s of segments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
   for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
+  for (const t of rawTraces) { t.x1 -= minX; t.y1 -= minY; t.x2 -= minX; t.y2 -= minY; }
 
-  // Build outline — chain segments into a continuous path.
-  // Sub-paths separated by NaN pen-ups are kept as-is; drawOutline handles them.
-  const outline = chainSegments(segments.map(s => [s.p1, s.p2] as [Point, Point]));
+  // Build outline: cluster connected segments and chain each cluster as its
+  // own sub-path with NaN pen-ups between them. This prevents greedy
+  // nearest-neighbor chaining from drawing long-distance "spaghetti" between
+  // disconnected board halves (MacBook unfolded butterfly) or between
+  // independent boards in a multi-board file (iPhone AP+BB sandwich).
+  const outline = chainByComponent(segments);
 
   // Build parts
   const parts: Part[] = [];
@@ -807,6 +1047,36 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     return { position: { x: tp.x, y: tp.y }, side: 'top' as const, net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
   });
 
+  // Build multi-layer trace data. XZZ layer IDs observed in the wild: 1–7
+  // are copper signal layers, 16 is solder mask, 17 is silkscreen, 28 is the
+  // board outline (handled as polygon above). The raw ID → 0-based index
+  // mapping is driven by the set of layers actually present in *this* file.
+  const LAYER_NAME_HINT: Record<number, string> = {
+    1: 'L1 Top Copper', 2: 'L2 Inner', 3: 'L3 Inner', 4: 'L4 Inner',
+    5: 'L5 Inner', 6: 'L6 Inner', 7: 'L7 Bottom Copper',
+    8: 'L8', 9: 'L9', 10: 'L10', 11: 'L11', 12: 'L12', 13: 'L13',
+    14: 'L14', 15: 'L15',
+    16: 'Solder Mask', 17: 'Silkscreen',
+  };
+  const usedLayers = [...new Set(rawTraces.map(t => t.rawLayer))].sort((a, b) => a - b);
+  const layerIndex = new Map<number, number>();
+  const layerNames: string[] = [];
+  for (const rawId of usedLayers) {
+    layerIndex.set(rawId, layerNames.length);
+    layerNames.push(LAYER_NAME_HINT[rawId] ?? `Layer ${rawId}`);
+  }
+  const traces: Trace[] = rawTraces.map(t => {
+    const raw2 = netDict.get(t.netIndex) ?? '';
+    const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
+    return {
+      start: { x: t.x1, y: t.y1 },
+      end:   { x: t.x2, y: t.y2 },
+      width: t.width > 0 ? t.width : 3,
+      net,
+      layer: layerIndex.get(t.rawLayer)!,
+    };
+  });
+
   if (parts.length === 0 && outline.length === 0) {
     throw new Error('XZZ file parsed but contains no parts or outline — file may be corrupt or empty');
   }
@@ -814,8 +1084,14 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   const allPts: Point[] = [...outline, ...parts.flatMap(p => p.pins.map(pi => pi.position))];
   const bounds = computeBBox(allPts.length > 0 ? allPts : [{ x: 0, y: 0 }]);
 
+  if (traces.length > 0) {
+    log.parser.log(`(pcb traces) ${traces.length} segments across ${layerNames.length} layer(s): ${layerNames.join(', ')}`);
+  }
+
   return {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim,
+    traces: traces.length > 0 ? traces : undefined,
+    layerNames: layerNames.length > 0 ? layerNames : undefined,
   };
 }
