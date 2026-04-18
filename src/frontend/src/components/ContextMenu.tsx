@@ -77,40 +77,88 @@ function renderDonorGroup<T>(
     );
   }
 
-  // 2+ items → top-level per-item submenu triggers (Task 5 upgrades ≥3 to umbrella)
+  // 2 items → top-level per-item submenu triggers (flat expansion)
+  if (g.items.length === 2) {
+    return (
+      <>
+        <div className="context-menu-separator" />
+        <div
+          className="context-menu-item"
+          onClick={() => g.onQuickSearch(g.items[0])}
+        >
+          <SearchScopeBadge scope={g.scope} />
+          {' '}Search &apos;{componentName}&apos; in {g.quickSearchLabel}
+        </div>
+        <div className="context-menu-separator" />
+        {g.items.map(item => {
+          const key = `${g.keyPrefix}:${g.itemKey(item)}`;
+          return (
+            <div
+              key={key}
+              className="context-menu-submenu-trigger"
+              onMouseEnter={() => setOpenSubmenu(key)}
+              onMouseLeave={() => setOpenSubmenu(null)}
+            >
+              <div className="context-menu-item context-menu-has-submenu">
+                <SearchScopeBadge scope={g.scope} />
+                {' '}{g.itemLabel(item)}
+                <span className="context-submenu-arrow">▸</span>
+              </div>
+              {openSubmenu === key && (
+                <div className="context-submenu">
+                  {g.renderSubmenu(item)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
+  // ≥3 items → umbrella: one top-level trigger reveals per-item submenu
+  //            triggers inside (two-level nesting). Keeps the menu compact
+  //            when many donors are open.
+  const umbrellaKey = `umbrella:${g.keyPrefix}`;
   return (
     <>
       <div className="context-menu-separator" />
       <div
-        className="context-menu-item"
-        onClick={() => g.onQuickSearch(g.items[0])}
+        className="context-menu-submenu-trigger"
+        onMouseEnter={() => setOpenSubmenu(umbrellaKey)}
+        onMouseLeave={() => setOpenSubmenu(null)}
       >
-        <SearchScopeBadge scope={g.scope} />
-        {' '}Search &apos;{componentName}&apos; in {g.quickSearchLabel}
-      </div>
-      <div className="context-menu-separator" />
-      {g.items.map(item => {
-        const key = `${g.keyPrefix}:${g.itemKey(item)}`;
-        return (
-          <div
-            key={key}
-            className="context-menu-submenu-trigger"
-            onMouseEnter={() => setOpenSubmenu(key)}
-            onMouseLeave={() => setOpenSubmenu(null)}
-          >
-            <div className="context-menu-item context-menu-has-submenu">
-              <SearchScopeBadge scope={g.scope} />
-              {' '}{g.itemLabel(item)}
-              <span className="context-submenu-arrow">▸</span>
-            </div>
-            {openSubmenu === key && (
-              <div className="context-submenu">
-                {g.renderSubmenu(item)}
-              </div>
-            )}
+        <div className="context-menu-item context-menu-has-submenu">
+          <SearchScopeBadge scope={g.scope} />
+          {' '}{g.umbrellaLabel}
+          <span className="context-submenu-arrow">▸</span>
+        </div>
+        {openSubmenu?.startsWith(`umbrella:${g.keyPrefix}`) || openSubmenu?.startsWith(`item:${g.keyPrefix}`) ? (
+          <div className="context-submenu">
+            {g.items.map(item => {
+              const key = `item:${g.keyPrefix}:${g.itemKey(item)}`;
+              return (
+                <div
+                  key={key}
+                  className="context-menu-submenu-trigger"
+                  onMouseEnter={(e) => { e.stopPropagation(); setOpenSubmenu(key); }}
+                >
+                  <div className="context-menu-item context-menu-has-submenu">
+                    <SearchScopeBadge scope={g.scope} />
+                    {' '}{g.itemLabel(item)}
+                    <span className="context-submenu-arrow">▸</span>
+                  </div>
+                  {openSubmenu === key && (
+                    <div className="context-submenu">
+                      {g.renderSubmenu(item)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        ) : null}
+      </div>
     </>
   );
 }
