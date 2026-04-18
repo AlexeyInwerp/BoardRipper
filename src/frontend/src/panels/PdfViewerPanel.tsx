@@ -7,6 +7,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
 import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked, setAutoSwitchLinked, onAutoSwitchChange } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
+import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
 import type { GlyphDebugState, PageGlyphData } from '../pdf/glyph-types';
 import { DEFAULT_GLYPH_DEBUG_STATE } from '../pdf/glyph-types';
@@ -2491,7 +2492,81 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-  }, []);
+
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const zoom = zoomRef.current;
+    const pan = panRef.current;
+    // Screen → CSS-space on the wrapper (page is sized cssW × cssH in CSS units)
+    const cssX = (e.clientX - rect.left - pan.x) / zoom;
+    const cssY = (e.clientY - rect.top - pan.y) / zoom;
+
+    const baseScale = scaleRef.current;
+    const vpT = viewportTransformRef.current;
+    if (baseScale <= 0 || !vpT) {
+      contextMenuStore.showPdf(e.clientX, e.clientY, '', pdfFileName);
+      return;
+    }
+
+    const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+    const pageIdx = curPage - 1;
+    const items = pdfStore.getDocTextItemsForPage(pdfFileName, pageIdx);
+
+    // Walk items, pick the smallest bbox containing (cssX, cssY)
+    let bestStr = '';
+    let bestArea = Infinity;
+    for (const item of items) {
+      const r = textItemRect(item.transform, item.width, vpT, baseScale);
+      if (cssX >= r.x && cssX <= r.x + r.w && cssY >= r.y && cssY <= r.y + r.h) {
+        const area = r.w * r.h;
+        if (area < bestArea) {
+          bestArea = area;
+          bestStr = item.str.trim();
+        }
+      }
+    }
+
+    contextMenuStore.showPdf(e.clientX, e.clientY, bestStr, pdfFileName);
+  }, [pdfFileName]);
+
+  // DEV-only test hook: expose helpers so Playwright can exercise the
+  // hit-test without reconstructing the transform math.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const target = window as unknown as {
+      __pdfPanelTestHooks?: Record<string, unknown>;
+    };
+    target.__pdfPanelTestHooks = {
+      ...(target.__pdfPanelTestHooks || {}),
+      [pdfFileName]: {
+        firstItemScreenCenter: () => {
+          const container = containerRef.current;
+          if (!container) return null;
+          const rect = container.getBoundingClientRect();
+          const zoom = zoomRef.current;
+          const pan = panRef.current;
+          const baseScale = scaleRef.current;
+          const vpT = viewportTransformRef.current;
+          if (baseScale <= 0 || !vpT) return null;
+          const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+          const items = pdfStore.getDocTextItemsForPage(pdfFileName, curPage - 1);
+          for (const item of items) {
+            if (!item.str.trim()) continue;
+            const r = textItemRect(item.transform, item.width, vpT, baseScale);
+            const cx = rect.left + pan.x + (r.x + r.w / 2) * zoom;
+            const cy = rect.top + pan.y + (r.y + r.h / 2) * zoom;
+            return { clientX: cx, clientY: cy, str: item.str };
+          }
+          return null;
+        },
+      },
+    };
+    return () => {
+      const hooks = target.__pdfPanelTestHooks as Record<string, unknown> | undefined;
+      if (hooks) delete hooks[pdfFileName];
+    };
+  }, [pdfFileName]);
 
   /** Reset zoom to 1 and pan to origin — page fits container width exactly */
   const handleFitWidth = useCallback(() => {

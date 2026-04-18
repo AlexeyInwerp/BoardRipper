@@ -2618,6 +2618,49 @@ html, body, #root {
   margin: 3px 8px;
 }
 
+.context-menu-group-header {
+  padding: 2px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Donor row: default-query line that can optionally carry a spoiler
+ * arrow revealing extra query variants below. Extends .context-menu-item
+ * so we inherit hover/disabled behavior. */
+.context-menu-donor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.context-menu-donor-row-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  align-self: stretch;
+  margin: -4px -12px -4px 0;
+  padding: 0 10px;
+  font-size: 2em;
+  opacity: 0.7;
+  cursor: pointer;
+  user-select: none;
+}
+.context-menu-donor-row-arrow:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Indented variant row below a donor-row spoiler. Clickable. */
+.context-menu-variant-row {
+  padding: 2px 12px 2px 28px;
+  font-size: 12px;
+}
+
 .context-menu-submenu-trigger {
   position: relative;
 }
