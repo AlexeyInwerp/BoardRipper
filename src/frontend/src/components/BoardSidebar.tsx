@@ -102,7 +102,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
 }
 
 function LayersTab() {
-  const { layerStates, showComponents, showVias, showTraces, showPins, showOutlines, showLabels, board, selection } = useBoardStore();
+  const { layerStates, showComponents, showVias, showTraces, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
   const [componentsExpanded, setComponentsExpanded] = useState(true);
 
   // Compute which layers have traces for the currently highlighted net
@@ -120,6 +120,85 @@ function LayersTab() {
 
   return (
     <div className="panel-content layer-list" data-testid="layer-list">
+      {board?.format === 'XZZ' && (
+        <div className="fold-section">
+          <div className="fold-section-title">Board folding</div>
+          <p className="fold-section-desc">
+            XZZ <code>.pcb</code> files store top and bottom halves side-by-side
+            instead of stacked — a single board looks like two mirror-image
+            rectangles next to each other. Files can also hold several boards
+            side-by-side. The parser picks a default; if it looks wrong, switch
+            to "Show all sides".
+          </p>
+          {board.boardGroups && board.boardGroups.length > 1 && (
+            <div className="fold-boards">
+              <div className="fold-boards-label">
+                Detected boards: {board.boardGroups.length}{board.foldComponents && ` (${board.foldComponents.length} components)`}
+              </div>
+              <div className="fold-boards-list">
+                <label className="fold-option">
+                  <input
+                    type="radio"
+                    name="selectedBoard"
+                    checked={selectedBoardIndex === null}
+                    onChange={() => boardStore.setSelectedBoardIndex(null)}
+                  />
+                  <span className="fold-option-label">All boards</span>
+                  <span className="fold-option-hint">Render every detected board together.</span>
+                </label>
+                {board.boardGroups.map((group, i) => {
+                  const firstComp = board.foldComponents?.[group.components[0]];
+                  const dims = firstComp
+                    ? `${Math.round(firstComp.maxX - firstComp.minX)} × ${Math.round(firstComp.maxY - firstComp.minY)} mils`
+                    : '';
+                  const sides = group.components.length;
+                  return (
+                    <label key={i} className="fold-option">
+                      <input
+                        type="radio"
+                        name="selectedBoard"
+                        checked={selectedBoardIndex === i}
+                        onChange={() => boardStore.setSelectedBoardIndex(i)}
+                      />
+                      <span className="fold-option-label">Board {i + 1}</span>
+                      <span className="fold-option-hint">
+                        {dims} · {sides} side{sides === 1 ? '' : 's'} (C{group.components.join(', C')})
+                        {group.fold && ` · ${group.fold.dim.toUpperCase()}-fold available`}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="fold-resolution">
+            <label className="fold-option">
+              <input
+                type="radio"
+                name="foldMode"
+                checked={foldMode === 'suggested'}
+                onChange={() => boardStore.setFoldMode('suggested')}
+              />
+              <span className="fold-option-label">Suggested</span>
+              <span className="fold-option-hint">
+                {board.foldInfo?.summary ?? 'No fold applied — rendered as-is'}
+              </span>
+            </label>
+            <label className="fold-option">
+              <input
+                type="radio"
+                name="foldMode"
+                checked={foldMode === 'all-sides'}
+                onChange={() => boardStore.setFoldMode('all-sides')}
+              />
+              <span className="fold-option-label">Show all sides</span>
+              <span className="fold-option-hint">
+                Render every component at its raw file position, no mirroring.
+              </span>
+            </label>
+          </div>
+        </div>
+      )}
       <div className="layer-list-header">
         <span>{layerStates.length} layers</span>
       </div>

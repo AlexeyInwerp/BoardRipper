@@ -1,4 +1,4 @@
-import type { BoardData, BoardRevision, GhostComponent, Net, Trace, Via } from '../parsers';
+import type { BoardData, BoardRevision, GhostComponent, Net, Point, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
 // DB_VERSION is ONLY bumped for schema changes (new/removed object stores,
@@ -20,7 +20,7 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * separation from DB_VERSION means parser fixes don't nuke the
  * pdf-text cache or require any data migration.
  */
-const PARSER_VERSION = 5;
+const PARSER_VERSION = 6;
 
 interface CachedBoard {
   key: string;
@@ -45,7 +45,14 @@ interface SerializedBoardData {
   vias?: Via[];
   layerNames?: string[];
   butterflyFoldAxis?: 'x' | 'y';
-  flipAxis?: 'x' | 'y';
+  rawOutline?: Point[];
+  foldComponents?: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>;
+  foldInfo?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean; source: string; summary: string };
+  boardGroups?: Array<{
+    components: number[];
+    fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
+    name?: string;
+  }>;
   revisions?: SerializedRevision[];
   activeRevision?: number;
   ghosts?: GhostComponent[];
@@ -79,7 +86,10 @@ function serialize(board: BoardData): SerializedBoardData {
     vias: board.vias,
     layerNames: board.layerNames,
     butterflyFoldAxis: board.butterflyFoldAxis,
-    flipAxis: board.flipAxis,
+    rawOutline: board.rawOutline,
+    foldComponents: board.foldComponents,
+    foldInfo: board.foldInfo,
+    boardGroups: board.boardGroups,
     revisions: board.revisions?.map(r => ({
       index: r.index,
       label: r.label,
@@ -111,7 +121,10 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       vias: data.vias,
       layerNames: data.layerNames,
       butterflyFoldAxis: data.butterflyFoldAxis,
-      flipAxis: data.flipAxis,
+      rawOutline: data.rawOutline,
+      foldComponents: data.foldComponents,
+      foldInfo: data.foldInfo,
+      boardGroups: data.boardGroups,
       revisions: data.revisions?.map(r => ({
         index: r.index,
         label: r.label,

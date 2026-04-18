@@ -338,11 +338,17 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
   }
 }
 
+
 /**
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
 export function buildBoardScene(board: BoardData, s: RenderSettings): BoardSceneGraph {
+  // Derivation now lives in `store/derive-board-view.ts` (called by boardStore).
+  // By the time we're here, `board` is already the presented view: filtered,
+  // folded, sides tagged. Hidden parts stay at their raw array index with
+  // `hidden: true` so `selection.partIndex` stays stable — skip them below.
+  const board0 = board;
   const root        = new Container();
   const outlineGfx  = new Graphics();
   const bottomLayer = new Container();
@@ -406,13 +412,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Single-layer: single traceLayer container with default red color.
   let traceLayer: Container | null = null;
   const traceLayerContainers: Container[] = [];
-  const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
+  const isMultiLayer = !!board0.layerNames && board0.layerNames.length > 0;
 
-  if (board.traces && board.traces.length > 0) {
+  if (board0.traces && board0.traces.length > 0) {
     if (isMultiLayer) {
       // Group traces by layer index → per-layer containers
-      const byLayer = new Map<number, typeof board.traces>();
-      for (const t of board.traces) {
+      const byLayer = new Map<number, typeof board0.traces>();
+      for (const t of board0.traces) {
         const li = t.layer ?? 0;
         let arr = byLayer.get(li);
         if (!arr) { arr = []; byLayer.set(li, arr); }
@@ -431,7 +437,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           arr.push(t);
         }
         // Use palette color for this layer
-        const layerColor = board.layerNames && layerIdx < board.layerNames.length
+        const layerColor = board0.layerNames && layerIdx < board0.layerNames.length
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
         for (const [width, traces] of byWidth) {
@@ -452,8 +458,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // Single-layer: one container with default red
       traceLayer = new Container();
       const traceGfx = new Graphics();
-      const byWidth = new Map<number, typeof board.traces>();
-      for (const t of board.traces) {
+      const byWidth = new Map<number, typeof board0.traces>();
+      for (const t of board0.traces) {
         let arr = byWidth.get(t.width);
         if (!arr) { arr = []; byWidth.set(t.width, arr); }
         arr.push(t);
@@ -473,18 +479,18 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.addChild(bottomLayer);
   root.addChild(topLayer);
 
-  drawOutline(outlineGfx, board, s);
+  drawOutline(outlineGfx, board0, s);
 
   // ── Spatial grid for pin/triangle culling ────────────────────────────────────
   // Divide the board into NxN cells. Each cell has its own color-batched pin
   // Graphics + triangle Graphics inside a cullable Container with explicit
   // cullArea. PixiJS skips off-screen cells entirely during rendering.
   // For small boards (gridSize=1) this degrades to the previous flat batching.
-  const totalPins = board.parts.reduce((n, p) => n + p.pins.length, 0);
+  const totalPins = board0.parts.reduce((n, p) => n + p.pins.length, 0);
   const gridSize  = computeGridSize(totalPins);
-  const bMinX = board.bounds.minX, bMinY = board.bounds.minY;
-  const bW = board.bounds.maxX - bMinX || 1;
-  const bH = board.bounds.maxY - bMinY || 1;
+  const bMinX = board0.bounds.minX, bMinY = board0.bounds.minY;
+  const bW = board0.bounds.maxX - bMinX || 1;
+  const bH = board0.bounds.maxY - bMinY || 1;
   const cellW = bW / gridSize, cellH = bH / gridSize;
 
   interface GridCell {
@@ -539,8 +545,9 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const partLabelByIndex = new Map<number, BitmapText>();
 
   // Parts
-  for (let pi = 0; pi < board.parts.length; pi++) {
-    const part = board.parts[pi];
+  for (let pi = 0; pi < board0.parts.length; pi++) {
+    const part = board0.parts[pi];
+    if (part.hidden) continue; // filtered out by the board-selection UI
 
     // Resolve per-type override — prefix match, longest key wins (e.g. 'FB' beats 'F' for FB1)
     const override = resolvePartTypeOverride(part.name, s);
@@ -1273,7 +1280,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   if (s.showPadVertices) {
     const ARM = 6; // crosshair arm length in mils
     padVertexGfx.setStrokeStyle({ width: 1.5, color: 0xff00ff });
-    for (const part of board.parts) {
+    for (const part of board0.parts) {
+      if (part.hidden) continue;
       for (const pin of part.pins) {
         const { x, y } = pin.position;
         padVertexGfx.moveTo(x - ARM, y).lineTo(x + ARM, y);
@@ -1290,8 +1298,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // resolved by finding trace endpoints near each via position.
   let viaLayer: Container | null = null;
   const viaLabels: BitmapText[] = [];
-  const viaConnectedLayers: number[][] = []; // parallel to board.vias — connected layer indices per via
-  if (board.vias && board.vias.length > 0 && isMultiLayer) {
+  const viaConnectedLayers: number[][] = []; // parallel to board0.vias — connected layer indices per via
+  if (board0.vias && board0.vias.length > 0 && isMultiLayer) {
     viaLayer = new Container();
     viaLayer.label = 'vias';
     const viaGfx = new Graphics();
@@ -1303,8 +1311,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const VIA_ARM = 8;       // static crosshair arm length (mils)
 
     // Short layer labels for overlay
-    const layerShortNames = board.layerNames
-      ? board.layerNames.map((n, _i) => {
+    const layerShortNames = board0.layerNames
+      ? board0.layerNames.map((n, _i) => {
           const upper = n.toUpperCase();
           if (upper.includes('TOP')) return 'T';
           if (upper.includes('BOTTOM') || upper.includes('BOT')) return 'B';
@@ -1320,8 +1328,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const VIA_MATCH_R2 = 15 * 15; // 15 mils squared
     // Index: net → array of { layer, x, y } from trace endpoints
     const traceEndpointsByNet = new Map<string, { layer: number; x: number; y: number }[]>();
-    if (board.traces) {
-      for (const t of board.traces) {
+    if (board0.traces) {
+      for (const t of board0.traces) {
         if (!t.net || t.layer == null) continue;
         let arr = traceEndpointsByNet.get(t.net);
         if (!arr) { arr = []; traceEndpointsByNet.set(t.net, arr); }
@@ -1332,7 +1340,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     const viaFontSize = quantizeFontSize(4);
 
-    for (const via of board.vias) {
+    for (const via of board0.vias) {
       const { x, y } = via.position;
 
       // Find which layers have trace endpoints near this via

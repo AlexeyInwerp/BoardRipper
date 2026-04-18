@@ -357,6 +357,77 @@ function chainComponent(segIdxs: number[], segments: Segment[], eps = 1.0): Poin
   return chains;
 }
 
+/** Compute per-cluster bounding boxes for UI display of outline components. */
+function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }> {
+  const groups = clusterSegments(segments);
+  return groups.map(idxs => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const i of idxs) {
+      const s = segments[i];
+      if (s.p1.x < minX) minX = s.p1.x; if (s.p1.y < minY) minY = s.p1.y;
+      if (s.p2.x < minX) minX = s.p2.x; if (s.p2.y < minY) minY = s.p2.y;
+      if (s.p1.x > maxX) maxX = s.p1.x; if (s.p1.y > maxY) maxY = s.p1.y;
+      if (s.p2.x > maxX) maxX = s.p2.x; if (s.p2.y > maxY) maxY = s.p2.y;
+    }
+    return { minX, minY, maxX, maxY, segCount: idxs.length };
+  });
+}
+
+/** Pair outline components that share identical bbox dimensions and segment
+ *  counts. For each 2-component group, computes a butterfly fold axis midway
+ *  between the two bboxes along whichever axis (X or Y) they're separated on.
+ *  Components with no pair become singleton groups without a fold.
+ *  The heuristic is tuned for XZZ .pcb files that pack multiple physical
+ *  boards into one file (iPhone AP+BB, MB+SUB). */
+function groupComponentsByGeometry(
+  components: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>,
+): Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean }; name?: string }> {
+  if (components.length === 0) return [];
+
+  // Bucket by (width, height, segCount) triple — string key for map lookup.
+  const buckets = new Map<string, number[]>();
+  components.forEach((c, i) => {
+    const w = Math.round(c.maxX - c.minX);
+    const h = Math.round(c.maxY - c.minY);
+    const key = `${w}|${h}|${c.segCount}`;
+    const arr = buckets.get(key) ?? [];
+    arr.push(i);
+    buckets.set(key, arr);
+  });
+
+  // Emit groups in ascending-first-component order so the UI ordering is stable.
+  const seen = new Set<number>();
+  const groups: Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean }; name?: string }> = [];
+  for (let i = 0; i < components.length; i++) {
+    if (seen.has(i)) continue;
+    const c = components[i];
+    const w = Math.round(c.maxX - c.minX);
+    const h = Math.round(c.maxY - c.minY);
+    const key = `${w}|${h}|${c.segCount}`;
+    const idxs = buckets.get(key)!;
+    for (const k of idxs) seen.add(k);
+
+    // When the bucket has exactly 2 components, compute a butterfly fold axis.
+    let fold: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean } | undefined;
+    if (idxs.length === 2) {
+      const [a, b] = idxs.map(k => components[k]);
+      const xSep = !((a.minX <= b.maxX) && (b.minX <= a.maxX)); // no X-overlap
+      const ySep = !((a.minY <= b.maxY) && (b.minY <= a.maxY));
+      if (xSep && !ySep) {
+        const [left, right] = a.maxX < b.minX ? [a, b] : [b, a];
+        fold = { dim: 'x', axis: (left.maxX + right.minX) / 2, lowerIsBottom: false };
+      } else if (ySep && !xSep) {
+        const [lower, upper] = a.maxY < b.minY ? [a, b] : [b, a];
+        fold = { dim: 'y', axis: (lower.maxY + upper.minY) / 2, lowerIsBottom: false };
+      }
+      // If the two components overlap on both axes (stacked directly), we
+      // can't infer a fold axis — leave `fold` undefined.
+    }
+    groups.push({ components: idxs, fold });
+  }
+  return groups;
+}
+
 /** Chain segments per connected component; emit NaN pen-ups between components
  *  so the renderer draws each as its own closed sub-path. Without this, a
  *  single greedy chain jumps long distances between unrelated features (board
@@ -403,7 +474,7 @@ function parseNetBlock(data: Uint8Array): Map<number, string> {
 }
 
 interface PinData { name: string; x: number; y: number; netIndex: number; }
-interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; }
+interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; }
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
   const FAIL = { pin: { name: '', x: 0, y: 0, netIndex: 0 }, next: data.length };
@@ -430,7 +501,9 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   const partSize = ru32(data, ptr); ptr += 4;
   ptr += 18; // unknown
   if (ptr + 4 > data.length) return null;
-  const groupNameSize = ru32(data, ptr); ptr += 4 + groupNameSize;
+  const groupNameSize = ru32(data, ptr); ptr += 4;
+  const groupName = (groupNameSize > 0 && ptr + groupNameSize <= data.length) ? rstr(data, ptr, groupNameSize) : '';
+  ptr += groupNameSize;
 
   if (ptr >= data.length || data[ptr] !== 0x06) return null;
   ptr += 31; // sub-block type byte (1) + 30 unknown bytes
@@ -464,7 +537,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
     }
   }
   if (!partName) return null;
-  return { name: partName, side: 'top', pins };
+  return { name: partName, side: 'top', pins, groupName };
 }
 
 interface TestPadData { x: number; y: number; netIndex: number; }
@@ -866,6 +939,14 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // Snapshot pre-fold geometry for the "Show all sides" view before the
+  // butterfly branch mutates `segments` and `partDataList` in place.
+  const rawSegmentsSnapshot: Segment[] = segments.map(s => ({
+    p1: { x: s.p1.x, y: s.p1.y },
+    p2: { x: s.p2.x, y: s.p2.y },
+  }));
+  const foldComponents = componentBBoxes(rawSegmentsSnapshot);
+
   // Detect board fold: XZZ stores top and bottom side-by-side (unfolded).
   const fold = findFoldAxis(segments, partDataList, testPads);
   if (fold) {
@@ -1019,6 +1100,21 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
   for (const t of rawTraces) { t.x1 -= minX; t.y1 -= minY; t.x2 -= minX; t.y2 -= minY; }
+  for (const s of rawSegmentsSnapshot) {
+    s.p1.x -= minX; s.p1.y -= minY;
+    s.p2.x -= minX; s.p2.y -= minY;
+  }
+  for (const fc of foldComponents) {
+    fc.minX -= minX; fc.maxX -= minX;
+    fc.minY -= minY; fc.maxY -= minY;
+  }
+  const rawOutline = chainByComponent(rawSegmentsSnapshot);
+  const boardGroups = groupComponentsByGeometry(foldComponents);
+  // XZZ `.pcb` files we've surveyed don't carry a board/sheet label in any
+  // block we parse — the per-part `groupName` we extract (e.g. "C-01-55",
+  // "IC-01-01") is a part-type designator, not a board name. If a future file
+  // surfaces a real board name somewhere, populate `group.name` here; the UI
+  // already falls back to "Board N" when name is undefined.
 
   // Build outline: cluster connected segments and chain each cluster as its
   // own sub-path with NaN pen-ups between them. This prevents greedy
@@ -1088,10 +1184,27 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     log.parser.log(`(pcb traces) ${traces.length} segments across ${layerNames.length} layer(s): ${layerNames.join(', ')}`);
   }
 
+  const foldInfo = fold ? {
+    dim: fold.dim,
+    // Adjust axis from pre-normalised coords to post-normalised so it lines up
+    // with rawOutline / part positions (which are all shifted by minX/minY).
+    axis: fold.dim === 'x' ? fold.axis - minX : fold.axis - minY,
+    lowerIsBottom: fold.lowerIsBottom,
+    source: fold._debug.source,
+    summary:
+      `${fold._debug.source === 'outline-components' ? 'Two disconnected outline groups paired as butterfly' : 'Gap-detected butterfly fold'}` +
+      ` — ${fold.dim.toUpperCase()}-fold axis @ ${(fold.dim === 'x' ? fold.axis - minX : fold.axis - minY).toFixed(0)} mils` +
+      ` (${fold.lowerIsBottom ? 'lower' : 'upper'} half mirrored onto top)`,
+  } : undefined;
+
   return {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim,
     traces: traces.length > 0 ? traces : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
+    rawOutline,
+    foldComponents,
+    foldInfo,
+    boardGroups,
   };
 }
