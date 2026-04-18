@@ -86,6 +86,14 @@ export function ContextMenu() {
     t => t.id !== boardStore.activeTabId && t.board !== null,
   );
 
+  // All open PDFs minus bound ones → the "Other PDFs" donor group.
+  // Includes unbound PDFs and those bound to other boards. Filter the
+  // bound list through actually-loaded names to guard stale references.
+  const allOpenPdfNames = pdfStore.loadedFileNames;
+  const boundOpen = boundPdfNames.filter(n => allOpenPdfNames.includes(n));
+  const otherPdfNames = allOpenPdfNames.filter(n => !boundOpen.includes(n));
+  void boundOpen; void otherPdfNames; // Task 4 wires these into JSX
+
   const doBoardSearch = (e: React.MouseEvent, tabId: number, query: string) => {
     e.stopPropagation();
     findInBoardTab(query, tabId);
