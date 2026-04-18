@@ -48,6 +48,9 @@ export interface BoardTab {
    *  parts list. Set via toggleHideGhosts(). Persists across revision switches
    *  on the same tab. */
   hideGhosts: boolean;
+  /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
+   *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
+  foldMode: 'suggested' | 'all-sides';
 }
 
 export interface PdfEntry {
@@ -245,6 +248,7 @@ class BoardStore extends Emitter {
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
+  get foldMode(): 'suggested' | 'all-sides' { return this.activeTab?.foldMode ?? 'suggested'; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -429,6 +433,7 @@ class BoardStore extends Emitter {
         pdfFileNames: [],
         cacheKey: '',
         hideGhosts: false,
+        foldMode: 'suggested',
       };
 
       this._tabs.push(tab);
@@ -714,6 +719,13 @@ class BoardStore extends Emitter {
       ?? syntheticRevisionFromBoard(tab.board);
     tab.board = buildRenderedBoard(tab.board, rev, next);
     tab.selection = emptySelection;
+    this.notify();
+  }
+
+  setFoldMode(mode: 'suggested' | 'all-sides'): void {
+    const tab = this.activeTab;
+    if (!tab || tab.foldMode === mode) return;
+    this.updateActiveTab({ foldMode: mode });
     this.notify();
   }
 

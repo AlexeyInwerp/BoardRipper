@@ -33,6 +33,7 @@ interface StoreSnapshot {
   showLabels: boolean;
   showGhosts: boolean;
   hideGhosts: boolean;
+  foldMode: 'suggested' | 'all-sides';
   layerStates: LayerState[];
   boundPdfFiles: File[];
   pdfFileNames: string[];
@@ -68,6 +69,7 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   showLabels: boardStore.showLabels,
   showGhosts: boardStore.showGhosts,
   hideGhosts: boardStore.hideGhosts,
+  foldMode: boardStore.foldMode,
   layerStates: boardStore.layerStates,
   boundPdfFiles: boardStore.boundPdfFiles,
   pdfFileNames: boardStore.pdfFileNames,
