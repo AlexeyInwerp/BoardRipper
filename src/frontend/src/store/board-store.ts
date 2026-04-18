@@ -93,6 +93,20 @@ function invalidateDerivedBoard(tab: BoardTab): void {
   tab._derivedBoardKey = undefined;
 }
 
+/** Pick `flipAxis` so the on-screen flip is always a top-bottom mirror
+ *  (hinge = horizontal screen axis), regardless of how the board is rotated.
+ *
+ *  - Unrotated (0°/180°):  scale.y=-1 flips Y directly in screen space →
+ *    need `flipAxis='x'` (which sets `flipY` sign).
+ *  - Rotated (90°/270°):   scene X maps to screen Y after rotation, so we
+ *    need `scale.x=-1` instead → `flipAxis='y'` (which sets `flipX` sign).
+ */
+function flipAxisForRotation(rotationDeg: number): 'x' | 'y' {
+  const rot90 = Math.round(rotationDeg / 90) % 4;
+  const axesSwapped = rot90 === 1 || rot90 === 3;
+  return axesSwapped ? 'y' : 'x';
+}
+
 /** Re-calibrate view orientation for the currently-derived board.
  *
  *  When a multi-board selection or fold mode changes, the derived BoardData
@@ -122,14 +136,7 @@ function syncMirrorsToDerivedFold(tab: BoardTab): void {
   }
   tab.rotation = rotation;
 
-  // Always use the same `flipAxis='x'` convention that `loadFile` applies
-  // to natively-butterfly files. Verified by numerical diff — butterfly
-  // files flip HORIZONTALLY on screen (world X changes, Y fixed), and a
-  // selected multi-board with `flipAxis='x'` produces the same horizontal
-  // flip. The earlier per-aspect heuristic produced 'y' here, which flipped
-  // the VERTICAL axis on screen instead, which the user perceived as
-  // "flipping on the wrong axis".
-  tab.flipAxis = 'x';
+  tab.flipAxis = flipAxisForRotation(rotation);
 
   const axis = derived.butterflyFoldAxis ?? null;
   tab.mirrorY = axis === 'x';
@@ -529,6 +536,7 @@ class BoardStore extends Emitter {
           invalidateDerivedBoard(tab);
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
+          tab.flipAxis = flipAxisForRotation(tab.rotation);
           if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
           const cachedFmt = getFormat(cached.format);
           // Initial side = user's perception of "top". For inverted files
@@ -573,6 +581,7 @@ class BoardStore extends Emitter {
         tab.board = board;
         invalidateDerivedBoard(tab);
         tab.rotation = this.autoRotation(board);
+        tab.flipAxis = flipAxisForRotation(tab.rotation);
         if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
         const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
         if (wantsBottomOnOpen) {
