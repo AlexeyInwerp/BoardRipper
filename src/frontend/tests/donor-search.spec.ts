@@ -313,3 +313,193 @@ test('board submenu triggers carry [B] badge in 2-other-boards case', async ({ p
   await expect(pdfBadge).toBeVisible();
   await expect(pdfBadge).toHaveText('P');
 });
+
+test('PDF right-click menu lists Bound Boards and Other PDFs', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByTestId('file-input').setInputFiles(BOARD_A);
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
+
+  await page.getByTestId('pdf-input').setInputFiles(path.join(SAMPLES, '820-02016.pdf'));
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
+
+  await page.getByTestId('pdf-input').setInputFiles(path.join(SAMPLES, '820-02935 051-08286 Rev 5.0.3.pdf'));
+  await expect(page.locator('.dv-tab', { hasText: /820-02935 051-08286/ })).toBeVisible({ timeout: 10000 });
+
+  await page.waitForFunction(() => {
+    const ps = (window as unknown as { __pdfStore?: { loadedFileNames: string[] } }).__pdfStore;
+    return !!ps && ps.loadedFileNames.length >= 2;
+  }, null, { timeout: 15000 });
+
+  // Switch active PDF to the bound one
+  await page.evaluate(() => {
+    const ps = (window as unknown as {
+      __pdfStore: { switchTo: (name: string) => void; loadedFileNames: string[] };
+    }).__pdfStore;
+    const bound = ps.loadedFileNames.find(n => n.includes('820-02016'));
+    if (bound) ps.switchTo(bound);
+  });
+
+  await page.evaluate(() => {
+    const cms = (window as unknown as {
+      __contextMenuStore: { showPdf: (x: number, y: number, q: string, origin: string) => void };
+    }).__contextMenuStore;
+    const ps = (window as unknown as {
+      __pdfStore: { loadedFileNames: string[] };
+    }).__pdfStore;
+    const bound = ps.loadedFileNames.find(n => n.includes('820-02016'))!;
+    cms.showPdf(200, 200, 'UF400', bound);
+  });
+
+  const menu = page.locator('.context-menu');
+  await expect(menu).toBeVisible();
+
+  await expect(menu.locator('.context-menu-item', {
+    hasText: `Search 'UF400' in 820-02016`,
+  }).first()).toBeVisible();
+
+  await expect(menu.locator('.context-menu-item', {
+    hasText: /Search 'UF400' in 820-02935 051-08286/,
+  }).first()).toBeVisible();
+});
+
+test('PDF menu board entry jumps to the board tab + auto-selects', async ({ page }) => {
+  await page.goto('/');
+
+  // Load board A first, then the matching PDF, then board B. Loading B
+  // before the PDF would double-bind the PDF (auto-bind to A via 820-code
+  // match, explicit bind to active-tab B) — polluting Bound Boards.
+  await page.getByTestId('file-input').setInputFiles(BOARD_A);
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
+
+  await page.getByTestId('pdf-input').setInputFiles(path.join(SAMPLES, '820-02016.pdf'));
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
+
+  await page.getByTestId('file-input').setInputFiles(BOARD_B);
+  await expect(page.locator('.dv-tab', { hasText: '820-02935-05.brd' })).toBeVisible({ timeout: 15000 });
+
+  await page.waitForFunction(() => {
+    const bs = (window as unknown as { __boardStore?: { tabs: { board: unknown }[] } }).__boardStore;
+    const ps = (window as unknown as { __pdfStore?: { loadedFileNames: string[] } }).__pdfStore;
+    return !!bs && !!ps && bs.tabs.length >= 2 && ps.loadedFileNames.length >= 1 && bs.tabs.every(t => t.board !== null);
+  }, null, { timeout: 15000 });
+
+  const info = await page.evaluate(() => {
+    const bs = (window as unknown as {
+      __boardStore: {
+        tabs: { id: number; fileName: string; board: { parts: { name: string }[] } | null }[];
+      };
+    }).__boardStore;
+    const ps = (window as unknown as {
+      __pdfStore: { loadedFileNames: string[] };
+    }).__pdfStore;
+    const a = bs.tabs.find(t => t.fileName.includes('820-02016'))!;
+    return {
+      boardAId: a.id,
+      firstPart: a.board!.parts[0].name,
+      pdfName: ps.loadedFileNames.find(n => n.includes('820-02016'))!,
+    };
+  });
+
+  await page.evaluate(({ query, origin }) => {
+    const cms = (window as unknown as {
+      __contextMenuStore: { showPdf: (x: number, y: number, q: string, origin: string) => void };
+    }).__contextMenuStore;
+    cms.showPdf(200, 200, query, origin);
+  }, { query: info.firstPart, origin: info.pdfName });
+
+  const menu = page.locator('.context-menu');
+  await expect(menu).toBeVisible();
+
+  const entry = menu.locator('.context-menu-item', {
+    hasText: `Search '${info.firstPart}' in 820-02016`,
+  });
+  await expect(entry).toBeVisible();
+  await entry.click();
+
+  const after = await page.evaluate(() => {
+    const bs = (window as unknown as {
+      __boardStore: {
+        activeTabId: number | null;
+        activeTab: { fileName: string; selection: { partIndex: number | null }; board: { parts: { name: string }[] } | null } | null;
+      };
+    }).__boardStore;
+    const tab = bs.activeTab;
+    const sel = tab?.selection?.partIndex ?? null;
+    return {
+      activeTabId: bs.activeTabId,
+      activeFileName: tab?.fileName ?? null,
+      selectionName: (sel != null && tab?.board) ? tab.board.parts[sel].name : null,
+    };
+  });
+
+  expect(after.activeTabId).toBe(info.boardAId);
+  expect(after.activeFileName).toContain('820-02016');
+  expect(after.selectionName?.toUpperCase()).toBe(info.firstPart.toUpperCase());
+});
+
+test('PDF hit-test picks the text item under the cursor', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByTestId('file-input').setInputFiles(BOARD_A);
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
+
+  await page.getByTestId('pdf-input').setInputFiles(path.join(SAMPLES, '820-02016.pdf'));
+  await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
+
+  await page.waitForFunction(() => {
+    const ps = (window as unknown as {
+      __pdfStore?: {
+        loadedFileNames: string[];
+        getDocTextItemsForPage?: (n: string, p: number) => unknown[];
+      };
+    }).__pdfStore;
+    if (!ps) return false;
+    const name = ps.loadedFileNames[0];
+    if (!name) return false;
+    const items = ps.getDocTextItemsForPage ? ps.getDocTextItemsForPage(name, 0) : [];
+    return Array.isArray(items) && items.length > 0;
+  }, null, { timeout: 30000 });
+
+  const pdfName = await page.evaluate(() => {
+    const ps = (window as unknown as { __pdfStore: { loadedFileNames: string[] } }).__pdfStore;
+    return ps.loadedFileNames[0];
+  });
+
+  // Wait until the panel registered its test hook
+  await page.waitForFunction((name) => {
+    const hooks = (window as unknown as {
+      __pdfPanelTestHooks?: Record<string, { firstItemScreenCenter?: () => unknown }>;
+    }).__pdfPanelTestHooks;
+    return !!hooks && !!hooks[name] && typeof hooks[name].firstItemScreenCenter === 'function';
+  }, pdfName, { timeout: 15000 });
+
+  const target = await page.evaluate((name) => {
+    const hooks = (window as unknown as {
+      __pdfPanelTestHooks: Record<string, { firstItemScreenCenter: () => { clientX: number; clientY: number; str: string } | null }>;
+    }).__pdfPanelTestHooks;
+    return hooks[name].firstItemScreenCenter();
+  }, pdfName);
+
+  expect(target).not.toBeNull();
+  const { clientX, clientY, str } = target!;
+
+  // Dispatch contextmenu at the text item's center
+  await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    if (!el) throw new Error('no element at point');
+    el.dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true }));
+  }, { x: clientX, y: clientY });
+
+  const menu = page.locator('.context-menu');
+  await expect(menu).toBeVisible({ timeout: 3000 });
+
+  const state = await page.evaluate(() => {
+    const cms = (window as unknown as {
+      __contextMenuStore: { state: { query: string; source: string } };
+    }).__contextMenuStore;
+    return { query: cms.state.query, source: cms.state.source };
+  });
+  expect(state.source).toBe('pdf');
+  expect(state.query).toBe(str.trim());
+});
