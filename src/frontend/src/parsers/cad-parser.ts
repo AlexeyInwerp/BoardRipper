@@ -832,7 +832,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // so the renderer's bottom-view X-negation re-flips them). Detect this
   // pattern and fold the bottom half back onto the top so both sides share
   // the same world coordinate frame.
-  unfoldButterflyIfPresent(partsByPass, nails, routes.traces, routes.vias);
+  const butterflyFold = unfoldButterflyIfPresent(partsByPass, nails, routes.traces, routes.vias);
 
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
   const hasTraces = routes.traces.length > 0;
@@ -940,6 +940,16 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   if (revisions.length > 1) {
     board.revisions = revisions;
     board.activeRevision = active.index;
+  }
+
+  // Butterfly-unfolded boards auto-rotate 270° (they're taller than wide after
+  // fold), which swaps scene and screen axes. The default flipAxis='x' would
+  // then produce an X-mirror on screen when viewing the bottom side. Setting
+  // flipAxis to the perpendicular of the fold axis keeps the bottom-view flip
+  // visually a Y-mirror on screen, matching the intuitive "hinge on a long
+  // edge" convention that non-rotated CAD files already exhibit.
+  if (butterflyFold) {
+    board.flipAxis = butterflyFold.dim === 'x' ? 'y' : 'x';
   }
 
   // Multilayer fields on top-level board (from active revision or global)
@@ -1098,9 +1108,9 @@ function unfoldButterflyIfPresent(
   nails: Nail[],
   traces: Trace[],
   vias: Via[],
-): void {
+): ButterflyFold | null {
   const fold = detectButterflyFold(partsByPass);
-  if (!fold) return;
+  if (!fold) return null;
 
   const mirrorCoord = (v: number) => 2 * fold.axis - v;
 
@@ -1145,6 +1155,7 @@ function unfoldButterflyIfPresent(
     if (fold.dim === 'x') v.position.x = mirrorCoord(v.position.x);
     else                  v.position.y = mirrorCoord(v.position.y);
   }
+  return fold;
 }
 
 function detectButterflyFold(partsByPass: Part[][]): ButterflyFold | null {

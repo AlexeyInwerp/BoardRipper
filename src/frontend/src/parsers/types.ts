@@ -79,6 +79,13 @@ export interface BoardData {
   butterflyFoldAxis?: 'x' | 'y';
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
   flipY?: boolean;
+  /** Per-board default flip axis for bottom-view rendering. 'x' = hinge on horizontal
+   *  (Y-mirror on screen for rotation=0 boards), 'y' = hinge on vertical (X-mirror).
+   *  When a vertical board is auto-rotated 270°, scene and screen axes swap, so the
+   *  "intuitive" Y-mirror on screen requires flipAxis='y'. Used by CAD butterfly
+   *  files where the exporter's butterfly layout + vertical auto-rotation would
+   *  otherwise produce an X-mirrored bottom view. */
+  flipAxis?: 'x' | 'y';
   /** Which part.side value the user perceives as "top" (CPU side). Defaults to 'top'.
    *  When 'bottom', the renderer swaps which scene layer each part goes into so that
    *  pressing "Top" shows parts whose parser-assigned side is 'bottom'. Set when the
