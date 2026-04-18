@@ -2623,45 +2623,30 @@ html, body, #root {
   user-select: none;
 }
 
-/* Donor header for multi-variant entries — donor name + badge, not
- * clickable. The query-variant rows beneath it are the actions. */
-.context-menu-donor-header {
-  padding: 3px 12px 1px 12px;
-  font-size: 12px;
-  opacity: 0.85;
-  cursor: default;
-  user-select: none;
-}
-.context-menu-donor-header:hover {
-  background: transparent;
-}
-
-/* Indented variant row under a donor header. Clickable. */
-.context-menu-variant-row {
-  padding: 2px 12px 2px 28px;
-  font-size: 12px;
-}
-
-/* Spoiler variant of the group header — clickable, shows ▸ / ▾ toggle. */
-.context-menu-spoiler-header {
+/* Donor row: default-query line that can optionally carry a spoiler
+ * arrow revealing extra query variants below. Extends .context-menu-item
+ * so we inherit hover/disabled behavior. */
+.context-menu-donor-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 12px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
+  gap: 12px;
+}
+.context-menu-donor-row-arrow {
+  font-size: 0.9em;
+  opacity: 0.6;
+  padding: 0 4px;
   cursor: pointer;
   user-select: none;
-  gap: 8px;
 }
-.context-menu-spoiler-header:hover {
+.context-menu-donor-row-arrow:hover {
   opacity: 1;
 }
-.context-menu-spoiler-arrow {
-  font-size: 0.9em;
-  opacity: 0.75;
+
+/* Indented variant row below a donor-row spoiler. Clickable. */
+.context-menu-variant-row {
+  padding: 2px 12px 2px 28px;
+  font-size: 12px;
 }
 
 .context-menu-submenu-trigger {

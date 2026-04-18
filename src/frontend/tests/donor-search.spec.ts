@@ -64,9 +64,9 @@ test('donor submenu renders and jumps to donor board', async ({ page }) => {
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // New flat row: [B] 820-02935-05 — <firstPart> (<count>)
+  // Donor row: [B] 820-02935-05 (<count>)  — click triggers default (component) search
   const entry = menu.locator('.context-menu-item', {
-    hasText: `820-02935-05 — ${firstPart}`,
+    hasText: /820-02935-05 \(\d+\)/,
   }).first();
   await expect(entry).toBeVisible();
 
@@ -218,9 +218,9 @@ test('other PDFs surface: unbound PDF appears in menu', async ({ page }) => {
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // New flat row: [P] 820-02016 — <firstPart> (<count>)
+  // Donor row: [P] 820-02016 (<count>)  — click triggers default search
   const otherRow = menu.locator('.context-menu-item', {
-    hasText: `820-02016 — ${firstPart}`,
+    hasText: /820-02016 \(\d+\)/,
   }).first();
   await expect(otherRow).toBeVisible();
 });
@@ -307,16 +307,8 @@ test('flat rows carry scope badges on both board and PDF donor groups', async ({
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // With 2 unbound PDFs in "Other PDFs", the group is a collapsed spoiler.
-  // Verify that collapsed-by-default (no PDF rows visible yet).
-  const beforeExpand = await menu.locator('.context-menu-item .toolbar-search-tag-pdf').count();
-  expect(beforeExpand).toBe(0);
-
-  const spoiler = menu.locator('.context-menu-spoiler-header', { hasText: 'Other PDFs' });
-  await expect(spoiler).toBeVisible();
-  await spoiler.click();
-
-  // Expanded rows carry the [P] badge.
+  // Donor rows for Other PDFs are rendered inline (no group-level spoiler).
+  // Each carries the [P] badge.
   const pdfBadge = menu.locator('.context-menu-item .toolbar-search-tag-pdf').first();
   await expect(pdfBadge).toBeVisible();
   await expect(pdfBadge).toHaveText('P');
@@ -362,14 +354,14 @@ test('PDF right-click menu lists Bound Boards and Other PDFs', async ({ page }) 
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // New flat row format: [B] 820-02016 — UF400 (N)
+  // PDF-mode donor rows: [B] 820-02016 (N) and [P] 820-02935 051-08286 (N).
+  // No em-dash query text — PDF mode has a single query and uses flat rows.
   await expect(menu.locator('.context-menu-item', {
-    hasText: /820-02016 — UF400 \(\d+\)/,
+    hasText: /820-02016 \(\d+\)/,
   }).first()).toBeVisible();
 
-  // Other PDFs row: [P] 820-02935 051-08286 — UF400 (N)
   await expect(menu.locator('.context-menu-item', {
-    hasText: /820-02935 051-08286.*— UF400 \(\d+\)/,
+    hasText: /820-02935 051-08286.*\(\d+\)/,
   }).first()).toBeVisible();
 });
 
@@ -421,9 +413,9 @@ test('PDF menu board entry jumps to the board tab + auto-selects', async ({ page
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // New flat row: [B] 820-02016 — <firstPart> (<count>)
+  // PDF-mode donor row for the bound board: [B] 820-02016 (<count>)
   const entry = menu.locator('.context-menu-item', {
-    hasText: `820-02016 — ${info.firstPart}`,
+    hasText: /820-02016 \(\d+\)/,
   }).first();
   await expect(entry).toBeVisible();
   await entry.click();
@@ -551,8 +543,9 @@ test('PDF menu zero-count row stays clickable (jump + manual tweak)', async ({ p
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
+  // PDF-mode donor row for the other PDF: [P] 820-02935 051-08286 (0)
   const zeroRow = menu.locator('.context-menu-item', {
-    hasText: new RegExp(`820-02935 051-08286.*— ${missingQuery} \\(0\\)`),
+    hasText: /820-02935 051-08286.*\(0\)/,
   }).first();
   await expect(zeroRow).toBeVisible();
   // Must NOT carry the disabled class
@@ -570,4 +563,68 @@ test('PDF menu zero-count row stays clickable (jump + manual tweak)', async ({ p
     return { active: ps._activeFileName ?? null };
   });
   expect(after.active).toContain('820-02935 051-08286');
+});
+
+test('board donor row has per-donor spoiler when net variant exists', async ({ page }) => {
+  const { tabs, firstPart } = await loadTwoBoardsAndPickRefdes(page);
+  void tabs;
+
+  // Find a part that has a pin on a net so the context menu has a net variant.
+  const pinContext = await page.evaluate(() => {
+    const bs = (window as unknown as {
+      __boardStore: {
+        activeTabId: number | null;
+        activeTab: {
+          board: {
+            parts: { name: string; pins: { name?: string; net?: string }[] }[];
+          } | null;
+        } | null;
+      };
+    }).__boardStore;
+    const parts = bs.activeTab?.board?.parts ?? [];
+    for (const p of parts) {
+      for (const pin of p.pins) {
+        if (pin.net && pin.net.trim()) {
+          return { componentName: p.name, pinId: pin.name ?? '1', netName: pin.net };
+        }
+      }
+    }
+    return null;
+  });
+
+  // Skip if no pin-on-net found in sample
+  if (!pinContext) {
+    test.skip(true, 'sample board has no pin-on-net context to exercise net-variant spoiler');
+    return;
+  }
+  void firstPart;
+
+  await page.evaluate((ctx) => {
+    const cms = (window as unknown as {
+      __contextMenuStore: { showBoard: (x: number, y: number, name: string, pinId: string | null, net: string | null) => void };
+    }).__contextMenuStore;
+    cms.showBoard(200, 200, ctx.componentName, ctx.pinId, ctx.netName);
+  }, pinContext);
+
+  const menu = page.locator('.context-menu');
+  await expect(menu).toBeVisible();
+
+  // Board-donor row should have a spoiler arrow because netName variant exists.
+  const donorRow = menu.locator('.context-menu-item.context-menu-donor-row').first();
+  await expect(donorRow).toBeVisible();
+  const arrow = donorRow.locator('.context-menu-donor-row-arrow');
+  await expect(arrow).toBeVisible();
+  await expect(arrow).toHaveText('▸');
+
+  // Variant row should be hidden initially
+  const variantBefore = await menu.locator('.context-menu-variant-row').count();
+  expect(variantBefore).toBe(0);
+
+  // Click spoiler to expand
+  await arrow.click();
+  await expect(arrow).toHaveText('▾');
+
+  // Variant row "net <name> (N)" should appear
+  const variantRow = menu.locator('.context-menu-variant-row', { hasText: `net ${pinContext.netName}` }).first();
+  await expect(variantRow).toBeVisible();
 });
