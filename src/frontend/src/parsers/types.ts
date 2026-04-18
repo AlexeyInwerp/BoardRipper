@@ -113,6 +113,10 @@ export interface BoardData {
       axis: number;                        // already normalised to the outline coord space
       lowerIsBottom: boolean;              // which half gets mirrored onto the other when folding
     };
+    /** Optional human-readable name derived from the most common `groupName`
+     *  among parts in the group. Examples: "RF Board", "AP", "SUB". Absent
+     *  when the file doesn't tag parts or when dominant-name lookup failed. */
+    name?: string;
   }>;
 
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
