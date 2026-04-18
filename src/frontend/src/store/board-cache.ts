@@ -20,7 +20,7 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * separation from DB_VERSION means parser fixes don't nuke the
  * pdf-text cache or require any data migration.
  */
-const PARSER_VERSION = 4;
+const PARSER_VERSION = 5;
 
 interface CachedBoard {
   key: string;
@@ -48,6 +48,10 @@ interface SerializedBoardData {
   rawOutline?: Point[];
   foldComponents?: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>;
   foldInfo?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean; source: string; summary: string };
+  boardGroups?: Array<{
+    components: number[];
+    fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
+  }>;
   revisions?: SerializedRevision[];
   activeRevision?: number;
   ghosts?: GhostComponent[];
@@ -84,6 +88,7 @@ function serialize(board: BoardData): SerializedBoardData {
     rawOutline: board.rawOutline,
     foldComponents: board.foldComponents,
     foldInfo: board.foldInfo,
+    boardGroups: board.boardGroups,
     revisions: board.revisions?.map(r => ({
       index: r.index,
       label: r.label,
@@ -118,6 +123,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       rawOutline: data.rawOutline,
       foldComponents: data.foldComponents,
       foldInfo: data.foldInfo,
+      boardGroups: data.boardGroups,
       revisions: data.revisions?.map(r => ({
         index: r.index,
         label: r.label,

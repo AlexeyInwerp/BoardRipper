@@ -101,6 +101,20 @@ export interface BoardData {
     summary: string;
   };
 
+  /** Outline components grouped into "boards" using an exact geometry match
+   *  heuristic: two components with the same (width, height, segCount) are
+   *  treated as top/bottom sides of one physical board. For each 2-component
+   *  group we also compute a butterfly fold axis so the renderer can fold
+   *  that individual board on demand. Absent when `foldComponents` is empty. */
+  boardGroups?: Array<{
+    components: number[];                 // indices into foldComponents
+    fold?: {
+      dim: 'x' | 'y';
+      axis: number;                        // already normalised to the outline coord space
+      lowerIsBottom: boolean;              // which half gets mirrored onto the other when folding
+    };
+  }>;
+
   /** Per-board flipY override. When set, takes precedence over the format descriptor's flipY. */
   flipY?: boolean;
   /** Which part.side value the user perceives as "top" (CPU side). Defaults to 'top'.
