@@ -819,7 +819,12 @@ class BoardStore extends Emitter {
     invalidateDerivedBoard(tab);
     // Clear any stale selection so it doesn't point at a now-hidden part.
     tab.selection = { ...emptySelection };
-    syncMirrorsToDerivedFold(tab);
+    // NOTE: we deliberately do NOT call `syncMirrorsToDerivedFold` here.
+    // For butterfly files (1 detected board) toggling fold mode flips
+    // between the parser's pre-folded view and the raw side-by-side view,
+    // but the user's preferred screen orientation (rotation/mirrorY/flipAxis)
+    // shouldn't change with that toggle — the load-time defaults remain
+    // correct. Only selection changes warrant a full orientation re-sync.
     this.requestFitDerivedBoard(tab);
     this.notify();
   }
