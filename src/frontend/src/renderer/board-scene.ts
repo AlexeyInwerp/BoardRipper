@@ -16,7 +16,7 @@
  * the label layers. This gives O(visible cells) label rendering instead of O(all labels).
  */
 import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
-import type { BoardData } from '../parsers';
+import type { BoardData, Part, Pin } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
 import {
@@ -338,11 +338,66 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
   }
 }
 
+/** Produce a shallow clone of `board` with bottom-side geometry inverse-mirrored
+ *  back to the raw unfolded positions, and `outline` replaced with `rawOutline`.
+ *  The bounds are recomputed to span the unfolded layout so the viewport
+ *  auto-frames both halves.
+ *
+ *  Called only when `foldMode === 'all-sides'` and `board.foldInfo` is present.
+ *  For flat boards or non-XZZ formats we return `board` unchanged. The parser's
+ *  fold is a pure reflection (p.x = 2*axis - p.x for an X-fold, or p.y = ... for
+ *  a Y-fold) so the inverse is the same formula. */
+function unfoldBoard(board: BoardData): BoardData {
+  if (!board.foldInfo) return board;
+  const { dim, axis, lowerIsBottom } = board.foldInfo;
+  const mirrorPt = (p: { x: number; y: number }) =>
+    dim === 'x' ? { x: 2 * axis - p.x, y: p.y } : { x: p.x, y: 2 * axis - p.y };
+
+  const outline = board.rawOutline ?? board.outline;
+
+  const parts: Part[] = board.parts.map(part => {
+    if (part.side !== 'bottom') return part;
+    const pins: Pin[] = part.pins.map(pin => ({ ...pin, position: mirrorPt(pin.position) }));
+    const bounds = dim === 'x'
+      ? { minX: 2 * axis - part.bounds.maxX, maxX: 2 * axis - part.bounds.minX, minY: part.bounds.minY, maxY: part.bounds.maxY }
+      : { minX: part.bounds.minX, maxX: part.bounds.maxX, minY: 2 * axis - part.bounds.maxY, maxY: 2 * axis - part.bounds.minY };
+    return { ...part, origin: mirrorPt(part.origin), bounds, pins };
+  });
+
+  const traces = board.traces?.map(t => {
+    const mid = dim === 'x' ? (t.start.x + t.end.x) / 2 : (t.start.y + t.end.y) / 2;
+    const isBottom = lowerIsBottom ? mid < axis : mid > axis;
+    if (!isBottom) return t;
+    return { ...t, start: mirrorPt(t.start), end: mirrorPt(t.end) };
+  });
+
+  // Recompute bounds so the renderer frames the full unfolded layout.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const pt of outline) {
+    if (Number.isNaN(pt.x) || Number.isNaN(pt.y)) continue;
+    if (pt.x < minX) minX = pt.x; if (pt.y < minY) minY = pt.y;
+    if (pt.x > maxX) maxX = pt.x; if (pt.y > maxY) maxY = pt.y;
+  }
+  for (const part of parts) {
+    for (const pin of part.pins) {
+      if (pin.position.x < minX) minX = pin.position.x;
+      if (pin.position.y < minY) minY = pin.position.y;
+      if (pin.position.x > maxX) maxX = pin.position.x;
+      if (pin.position.y > maxY) maxY = pin.position.y;
+    }
+  }
+  if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+  const bounds = { minX, minY, maxX, maxY };
+
+  return { ...board, outline, parts, traces, bounds };
+}
+
 /**
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
-export function buildBoardScene(board: BoardData, s: RenderSettings): BoardSceneGraph {
+export function buildBoardScene(board: BoardData, s: RenderSettings, opts: { foldMode: 'suggested' | 'all-sides' } = { foldMode: 'suggested' }): BoardSceneGraph {
+  const board0 = opts.foldMode === 'all-sides' ? unfoldBoard(board) : board;
   const root        = new Container();
   const outlineGfx  = new Graphics();
   const bottomLayer = new Container();
@@ -406,13 +461,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Single-layer: single traceLayer container with default red color.
   let traceLayer: Container | null = null;
   const traceLayerContainers: Container[] = [];
-  const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
+  const isMultiLayer = !!board0.layerNames && board0.layerNames.length > 0;
 
-  if (board.traces && board.traces.length > 0) {
+  if (board0.traces && board0.traces.length > 0) {
     if (isMultiLayer) {
       // Group traces by layer index → per-layer containers
-      const byLayer = new Map<number, typeof board.traces>();
-      for (const t of board.traces) {
+      const byLayer = new Map<number, typeof board0.traces>();
+      for (const t of board0.traces) {
         const li = t.layer ?? 0;
         let arr = byLayer.get(li);
         if (!arr) { arr = []; byLayer.set(li, arr); }
@@ -431,7 +486,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           arr.push(t);
         }
         // Use palette color for this layer
-        const layerColor = board.layerNames && layerIdx < board.layerNames.length
+        const layerColor = board0.layerNames && layerIdx < board0.layerNames.length
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
         for (const [width, traces] of byWidth) {
@@ -452,8 +507,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       // Single-layer: one container with default red
       traceLayer = new Container();
       const traceGfx = new Graphics();
-      const byWidth = new Map<number, typeof board.traces>();
-      for (const t of board.traces) {
+      const byWidth = new Map<number, typeof board0.traces>();
+      for (const t of board0.traces) {
         let arr = byWidth.get(t.width);
         if (!arr) { arr = []; byWidth.set(t.width, arr); }
         arr.push(t);
@@ -473,18 +528,18 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.addChild(bottomLayer);
   root.addChild(topLayer);
 
-  drawOutline(outlineGfx, board, s);
+  drawOutline(outlineGfx, board0, s);
 
   // ── Spatial grid for pin/triangle culling ────────────────────────────────────
   // Divide the board into NxN cells. Each cell has its own color-batched pin
   // Graphics + triangle Graphics inside a cullable Container with explicit
   // cullArea. PixiJS skips off-screen cells entirely during rendering.
   // For small boards (gridSize=1) this degrades to the previous flat batching.
-  const totalPins = board.parts.reduce((n, p) => n + p.pins.length, 0);
+  const totalPins = board0.parts.reduce((n, p) => n + p.pins.length, 0);
   const gridSize  = computeGridSize(totalPins);
-  const bMinX = board.bounds.minX, bMinY = board.bounds.minY;
-  const bW = board.bounds.maxX - bMinX || 1;
-  const bH = board.bounds.maxY - bMinY || 1;
+  const bMinX = board0.bounds.minX, bMinY = board0.bounds.minY;
+  const bW = board0.bounds.maxX - bMinX || 1;
+  const bH = board0.bounds.maxY - bMinY || 1;
   const cellW = bW / gridSize, cellH = bH / gridSize;
 
   interface GridCell {
@@ -539,8 +594,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   const partLabelByIndex = new Map<number, BitmapText>();
 
   // Parts
-  for (let pi = 0; pi < board.parts.length; pi++) {
-    const part = board.parts[pi];
+  for (let pi = 0; pi < board0.parts.length; pi++) {
+    const part = board0.parts[pi];
 
     // Resolve per-type override — prefix match, longest key wins (e.g. 'FB' beats 'F' for FB1)
     const override = resolvePartTypeOverride(part.name, s);
@@ -1273,7 +1328,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   if (s.showPadVertices) {
     const ARM = 6; // crosshair arm length in mils
     padVertexGfx.setStrokeStyle({ width: 1.5, color: 0xff00ff });
-    for (const part of board.parts) {
+    for (const part of board0.parts) {
       for (const pin of part.pins) {
         const { x, y } = pin.position;
         padVertexGfx.moveTo(x - ARM, y).lineTo(x + ARM, y);
@@ -1290,8 +1345,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // resolved by finding trace endpoints near each via position.
   let viaLayer: Container | null = null;
   const viaLabels: BitmapText[] = [];
-  const viaConnectedLayers: number[][] = []; // parallel to board.vias — connected layer indices per via
-  if (board.vias && board.vias.length > 0 && isMultiLayer) {
+  const viaConnectedLayers: number[][] = []; // parallel to board0.vias — connected layer indices per via
+  if (board0.vias && board0.vias.length > 0 && isMultiLayer) {
     viaLayer = new Container();
     viaLayer.label = 'vias';
     const viaGfx = new Graphics();
@@ -1303,8 +1358,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const VIA_ARM = 8;       // static crosshair arm length (mils)
 
     // Short layer labels for overlay
-    const layerShortNames = board.layerNames
-      ? board.layerNames.map((n, _i) => {
+    const layerShortNames = board0.layerNames
+      ? board0.layerNames.map((n, _i) => {
           const upper = n.toUpperCase();
           if (upper.includes('TOP')) return 'T';
           if (upper.includes('BOTTOM') || upper.includes('BOT')) return 'B';
@@ -1320,8 +1375,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const VIA_MATCH_R2 = 15 * 15; // 15 mils squared
     // Index: net → array of { layer, x, y } from trace endpoints
     const traceEndpointsByNet = new Map<string, { layer: number; x: number; y: number }[]>();
-    if (board.traces) {
-      for (const t of board.traces) {
+    if (board0.traces) {
+      for (const t of board0.traces) {
         if (!t.net || t.layer == null) continue;
         let arr = traceEndpointsByNet.get(t.net);
         if (!arr) { arr = []; traceEndpointsByNet.set(t.net, arr); }
@@ -1332,7 +1387,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
 
     const viaFontSize = quantizeFontSize(4);
 
-    for (const via of board.vias) {
+    for (const via of board0.vias) {
       const { x, y } = via.position;
 
       // Find which layers have trace endpoints near this via
