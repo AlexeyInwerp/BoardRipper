@@ -338,40 +338,137 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
   }
 }
 
-/** Produce a shallow clone of `board` with bottom-side geometry inverse-mirrored
- *  back to the raw unfolded positions, and `outline` replaced with `rawOutline`.
- *  The bounds are recomputed to span the unfolded layout so the viewport
- *  auto-frames both halves.
+/** Prepare the board for rendering based on fold options.
  *
- *  Called only when `foldMode === 'all-sides'` and `board.foldInfo` is present.
- *  For flat boards or non-XZZ formats we return `board` unchanged. The parser's
- *  fold is a pure reflection (p.x = 2*axis - p.x for an X-fold, or p.y = ... for
- *  a Y-fold) so the inverse is the same formula. */
-function unfoldBoard(board: BoardData): BoardData {
-  if (!board.foldInfo) return board;
-  const { dim, axis, lowerIsBottom } = board.foldInfo;
-  const mirrorPt = (p: { x: number; y: number }) =>
-    dim === 'x' ? { x: 2 * axis - p.x, y: p.y } : { x: p.x, y: 2 * axis - p.y };
+ *  - When `selectedBoardIndex` is set, keeps only that group's components'
+ *    outline sub-paths, parts, and traces. Components are identified by bbox
+ *    containment — a sub-path / part / trace belongs to the component whose
+ *    bbox contains its bounding box / origin / midpoint.
+ *  - When `foldMode === 'suggested'` and there's a fold to apply (either the
+ *    selected group's own fold, or the global `foldInfo` for the whole board
+ *    when nothing is selected), mirrors the "bottom" half onto the other side.
+ *  - When `foldMode === 'all-sides'`, no mirroring — outline uses `rawOutline`
+ *    and all parts render in top-side style. */
+function unfoldBoard(
+  board: BoardData,
+  foldMode: 'suggested' | 'all-sides',
+  selectedBoardIndex: number | null,
+): BoardData {
+  const groups = board.boardGroups;
+  const hasSelection = selectedBoardIndex != null && groups != null && groups[selectedBoardIndex] != null;
+  const selectedGroup = hasSelection ? groups![selectedBoardIndex!] : null;
 
-  const outline = board.rawOutline ?? board.outline;
+  // Pick which (if any) fold to apply.
+  //  - foldMode 'all-sides': no fold
+  //  - selection: use that group's fold
+  //  - no selection: use the board-level foldInfo (legacy path, butterfly files)
+  const effectiveFold =
+    foldMode === 'all-sides' ? null
+    : selectedGroup ? selectedGroup.fold ?? null
+    : board.foldInfo ?? null;
 
-  const parts: Part[] = board.parts.map(part => {
-    if (part.side !== 'bottom') return part;
-    const pins: Pin[] = part.pins.map(pin => ({ ...pin, side: 'top' as const, position: mirrorPt(pin.position) }));
-    const bounds = dim === 'x'
-      ? { minX: 2 * axis - part.bounds.maxX, maxX: 2 * axis - part.bounds.minX, minY: part.bounds.minY, maxY: part.bounds.maxY }
-      : { minX: part.bounds.minX, maxX: part.bounds.maxX, minY: 2 * axis - part.bounds.maxY, maxY: 2 * axis - part.bounds.minY };
-    return { ...part, side: 'top' as const, origin: mirrorPt(part.origin), bounds, pins };
-  });
+  // Early exit: no fold, no selection → return board unchanged (fast path).
+  if (!effectiveFold && !hasSelection && foldMode === 'suggested') return board;
 
-  const traces = board.traces?.map(t => {
-    const mid = dim === 'x' ? (t.start.x + t.end.x) / 2 : (t.start.y + t.end.y) / 2;
-    const isBottom = lowerIsBottom ? mid < axis : mid > axis;
-    if (!isBottom) return t;
-    return { ...t, start: mirrorPt(t.start), end: mirrorPt(t.end) };
-  });
+  // Resolve the set of component bboxes that we keep when filtering.
+  const componentBBoxes = board.foldComponents ?? [];
+  const keptComponents = hasSelection ? selectedGroup!.components : componentBBoxes.map((_, i) => i);
+  const keptBBoxes = keptComponents.map(i => componentBBoxes[i]).filter(b => b != null);
 
-  // Recompute bounds so the renderer frames the full unfolded layout.
+  function bboxContainsPt(bb: { minX: number; minY: number; maxX: number; maxY: number }, x: number, y: number, pad = 0.5): boolean {
+    return x >= bb.minX - pad && x <= bb.maxX + pad && y >= bb.minY - pad && y <= bb.maxY + pad;
+  }
+  // A component "contains" an element when the element's representative point
+  // (centroid for parts, midpoint for traces, any sub-path point for outline)
+  // falls inside the component's bbox with a small tolerance.
+  function belongsToKept(x: number, y: number): boolean {
+    if (!hasSelection) return true; // when no selection, keep everything
+    for (const bb of keptBBoxes) if (bboxContainsPt(bb, x, y)) return true;
+    return false;
+  }
+
+  // Mirror helper (inverse-mirror ≡ mirror since it's a reflection).
+  const mirrorPt = effectiveFold
+    ? (p: { x: number; y: number }) => effectiveFold.dim === 'x'
+      ? { x: 2 * effectiveFold.axis - p.x, y: p.y }
+      : { x: p.x, y: 2 * effectiveFold.axis - p.y }
+    : null;
+
+  // OUTLINE:
+  // Source: rawOutline when all-sides or selection-filtered; else regular outline.
+  // When we need to filter or recompute, walk sub-paths (NaN-break terminated)
+  // and keep those whose points lie inside kept bboxes.
+  const sourceOutline = (foldMode === 'all-sides' || hasSelection) && board.rawOutline
+    ? board.rawOutline
+    : board.outline;
+
+  let outline: typeof board.outline;
+  if (!hasSelection && foldMode !== 'all-sides') {
+    outline = board.outline;
+  } else {
+    const out: typeof board.outline = [];
+    let subPath: typeof board.outline = [];
+    let subPathBelongs = false;
+    const flush = () => {
+      if (subPath.length > 0 && subPathBelongs) {
+        if (out.length > 0) out.push({ x: NaN, y: NaN });
+        for (const p of subPath) out.push(p);
+      }
+      subPath = [];
+      subPathBelongs = false;
+    };
+    for (const p of sourceOutline) {
+      if (Number.isNaN(p.x) || Number.isNaN(p.y)) { flush(); continue; }
+      if (!subPathBelongs && belongsToKept(p.x, p.y)) subPathBelongs = true;
+      subPath.push(p);
+    }
+    flush();
+    outline = out;
+  }
+
+  // PARTS:
+  // Filter by bbox containment of origin. Inverse-mirror bottom-side when a
+  // fold is effective, and promote every part to `side: 'top'` so the renderer
+  // draws them uniformly (spec: neutral color in all-sides / selected mode).
+  const parts = board.parts
+    .filter(part => {
+      if (!hasSelection) return true;
+      return belongsToKept(part.origin.x, part.origin.y);
+    })
+    .map(part => {
+      const shouldMirror = mirrorPt != null && part.side === 'bottom';
+      if (!shouldMirror && foldMode !== 'all-sides' && !hasSelection) return part;
+      const origin = shouldMirror ? mirrorPt!(part.origin) : part.origin;
+      const bounds = shouldMirror
+        ? (effectiveFold!.dim === 'x'
+          ? { minX: 2 * effectiveFold!.axis - part.bounds.maxX, maxX: 2 * effectiveFold!.axis - part.bounds.minX, minY: part.bounds.minY, maxY: part.bounds.maxY }
+          : { minX: part.bounds.minX, maxX: part.bounds.maxX, minY: 2 * effectiveFold!.axis - part.bounds.maxY, maxY: 2 * effectiveFold!.axis - part.bounds.minY })
+        : part.bounds;
+      const pins = shouldMirror
+        ? part.pins.map(pin => ({ ...pin, side: 'top' as const, position: mirrorPt!(pin.position) }))
+        : (foldMode === 'all-sides' || hasSelection ? part.pins.map(pin => ({ ...pin, side: 'top' as const })) : part.pins);
+      return { ...part, side: 'top' as const, origin, bounds, pins };
+    });
+
+  // TRACES: filter by midpoint containment, inverse-mirror when on the "bottom" half.
+  const traces = board.traces
+    ? board.traces
+        .filter(t => {
+          if (!hasSelection) return true;
+          const mx = (t.start.x + t.end.x) / 2;
+          const my = (t.start.y + t.end.y) / 2;
+          return belongsToKept(mx, my);
+        })
+        .map(t => {
+          if (!mirrorPt) return t;
+          const mid = effectiveFold!.dim === 'x' ? (t.start.x + t.end.x) / 2 : (t.start.y + t.end.y) / 2;
+          const isBottom = effectiveFold!.lowerIsBottom ? mid < effectiveFold!.axis : mid > effectiveFold!.axis;
+          if (!isBottom) return t;
+          return { ...t, start: mirrorPt(t.start), end: mirrorPt(t.end) };
+        })
+    : board.traces;
+
+  // Recompute bounds so the viewport auto-frames whatever is actually rendered.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const pt of outline) {
     if (Number.isNaN(pt.x) || Number.isNaN(pt.y)) continue;
@@ -396,8 +493,8 @@ function unfoldBoard(board: BoardData): BoardData {
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
-export function buildBoardScene(board: BoardData, s: RenderSettings, opts: { foldMode: 'suggested' | 'all-sides' } = { foldMode: 'suggested' }): BoardSceneGraph {
-  const board0 = opts.foldMode === 'all-sides' ? unfoldBoard(board) : board;
+export function buildBoardScene(board: BoardData, s: RenderSettings, opts: { foldMode: 'suggested' | 'all-sides'; selectedBoardIndex?: number | null } = { foldMode: 'suggested', selectedBoardIndex: null }): BoardSceneGraph {
+  const board0 = unfoldBoard(board, opts.foldMode, opts.selectedBoardIndex ?? null);
   const root        = new Container();
   const outlineGfx  = new Graphics();
   const bottomLayer = new Container();

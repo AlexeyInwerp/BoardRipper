@@ -51,6 +51,9 @@ export interface BoardTab {
   /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
    *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
   foldMode: 'suggested' | 'all-sides';
+  /** XZZ multi-board selection. null = show all boards. An index selects the
+   *  group at that position in `board.boardGroups`. */
+  selectedBoardIndex: number | null;
 }
 
 export interface PdfEntry {
@@ -249,6 +252,7 @@ class BoardStore extends Emitter {
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
   get foldMode(): 'suggested' | 'all-sides' { return this.activeTab?.foldMode ?? 'suggested'; }
+  get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
@@ -434,6 +438,7 @@ class BoardStore extends Emitter {
         cacheKey: '',
         hideGhosts: false,
         foldMode: 'suggested',
+        selectedBoardIndex: null,
       };
 
       this._tabs.push(tab);
@@ -726,6 +731,13 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab || tab.foldMode === mode) return;
     this.updateActiveTab({ foldMode: mode });
+    this.notify();
+  }
+
+  setSelectedBoardIndex(idx: number | null): void {
+    const tab = this.activeTab;
+    if (!tab || tab.selectedBoardIndex === idx) return;
+    this.updateActiveTab({ selectedBoardIndex: idx });
     this.notify();
   }
 
