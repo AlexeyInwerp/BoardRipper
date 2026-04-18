@@ -4688,13 +4688,22 @@ html, body, #root {
   padding: 1px 4px;
   border-radius: 2px;
 }
-.fold-components {
+.fold-components,
+.fold-boards {
   font-size: 11px;
   margin-bottom: 10px;
 }
-.fold-components-label {
+.fold-components-label,
+.fold-boards-label {
   opacity: 0.65;
-  margin-bottom: 3px;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+.fold-boards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
 }
 .fold-components-list {
   list-style: none;
