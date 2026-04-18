@@ -824,6 +824,16 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
   const nails: Nail[] = [...testpins, ...powerpins];
 
+  // Butterfly unfold: some CAMCAD exports (e.g. Apple 820-02841) place
+  // bottom-side components at mirrored X (or Y) relative to the top side,
+  // producing an already-unfolded "butterfly" layout. Rendering it as a
+  // single-side board yields a 2×-wide outline and a view that looks
+  // mirrored after flipping (stored bottom pins are already in bottom-POV,
+  // so the renderer's bottom-view X-negation re-flips them). Detect this
+  // pattern and fold the bottom half back onto the top so both sides share
+  // the same world coordinate frame.
+  unfoldButterflyIfPresent(partsByPass, nails, routes.traces, routes.vias);
+
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
   const hasTraces = routes.traces.length > 0;
   const hasMultiplePasses = parsedComps.passCount > 1;
@@ -1060,6 +1070,145 @@ function assignTracesToRevisions(
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Butterfly-layout unfold (CAMCAD/Apple exports)
+// ---------------------------------------------------------------------------
+
+interface ButterflyFold {
+  dim: 'x' | 'y';
+  axis: number;
+  /** Coord sign (after subtracting axis) of the half that needs mirroring. */
+  bottomSign: 1 | -1;
+}
+
+/**
+ * Detect + apply a butterfly fold on the assembled parts. Fold is applied
+ * in-place to pin positions, part origin/bounds, nail positions, and
+ * trace/via endpoints that fall on the mirrored half.
+ *
+ * No-op when the board doesn't exhibit butterfly-authored bottom coordinates,
+ * which covers every non-Apple CAD sample in the test set. Guards are
+ * deliberately conservative (disjoint axis-range, comparable widths, strong
+ * perpendicular overlap) to avoid mis-firing on partly-populated boards.
+ */
+function unfoldButterflyIfPresent(
+  partsByPass: Part[][],
+  nails: Nail[],
+  traces: Trace[],
+  vias: Via[],
+): void {
+  const fold = detectButterflyFold(partsByPass);
+  if (!fold) return;
+
+  const mirrorCoord = (v: number) => 2 * fold.axis - v;
+
+  for (const parts of partsByPass) {
+    for (const part of parts) {
+      if (part.side !== 'bottom') continue;
+      for (const pin of part.pins) {
+        if (fold.dim === 'x') pin.position.x = mirrorCoord(pin.position.x);
+        else                  pin.position.y = mirrorCoord(pin.position.y);
+      }
+      const { origin, bounds } = computePartGeometry(part.pins);
+      part.origin = origin;
+      part.bounds = bounds;
+    }
+  }
+
+  for (const nail of nails) {
+    if (nail.side !== 'bottom') continue;
+    if (fold.dim === 'x') nail.position.x = mirrorCoord(nail.position.x);
+    else                  nail.position.y = mirrorCoord(nail.position.y);
+  }
+
+  // Traces/vias have no side — classify by midpoint position along the fold
+  // axis. The bottom half is the one whose coord-sign relative to the axis
+  // matches bottomSign.
+  for (const t of traces) {
+    const mid = fold.dim === 'x'
+      ? (t.start.x + t.end.x) / 2
+      : (t.start.y + t.end.y) / 2;
+    if (Math.sign(mid - fold.axis) !== fold.bottomSign) continue;
+    if (fold.dim === 'x') {
+      t.start.x = mirrorCoord(t.start.x);
+      t.end.x   = mirrorCoord(t.end.x);
+    } else {
+      t.start.y = mirrorCoord(t.start.y);
+      t.end.y   = mirrorCoord(t.end.y);
+    }
+  }
+  for (const v of vias) {
+    const coord = fold.dim === 'x' ? v.position.x : v.position.y;
+    if (Math.sign(coord - fold.axis) !== fold.bottomSign) continue;
+    if (fold.dim === 'x') v.position.x = mirrorCoord(v.position.x);
+    else                  v.position.y = mirrorCoord(v.position.y);
+  }
+}
+
+function detectButterflyFold(partsByPass: Part[][]): ButterflyFold | null {
+  let tMinX = Infinity, tMaxX = -Infinity, tMinY = Infinity, tMaxY = -Infinity, tN = 0;
+  let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity, bN = 0;
+  for (const parts of partsByPass) {
+    for (const part of parts) {
+      for (const pin of part.pins) {
+        const x = pin.position.x, y = pin.position.y;
+        if (part.side === 'top') {
+          if (x < tMinX) tMinX = x; if (x > tMaxX) tMaxX = x;
+          if (y < tMinY) tMinY = y; if (y > tMaxY) tMaxY = y;
+          tN++;
+        } else {
+          if (x < bMinX) bMinX = x; if (x > bMaxX) bMaxX = x;
+          if (y < bMinY) bMinY = y; if (y > bMaxY) bMaxY = y;
+          bN++;
+        }
+      }
+    }
+  }
+  if (tN < 50 || bN < 50) return null;
+
+  const xFold = checkFoldAxis(tMinX, tMaxX, bMinX, bMaxX, tMinY, tMaxY, bMinY, bMaxY);
+  const yFold = checkFoldAxis(tMinY, tMaxY, bMinY, bMaxY, tMinX, tMaxX, bMinX, bMaxX);
+
+  // Prefer the stronger signal (larger gap / smaller-half ratio)
+  const pick = xFold && (!yFold || xFold.score >= yFold.score) ? xFold : yFold;
+  if (!pick) return null;
+  return { dim: pick === xFold ? 'x' : 'y', axis: pick.axis, bottomSign: pick.bottomSign };
+}
+
+/**
+ * Returns a fold descriptor when the two layer ranges along the primary axis
+ * are disjoint, comparable in size, and overlap along the perpendicular axis.
+ * These three conditions together are specific to butterfly-authored files
+ * and don't hold for normal boards (top/bottom always overlap in world X/Y).
+ */
+function checkFoldAxis(
+  tMin: number, tMax: number, bMin: number, bMax: number,
+  pTMin: number, pTMax: number, pBMin: number, pBMax: number,
+): { axis: number; score: number; bottomSign: 1 | -1 } | null {
+  const tSpan = tMax - tMin, bSpan = bMax - bMin;
+  if (tSpan <= 0 || bSpan <= 0) return null;
+
+  const topBelow = tMax <= bMin;
+  const botBelow = bMax <= tMin;
+  if (!topBelow && !botBelow) return null;
+
+  // Widths must be comparable (butterfly implies mirror symmetry).
+  const widthRatio = Math.min(tSpan, bSpan) / Math.max(tSpan, bSpan);
+  if (widthRatio < 0.6) return null;
+
+  // Perpendicular ranges must overlap substantially (both halves span the
+  // same physical board on the other axis).
+  const pOverlap = Math.min(pTMax, pBMax) - Math.max(pTMin, pBMin);
+  const pMinSpan = Math.min(pTMax - pTMin, pBMax - pBMin);
+  if (pMinSpan <= 0 || pOverlap / pMinSpan < 0.6) return null;
+
+  const axis = topBelow ? (tMax + bMin) / 2 : (bMax + tMin) / 2;
+  const bottomSign: 1 | -1 = topBelow ? 1 : -1; // side-of-axis where bottom lives
+  // Score = perpendicular overlap ratio × width similarity (higher = more butterfly-like)
+  const score = (pOverlap / pMinSpan) * widthRatio;
+  return { axis, score, bottomSign };
 }
 
 /** Assign vias to revisions by pin proximity. */
