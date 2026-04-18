@@ -381,7 +381,7 @@ function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: numbe
  *  boards into one file (iPhone AP+BB, MB+SUB). */
 function groupComponentsByGeometry(
   components: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>,
-): Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean } }> {
+): Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean }; name?: string }> {
   if (components.length === 0) return [];
 
   // Bucket by (width, height, segCount) triple — string key for map lookup.
@@ -397,7 +397,7 @@ function groupComponentsByGeometry(
 
   // Emit groups in ascending-first-component order so the UI ordering is stable.
   const seen = new Set<number>();
-  const groups: Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean } }> = [];
+  const groups: Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean }; name?: string }> = [];
   for (let i = 0; i < components.length; i++) {
     if (seen.has(i)) continue;
     const c = components[i];
@@ -474,7 +474,7 @@ function parseNetBlock(data: Uint8Array): Map<number, string> {
 }
 
 interface PinData { name: string; x: number; y: number; netIndex: number; }
-interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; }
+interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; }
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
   const FAIL = { pin: { name: '', x: 0, y: 0, netIndex: 0 }, next: data.length };
@@ -501,7 +501,9 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   const partSize = ru32(data, ptr); ptr += 4;
   ptr += 18; // unknown
   if (ptr + 4 > data.length) return null;
-  const groupNameSize = ru32(data, ptr); ptr += 4 + groupNameSize;
+  const groupNameSize = ru32(data, ptr); ptr += 4;
+  const groupName = (groupNameSize > 0 && ptr + groupNameSize <= data.length) ? rstr(data, ptr, groupNameSize) : '';
+  ptr += groupNameSize;
 
   if (ptr >= data.length || data[ptr] !== 0x06) return null;
   ptr += 31; // sub-block type byte (1) + 30 unknown bytes
@@ -535,7 +537,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
     }
   }
   if (!partName) return null;
-  return { name: partName, side: 'top', pins };
+  return { name: partName, side: 'top', pins, groupName };
 }
 
 interface TestPadData { x: number; y: number; netIndex: number; }
@@ -1108,6 +1110,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   }
   const rawOutline = chainByComponent(rawSegmentsSnapshot);
   const boardGroups = groupComponentsByGeometry(foldComponents);
+  // XZZ `.pcb` files we've surveyed don't carry a board/sheet label in any
+  // block we parse — the per-part `groupName` we extract (e.g. "C-01-55",
+  // "IC-01-01") is a part-type designator, not a board name. If a future file
+  // surfaces a real board name somewhere, populate `group.name` here; the UI
+  // already falls back to "Board N" when name is undefined.
 
   // Build outline: cluster connected segments and chain each cluster as its
   // own sub-path with NaN pen-ups between them. This prevents greedy
