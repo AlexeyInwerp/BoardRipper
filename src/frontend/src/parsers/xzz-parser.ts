@@ -373,6 +373,61 @@ function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: numbe
   });
 }
 
+/** Pair outline components that share identical bbox dimensions and segment
+ *  counts. For each 2-component group, computes a butterfly fold axis midway
+ *  between the two bboxes along whichever axis (X or Y) they're separated on.
+ *  Components with no pair become singleton groups without a fold.
+ *  The heuristic is tuned for XZZ .pcb files that pack multiple physical
+ *  boards into one file (iPhone AP+BB, MB+SUB). */
+function groupComponentsByGeometry(
+  components: Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }>,
+): Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean } }> {
+  if (components.length === 0) return [];
+
+  // Bucket by (width, height, segCount) triple — string key for map lookup.
+  const buckets = new Map<string, number[]>();
+  components.forEach((c, i) => {
+    const w = Math.round(c.maxX - c.minX);
+    const h = Math.round(c.maxY - c.minY);
+    const key = `${w}|${h}|${c.segCount}`;
+    const arr = buckets.get(key) ?? [];
+    arr.push(i);
+    buckets.set(key, arr);
+  });
+
+  // Emit groups in ascending-first-component order so the UI ordering is stable.
+  const seen = new Set<number>();
+  const groups: Array<{ components: number[]; fold?: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean } }> = [];
+  for (let i = 0; i < components.length; i++) {
+    if (seen.has(i)) continue;
+    const c = components[i];
+    const w = Math.round(c.maxX - c.minX);
+    const h = Math.round(c.maxY - c.minY);
+    const key = `${w}|${h}|${c.segCount}`;
+    const idxs = buckets.get(key)!;
+    for (const k of idxs) seen.add(k);
+
+    // When the bucket has exactly 2 components, compute a butterfly fold axis.
+    let fold: { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean } | undefined;
+    if (idxs.length === 2) {
+      const [a, b] = idxs.map(k => components[k]);
+      const xSep = !((a.minX <= b.maxX) && (b.minX <= a.maxX)); // no X-overlap
+      const ySep = !((a.minY <= b.maxY) && (b.minY <= a.maxY));
+      if (xSep && !ySep) {
+        const [left, right] = a.maxX < b.minX ? [a, b] : [b, a];
+        fold = { dim: 'x', axis: (left.maxX + right.minX) / 2, lowerIsBottom: false };
+      } else if (ySep && !xSep) {
+        const [lower, upper] = a.maxY < b.minY ? [a, b] : [b, a];
+        fold = { dim: 'y', axis: (lower.maxY + upper.minY) / 2, lowerIsBottom: false };
+      }
+      // If the two components overlap on both axes (stacked directly), we
+      // can't infer a fold axis — leave `fold` undefined.
+    }
+    groups.push({ components: idxs, fold });
+  }
+  return groups;
+}
+
 /** Chain segments per connected component; emit NaN pen-ups between components
  *  so the renderer draws each as its own closed sub-path. Without this, a
  *  single greedy chain jumps long distances between unrelated features (board
@@ -1052,6 +1107,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     fc.minY -= minY; fc.maxY -= minY;
   }
   const rawOutline = chainByComponent(rawSegmentsSnapshot);
+  const boardGroups = groupComponentsByGeometry(foldComponents);
 
   // Build outline: cluster connected segments and chain each cluster as its
   // own sub-path with NaN pen-ups between them. This prevents greedy
@@ -1142,5 +1198,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     rawOutline,
     foldComponents,
     foldInfo,
+    boardGroups,
   };
 }
