@@ -2633,14 +2633,21 @@ html, body, #root {
   gap: 12px;
 }
 .context-menu-donor-row-arrow {
-  font-size: 0.9em;
-  opacity: 0.6;
-  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  align-self: stretch;
+  margin: -4px -12px -4px 0;
+  padding: 0 10px;
+  font-size: 1.05em;
+  opacity: 0.7;
   cursor: pointer;
   user-select: none;
 }
 .context-menu-donor-row-arrow:hover {
   opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 /* Indented variant row below a donor-row spoiler. Clickable. */
