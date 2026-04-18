@@ -13,6 +13,7 @@ import { pdfStore } from '../store/pdf-store';
 import { databankStore } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
+import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
 
 /** Dropdown showing release notes + update/download action */
 function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) {
@@ -231,9 +232,7 @@ function GlobalSearch() {
                 onClick={() => { setOpen(false); item.action(); }}
               >
                 <span className="toolbar-search-label">
-                  <span className={`toolbar-search-tag toolbar-search-tag-${group.toLowerCase()}`}>
-                    {group[0]}
-                  </span>
+                  <SearchScopeBadge scope={group.toLowerCase() as SearchScope} />
                   {item.label}
                 </span>
                 <span className="toolbar-search-count">{item.count}</span>
