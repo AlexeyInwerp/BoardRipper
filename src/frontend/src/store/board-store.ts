@@ -122,20 +122,14 @@ function syncMirrorsToDerivedFold(tab: BoardTab): void {
   }
   tab.rotation = rotation;
 
-  // Pick flipAxis based on the post-rotation SCREEN aspect:
-  //   screen tall  (long side vertical)    → 'x' (hinge is horizontal axis)
-  //   screen wide  (long side horizontal)  → 'y' (hinge is vertical axis)
-  // The button naming is confusing — 'x' flips scale.y under the hood, which
-  // combined with the renderer's axesSwapped logic produces the visible flip
-  // along the screen's long side. This matches how natively-butterfly tall
-  // files appear on first load (default flipAxis='x' is correct for them
-  // because their post-rotation aspect is wide, and the 'x' setting plus
-  // 270° rotation yields the expected left-right flip on screen).
-  const rot90 = Math.round(rotation / 90) % 4;
-  const axesSwapped = rot90 === 1 || rot90 === 3;
-  const screenW = axesSwapped ? h : w;
-  const screenH = axesSwapped ? w : h;
-  tab.flipAxis = screenH > screenW ? 'x' : 'y';
+  // Always use the same `flipAxis='x'` convention that `loadFile` applies
+  // to natively-butterfly files. Verified by numerical diff — butterfly
+  // files flip HORIZONTALLY on screen (world X changes, Y fixed), and a
+  // selected multi-board with `flipAxis='x'` produces the same horizontal
+  // flip. The earlier per-aspect heuristic produced 'y' here, which flipped
+  // the VERTICAL axis on screen instead, which the user perceived as
+  // "flipping on the wrong axis".
+  tab.flipAxis = 'x';
 
   const axis = derived.butterflyFoldAxis ?? null;
   tab.mirrorY = axis === 'x';
