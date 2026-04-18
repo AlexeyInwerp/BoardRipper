@@ -93,9 +93,14 @@ html, body, #root {
   opacity: 1;
 }
 
-.toolbar-btn:hover {
+.toolbar-btn:hover:not(:disabled) {
   background: var(--accent);
   color: #fff;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .toolbar-btn.active {
