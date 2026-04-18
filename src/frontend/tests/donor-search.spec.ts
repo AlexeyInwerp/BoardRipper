@@ -64,9 +64,10 @@ test('donor submenu renders and jumps to donor board', async ({ page }) => {
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
+  // New flat row: [B] 820-02935-05 — <firstPart> (<count>)
   const entry = menu.locator('.context-menu-item', {
-    hasText: `Search '${firstPart}' in 820-02935-05`,
-  });
+    hasText: `820-02935-05 — ${firstPart}`,
+  }).first();
   await expect(entry).toBeVisible();
 
   await entry.click();
@@ -217,12 +218,11 @@ test('other PDFs surface: unbound PDF appears in menu', async ({ page }) => {
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // With 1 unbound PDF, the Other PDFs flat case renders:
-  // "Search '<refdes>' in <pdfShortName>"
+  // New flat row: [P] 820-02016 — <firstPart> (<count>)
   const otherRow = menu.locator('.context-menu-item', {
-    hasText: `Search '${firstPart}' in 820-02016`,
-  });
-  await expect(otherRow.first()).toBeVisible();
+    hasText: `820-02016 — ${firstPart}`,
+  }).first();
+  await expect(otherRow).toBeVisible();
 });
 
 test('scope badges render in global search dropdown (regression guard)', async ({ page }) => {
@@ -248,7 +248,7 @@ test('scope badges render in global search dropdown (regression guard)', async (
   await expect(pdfBadge).toHaveText('P');
 });
 
-test('board submenu triggers carry [B] badge in 2-other-boards case', async ({ page }) => {
+test('flat rows carry scope badges on both board and PDF donor groups', async ({ page }) => {
   // Load two distinct boards so there is 1 active + 1 other. That's the
   // flat case (1 other) — no submenu trigger on the board side. To exercise
   // the 2+ item branch honestly we'd need a third distinct sample; we don't
@@ -307,9 +307,8 @@ test('board submenu triggers carry [B] badge in 2-other-boards case', async ({ p
   const menu = page.locator('.context-menu');
   await expect(menu).toBeVisible();
 
-  // In the 2-item "Other PDFs" flat-expansion branch, per-item triggers
-  // carry the [P] badge.
-  const pdfBadge = menu.locator('.context-menu-submenu-trigger .toolbar-search-tag-pdf').first();
+  // Flat rows for Other PDFs carry the [P] badge.
+  const pdfBadge = menu.locator('.context-menu-item .toolbar-search-tag-pdf').first();
   await expect(pdfBadge).toBeVisible();
   await expect(pdfBadge).toHaveText('P');
 });
