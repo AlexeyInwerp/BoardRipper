@@ -429,7 +429,7 @@ export function ContextMenu() {
     </>
   );
 
-  // PDF-mode click handlers + per-item renderers
+  // PDF-mode click handlers
   const doPdfBoardSearch = (e: React.MouseEvent, tabId: number) => {
     e.stopPropagation();
     findInBoardTab(state.query, tabId);
@@ -442,42 +442,23 @@ export function ContextMenu() {
     contextMenuStore.hide();
   };
 
-  const renderPdfBoardFlat = (tab: { id: number; fileName: string }) => (
+  /** Flat one-liner row: [scope-badge] <donorName> — <query> (<count>).
+   *  Zero-count rows stay clickable — user may want to jump to the target
+   *  and tweak the query there. */
+  const renderPdfDonorRow = (
+    key: string,
+    scope: 'board' | 'pdf',
+    donorLabel: string,
+    count: number,
+    onClick: (e: React.MouseEvent) => void,
+  ) => (
     <div
+      key={key}
       className="context-menu-item"
-      onClick={(e) => doPdfBoardSearch(e, tab.id)}
+      onClick={onClick}
     >
-      Search &apos;{state.query}&apos; in {shortBoardName(tab.fileName)}
-    </div>
-  );
-
-  const renderPdfPdfFlat = (name: string) => (
-    <div
-      className="context-menu-item"
-      onClick={(e) => doPdfPdfSearch(e, name)}
-    >
-      Search &apos;{state.query}&apos; in {shortPdfName(name)}
-    </div>
-  );
-
-  const renderPdfBoardSubmenu = (tab: { id: number; fileName: string }) => {
-    const count = countInBoardTab(state.query, tab.id);
-    return (
-      <div
-        className={`context-menu-item context-submenu-item${count === 0 ? ' disabled' : ''}`}
-        onClick={count === 0 ? undefined : (e) => doPdfBoardSearch(e, tab.id)}
-      >
-        {state.query} ({count})
-      </div>
-    );
-  };
-
-  const renderPdfPdfSubmenu = (name: string) => (
-    <div
-      className="context-menu-item context-submenu-item"
-      onClick={(e) => doPdfPdfSearch(e, name)}
-    >
-      {state.query}
+      <SearchScopeBadge scope={scope} />
+      {' '}{donorLabel} — {state.query} ({count})
     </div>
   );
 
@@ -495,70 +476,57 @@ export function ContextMenu() {
       return <div className="context-menu-item disabled">Nowhere to search</div>;
     }
 
-    return (
-      <>
-        {renderDonorGroup(
-          {
-            scope: 'board',
-            keyPrefix: 'pdf-bound-boards',
-            quickSearchLabel: 'Board',
-            umbrellaLabel: 'Bound Boards',
-            items: boundBoardTabs,
-            itemKey: (tab) => String(tab.id),
-            itemLabel: (tab) => shortBoardName(tab.fileName),
-            onQuickSearch: (tab) => {
-              findInBoardTab(state.query, tab.id);
-              contextMenuStore.hide();
-            },
-            renderSubmenu: (tab) => renderPdfBoardSubmenu(tab),
-            renderFlatItems: (tab) => renderPdfBoardFlat(tab),
-          },
-          openSubmenu,
-          setOpenSubmenu,
-          state.query,
-        )}
-        {renderDonorGroup(
-          {
-            scope: 'board',
-            keyPrefix: 'pdf-other-boards',
-            quickSearchLabel: 'Other Boards',
-            umbrellaLabel: 'Other Boards',
-            items: otherBoardsForPdf,
-            itemKey: (tab) => String(tab.id),
-            itemLabel: (tab) => shortBoardName(tab.fileName),
-            onQuickSearch: (tab) => {
-              findInBoardTab(state.query, tab.id);
-              contextMenuStore.hide();
-            },
-            renderSubmenu: (tab) => renderPdfBoardSubmenu(tab),
-            renderFlatItems: (tab) => renderPdfBoardFlat(tab),
-          },
-          openSubmenu,
-          setOpenSubmenu,
-          state.query,
-        )}
-        {renderDonorGroup(
-          {
-            scope: 'pdf',
-            keyPrefix: 'pdf-other-pdfs',
-            quickSearchLabel: 'Other PDFs',
-            umbrellaLabel: 'Other PDFs',
-            items: otherPdfsForPdf,
-            itemKey: (name) => name,
-            itemLabel: (name) => shortPdfName(name),
-            onQuickSearch: (name) => {
-              findInPdf(state.query, name);
-              contextMenuStore.hide();
-            },
-            renderSubmenu: (name) => renderPdfPdfSubmenu(name),
-            renderFlatItems: (name) => renderPdfPdfFlat(name),
-          },
-          openSubmenu,
-          setOpenSubmenu,
-          state.query,
-        )}
-      </>
-    );
+    const sections: React.ReactNode[] = [];
+
+    if (boundBoardTabs.length > 0) {
+      sections.push(
+        <React.Fragment key="bound-boards">
+          <div className="context-menu-separator" />
+          <div className="context-menu-group-header">Bound Boards</div>
+          {boundBoardTabs.map(tab => renderPdfDonorRow(
+            `pdf-bound-${tab.id}`,
+            'board',
+            shortBoardName(tab.fileName),
+            countInBoardTab(state.query, tab.id),
+            (e) => doPdfBoardSearch(e, tab.id),
+          ))}
+        </React.Fragment>,
+      );
+    }
+
+    if (otherBoardsForPdf.length > 0) {
+      sections.push(
+        <React.Fragment key="other-boards">
+          <div className="context-menu-separator" />
+          <div className="context-menu-group-header">Other Boards</div>
+          {otherBoardsForPdf.map(tab => renderPdfDonorRow(
+            `pdf-other-board-${tab.id}`,
+            'board',
+            shortBoardName(tab.fileName),
+            countInBoardTab(state.query, tab.id),
+            (e) => doPdfBoardSearch(e, tab.id),
+          ))}
+        </React.Fragment>,
+      );
+    }
+
+    if (otherPdfsForPdf.length > 0) {
+      sections.push(
+        <React.Fragment key="other-pdfs">
+          <div className="context-menu-separator" />
+          <div className="context-menu-group-header">Other PDFs</div>
+          {otherPdfsForPdf.map(name => renderPdfDonorRow(
+            `pdf-other-pdf-${name}`,
+            'pdf',
+            shortPdfName(name),
+            pdfStore.countTextMatches(name, state.query.toLowerCase()),
+            (e) => doPdfPdfSearch(e, name),
+          ))}
+        </React.Fragment>,
+      );
+    }
+
+    return <>{sections}</>;
   };
 
   return (
