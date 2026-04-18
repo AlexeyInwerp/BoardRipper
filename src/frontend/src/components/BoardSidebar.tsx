@@ -130,7 +130,7 @@ function LayersTab() {
             side-by-side. The parser picks a default; if it looks wrong, switch
             to "Show all sides".
           </p>
-          {board.boardGroups && board.boardGroups.length > 0 && (
+          {board.boardGroups && board.boardGroups.length > 1 && (
             <div className="fold-boards">
               <div className="fold-boards-label">
                 Detected boards: {board.boardGroups.length}{board.foldComponents && ` (${board.foldComponents.length} components)`}

@@ -93,6 +93,19 @@ function invalidateDerivedBoard(tab: BoardTab): void {
   tab._derivedBoardKey = undefined;
 }
 
+/** Keep `mirrorY` / `mirrorX` in sync with the derived board's
+ *  `butterflyFoldAxis`. Matches the on-load convention in `loadFile`:
+ *  X-fold → `mirrorY = true`, Y-fold → `mirrorX = true`, no fold → clear
+ *  both. Called whenever the selection/foldMode changes so the viewer shows
+ *  the selected board at the same orientation a natively-butterfly file of
+ *  the same dim would have on first load. */
+function syncMirrorsToDerivedFold(tab: BoardTab): void {
+  const derived = ensureDerivedBoard(tab);
+  const axis = derived?.butterflyFoldAxis ?? null;
+  tab.mirrorY = axis === 'x';
+  tab.mirrorX = axis === 'y';
+}
+
 /** Extract a "820-XXXXX" board code (5 digits) from a file name, or null if absent. */
 function extract820Code(fileName: string): string | null {
   const m = fileName.match(/820-(\d{5})/i);
@@ -770,6 +783,9 @@ class BoardStore extends Emitter {
     invalidateDerivedBoard(tab);
     // Clear any stale selection so it doesn't point at a now-hidden part.
     tab.selection = { ...emptySelection };
+    // Sync mirrorY with the post-derivation butterflyFoldAxis so the view
+    // matches how a natively-butterfly board of the same dim appears on load.
+    syncMirrorsToDerivedFold(tab);
     this.notify();
   }
 
@@ -779,6 +795,7 @@ class BoardStore extends Emitter {
     this.updateActiveTab({ selectedBoardIndex: idx });
     invalidateDerivedBoard(tab);
     tab.selection = { ...emptySelection };
+    syncMirrorsToDerivedFold(tab);
     this.notify();
   }
 
