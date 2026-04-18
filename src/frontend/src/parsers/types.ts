@@ -28,6 +28,12 @@ export interface Part {
   bounds: BBox;
   /** Layer index for multi-layer boards (0-based). Undefined = single-layer. */
   layer?: number;
+  /** Present only on the `deriveBoardView()` output when a board-selection
+   *  filter is active — marks parts outside the selected board so the
+   *  renderer, hit-grid, net highlight, and label passes skip them. The array
+   *  index is preserved so `selection.partIndex` stays consistent across
+   *  filter changes. Never set by parsers. */
+  hidden?: boolean;
 }
 
 export interface Nail {

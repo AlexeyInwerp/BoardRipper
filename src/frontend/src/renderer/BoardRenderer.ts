@@ -127,8 +127,11 @@ export class BoardRenderer {
   /** Whether bottom layer should be visible (accounts for butterfly mode) */
   private get isBottomVisible() { return boardStore.showBottom || boardStore.butterfly; }
   /** Whether a part should be visible given its side and current view mode.
-   *  'both' parts live in topLayer, so they follow top-side visibility. */
-  private isPartVisible(part: { side: string }): boolean {
+   *  'both' parts live in topLayer, so they follow top-side visibility.
+   *  Parts flagged `hidden: true` by `deriveBoardView` (outside the selected
+   *  board) are never visible. */
+  private isPartVisible(part: { side: string; hidden?: boolean }): boolean {
+    if (part.hidden) return false;
     if (part.side === 'bottom') return this.isBottomVisible;
     return this.isTopVisible; // 'top' and 'both'
   }
@@ -237,16 +240,15 @@ export class BoardRenderer {
   private sceneCache = new Map<string, BoardScene>();
   private boardRefs = new WeakMap<BoardData, number>();
   private boardRefCounter = 0;
-  private sceneCacheKey(board: BoardData): string {
-    // Include foldMode in the key so toggling yields a fresh scene without
-    // wiping caches for the "other" mode. (board, foldMode) is the scene's
-    // full identity.
-    let ref = this.boardRefs.get(board);
-    if (ref == null) { ref = ++this.boardRefCounter; this.boardRefs.set(board, ref); }
+  private sceneCacheKey(_board: BoardData): string {
+    // Key on the raw board ref + filter state. Derived boards come and go on
+    // each filter toggle, so keying on them would leak cache entries. Keying
+    // on rawBoard lets repeated toggles reuse the same scene slots.
+    const raw = boardStore.rawBoard ?? _board;
+    let ref = this.boardRefs.get(raw);
+    if (ref == null) { ref = ++this.boardRefCounter; this.boardRefs.set(raw, ref); }
     return `${ref}|${boardStore.foldMode}|${boardStore.selectedBoardIndex ?? 'all'}`;
   }
-  private lastSeenFoldMode: 'suggested' | 'all-sides' | null = null;
-  private lastSeenSelectedBoardIndex: number | null | undefined = undefined; // undefined = not yet observed
   private activeScene: BoardScene | null = null;
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
    *  to skip full scene rebuilds when only interaction-only fields changed. */
@@ -1396,7 +1398,7 @@ export class BoardRenderer {
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings, { foldMode: boardStore.foldMode, selectedBoardIndex: boardStore.selectedBoardIndex });
+      const graph = buildBoardScene(board, renderSettingsStore.settings);
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
@@ -1644,19 +1646,10 @@ export class BoardRenderer {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
-    // Rebuild scene when foldMode or selectedBoardIndex changes (XZZ fold-resolution toggle)
-    const currentFoldMode = boardStore.foldMode;
-    const currentSelectedBoard = boardStore.selectedBoardIndex;
-    if (this.board != null) {
-      const foldModeChanged = this.lastSeenFoldMode != null && this.lastSeenFoldMode !== currentFoldMode;
-      const selectedBoardChanged = this.lastSeenSelectedBoardIndex !== undefined && this.lastSeenSelectedBoardIndex !== currentSelectedBoard;
-      if (foldModeChanged || selectedBoardChanged) {
-        log.render.log(`fold state changed: foldMode=${this.lastSeenFoldMode}->${currentFoldMode} selectedBoard=${this.lastSeenSelectedBoardIndex}->${currentSelectedBoard}; rebuilding scene`);
-        this.activateScene(this.board);
-      }
-    }
-    this.lastSeenFoldMode = currentFoldMode;
-    this.lastSeenSelectedBoardIndex = currentSelectedBoard;
+    // boardStore.board now returns a DERIVED BoardData (filtered/folded) —
+    // its reference changes whenever foldMode or selectedBoardIndex changes,
+    // so the `boardStore.board !== this.board` check below naturally triggers
+    // a scene rebuild on toggle. No separate filter-state tracking needed.
 
     // Notify settings store which board is active so per-board overrides take effect
     renderSettingsStore.setActiveBoard(boardStore.fileName);
@@ -3223,6 +3216,7 @@ export class BoardRenderer {
 
     for (let pi = 0; pi < board.parts.length; pi++) {
       const part = board.parts[pi];
+      if (part.hidden) continue; // skip parts filtered out by deriveBoardView
       // Use part bounds (authoritative, already includes pin positions)
       const b = part.bounds;
       if (b.minX === b.maxX && b.minY === b.maxY && part.pins.length === 0) continue;
