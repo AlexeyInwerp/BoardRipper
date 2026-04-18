@@ -84,6 +84,16 @@ The residual open sub-paths on butterfly boards reflect real topological branche
 - `820-02382-16.pcb` and `A2485 820-02100-H M1 MAX.pcb` produce only 4 outline segments (from `16→4 segs` after butterfly filtering). `findFoldAxis` treats them as butterfly because the outline-component detector sees two tiny groups, but these are multi-board assemblies with sparse outlines — the detection heuristic needs more guards. Filed mentally, not fixed here.
 - XZZ butterfly detection occasionally fires on files whose outline is dominated by connector / feature fragments rather than a real board outline.
 
+## Follow-up
+
+Fold ambiguity on multi-board files spawned a separate effort — rather than
+improving detection, add a UI that lets the user choose between the parser's
+suggestion and a raw "show all sides" view:
+
+- Spec: [2026-04-18-xzz-fold-resolution-design.md](2026-04-18-xzz-fold-resolution-design.md)
+- Plan: [../plans/2026-04-18-xzz-fold-resolution.md](../plans/2026-04-18-xzz-fold-resolution.md)
+- Branch: `xzz-fold-resolution` (worktree at `Boardviewer-xzz-fold/`)
+
 ## References
 
 - [docs/formats/XZZ_FORMAT.md](docs/formats/XZZ_FORMAT.md) — format spec.
