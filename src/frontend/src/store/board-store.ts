@@ -1083,3 +1083,8 @@ class BoardStore extends Emitter {
 }
 
 export const boardStore = new BoardStore();
+
+// Expose for integration tests (Playwright) — DEV builds only
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as { __boardStore?: typeof boardStore }).__boardStore = boardStore;
+}

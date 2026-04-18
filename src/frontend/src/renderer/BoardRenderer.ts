@@ -3496,7 +3496,7 @@ export class BoardRenderer {
         const pin = hit.pinIndex >= 0 ? part.pins[hit.pinIndex] : null;
         const pinId = pin ? pinDisplayId(pin, hit.pinIndex) : null;
         const netName = pin?.net || null;
-        contextMenuStore.show(e.clientX, e.clientY, part.name, pinId, netName);
+        contextMenuStore.showBoard(e.clientX, e.clientY, part.name, pinId, netName);
       }
     }
   }
