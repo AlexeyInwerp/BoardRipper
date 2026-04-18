@@ -93,15 +93,45 @@ function invalidateDerivedBoard(tab: BoardTab): void {
   tab._derivedBoardKey = undefined;
 }
 
-/** Keep `mirrorY` / `mirrorX` in sync with the derived board's
- *  `butterflyFoldAxis`. Matches the on-load convention in `loadFile`:
- *  X-fold → `mirrorY = true`, Y-fold → `mirrorX = true`, no fold → clear
- *  both. Called whenever the selection/foldMode changes so the viewer shows
- *  the selected board at the same orientation a natively-butterfly file of
- *  the same dim would have on first load. */
+/** Re-calibrate view orientation for the currently-derived board.
+ *
+ *  When a multi-board selection or fold mode changes, the derived BoardData
+ *  can have a very different aspect ratio and fold axis than the raw file.
+ *  Re-run the same heuristics `loadFile` uses on first open:
+ *
+ *  - `rotation` — auto-rotate tall boards so they display wide on screen
+ *    (matches `autoRotation` logic on raw-board load).
+ *  - `flipAxis` — pick based on the *screen* aspect (after rotation), so
+ *    pressing "flip" mirrors along the board's visibly-longest side
+ *    regardless of how the file stored the board.
+ *  - `mirrorY` / `mirrorX` — match the X-fold → mirrorY=true convention
+ *    used for natively-butterfly files.
+ */
 function syncMirrorsToDerivedFold(tab: BoardTab): void {
   const derived = ensureDerivedBoard(tab);
-  const axis = derived?.butterflyFoldAxis ?? null;
+  if (!derived) return;
+
+  // Auto-rotation matches the loadFile heuristic (inlined to avoid plumbing
+  // an instance method through module-level code).
+  const w = derived.bounds.maxX - derived.bounds.minX;
+  const h = derived.bounds.maxY - derived.bounds.minY;
+  let rotation = 0;
+  if (h > w) {
+    const flipY = derived.flipY ?? getFormat(derived.format)?.flipY ?? false;
+    rotation = flipY ? 270 : 90;
+  }
+  tab.rotation = rotation;
+
+  // Pick flipAxis based on the post-rotation aspect, not the raw aspect.
+  // Long side on screen is horizontal → 'x' (top/bottom flip).
+  // Long side on screen is vertical → 'y' (left/right flip).
+  const rot90 = Math.round(rotation / 90) % 4;
+  const axesSwapped = rot90 === 1 || rot90 === 3;
+  const screenW = axesSwapped ? h : w;
+  const screenH = axesSwapped ? w : h;
+  tab.flipAxis = screenH > screenW ? 'y' : 'x';
+
+  const axis = derived.butterflyFoldAxis ?? null;
   tab.mirrorY = axis === 'x';
   tab.mirrorX = axis === 'y';
 }
