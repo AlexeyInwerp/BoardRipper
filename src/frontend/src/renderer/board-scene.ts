@@ -357,11 +357,11 @@ function unfoldBoard(board: BoardData): BoardData {
 
   const parts: Part[] = board.parts.map(part => {
     if (part.side !== 'bottom') return part;
-    const pins: Pin[] = part.pins.map(pin => ({ ...pin, position: mirrorPt(pin.position) }));
+    const pins: Pin[] = part.pins.map(pin => ({ ...pin, side: 'top' as const, position: mirrorPt(pin.position) }));
     const bounds = dim === 'x'
       ? { minX: 2 * axis - part.bounds.maxX, maxX: 2 * axis - part.bounds.minX, minY: part.bounds.minY, maxY: part.bounds.maxY }
       : { minX: part.bounds.minX, maxX: part.bounds.maxX, minY: 2 * axis - part.bounds.maxY, maxY: 2 * axis - part.bounds.minY };
-    return { ...part, origin: mirrorPt(part.origin), bounds, pins };
+    return { ...part, side: 'top' as const, origin: mirrorPt(part.origin), bounds, pins };
   });
 
   const traces = board.traces?.map(t => {
