@@ -122,14 +122,20 @@ function syncMirrorsToDerivedFold(tab: BoardTab): void {
   }
   tab.rotation = rotation;
 
-  // Pick flipAxis based on the post-rotation aspect, not the raw aspect.
-  // Long side on screen is horizontal → 'x' (top/bottom flip).
-  // Long side on screen is vertical → 'y' (left/right flip).
+  // Pick flipAxis based on the post-rotation SCREEN aspect:
+  //   screen tall  (long side vertical)    → 'x' (hinge is horizontal axis)
+  //   screen wide  (long side horizontal)  → 'y' (hinge is vertical axis)
+  // The button naming is confusing — 'x' flips scale.y under the hood, which
+  // combined with the renderer's axesSwapped logic produces the visible flip
+  // along the screen's long side. This matches how natively-butterfly tall
+  // files appear on first load (default flipAxis='x' is correct for them
+  // because their post-rotation aspect is wide, and the 'x' setting plus
+  // 270° rotation yields the expected left-right flip on screen).
   const rot90 = Math.round(rotation / 90) % 4;
   const axesSwapped = rot90 === 1 || rot90 === 3;
   const screenW = axesSwapped ? h : w;
   const screenH = axesSwapped ? w : h;
-  tab.flipAxis = screenH > screenW ? 'y' : 'x';
+  tab.flipAxis = screenH > screenW ? 'x' : 'y';
 
   const axis = derived.butterflyFoldAxis ?? null;
   tab.mirrorY = axis === 'x';
