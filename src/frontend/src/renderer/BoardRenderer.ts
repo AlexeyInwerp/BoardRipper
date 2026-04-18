@@ -234,7 +234,18 @@ export class BoardRenderer {
   private netLineSettleTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Scene cache: avoid rebuilding PixiJS objects on tab switch
-  private sceneCache = new Map<BoardData, BoardScene>();
+  private sceneCache = new Map<string, BoardScene>();
+  private boardRefs = new WeakMap<BoardData, number>();
+  private boardRefCounter = 0;
+  private sceneCacheKey(board: BoardData): string {
+    // Include foldMode in the key so toggling yields a fresh scene without
+    // wiping caches for the "other" mode. (board, foldMode) is the scene's
+    // full identity.
+    let ref = this.boardRefs.get(board);
+    if (ref == null) { ref = ++this.boardRefCounter; this.boardRefs.set(board, ref); }
+    return `${ref}|${boardStore.foldMode}`;
+  }
+  private lastSeenFoldMode: 'suggested' | 'all-sides' | null = null;
   private activeScene: BoardScene | null = null;
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
    *  to skip full scene rebuilds when only interaction-only fields changed. */
@@ -526,7 +537,7 @@ export class BoardRenderer {
       return;
     }
     // Evict cached scene so buildBoardScene runs fresh, then re-activate directly
-    this.sceneCache.delete(board);
+    this.sceneCache.delete(this.sceneCacheKey(board));
     this.hitGridCache.delete(board);
     this.activateScene(board);
     this.board = board;
@@ -1384,7 +1395,7 @@ export class BoardRenderer {
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings);
+      const graph = buildBoardScene(board, renderSettingsStore.settings, { foldMode: boardStore.foldMode });
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
@@ -1440,10 +1451,10 @@ export class BoardRenderer {
   }
 
   private getOrBuildScene(board: BoardData): BoardScene {
-    let scene = this.sceneCache.get(board);
+    let scene = this.sceneCache.get(this.sceneCacheKey(board));
     if (!scene) {
       scene = this.buildScene(board);
-      this.sceneCache.set(board, scene);
+      this.sceneCache.set(this.sceneCacheKey(board), scene);
     }
     return scene;
   }
@@ -1632,6 +1643,14 @@ export class BoardRenderer {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
+    // Rebuild scene when foldMode changes (XZZ fold-resolution toggle)
+    const currentFoldMode = boardStore.foldMode;
+    if (this.board != null && this.lastSeenFoldMode != null && this.lastSeenFoldMode !== currentFoldMode) {
+      log.render.log(`foldMode changed: ${this.lastSeenFoldMode} -> ${currentFoldMode}; rebuilding scene`);
+      this.activateScene(this.board);
+    }
+    this.lastSeenFoldMode = currentFoldMode;
+
     // Notify settings store which board is active so per-board overrides take effect
     renderSettingsStore.setActiveBoard(boardStore.fileName);
     log.render.log('onBoardUpdate', 'tab=' + this.tabId,
