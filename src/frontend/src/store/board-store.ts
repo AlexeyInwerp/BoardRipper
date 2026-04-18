@@ -819,9 +819,8 @@ class BoardStore extends Emitter {
     invalidateDerivedBoard(tab);
     // Clear any stale selection so it doesn't point at a now-hidden part.
     tab.selection = { ...emptySelection };
-    // Sync mirrorY with the post-derivation butterflyFoldAxis so the view
-    // matches how a natively-butterfly board of the same dim appears on load.
     syncMirrorsToDerivedFold(tab);
+    this.requestFitDerivedBoard(tab);
     this.notify();
   }
 
@@ -832,7 +831,21 @@ class BoardStore extends Emitter {
     invalidateDerivedBoard(tab);
     tab.selection = { ...emptySelection };
     syncMirrorsToDerivedFold(tab);
+    this.requestFitDerivedBoard(tab);
     this.notify();
+  }
+
+  /** Ask the renderer (on its next onBoardUpdate) to fit the derived board
+   *  into view. Uses the existing focus-request plumbing: the renderer picks
+   *  it up and calls zoomToBounds which fits and centers. Prevents the
+   *  post-selection viewport from ending up stranded where the previous
+   *  all-boards view used to show a different board — and also gives the
+   *  flip-preservation math a sane starting point (centered inside the
+   *  new derived bounds). */
+  private requestFitDerivedBoard(tab: BoardTab): void {
+    const derived = ensureDerivedBoard(tab);
+    if (!derived) return;
+    this._focusRequest = { partIndex: null, bounds: { ...derived.bounds } };
   }
 
   // ── Cache control actions ────────────────────────────────────────────
