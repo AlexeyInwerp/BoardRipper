@@ -357,6 +357,22 @@ function chainComponent(segIdxs: number[], segments: Segment[], eps = 1.0): Poin
   return chains;
 }
 
+/** Compute per-cluster bounding boxes for UI display of outline components. */
+function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }> {
+  const groups = clusterSegments(segments);
+  return groups.map(idxs => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const i of idxs) {
+      const s = segments[i];
+      if (s.p1.x < minX) minX = s.p1.x; if (s.p1.y < minY) minY = s.p1.y;
+      if (s.p2.x < minX) minX = s.p2.x; if (s.p2.y < minY) minY = s.p2.y;
+      if (s.p1.x > maxX) maxX = s.p1.x; if (s.p1.y > maxY) maxY = s.p1.y;
+      if (s.p2.x > maxX) maxX = s.p2.x; if (s.p2.y > maxY) maxY = s.p2.y;
+    }
+    return { minX, minY, maxX, maxY, segCount: idxs.length };
+  });
+}
+
 /** Chain segments per connected component; emit NaN pen-ups between components
  *  so the renderer draws each as its own closed sub-path. Without this, a
  *  single greedy chain jumps long distances between unrelated features (board
@@ -866,6 +882,14 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // Snapshot pre-fold geometry for the "Show all sides" view before the
+  // butterfly branch mutates `segments` and `partDataList` in place.
+  const rawSegmentsSnapshot: Segment[] = segments.map(s => ({
+    p1: { x: s.p1.x, y: s.p1.y },
+    p2: { x: s.p2.x, y: s.p2.y },
+  }));
+  const foldComponents = componentBBoxes(rawSegmentsSnapshot);
+
   // Detect board fold: XZZ stores top and bottom side-by-side (unfolded).
   const fold = findFoldAxis(segments, partDataList, testPads);
   if (fold) {
@@ -1019,6 +1043,15 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
   for (const t of rawTraces) { t.x1 -= minX; t.y1 -= minY; t.x2 -= minX; t.y2 -= minY; }
+  for (const s of rawSegmentsSnapshot) {
+    s.p1.x -= minX; s.p1.y -= minY;
+    s.p2.x -= minX; s.p2.y -= minY;
+  }
+  for (const fc of foldComponents) {
+    fc.minX -= minX; fc.maxX -= minX;
+    fc.minY -= minY; fc.maxY -= minY;
+  }
+  const rawOutline = chainByComponent(rawSegmentsSnapshot);
 
   // Build outline: cluster connected segments and chain each cluster as its
   // own sub-path with NaN pen-ups between them. This prevents greedy
@@ -1088,10 +1121,26 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     log.parser.log(`(pcb traces) ${traces.length} segments across ${layerNames.length} layer(s): ${layerNames.join(', ')}`);
   }
 
+  const foldInfo = fold ? {
+    dim: fold.dim,
+    // Adjust axis from pre-normalised coords to post-normalised so it lines up
+    // with rawOutline / part positions (which are all shifted by minX/minY).
+    axis: fold.dim === 'x' ? fold.axis - minX : fold.axis - minY,
+    lowerIsBottom: fold.lowerIsBottom,
+    source: fold._debug.source,
+    summary:
+      `${fold._debug.source === 'outline-components' ? 'Two disconnected outline groups paired as butterfly' : 'Gap-detected butterfly fold'}` +
+      ` — ${fold.dim.toUpperCase()}-fold axis @ ${(fold.dim === 'x' ? fold.axis - minX : fold.axis - minY).toFixed(0)} mils` +
+      ` (${fold.lowerIsBottom ? 'lower' : 'upper'} half mirrored onto top)`,
+  } : undefined;
+
   return {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim,
     traces: traces.length > 0 ? traces : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
+    rawOutline,
+    foldComponents,
+    foldInfo,
   };
 }
