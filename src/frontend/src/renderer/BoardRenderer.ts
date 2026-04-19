@@ -11,7 +11,7 @@
  *  - Reacts to renderSettingsStore changes and rebuilds the scene as needed
  *
  */
-import { Application, Graphics, Container, BitmapText, Text } from 'pixi.js';
+import { Application, Graphics, Container, BitmapText, Text, RenderLayer } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
@@ -144,6 +144,10 @@ export class BoardRenderer {
   private netLabelLayer!: Container;
   private butterflySelectionGfx!: Graphics;
   private netLinesGfx!: Graphics;
+  /** Render layer that lifts selection-related labels above netLinesGfx in render order.
+   *  Labels keep scene.root as logical parent (for transform inheritance) but render
+   *  after the net lines via this layer. */
+  private selectionLabelLayer!: RenderLayer;
   /** Ghost outlines for cross-side net components (hidden side, semi-transparent + pulsing) */
   private crossSideGhostGfx!: Graphics;
   /** Part indices currently drawn as cross-side ghosts (for ticker-driven pulse redraw) */
@@ -255,12 +259,11 @@ export class BoardRenderer {
   private lastSettingsSnapshot: import('../store/render-settings').RenderSettings | null = null;
 
   // Spatial hash for O(1) hit-testing — maps grid cell keys to part indices.
-  // Cached per-board to avoid expensive rebuild on tab switch.
-  private hitGrid: Map<string, number[]> = new Map();
-  private hitGridCellSize = 0;
   // Cached per (raw board, foldMode, selectedBoardIndex) via `sceneCacheKey`
   // so filter toggles reuse the same grid entry instead of leaking a new
   // one per derived-board reference.
+  private hitGrid: Map<string, number[]> = new Map();
+  private hitGridCellSize = 0;
   private hitGridCache = new Map<string, { grid: Map<string, number[]>; cellSize: number }>();
 
   // WebGL context loss recovery
@@ -672,7 +675,9 @@ export class BoardRenderer {
     this.netLinesGfx = new Graphics();
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
+    this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
     this.viewport.addChild(this.netLinesGfx);
+    this.viewport.addChild(this.selectionLabelLayer);
 
     // Recreate elevated labels (see init() for detailed comments)
     const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
@@ -782,6 +787,7 @@ export class BoardRenderer {
     this.netLinesGfx = new Graphics();
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below labels (20) and selection (30)
+    this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
 
     // Elevated labels for selected part/pin — persistent objects reused across
     // scene switches. Visibility is toggled in updateElevatedLabels() each frame.
@@ -803,6 +809,7 @@ export class BoardRenderer {
     this.elevatedPinLabel.visible = false;
     this.elevatedPinBg.visible = false;
     this.viewport.addChild(this.netLinesGfx);
+    this.viewport.addChild(this.selectionLabelLayer);
 
     this.viewport.on('clicked', (e: ViewportClickEvent) => {
       this.handleClick(e.world);
@@ -1297,6 +1304,8 @@ export class BoardRenderer {
         this.viewport.addChild(scene.butterflyRoot);
         this.viewport.removeChild(this.netLinesGfx);
         this.viewport.addChild(this.netLinesGfx);
+        this.viewport.removeChild(this.selectionLabelLayer);
+        this.viewport.addChild(this.selectionLabelLayer);
       }
       return;
     }
@@ -1319,9 +1328,11 @@ export class BoardRenderer {
     broot.addChild(this.butterflySelectionGfx);
     this.viewport.addChild(broot);
 
-    // Keep net lines on top of butterfly content
+    // Keep net lines on top of butterfly content, then selection labels on top of net lines.
     this.viewport.removeChild(this.netLinesGfx);
     this.viewport.addChild(this.netLinesGfx);
+    this.viewport.removeChild(this.selectionLabelLayer);
+    this.viewport.addChild(this.selectionLabelLayer);
   }
 
   /** Tear down butterfly mode: move bottom layer back into root */
@@ -1543,6 +1554,16 @@ export class BoardRenderer {
     scene.root.addChild(this.elevatedPinLabel!);
     scene.root.addChild(this.elevatedPartBg!);
     scene.root.addChild(this.elevatedPartLabel!);
+    // Lift selection-related labels above netLinesGfx in render order. Logical
+    // parent stays scene.root so they follow board flips/rotations; the render
+    // layer only controls draw order (sorted by zIndex within the layer).
+    this.selectionLabelLayer.attach(
+      this.netLabelLayer,
+      this.elevatedPartBg!,
+      this.elevatedPartLabel!,
+      this.elevatedPinBg!,
+      this.elevatedPinLabel!,
+    );
     this.activeScene = scene;
     this.lastFlipParams = null; // force full label transform on first applyFlips for this scene
     // Set correct label + pin layer visibility for this scene's zoom level
@@ -1555,9 +1576,12 @@ export class BoardRenderer {
     }
     this.rebuildLabelCounts(scene);
 
-    // Keep net lines on top of all scene content
+    // Keep net lines on top of all scene content, and the selection-label
+    // render layer above the net lines so selection labels never get overdrawn.
     this.viewport.removeChild(this.netLinesGfx);
     this.viewport.addChild(this.netLinesGfx);
+    this.viewport.removeChild(this.selectionLabelLayer);
+    this.viewport.addChild(this.selectionLabelLayer);
 
     scene.topLayer.visible = this.isTopVisible;
     scene.bottomLayer.visible = this.isBottomVisible;
@@ -2313,6 +2337,26 @@ export class BoardRenderer {
         const selColor = blinkRed ? 0xcc2222 : COLORS.partSelected;
         gfx.stroke({ width: s.selectionWidth, color: selColor, alpha: 0.9 });
       }
+
+      // Raise the selected part's pin labels into netLabelLayer so they render
+      // above the selection fill (zIndex 30) and the netDim overlay alike.
+      // Skip butterfly-bottom labels — they live in butterflyRoot and would
+      // render mirrored if moved into scene.root's netLabelLayer.
+      const selPart = this.board.parts[sel.partIndex];
+      const skipRaise = butterfly && selPart?.side === 'bottom';
+      if (selPart && this.isPartVisible(selPart) && !skipRaise && this.activeScene) {
+        const pinLabels = this.activeScene.pinLabelsByPartIndex.get(sel.partIndex);
+        if (pinLabels) {
+          for (const child of pinLabels) {
+            if (!child.visible || !child.parent || child.parent === this.netLabelLayer) continue;
+            const parent = child.parent as Container;
+            const index = parent.getChildIndex(child);
+            this.raisedPinLabels.push({ child, parent, index });
+            parent.removeChild(child);
+            this.netLabelLayer.addChild(child);
+          }
+        }
+      }
     }
 
     // ── Determine the effective net to highlight (selection or hover in ambient dim) ──
@@ -2378,25 +2422,8 @@ export class BoardRenderer {
                 }
               }
             }
-
-            // Raise the selected part's pin labels (numbers + net names)
-            // above the dim overlay by reparenting them into netLabelLayer.
-            // Skip in butterfly mode for bottom-side parts — their labels live
-            // in butterflyRoot and would render mirrored if moved.
-            const skipRaise = butterfly && selPart.side === 'bottom';
-            if (!skipRaise) {
-              const pinLabels = this.activeScene.pinLabelsByPartIndex.get(sel.partIndex);
-              if (pinLabels) {
-                for (const child of pinLabels) {
-                  if (!child.visible || !child.parent) continue;
-                  const parent = child.parent as Container;
-                  const index = parent.getChildIndex(child);
-                  this.raisedPinLabels.push({ child, parent, index });
-                  parent.removeChild(child);
-                  this.netLabelLayer.addChild(child);
-                }
-              }
-            }
+            // Pin labels for the selected part are already raised into
+            // netLabelLayer above (unconditional raise in the part-outline branch).
           }
         }
       }
@@ -2552,26 +2579,8 @@ export class BoardRenderer {
           this.butterflySelectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
         }
 
-        // Raise the selected part's pin labels above the dim overlay so pin
-        // numbers and pin net names read at full brightness (matches the
-        // part-only ambient dim path above).
-        if (showDim && sel.partIndex !== null && this.activeScene) {
-          const selPart = this.board.parts[sel.partIndex];
-          const skipRaise = butterfly && selPart?.side === 'bottom';
-          if (selPart && this.isPartVisible(selPart) && !skipRaise) {
-            const pinLabels = this.activeScene.pinLabelsByPartIndex.get(sel.partIndex);
-            if (pinLabels) {
-              for (const child of pinLabels) {
-                if (!child.visible || !child.parent) continue;
-                const parent = child.parent as Container;
-                const index = parent.getChildIndex(child);
-                this.raisedPinLabels.push({ child, parent, index });
-                parent.removeChild(child);
-                this.netLabelLayer.addChild(child);
-              }
-            }
-          }
-        }
+        // Pin labels for the selected part are already raised into netLabelLayer
+        // (unconditional raise in the part-outline branch above).
 
         // ── Highlight PCB traces belonging to the selected net ──────────
         // Traces are colored by their layer's palette color to show which layer each segment is on.

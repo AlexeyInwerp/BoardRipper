@@ -215,7 +215,7 @@ export const DEFAULTS: RenderSettings = {
   showPartLabels: true,
   partLabelShadow: false,
   labelSize: 'small',
-  labelSizeSmall: 4,
+  labelSizeSmall: 3,
   labelSizeMedium: 6,
   labelSizeLarge: 14,
   labelHideThreshold: 2,
@@ -721,6 +721,10 @@ function loadFromStorage(): RenderSettings {
         // Legacy format — migrate prefix-keyed overrides into types.
         result.partTypes = migrateLegacyPartTypes(parsed.partTypeOverrides);
       }
+      // Migration: small-size default dropped from 4 → 3. Users still on the
+      // previous default get bumped automatically; explicit customizations
+      // (any other value) are preserved.
+      if (result.labelSizeSmall === 4) result.labelSizeSmall = 3;
       return result;
     }
   } catch { /* ignore corrupt data */ }
