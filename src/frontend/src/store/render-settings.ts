@@ -168,6 +168,14 @@ export interface RenderSettings {
    * wheels are unaffected by the heuristic. Default: true.
    */
   wheelDetection: boolean;
+  /**
+   * When true, bare left-drag on the board zooms (vertical delta, anchored
+   * at the initial click point) and Shift+left-drag pans. When false
+   * (default), bare left-drag pans via pixi-viewport and Shift+left-drag
+   * zooms. Does not affect trackpad two-finger scroll, scroll wheel, pinch,
+   * or right/middle mouse button behavior. Default: false.
+   */
+  dragToZoom: boolean;
 
   netColorRules: NetColorRule[];
 
@@ -275,6 +283,7 @@ export const DEFAULTS: RenderSettings = {
   wheelSmooth: 5,
   twoFingerPan: true,
   wheelDetection: true,
+  dragToZoom: false,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
 
