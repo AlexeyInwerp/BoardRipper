@@ -5205,3 +5205,49 @@ html, body, #root {
   color: var(--accent);
   margin: 0 1px;
 }
+
+/* --- PDF watermark filter (Settings panel) --- */
+.pdf-watermark-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pdf-watermark-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.pdf-watermark-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pdf-watermark-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pdf-watermark-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pdf-watermark-save:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-secondary));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.pdf-watermark-save:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg-secondary));
+}
+.pdf-watermark-revert {
+  /* inherits .settings-btn-option styling */
+  flex: 0 0 auto;
+}
