@@ -175,6 +175,7 @@ export class BoardRenderer {
   private boundWheelWake: ((e: WheelEvent) => void) | null = null;
   /** Bound shift+wheel handler — intercepts before pixi-viewport to implement scroll bindings */
   private boundShiftWheel: ((e: WheelEvent) => void) | null = null;
+  private boundDragZoomDown: ((e: PointerEvent) => void) | null = null;
   /** Timer to re-pause ticker after wheel activity on an unfocused panel */
   private wheelIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private hudEl: HTMLDivElement | null = null;
@@ -659,6 +660,7 @@ export class BoardRenderer {
     });
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
+    this.installDragZoomHandler();
     this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
     this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
     this.app.stage.addChild(this.viewport);
@@ -765,6 +767,7 @@ export class BoardRenderer {
 
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
+    this.installDragZoomHandler();
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
     this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
@@ -2054,18 +2057,8 @@ export class BoardRenderer {
         s.wheelDetection && s.twoFingerPan && !e.shiftKey && looksLikeMouseWheel(e);
 
       if ((e.shiftKey && s.twoFingerPan) || safetyNetFires) {
-        // Mouse-centered zoom using whichever delta is non-zero.
-        const raw = e.deltaY || e.deltaX; // browser may swap axes on shift
-        const factor = Math.pow(2, (1 + 0.3) * (-raw / 500));
-        const point = { x: e.offsetX, y: e.offsetY };
-        const before = this.viewport.toWorld(point.x, point.y);
-        this.viewport.scale.set(
-          Math.max(0.001, Math.min(10, this.viewport.scale.x * factor)),
-          Math.max(0.001, Math.min(10, this.viewport.scale.y * factor)),
-        );
-        const after = this.viewport.toWorld(point.x, point.y);
-        this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
-        this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
+        const raw = e.deltaY || e.deltaX;
+        this.zoomAtScreen(e.offsetX, e.offsetY, raw);
       } else if (e.shiftKey && !s.twoFingerPan) {
         // Alternate mode: bare = zoom, shift+scroll = pan.
         const dx = e.deltaX || e.deltaY;
@@ -2082,6 +2075,106 @@ export class BoardRenderer {
       e.stopPropagation();
     };
     this.containerEl.addEventListener('wheel', this.boundShiftWheel, { capture: true, passive: false });
+  }
+
+  /** Mouse-centered zoom at a screen point using the same formula the
+   *  shift+wheel handler uses, so drag-zoom and wheel-zoom feel identical.
+   *  `rawDelta` is an incremental signed pixel delta: positive = zoom out,
+   *  negative = zoom in (matches wheel deltaY sign convention). */
+  private zoomAtScreen(screenX: number, screenY: number, rawDelta: number): void {
+    const factor = Math.pow(2, (1 + 0.3) * (-rawDelta / 500));
+    const before = this.viewport.toWorld(screenX, screenY);
+    this.viewport.scale.set(
+      Math.max(0.001, Math.min(10, this.viewport.scale.x * factor)),
+      Math.max(0.001, Math.min(10, this.viewport.scale.y * factor)),
+    );
+    const after = this.viewport.toWorld(screenX, screenY);
+    this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
+    this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
+  }
+
+  /**
+   * Capture-phase pointerdown handler that implements drag-to-zoom when the
+   * resolved action (from dragToZoom + shiftKey) is 'zoom'. If the action is
+   * 'pan', the handler returns without consuming the event so pixi-viewport's
+   * drag plugin sees it in bubble phase and pans normally.
+   *
+   * Zoom is vertical-delta, anchored at the INITIAL click point for the
+   * duration of the gesture, and delegated to the same mouse-centered zoom
+   * helper the wheel handler uses. Sensitivity is 2× that of the scroll
+   * wheel so a short drag feels responsive.
+   *
+   * A 3-px click-vs-drag threshold gates the zoom loop so simple clicks
+   * still select parts normally.
+   */
+  private installDragZoomHandler(): void {
+    if (this.boundDragZoomDown) {
+      this.containerEl.removeEventListener('pointerdown', this.boundDragZoomDown, true);
+    }
+
+    const DRAG_THRESHOLD = 3;
+    const DRAG_ZOOM_SPEED = 2; // drag-zoom is 2× as sensitive as wheel
+
+    this.boundDragZoomDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const s = renderSettingsStore.settings;
+      const action: 'pan' | 'zoom' =
+        s.dragToZoom === e.shiftKey ? 'pan' : 'zoom';
+      if (action === 'pan') return; // pixi-viewport handles it
+
+      const rect = this.containerEl.getBoundingClientRect();
+      const anchorX = e.clientX - rect.left;
+      const anchorY = e.clientY - rect.top;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const pointerId = e.pointerId;
+      let lastY = startY;
+      let committed = false;
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        if (!committed) {
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
+          if (Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
+          committed = true;
+          try { (this.containerEl as Element).setPointerCapture?.(pointerId); } catch { /* ignore */ }
+          lastY = ev.clientY;
+        }
+        const incDy = ev.clientY - lastY;
+        lastY = ev.clientY;
+        if (incDy !== 0) {
+          // Same sign convention as wheel deltaY: positive = zoom out, negative = zoom in.
+          // Anchor is fixed at the initial click point; speed is 2× wheel sensitivity.
+          this.zoomAtScreen(anchorX, anchorY, incDy * DRAG_ZOOM_SPEED);
+          this.viewport.emit('moved', { viewport: this.viewport, type: 'drag-zoom' });
+          this.needsRender = true;
+          this.netLinesDirty = true;
+        }
+        this.containerEl.style.cursor = incDy < 0 ? 'zoom-in' : 'zoom-out';
+        ev.preventDefault();
+        ev.stopPropagation();
+      };
+
+      const cleanup = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        window.removeEventListener('pointermove', onMove, true);
+        window.removeEventListener('pointerup', cleanup, true);
+        window.removeEventListener('pointercancel', cleanup, true);
+        try { (this.containerEl as Element).releasePointerCapture?.(pointerId); } catch { /* ignore */ }
+        this.containerEl.style.cursor = '';
+        if (committed) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+      };
+
+      window.addEventListener('pointermove', onMove, { capture: true, passive: false });
+      window.addEventListener('pointerup', cleanup, { capture: true });
+      window.addEventListener('pointercancel', cleanup, { capture: true });
+    };
+
+    this.containerEl.addEventListener('pointerdown', this.boundDragZoomDown, { capture: true });
   }
 
   private onSettingsUpdate() {
@@ -3623,6 +3716,10 @@ export class BoardRenderer {
     if (this.boundShiftWheel) {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
       this.boundShiftWheel = null;
+    }
+    if (this.boundDragZoomDown) {
+      this.containerEl.removeEventListener('pointerdown', this.boundDragZoomDown, true);
+      this.boundDragZoomDown = null;
     }
     if (this.boundContextMenu) {
       this.containerEl.removeEventListener('contextmenu', this.boundContextMenu);
