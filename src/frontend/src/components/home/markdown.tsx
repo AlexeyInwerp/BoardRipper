@@ -1,28 +1,50 @@
 import React from 'react';
+import {
+  IconHierarchy,
+  IconTooltip,
+  IconObjectScan,
+  IconGhost2,
+  IconHandMove,
+  IconZoomIn,
+  IconFlipHorizontal,
+} from '@tabler/icons-react';
 
 /**
- * Intentionally minimal Markdown renderer for dashboard instructions.
- * Handles: ATX headings (# ## ###), bullet lists (-, *), **bold**, *italic*,
- * `inline code`, [link](url), blank-line paragraph separation.
+ * Minimal Markdown renderer for dashboard instructions.
  *
- * No nested lists, no code blocks, no tables. If instructions outgrow this,
- * swap for `marked` or `markdown-it`.
+ * Supported:
+ *   - ATX headings: # h1 (rendered as page heading), ## h2 (rendered as
+ *     collapsible <details> section — first one `open` by default),
+ *     ### h3 (in-section subheading).
+ *   - Bullet lists: - or *
+ *   - Inline: **bold**, *italic*, `code`, [link](url)
+ *   - Inline icons via `:icon-<name>:` — see ICONS below for the available set.
+ *
+ * Not supported: nested lists, code fences, tables.
  */
 
-type Inline = React.ReactNode;
+// ── Icon registry ───────────────────────────────────────────────────────────
+
+type TablerIconLike = React.FC<{ size?: number | string; className?: string }>;
+const ICONS: Record<string, TablerIconLike> = {
+  hierarchy: IconHierarchy,
+  tooltip: IconTooltip,
+  'object-scan': IconObjectScan,
+  ghost: IconGhost2,
+  'hand-move': IconHandMove,
+  'zoom-in': IconZoomIn,
+  'flip-horizontal': IconFlipHorizontal,
+};
+
+// ── Inline renderer ─────────────────────────────────────────────────────────
 
 const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
 const BOLD_RE = /\*\*([^*]+)\*\*/g;
 const CODE_RE = /`([^`]+)`/g;
 const ITALIC_RE = /(^|[^*])\*([^*\n]+)\*/g;
+const ICON_RE = /:icon-([a-z0-9-]+):/g;
 
-function renderInline(text: string, keyPrefix: string): Inline {
-  // Placeholder-based rewrite: replace each markup match with a sentinel, then
-  // split on sentinels and stitch React nodes back in. Avoids overlap issues
-  // between the four regex passes.
-  const tokens: React.ReactNode[] = [];
-  let t = text;
-
+function renderInline(text: string, keyPrefix: string): React.ReactNode {
   const slots: { marker: string; node: React.ReactNode }[] = [];
   const push = (node: React.ReactNode): string => {
     const marker = `\u0000${slots.length}\u0000`;
@@ -30,6 +52,18 @@ function renderInline(text: string, keyPrefix: string): Inline {
     return marker;
   };
 
+  let t = text;
+  t = t.replace(ICON_RE, (raw, name: string) => {
+    const Icon = ICONS[name];
+    if (!Icon) return raw; // unknown icon name — leave literal
+    return push(
+      <Icon
+        key={`${keyPrefix}-ic-${slots.length}`}
+        size={14}
+        className="home-instructions-icon"
+      />,
+    );
+  });
   t = t.replace(LINK_RE, (_m, label: string, url: string) =>
     push(
       <a key={`${keyPrefix}-lnk-${slots.length}`} href={url} target="_blank" rel="noreferrer">
@@ -48,19 +82,41 @@ function renderInline(text: string, keyPrefix: string): Inline {
   );
 
   const parts = t.split(/(\u0000\d+\u0000)/);
+  const out: React.ReactNode[] = [];
   for (const part of parts) {
     if (!part) continue;
     const slot = slots.find((s) => s.marker === part);
-    tokens.push(slot ? slot.node : part);
+    out.push(slot ? slot.node : part);
   }
-  return tokens;
+  return out;
 }
+
+// ── Block renderer ──────────────────────────────────────────────────────────
 
 export function renderMarkdown(md: string): React.ReactNode {
   const lines = md.split('\n');
-  const blocks: React.ReactNode[] = [];
+  const top: React.ReactNode[] = [];
+  type Group = { titleKey: number; title: React.ReactNode; content: React.ReactNode[] };
+  let group: Group | null = null;
   let i = 0;
   let key = 0;
+  let h2Count = 0;
+
+  const push = (node: React.ReactNode) => {
+    if (group) group.content.push(node);
+    else top.push(node);
+  };
+
+  const flush = () => {
+    if (!group) return;
+    top.push(
+      <details key={`d-${group.titleKey}`} open={h2Count === 1} className="home-spoiler">
+        <summary>{group.title}</summary>
+        <div className="home-spoiler-content">{group.content}</div>
+      </details>,
+    );
+    group = null;
+  };
 
   while (i < lines.length) {
     const line = lines[i];
@@ -76,8 +132,20 @@ export function renderMarkdown(md: string): React.ReactNode {
     if (h) {
       const level = h[1].length;
       const text = h[2];
-      const Tag = (`h${level + 1}` as 'h2' | 'h3' | 'h4'); // h1 in MD → h2 in card
-      blocks.push(<Tag key={key++}>{renderInline(text, `h${key}`)}</Tag>);
+      if (level === 1) {
+        flush();
+        top.push(<h2 key={key++}>{renderInline(text, `h${key}`)}</h2>);
+      } else if (level === 2) {
+        flush();
+        h2Count++;
+        group = {
+          titleKey: key++,
+          title: renderInline(text, `s${key}`),
+          content: [],
+        };
+      } else {
+        push(<h4 key={key++}>{renderInline(text, `h${key}`)}</h4>);
+      }
       i++;
       continue;
     }
@@ -87,10 +155,12 @@ export function renderMarkdown(md: string): React.ReactNode {
       const items: React.ReactNode[] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
         const itemText = lines[i].replace(/^\s*[-*]\s+/, '');
-        items.push(<li key={items.length}>{renderInline(itemText, `li${key}-${items.length}`)}</li>);
+        items.push(
+          <li key={items.length}>{renderInline(itemText, `li${key}-${items.length}`)}</li>,
+        );
         i++;
       }
-      blocks.push(<ul key={key++}>{items}</ul>);
+      push(<ul key={key++}>{items}</ul>);
       continue;
     }
 
@@ -103,8 +173,9 @@ export function renderMarkdown(md: string): React.ReactNode {
       paraLines.push(nxt);
       i++;
     }
-    blocks.push(<p key={key++}>{renderInline(paraLines.join(' '), `p${key}`)}</p>);
+    push(<p key={key++}>{renderInline(paraLines.join(' '), `p${key}`)}</p>);
   }
 
-  return blocks;
+  flush();
+  return top;
 }
