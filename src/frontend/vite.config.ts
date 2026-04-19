@@ -15,6 +15,13 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:1336',
         changeOrigin: true,
+        // Silence Vite's default ECONNREFUSED logging when the Go backend
+        // isn't running (Playwright / pure-frontend dev / CI). The app
+        // already swallows the fetch error in update-store.ts etc.; Vite's
+        // own proxy logger sits above that and spams the terminal.
+        configure: (proxy) => {
+          proxy.on('error', () => { /* suppress */ });
+        },
       },
     },
   },
