@@ -833,6 +833,7 @@ const BOARD_DRAG_MODIFIER_LABELS: Record<BoardDragModifier, React.ReactNode> = {
 
 function BoardDragBindingsEditor({ dragToZoom, onUpdate }: { dragToZoom: boolean; onUpdate: DraftUpdater }) {
   // Derive bindings: bare=zoom when dragToZoom, else bare=pan
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const bindings: Record<BoardDragModifier, BoardDragAction> = {
     bare: dragToZoom ? 'zoom' : 'pan',
     shift: dragToZoom ? 'pan' : 'zoom',

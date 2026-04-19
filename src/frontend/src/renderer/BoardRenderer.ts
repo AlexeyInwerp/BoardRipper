@@ -2147,7 +2147,7 @@ export class BoardRenderer {
           // Same sign convention as wheel deltaY: positive = zoom out, negative = zoom in.
           // Anchor is fixed at the initial click point; speed is 2× wheel sensitivity.
           this.zoomAtScreen(anchorX, anchorY, incDy * DRAG_ZOOM_SPEED);
-          this.viewport.emit('moved', { viewport: this.viewport, type: 'drag-zoom' });
+          this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
           this.needsRender = true;
           this.netLinesDirty = true;
         }
