@@ -594,7 +594,7 @@ const CATEGORY_LABELS: Record<Shortcut['category'], string> = {
   file: 'File',
   view: 'Board',
   navigation: 'Navigation',
-  pdf: 'PDF',
+  pdf: 'PDF (when panel is active)',
 };
 
 const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'navigation', 'pdf'];
