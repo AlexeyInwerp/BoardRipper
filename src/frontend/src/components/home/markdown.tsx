@@ -47,7 +47,7 @@ const ICON_RE = /:icon-([a-z0-9-]+):/g;
 function renderInline(text: string, keyPrefix: string): React.ReactNode {
   const slots: { marker: string; node: React.ReactNode }[] = [];
   const push = (node: React.ReactNode): string => {
-    const marker = `\u0000${slots.length}\u0000`;
+    const marker = `\uE000${slots.length}\uE000`;
     slots.push({ marker, node });
     return marker;
   };
@@ -81,7 +81,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode {
     lead + push(<em key={`${keyPrefix}-i-${slots.length}`}>{inner}</em>),
   );
 
-  const parts = t.split(/(\u0000\d+\u0000)/);
+  const parts = t.split(/(\uE000\d+\uE000)/);
   const out: React.ReactNode[] = [];
   for (const part of parts) {
     if (!part) continue;
