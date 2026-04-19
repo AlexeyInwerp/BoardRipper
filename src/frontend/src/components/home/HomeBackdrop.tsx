@@ -1,4 +1,4 @@
-import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
@@ -11,6 +11,13 @@ import {
 import { showSidebarTab } from '../Sidebar';
 import { shortcuts, formatShortcut } from '../../store/keyboard-shortcuts';
 import type { Shortcut } from '../../store/keyboard-shortcuts';
+import {
+  SCROLL_BINDINGS_KEY,
+  SCROLL_ACTIONS,
+  DEFAULT_SCROLL_BINDINGS,
+  loadScrollBindings,
+} from '../../panels/PdfViewerPanel';
+import type { ScrollAction, ScrollBindings } from '../../panels/PdfViewerPanel';
 import { sessionRant } from './rants';
 import { renderMarkdown } from './markdown';
 import instructionsMd from './instructions.md?raw';
@@ -277,6 +284,144 @@ function ScrollBindings() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// PDF scroll bindings — 3-slot pill-swap (zoom / pan / page-switch)
+// ─────────────────────────────────────────────────────────────
+
+const PDF_ACTION_LABEL: Record<ScrollAction, string> = {
+  zoom: 'Zoom',
+  pan: 'Pan',
+  switch: 'Page',
+};
+const PDF_ACTION_COLOR: Record<ScrollAction, string> = {
+  zoom: '#00d4ff',
+  pan: '#ffd93d',
+  switch: '#ff6b9d',
+};
+
+const PDF_SLOT_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
+const isMacPlatform =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? '');
+const PDF_SLOT_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
+  bare: 'Scroll',
+  shift: (
+    <>
+      Shift + Scroll
+      <br />
+      (fast)
+    </>
+  ),
+  meta: isMacPlatform ? '⌘ + Scroll' : 'Ctrl + Scroll',
+};
+
+function savePdfBindings(next: ScrollBindings) {
+  try {
+    localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore quota */
+  }
+  window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
+}
+
+function PdfScrollBindings() {
+  const [bindings, setBindings] = useState<ScrollBindings>(loadScrollBindings);
+  const [dragging, setDragging] = useState<ScrollAction | null>(null);
+  const [dragOver, setDragOver] = useState<keyof ScrollBindings | null>(null);
+
+  // Stay in sync with the Settings panel — both listen on this event.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<ScrollBindings>).detail;
+      if (detail) setBindings(detail);
+    };
+    window.addEventListener('pdf-scroll-bindings-changed', handler);
+    return () => window.removeEventListener('pdf-scroll-bindings-changed', handler);
+  }, []);
+
+  const onDragStart = useCallback((e: React.DragEvent, action: ScrollAction) => {
+    setDragging(action);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', action);
+  }, []);
+
+  const onDragOverSlot = useCallback((e: React.DragEvent, slot: keyof ScrollBindings) => {
+    if (e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(slot);
+  }, []);
+
+  const onDropSlot = useCallback(
+    (e: React.DragEvent, target: keyof ScrollBindings) => {
+      if (e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      setDragOver(null);
+      setDragging(null);
+      const action = e.dataTransfer.getData('text/plain') as ScrollAction;
+      if (!SCROLL_ACTIONS.includes(action)) return;
+      const source = PDF_SLOT_KEYS.find((k) => bindings[k] === action);
+      if (!source || source === target) return;
+      const next: ScrollBindings = { ...bindings };
+      next[source] = bindings[target];
+      next[target] = action;
+      setBindings(next);
+      savePdfBindings(next);
+    },
+    [bindings],
+  );
+
+  const onDragEnd = useCallback(() => {
+    setDragging(null);
+    setDragOver(null);
+  }, []);
+
+  const isDefault =
+    bindings.bare === DEFAULT_SCROLL_BINDINGS.bare &&
+    bindings.shift === DEFAULT_SCROLL_BINDINGS.shift &&
+    bindings.meta === DEFAULT_SCROLL_BINDINGS.meta;
+
+  const handleReset = useCallback(() => {
+    setBindings(DEFAULT_SCROLL_BINDINGS);
+    savePdfBindings(DEFAULT_SCROLL_BINDINGS);
+  }, []);
+
+  return (
+    <div className="scroll-bindings-editor">
+      <div className="scroll-bindings-grid">
+        {PDF_SLOT_KEYS.map((slot) => {
+          const action = bindings[slot];
+          const isOver = dragOver === slot;
+          return (
+            <div
+              key={slot}
+              className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
+              onDragOver={(e) => onDragOverSlot(e, slot)}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={(e) => onDropSlot(e, slot)}
+            >
+              <span className="scroll-binding-modifier">{PDF_SLOT_LABELS[slot]}</span>
+              <span
+                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
+                style={{ '--pill-color': PDF_ACTION_COLOR[action] } as React.CSSProperties}
+                draggable
+                onDragStart={(e) => onDragStart(e, action)}
+                onDragEnd={onDragEnd}
+              >
+                {PDF_ACTION_LABEL[action]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {!isDefault && (
+        <button type="button" className="scroll-bindings-reset" onClick={handleReset}>
+          Reset to default
+        </button>
+      )}
+    </div>
+  );
+}
+
 function AutoSwitchToggle() {
   const enabled = useAutoSwitch();
   return (
@@ -303,18 +448,27 @@ function QuickSettings() {
       </div>
       <div className="home-quick-settings">
         <div className="home-quick-group">
-          <h3 className="home-quick-label">Mouse drag</h3>
+          <h3 className="home-quick-label">Board — mouse drag</h3>
           <DragBindings />
         </div>
         <div className="home-quick-group">
-          <h3 className="home-quick-label">Scroll wheel</h3>
+          <h3 className="home-quick-label">Board — scroll / two-finger scroll</h3>
           <ScrollBindings />
+        </div>
+        <div className="home-quick-group home-quick-group-wide">
+          <h3 className="home-quick-label">PDF — scroll / two-finger scroll</h3>
+          <PdfScrollBindings />
         </div>
         <div className="home-quick-group">
           <h3 className="home-quick-label">Behaviour</h3>
           <AutoSwitchToggle />
         </div>
       </div>
+      <p className="home-quick-hint">
+        On a trackpad, <strong>two-finger scroll</strong> fires the same event as a mouse wheel — the
+        bindings above cover both. <strong>Pinch-to-zoom</strong> always zooms directly, regardless
+        of these settings.
+      </p>
       <button type="button" className="home-settings-link" onClick={openSettings}>
         Open full Settings →
       </button>
