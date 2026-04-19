@@ -258,7 +258,10 @@ export class BoardRenderer {
   // Cached per-board to avoid expensive rebuild on tab switch.
   private hitGrid: Map<string, number[]> = new Map();
   private hitGridCellSize = 0;
-  private hitGridCache = new Map<BoardData, { grid: Map<string, number[]>; cellSize: number }>();
+  // Cached per (raw board, foldMode, selectedBoardIndex) via `sceneCacheKey`
+  // so filter toggles reuse the same grid entry instead of leaking a new
+  // one per derived-board reference.
+  private hitGridCache = new Map<string, { grid: Map<string, number[]>; cellSize: number }>();
 
   // WebGL context loss recovery
   private contextLost = false;
@@ -540,8 +543,9 @@ export class BoardRenderer {
       return;
     }
     // Evict cached scene so buildBoardScene runs fresh, then re-activate directly
-    this.sceneCache.delete(this.sceneCacheKey(board));
-    this.hitGridCache.delete(board);
+    const key = this.sceneCacheKey(board);
+    this.sceneCache.delete(key);
+    this.hitGridCache.delete(key);
     this.activateScene(board);
     this.board = board;
     // Resync board store so onBoardUpdate won't skip future notifications
@@ -1454,10 +1458,11 @@ export class BoardRenderer {
   }
 
   private getOrBuildScene(board: BoardData): BoardScene {
-    let scene = this.sceneCache.get(this.sceneCacheKey(board));
+    const key = this.sceneCacheKey(board);
+    let scene = this.sceneCache.get(key);
     if (!scene) {
       scene = this.buildScene(board);
-      this.sceneCache.set(this.sceneCacheKey(board), scene);
+      this.sceneCache.set(key, scene);
     }
     return scene;
   }
@@ -3214,7 +3219,8 @@ export class BoardRenderer {
    *  Each part is inserted into every grid cell its bounding box overlaps.
    *  Results are cached per-board so tab switches are instant. */
   private buildHitGrid(board: BoardData) {
-    const cached = this.hitGridCache.get(board);
+    const cacheKey = this.sceneCacheKey(board);
+    const cached = this.hitGridCache.get(cacheKey);
     if (cached) {
       this.hitGrid = cached.grid;
       this.hitGridCellSize = cached.cellSize;
@@ -3225,7 +3231,7 @@ export class BoardRenderer {
     if (board.parts.length === 0) {
       this.hitGrid = grid;
       this.hitGridCellSize = 1;
-      this.hitGridCache.set(board, { grid, cellSize: 1 });
+      this.hitGridCache.set(cacheKey, { grid, cellSize: 1 });
       return;
     }
     // Cell size: use board bounds divided into a reasonable grid (~50x50 cells)
@@ -3259,7 +3265,7 @@ export class BoardRenderer {
       }
     }
     this.hitGrid = grid;
-    this.hitGridCache.set(board, { grid, cellSize });
+    this.hitGridCache.set(cacheKey, { grid, cellSize });
   }
 
   /** Get candidate part indices from the spatial hash for a given scene-space point */
