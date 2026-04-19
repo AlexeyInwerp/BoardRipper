@@ -28,9 +28,18 @@
  */
 
 import type { BoardData, Part, Pin, Net } from '../parsers';
+import { computeBBox } from '../parsers/types';
 
-type FoldMode = 'suggested' | 'all-sides';
+/** Subset of a component bbox used for containment checks — `foldComponents`
+ *  entries also carry `segCount` which we don't need here. */
+type BBoxLike = { minX: number; minY: number; maxX: number; maxY: number };
+
+export type FoldMode = 'suggested' | 'all-sides';
+
 type Mode = 'forward' | 'reverse' | 'filter-only' | 'passthrough';
+type FoldSpec = { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
+
+const IDENTITY = <T extends { x: number; y: number }>(p: T): T => p;
 
 export function deriveBoardView(
   board: BoardData,
@@ -38,10 +47,10 @@ export function deriveBoardView(
   selectedBoardIndex: number | null,
 ): BoardData {
   const groups = board.boardGroups;
-  const hasSelection = selectedBoardIndex != null && groups != null && groups[selectedBoardIndex] != null;
-  const selectedGroup = hasSelection ? groups![selectedBoardIndex!] : null;
+  const selectedGroup =
+    selectedBoardIndex != null && groups != null ? groups[selectedBoardIndex] ?? null : null;
+  const hasSelection = selectedGroup !== null;
 
-  type FoldSpec = { dim: 'x' | 'y'; axis: number; lowerIsBottom: boolean };
   let mode: Mode;
   let foldToUse: FoldSpec | null;
   if (selectedGroup && foldMode === 'suggested' && selectedGroup.fold) {
@@ -59,27 +68,26 @@ export function deriveBoardView(
   }
   if (mode === 'passthrough') return board;
 
+  // Selection-only data: kept bboxes for filtering. When nothing is selected,
+  // every part/trace/outline-point is kept — skip the array setup entirely.
   const componentBBoxes = board.foldComponents ?? [];
-  const keptComponents = hasSelection ? selectedGroup!.components : componentBBoxes.map((_, i) => i);
-  const keptBBoxes = keptComponents.map(i => componentBBoxes[i]).filter(b => b != null);
+  const keptBBoxes: BBoxLike[] = hasSelection
+    ? selectedGroup!.components
+        .map(i => componentBBoxes[i])
+        .filter(b => b != null) as BBoxLike[]
+    : [];
 
-  function bboxContainsPt(
-    bb: { minX: number; minY: number; maxX: number; maxY: number },
-    x: number,
-    y: number,
-    pad = 0.5,
-  ): boolean {
-    return x >= bb.minX - pad && x <= bb.maxX + pad && y >= bb.minY - pad && y <= bb.maxY + pad;
-  }
-  function belongsToKept(x: number, y: number): boolean {
+  const bboxContainsPt = (bb: BBoxLike, x: number, y: number, pad = 0.5): boolean =>
+    x >= bb.minX - pad && x <= bb.maxX + pad && y >= bb.minY - pad && y <= bb.maxY + pad;
+  const belongsToKept = (x: number, y: number): boolean => {
     if (!hasSelection) return true;
     for (const bb of keptBBoxes) if (bboxContainsPt(bb, x, y)) return true;
     return false;
-  }
+  };
 
   // Forward-fold: outline is drawn from only the "top" component of the
   // selected group — the bottom one mirrors onto it and would superimpose.
-  const topComponentBBox = (() => {
+  const topComponentBBox: BBoxLike | null = (() => {
     if (mode !== 'forward' || !selectedGroup || !foldToUse) return null;
     for (const ci of selectedGroup.components) {
       const bb = componentBBoxes[ci];
@@ -90,34 +98,33 @@ export function deriveBoardView(
     }
     return null;
   })();
-  function belongsToTopOnly(x: number, y: number): boolean {
-    if (!topComponentBBox) return true;
-    return bboxContainsPt(topComponentBBox, x, y);
-  }
+  const belongsToTopOnly = (x: number, y: number): boolean =>
+    !topComponentBBox || bboxContainsPt(topComponentBBox, x, y);
 
+  // When `foldToUse` is null we still want a callable function — the callers
+  // that guarded `mirrorPt && ...` can just call it unconditionally now.
   const mirrorPt = foldToUse
     ? (p: { x: number; y: number }) => foldToUse!.dim === 'x'
       ? { x: 2 * foldToUse!.axis - p.x, y: p.y }
       : { x: p.x, y: 2 * foldToUse!.axis - p.y }
-    : null;
+    : IDENTITY;
 
-  function isPartOnBottom(x: number, y: number): boolean {
+  const isPartOnBottom = (x: number, y: number): boolean => {
     if (!foldToUse) return false;
     const c = foldToUse.dim === 'x' ? x : y;
     return foldToUse.lowerIsBottom ? c < foldToUse.axis : c > foldToUse.axis;
-  }
+  };
 
-  // OUTLINE — source is rawOutline when we're doing anything non-passthrough.
+  // OUTLINE — rawOutline has both halves; filter to whichever bboxes apply.
   const sourceOutline = board.rawOutline ?? board.outline;
-  let outline: typeof board.outline;
+  const outline: typeof board.outline = [];
   {
-    const out: typeof board.outline = [];
     let subPath: typeof board.outline = [];
     let subPathKeep = false;
     const flush = () => {
       if (subPath.length > 0 && subPathKeep) {
-        if (out.length > 0) out.push({ x: NaN, y: NaN });
-        for (const p of subPath) out.push(p);
+        if (outline.length > 0) outline.push({ x: NaN, y: NaN });
+        for (const p of subPath) outline.push(p);
       }
       subPath = [];
       subPathKeep = false;
@@ -130,17 +137,18 @@ export function deriveBoardView(
       subPath.push(p);
     }
     flush();
-    outline = out;
   }
 
   // PARTS — preserve array length (so selection.partIndex stays valid). Parts
   // outside kept bboxes get `hidden: true`; visible parts may be transformed.
+  // When nothing changes (same side, no mirror) return `part` verbatim so
+  // downstream reference-equality checks short-circuit.
   const parts: Part[] = board.parts.map(part => {
-    const kept = hasSelection ? belongsToKept(part.origin.x, part.origin.y) : true;
+    const kept = belongsToKept(part.origin.x, part.origin.y);
     if (!kept) return { ...part, hidden: true };
 
     let shouldMirror = false;
-    let newSide: 'top' | 'bottom' = 'top';
+    let newSide: 'top' | 'bottom';
     if (mode === 'forward') {
       if (isPartOnBottom(part.origin.x, part.origin.y)) {
         shouldMirror = true;
@@ -155,35 +163,40 @@ export function deriveBoardView(
       newSide = 'top';
     }
 
-    const origin = shouldMirror && mirrorPt ? mirrorPt(part.origin) : part.origin;
+    if (!shouldMirror && part.side === newSide) return part;
+
+    const origin = shouldMirror ? mirrorPt(part.origin) : part.origin;
     const bounds = shouldMirror && foldToUse
-      ? (foldToUse.dim === 'x'
+      ? foldToUse.dim === 'x'
         ? { minX: 2 * foldToUse.axis - part.bounds.maxX, maxX: 2 * foldToUse.axis - part.bounds.minX, minY: part.bounds.minY, maxY: part.bounds.maxY }
-        : { minX: part.bounds.minX, maxX: part.bounds.maxX, minY: 2 * foldToUse.axis - part.bounds.maxY, maxY: 2 * foldToUse.axis - part.bounds.minY })
+        : { minX: part.bounds.minX, maxX: part.bounds.maxX, minY: 2 * foldToUse.axis - part.bounds.maxY, maxY: 2 * foldToUse.axis - part.bounds.minY }
       : part.bounds;
-    const pins: Pin[] = shouldMirror && mirrorPt
+    const pins: Pin[] = shouldMirror
       ? part.pins.map(pin => ({ ...pin, side: newSide, position: mirrorPt(pin.position) }))
-      : part.pins.map(pin => ({ ...pin, side: newSide }));
+      : part.pins.map(pin => (pin.side === newSide ? pin : { ...pin, side: newSide }));
     return { ...part, side: newSide, origin, bounds, pins };
   });
 
-  // TRACES — filter by midpoint and mirror bottom-side when a fold is active.
-  const traces = board.traces
-    ? board.traces
-        .filter(t => {
-          if (!hasSelection) return true;
-          const mx = (t.start.x + t.end.x) / 2;
-          const my = (t.start.y + t.end.y) / 2;
-          return belongsToKept(mx, my);
-        })
-        .map(t => {
-          if (!mirrorPt || !foldToUse) return t;
-          const mx = foldToUse.dim === 'x' ? (t.start.x + t.end.x) / 2 : (t.start.y + t.end.y) / 2;
-          const isBottom = foldToUse.lowerIsBottom ? mx < foldToUse.axis : mx > foldToUse.axis;
-          if (!isBottom) return t;
-          return { ...t, start: mirrorPt(t.start), end: mirrorPt(t.end) };
-        })
-    : board.traces;
+  // TRACES — filter + mirror in a single pass; skip intermediate filtered array.
+  let traces: BoardData['traces'];
+  if (board.traces) {
+    const out: NonNullable<BoardData['traces']> = [];
+    for (const t of board.traces) {
+      const mx = (t.start.x + t.end.x) / 2;
+      const my = (t.start.y + t.end.y) / 2;
+      if (hasSelection && !belongsToKept(mx, my)) continue;
+      if (foldToUse) {
+        const c = foldToUse.dim === 'x' ? mx : my;
+        const isBottom = foldToUse.lowerIsBottom ? c < foldToUse.axis : c > foldToUse.axis;
+        out.push(isBottom ? { ...t, start: mirrorPt(t.start), end: mirrorPt(t.end) } : t);
+      } else {
+        out.push(t);
+      }
+    }
+    traces = out;
+  } else {
+    traces = board.traces;
+  }
 
   // NETS — rebuild from visible parts only so net.pinIndices never points to
   // a hidden part. Hit-grid and net-highlight code read nets via this rebuilt
@@ -205,23 +218,12 @@ export function deriveBoardView(
   }
 
   // Recompute board-level bounds so the viewport auto-frames the view.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const pt of outline) {
-    if (Number.isNaN(pt.x) || Number.isNaN(pt.y)) continue;
-    if (pt.x < minX) minX = pt.x; if (pt.y < minY) minY = pt.y;
-    if (pt.x > maxX) maxX = pt.x; if (pt.y > maxY) maxY = pt.y;
-  }
-  for (const part of parts) {
-    if (part.hidden) continue;
-    for (const pin of part.pins) {
-      if (pin.position.x < minX) minX = pin.position.x;
-      if (pin.position.y < minY) minY = pin.position.y;
-      if (pin.position.x > maxX) maxX = pin.position.x;
-      if (pin.position.y > maxY) maxY = pin.position.y;
-    }
-  }
-  if (!isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
-  const bounds = { minX, minY, maxX, maxY };
+  // Outline alone is authoritative when it exists (covers the board area);
+  // fall back to pin positions only when the outline is empty / all-NaN.
+  const outlinePts = outline.filter(p => !Number.isNaN(p.x) && !Number.isNaN(p.y));
+  const bounds = outlinePts.length > 0
+    ? computeBBox(outlinePts)
+    : computeBBox(parts.flatMap(p => p.hidden ? [] : p.pins.map(pin => pin.position)));
 
   // Set `butterflyFoldAxis` only in forward-fold mode so the existing flip UI
   // treats the selected multi-board view as a normal butterfly board. Clear

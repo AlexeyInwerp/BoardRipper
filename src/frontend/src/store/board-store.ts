@@ -7,6 +7,7 @@ import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 import { deriveBoardView } from './derive-board-view';
+import type { FoldMode } from './derive-board-view';
 
 
 export interface SelectionState {
@@ -51,7 +52,7 @@ export interface BoardTab {
   hideGhosts: boolean;
   /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
    *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
-  foldMode: 'suggested' | 'all-sides';
+  foldMode: FoldMode;
   /** XZZ multi-board selection. null = show all boards. An index selects the
    *  group at that position in `board.boardGroups`. */
   selectedBoardIndex: number | null;
@@ -93,6 +94,17 @@ function invalidateDerivedBoard(tab: BoardTab): void {
   tab._derivedBoardKey = undefined;
 }
 
+/** Auto-rotate tall boards 90°/270° so they display wide on screen.
+ *  270° when the format's Y axis is flipped (most boardview formats),
+ *  otherwise 90°. Matches the convention `loadFile` has always used. */
+function computeAutoRotation(board: BoardData): number {
+  const w = board.bounds.maxX - board.bounds.minX;
+  const h = board.bounds.maxY - board.bounds.minY;
+  if (h <= w) return 0;
+  const flipY = board.flipY ?? getFormat(board.format)?.flipY ?? false;
+  return flipY ? 270 : 90;
+}
+
 /** Pick `flipAxis` so the on-screen flip is always a top-bottom mirror
  *  (hinge = horizontal screen axis), regardless of how the board is rotated.
  *
@@ -124,16 +136,7 @@ function flipAxisForRotation(rotationDeg: number): 'x' | 'y' {
 function syncMirrorsToDerivedFold(tab: BoardTab): void {
   const derived = ensureDerivedBoard(tab);
   if (!derived) return;
-
-  // Auto-rotation matches the loadFile heuristic (inlined to avoid plumbing
-  // an instance method through module-level code).
-  const w = derived.bounds.maxX - derived.bounds.minX;
-  const h = derived.bounds.maxY - derived.bounds.minY;
-  let rotation = 0;
-  if (h > w) {
-    const flipY = derived.flipY ?? getFormat(derived.format)?.flipY ?? false;
-    rotation = flipY ? 270 : 90;
-  }
+  const rotation = computeAutoRotation(derived);
   tab.rotation = rotation;
 
   tab.flipAxis = flipAxisForRotation(rotation);
@@ -333,7 +336,7 @@ class BoardStore extends Emitter {
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
-  get foldMode(): 'suggested' | 'all-sides' { return this.activeTab?.foldMode ?? 'suggested'; }
+  get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
@@ -617,14 +620,7 @@ class BoardStore extends Emitter {
   }
 
   private autoRotation(board: BoardData): number {
-    const w = board.bounds.maxX - board.bounds.minX;
-    const h = board.bounds.maxY - board.bounds.minY;
-    if (h <= w) return 0;
-    // 90° + flipY creates a horizontal mirror on tall boards.
-    // 270° avoids this for all flipY formats.
-    const fmt = getFormat(board.format);
-    const flipY = board.flipY ?? fmt?.flipY ?? false;
-    return flipY ? 270 : 90;
+    return computeAutoRotation(board);
   }
 
   async loadFiles(files: FileList | File[]) {
@@ -817,7 +813,7 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  setFoldMode(mode: 'suggested' | 'all-sides'): void {
+  setFoldMode(mode: FoldMode): void {
     const tab = this.activeTab;
     if (!tab || tab.foldMode === mode) return;
     this.updateActiveTab({ foldMode: mode });
