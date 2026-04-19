@@ -788,10 +788,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           pinX = pin.position.x;
           pinY = pin.position.y;
           // BGA alternating: even column → number above pin center, odd → below.
+          // Half the requested gap is applied here; the matching net label adds
+          // the other half on the opposite side, so the visible gap between the
+          // two labels equals `r * bgaLabelGapFactor` (matches the UI tooltip).
           const even = pinColIndex[pni] % 2 === 0;
           numAnchorY = bgaAlternate ? (even ? 1.0 : 0.0) : 0.8;
-          const bgaGap = r * s.bgaLabelGapFactor;
-          pinY += bgaAlternate ? (even ? -bgaGap : bgaGap) : 0;
+          const bgaHalfGap = (r * s.bgaLabelGapFactor) / 2;
+          pinY += bgaAlternate ? (even ? -bgaHalfGap : bgaHalfGap) : 0;
         }
 
         pinFontSize = quantizeFontSize(pinFontSize);
@@ -849,9 +852,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
           if (bgaAlternate) {
             // BGA alternating: mirror of pin number — even column → net below pin center, odd → above.
             // anchor 0.0 = text top at y; anchor 1.0 = text bottom at y.
+            // Half-gap matches the pin-number side; combined visible separation = r * factor.
             const even = pinColIndex[pni] % 2 === 0;
             anchorY = even ? 0.0 : 1.0;
-            ny += even ? r * s.bgaLabelGapFactor : -(r * s.bgaLabelGapFactor);
+            const bgaHalfGap = (r * s.bgaLabelGapFactor) / 2;
+            ny += even ? bgaHalfGap : -bgaHalfGap;
           } else if (isMultiPin && s.showPinNumbers) {
             anchorY = 0.05; // standard offset when pin number also shown
           }
