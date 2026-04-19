@@ -4,11 +4,13 @@ Welcome to **BoardRipper** — a browser-based viewer for PCB boardview files. E
 
 ## Run it in Docker (recommended)
 
-BoardRipper is designed to live in a **Docker container** on your NAS or workstation. In that mode it can auto-scan a mounted *boards folder* (and its subdirectories) and build a **browsable, automatically organised library** of every board and linked PDF it finds — searchable from the sidebar without dragging files one at a time.
+BoardRipper is designed to live in a **Docker container** on your NAS or workstation. In that mode it can auto-scan one or more mounted *boards folders* and build a **browsable, automatically organised library** of every board and linked PDF it finds — searchable from the sidebar without dragging files one at a time.
 
-- Mount your boards folder read-only into `/data`.
-- Point a browser at the host on the configured port.
-- The Library tab picks up new files automatically; no imports, no indexing dance.
+Two separate volumes, different jobs:
+
+- **`/library`** — mount your boards folder(s) here (usually read-only). Each subfolder under `/library` shows up as a top-level group in the Library panel. Mount several folders as subdirectories to keep repositories separate, e.g. `/path/to/MacBooks:/library/MacBooks:ro` and `/path/to/iPhones:/library/iPhones:ro`.
+- **`/data`** — writable upload storage. Any file you **drag-and-drop onto the app** lands here and persists across restarts. This is independent of `/library`.
+- Point a browser at the host on the configured port; the Library tab picks up new files automatically — no imports, no indexing dance.
 
 Running from source locally also works, but the auto-scan library is the killer feature — use the Docker image if you have more than a handful of files.
 
