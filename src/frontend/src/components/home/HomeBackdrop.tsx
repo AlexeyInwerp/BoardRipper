@@ -62,6 +62,92 @@ function useAutoSwitch(): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────
+// CollapsibleCard — dashboard section with a −/+ toggle. Collapse
+// state is persisted to localStorage under a single JSON key.
+// ─────────────────────────────────────────────────────────────
+
+const CARD_STATE_KEY = 'boardripper-home-card-state';
+
+type CardState = Record<string, boolean>; // true = collapsed
+
+function loadCardState(): CardState {
+  try {
+    const raw = localStorage.getItem(CARD_STATE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as CardState) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCardState(state: CardState): void {
+  try {
+    localStorage.setItem(CARD_STATE_KEY, JSON.stringify(state));
+  } catch {
+    /* quota or private mode */
+  }
+}
+
+function useCardCollapsed(id: string, defaultCollapsed = false): [boolean, (v: boolean) => void] {
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    const s = loadCardState();
+    return id in s ? s[id] : defaultCollapsed;
+  });
+  const update = useCallback(
+    (next: boolean) => {
+      setCollapsed(next);
+      const s = loadCardState();
+      s[id] = next;
+      saveCardState(s);
+    },
+    [id],
+  );
+  return [collapsed, update];
+}
+
+interface CollapsibleCardProps {
+  id: string;
+  title: string;
+  headerExtra?: React.ReactNode;
+  className?: string;
+  defaultCollapsed?: boolean;
+  children: React.ReactNode;
+}
+
+function CollapsibleCard({
+  id,
+  title,
+  headerExtra,
+  className,
+  defaultCollapsed,
+  children,
+}: CollapsibleCardProps) {
+  const [collapsed, setCollapsed] = useCardCollapsed(id, defaultCollapsed);
+  return (
+    <section
+      className={`home-card${collapsed ? ' collapsed' : ''}${className ? ' ' + className : ''}`}
+    >
+      <div className="home-card-header">
+        <h2 className="home-card-title">{title}</h2>
+        {headerExtra}
+        <button
+          type="button"
+          className="home-card-toggle"
+          onClick={() => setCollapsed(!collapsed)}
+          title={collapsed ? 'Expand' : 'Collapse'}
+          aria-label={collapsed ? 'Expand section' : 'Collapse section'}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? '+' : '\u2212'}
+        </button>
+      </div>
+      {!collapsed && children}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Banner + rant
 // ─────────────────────────────────────────────────────────────
 
@@ -76,13 +162,20 @@ function Banner() {
 
 // ─────────────────────────────────────────────────────────────
 // Instructions — editable markdown at components/home/instructions.md
+// The MD's first H1 is stripped (title lives on the card header).
 // ─────────────────────────────────────────────────────────────
+
+const INSTRUCTIONS_BODY = instructionsMd.replace(/^#\s+.*(?:\r?\n)?/, '');
+const INSTRUCTIONS_TITLE = (() => {
+  const m = instructionsMd.match(/^#\s+(.+)/);
+  return m ? m[1].trim() : 'Getting started';
+})();
 
 function Instructions() {
   return (
-    <section className="home-card home-instructions">
-      {renderMarkdown(instructionsMd)}
-    </section>
+    <CollapsibleCard id="instructions" title={INSTRUCTIONS_TITLE} className="home-instructions">
+      {renderMarkdown(INSTRUCTIONS_BODY)}
+    </CollapsibleCard>
   );
 }
 
@@ -112,11 +205,13 @@ function LatestUpdate() {
   const info = state.release_info;
 
   return (
-    <section className="home-card">
-      <div className="home-card-header">
-        <h2 className="home-card-title">Latest update</h2>
-        {state.has_update && <span className="home-update-badge">Update available</span>}
-      </div>
+    <CollapsibleCard
+      id="latest-update"
+      title="Latest update"
+      headerExtra={
+        state.has_update ? <span className="home-update-badge">Update available</span> : undefined
+      }
+    >
       {info ? (
         <div className="home-update-body">
           <div className="home-update-meta">
@@ -132,7 +227,7 @@ function LatestUpdate() {
       ) : (
         <p className="home-card-empty">No release info — check your connection.</p>
       )}
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -140,9 +235,21 @@ function LatestUpdate() {
 // Quick settings: drag bindings + auto-switch + settings link
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// Pan/zoom bindings (board drag + board scroll + PDF scroll)
+//
+// ⚠ Keep in sync with the Settings panel editors in
+//   src/frontend/src/panels/SettingsPanel.tsx
+// (BoardScrollBindingsEditor, BoardDragBindingsEditor, ScrollBindingsEditor
+//  + their MODIFIER_LABELS / ACTION_LABELS / ACTION_COLORS constants).
+// Pill labels, slot labels, and colors must match exactly — any change
+// here needs the same change there, and vice versa.
+// ─────────────────────────────────────────────────────────────
+
 type PzAction = 'pan' | 'zoom';
-const PZ_ACTION_LABEL: Record<PzAction, string> = { pan: 'Pan', zoom: 'Zoom' };
-const PZ_ACTION_COLOR: Record<PzAction, string> = { pan: '#ffd93d', zoom: '#00d4ff' };
+// Mirrors BOARD_ACTION_LABELS / BOARD_ACTION_COLORS in SettingsPanel.tsx.
+const PZ_ACTION_LABEL: Record<PzAction, string> = { zoom: 'Zoom', pan: 'Pan' };
+const PZ_ACTION_COLOR: Record<PzAction, string> = { zoom: '#00d4ff', pan: '#ffd93d' };
 
 type SlotKey = 'bare' | 'shift';
 
@@ -242,18 +349,20 @@ function setGlobalSetting<K extends 'dragToZoom' | 'twoFingerPan'>(key: K, next:
   renderSettingsStore.applyGlobal(snap);
 }
 
+// Mirrors BOARD_DRAG_MODIFIER_LABELS in SettingsPanel.tsx.
 const DRAG_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
   bare: 'Left-drag',
   shift: 'Shift + Left-drag',
 };
 
+// Mirrors BOARD_MODIFIER_LABELS in SettingsPanel.tsx.
 const SCROLL_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
   bare: 'Scroll',
   shift: (
     <>
       Shift + Scroll
       <br />
-      Ctrl + Scroll
+      Ctrl + Scroll (fast)
     </>
   ),
 };
@@ -288,6 +397,10 @@ function ScrollBindings() {
 // PDF scroll bindings — 3-slot pill-swap (zoom / pan / page-switch)
 // ─────────────────────────────────────────────────────────────
 
+// PDF scroll bindings — mirror of ACTION_LABELS / ACTION_COLORS /
+// MODIFIER_LABELS in SettingsPanel.tsx (ScrollBindingsEditor). Labels
+// and colors must stay identical to the Settings panel so both views
+// show the same thing. Any change here must also be made there.
 const PDF_ACTION_LABEL: Record<ScrollAction, string> = {
   zoom: 'Zoom',
   pan: 'Pan',
@@ -308,7 +421,7 @@ const PDF_SLOT_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
     <>
       Shift + Scroll
       <br />
-      (fast)
+      Ctrl + Scroll (fast)
     </>
   ),
   meta: isMacPlatform ? '⌘ + Scroll' : 'Ctrl + Scroll',
@@ -442,10 +555,7 @@ function AutoSwitchToggle() {
 function QuickSettings() {
   const openSettings = useCallback(() => showSidebarTab('settings'), []);
   return (
-    <section className="home-card">
-      <div className="home-card-header">
-        <h2 className="home-card-title">Quick settings</h2>
-      </div>
+    <CollapsibleCard id="quick-settings" title="Quick settings">
       <div className="home-quick-settings">
         <div className="home-quick-group">
           <h3 className="home-quick-label">Board — mouse drag</h3>
@@ -472,7 +582,7 @@ function QuickSettings() {
       <button type="button" className="home-settings-link" onClick={openSettings}>
         Open full Settings →
       </button>
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -491,10 +601,7 @@ const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'navigation', 'p
 
 function ShortcutList() {
   return (
-    <section className="home-card">
-      <div className="home-card-header">
-        <h2 className="home-card-title">Keyboard shortcuts</h2>
-      </div>
+    <CollapsibleCard id="shortcuts" title="Keyboard shortcuts">
       <div className="home-shortcut-grid">
         {CATEGORY_ORDER.map((cat) => {
           const items = shortcuts.filter((s) => s.category === cat);
@@ -514,7 +621,7 @@ function ShortcutList() {
           );
         })}
       </div>
-    </section>
+    </CollapsibleCard>
   );
 }
 
