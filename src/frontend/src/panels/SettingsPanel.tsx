@@ -819,6 +819,80 @@ function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: b
   );
 }
 
+// ---- Board drag bindings editor ----
+
+type BoardDragAction = 'pan' | 'zoom';
+const BOARD_DRAG_ACTIONS: BoardDragAction[] = ['pan', 'zoom'];
+
+const BOARD_DRAG_MODIFIER_KEYS = ['bare', 'shift'] as const;
+type BoardDragModifier = typeof BOARD_DRAG_MODIFIER_KEYS[number];
+const BOARD_DRAG_MODIFIER_LABELS: Record<BoardDragModifier, React.ReactNode> = {
+  bare: 'Left-drag',
+  shift: 'Shift + Left-drag',
+};
+
+function BoardDragBindingsEditor({ dragToZoom, onUpdate }: { dragToZoom: boolean; onUpdate: DraftUpdater }) {
+  // Derive bindings: bare=zoom when dragToZoom, else bare=pan
+  const bindings: Record<BoardDragModifier, BoardDragAction> = {
+    bare: dragToZoom ? 'zoom' : 'pan',
+    shift: dragToZoom ? 'pan' : 'zoom',
+  };
+
+  const [dragging, setDragging] = useState<BoardDragAction | null>(null);
+  const [dragOver, setDragOver] = useState<BoardDragModifier | null>(null);
+
+  const handleDragStart = useCallback((e: React.DragEvent, action: BoardDragAction) => {
+    setDragging(action);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', action);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, slot: BoardDragModifier) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(slot);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, targetSlot: BoardDragModifier) => {
+    e.preventDefault();
+    setDragOver(null);
+    setDragging(null);
+    const action = e.dataTransfer.getData('text/plain') as BoardDragAction;
+    if (!BOARD_DRAG_ACTIONS.includes(action)) return;
+    const sourceSlot = BOARD_DRAG_MODIFIER_KEYS.find(k => bindings[k] === action);
+    if (!sourceSlot || sourceSlot === targetSlot) return;
+    // Swapping bare and shift means toggling dragToZoom
+    onUpdate({ dragToZoom: targetSlot === 'bare' && action === 'zoom' });
+  }, [bindings, onUpdate]);
+
+  const handleDragEnd = useCallback(() => { setDragging(null); setDragOver(null); }, []);
+
+  return (
+    <div className="scroll-bindings-editor">
+      <div className="scroll-bindings-grid">
+        {BOARD_DRAG_MODIFIER_KEYS.map(slot => {
+          const action = bindings[slot];
+          const isOver = dragOver === slot;
+          return (
+            <div key={slot} className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
+              onDragOver={e => handleDragOver(e, slot)}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={e => handleDrop(e, slot)}>
+              <span className="scroll-binding-modifier">{BOARD_DRAG_MODIFIER_LABELS[slot]}</span>
+              <span
+                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
+                style={{ '--pill-color': BOARD_ACTION_COLORS[action as BoardScrollAction] } as React.CSSProperties}
+                draggable onDragStart={e => handleDragStart(e, action)} onDragEnd={handleDragEnd}>
+                {BOARD_ACTION_LABELS[action as BoardScrollAction]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ---- PDF inertia toggle ----
 
 function PdfInertiaToggle() {
@@ -1246,6 +1320,10 @@ export function SettingsPanel() {
           onUpdate={updateDraft}
           title="When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
         />
+
+        <div className="settings-subsection-label">Mouse drag behavior</div>
+        <p className="settings-hint">Drag pills between slots to swap left-drag and Shift+left-drag actions.</p>
+        <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateDraft} />
 
         <div className="settings-subsection-label">Zoom</div>
         <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
