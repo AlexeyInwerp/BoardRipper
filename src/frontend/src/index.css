@@ -5119,3 +5119,58 @@ html, body, #root {
   color: var(--text-primary);
   font-style: italic;
 }
+
+/* --- Instructions: collapsible spoilers --- */
+.home-instructions .home-spoiler {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.home-instructions .home-spoiler:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+.home-instructions .home-spoiler > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+.home-instructions .home-spoiler > summary::-webkit-details-marker {
+  display: none;
+}
+.home-instructions .home-spoiler > summary::before {
+  content: '▸';
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+  display: inline-block;
+  width: 10px;
+}
+.home-instructions .home-spoiler[open] > summary::before {
+  transform: rotate(90deg);
+}
+.home-instructions .home-spoiler > summary:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.home-spoiler-content {
+  padding: 2px 4px 8px 22px;
+}
+
+/* --- Instructions: inline icons from @tabler/icons-react --- */
+.home-instructions-icon {
+  display: inline-flex;
+  vertical-align: -3px;
+  color: var(--accent);
+  margin: 0 1px;
+}

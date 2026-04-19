@@ -1,24 +1,58 @@
 # Getting started
 
-Welcome to **BoardRipper** — a browser-based viewer for PCB boardview files.
+Welcome to **BoardRipper** — a browser-based viewer for PCB boardview files. Each section below expands when you click it.
+
+## Run it in Docker (recommended)
+
+BoardRipper is designed to live in a **Docker container** on your NAS or workstation. In that mode it can auto-scan a mounted *boards folder* (and its subdirectories) and build a **browsable, automatically organised library** of every board and linked PDF it finds — searchable from the sidebar without dragging files one at a time.
+
+- Mount your boards folder read-only into `/data`.
+- Point a browser at the host on the configured port.
+- The Library tab picks up new files automatically; no imports, no indexing dance.
+
+Running from source locally also works, but the auto-scan library is the killer feature — use the Docker image if you have more than a handful of files.
 
 ## Open a file
 
 - Drop a board file (`.bvr`, `.brd`, `.bdv`, `.fz`, `.cad`, `.xzz`, `.tvw`, or Allegro `.brd`) anywhere on this window.
 - Or drop a PDF schematic next to it — PDFs open in a side panel and stay linked to the board.
 - You can also press **⌘O** to pick a board, or **⌘P** to pick a PDF.
+- In Docker mode: open the **Library** tab in the sidebar and pick any board from the auto-scanned folder.
 
-## Toolbar buttons (top bar)
+## Top toolbar
 
-- **☰** — toggle the sidebar (Library / Settings / Debug tabs).
-- **Open Board / Open PDF** — file pickers for boards and schematics.
-- **Top / Bottom** — choose which layer is facing you. The small arrow between them flips the mirror axis. Shift-click either to show both sides at once.
-- **↺ / ↻** — rotate the board 90° counter-clockwise / clockwise.
-- **⇔ / ⇕** — mirror the board horizontally / vertically.
-- **Traces** — toggle PCB trace rendering (only appears when the file contains trace data).
-- **Butterfly** — show top and bottom side-by-side (only for single-layer boards).
-- **Search** — global fuzzy search across parts, pins, nets, and PDF text.
-- **Version badge** (right side) — click to view the changelog and check for updates.
+The bar above this screen is mostly self-explanatory. In short:
+
+- **☰** opens the sidebar (Library / Settings / Debug).
+- **Open Board / Open PDF** are file pickers.
+- **Top / Bottom** pick the layer; Shift-click shows both; the small arrow between them flips the mirror axis.
+- **↺ ↻ ⇔ ⇕** rotate and mirror the board.
+- **Traces** toggles PCB traces when the file has them.
+- **Search** runs a global fuzzy search across parts, pins, nets, and PDF text.
+- The **version badge** on the right shows the changelog and checks for updates.
+
+## BoardViewer tab controls
+
+Inside every board tab there is a small cluster of overlay buttons. They act only on the active board, not the app as a whole.
+
+### Top-left corner
+
+- **☰** — toggle the floating *BoardSidebar* inside the tab (Layers / Info / Search). Click again to close; click once more to re-show and reveal the opacity slider next to it.
+
+### Bottom-right status group
+
+First row — view controls:
+
+- **⇶** — **PDF follow**. When ON, clicking a component here jumps the linked PDF panel to its schematic location. Disabled until a PDF is bound.
+- :icon-hand-move: / :icon-zoom-in: — **Quick scroll swap**. Shows the current bare-scroll action (pan or zoom). Click to swap bare and Shift+scroll. Equivalent to flipping *Board — scroll* in Quick settings below.
+- :icon-object-scan: — **Zoom to fit**. Frames the full board in the viewport.
+
+Second row — overlay toggles:
+
+- :icon-tooltip: — **Hover info**. Shows a tooltip with component / pin details under the cursor.
+- **◐** — **Selection dim**. When a net is selected, fade everything that is not on that net.
+- :icon-hierarchy: — **Net lines**. Draw connection lines between pins on the selected net.
+- :icon-ghost: — **Hidden-side ghosts**. Overlay components from the back side faintly onto the front (and vice versa) so through-hole alignment is visible.
 
 ## Navigate the board
 
@@ -32,7 +66,7 @@ Welcome to **BoardRipper** — a browser-based viewer for PCB boardview files.
 
 - Open multiple boards at once — each gets its own tab.
 - The **Library** tab in the sidebar shows every board in your loaded repository and lets you match against the reference database.
-- Parsed boards are cached locally, so re-opening the same file is instant.
+- Parsed boards are cached locally in IndexedDB, so re-opening the same file is instant.
 
 ## Feedback / issues
 
