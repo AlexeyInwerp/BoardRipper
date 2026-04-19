@@ -1,0 +1,411 @@
+import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useBoardStore } from '../../hooks/useBoardStore';
+import { pdfStore } from '../../store/pdf-store';
+import { updateStore } from '../../store/update-store';
+import { renderSettingsStore } from '../../store/render-settings';
+import {
+  isAutoSwitchLinked,
+  setAutoSwitchLinked,
+  onAutoSwitchChange,
+} from '../../store/dockview-api';
+import { showSidebarTab } from '../Sidebar';
+import { shortcuts, formatShortcut } from '../../store/keyboard-shortcuts';
+import type { Shortcut } from '../../store/keyboard-shortcuts';
+import { sessionRant } from './rants';
+import { renderMarkdown } from './markdown';
+import instructionsMd from './instructions.md?raw';
+
+// ─────────────────────────────────────────────────────────────
+// Small store subscriptions (inline — only used here)
+// ─────────────────────────────────────────────────────────────
+
+function usePdfCount(): number {
+  return useSyncExternalStore(
+    (cb) => pdfStore.subscribe(cb),
+    () => pdfStore.loadedFileNames.length,
+  );
+}
+
+function useUpdateState() {
+  return useSyncExternalStore(
+    (cb) => updateStore.subscribe(cb),
+    () => updateStore.state,
+  );
+}
+
+function useDragToZoom(): boolean {
+  return useSyncExternalStore(
+    (cb) => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.globalSettings.dragToZoom,
+  );
+}
+
+function useTwoFingerPan(): boolean {
+  return useSyncExternalStore(
+    (cb) => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.globalSettings.twoFingerPan,
+  );
+}
+
+function useAutoSwitch(): boolean {
+  return useSyncExternalStore(
+    (cb) => onAutoSwitchChange(cb),
+    () => isAutoSwitchLinked(),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Banner + rant
+// ─────────────────────────────────────────────────────────────
+
+function Banner() {
+  return (
+    <header className="home-banner">
+      <h1 className="home-banner-title">***WELCOME YOU TO BOARDRIPPER***</h1>
+      <p className="home-banner-rant">{sessionRant}</p>
+    </header>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Instructions — editable markdown at components/home/instructions.md
+// ─────────────────────────────────────────────────────────────
+
+function Instructions() {
+  return (
+    <section className="home-card home-instructions">
+      {renderMarkdown(instructionsMd)}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Latest update card
+// ─────────────────────────────────────────────────────────────
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return '';
+  const diffMs = Date.now() - then;
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
+
+function LatestUpdate() {
+  const state = useUpdateState();
+  const info = state.release_info;
+
+  return (
+    <section className="home-card">
+      <div className="home-card-header">
+        <h2 className="home-card-title">Latest update</h2>
+        {state.has_update && <span className="home-update-badge">Update available</span>}
+      </div>
+      {info ? (
+        <div className="home-update-body">
+          <div className="home-update-meta">
+            <a href={info.html_url} target="_blank" rel="noreferrer" className="home-update-tag">
+              {info.tag_name}
+            </a>
+            {info.published_at && (
+              <span className="home-update-date">· {formatRelativeTime(info.published_at)}</span>
+            )}
+          </div>
+          <pre className="home-update-notes">{info.body || '(no release notes)'}</pre>
+        </div>
+      ) : (
+        <p className="home-card-empty">No release info — check your connection.</p>
+      )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Quick settings: drag bindings + auto-switch + settings link
+// ─────────────────────────────────────────────────────────────
+
+type PzAction = 'pan' | 'zoom';
+const PZ_ACTION_LABEL: Record<PzAction, string> = { pan: 'Pan', zoom: 'Zoom' };
+const PZ_ACTION_COLOR: Record<PzAction, string> = { pan: '#ffd93d', zoom: '#00d4ff' };
+
+type SlotKey = 'bare' | 'shift';
+
+interface PillSwapProps {
+  /** Current action assigned to the bare slot (the other slot gets the opposite). */
+  bareAction: PzAction;
+  /** Label shown for each slot. */
+  slotLabels: Record<SlotKey, React.ReactNode>;
+  /** Called when the user swaps pills; receives the new action that the bare slot should hold. */
+  onSwap: (newBareAction: PzAction) => void;
+}
+
+/**
+ * Generic two-slot pill-swap editor: user drags one pill onto the other slot
+ * to swap them. Used for both scroll-wheel and mouse-drag bindings.
+ */
+function PillSwap({ bareAction, slotLabels, onSwap }: PillSwapProps) {
+  const [dragging, setDragging] = useState<PzAction | null>(null);
+  const [dragOver, setDragOver] = useState<SlotKey | null>(null);
+
+  const bindings: Record<SlotKey, PzAction> = {
+    bare: bareAction,
+    shift: bareAction === 'zoom' ? 'pan' : 'zoom',
+  };
+
+  const onDragStart = useCallback((e: React.DragEvent, action: PzAction) => {
+    setDragging(action);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', action);
+  }, []);
+
+  const onDragOverSlot = useCallback((e: React.DragEvent, slot: SlotKey) => {
+    if (e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(slot);
+  }, []);
+
+  const onDropSlot = useCallback(
+    (e: React.DragEvent, target: SlotKey) => {
+      if (e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      setDragOver(null);
+      setDragging(null);
+      const action = e.dataTransfer.getData('text/plain') as PzAction;
+      if (action !== 'pan' && action !== 'zoom') return;
+      // If the dropped action lands on the bare slot, bare becomes that action.
+      // If it lands on the shift slot, bare becomes the opposite.
+      const newBare: PzAction = target === 'bare' ? action : action === 'zoom' ? 'pan' : 'zoom';
+      if (newBare !== bareAction) onSwap(newBare);
+    },
+    [bareAction, onSwap],
+  );
+
+  const onDragEnd = useCallback(() => {
+    setDragging(null);
+    setDragOver(null);
+  }, []);
+
+  const slots: SlotKey[] = ['bare', 'shift'];
+  return (
+    <div className="scroll-bindings-editor">
+      <div className="scroll-bindings-grid">
+        {slots.map((key) => {
+          const action = bindings[key];
+          const isOver = dragOver === key;
+          return (
+            <div
+              key={key}
+              className={`scroll-binding-slot${isOver ? ' drag-over' : ''}`}
+              onDragOver={(e) => onDragOverSlot(e, key)}
+              onDragLeave={() => setDragOver(null)}
+              onDrop={(e) => onDropSlot(e, key)}
+            >
+              <span className="scroll-binding-modifier">{slotLabels[key]}</span>
+              <span
+                className={`scroll-binding-pill${dragging === action ? ' dragging' : ''}`}
+                style={{ '--pill-color': PZ_ACTION_COLOR[action] } as React.CSSProperties}
+                draggable
+                onDragStart={(e) => onDragStart(e, action)}
+                onDragEnd={onDragEnd}
+              >
+                {PZ_ACTION_LABEL[action]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function setGlobalSetting<K extends 'dragToZoom' | 'twoFingerPan'>(key: K, next: boolean) {
+  const snap = renderSettingsStore.globalSnapshot();
+  if (snap[key] === next) return;
+  snap[key] = next;
+  renderSettingsStore.applyGlobal(snap);
+}
+
+const DRAG_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
+  bare: 'Left-drag',
+  shift: 'Shift + Left-drag',
+};
+
+const SCROLL_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
+  bare: 'Scroll',
+  shift: (
+    <>
+      Shift + Scroll
+      <br />
+      Ctrl + Scroll
+    </>
+  ),
+};
+
+function DragBindings() {
+  const dragToZoom = useDragToZoom();
+  // dragToZoom=true  →  bare left-drag zooms
+  // dragToZoom=false →  bare left-drag pans
+  return (
+    <PillSwap
+      bareAction={dragToZoom ? 'zoom' : 'pan'}
+      slotLabels={DRAG_SLOT_LABELS}
+      onSwap={(bare) => setGlobalSetting('dragToZoom', bare === 'zoom')}
+    />
+  );
+}
+
+function ScrollBindings() {
+  const twoFingerPan = useTwoFingerPan();
+  // twoFingerPan=true  →  bare scroll pans (shift/ctrl zoom)
+  // twoFingerPan=false →  bare scroll zooms (shift/ctrl pan)
+  return (
+    <PillSwap
+      bareAction={twoFingerPan ? 'pan' : 'zoom'}
+      slotLabels={SCROLL_SLOT_LABELS}
+      onSwap={(bare) => setGlobalSetting('twoFingerPan', bare === 'pan')}
+    />
+  );
+}
+
+function AutoSwitchToggle() {
+  const enabled = useAutoSwitch();
+  return (
+    <label
+      className="home-toggle-row"
+      title="When you activate a board tab, its linked PDF tab is also activated (and vice versa)."
+    >
+      <span>Auto-switch linked board ↔ PDF panel</span>
+      <input
+        type="checkbox"
+        checked={enabled}
+        onChange={(e) => setAutoSwitchLinked(e.target.checked)}
+      />
+    </label>
+  );
+}
+
+function QuickSettings() {
+  const openSettings = useCallback(() => showSidebarTab('settings'), []);
+  return (
+    <section className="home-card">
+      <div className="home-card-header">
+        <h2 className="home-card-title">Quick settings</h2>
+      </div>
+      <div className="home-quick-settings">
+        <div className="home-quick-group">
+          <h3 className="home-quick-label">Mouse drag</h3>
+          <DragBindings />
+        </div>
+        <div className="home-quick-group">
+          <h3 className="home-quick-label">Scroll wheel</h3>
+          <ScrollBindings />
+        </div>
+        <div className="home-quick-group">
+          <h3 className="home-quick-label">Behaviour</h3>
+          <AutoSwitchToggle />
+        </div>
+      </div>
+      <button type="button" className="home-settings-link" onClick={openSettings}>
+        Open full Settings →
+      </button>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Keyboard shortcuts (display-only, grouped by category)
+// ─────────────────────────────────────────────────────────────
+
+const CATEGORY_LABELS: Record<Shortcut['category'], string> = {
+  file: 'File',
+  view: 'Board',
+  navigation: 'Navigation',
+  pdf: 'PDF',
+};
+
+const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'navigation', 'pdf'];
+
+function ShortcutList() {
+  return (
+    <section className="home-card">
+      <div className="home-card-header">
+        <h2 className="home-card-title">Keyboard shortcuts</h2>
+      </div>
+      <div className="home-shortcut-grid">
+        {CATEGORY_ORDER.map((cat) => {
+          const items = shortcuts.filter((s) => s.category === cat);
+          if (items.length === 0) return null;
+          return (
+            <div key={cat} className="home-shortcut-col">
+              <h3 className="home-shortcut-category">{CATEGORY_LABELS[cat]}</h3>
+              <ul className="home-shortcut-list">
+                {items.map((s) => (
+                  <li key={s.id} className="home-shortcut-row">
+                    <span className="home-shortcut-label">{s.label}</span>
+                    <kbd className="home-shortcut-key">{formatShortcut(s.id)}</kbd>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Footer
+// ─────────────────────────────────────────────────────────────
+
+function Footer() {
+  const state = useUpdateState();
+  return (
+    <footer className="home-footer">
+      BoardRipper {state.current_version} · AGPL-3.0 ·{' '}
+      <a
+        href="https://github.com/inwerp/Boardviewer"
+        target="_blank"
+        rel="noreferrer"
+        className="home-footer-link"
+      >
+        GitHub
+      </a>
+    </footer>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Top-level backdrop
+// ─────────────────────────────────────────────────────────────
+
+export function HomeBackdrop() {
+  const { tabs } = useBoardStore();
+  const pdfCount = usePdfCount();
+  const visible = tabs.length === 0 && pdfCount === 0;
+
+  return (
+    <div className={`home-backdrop${visible ? '' : ' hidden'}`} aria-hidden={!visible}>
+      <div className="home-backdrop-scroll">
+        <div className="home-backdrop-inner">
+          <Banner />
+          <Instructions />
+          <LatestUpdate />
+          <QuickSettings />
+          <ShortcutList />
+          <Footer />
+        </div>
+      </div>
+    </div>
+  );
+}

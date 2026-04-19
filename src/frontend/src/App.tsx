@@ -14,6 +14,7 @@ import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebar
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { BoardTab } from './components/BoardTab';
+import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
@@ -183,6 +184,7 @@ function App() {
             tabComponents={tabComponents}
             disableFloatingGroups={false}
           />
+          <HomeBackdrop />
         </div>
       </div>
       <StatusBar />
