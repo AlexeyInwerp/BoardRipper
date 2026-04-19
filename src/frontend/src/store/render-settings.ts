@@ -124,9 +124,10 @@ export interface RenderSettings {
   /** Draw a background block behind Group B net-name labels (2-pin pads) */
   twoPinNetLabelBg: boolean;
   /**
-   * BGA label gap: multiplier on pin radius that separates the pin number
-   * and net name text when BGA alternating layout is active.
-   * Higher = more vertical distance between the two labels. Default 0.25.
+   * BGA label gap: visible vertical gap between the pin number and net name
+   * labels on BGA alternating layout, expressed as a fraction of pin radius.
+   * 0 = labels touch at the pin center; positive values insert that fraction
+   * of the radius as empty space between them.
    */
   bgaLabelGapFactor: number;
   /**
@@ -257,7 +258,7 @@ export const DEFAULTS: RenderSettings = {
   twoPinLabelMinScreenPx: 6,
   pinNetLabelBg: true,
   twoPinNetLabelBg: true,
-  bgaLabelGapFactor: 0.15,
+  bgaLabelGapFactor: 0,
   twoPinLabelGapFactor: 0.6,
 
   pdfWatermarkFilter: ['www.chinafix.com', 'NotebookSchematics.com'],
@@ -725,6 +726,12 @@ function loadFromStorage(): RenderSettings {
       // previous default get bumped automatically; explicit customizations
       // (any other value) are preserved.
       if (result.labelSizeSmall === 4) result.labelSizeSmall = 3;
+      // Migration: BGA gap formula was halved (factor now equals visible gap
+      // as fraction of pin radius, not 2× of it) and the default dropped to 0.
+      // Users on the previous default get the new default; other customizations
+      // are preserved verbatim — they end up with half the visible gap they
+      // had before, which is closer to the value the slider promised.
+      if (result.bgaLabelGapFactor === 0.15) result.bgaLabelGapFactor = 0;
       return result;
     }
   } catch { /* ignore corrupt data */ }
