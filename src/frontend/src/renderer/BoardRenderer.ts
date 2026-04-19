@@ -2097,7 +2097,7 @@ export class BoardRenderer {
       // applyGlobal structuredClones the settings, so object/array fields get
       // fresh references each call — use JSON equality for deep comparison.
       const INTERACTION_ONLY = new Set<string>([
-        'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia',
+        'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
       ]);
       if (prev) {
         let visualChanged = false;
