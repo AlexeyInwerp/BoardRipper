@@ -4880,6 +4880,37 @@ html, body, #root {
   font-size: 0.85rem;
   font-style: italic;
 }
+.home-card.collapsed {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.home-card.collapsed .home-card-header {
+  margin-bottom: 0;
+}
+.home-card-toggle {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  line-height: 1;
+  font-size: 1rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.home-card-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-tertiary));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
 
 /* --- Latest update --- */
 .home-update-badge {

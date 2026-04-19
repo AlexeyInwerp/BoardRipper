@@ -569,6 +569,9 @@ function DatabaseInfoSection() {
 
 // ---- PDF Scroll Bindings Editor (drag-and-drop) ----
 
+// PDF scroll bindings editor. Mirrored on the home dashboard in
+// components/home/HomeBackdrop.tsx (PdfScrollBindings). Keep labels
+// and colors identical across both surfaces.
 const MODIFIER_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
 const MODIFIER_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
   bare: 'Scroll',
@@ -744,6 +747,11 @@ function PdfWatermarkFilterEditor() {
 }
 
 // ---- Board scroll bindings editor (drag-and-drop pills) ----
+//
+// ⚠ Keep labels / colors / actions in sync with the home dashboard
+//   editors in src/frontend/src/components/home/HomeBackdrop.tsx
+//   (PillSwap + DragBindings + ScrollBindings + PdfScrollBindings).
+//   Both surfaces render the same state and must show identical pills.
 
 type BoardScrollAction = 'zoom' | 'pan';
 const BOARD_ACTIONS: BoardScrollAction[] = ['zoom', 'pan'];
