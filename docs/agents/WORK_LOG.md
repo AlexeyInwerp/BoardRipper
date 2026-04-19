@@ -30,3 +30,12 @@ Append-only. Most recent entries at the bottom.
 **Reasoning:** (1) Audited `allegro-assembler.ts` directly — `extractTraces`/`extractVias`/`extractLayerNames` are all implemented, uniform across v16.0–17.4, and their outputs are set on `BoardData` (assembler.ts:85-87). No version gates skip them. (2) Arc sweep: `linearizeArc` (assembler.ts:330-393) correctly reads `subType & 0x40` per spec, computes wrapped sweep, steps ~10°; `parseBlock0x01` has no version-conditional around `subType` so behavior is invariant. Arcs are pre-linearized to `Trace[]` before rendering, so no renderer-side convention is involved. (3) BVR3 flipY: `bvr3-parser.ts` reads Y verbatim, descriptor defaults to false — same as BVR1 and BRD. The BoardRenderer.ts:1108 comment claiming BVR is Y-up is legacy/misleading; runtime actually does not flip and has not for a long time. Empirically correct.
 **Commit:** uncommitted (docs only, no src changes)
 **Files touched:** docs/agents/format-maint/MEMORY.md, docs/agents/WORK_LOG.md, docs/agents/ERROR_LOG.md
+
+
+---
+
+## 2026-04-18 — renderer
+**Action:** Fixed two z-order bugs: (1) selected pin labels hidden by selection overlay in normal (non-dim) mode — pin labels for the selected part are now raised into `netLabelLayer` unconditionally whenever a part is selected, removing the two duplicated dim-only raise blocks. (2) net lines drawn over selected labels — introduced PixiJS v8 `RenderLayer` (`selectionLabelLayer`) added to viewport after `netLinesGfx`; `netLabelLayer` + the 4 elevated label objects are attached to it so they keep scene.root as logical parent (transforms inherited) but render after net lines. Also dropped `labelSizeSmall` default 4 → 3 and added an auto-migration that bumps stored value 4 → 3 for users on the old default.
+**Reasoning:** RenderLayer is the minimum-invasive way to override render order without refactoring the viewport/scene/butterfly layout or changing net-line coord computation (net lines span scene.root and butterflyRoot so they can't move into either). Unconditional pin-label raise simplifies renderSelection — one path instead of three with ambient-dim/effective-net gates.
+**Commit:** uncommitted
+**Files touched:** src/frontend/src/renderer/BoardRenderer.ts, src/frontend/src/store/render-settings.ts, docs/agents/renderer/FILE_MAP.md, docs/agents/renderer/MEMORY.md

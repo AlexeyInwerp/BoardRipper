@@ -21,6 +21,8 @@
 - #8: NC pad outline increased diameter — stroke rendered outward instead of inward
 - #6: Zoom not rendered when panel unfocused — ticker stopped on Dockview deactivation
 - #2: Selection overlay duplication — redundant label rendering
+- Selected pin labels hidden under selection fill in normal (non-dim) mode — pin labels used to live in layer containers (zIndex 0) while selectionGfx draws at zIndex 30 inside scene.root. Fix: raise selected part's pin labels into netLabelLayer (zIndex 35) unconditionally whenever a part is selected, not only under dim modes.
+- Net lines drawn over selection labels — netLinesGfx is a viewport-level sibling of scene.root, so it renders above all scene.root content including elevated labels (zIndex 100–103) and netLabelLayer (zIndex 35). Fix: use PixiJS v8 `RenderLayer` (`selectionLabelLayer`) added to viewport after netLinesGfx. The render layer attaches netLabelLayer + the 4 elevated label objects, so they keep scene.root as logical parent (for flip/rotation inheritance) but render after the net lines.
 
 ## Shared Boundary with UI Agent
 

@@ -1,7 +1,7 @@
 # Renderer Agent — File Map
 
-**git_hash:** a5a2f8e
-**last_updated:** 2026-04-15
+**git_hash:** 0fc0f2d
+**last_updated:** 2026-04-18
 
 ## Staleness Check
 
@@ -13,7 +13,7 @@ git log --oneline a7bbb79..HEAD -- src/frontend/src/renderer/ src/frontend/src/s
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `BoardRenderer.ts` | 3,607 | Main PixiJS Application + Viewport. Scene lifecycle, multi-tab, selection, butterfly, net lines, LoD, WebGL context recovery, board-flip keeps-view-centered (be40ade, b8faf59), ambient-dim preserves selection+labels (5c91f95, b3465ac), ghost-hide for multi-rev CAD (176cced, 32b9efc) |
+| `BoardRenderer.ts` | 3,675 | Main PixiJS Application + Viewport. Scene lifecycle, multi-tab, selection, butterfly, net lines, LoD, WebGL context recovery, board-flip keeps-view-centered (be40ade, b8faf59), ambient-dim preserves selection+labels (5c91f95, b3465ac), ghost-hide for multi-rev CAD (176cced, 32b9efc), `selectionLabelLayer` RenderLayer lifts selected labels above net lines, pin labels raised unconditionally when a part is selected |
 | `board-scene.ts` | 1,371 | **Shared pure function** `buildBoardScene()` — outlines, parts, pins, labels, traces, vias. Spatial grid culling, color batching, BitmapText atlases, OBB skip for near-axis-aligned parts (4df9295), `pinLabelsByPartIndex` on BoardScene (93ab00d) |
 | `mockup-data.ts` | 72 | Static fake board (U1+R1+C1) for SettingsMockup preview |
 
@@ -23,7 +23,7 @@ git log --oneline a7bbb79..HEAD -- src/frontend/src/renderer/ src/frontend/src/s
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `render-settings.ts` | 949 | `RenderSettings` interface, `renderSettingsStore` singleton, pin/part geometry helpers, net color rules. Part Type prefixes grouped under categories (696cbe2), MOSFET→Transistor rename (a5a2f8e). Format overrides system removed (0355f93). |
+| `render-settings.ts` | 953 | `RenderSettings` interface, `renderSettingsStore` singleton, pin/part geometry helpers, net color rules. Part Type prefixes grouped under categories (696cbe2), MOSFET→Transistor rename (a5a2f8e). Format overrides system removed (0355f93). `labelSizeSmall` default lowered 4 → 3 with auto-migration for stored value 4. |
 | `layer-store.ts` | 63 | `LayerState` type, `DEFAULT_LAYER_PALETTE` (15 colors), layer creation helpers |
 
 ## Key Exports
