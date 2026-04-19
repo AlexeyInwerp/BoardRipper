@@ -176,6 +176,9 @@ export class BoardRenderer {
   /** Bound shift+wheel handler — intercepts before pixi-viewport to implement scroll bindings */
   private boundShiftWheel: ((e: WheelEvent) => void) | null = null;
   private boundDragZoomDown: ((e: PointerEvent) => void) | null = null;
+  /** If a drag-zoom gesture is active, holds its cleanup function so dispose()
+   *  can force-remove the per-gesture window listeners. */
+  private activeDragZoomCleanup: (() => void) | null = null;
   /** Timer to re-pause ticker after wheel activity on an unfocused panel */
   private wheelIdleTimer: ReturnType<typeof setTimeout> | null = null;
   private hudEl: HTMLDivElement | null = null;
@@ -2156,13 +2159,18 @@ export class BoardRenderer {
         ev.stopPropagation();
       };
 
-      const cleanup = (ev: PointerEvent) => {
-        if (ev.pointerId !== pointerId) return;
+      const forceCleanup = () => {
         window.removeEventListener('pointermove', onMove, true);
         window.removeEventListener('pointerup', cleanup, true);
         window.removeEventListener('pointercancel', cleanup, true);
         try { (this.containerEl as Element).releasePointerCapture?.(pointerId); } catch { /* ignore */ }
         this.containerEl.style.cursor = '';
+        if (this.activeDragZoomCleanup === forceCleanup) this.activeDragZoomCleanup = null;
+      };
+
+      const cleanup = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        forceCleanup();
         if (committed) {
           ev.preventDefault();
           ev.stopPropagation();
@@ -2172,6 +2180,7 @@ export class BoardRenderer {
       window.addEventListener('pointermove', onMove, { capture: true, passive: false });
       window.addEventListener('pointerup', cleanup, { capture: true });
       window.addEventListener('pointercancel', cleanup, { capture: true });
+      this.activeDragZoomCleanup = forceCleanup;
     };
 
     this.containerEl.addEventListener('pointerdown', this.boundDragZoomDown, { capture: true });
@@ -3716,6 +3725,13 @@ export class BoardRenderer {
     if (this.boundShiftWheel) {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
       this.boundShiftWheel = null;
+    }
+    // Force-cleanup any in-flight drag-zoom gesture so its window-scoped
+    // listeners don't outlive this BoardRenderer and then dereference a
+    // disposed viewport on the next pointerup.
+    if (this.activeDragZoomCleanup) {
+      this.activeDragZoomCleanup();
+      this.activeDragZoomCleanup = null;
     }
     if (this.boundDragZoomDown) {
       this.containerEl.removeEventListener('pointerdown', this.boundDragZoomDown, true);
