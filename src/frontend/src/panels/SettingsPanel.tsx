@@ -716,31 +716,80 @@ function PdfQualitySelector() {
   );
 }
 
-function PdfWatermarkFilterEditor() {
-  const [value, setValue] = useState(() =>
-    renderSettingsStore.globalSettings.pdfWatermarkFilter.join(', ')
-  );
+/** Format the stored filter array into a textarea-friendly string (one term per line). */
+function formatWatermarkFilter(terms: string[]): string {
+  return terms.join('\n');
+}
 
-  const commit = useCallback((raw: string) => {
-    const terms = raw.split(',').map(t => t.trim()).filter(t => t.length > 0);
+/** Parse a textarea value into normalised filter terms (split on newline OR comma). */
+function parseWatermarkFilter(raw: string): string[] {
+  return raw.split(/[\n,]/).map(t => t.trim()).filter(t => t.length > 0);
+}
+
+function PdfWatermarkFilterEditor() {
+  const storedTerms = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+  const [value, setValue] = useState(() => formatWatermarkFilter(storedTerms));
+
+  // Dirty when the textarea would commit to a different terms list than what's stored.
+  const pendingTerms = parseWatermarkFilter(value);
+  const dirty =
+    pendingTerms.length !== storedTerms.length ||
+    pendingTerms.some((t, i) => t !== storedTerms[i]);
+
+  const commit = useCallback(() => {
     const current = renderSettingsStore.globalSnapshot();
-    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: terms });
-  }, []);
+    const next = parseWatermarkFilter(value);
+    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: next });
+    // Normalise the textarea to the canonical form so the dirty flag clears.
+    setValue(formatWatermarkFilter(next));
+  }, [value]);
+
+  const revert = useCallback(() => {
+    setValue(formatWatermarkFilter(storedTerms));
+  }, [storedTerms]);
 
   return (
     <div className="pdf-watermark-filter">
-      <input
-        type="text"
-        className="settings-text-input"
+      <textarea
+        className="settings-text-input pdf-watermark-textarea"
+        rows={4}
         value={value}
         onChange={e => setValue(e.target.value)}
-        onBlur={e => commit(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-        placeholder="comma-separated terms"
+        onKeyDown={e => {
+          // Ctrl / Cmd + Enter = save (plain Enter inserts a newline)
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        placeholder={'One term per line\n(commas also accepted)'}
+        spellCheck={false}
       />
+      <div className="pdf-watermark-actions">
+        <button
+          type="button"
+          className="settings-btn-option pdf-watermark-save"
+          onClick={commit}
+          disabled={!dirty}
+          title={dirty ? 'Save watermark filter (Ctrl/Cmd + Enter)' : 'No unsaved changes'}
+        >
+          {dirty ? 'Save' : 'Saved'}
+        </button>
+        {dirty && (
+          <button
+            type="button"
+            className="settings-btn-option pdf-watermark-revert"
+            onClick={revert}
+            title="Discard changes"
+          >
+            Revert
+          </button>
+        )}
+      </div>
       <p className="settings-hint">
-        Comma-separated. Matches ignore case and whitespace (so "www.chinafix.com" catches "w w w . c h i n a f i x . c o m").
-        Matching text is erased before rendering.
+        One term per line (or comma-separated). Matches ignore case and whitespace,
+        so "www.chinafix.com" catches "w w w . c h i n a f i x . c o m". Matching
+        text is erased before rendering. Press Ctrl/Cmd + Enter to save.
       </p>
     </div>
   );
