@@ -4944,6 +4944,19 @@ html, body, #root {
   letter-spacing: 0.05em;
   margin: 0 0 2px;
 }
+.home-quick-group-wide {
+  grid-column: 1 / -1;
+}
+.home-quick-hint {
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  opacity: 0.85;
+}
+.home-quick-hint strong {
+  color: var(--text-primary);
+}
 .home-toggle-row {
   display: flex;
   justify-content: space-between;
