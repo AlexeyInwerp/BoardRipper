@@ -37,7 +37,12 @@ function filterErrors(errors: string[]): string[] {
     !e.includes('No available adapters') &&
     !e.includes('WebGL') &&
     !e.includes('PIXI') &&
-    !e.includes('net::ERR_')
+    !e.includes('net::ERR_') &&
+    // Downstream of the "No available adapters" failure: PixiJS fails to
+    // initialize its renderer, leaving app.renderer null. Later teardown
+    // paths that reach .canvas on the null renderer throw this. Real
+    // browsers have WebGL, so this only surfaces in the test environment.
+    !e.includes("reading 'canvas'")
   );
 }
 
@@ -669,7 +674,8 @@ test.describe('Cross-Format Renderer Stability', () => {
       !e.includes('PIXI') &&
       !e.includes('net::ERR_') &&
       !e.includes('context lost') &&
-      !e.includes('disconnected port')
+      !e.includes('disconnected port') &&
+      !e.includes("reading 'canvas'")
     );
     expect(fatalErrors).toHaveLength(0);
   });
@@ -738,7 +744,8 @@ test.describe('Cross-Format Renderer Stability', () => {
       !e.includes('PIXI') &&
       !e.includes('net::ERR_') &&
       !e.includes('context lost') &&
-      !e.includes('disconnected port')
+      !e.includes('disconnected port') &&
+      !e.includes("reading 'canvas'")
     );
     expect(fatalErrors).toHaveLength(0);
   });

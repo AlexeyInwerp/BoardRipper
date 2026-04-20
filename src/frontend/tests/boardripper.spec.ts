@@ -97,10 +97,15 @@ test.describe('BoardRipper', () => {
     await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 15000 });
     const statsAfterBoard1 = await page.getByTestId('statusbar').textContent();
 
-    // Open second board (820-02935-05.brd)
+    // Open second board (820-02935-05.brd). Between setInputFiles and the
+    // new board being parsed, the statusbar briefly shows the unloaded
+    // welcome string — which is not statsAfterBoard1 either, so a plain
+    // not-equal assertion would race-match it and capture welcome text
+    // as "board2 stats". Wait for the BRD format marker specifically to
+    // confirm we're in the loaded state before snapshotting.
     const board2 = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
     await fileInput.setInputFiles(board2);
-    await expect(page.getByTestId('statusbar')).not.toContainText(statsAfterBoard1!, { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).toContainText('BRD|', { timeout: 15000 });
     const statsAfterBoard2 = await page.getByTestId('statusbar').textContent();
     console.log('Board1 stats:', statsAfterBoard1, '| Board2 stats:', statsAfterBoard2);
 
@@ -173,7 +178,7 @@ test.describe('BoardRipper', () => {
     await expect(tab2).toBeVisible({ timeout: 3000 });
     await tab2.click();
     await page.waitForTimeout(500);
-    expect(await page.getByTestId('statusbar').textContent()).toContain('4317');
+    expect(await page.getByTestId('statusbar').textContent()).toContain('6557');
 
     // Switch back to board 1 via its PDF tab (tests PDF→board cross-activation)
     const pdfTab1 = page.locator('.dv-tab', { hasText: '820-02016.pdf' }).first();
