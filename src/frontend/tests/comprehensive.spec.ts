@@ -16,7 +16,7 @@ async function loadBoard(page: import('@playwright/test').Page, filePath: string
   const fileInput = page.getByTestId('file-input');
   await fileInput.setInputFiles(filePath);
   const text = expectedText ?? 'parts';
-  await expect(page.getByTestId('file-name')).toContainText(text, { timeout: 15000 });
+  await expect(page.getByTestId('statusbar')).toContainText(text, { timeout: 15000 });
 }
 
 test.describe('Comprehensive Board Tests', () => {
@@ -52,7 +52,7 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const stats = await page.getByTestId('file-name').textContent();
+    const stats = await page.getByTestId('statusbar').textContent();
     // test-board.bvr has: U1, R1-R4, C1-C3, U2, J1 = 10 parts
     expect(stats).toContain('10 parts');
   });
@@ -213,13 +213,13 @@ test.describe('Comprehensive Board Tests', () => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const statsFirst = await page.getByTestId('file-name').textContent();
+    const statsFirst = await page.getByTestId('statusbar').textContent();
 
     // Open the same file again
     await page.getByTestId('file-input').setInputFiles(TEST_BVR1);
     await page.waitForTimeout(500);
 
-    const statsSecond = await page.getByTestId('file-name').textContent();
+    const statsSecond = await page.getByTestId('statusbar').textContent();
     expect(statsSecond).toBe(statsFirst);
 
     // Should still have only 1 dockview tab
@@ -233,11 +233,11 @@ test.describe('Comprehensive Board Tests', () => {
 
     // Load first board
     await loadBoard(page, REAL_BVR3, '3075');
-    const stats1 = await page.getByTestId('file-name').textContent();
+    const stats1 = await page.getByTestId('statusbar').textContent();
 
     // Load second board
     await loadBoard(page, REAL_BRD, '4317');
-    const stats2 = await page.getByTestId('file-name').textContent();
+    const stats2 = await page.getByTestId('statusbar').textContent();
     expect(stats2).not.toBe(stats1);
 
     // Switch back to first
@@ -245,7 +245,7 @@ test.describe('Comprehensive Board Tests', () => {
     await tab1.click();
     await page.waitForTimeout(400);
 
-    const statsAfterSwitch = await page.getByTestId('file-name').textContent();
+    const statsAfterSwitch = await page.getByTestId('statusbar').textContent();
     expect(statsAfterSwitch).toBe(stats1);
   });
 

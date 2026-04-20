@@ -16,7 +16,7 @@ test.describe('TVW Parser', () => {
     await fileInput.setInputFiles(tvwFile);
 
     // Wait for parsing — status bar should show component/net counts
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 30000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 30000 });
     await expect(page.getByTestId('statusbar')).toContainText('Components:');
     await expect(page.getByTestId('statusbar')).toContainText('Nets:');
 
@@ -34,7 +34,7 @@ test.describe('TVW Parser', () => {
     await fileInput.setInputFiles(tvwFile);
 
     // Wait for parsing
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 30000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 30000 });
 
     // Status bar should show significant component/net counts for the NM-D711 board
     const statusText = await page.getByTestId('statusbar').textContent();
@@ -61,7 +61,7 @@ test.describe('TVW Parser', () => {
     await fileInput.setInputFiles(tvwFile);
 
     // Wait for parsing
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 30000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 30000 });
 
     const statusText = await page.getByTestId('statusbar').textContent();
     expect(statusText).toBeTruthy();
@@ -118,7 +118,7 @@ test.describe('TVW Parser', () => {
     await fileInput.setInputFiles(tvwFile);
 
     // Wait for parsing
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 30000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 30000 });
 
     // Traces button should now be visible and active (traces on by default)
     const tracesBtn = page.getByTestId('traces-btn');

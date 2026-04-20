@@ -25,8 +25,7 @@ test.describe('BoardRipper', () => {
     const testFile = path.resolve(__dirname, '../public/samples/test-board.bvr');
     await fileInput.setInputFiles(testFile);
 
-    // file-name span shows "N parts | N nets"
-    await expect(page.getByTestId('file-name')).toContainText('parts');
+    // statusbar shows "Components: N | Nets: M"
     await expect(page.getByTestId('statusbar')).toContainText('Components:');
     await expect(page.getByTestId('statusbar')).toContainText('Nets:');
 
@@ -42,7 +41,7 @@ test.describe('BoardRipper', () => {
     const realFile = path.resolve(__dirname, '../../../samples/820-02016.bvr');
     await fileInput.setInputFiles(realFile);
 
-    await expect(page.getByTestId('file-name')).toContainText('3075', { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).toContainText('3075', { timeout: 15000 });
     await expect(page.getByTestId('statusbar')).toContainText('Components:');
     await expect(page.getByTestId('statusbar')).toContainText('Nets:');
   });
@@ -59,7 +58,7 @@ test.describe('BoardRipper', () => {
     const fileInput = page.getByTestId('file-input');
     const testFile = path.resolve(__dirname, '../public/samples/test-board.bvr');
     await fileInput.setInputFiles(testFile);
-    await expect(page.getByTestId('file-name')).toContainText('parts');
+    await expect(page.getByTestId('statusbar')).toContainText('Components');
 
     // Open the sidebar via the toggle button
     await page.locator('.board-sidebar-toggle').first().click();
@@ -74,7 +73,7 @@ test.describe('BoardRipper', () => {
     const fileInput = page.getByTestId('file-input');
     const testFile = path.resolve(__dirname, '../public/samples/test-board.bvr');
     await fileInput.setInputFiles(testFile);
-    await expect(page.getByTestId('file-name')).toContainText('parts');
+    await expect(page.getByTestId('statusbar')).toContainText('Components');
 
     const searchInput = page.getByTestId('search-input');
     await searchInput.fill('U1');
@@ -95,14 +94,14 @@ test.describe('BoardRipper', () => {
     const board1 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
     await fileInput.setInputFiles(board1);
     // Wait for board to load: stats span shows "parts |"
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
-    const statsAfterBoard1 = await page.getByTestId('file-name').textContent();
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 15000 });
+    const statsAfterBoard1 = await page.getByTestId('statusbar').textContent();
 
     // Open second board (820-02935-05.brd)
     const board2 = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
     await fileInput.setInputFiles(board2);
-    await expect(page.getByTestId('file-name')).not.toContainText(statsAfterBoard1!, { timeout: 15000 });
-    const statsAfterBoard2 = await page.getByTestId('file-name').textContent();
+    await expect(page.getByTestId('statusbar')).not.toContainText(statsAfterBoard1!, { timeout: 15000 });
+    const statsAfterBoard2 = await page.getByTestId('statusbar').textContent();
     console.log('Board1 stats:', statsAfterBoard1, '| Board2 stats:', statsAfterBoard2);
 
     // dockview renders tabs as .dv-tab elements containing the panel title text
@@ -113,7 +112,7 @@ test.describe('BoardRipper', () => {
     await expect(tab1).toBeVisible({ timeout: 3000 });
     await tab1.click();
     await page.waitForTimeout(400);
-    const statsAfterSwitchTo1 = await page.getByTestId('file-name').textContent();
+    const statsAfterSwitchTo1 = await page.getByTestId('statusbar').textContent();
     console.log('Stats after switching back to board1:', statsAfterSwitchTo1);
     expect(statsAfterSwitchTo1).toBe(statsAfterBoard1);
 
@@ -121,7 +120,7 @@ test.describe('BoardRipper', () => {
     await expect(tab2).toBeVisible({ timeout: 3000 });
     await tab2.click();
     await page.waitForTimeout(400);
-    const statsAfterSwitchTo2 = await page.getByTestId('file-name').textContent();
+    const statsAfterSwitchTo2 = await page.getByTestId('statusbar').textContent();
     console.log('Stats after switching back to board2:', statsAfterSwitchTo2);
     expect(statsAfterSwitchTo2).toBe(statsAfterBoard2);
 
@@ -152,13 +151,13 @@ test.describe('BoardRipper', () => {
 
     // Open board 1 + PDF 1
     await fileInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02016.bvr'));
-    await expect(page.getByTestId('file-name')).toContainText('3075', { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).toContainText('3075', { timeout: 15000 });
     await pdfInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02016.pdf'));
     await page.waitForTimeout(500); // let PDF panel open + auto-bind
 
     // Open board 2 + PDF 2
     await fileInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02935-05.brd'));
-    await expect(page.getByTestId('file-name')).not.toContainText('3075', { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).not.toContainText('3075', { timeout: 15000 });
     await pdfInput.setInputFiles(path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf'));
     await page.waitForTimeout(500);
 
@@ -167,22 +166,22 @@ test.describe('BoardRipper', () => {
     await expect(tab1).toBeVisible({ timeout: 3000 });
     await tab1.click();
     await page.waitForTimeout(500);
-    expect(await page.getByTestId('file-name').textContent()).toContain('3075');
+    expect(await page.getByTestId('statusbar').textContent()).toContain('3075');
 
     // Switch to board 2 tab
     const tab2 = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
     await expect(tab2).toBeVisible({ timeout: 3000 });
     await tab2.click();
     await page.waitForTimeout(500);
-    expect(await page.getByTestId('file-name').textContent()).toContain('4317');
+    expect(await page.getByTestId('statusbar').textContent()).toContain('4317');
 
     // Switch back to board 1 via its PDF tab (tests PDF→board cross-activation)
     const pdfTab1 = page.locator('.dv-tab', { hasText: '820-02016.pdf' }).first();
     if (await pdfTab1.isVisible({ timeout: 2000 }).catch(() => false)) {
       await pdfTab1.click();
       await page.waitForTimeout(500);
-      console.log('After clicking PDF1 tab, stats:', await page.getByTestId('file-name').textContent());
-      expect(await page.getByTestId('file-name').textContent()).toContain('3075');
+      console.log('After clicking PDF1 tab, stats:', await page.getByTestId('statusbar').textContent());
+      expect(await page.getByTestId('statusbar').textContent()).toContain('3075');
     }
 
     // Print renderer/panel/pdf logs for diagnosis
@@ -205,7 +204,7 @@ test.describe('BoardRipper', () => {
     const fileInput = page.getByTestId('file-input');
     const testFile = path.resolve(__dirname, '../public/samples/test-board.bvr');
     await fileInput.setInputFiles(testFile);
-    await expect(page.getByTestId('file-name')).toContainText('parts');
+    await expect(page.getByTestId('statusbar')).toContainText('Components');
 
     const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
     const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });

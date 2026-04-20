@@ -190,7 +190,7 @@ test.describe('Allegro BRD Parser', () => {
     await fileInput.setInputFiles(brdFile);
 
     // Wait for parsing — status bar should show component/net counts
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 60000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 60000 });
     await expect(page.getByTestId('statusbar')).toContainText('Components:');
     await expect(page.getByTestId('statusbar')).toContainText('Nets:');
 
