@@ -764,6 +764,16 @@ export class BoardRenderer {
       autoDensity: true,
       powerPreference: 'high-performance',
     });
+    // React StrictMode (and fast HMR) can run mount → unmount → remount while
+    // `app.init()` is mid-await. The cleanup path calls destroy() synchronously,
+    // which nulls `this.app` (see the bottom of destroy()). When the awaited
+    // promise finally resolves we'd continue executing here with this.app ===
+    // null, crashing at .canvas access. Bail out quietly in that case — the
+    // remount will create a fresh BoardRenderer.
+    if (this.destroyed || !this.app) {
+      log.render.log(`init: aborted — renderer destroyed during app.init (tab=${this.tabId})`);
+      return;
+    }
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
 
