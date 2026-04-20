@@ -187,24 +187,23 @@ build_docker() {
 
 # Kick off mac + win Electron builds in parallel. Mac requires darwin host.
 build_electron() {
-  log "Building Electron apps (parallel)"
-  local -a PIDS=()
-  ( cd desktop && node build-all.mjs --win ) > "$STAGE/build-win.log" 2>&1 &
-  PIDS+=($!)
+  # electron-packager shares /tmp/electron-packager across invocations and
+  # races on file renames inside the extracted prebuilt directory when
+  # invoked concurrently (observed failure: ENOENT rename electron.exe →
+  # BoardRipper.exe). Running sequentially avoids the race and the total
+  # wall time is still within ~2 minutes.
+  log "Building Electron Windows app"
+  ( cd desktop && node build-all.mjs --win ) > "$STAGE/build-win.log" 2>&1 \
+    || die "Windows Electron build failed — see $STAGE/build-win.log"
+  cp "desktop/out-win/BoardRipper-Windows-x64-$VERSION.zip" "$ARTIFACTS/"
   if [ "$(uname -s)" = "Darwin" ]; then
-    ( cd desktop && node build-all.mjs --mac ) > "$STAGE/build-mac.log" 2>&1 &
-    PIDS+=($!)
+    log "Building Electron macOS app"
+    ( cd desktop && node build-all.mjs --mac ) > "$STAGE/build-mac.log" 2>&1 \
+      || die "macOS Electron build failed — see $STAGE/build-mac.log"
+    cp "desktop/out/BoardRipper-macOS-universal-$VERSION.zip" "$ARTIFACTS/"
   else
     warn "Not on darwin — skipping macOS Electron build; upload the .zip later with 'gh release upload'"
   fi
-  local fail=0
-  for p in "${PIDS[@]}"; do
-    wait "$p" || { fail=1; warn "Electron build PID $p failed — see $STAGE/build-*.log"; }
-  done
-  [ $fail -eq 0 ] || die "Electron build(s) failed — aborting"
-  cp "desktop/out-win/BoardRipper-Windows-x64-$VERSION.zip" "$ARTIFACTS/"
-  [ -f "desktop/out/BoardRipper-macOS-universal-$VERSION.zip" ] \
-    && cp "desktop/out/BoardRipper-macOS-universal-$VERSION.zip" "$ARTIFACTS/"
 }
 
 local_build() {
@@ -264,6 +263,7 @@ main() {
   case "$MODE" in
     local)
       preflight
+      push_tag
       local_build
       publish
       ;;
