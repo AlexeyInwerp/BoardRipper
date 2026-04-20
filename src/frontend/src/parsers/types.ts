@@ -153,6 +153,10 @@ export interface BoardData {
    *  (e.g. J8 left in place after being upgraded to J4008). Surfaced in the
    *  UI so the user can verify against the physical board, never auto-pruned. */
   ghosts?: GhostComponent[];
+  /** Human-readable notes about transformations the parser applied to the
+   *  raw file data — e.g. "Un-mirrored X coords (v1 SERG_UKRAINE converter)".
+   *  Surfaced to the user as an info toast on load so the fixup is not silent. */
+  parserNotes?: string[];
 }
 
 export interface GhostComponent {

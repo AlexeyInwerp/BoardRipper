@@ -969,6 +969,11 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   };
   if (formatVersion) board.formatVersion = formatVersion;
   if (active.ghosts.length > 0) board.ghosts = active.ghosts;
+  if (isMirroredConverter) {
+    board.parserNotes = [
+      'Board was horizontally un-mirrored on load — source file was produced by a buggy early version of the SERG_UKRAINE//GOCCANH_VIETNAM GenCAD converter that emits X-flipped coordinates. Newer outputs from the same author (SERG_UKRAINA-) are unaffected.',
+    ];
+  }
   if (revisions.length > 1) {
     board.revisions = revisions;
     board.activeRevision = active.index;
