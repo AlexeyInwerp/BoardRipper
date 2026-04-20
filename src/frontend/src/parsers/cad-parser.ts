@@ -19,6 +19,7 @@
 import type { BoardData, BoardRevision, Part, Pin, Nail, Point, Trace, Via } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents } from './types';
 import { detectXMirrorByPinDirection, applyXMirrorInPlace } from './mirror-detect';
+import { log } from '../store/log-store';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -834,6 +835,17 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // build, outline synthesis) sees the corrected geometry.
   const allParts = partsByPass.flat();
   const mirrorVerdict = detectXMirrorByPinDirection(allParts);
+  {
+    const pct = isNaN(mirrorVerdict.wrongRatio) ? 'n/a' : (mirrorVerdict.wrongRatio * 100).toFixed(0) + '%';
+    const diag = `top-CCW=${mirrorVerdict.topCCW} top-CW=${mirrorVerdict.topCW} (wrong=${pct} of ${mirrorVerdict.totalAnalyzed}), bottom-CCW=${mirrorVerdict.bottomCCW} bottom-CW=${mirrorVerdict.bottomCW}`;
+    if (mirrorVerdict.mirrored) {
+      log.parser.warn(`X-mirror detected via QFN pin-direction heuristic; un-mirroring board. ${diag}`);
+    } else if (mirrorVerdict.totalAnalyzed >= 10) {
+      log.parser.log(`X-mirror check: clean. ${diag}`);
+    } else {
+      log.parser.log(`X-mirror check: insufficient data (${mirrorVerdict.totalAnalyzed} top-side chips, need ≥10). ${diag}`);
+    }
+  }
   if (mirrorVerdict.mirrored) {
     applyXMirrorInPlace(allParts, nails, routes.traces, [...routes.vias, ...mechHoles]);
   }
