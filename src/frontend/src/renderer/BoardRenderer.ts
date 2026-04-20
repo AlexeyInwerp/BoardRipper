@@ -202,6 +202,10 @@ export class BoardRenderer {
   // Pin labels raised above the ambient dim overlay for the selected part.
   // Each entry remembers where to put the child back on the next update.
   private raisedPinLabels: { child: Container; parent: Container; index: number }[] = [];
+  // The bright-white clone of the selected part's name label (lives in
+  // netLabelLayer). Tracked so the per-tick loop can fade its alpha when the
+  // part grows large enough on screen that the label would cover pins.
+  private selectedPartLabelClone: BitmapText | null = null;
 
   // On-demand rendering: only render when something changed
   private needsRender = true;
@@ -2280,17 +2284,23 @@ export class BoardRenderer {
 
   // --- Selection rendering (always rebuilt, lightweight) ---
 
-  /** Reuse or create a BitmapText in the net label pool, copying properties from a source label */
+  /** Reuse or create a BitmapText in the net label pool, copying properties from a source label.
+   *  Inherits the source's `fontFamily` so the clone binds to the same BitmapFont atlas —
+   *  otherwise a shadow-baked source label gets cloned onto a plain 'monospace' atlas with
+   *  different glyph metrics, producing a low-res ghost sitting a few pixels above the original. */
   private acquireNetLabel(srcLabel: BitmapText) {
+    const srcFontSize = srcLabel.style.fontSize as number;
+    const srcFontFamily = srcLabel.style.fontFamily as string;
     let label: BitmapText;
     if (this.netLabelPoolIdx < this.netLabelLayer.children.length) {
       label = this.netLabelLayer.children[this.netLabelPoolIdx] as BitmapText;
       label.text = srcLabel.text;
-      label.style.fontSize = srcLabel.style.fontSize as number;
+      label.style.fontSize = srcFontSize;
+      label.style.fontFamily = srcFontFamily;
     } else {
       label = new BitmapText({
         text: srcLabel.text,
-        style: { fontSize: srcLabel.style.fontSize as number, fill: 0xffffff, fontFamily: 'monospace' },
+        style: { fontSize: srcFontSize, fill: 0xffffff, fontFamily: srcFontFamily },
       });
       label.anchor.set(0.5, 0.5);
       this.netLabelLayer.addChild(label);
@@ -2299,6 +2309,7 @@ export class BoardRenderer {
     label.y = srcLabel.y;
     label.rotation = srcLabel.rotation;
     label.scale.copyFrom(srcLabel.scale);
+    label.alpha = 1;
     label.visible = true;
     this.netLabelPoolIdx++;
   }
@@ -2318,6 +2329,8 @@ export class BoardRenderer {
     this.netDimGfx.clear();
     // Restore any pin labels previously raised above the dim overlay back to
     // their original parents (top/bottom pin layers inside the part container).
+    // Visibility is not touched here — LoD (applyLabelVisibility) owns the
+    // .visible flag for these labels whether raised or restored.
     if (this.raisedPinLabels.length > 0) {
       for (let i = this.raisedPinLabels.length - 1; i >= 0; i--) {
         const { child, parent, index } = this.raisedPinLabels[i];
@@ -2351,10 +2364,15 @@ export class BoardRenderer {
     // visual result is identical regardless of whether a pin or only a part is selected.
     // (BitmapText style.fill has no runtime effect and tint can't brighten past fill,
     // so modifying the original label in-place cannot achieve full white.)
+    this.selectedPartLabelClone = null;
     if (sel.partIndex !== null && this.activeScene) {
       const lbl = this.activeScene.partLabelByIndex.get(sel.partIndex);
       if (lbl && lbl.visible) {
         this.acquireNetLabel(lbl);
+        // The selected part's name clone is always the first pool entry consumed
+        // in this pass. Track it so updateSelectedPartLabelAlpha() can fade it
+        // when the part fills the screen.
+        this.selectedPartLabelClone = this.netLabelLayer.children[this.netLabelPoolIdx - 1] as BitmapText;
       }
     }
 
@@ -2444,13 +2462,18 @@ export class BoardRenderer {
       // above the selection fill (zIndex 30) and the netDim overlay alike.
       // Skip butterfly-bottom labels — they live in butterflyRoot and would
       // render mirrored if moved into scene.root's netLabelLayer.
+      // Visibility is NOT forced here — LoD (applyLabelVisibility) still owns
+      // the .visible flag, so a label that LoD has hidden (pin numbers not yet
+      // rendering at the current zoom) stays hidden even when its part is
+      // selected. That matches "pin number / net name labels should only render
+      // as soon as pin numbers are" for the selected part.
       const selPart = this.board.parts[sel.partIndex];
       const skipRaise = butterfly && selPart?.side === 'bottom';
       if (selPart && this.isPartVisible(selPart) && !skipRaise && this.activeScene) {
         const pinLabels = this.activeScene.pinLabelsByPartIndex.get(sel.partIndex);
         if (pinLabels) {
           for (const child of pinLabels) {
-            if (!child.visible || !child.parent || child.parent === this.netLabelLayer) continue;
+            if (!child.parent || child.parent === this.netLabelLayer) continue;
             const parent = child.parent as Container;
             const index = parent.getChildIndex(child);
             this.raisedPinLabels.push({ child, parent, index });
@@ -2825,6 +2848,18 @@ export class BoardRenderer {
     if (!this.board || sel.partIndex === null || !this.activeScene) return;
     const part = this.board.parts[sel.partIndex];
     if (!part) return;
+
+    // Fade the bright-white part-name clone (in netLabelLayer) as soon as pin
+    // numbers start rendering at the current zoom — at that point the part
+    // name would otherwise cover pins and pin-number labels (also white).
+    const clone = this.selectedPartLabelClone;
+    if (clone && clone.visible) {
+      const fadeScale = Math.abs(this.viewport.scale.x);
+      const zoomOk = s.labelZoomHide <= 0 || fadeScale >= s.labelZoomHide;
+      const groups = this.activeScene.circleFontSizeGroups;
+      const pinNumbersVisible = zoomOk && groups.some(g => g.minSize * fadeScale >= s.circleLabelMinScreenPx);
+      clone.alpha = pinNumbersVisible ? 0.55 : 1;
+    }
 
     // Font size is constant in screen pixels — divide by viewport scale to get world units
     const vpScale = Math.abs(this.viewport.scale.x);

@@ -2276,6 +2276,12 @@ html, body, #root {
   border-bottom: 1px solid var(--border);
 }
 
+.visibility-toggle-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
 .visibility-toggle {
   display: flex;
   align-items: center;
@@ -2288,6 +2294,11 @@ html, body, #root {
   padding: 3px 12px;
   text-align: left;
   width: 100%;
+}
+
+.visibility-toggle-row > .visibility-toggle {
+  flex: 1;
+  width: auto;
 }
 
 .visibility-toggle:hover {
