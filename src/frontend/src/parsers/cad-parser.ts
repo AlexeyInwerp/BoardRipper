@@ -701,18 +701,25 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     }
   }
 
-  // Some "HTML → CAD" converters scrape a boardview web viewer (e.g.
-  // smd.db-x7.ru) that displays the PCB horizontally mirrored, and emit
-  // those mirrored world coordinates verbatim. Every X is flipped vs. the
-  // physical board. Detect by two fingerprints unique to that converter
-  // family within our sample corpus:
-  //   REVISION "SMD.DB-X7.RU"                       — HTML source site
-  //   ATTRIBUTE HEADER_2 "PATH" "...HTML TO CAD..." — explicit conversion tag
-  // Gating on the USER line alone would also catch the sibling Quanta
-  // export (same author, non-HTML source) which is NOT mirrored.
-  const isHtmlMirrored = headerLines.some(raw => {
+  // A GenCAD converter authored by "SERG_UKRAINE/UKRAINA // GOCCANH_VIETNAM"
+  // emits world coordinates that are horizontally mirrored relative to the
+  // physical board — confirmed across every known output of this tool
+  // (HTML-scraped GOG10, plus Quanta NJM and ACER Predator exports that
+  // carry no HTML markers). The converter family itself is the root cause;
+  // explicit HTML-conversion tags (SMD.DB-X7.RU, "Convert HTML TO CAD")
+  // are just extra metadata on one variant. Gate on any of these markers:
+  //   USER "...SERG_UKRAIN...- Licensed"      — author line, UKRAINE/UKRAINA
+  //   USER "...GOCCANH..."                    — co-author, also unique
+  //   REVISION "SMD.DB-X7.RU"                 — fallback: HTML-scraped subset
+  //   ATTRIBUTE HEADER_2 "PATH" "...HTML TO CAD..." — fallback: HTML tag
+  // All CAMCAD/Mentor/Teradyne/Allegro/Pegatron samples pass through
+  // untouched because none of these tokens appear in their headers.
+  const isMirroredConverter = headerLines.some(raw => {
     const l = raw.trim().toLowerCase();
-    return l.includes('smd.db-x7') || l.includes('html to cad');
+    return l.includes('serg_ukrain')
+        || l.includes('goccanh')
+        || l.includes('smd.db-x7')
+        || l.includes('html to cad');
   });
 
   // Parse sections
@@ -723,7 +730,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
 
-  if (isHtmlMirrored) {
+  if (isMirroredConverter) {
     for (const s of shapes.values()) for (const p of s.pins) p.x = -p.x;
     for (const c of components) c.placeX = -c.placeX;
   }
@@ -843,7 +850,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
   const nails: Nail[] = [...testpins, ...powerpins];
 
-  if (isHtmlMirrored) {
+  if (isMirroredConverter) {
     for (const t of routes.traces) { t.start.x = -t.start.x; t.end.x = -t.end.x; }
     for (const v of routes.vias) v.position.x = -v.position.x;
     for (const n of nails) n.position.x = -n.position.x;
