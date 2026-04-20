@@ -701,25 +701,24 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     }
   }
 
-  // A GenCAD converter authored by "SERG_UKRAINE/UKRAINA // GOCCANH_VIETNAM"
-  // emits world coordinates that are horizontally mirrored relative to the
-  // physical board — confirmed across every known output of this tool
-  // (HTML-scraped GOG10, plus Quanta NJM and ACER Predator exports that
-  // carry no HTML markers). The converter family itself is the root cause;
-  // explicit HTML-conversion tags (SMD.DB-X7.RU, "Convert HTML TO CAD")
-  // are just extra metadata on one variant. Gate on any of these markers:
-  //   USER "...SERG_UKRAIN...- Licensed"      — author line, UKRAINE/UKRAINA
-  //   USER "...GOCCANH..."                    — co-author, also unique
-  //   REVISION "SMD.DB-X7.RU"                 — fallback: HTML-scraped subset
-  //   ATTRIBUTE HEADER_2 "PATH" "...HTML TO CAD..." — fallback: HTML tag
-  // All CAMCAD/Mentor/Teradyne/Allegro/Pegatron samples pass through
-  // untouched because none of these tokens appear in their headers.
+  // One specific *version* of an unofficial GenCAD converter — authored by
+  // "SERG_UKRAINE//GOCCANH_VIETNAM" — emits world coordinates that are
+  // horizontally mirrored relative to the physical board. A later version
+  // of the same converter (USER "SERG_UKRAINA-GOCCANH_VIETNAM", DRAWING
+  // "Board_0_0", PATH "Convert PCB ACE ASC HTML FZ TO CAD") fixes the
+  // bug and produces correct coords — so gating on the author-pair alone
+  // would incorrectly flip ASRock/Quanta exports from the fixed version.
+  // The old, buggy version has two unique tokens:
+  //   USER "...SERG_UKRAINE//..."                — UKRAINE (E), double slash
+  //   ATTRIBUTE HEADER_2 "PATH" "...HTML TO CAD..." (exact; the newer
+  //     variant says "HTML FZ TO CAD" which does NOT contain "HTML TO CAD"
+  //     as a substring, so the two versions remain distinguishable)
+  // Neither token appears in any CAMCAD/Mentor/Teradyne/Allegro/Pegatron
+  // export nor in the *fixed* SERG_UKRAINA-GOCCANH outputs.
   const isMirroredConverter = headerLines.some(raw => {
     const l = raw.trim().toLowerCase();
-    return l.includes('serg_ukrain')
-        || l.includes('goccanh')
-        || l.includes('smd.db-x7')
-        || l.includes('html to cad');
+    return l.includes('serg_ukraine')   // E-ending spelling = buggy version
+        || l.includes('html to cad');   // old PATH with no intermediate token
   });
 
   // Parse sections
