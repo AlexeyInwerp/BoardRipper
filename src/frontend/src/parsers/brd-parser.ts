@@ -25,6 +25,8 @@
 
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets, computePartGeometry } from './types';
+import { applyXMirrorInPlace } from './mirror-detect';
+import { log } from '../store/log-store';
 
 // ---------------------------------------------------------------------------
 // Decoding
@@ -196,6 +198,11 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
   const partNames: string[] = [];
   const partFlags: number[] = [];
   const partCumPins: number[] = []; // running total of pins through this part
+  // Distinguish the two BRD writer tools by which section naming they use
+  // ("Pins1"/"Pins2" vs "Parts"/"Pins"). The X-flip normalization below
+  // applies only to the "Pins1/Pins2" writer when its IC distribution is
+  // un-inverted — see rationale at the normalization block.
+  const isPins1Variant = secs.has('Pins1');
   const p1Lines = secs.get('Pins1') ?? secs.get('Parts') ?? [];
   let p1count = 0;
   for (const line of p1Lines) {
@@ -300,6 +307,32 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     throw new Error('BRD file parsed but contains no parts or outline — file may be corrupt or empty');
   }
 
+  // ---- BRD-writer X-flip normalization ------------------------------------
+  // The BRD corpus comes from two different writer tools. They split into
+  // four buckets by (section-variant × inverted-flag):
+  //
+  //   Parts/Pins  + inverted=Y  →  render correctly as-is   (e.g. 820-00281)
+  //   Parts/Pins  + inverted=N  →  render correctly as-is   (e.g. 820-00291)
+  //   Pins1/Pins2 + inverted=Y  →  render correctly as-is   (e.g. LA-H501P)
+  //   Pins1/Pins2 + inverted=N  →  X-FLIPPED in storage     (020-02098 etc.)
+  //
+  // Only the last bucket needs a parse-time X-flip. The Pins1/Pins2 writer
+  // with un-inverted IC flags stores coordinates in the opposite X frame
+  // from the other three, so without the flip the board renders mirrored.
+  // Confirmed ground truth on 6 files: 820-00281, LA-H501P, 820-00291,
+  // 820-02098, 820-02935-05, 820-01823.
+  let parserNotes: string[] | undefined;
+  const needsXFlip = isPins1Variant && !inverted;
+  if (needsXFlip) {
+    log.parser.warn(`BRD X-mirror normalization applied (Pins1/Pins2 writer, inverted=false)`);
+    applyXMirrorInPlace(parts, nails, [], [], outline);
+    parserNotes = [
+      'Board was horizontally un-mirrored on load — the file was produced by a BRD writer whose X-axis convention is opposite to the renderer\'s (Pins1/Pins2 section format with non-inverted flag distribution).',
+    ];
+  } else {
+    log.parser.log(`BRD X-mirror check: variant=${isPins1Variant ? 'Pins1/Pins2' : 'Parts/Pins'}, inverted=${inverted}, no flip needed`);
+  }
+
   // ---- Finalise -----------------------------------------------------------
   const allPoints = [
     ...outline,
@@ -308,5 +341,7 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
   const bounds = computeBBox(allPoints);
   const nets   = buildNets(parts);
 
-  return { format: 'BRD', outline, parts, nails, nets, bounds };
+  const board: BoardData = { format: 'BRD', outline, parts, nails, nets, bounds };
+  if (parserNotes) board.parserNotes = parserNotes;
+  return board;
 }
