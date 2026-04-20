@@ -56,6 +56,7 @@ interface SerializedBoardData {
   revisions?: SerializedRevision[];
   activeRevision?: number;
   ghosts?: GhostComponent[];
+  parserNotes?: string[];
 }
 
 interface SerializedRevision {
@@ -102,6 +103,7 @@ function serialize(board: BoardData): SerializedBoardData {
     })),
     activeRevision: board.activeRevision,
     ghosts: board.ghosts,
+    parserNotes: board.parserNotes,
   };
 }
 
@@ -137,6 +139,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       })),
       activeRevision: data.activeRevision,
       ghosts: data.ghosts,
+      parserNotes: data.parserNotes,
     };
   } catch {
     return null;

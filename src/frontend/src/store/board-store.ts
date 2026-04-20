@@ -552,6 +552,9 @@ class BoardStore extends Emitter {
             tab.showBottom = true;
           }
           if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, wantsBottomOnOpen ? 'bottom' : 'top');
+          if (cached.parserNotes) {
+            for (const note of cached.parserNotes) this.addToast(note, 'info');
+          }
           this.autoBindBoard(file.name);
           // Create panel AFTER board + rotation are ready so the renderer sees correct state
           this.onTabCreated?.(id, file.name);
@@ -596,6 +599,10 @@ class BoardStore extends Emitter {
         if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, wantsBottomOnOpen ? 'bottom' : 'top');
 
         await boardCache.put(file.name, file.size, file.lastModified, board);
+
+        if (board.parserNotes) {
+          for (const note of board.parserNotes) this.addToast(note, 'info');
+        }
 
         this.autoBindBoard(file.name);
       } catch (err) {
