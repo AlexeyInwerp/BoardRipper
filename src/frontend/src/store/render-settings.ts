@@ -230,7 +230,7 @@ export const DEFAULTS: RenderSettings = {
   labelHideThreshold: 2,
 
   pinMinRadius: 3,
-  pinMaxRadius: 30,
+  pinMaxRadius: 15,
   pinScaleFactor: 1,
   partMinBodyRatio: 0.8,
   pinAlpha: 0.85,
@@ -741,6 +741,10 @@ function loadFromStorage(): RenderSettings {
       // are preserved verbatim — they end up with half the visible gap they
       // had before, which is closer to the value the slider promised.
       if (result.bgaLabelGapFactor === 0.15) result.bgaLabelGapFactor = 0;
+      // Migration: pinMaxRadius default dropped from 30 → 15. Users on the
+      // previous default get the new cap so testpoints and other large-radius
+      // pins stop dominating the view. Explicit customisations are preserved.
+      if (result.pinMaxRadius === 30) result.pinMaxRadius = 15;
       return result;
     }
   } catch { /* ignore corrupt data */ }

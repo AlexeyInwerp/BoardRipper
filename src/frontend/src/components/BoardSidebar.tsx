@@ -222,21 +222,23 @@ function LayersTab() {
           </button>
         )}
         <div className="visibility-toggle-group">
-          <button
-            className={`visibility-toggle ${showComponents ? '' : 'off'}`}
-            onClick={() => boardStore.toggleComponents()}
-            title={showComponents ? 'Hide all components' : 'Show all components'}
-          >
-            <span className="toggle-check">{showComponents ? '■' : '□'}</span>
-            <span className="toggle-label">Components</span>
+          <div className="visibility-toggle-row">
+            <button
+              className={`visibility-toggle ${showComponents ? '' : 'off'}`}
+              onClick={() => boardStore.toggleComponents()}
+              title={showComponents ? 'Hide all components' : 'Show all components'}
+            >
+              <span className="toggle-check">{showComponents ? '■' : '□'}</span>
+              <span className="toggle-label">Components</span>
+            </button>
             <button
               className="toggle-collapse"
-              onClick={(e) => { e.stopPropagation(); setComponentsExpanded(!componentsExpanded); }}
+              onClick={() => setComponentsExpanded(!componentsExpanded)}
               title={componentsExpanded ? 'Collapse' : 'Expand'}
             >
               {componentsExpanded ? '▾' : '▸'}
             </button>
-          </button>
+          </div>
           {componentsExpanded && (
             <div className={`visibility-sub-toggles ${showComponents ? '' : 'disabled'}`}>
               <button
