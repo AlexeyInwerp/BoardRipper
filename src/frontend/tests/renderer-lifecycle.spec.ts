@@ -15,7 +15,7 @@ test.describe('Renderer Lifecycle Stability', () => {
     // Open → close → reopen 3 times
     for (let i = 0; i < 3; i++) {
       await fileInput.setInputFiles(boardFile);
-      await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
+      await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 15000 });
 
       // Close tab via Dockview close button
       const closeBtn = page.locator('.dv-default-tab-action').first();
@@ -39,7 +39,7 @@ test.describe('Renderer Lifecycle Stability', () => {
     await page.goto('/');
     const fileInput = page.getByTestId('file-input');
     await fileInput.setInputFiles(path.resolve('samples/820-02016.bvr'));
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 15000 });
 
     // Open settings via gear icon (actual selector from Toolbar.tsx)
     const settingsBtn = page.locator('.toolbar-btn-icon', { hasText: '⚙' });
@@ -57,7 +57,7 @@ test.describe('Renderer Lifecycle Stability', () => {
     }
 
     // Board should still be rendered (no crash)
-    await expect(page.getByTestId('file-name')).toContainText('parts');
+    await expect(page.getByTestId('statusbar')).toContainText('Components');
 
     // No critical renderer errors
     const criticalErrors = pageErrors.filter(e =>

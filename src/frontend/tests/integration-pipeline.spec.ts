@@ -10,7 +10,7 @@ const SAMPLES = {
 async function loadBoard(page: import('@playwright/test').Page, filePath: string) {
   const fileInput = page.getByTestId('file-input');
   await fileInput.setInputFiles(path.resolve(filePath));
-  await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
+  await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 15000 });
 }
 
 test.describe('Parser → Store → Renderer Pipeline', () => {
@@ -70,7 +70,7 @@ test.describe('Parser → Store → Renderer Pipeline', () => {
     await page.waitForTimeout(500);
 
     // First board should still show stats
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 5000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 5000 });
 
     // Canvas should still be rendered
     await expect(page.getByTestId('board-canvas').locator('canvas')).toBeVisible();

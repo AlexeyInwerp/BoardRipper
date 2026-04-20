@@ -18,9 +18,9 @@ async function loadBoard(page: import('@playwright/test').Page, filePath: string
   const fileInput = page.getByTestId('file-input');
   await fileInput.setInputFiles(filePath);
   if (expectedText) {
-    await expect(page.getByTestId('file-name')).toContainText(expectedText, { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).toContainText(expectedText, { timeout: 15000 });
   } else {
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 15000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 15000 });
   }
 }
 
@@ -71,10 +71,10 @@ test.describe('Cross-Format Renderer Stability', () => {
 
     await page.goto('/');
     await loadBoard(page, BVR3_FILE, '3075');
-    const stats1 = await page.getByTestId('file-name').textContent();
+    const stats1 = await page.getByTestId('statusbar').textContent();
 
     await loadBoard(page, BRD_FILE);
-    const stats2 = await page.getByTestId('file-name').textContent();
+    const stats2 = await page.getByTestId('statusbar').textContent();
     expect(stats2).not.toBe(stats1);
 
     // Switch back to BVR tab
@@ -82,7 +82,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await bvrTab.click();
     await page.waitForTimeout(500);
 
-    const statsAfterSwitch = await page.getByTestId('file-name').textContent();
+    const statsAfterSwitch = await page.getByTestId('statusbar').textContent();
     expect(statsAfterSwitch).toBe(stats1);
 
     // Switch to BRD tab
@@ -90,7 +90,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await brdTab.click();
     await page.waitForTimeout(500);
 
-    const statsAfterSwitch2 = await page.getByTestId('file-name').textContent();
+    const statsAfterSwitch2 = await page.getByTestId('statusbar').textContent();
     expect(statsAfterSwitch2).toBe(stats2);
 
     expect(filterErrors(errors)).toHaveLength(0);
@@ -254,10 +254,10 @@ test.describe('Cross-Format Renderer Stability', () => {
 
     await page.goto('/');
     await loadBoard(page, BRD_FILE);
-    const stats1 = await page.getByTestId('file-name').textContent();
+    const stats1 = await page.getByTestId('statusbar').textContent();
 
     await loadBoard(page, FZ_FILE);
-    const stats2 = await page.getByTestId('file-name').textContent();
+    const stats2 = await page.getByTestId('statusbar').textContent();
     expect(stats2).not.toBe(stats1);
 
     // Switch back
@@ -265,7 +265,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await tab1.click();
     await page.waitForTimeout(500);
 
-    const statsAfter = await page.getByTestId('file-name').textContent();
+    const statsAfter = await page.getByTestId('statusbar').textContent();
     expect(statsAfter).toBe(stats1);
 
     expect(filterErrors(errors)).toHaveLength(0);
@@ -359,7 +359,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     }
 
     // BVR tab should still work
-    const statusbar = page.getByTestId('file-name');
+    const statusbar = page.getByTestId('statusbar');
     await expect(statusbar).toContainText('3075', { timeout: 5000 });
 
     // Canvas should still exist
@@ -389,8 +389,8 @@ test.describe('Cross-Format Renderer Stability', () => {
     }
 
     // BRD tab should still work
-    const statusbar = page.getByTestId('file-name');
-    await expect(statusbar).toContainText('parts', { timeout: 5000 });
+    const statusbar = page.getByTestId('statusbar');
+    await expect(statusbar).toContainText('Components', { timeout: 5000 });
 
     const canvas = page.getByTestId('board-canvas').locator('canvas');
     await expect(canvas).toBeVisible();
@@ -639,7 +639,7 @@ test.describe('Cross-Format Renderer Stability', () => {
     await expect(hud).toContainText('%', { timeout: 5000 });
 
     // Verify: status bar shows the BVR board's stats (part count)
-    await expect(page.getByTestId('file-name')).toContainText('parts', { timeout: 5000 });
+    await expect(page.getByTestId('statusbar')).toContainText('Components', { timeout: 5000 });
 
     // Step 4: Switch to BRD and back again (second round)
     const brdTab = page.locator('.dv-tab', { hasText: '820-02935-05.brd' }).first();
