@@ -701,6 +701,20 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // Some "HTML → CAD" converters scrape a boardview web viewer (e.g.
+  // smd.db-x7.ru) that displays the PCB horizontally mirrored, and emit
+  // those mirrored world coordinates verbatim. Every X is flipped vs. the
+  // physical board. Detect by two fingerprints unique to that converter
+  // family within our sample corpus:
+  //   REVISION "SMD.DB-X7.RU"                       — HTML source site
+  //   ATTRIBUTE HEADER_2 "PATH" "...HTML TO CAD..." — explicit conversion tag
+  // Gating on the USER line alone would also catch the sibling Quanta
+  // export (same author, non-HTML source) which is NOT mirrored.
+  const isHtmlMirrored = headerLines.some(raw => {
+    const l = raw.trim().toLowerCase();
+    return l.includes('smd.db-x7') || l.includes('html to cad');
+  });
+
   // Parse sections
   // Note: UNITS USER 1000 means "1000 units per inch" = coordinates are in mils.
   // Our internal coordinate system is mils, so no conversion needed.
@@ -708,6 +722,11 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'));
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
+
+  if (isHtmlMirrored) {
+    for (const s of shapes.values()) for (const p of s.pins) p.x = -p.x;
+    for (const c of components) c.placeX = -c.placeX;
+  }
 
   // Some shapes in V382-style exports are left with stale world
   // coordinates leaked from a previous instance (e.g. PDFN8/DFN8 in
@@ -823,6 +842,13 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const mechHoles   = parseMech(extractSection(lines, 'MECH'));
 
   const nails: Nail[] = [...testpins, ...powerpins];
+
+  if (isHtmlMirrored) {
+    for (const t of routes.traces) { t.start.x = -t.start.x; t.end.x = -t.end.x; }
+    for (const v of routes.vias) v.position.x = -v.position.x;
+    for (const n of nails) n.position.x = -n.position.x;
+    for (const h of mechHoles) h.position.x = -h.position.x;
+  }
 
   // Butterfly unfold: some CAMCAD exports (e.g. Apple 820-02841) place
   // bottom-side components at mirrored X (or Y) relative to the top side,
