@@ -32,6 +32,13 @@ import { fileInputRefs } from '../store/file-inputs';
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
 
+// Selected-part name currently uses a simple alpha fade when pin numbers come
+// into view (see updateElevatedLabels). A read-under-text invert effect was
+// prototyped via `blendMode: 'difference'` but it doesn't take effect for
+// labels living inside a RenderLayer — see
+// `docs/research/threejs-webgpu-vs-pixi.md` § "Label blending options" for
+// the long-term plan.
+
 /** Shape of the event object emitted by pixi-viewport's `clicked` event. */
 interface ViewportClickEvent {
   world: Point;
@@ -2531,25 +2538,10 @@ export class BoardRenderer {
             gfx.fill({ color, alpha: 1.0 });
           }
 
-          // Clone the selected part's in-scene label above the dim so it
-          // reads at full brightness. Mirrors the netDim label-clone path.
-          // In butterfly mode, skip bottom labels — they live in butterflyRoot
-          // and would render mirrored if cloned into scene.root.
-          if (this.activeScene) {
-            const labelSrc = selPart.side === 'bottom'
-              ? (butterfly ? null : this.activeScene.bottomLabels)
-              : this.activeScene.topLabels;
-            if (labelSrc) {
-              for (const srcLabel of labelSrc) {
-                if (srcLabel.visible && srcLabel.text === selPart.name) {
-                  this.acquireNetLabel(srcLabel);
-                  break;
-                }
-              }
-            }
-            // Pin labels for the selected part are already raised into
-            // netLabelLayer above (unconditional raise in the part-outline branch).
-          }
+          // The selected part's name clone is already acquired unconditionally
+          // at the top of renderSelection; duplicating here renders the same
+          // label twice on top of itself. Pin labels are already raised into
+          // netLabelLayer above (unconditional raise in the part-outline branch).
         }
       }
     }
@@ -2613,12 +2605,18 @@ export class BoardRenderer {
         }
 
         // ── Re-draw affected part name labels above the dim overlay ─────────
+        // Skip the selected part — its label was already cloned at the top of
+        // renderSelection; cloning it again here stacks two identical labels
+        // on top of each other (visible as a slight doubling once the
+        // fontFamily mismatch was fixed).
         if (showDim && this.activeScene) {
           // In butterfly mode, track which sides have affected parts to avoid
           // cloning labels from the wrong side (which would appear mirrored).
+          const selectedPartName = sel.partIndex !== null ? this.board.parts[sel.partIndex]?.name : null;
           const affectedTopNames = new Set<string>();
           const affectedBotNames = new Set<string>();
           for (const pi of seenParts) {
+            if (pi === sel.partIndex) continue;
             const p = this.board.parts[pi];
             if (!p) continue;
             if (p.side === 'bottom') affectedBotNames.add(p.name);
@@ -2628,6 +2626,7 @@ export class BoardRenderer {
           if (this.isTopVisible) {
             for (const srcLabel of this.activeScene.topLabels) {
               if (!srcLabel.visible || !affectedTopNames.has(srcLabel.text)) continue;
+              if (selectedPartName && srcLabel.text === selectedPartName) continue;
               this.acquireNetLabel(srcLabel);
             }
           }
@@ -2637,6 +2636,7 @@ export class BoardRenderer {
             // would render them mirrored at wrong positions, so skip.
             for (const srcLabel of this.activeScene.bottomLabels) {
               if (!srcLabel.visible || !affectedBotNames.has(srcLabel.text)) continue;
+              if (selectedPartName && srcLabel.text === selectedPartName) continue;
               this.acquireNetLabel(srcLabel);
             }
           }
@@ -2849,9 +2849,12 @@ export class BoardRenderer {
     const part = this.board.parts[sel.partIndex];
     if (!part) return;
 
-    // Fade the bright-white part-name clone (in netLabelLayer) as soon as pin
-    // numbers start rendering at the current zoom — at that point the part
-    // name would otherwise cover pins and pin-number labels (also white).
+    // Once pin numbers start rendering at the current zoom the bright-white
+    // part-name clone would otherwise cover the pins and pin-number labels
+    // beneath it, so fade it to 0.55 alpha at that threshold. A read-under
+    // blend (difference / exclusion) would be ideal but advanced blend modes
+    // don't take effect for renderables attached to a RenderLayer — see
+    // `docs/research/threejs-webgpu-vs-pixi.md` § "Label blending options".
     const clone = this.selectedPartLabelClone;
     if (clone && clone.visible) {
       const fadeScale = Math.abs(this.viewport.scale.x);
