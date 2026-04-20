@@ -18,6 +18,7 @@
 
 import type { BoardData, BoardRevision, Part, Pin, Nail, Point, Trace, Via } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents } from './types';
+import { detectXMirrorByPinDirection, applyXMirrorInPlace } from './mirror-detect';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -701,26 +702,6 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     }
   }
 
-  // One specific *version* of an unofficial GenCAD converter — authored by
-  // "SERG_UKRAINE//GOCCANH_VIETNAM" — emits world coordinates that are
-  // horizontally mirrored relative to the physical board. A later version
-  // of the same converter (USER "SERG_UKRAINA-GOCCANH_VIETNAM", DRAWING
-  // "Board_0_0", PATH "Convert PCB ACE ASC HTML FZ TO CAD") fixes the
-  // bug and produces correct coords — so gating on the author-pair alone
-  // would incorrectly flip ASRock/Quanta exports from the fixed version.
-  // The old, buggy version has two unique tokens:
-  //   USER "...SERG_UKRAINE//..."                — UKRAINE (E), double slash
-  //   ATTRIBUTE HEADER_2 "PATH" "...HTML TO CAD..." (exact; the newer
-  //     variant says "HTML FZ TO CAD" which does NOT contain "HTML TO CAD"
-  //     as a substring, so the two versions remain distinguishable)
-  // Neither token appears in any CAMCAD/Mentor/Teradyne/Allegro/Pegatron
-  // export nor in the *fixed* SERG_UKRAINA-GOCCANH outputs.
-  const isMirroredConverter = headerLines.some(raw => {
-    const l = raw.trim().toLowerCase();
-    return l.includes('serg_ukraine')   // E-ending spelling = buggy version
-        || l.includes('html to cad');   // old PATH with no intermediate token
-  });
-
   // Parse sections
   // Note: UNITS USER 1000 means "1000 units per inch" = coordinates are in mils.
   // Our internal coordinate system is mils, so no conversion needed.
@@ -728,11 +709,6 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'));
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
-
-  if (isMirroredConverter) {
-    for (const s of shapes.values()) for (const p of s.pins) p.x = -p.x;
-    for (const c of components) c.placeX = -c.placeX;
-  }
 
   // Some shapes in V382-style exports are left with stale world
   // coordinates leaked from a previous instance (e.g. PDFN8/DFN8 in
@@ -849,11 +825,17 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
   const nails: Nail[] = [...testpins, ...powerpins];
 
-  if (isMirroredConverter) {
-    for (const t of routes.traces) { t.start.x = -t.start.x; t.end.x = -t.end.x; }
-    for (const v of routes.vias) v.position.x = -v.position.x;
-    for (const n of nails) n.position.x = -n.position.x;
-    for (const h of mechHoles) h.position.x = -h.position.x;
+  // Detect an X-mirror via chip pin-numbering direction (IPC-7351: pins run
+  // CCW on top-mounted chips when viewed from above, CW on bottom-mounted).
+  // The heuristic runs on already-assembled world-coord pins, so it's
+  // independent of how any given format lays out its shape data. If the
+  // verdict trips, mirror every world coord we produced — parts, nails,
+  // traces, vias, and mech holes — so downstream (butterfly fold, revision
+  // build, outline synthesis) sees the corrected geometry.
+  const allParts = partsByPass.flat();
+  const mirrorVerdict = detectXMirrorByPinDirection(allParts);
+  if (mirrorVerdict.mirrored) {
+    applyXMirrorInPlace(allParts, nails, routes.traces, [...routes.vias, ...mechHoles]);
   }
 
   // Butterfly unfold: some CAMCAD exports (e.g. Apple 820-02841) place
@@ -969,9 +951,10 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   };
   if (formatVersion) board.formatVersion = formatVersion;
   if (active.ghosts.length > 0) board.ghosts = active.ghosts;
-  if (isMirroredConverter) {
+  if (mirrorVerdict.mirrored) {
+    const pct = (mirrorVerdict.wrongRatio * 100).toFixed(0);
     board.parserNotes = [
-      'Board was horizontally un-mirrored on load — source file was produced by a buggy early version of the SERG_UKRAINE//GOCCANH_VIETNAM GenCAD converter that emits X-flipped coordinates. Newer outputs from the same author (SERG_UKRAINA-) are unaffected.',
+      `Board was horizontally un-mirrored on load — ${pct}% of ${mirrorVerdict.totalAnalyzed} analyzed top-side chips had CW pin numbering (IPC-7351 convention expects CCW from chip top), indicating an X-flipped layout in source.`,
     ];
   }
   if (revisions.length > 1) {
