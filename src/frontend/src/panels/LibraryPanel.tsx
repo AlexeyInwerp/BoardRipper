@@ -86,13 +86,28 @@ export function LibraryPanel() {
   useEffect(() => {
     if (typeof window !== 'undefined' && window.electronAPI?.scanLibrary) {
       databankStore.initElectron();
-    } else {
-      databankStore.loadConfig();
-      databankStore.fetchFiles();
-      databankStore.fetchTree();
-      databankStore.checkScanStatus();
+      return;
     }
+    // loadConfig must run first: it discovers library_dir / _scan_root
+    // and flips _backendAvailable. Files + scan status can race.
+    databankStore.loadConfig().then(() => {
+      Promise.all([
+        databankStore.fetchFiles(),
+        databankStore.checkScanStatus(),
+      ]);
+    });
+    // folderTree fetch is deferred to first use (see the effect below)
   }, []);
+
+  // Fetch folder tree only the first time the user opens the Folders tab
+  // in database mode. For Electron mode the tree is built during _electronScan
+  // and folderTree is already populated — no fetch needed.
+  useEffect(() => {
+    if (electronMode) return;
+    if (viewMode !== 'folders' || browseMode !== 'database') return;
+    if (folderTree) return;
+    databankStore.fetchTree();
+  }, [viewMode, browseMode, folderTree, electronMode]);
 
   const handleFileScan = useCallback(() => {
     databankStore.triggerFileScan();
