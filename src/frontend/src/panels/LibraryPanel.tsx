@@ -690,20 +690,27 @@ function HistoryView({ onOpenFile, searchFilter }: {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  const q = searchFilter.trim().toLowerCase();
-  const filteredItems = q
-    ? recentItems.filter(item => {
-        if (item.fileName.toLowerCase().includes(q)) return true;
-        if (item.path.toLowerCase().includes(q)) return true;
-        const dbFile = files.find(f => f.path === item.path);
-        if (!dbFile) return false;
-        return (
-          dbFile.board_number?.toLowerCase().includes(q) ||
-          dbFile.manufacturer?.toLowerCase().includes(q) ||
-          dbFile.model?.toLowerCase().includes(q)
-        ) ?? false;
-      })
-    : recentItems;
+  const filesByPath = useMemo(() => {
+    const m = new Map<string, DatabankFile>();
+    for (const f of files) m.set(f.path, f);
+    return m;
+  }, [files]);
+
+  const filteredItems = useMemo(() => {
+    const q = searchFilter.trim().toLowerCase();
+    if (!q) return recentItems;
+    return recentItems.filter(item => {
+      if (item.fileName.toLowerCase().includes(q)) return true;
+      if (item.path.toLowerCase().includes(q)) return true;
+      const dbFile = filesByPath.get(item.path);
+      if (!dbFile) return false;
+      return (
+        dbFile.board_number?.toLowerCase().includes(q) ||
+        dbFile.manufacturer?.toLowerCase().includes(q) ||
+        dbFile.model?.toLowerCase().includes(q)
+      ) ?? false;
+    });
+  }, [recentItems, filesByPath, searchFilter]);
 
   return (
     <div className="library-history">
@@ -714,7 +721,7 @@ function HistoryView({ onOpenFile, searchFilter }: {
       ) : (
         <div className="library-tree-children">
           {filteredItems.map((item, i) => {
-            const dbFile = files.find(f => f.path === item.path);
+            const dbFile = filesByPath.get(item.path);
             return (
               <div
                 key={`${item.path}-${i}`}
