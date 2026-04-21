@@ -2179,7 +2179,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           // In full-page mode: renderPage blits from cache instantly, no backdrop needed.
           if (zoom > 1.05) {
             const adj = adjCanvasMapRef.current.get(curPage + 1);
-            if (adj) { adj.canvas.style.top = '0px'; adj.canvas.dataset.transitionBackdrop = '1'; }
+            if (adj) {
+              adj.canvas.style.top = '0px';
+              adj.canvas.dataset.transitionBackdrop = '1';
+              wrapperRef.current?.querySelectorAll('canvas[data-transition-backdrop]').forEach(c => { if (c !== adj.canvas) c.remove(); });
+            }
           }
           pdfStore.goToPage(curPage + 1);
           newY += pageH;
@@ -2192,7 +2196,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           for (const c of tileContainerRef.current.values()) c.style.display = 'none';
           if (zoom > 1.05) {
             const adj = adjCanvasMapRef.current.get(curPage - 1);
-            if (adj) { adj.canvas.style.top = '0px'; adj.canvas.dataset.transitionBackdrop = '1'; }
+            if (adj) {
+              adj.canvas.style.top = '0px';
+              adj.canvas.dataset.transitionBackdrop = '1';
+              wrapperRef.current?.querySelectorAll('canvas[data-transition-backdrop]').forEach(c => { if (c !== adj.canvas) c.remove(); });
+            }
           }
           pdfStore.goToPage(curPage - 1);
           newY -= pageH;
