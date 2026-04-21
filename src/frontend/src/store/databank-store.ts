@@ -148,6 +148,18 @@ export interface ModelGroup {
 
 class DatabankStore extends Emitter {
   private _files: DatabankFile[] = [];
+  private _filesVersion = 0;
+  private _metadataCache: { version: number; tree: MetadataGroup[] } | null = null;
+  private _modelCache: { version: number; tree: ModelGroup[] } | null = null;
+
+  /** Single mutation point for `_files`. Bumps the version so memoized
+   *  getters (metadataTree/modelTree) know to recompute. */
+  private _setFiles(files: DatabankFile[]) {
+    this._files = files;
+    this._filesVersion++;
+    this._metadataCache = null;
+    this._modelCache = null;
+  }
   private _folderTree: FolderNode | null = null;
   private _scanStatus: ScanStatus | null = (() => {
     try {
@@ -217,6 +229,9 @@ class DatabankStore extends Emitter {
   get historyDepth() { return this._historyDepth; }
 
   get metadataTree(): MetadataGroup[] {
+    if (this._metadataCache && this._metadataCache.version === this._filesVersion) {
+      return this._metadataCache.tree;
+    }
     const mfrMap = new Map<string, Map<string, DatabankFile[]>>();
     const ungroupedMap = new Map<string, DatabankFile[]>();
 
@@ -254,10 +269,14 @@ class DatabankStore extends Emitter {
       });
     }
 
+    this._metadataCache = { version: this._filesVersion, tree: groups };
     return groups;
   }
 
   get modelTree(): ModelGroup[] {
+    if (this._modelCache && this._modelCache.version === this._filesVersion) {
+      return this._modelCache.tree;
+    }
     // Group files by brand → model → board_number
     // Uses backend-enriched model/manufacturer fields (from Board DB resolution)
     // Falls back to client-side Apple lookup for files without backend resolution
@@ -313,6 +332,7 @@ class DatabankStore extends Emitter {
       });
     }
 
+    this._modelCache = { version: this._filesVersion, tree: groups };
     return groups;
   }
 
@@ -379,7 +399,7 @@ class DatabankStore extends Emitter {
       await this._electronScan();
     } else {
       const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
-      if (data) this._files = data;
+      if (data) this._setFiles(data);
     }
 
     this._loading = false;
@@ -517,8 +537,9 @@ class DatabankStore extends Emitter {
     if (data) {
       const idx = this._files.findIndex(f => f.id === id);
       if (idx >= 0) {
-        this._files[idx] = { ...this._files[idx], ...update };
-        this._files = [...this._files];
+        const next = [...this._files];
+        next[idx] = { ...next[idx], ...update };
+        this._setFiles(next);
         this.notify();
       }
     }
@@ -595,8 +616,9 @@ class DatabankStore extends Emitter {
       // Update local state
       const idx = this._files.findIndex(f => f.id === file.id);
       if (idx >= 0) {
-        this._files[idx] = { ...this._files[idx], has_preview: true };
-        this._files = [...this._files];
+        const next = [...this._files];
+        next[idx] = { ...next[idx], has_preview: true };
+        this._setFiles(next);
         this.notify();
       }
       return true;
@@ -623,7 +645,7 @@ class DatabankStore extends Emitter {
     const res = await this.apiFetch<{ status: string }>('/api/databank/reset', { method: 'POST' });
     if (res) {
       log.scan.log('Database reset complete');
-      this._files = []; this._folderTree = null; this._scanStatus = null; this._stats = null;
+      this._setFiles([]); this._folderTree = null; this._scanStatus = null; this._stats = null;
       try { localStorage.removeItem('boardripper-scan-status'); } catch { /* ignored */ }
       await this.fetchStats();
       this.notify();
@@ -801,7 +823,7 @@ class DatabankStore extends Emitter {
       log.scan.warn('Electron scan error:', result.error);
       return;
     }
-    this._files = result.files;
+    this._setFiles(result.files);
     this._folderTree = result.tree;
     this._scanStatus = {
       running: false, scanned: result.files.length, total: result.files.length,
