@@ -225,3 +225,44 @@ with a hosted instance over a network.
 
 For a complete list of third-party sources, libraries, and attributions, see
 [THIRD_PARTY.md](THIRD_PARTY.md).
+
+## Credits & References
+
+BoardRipper exists because of the reverse-engineering work already done by the
+boardview community. Each of the entries below was consulted during
+development; full attribution and license details are in
+[THIRD_PARTY.md](THIRD_PARTY.md).
+
+**Parser references**
+
+- [KiCad](https://gitlab.com/kicad/code/kicad) *(GPL-3.0)* — Cadence Allegro BRD reader (`pcbnew/pcb_io/allegro/`), transliterated to TypeScript for the Allegro parser
+- [OpenBoardView](https://github.com/OpenBoardView/OpenBoardView) *(MIT)* — reference implementations for BVR1/BVR3, BRD (Apple), BDV (plain-text), BDV ASC (Honhan / Tebo-ICT), FZ (ASUS), GenCAD, XZZ
+- [eagleview](https://github.com/nitrocaster/eagleview) by Pavel Kovalenko *(MIT)* — TVW / Teboview parser source
+- [brd_parser](https://github.com/bernayigit/brd_parser) by Jeff Wheeler *(MIT)* — cross-validation for Allegro block layout
+- [piernov/honhan-bdv gist](https://gist.github.com/piernov/37849a3b92375e18515160b8a1efde18) & [OpenBoardView issue #2](https://github.com/OpenBoardView/OpenBoardView/issues/2) — identified the BDV ASC signature and line-key cipher
+- **Cryptographic standards** — [RC6](https://people.csail.mit.edu/rivest/pubs/RRSY98.pdf) by Rivest/Robshaw/Sidney/Yin (FZ), [DES / FIPS PUB 46-3](https://csrc.nist.gov/pubs/fips/46-3/final) (XZZ), [GenCAD 1.4 specification](https://en.wikipedia.org/wiki/GenCAD) (CAD)
+
+**Rendering & runtime**
+
+- [PixiJS](https://pixijs.com/) *(MIT)* — WebGL renderer
+- [pixi-viewport](https://github.com/davidfig/pixi-viewport) *(MIT)* — pan/zoom/culling
+- [React](https://react.dev/) *(MIT)* — UI framework
+- [Vite](https://vitejs.dev/) *(MIT)* — build pipeline
+- [Dockview](https://dockview.dev/) *(MIT)* — dockable / floating / popout panel system
+- [pdf.js](https://mozilla.github.io/pdf.js/) *(Apache-2.0)* — PDF rendering and text extraction
+- [pdf-lib](https://pdf-lib.js.org/) *(MIT)* — PDF manipulation
+- [opentype.js](https://opentype.js.org/) *(MIT)* — font glyph extraction
+- [Tabler Icons](https://tabler.io/icons) *(MIT)* — icon set
+
+**Backend**
+
+- [Go standard library](https://pkg.go.dev/std) *(BSD-3-Clause)*
+- [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) *(BSD-3-Clause)* — pure-Go SQLite driver
+- [rsc.io/pdf](https://pkg.go.dev/rsc.io/pdf) *(BSD-3-Clause)* — PDF text extraction
+
+**Desktop**
+
+- [Electron](https://www.electronjs.org/) *(MIT)*, [@electron/packager](https://github.com/electron/packager) *(MIT)*, [@electron/universal](https://github.com/electron/universal) *(MIT)*
+
+Corrections and missing attributions are welcome — open an issue on
+[GitHub](https://github.com/AlexeyInwerp/BoardRipper/issues).

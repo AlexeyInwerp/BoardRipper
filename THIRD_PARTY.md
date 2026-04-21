@@ -21,9 +21,17 @@ in BoardRipper.
 ### OpenBoardView
 - **License:** MIT
 - **Upstream:** https://github.com/OpenBoardView/OpenBoardView
-- **Used in:** `src/frontend/src/parsers/` — BVR1, BVR3, BRD, BDV, FZ, CAD, XZZ parsers
-- **Nature of use:** OpenBoardView's C++ parsers (BVRFile.cpp, BVR3File.cpp, BRDFile.cpp, FZFile.cpp, GenCADFile.cpp, XZZPCBFile.cpp) were consulted as reference implementations to reverse-engineer format behavior. BoardRipper's TypeScript parsers are independent re-implementations written against the format specifications in `docs/formats/`; no verbatim OpenBoardView code is present.
-- **Specs:** `docs/formats/BVR_FORMAT.md`, `docs/formats/BRD_FORMAT.md`, `docs/formats/BDV_FORMAT.md`, `docs/formats/FZ_FORMAT.md`, `docs/formats/CAD_FORMAT.md`, `docs/formats/XZZ_FORMAT.md`
+- **Used in:** `src/frontend/src/parsers/` — BVR1, BVR3, BRD, BDV, BDV ASC, FZ, CAD, XZZ parsers
+- **Nature of use:** OpenBoardView's C++ parsers (BVRFile.cpp, BVR3File.cpp, BRDFile.cpp, BDVFile.cpp, FZFile.cpp, GenCADFile.cpp, XZZPCBFile.cpp) were consulted as reference implementations to reverse-engineer format behavior. BoardRipper's TypeScript parsers are independent re-implementations written against the format specifications in `docs/formats/`; no verbatim OpenBoardView code is present.
+- **Specs:** `docs/formats/BVR_FORMAT.md`, `docs/formats/BRD_FORMAT.md`, `docs/formats/BDV_FORMAT.md`, `docs/formats/BDV_ASC_FORMAT.md`, `docs/formats/FZ_FORMAT.md`, `docs/formats/CAD_FORMAT.md`, `docs/formats/XZZ_FORMAT.md`
+
+### piernov — Honhan BDV decoder gist
+- **License:** Public gist (no explicit license; algorithm only)
+- **Upstream:** https://gist.github.com/piernov/37849a3b92375e18515160b8a1efde18
+- **Context:** https://github.com/OpenBoardView/OpenBoardView/issues/2
+- **Used in:** `src/frontend/src/parsers/bdv-asc-decoder.ts`
+- **Nature of use:** The gist identifies the `dd:1.3?,r?-=bb` signature and the line-key cipher shape (count-minus-byte, CRLF-advanced). BoardRipper's TypeScript decoder was written against OpenBoardView's canonical `decode_bdv` in `BDVFile.cpp` — the same algorithm, but the gist was how the format was first attributed to the Honhan / Tebo-ICT family.
+- **Spec:** [docs/formats/BDV_ASC_FORMAT.md](docs/formats/BDV_ASC_FORMAT.md)
 
 ### eagleview — Pavel Kovalenko
 - **License:** MIT
