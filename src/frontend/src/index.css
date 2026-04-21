@@ -3487,49 +3487,53 @@ html, body, #root {
 .library-tab {
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   color: var(--text-secondary);
-  padding: 6px 10px;
+  padding: 7px 12px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
   margin-bottom: -1px; /* overlap the row border so the active indicator reads as a tab */
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  transition: color 0.08s ease, border-color 0.08s ease, background 0.08s ease;
 }
 .library-tab:hover:not(.active) {
   color: var(--text-primary);
+  background: var(--bg-secondary);
 }
 .library-tab.active {
-  color: var(--text-primary);
+  color: var(--accent);
   border-bottom-color: var(--accent);
+  font-weight: 600;
 }
 
-/* Compact 2-state pill — only appears when Folders tab is active */
+/* DB/Live — tab-styled segmented pair, reads as a continuation of the tab row. */
 .library-browse-pill {
   display: inline-flex;
-  align-self: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg-secondary);
-  height: 18px;
+  align-self: stretch;
+  margin-bottom: -1px;
 }
 .library-browse-pill-btn {
   background: transparent;
   border: none;
+  border-bottom: 3px solid transparent;
   color: var(--text-secondary);
-  font-size: 10px;
-  padding: 0 8px;
+  font-size: 11px;
+  padding: 7px 10px;
   cursor: pointer;
-  line-height: 18px;
+  transition: color 0.08s ease, border-color 0.08s ease, background 0.08s ease;
 }
 .library-browse-pill-btn:hover:not(.active) {
   color: var(--text-primary);
+  background: var(--bg-secondary);
 }
 .library-browse-pill-btn.active {
-  background: var(--accent);
-  color: #fff;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
 }
 
 /* Scan buttons — same visuals, compact padding now that they share a row with stats */
