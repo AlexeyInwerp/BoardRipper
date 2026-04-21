@@ -171,7 +171,8 @@ func main() {
 	log.Printf("Library scan root: %s", scanner.ScanRoot())
 
 	addr := fmt.Sprintf(":%s", port)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	handler := gzipMiddleware(mux)
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
