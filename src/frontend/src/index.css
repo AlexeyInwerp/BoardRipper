@@ -3443,13 +3443,39 @@ html, body, #root {
   font-size: 12px;
 }
 
-.library-header {
+/* Row 1 — stats + scan buttons (top) */
+.library-statsbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 6px 8px;
+  gap: 8px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-tertiary);
+  flex-shrink: 0;
+  min-height: 22px;
+}
+.library-statsbar-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.library-statsbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Row 2 — tabs + (conditional) DB/Live pill */
+.library-tabs-row {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
   flex-shrink: 0;
 }
 
@@ -3459,59 +3485,68 @@ html, body, #root {
 }
 
 .library-tab {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
   color: var(--text-secondary);
-  padding: 3px 10px;
-  border-radius: 3px;
+  padding: 6px 10px;
   cursor: pointer;
   font-size: 11px;
+  margin-bottom: -1px; /* overlap the row border so the active indicator reads as a tab */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.library-tab:hover:not(.active) {
+  color: var(--text-primary);
+}
+.library-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
 }
 
-.library-tab.active {
+/* Compact 2-state pill — only appears when Folders tab is active */
+.library-browse-pill {
+  display: inline-flex;
+  align-self: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  height: 18px;
+}
+.library-browse-pill-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 10px;
+  padding: 0 8px;
+  cursor: pointer;
+  line-height: 18px;
+}
+.library-browse-pill-btn:hover:not(.active) {
+  color: var(--text-primary);
+}
+.library-browse-pill-btn.active {
   background: var(--accent);
   color: #fff;
-  border-color: var(--accent);
 }
 
-.library-tab:hover:not(.active) {
-  background: var(--bg-tertiary);
-}
-
-.library-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.library-donor-filter {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.library-donor-filter input {
-  cursor: pointer;
-}
-
+/* Scan buttons — same visuals, compact padding now that they share a row with stats */
 .library-scan-btn {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text-primary);
-  padding: 3px 10px;
+  padding: 2px 8px;
   border-radius: 3px;
   cursor: pointer;
   font-size: 11px;
+  line-height: 1;
 }
-
 .library-scan-btn:hover:not(:disabled) {
   background: var(--accent);
   border-color: var(--accent);
 }
-
 .library-scan-btn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -3520,24 +3555,22 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 6px;
+  padding: 2px 6px;
 }
-
 .library-scan-stop {
   color: var(--red, #e55);
   border-color: var(--red, #e55);
 }
-
 .library-scan-stop:hover {
   background: var(--red, #e55);
   color: #fff;
 }
 
+/* Animations + misc */
 .library-indexing {
   color: var(--accent);
   animation: library-pulse 1.5s ease-in-out infinite;
 }
-
 .library-indexing-file {
   color: var(--text-secondary);
   font-size: 10px;
@@ -3546,19 +3579,15 @@ html, body, #root {
   white-space: nowrap;
   opacity: 0.7;
 }
-
 @keyframes library-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
-
-.library-stats {
-  padding: 4px 8px;
+.library-scan-result {
   color: var(--text-secondary);
-  font-size: 11px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  opacity: 0.7;
 }
+
 .library-backend-warn {
   padding: 8px 10px;
   background: #3a2000;
@@ -3595,11 +3624,6 @@ html, body, #root {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-
-.library-scan-result {
-  color: var(--text-secondary);
-  opacity: 0.7;
 }
 
 .library-content {
@@ -4304,40 +4328,6 @@ html, body, #root {
   font-size: 11px;
 }
 
-.library-history-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border);
-}
-.library-history-depth {
-  font-size: 11px;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.library-history-depth input {
-  width: 48px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  border-radius: 3px;
-  padding: 1px 4px;
-  font-size: 11px;
-}
-.library-history-clear {
-  margin-left: auto;
-  font-size: 10px;
-  padding: 1px 6px;
-  background: var(--bg-button);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  border-radius: 3px;
-  cursor: pointer;
-}
-.library-history-clear:hover { color: var(--text-primary); }
 .library-history-time {
   margin-left: auto;
   font-size: 10px;
