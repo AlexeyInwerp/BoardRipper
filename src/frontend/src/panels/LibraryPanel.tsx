@@ -239,21 +239,19 @@ export function LibraryPanel() {
           )}
         </div>
         <div className="library-statsbar-actions">
-          {!(viewMode === 'folders' && browseMode === 'live') && (
-            scanStatus?.running ? (
-              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
-            ) : scanStatus?.pdf_running ? (
-              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
-            ) : (
-              <>
-                <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
-                  <IconFolderSearch size={14} />
-                </button>
-                <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
-                  <IconFileText size={14} />
-                </button>
-              </>
-            )
+          {scanStatus?.running ? (
+            <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
+          ) : scanStatus?.pdf_running ? (
+            <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
+          ) : (
+            <>
+              <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
+                <IconFolderSearch size={14} />
+              </button>
+              <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
+                <IconFileText size={14} />
+              </button>
+            </>
           )}
         </div>
       </div>
