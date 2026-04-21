@@ -178,8 +178,15 @@ class DatabankStore extends Emitter {
   private _historyDepth: number = (() => {
     try {
       const v = localStorage.getItem('boardripper-history-depth');
-      return v ? Math.min(100, Math.max(1, Number(v))) : 20;
-    } catch { return 20; }
+      // Migration: the previous product default was 20. Bump legacy-default users
+      // to the new default of 100, but leave any other stored value (including
+      // values below 100 a user has explicitly chosen) untouched.
+      if (v === '20') {
+        localStorage.setItem('boardripper-history-depth', '100');
+        return 100;
+      }
+      return v ? Math.min(100, Math.max(1, Number(v))) : 100;
+    } catch { return 100; }
   })();
   private _selectedFileDetail: FileDetail | null = null;
   private _loading = false;
