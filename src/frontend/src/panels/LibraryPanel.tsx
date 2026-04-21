@@ -420,6 +420,7 @@ export function LibraryPanel() {
             tree={folderTree}
             selectedFileId={selectedFileId}
             filterFile={filterFile}
+            searchFilter={localSearch}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
           />
@@ -979,16 +980,40 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
 
 // --- Folder Tree View ---
 
-function FolderView({ tree, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
+/** Recursively remove folders whose filtered file lists and all descendant
+ *  folder file lists are empty. Used when a filter is active so empty
+ *  directories disappear from the tree. */
+function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolean): FolderNode | null {
+  const files = (node.files ?? []).filter(filter);
+  const children = (node.children ?? [])
+    .map(c => pruneEmptyFolders(c, filter))
+    .filter((c): c is FolderNode => c !== null);
+  if (files.length === 0 && children.length === 0) return null;
+  return { ...node, files, children };
+}
+
+function FolderView({ tree, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
   tree: FolderNode | null;
   selectedFileId: number | null;
   filterFile: (f: DatabankFile) => boolean;
+  searchFilter: string;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-folders', ['']);
 
-  if (!tree) return <div className="library-empty">Loading folder tree...</div>;
+  // Only prune when the user is actively filtering — otherwise let empty
+  // directories stay visible (browsing a fresh library should show structure).
+  const visibleTree = useMemo(
+    () => (searchFilter.trim() && tree ? pruneEmptyFolders(tree, filterFile) : tree),
+    [searchFilter, tree, filterFile],
+  );
+
+  if (!visibleTree) {
+    return <div className="library-empty">
+      {searchFilter.trim() ? `No folders match "${searchFilter}".` : 'Loading folder tree...'}
+    </div>;
+  }
 
   return (
     <div className="library-tree">
@@ -996,7 +1021,7 @@ function FolderView({ tree, selectedFileId, filterFile, onSelectFile, onOpenFile
         <button className="library-collapse-all" onClick={collapseAll} title="Collapse all folders">⊟</button>
       )}
       <FolderNodeView
-        node={tree}
+        node={visibleTree}
         depth={0}
         expanded={expanded}
         selectedFileId={selectedFileId}
