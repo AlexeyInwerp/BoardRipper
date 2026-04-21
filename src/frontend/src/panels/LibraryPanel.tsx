@@ -199,8 +199,67 @@ export function LibraryPanel() {
 
   return (
     <div className="library-panel">
-      {/* Header bar */}
-      <div className="library-header">
+      {/* Stats + scan buttons (row 1) */}
+      <div className="library-statsbar">
+        <div className="library-statsbar-text">
+          {scanning ? (
+            <>
+              <span className="library-indexing">
+                Indexing{scanStatus && scanStatus.total > 0
+                  ? ` ${scanStatus.scanned}/${scanStatus.total}`
+                  : ''}
+                {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
+              </span>
+              {scanStatus?.last_file && (
+                <div className="library-indexing-file" title={scanStatus.last_file}>
+                  {tailTruncate(scanStatus.last_file)}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {boardCount} boards, {pdfCount} PDFs
+              {scanStatus && scanStatus.duration_ms > 0 && (
+                <span className="library-scan-result">
+                  {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
+                </span>
+              )}
+              {scanStatus?.pdf_running && (
+                <span className="library-indexing" style={{ marginLeft: 8 }}>
+                  PDF indexing {scanStatus.pdf_extracted}/{scanStatus.pdf_total}
+                  {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
+                </span>
+              )}
+              {scanStatus?.pdf_running && scanStatus?.pdf_current && (
+                <div className="library-indexing-file" title={scanStatus.pdf_current}>
+                  {tailTruncate(scanStatus.pdf_current)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="library-statsbar-actions">
+          {!(viewMode === 'folders' && browseMode === 'live') && (
+            scanStatus?.running ? (
+              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
+            ) : scanStatus?.pdf_running ? (
+              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
+            ) : (
+              <>
+                <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
+                  <IconFolderSearch size={14} />
+                </button>
+                <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
+                  <IconFileText size={14} />
+                </button>
+              </>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Tabs + inline DB/Live pill (row 2) */}
+      <div className="library-tabs-row">
         <div className="library-tabs">
           <button
             className={`library-tab ${viewMode === 'history' ? 'active' : ''}`}
@@ -230,77 +289,26 @@ export function LibraryPanel() {
           </button>
         </div>
         {viewMode === 'folders' && (
-          <div className="library-browse-toggle">
-            <button className={`library-tab ${browseMode === 'database' ? 'active' : ''}`}
-              onClick={() => databankStore.setBrowseMode('database')}>Database</button>
-            <button className={`library-tab ${browseMode === 'live' ? 'active' : ''}`}
-              onClick={() => databankStore.setBrowseMode('live')}>Live</button>
+          <div className="library-browse-pill" role="tablist" aria-label="Folder source">
+            <button
+              className={`library-browse-pill-btn ${browseMode === 'database' ? 'active' : ''}`}
+              onClick={() => databankStore.setBrowseMode('database')}
+              role="tab"
+              aria-selected={browseMode === 'database'}
+              title="Show folders from the indexed database"
+            >
+              DB
+            </button>
+            <button
+              className={`library-browse-pill-btn ${browseMode === 'live' ? 'active' : ''}`}
+              onClick={() => databankStore.setBrowseMode('live')}
+              role="tab"
+              aria-selected={browseMode === 'live'}
+              title="Browse the live filesystem"
+            >
+              Live
+            </button>
           </div>
-        )}
-        <div className="library-actions">
-          <label className="library-donor-filter" title="Auto-load bound PDFs when opening a board">
-            <input
-              type="checkbox"
-              checked={autoPdf}
-              onChange={(e) => databankStore.setAutoPdf(e.target.checked)}
-            />
-            Auto PDF
-          </label>
-          {!(viewMode === 'folders' && browseMode === 'live') && (
-            scanStatus?.running ? (
-              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
-            ) : scanStatus?.pdf_running ? (
-              <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
-            ) : (
-              <>
-                <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
-                  <IconFolderSearch size={14} />
-                </button>
-                <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
-                  <IconFileText size={14} />
-                </button>
-              </>
-            )
-          )}
-        </div>
-      </div>
-
-      {/* Stats / indexing indicator */}
-      <div className="library-stats">
-        {scanning ? (
-          <>
-            <span className="library-indexing">
-              Indexing{scanStatus && scanStatus.total > 0
-                ? ` ${scanStatus.scanned}/${scanStatus.total}`
-                : ''}
-              {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
-            </span>
-            {scanStatus?.last_file && (
-              <div className="library-indexing-file" title={scanStatus.last_file}>
-                {tailTruncate(scanStatus.last_file)}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {boardCount} boards, {pdfCount} PDFs
-            {scanStatus && scanStatus.duration_ms > 0 && (
-              <span className="library-scan-result">
-                {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
-              </span>
-            )}
-            {scanStatus?.pdf_running && (
-              <span className="library-indexing" style={{ marginLeft: 8 }}>
-                PDF indexing {scanStatus.pdf_extracted}/{scanStatus.pdf_total}
-                {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
-              </span>
-            )}
-            {scanStatus?.pdf_running && scanStatus?.pdf_current && (
-              <div className="library-indexing-file" title={scanStatus.pdf_current}>
-                {tailTruncate(scanStatus.pdf_current)}
-              </div>
-            )}
-          </>
         )}
       </div>
 
