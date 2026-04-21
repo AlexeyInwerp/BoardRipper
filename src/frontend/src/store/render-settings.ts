@@ -424,10 +424,26 @@ export function computeDiagonalOBB(
   const lambda1 = trace / 2 + disc; // largest eigenvalue
   // Eigenvector for lambda1
   let ux: number, uy: number;
-  if (Math.abs(cxy) > 1e-6) {
+  // Degeneracy check uses the correlation ratio, not a raw 1e-6 floor: a
+  // 908-pin diamond-BGA accumulates cxy ≈ 3 from sub-mil pin-placement
+  // noise even when the analytic diamond is perfectly symmetric — that's
+  // seven orders of magnitude below cxx/cyy (~1e8) yet still above the
+  // old 1e-6 gate, so it was being interpreted as a "tilted" PCA axis
+  // and rejected by the |ux·uy|<0.15 axis-alignment guard below.
+  const varAvg = (cxx + cyy) / 2;
+  const isNearSquare = Math.abs(cxx - cyy) < varAvg * 0.01;
+  const isDecorrelated = Math.abs(cxy) < varAvg * 0.01;
+  if (isNearSquare && isDecorrelated) {
+    // PCA degenerate — pin cloud is 90°-rotation symmetric. Could be an
+    // axis-aligned square BGA (AABB is already optimal) or a 45°-rotated
+    // diamond BGA (AABB is ~2× too big). Probe a 45° axis; the later
+    // area-saving gate rejects it for the genuine axis-aligned case.
+    ux = Math.SQRT1_2; uy = Math.SQRT1_2;
+  } else if (Math.abs(cxy) > 1e-6) {
     ux = lambda1 - cyy; uy = cxy;
   } else {
-    // Already axis-aligned — no OBB needed
+    // Axis-aligned anisotropic distribution (rectangular BGA, DIMM, etc.) —
+    // AABB is already optimal.
     return null;
   }
   const len = Math.hypot(ux, uy);
