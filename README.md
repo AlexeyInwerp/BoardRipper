@@ -1,13 +1,13 @@
 # BoardRipper
 
-Web-based PCB boardview file viewer and inspector for board-level repair. GPU-accelerated WebGL rendering of 9 board formats with integrated PDF schematics viewer, dockable panel system, and board library — all in a ~15MB Docker image with self-update.
+Web-based PCB boardview file viewer and inspector for board-level repair. GPU-accelerated WebGL rendering of 10 board formats with integrated PDF schematics viewer, dockable panel system, and board library — all in a ~15MB Docker image with self-update.
 
 ![Boardview and PDF schematic side by side — instant cross-reference](docs/screenshots/01-board-pdf-lookup.png)
 
 ## Features
 
 - **GPU-accelerated rendering** — PixiJS v8 (WebGL), handles 10,000+ components at 60fps
-- **9 board formats** — BVR1, BVR3, BRD (Apple), FZ (ASUS), CAD (GenCAD), BDV, XZZ, TVW (Teboview), Allegro BRD
+- **10 board formats** — BVR1, BVR3, BRD (Apple), FZ (ASUS), CAD (GenCAD), BDV, BDV ASC (Honhan/Tebo-ICT), XZZ, TVW (Teboview), Allegro BRD
 - **Pan & zoom** — mouse wheel, drag, pinch-zoom, deceleration, fit-to-board
 - **Multi-board tabs** — open multiple boards simultaneously, switch between them
 - **Layer toggle** — show/hide top and bottom layers independently
@@ -42,6 +42,7 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 | **BVR3** | Keyword-value, relative pin coordinates | [BVR_FORMAT.md](docs/formats/BVR_FORMAT.md) |
 | **BRD** | Binary obfuscated boardview (Apple/Mac repair) | [BRD_FORMAT.md](docs/formats/BRD_FORMAT.md) |
 | **BDV** | Plain-text boardview (BRDOUT/NETS/PARTS/PINS/NAILS) | [BDV_FORMAT.md](docs/formats/BDV_FORMAT.md) |
+| **BDV ASC** | Honhan / Tebo-ICT obfuscated multi-section ASC (line-key cipher) | [BDV_ASC_FORMAT.md](docs/formats/BDV_ASC_FORMAT.md) |
 | **FZ** | ASUS boardview (RC6-encrypted, zlib-compressed) | [FZ_FORMAT.md](docs/formats/FZ_FORMAT.md) |
 | **CAD** | GenCAD 1.4 text-based PCB interchange | [CAD_FORMAT.md](docs/formats/CAD_FORMAT.md) |
 | **XZZ** | XZZ PCB (DES-encrypted boardview) | [XZZ_FORMAT.md](docs/formats/XZZ_FORMAT.md) |

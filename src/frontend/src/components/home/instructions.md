@@ -16,7 +16,7 @@ Running from source locally also works, but the auto-scan library is the killer 
 
 ## Open a file
 
-- Drop a board file (`.bvr`, `.brd`, `.bdv`, `.fz`, `.cad`, `.xzz`, `.tvw`, or Allegro `.brd`) anywhere on this window.
+- Drop a board file (`.bvr`, `.brd`, `.bdv` — both plain-text and Honhan/Tebo-ICT obfuscated, `.fz`, `.cad`, `.xzz`, `.tvw`, or Allegro `.brd`) anywhere on this window.
 - Or drop a PDF schematic next to it — PDFs open in a side panel and stay linked to the board.
 - You can also press **⌘O** to pick a board, or **⌘P** to pick a PDF.
 - In Docker mode: open the **Library** tab in the sidebar and pick any board from the auto-scanned folder.

@@ -19,7 +19,7 @@ If any output, re-scan changed files before working.
 |------|-------|------|
 | `types.ts` | 356 | BoardData, Part, Pin, Net, Nail, Trace, Via, BBox, utility functions (buildNets, computeBBox, computePartGeometry, generateSyntheticOutline, chainSegments); now also CAD revision types |
 | `registry.ts` | 95 | FormatDescriptor interface, format registration, content-based detection, `identifyFormat()` (parserVersion tracked for cache) |
-| `index.ts` | 45 | Imports all formats, exports `parseBoardFile()`. Detection order: BVR1 → BVR3 → BDV → Allegro → BRD → FZ → CAD → XZZ → TVW |
+| `index.ts` | 46 | Imports all formats, exports `parseBoardFile()`. Detection order: BVR1 → BVR3 → BDV ASC → BDV → Allegro → BRD → FZ → CAD → XZZ → TVW |
 | `export-bvr3.ts` | 47 | Export BoardData back to BVR3 format |
 
 ### Format Descriptors (`*-format.ts`)
@@ -32,6 +32,7 @@ Each implements `FormatDescriptor`: id, name, extensions, detect(), parse refere
 | `bvr3-format.ts` | 21 | BVR3 | flipY:false, swapSides:false |
 | `brd-format.ts` | 24 | BRD | flipY:true, swapSides:true |
 | `bdv-format.ts` | 30 | BDV | flipY:true, swapSides:false |
+| `bdv-asc-format.ts` | 33 | BDV_ASC | flipY:true, swapSides:false. Detect: `dd:1.3?,r?-=bb` signature |
 | `fz-format.ts` | 35 | FZ | flipY:true, swapSides:false |
 | `cad-format.ts` | 22 | CAD | flipY:true, swapSides:false |
 | `xzz-format.ts` | 35 | XZZ | flipY:true, swapSides:false |
@@ -46,6 +47,8 @@ Each implements `FormatDescriptor`: id, name, extensions, detect(), parse refere
 | `bvr3-parser.ts` | 214 | Sync | Side inversion baked in (T→bottom). Relative pin coords |
 | `brd-parser.ts` | 312 | Sync | Byte deobfuscation. `detectSideInversion()` heuristic. swapSides flag |
 | `bdv-parser.ts` | 267 | Sync | Per-file flipY via shoelace winding. Y-mirror detection |
+| `bdv-asc-decoder.ts` | 29 | Sync | Line-key cipher (count=0xA0, increments on CRLF). Ports OpenBoardView `decode_bdv` |
+| `bdv-asc-parser.ts` | 160 | Sync | Honhan / Tebo-ICT multi-section ASC. Inch→mil ×1000. Per-file flipY via shoelace winding |
 | `fz-parser.ts` | 430 | **Async** | RC6 decrypt + zlib decompress. Unit multiplier (mils or mm) |
 | `cad-parser.ts` | 557 | Sync | GenCAD 1.4 text. $SIGNALS for pin-net mapping. Multi-revision support with delta-based dedup + shape-local recenter (see 5b319e6, 17e572e, 980aa92) |
 | `xzz-parser.ts` | 821 | **Async** | DES decrypt. XOR obfuscation variant. Butterfly fold: dual-side layout derived from signal clustering |
@@ -72,6 +75,7 @@ Each implements `FormatDescriptor`: id, name, extensions, detect(), parse refere
 | `BVR_FORMAT.md` | 246 | BVR1 + BVR3 | Complete |
 | `BRD_FORMAT.md` | 258 | BRD (Apple) | Complete |
 | `BDV_FORMAT.md` | 137 | BDV | Complete |
+| `BDV_ASC_FORMAT.md` | 167 | BDV ASC (Honhan / Tebo-ICT) | Complete |
 | `FZ_FORMAT.md` | 158 | FZ (ASUS) | Complete |
 | `CAD_FORMAT.md` | 156 | CAD (GenCAD) | Complete |
 | `XZZ_FORMAT.md` | 160 | XZZ | Complete |

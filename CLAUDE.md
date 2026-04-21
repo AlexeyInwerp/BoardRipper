@@ -25,6 +25,7 @@ MIT/Apache-2.0/BSD.
 - **BVR3** — keyword-value, relative pin coords. Spec: `docs/formats/BVR_FORMAT.md`
 - **BRD** — binary obfuscated boardview (Apple/Mac repair). Spec: `docs/formats/BRD_FORMAT.md`
 - **BDV** — plain-text boardview (BRDOUT/NETS/PARTS/PINS/NAILS sections). Spec: `docs/formats/BDV_FORMAT.md`
+- **BDV ASC** — Honhan / Tebo-ICT obfuscated multi-section ASC (line-key cipher). Spec: `docs/formats/BDV_ASC_FORMAT.md`
 - **FZ** — ASUS boardview (RC6-encrypted, zlib-compressed). Spec: `docs/formats/FZ_FORMAT.md`
 - **CAD** — GenCAD 1.4 text-based PCB interchange. Spec: `docs/formats/CAD_FORMAT.md`
 - **XZZ** — XZZ PCB (DES-encrypted boardview). Spec: `docs/formats/XZZ_FORMAT.md`
@@ -46,6 +47,7 @@ Boardviewer/
 │   │   ├── BVR_FORMAT.md        # BVR1/BVR3
 │   │   ├── BRD_FORMAT.md        # BRD (Apple/Mac obfuscated)
 │   │   ├── BDV_FORMAT.md        # BDV (plain-text boardview)
+│   │   ├── BDV_ASC_FORMAT.md    # BDV ASC (Honhan / Tebo-ICT obfuscated)
 │   │   ├── FZ_FORMAT.md         # FZ (ASUS RC6-encrypted)
 │   │   ├── CAD_FORMAT.md        # GenCAD 1.4
 │   │   ├── XZZ_FORMAT.md        # XZZ PCB (DES-encrypted)
@@ -57,7 +59,7 @@ Boardviewer/
     ├── frontend/                # React + PixiJS SPA
     │   ├── tests/               # Playwright E2E specs
     │   └── src/
-    │       ├── parsers/         # Format parsers (pure TS functions, 9 formats)
+    │       ├── parsers/         # Format parsers (pure TS functions, 10 formats)
     │       ├── renderer/        # BoardRenderer, board-scene (shared), mockup-data
     │       ├── pdf/             # PDF glyph extraction & overlay utilities
     │       ├── components/      # Toolbar, StatusBar, TabBar, ContextMenu, PanelAdder, BindLink, BoardSidebar
