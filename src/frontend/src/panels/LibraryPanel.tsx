@@ -109,6 +109,15 @@ export function LibraryPanel() {
     databankStore.fetchTree();
   }, [viewMode, browseMode, folderTree, electronMode]);
 
+  // Normalize: entering history while PDF-search mode is active would leave
+  // pdfSearchMode=true without any UI control to turn it off.
+  useEffect(() => {
+    if (viewMode === 'history' && pdfSearchMode) {
+      setPdfSearchMode(false);
+      if (searchQuery) databankStore.search('');
+    }
+  }, [viewMode, pdfSearchMode, searchQuery]);
+
   const handleFileScan = useCallback(() => {
     databankStore.triggerFileScan();
   }, []);
@@ -313,17 +322,19 @@ export function LibraryPanel() {
             }
           }}
         />
-        <label className="library-pdf-search-toggle" title="Toggle PDF content search (searches inside PDF text)">
-          <input
-            type="checkbox"
-            checked={pdfSearchMode}
-            onChange={(e) => {
-              setPdfSearchMode(e.target.checked);
-              if (!e.target.checked && searchQuery) databankStore.search('');
-            }}
-          />
-          PDF
-        </label>
+        {viewMode !== 'history' && (
+          <label className="library-pdf-search-toggle" title="Toggle PDF content search (searches inside PDF text)">
+            <input
+              type="checkbox"
+              checked={pdfSearchMode}
+              onChange={(e) => {
+                setPdfSearchMode(e.target.checked);
+                if (!e.target.checked && searchQuery) databankStore.search('');
+              }}
+            />
+            PDF
+          </label>
+        )}
         {pdfSearchMode && (
           <button
             className="library-search-btn"
@@ -385,7 +396,7 @@ export function LibraryPanel() {
         ) : pdfSearchMode && searchQuery && searchResults.length === 0 ? (
           <div className="library-empty">No results for "{searchQuery}"</div>
         ) : viewMode === 'history' ? (
-          <HistoryView onOpenFile={handleOpenFile} />
+          <HistoryView onOpenFile={handleOpenFile} searchFilter={localSearch} />
         ) : viewMode === 'model' ? (
           <ModelView
             groups={modelTree}
@@ -662,10 +673,11 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
 
 // --- History View ---
 
-function HistoryView({ onOpenFile }: {
+function HistoryView({ onOpenFile, searchFilter }: {
   onOpenFile: (f: DatabankFile) => void;
+  searchFilter: string;
 }) {
-  const { recentItems, historyDepth, files } = useDatabank();
+  const { recentItems, files } = useDatabank();
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
@@ -678,24 +690,30 @@ function HistoryView({ onOpenFile }: {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
+  const q = searchFilter.trim().toLowerCase();
+  const filteredItems = q
+    ? recentItems.filter(item => {
+        if (item.fileName.toLowerCase().includes(q)) return true;
+        if (item.path.toLowerCase().includes(q)) return true;
+        const dbFile = files.find(f => f.path === item.path);
+        if (!dbFile) return false;
+        return (
+          dbFile.board_number?.toLowerCase().includes(q) ||
+          dbFile.manufacturer?.toLowerCase().includes(q) ||
+          dbFile.model?.toLowerCase().includes(q)
+        ) ?? false;
+      })
+    : recentItems;
+
   return (
     <div className="library-history">
-      <div className="library-history-controls">
-        <label className="library-history-depth" title="Maximum number of recent items to remember">
-          Depth: <input
-            type="number" min={1} max={100} value={historyDepth}
-            onChange={e => databankStore.setHistoryDepth(Number(e.target.value) || 20)}
-          />
-        </label>
-        {recentItems.length > 0 && (
-          <button className="library-history-clear" onClick={() => databankStore.clearHistory()}>Clear</button>
-        )}
-      </div>
       {recentItems.length === 0 ? (
         <div className="library-empty">No recently opened files.</div>
+      ) : filteredItems.length === 0 ? (
+        <div className="library-empty">No recent files match "{searchFilter}".</div>
       ) : (
         <div className="library-tree-children">
-          {recentItems.map((item, i) => {
+          {filteredItems.map((item, i) => {
             const dbFile = files.find(f => f.path === item.path);
             return (
               <div
