@@ -9,9 +9,11 @@ const __dirname = path.dirname(__filename);
 const SAMPLES_DIR = path.resolve(__dirname, '../../../samples/BROKEN/BDV');
 
 const CASES = [
-  { file: 'LA-L031P_r1A_GH53Z.bdv',                    minParts: 4000, minPins: 10000, minNails: 1000 },
-  { file: 'LA-L181P_r1A_GH51G_GH71G_GH53G_GH57G.bdv',  minParts: 2500, minPins: 10000, minNails: 1500 },
-  { file: 'LA-L191P_r1A_GH53G.bdv',                    minParts: 4500, minPins: 14000, minNails: 1500 },
+  // UV1/UC1/UH1 are the big BGAs (CPU/GPU/chipset) on these Compal laptop
+  // mainboards — their pin counts confirm the >999 pin-number regex fix.
+  { file: 'LA-L031P_r1A_GH53Z.bdv',                    minParts: 4000, minPins: 14000, minNails: 1000, bigBga: { UV1: 2714, UC1: 1140 } },
+  { file: 'LA-L181P_r1A_GH51G_GH71G_GH53G_GH57G.bdv',  minParts: 2500, minPins: 12000, minNails: 1500, bigBga: { UV1: 1358, UC1: 1787, UH1: 943 } },
+  { file: 'LA-L191P_r1A_GH53G.bdv',                    minParts: 4500, minPins: 17000, minNails: 1500, bigBga: { UV1: 2714, UC1: 1787, UH1: 943 } },
 ];
 
 test.describe('BDV ASC (Honhan / Tebo-ICT) Parser', () => {
@@ -61,6 +63,22 @@ test.describe('BDV ASC (Honhan / Tebo-ICT) Parser', () => {
       const pinsWithNet = board.parts.flatMap(p => p.pins).filter(p => p.net);
       expect(pinsWithNet.length).toBeGreaterThan(totalPins / 4);
       expect(board.nets.size).toBeGreaterThan(1000);
+
+      // Big-BGA pin counts — regression guard for the 4-digit pin-number
+      // line-format bug: the pin-number column loses its leading space at
+      // pin >= 1000, and the original PIN_LINE_RE (/^\s+\d/) dropped every
+      // pin past 999, silently halving BGAs like UV1 (GPU) and UC1 (CPU).
+      for (const [name, pinCount] of Object.entries(c.bigBga)) {
+        const part = board.parts.find(p => p.name === name);
+        expect(part, `expected part ${name} in ${c.file}`).toBeTruthy();
+        expect(part!.pins.length).toBe(pinCount);
+      }
+
+      // Pin majority lands on side='bottom' because the exporter labels
+      // sides from the ICT fixture's perspective, inverted relative to
+      // the user-visible component side. The parser flags this via
+      // primarySide so the renderer swaps scene layers on open.
+      expect(board.primarySide).toBe('bottom');
     });
   }
 });
