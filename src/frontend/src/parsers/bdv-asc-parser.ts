@@ -58,7 +58,11 @@ function parseOutline(body: string): Point[] {
 // ---------------------------------------------------------------------------
 
 const PART_HEADER_RE = /^Part\s+(\S+)\s*\(([TB])\)\s*$/;
-const PIN_LINE_RE = /^\s+\d/;
+// Pin-number column is 4 wide right-aligned: single-digit "   1", 3-digit " 999",
+// 4-digit pin numbers (BGAs >999 balls) land at column 0 with no leading
+// whitespace — accept both forms. Later token-count + numeric checks guard
+// against stray header/metadata lines that begin with a digit.
+const PIN_LINE_RE = /^\s*\d+\s+\S/;
 
 interface RawPart {
   name: string;
@@ -178,6 +182,20 @@ export function parseBDVAsc(buffer: ArrayBuffer): BoardData {
     throw new Error('BDV ASC file parsed but contains no parts or outline — decoder may have desynced');
   }
 
+  // Detect side-label inversion. Tebo-ICT / eM-Test files label parts from
+  // the fixture's perspective — the side where the test nails land. For a
+  // bed-of-nails ICT fixture that is physically opposite to the board's
+  // component side, so laptop mainboards end up with every big BGA (CPU,
+  // GPU, chipset) tagged (B) even though it's on the user-visible top.
+  // Matches the Allegro assembler's pin-majority heuristic: when >55% of
+  // pins sit on side='bottom' the "primary" side is bottom; the renderer
+  // then swaps scene layers so the user's "Top" button shows them.
+  const pinsOnTop = parts.filter(p => p.side === 'top').reduce((n, p) => n + p.pins.length, 0);
+  const pinsOnBottom = parts.filter(p => p.side === 'bottom').reduce((n, p) => n + p.pins.length, 0);
+  const totalPins = pinsOnTop + pinsOnBottom;
+  const primarySide: 'top' | 'bottom' | undefined =
+    totalPins > 0 && pinsOnBottom / totalPins > 0.55 ? 'bottom' : undefined;
+
   // Winding-order flipY detection (matches bdv-parser behaviour).
   let flipY = false;
   if (outline.length >= 3) {
@@ -198,5 +216,5 @@ export function parseBDVAsc(buffer: ArrayBuffer): BoardData {
   const bounds = computeBBox(allPoints);
   const nets = buildNets(parts);
 
-  return { format: 'BDV_ASC', outline, parts, nails, nets, bounds, flipY };
+  return { format: 'BDV_ASC', outline, parts, nails, nets, bounds, flipY, primarySide };
 }
