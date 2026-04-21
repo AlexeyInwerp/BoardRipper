@@ -567,6 +567,63 @@ function DatabaseInfoSection() {
   );
 }
 
+// ---- Library settings (auto-pdf, history depth, clear history) ----
+
+function LibrarySettingsSection() {
+  const { autoPdf, historyDepth, recentItems } = useDatabank();
+  const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
+
+  // Keep local draft in sync when the stored value changes externally
+  useEffect(() => {
+    setDepthDraft(String(historyDepth));
+  }, [historyDepth]);
+
+  const commitDepth = () => {
+    const n = Number(depthDraft);
+    if (!Number.isFinite(n)) { setDepthDraft(String(historyDepth)); return; }
+    databankStore.setHistoryDepth(n);
+  };
+
+  return (
+    <div className="settings-subsection">
+      <div className="settings-subsection-label">Library</div>
+
+      <label className="settings-row-toggle">
+        <input
+          type="checkbox"
+          checked={autoPdf}
+          onChange={(e) => databankStore.setAutoPdf(e.target.checked)}
+        />
+        <span>Auto-load bound PDFs when opening a board</span>
+      </label>
+
+      <label className="settings-row-field">
+        <span>Recent history depth</span>
+        <input
+          type="number"
+          min={1}
+          max={100}
+          value={depthDraft}
+          onChange={(e) => setDepthDraft(e.target.value)}
+          onBlur={commitDepth}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        />
+      </label>
+
+      <div className="settings-row-field">
+        <span>Recent history ({recentItems.length} item{recentItems.length === 1 ? '' : 's'})</span>
+        <button
+          className="settings-action-btn"
+          disabled={recentItems.length === 0}
+          onClick={() => databankStore.clearHistory()}
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---- PDF Scroll Bindings Editor (drag-and-drop) ----
 
 // PDF scroll bindings editor. Mirrored on the home dashboard in
@@ -1440,6 +1497,7 @@ export function SettingsPanel() {
         <LibraryFolderSetting />
         <AutoScanToggle />
         <DatabaseInfoSection />
+        <LibrarySettingsSection />
       </CollapsibleSection>
 
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
