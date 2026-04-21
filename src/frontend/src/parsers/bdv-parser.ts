@@ -15,7 +15,9 @@
  */
 
 import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets } from './types';
+import { computeBBox, buildNets, generateSyntheticOutline } from './types';
+import { applyXMirrorInPlace } from './mirror-detect';
+import { log } from '../store/log-store';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -111,6 +113,7 @@ function readSections(text: string): Sections {
 export function parseBDV(buffer: ArrayBuffer): BoardData {
   const text = decoder.decode(buffer);
   const sec = readSections(text);
+  const creator = sec.header.trim();
 
   // ---- Board outline -------------------------------------------------------
   const outline: Point[] = [];
@@ -169,17 +172,18 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
 
   const sideStr = (s: number): 'top' | 'bottom' => s === 1 ? 'top' : 'bottom';
 
-  // ---- Detect side=0 Y-mirror axis ----------------------------------------
-  // Some BDV exporters encode bottom-side pins with side=0 and Y-mirrored
-  // coordinates: y_pin = boardMaxY - y_actual. Detect the mirror axis from
-  // the maximum Y across all part bounding boxes.
-  const hasSide0 = rawPins.some(p => p.side === 0);
-  let mirrorY = 0;
-  if (hasSide0) {
-    for (const rp of rawParts) {
-      mirrorY = Math.max(mirrorY, rp.y1, rp.y2);
-    }
-  }
+  // ---- Side=0 Y-mirror axis (BRDOUT height) --------------------------------
+  // The "159xxxx" Compal/Quanta-family BDV writer encodes through-hole
+  // mounting-hole pins as side=0 with the Y coordinate pre-mirrored around
+  // the board's BRDOUT height when the parent part is on the top side. For
+  // bottom-side parents the Y is already in un-mirrored space. We flip only
+  // in the top-parent case and assign the pin to the side opposite the
+  // part's declared side (through-hole exits on the back of the component).
+  //
+  // The mirror axis must be the declared BRDOUT height — earlier revisions
+  // used max(partY1, partY2), which undershoots by ~80 mils and scatters
+  // mounting-hole pins away from their holes.
+  const mirrorY = sec.brdout.height > 0 ? sec.brdout.height : 0;
 
   const parts: Part[] = [];
   for (let i = 0; i < rawParts.length; i++) {
@@ -190,9 +194,20 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
     const pins: Pin[] = [];
     for (let j = rp.pinStart; j < pinEnd && j < rawPins.length; j++) {
       const rpin = rawPins[j];
-      // side=0 pins have Y-mirrored coords — unmirror and assign to bottom
-      const pinY = rpin.side === 0 ? mirrorY - rpin.y : rpin.y;
-      const pinSide = rpin.side === 0 ? 'bottom' as const : side;
+      // side=0 encodes a through-hole pin exiting on the opposite side of the
+      // parent part. When the parent is on the top side, the file pre-mirrors
+      // the Y coordinate around the BRDOUT height; when the parent is on the
+      // bottom side, the Y is stored directly.
+      let pinY = rpin.y;
+      let pinSide: 'top' | 'bottom' = side;
+      if (rpin.side === 0) {
+        if (rp.side === 1 && mirrorY > 0) {
+          pinY = mirrorY - rpin.y;
+          pinSide = 'bottom';
+        } else if (rp.side === 2) {
+          pinSide = 'top';
+        }
+      }
       pins.push({
         name: String(j - rp.pinStart + 1),
         number: String(j - rp.pinStart + 1),
@@ -235,11 +250,15 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  if (parts.length === 0 && outline.length === 0) {
+    throw new Error('BDV file parsed but contains no parts or outline — file may be corrupt or empty');
+  }
+
   // ---- Detect Y direction from outline winding order -------------------------
   // Positive signed area (shoelace) → CCW in Y-up space → file uses Y-up → need flipY.
   // Negative → CW in Y-up = file is Y-down → no flipY.
   // Zero/degenerate outline → assume screen-oriented (Y-down) → no flipY.
-  let flipY = false; // default: no flip (screen Y-down)
+  let flipY = false;
   if (outline.length >= 3) {
     let signedArea2 = 0;
     for (let i = 0; i < outline.length; i++) {
@@ -247,21 +266,95 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
       signedArea2 += outline[i].x * outline[j].y - outline[j].x * outline[i].y;
     }
     if (Math.abs(signedArea2) > 1) {
-      flipY = signedArea2 > 0; // positive = CCW in Y-up = need flip
+      flipY = signedArea2 > 0;
     }
   }
 
-  if (parts.length === 0 && outline.length === 0) {
-    throw new Error('BDV file parsed but contains no parts or outline — file may be corrupt or empty');
+  const parserNotes: string[] = [];
+
+  // ---- X-mirror normalization for the "Compal/Quanta 7-digit ID" writer -----
+  // The BDV family whose first-line creator is a 7-digit numeric ID (e.g.
+  // 1599467 = LA-L978P, 1593300 = LA-L191P-R1C, 1450250 = Quanta G37D) stores
+  // coordinates horizontally flipped relative to the renderer's frame. The
+  // same exporter also emits files with an all-zero BRDOUT (e.g. 1457685 =
+  // DAG3BEMBCD0), and those files are NOT X-mirrored. The discriminating
+  // signal is the outline itself: when it's a rectangle sitting at (0,0)-(W,H)
+  // with the same W/H declared in the BRDOUT header, the file belongs to the
+  // mirrored bucket. Matches the same shape as brd-parser.ts's Pins1/Pins2
+  // writer X-flip.
+  const hasRectOutline =
+    outline.length >= 4 &&
+    sec.brdout.width > 0 &&
+    sec.brdout.height > 0 &&
+    Math.min(...outline.map(p => p.x)) === 0 &&
+    Math.min(...outline.map(p => p.y)) === 0 &&
+    Math.abs(Math.max(...outline.map(p => p.x)) - sec.brdout.width) < 1 &&
+    Math.abs(Math.max(...outline.map(p => p.y)) - sec.brdout.height) < 1;
+  const needsXFlip = /^\d{7}$/.test(creator) && hasRectOutline;
+  if (needsXFlip) {
+    log.parser.warn(
+      `BDV X-mirror normalization applied (creator='${creator}', rectangular ${sec.brdout.width}×${sec.brdout.height} outline)`,
+    );
+    applyXMirrorInPlace(parts, nails, [], [], outline);
+    parserNotes.push(
+      "Board was horizontally un-mirrored on load — the file was produced by the Compal/Quanta-family BDV writer (7-digit creator ID) whose X-axis convention is opposite to the renderer's.",
+    );
+  } else {
+    log.parser.log(
+      `BDV X-mirror check: creator='${creator}', rectOutline=${hasRectOutline}, no flip needed`,
+    );
+  }
+
+  // ---- primarySide pin-majority heuristic ----------------------------------
+  // Matches Allegro/BDV-ASC: when the IC-heavy side ends up tagged 'bottom',
+  // flag the board so the renderer swaps scene layers on open. No-op when
+  // the file's side encoding already matches reality (>55% pins on 'bottom'
+  // is the trigger).
+  const pinsOnTop = parts.reduce((n, p) => n + (p.side === 'top' ? p.pins.length : 0), 0);
+  const pinsOnBottom = parts.reduce((n, p) => n + (p.side === 'bottom' ? p.pins.length : 0), 0);
+  const totalPins = pinsOnTop + pinsOnBottom;
+  const primarySide: 'top' | 'bottom' | undefined =
+    totalPins > 0 && pinsOnBottom / totalPins > 0.55 ? 'bottom' : undefined;
+
+  // ---- Synthetic outline fallback ------------------------------------------
+  // Some files (e.g. DAG3BEMBCD0, creator 1457685) declare `BRDOUT: 5 0 0`
+  // with five (0,0) vertices — effectively no outline. Without one the view
+  // has nothing to frame the board and parts float against the origin.
+  // Generate a rectangular outline around the parts' bbox when this happens.
+  let finalOutline = outline;
+  const outlineDegenerate =
+    outline.length === 0 ||
+    (outline.length > 0 &&
+      Math.abs(Math.max(...outline.map(p => p.x)) - Math.min(...outline.map(p => p.x))) < 1 &&
+      Math.abs(Math.max(...outline.map(p => p.y)) - Math.min(...outline.map(p => p.y))) < 1);
+  if (outlineDegenerate && parts.length > 0) {
+    const partPoints = parts.flatMap(p => p.pins.map(pin => pin.position));
+    if (partPoints.length > 0) {
+      finalOutline = generateSyntheticOutline(partPoints, 200);
+      parserNotes.push(
+        'Board outline was missing in the file — a synthetic rectangular outline was derived from the part positions.',
+      );
+    }
   }
 
   // ---- Finalise -------------------------------------------------------------
   const allPoints = [
-    ...outline,
+    ...finalOutline,
     ...parts.flatMap(p => p.pins.map(pin => pin.position)),
   ];
   const bounds = computeBBox(allPoints);
   const nets = buildNets(parts);
 
-  return { format: 'BDV', outline, parts, nails, nets, bounds, flipY };
+  const board: BoardData = {
+    format: 'BDV',
+    outline: finalOutline,
+    parts,
+    nails,
+    nets,
+    bounds,
+    flipY,
+  };
+  if (primarySide) board.primarySide = primarySide;
+  if (parserNotes.length > 0) board.parserNotes = parserNotes;
+  return board;
 }
