@@ -579,8 +579,8 @@ function LibrarySettingsSection() {
   }, [historyDepth]);
 
   const commitDepth = () => {
-    const n = Number(depthDraft);
-    if (!Number.isFinite(n)) { setDepthDraft(String(historyDepth)); return; }
+    const n = Math.floor(Number(depthDraft));
+    if (!Number.isFinite(n) || n < 1) { setDepthDraft(String(historyDepth)); return; }
     databankStore.setHistoryDepth(n);
   };
 
@@ -603,6 +603,7 @@ function LibrarySettingsSection() {
           type="number"
           min={1}
           max={100}
+          step={1}
           value={depthDraft}
           onChange={(e) => setDepthDraft(e.target.value)}
           onBlur={commitDepth}
