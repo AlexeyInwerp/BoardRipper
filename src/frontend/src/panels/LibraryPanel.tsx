@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import type { DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup } from '../store/databank-store';
+import type { DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, ViewMode } from '../store/databank-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
@@ -110,13 +110,15 @@ export function LibraryPanel() {
   }, [viewMode, browseMode, folderTree, electronMode]);
 
   // Normalize: entering history while PDF-search mode is active would leave
-  // pdfSearchMode=true without any UI control to turn it off.
-  useEffect(() => {
-    if (viewMode === 'history' && pdfSearchMode) {
+  // pdfSearchMode=true without any UI control to turn it off. Handle at the
+  // tab click site instead of in an effect — avoids cascading renders.
+  const handleSetViewMode = useCallback((mode: ViewMode) => {
+    if (mode === 'history' && pdfSearchMode) {
       setPdfSearchMode(false);
       if (searchQuery) databankStore.search('');
     }
-  }, [viewMode, pdfSearchMode, searchQuery]);
+    databankStore.setViewMode(mode);
+  }, [pdfSearchMode, searchQuery]);
 
   const handleFileScan = useCallback(() => {
     databankStore.triggerFileScan();
@@ -261,26 +263,26 @@ export function LibraryPanel() {
         <div className="library-tabs">
           <button
             className={`library-tab ${viewMode === 'history' ? 'active' : ''}`}
-            onClick={() => databankStore.setViewMode('history')}
+            onClick={() => handleSetViewMode('history')}
             title="Recently opened"
           >
             <IconHistory size={14} />
           </button>
           <button
             className={`library-tab ${viewMode === 'metadata' ? 'active' : ''}`}
-            onClick={() => databankStore.setViewMode('metadata')}
+            onClick={() => handleSetViewMode('metadata')}
           >
             Board #
           </button>
           <button
             className={`library-tab ${viewMode === 'model' ? 'active' : ''}`}
-            onClick={() => databankStore.setViewMode('model')}
+            onClick={() => handleSetViewMode('model')}
           >
             Model
           </button>
           <button
             className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => databankStore.setViewMode('folders')}
+            onClick={() => handleSetViewMode('folders')}
             title="Browse folders"
           >
             <IconFolder size={14} />
