@@ -1381,6 +1381,22 @@ export function SettingsPanel() {
 
       <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}
         onToggle={toggleSection} sectionRef={netColorsRef} isFocused={focusedSection === 'netColors'}>
+        <div className="settings-subsection-label">Default pin color (no rule matched)</div>
+        <div className="color-rule-row">
+          <span className="color-rule-pattern" style={{ flex: 1 }}>Top side</span>
+          <input type="color" className="color-rule-color"
+            value={draft.defaultPinColorTop}
+            onChange={(e) => updateDraft({ defaultPinColorTop: e.target.value })}
+            title="Fill color for top-side pins whose net does not match any rule" />
+        </div>
+        <div className="color-rule-row">
+          <span className="color-rule-pattern" style={{ flex: 1 }}>Bottom side</span>
+          <input type="color" className="color-rule-color"
+            value={draft.defaultPinColorBottom}
+            onChange={(e) => updateDraft({ defaultPinColorBottom: e.target.value })}
+            title="Fill color for bottom-side pins whose net does not match any rule" />
+        </div>
+        <div className="settings-subsection-label">Rules</div>
         <NetColorRulesSection rules={draft.netColorRules} ruleActions={ruleActions} />
         <div className="settings-subsection-label">No-Connect Patterns</div>
         <NcNetPatternsSection patterns={draft.ncNetPatterns} onChange={onNcPatternsChange} />

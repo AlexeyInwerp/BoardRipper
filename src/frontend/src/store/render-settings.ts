@@ -179,6 +179,12 @@ export interface RenderSettings {
 
   netColorRules: NetColorRule[];
 
+  /** Default pin fill color (hex `#rrggbb`) applied when no `netColorRules`
+   *  pattern matches. Separate values for the top and bottom side of the board.
+   *  Traditional defaults: green top, red bottom. */
+  defaultPinColorTop: string;
+  defaultPinColorBottom: string;
+
   /** Net name patterns treated as "no connect" — outline-only pins, no fill, no labels.
    *  Patterns are case-insensitive. Supports trailing `*` wildcard (e.g. `NC_*` matches `NC_PAD`). */
   ncNetPatterns: string[];
@@ -286,6 +292,8 @@ export const DEFAULTS: RenderSettings = {
   dragToZoom: false,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
+  defaultPinColorTop: '#44cc44',
+  defaultPinColorBottom: '#cc4444',
 
   ncNetPatterns: ['NC', 'NC_*', 'N/C', 'NO CONNECT'],
 
@@ -676,7 +684,8 @@ export function resolvePinColor(settings: RenderSettings, netName: string, side:
       }
     }
   }
-  return side === 'bottom' ? 0xcc4444 : 0x44cc44;
+  const fallback = side === 'bottom' ? settings.defaultPinColorBottom : settings.defaultPinColorTop;
+  return parseInt(fallback.replace('#', ''), 16);
 }
 
 
