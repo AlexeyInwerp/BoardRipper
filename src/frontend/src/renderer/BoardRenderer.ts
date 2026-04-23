@@ -183,6 +183,11 @@ export class BoardRenderer {
   /** Bound shift+wheel handler — intercepts before pixi-viewport to implement scroll bindings */
   private boundShiftWheel: ((e: WheelEvent) => void) | null = null;
   private boundDragZoomDown: ((e: PointerEvent) => void) | null = null;
+  /** Set to true when a drag-to-zoom gesture actually moved (committed past the
+   *  threshold). Consumed by the next `handleClick` to prevent a stale selection:
+   *  pixi-viewport's InputManager never sees the pointermoves (drag-zoom
+   *  stopPropagation's them), so it still emits 'clicked' on pointerup. */
+  private dragZoomConsumedClick = false;
   /** If a drag-zoom gesture is active, holds its cleanup function so dispose()
    *  can force-remove the per-gesture window listeners. */
   private activeDragZoomCleanup: (() => void) | null = null;
@@ -2193,6 +2198,9 @@ export class BoardRenderer {
         if (ev.pointerId !== pointerId) return;
         forceCleanup();
         if (committed) {
+          // Block the stale 'clicked' that pixi-viewport will still emit —
+          // its InputManager never saw the moves, so it thinks the drag was a click.
+          this.dragZoomConsumedClick = true;
           ev.preventDefault();
           ev.stopPropagation();
         }
@@ -3656,6 +3664,10 @@ export class BoardRenderer {
   }
 
   private handleClick(world: Point) {
+    if (this.dragZoomConsumedClick) {
+      this.dragZoomConsumedClick = false;
+      return;
+    }
     const hit = this.hitTest(world);
     if (hit) {
       if (hit.pinIndex >= 0) {
