@@ -475,11 +475,14 @@ function extractOutline(db: AllegroDb, _ver: FmtVer, div: number): Point[] {
   // walks three separate lists; flat iteration is simpler and catches
   // every case without sensitivity to which LL the outline lives on.
   //
-  // Filter (unchanged): BOUNDARY class (0x15), or BOARD_GEOMETRY (0x01)
-  // / DRAWING_FORMAT (0x04) with subclass 0xEA (BGEOM_OUTLINE) or 0xFD
-  // (BGEOM_DESIGN_OUTLINE). Pick the shape with the most segments — the
-  // board edge is the largest polygon matching the filter. Prefer 0xEA
-  // over 0xFD as a tiebreaker (matches KiCad's convention).
+  // Filter: BOUNDARY class (0x15), or BOARD_GEOMETRY (0x01) / DRAWING_FORMAT
+  // (0x04) with subclass 0xEA (BGEOM_OUTLINE) or 0xFD (BGEOM_DESIGN_OUTLINE).
+  // Rank by bounding-box AREA — on Compal/Quanta files the BOUNDARY layer
+  // also carries routing keepins and copper-pour boundaries that have many
+  // more segments than the board edge but a much smaller bbox; ranking by
+  // segment count therefore picks the wrong shape (LA-H271P regression).
+  // The board outline is by definition the largest enclosed shape on these
+  // layers, so area-ranking is robust. 0xEA preferred as tiebreaker.
   let best: Point[] = [];
   let bestScore = -1;
 
@@ -496,8 +499,17 @@ function extractOutline(db: AllegroDb, _ver: FmtVer, div: number): Point[] {
     if (!isBoundary && !isBoardGeomOutline) continue;
 
     const pts = walkSegmentChain(db, shape.firstSegmentPtr, div);
-    // Tie-breaker bias: prefer 0xEA by a small margin when point counts tie
-    const score = pts.length * 10 + (sc === 0xEA ? 1 : 0);
+    if (pts.length < 2) continue;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const area = (maxX - minX) * (maxY - minY);
+    const score = area * 10 + (sc === 0xEA ? 1 : 0);
     if (score > bestScore) {
       bestScore = score;
       best = pts;
