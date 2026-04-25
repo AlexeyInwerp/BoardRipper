@@ -1,7 +1,12 @@
 import { databankStore } from '../store/databank-store';
 import { createStoreHook } from './createStoreHook';
-import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, MetadataGroup, ModelGroup, DatabankStats, BrowseResult, RecentItem } from '../store/databank-store';
+import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, DatabankStats, BrowseResult, RecentItem } from '../store/databank-store';
 
+// `metadataTree`/`modelTree` are deliberately NOT in the snapshot. Including
+// them would call the (O(N)) groupby getters on every store notify — even
+// when the active tab doesn't render either tree. They are computed lazily
+// inside the panel/views via `useMemo` so the cost is only paid by the tab
+// that actually needs them.
 interface DatabankSnapshot {
   files: DatabankFile[];
   filesComplete: boolean;
@@ -15,8 +20,6 @@ interface DatabankSnapshot {
   selectedFileDetail: FileDetail | null;
   loading: boolean;
   backendAvailable: boolean;
-  metadataTree: MetadataGroup[];
-  modelTree: ModelGroup[];
   libraryPath: string | null;
   electronMode: boolean;
   verboseScan: boolean;
@@ -42,8 +45,6 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   selectedFileDetail: databankStore.selectedFileDetail,
   loading: databankStore.loading,
   backendAvailable: databankStore.backendAvailable,
-  metadataTree: databankStore.metadataTree,
-  modelTree: databankStore.modelTree,
   libraryPath: databankStore.libraryPath,
   electronMode: databankStore.electronMode,
   verboseScan: databankStore.verboseScan,

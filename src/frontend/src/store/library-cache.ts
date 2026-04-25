@@ -51,6 +51,14 @@ class LibraryCache {
   }
 
   async get(signature: string): Promise<DatabankFile[] | null> {
+    const snap = await this.getRaw();
+    return snap && snap.signature === signature ? snap.files : null;
+  }
+
+  /** Read the cached snapshot without verifying its signature. Useful when
+   *  the caller wants to fire IDB read in parallel with `/api/databank/stats`
+   *  and validate after — instead of paying both round-trips serially. */
+  async getRaw(): Promise<{ signature: string; files: DatabankFile[] } | null> {
     try {
       const db = await this.openDB();
       return await new Promise((resolve, reject) => {
@@ -58,11 +66,7 @@ class LibraryCache {
         const req = tx.objectStore(FILES_STORE).get(SNAPSHOT_KEY);
         req.onsuccess = () => {
           const result = req.result as CachedSnapshot | undefined;
-          if (!result || result.signature !== signature) {
-            resolve(null);
-            return;
-          }
-          resolve(result.files);
+          resolve(result ? { signature: result.signature, files: result.files } : null);
         };
         req.onerror = () => reject(req.error);
       });
