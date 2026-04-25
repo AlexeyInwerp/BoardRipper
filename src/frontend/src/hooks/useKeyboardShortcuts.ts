@@ -201,9 +201,14 @@ export function useKeyboardShortcuts() {
               return;
             }
             e.preventDefault();
-            const { showTop, showBottom, butterfly } = boardStore;
+            const { showTop, showBottom, butterfly, board } = boardStore;
             if (butterfly || (showTop && showBottom)) return;
-            if (showTop) boardStore.selectBottom();
+            // selectTop/selectBottom already swap raw flags for primarySide='bottom'
+            // files. Read state in UI perspective (what the user sees as "Top") so
+            // the toggle flips both kinds of files identically.
+            const swap = board?.primarySide === 'bottom';
+            const uiTopVisible = swap ? showBottom : showTop;
+            if (uiTopVisible) boardStore.selectBottom();
             else boardStore.selectTop();
             return;
           }
