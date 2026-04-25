@@ -145,6 +145,12 @@ export interface BoardSceneGraph {
   traceLayer: Container | null;
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
   traceLayerContainers: Container[];
+  /** Silkscreen / assembly outline overlay — toggled by showSilkscreen.
+   *  Two child containers (top, bottom); each side container is shown only
+   *  when its corresponding board side is visible. */
+  silkscreenLayer: Container | null;
+  silkscreenTop: Container | null;
+  silkscreenBottom: Container | null;
   /** Via/drill hole overlay container — toggled by showVias */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
@@ -473,6 +479,44 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       traceLayer.addChild(traceGfx);
       root.addChild(traceLayer);
     }
+  }
+
+  // ── Silkscreen / assembly outlines ────────────────────────────────────────
+  // Per-component polylines from the parser, already in board coordinates.
+  // Two side containers so the renderer can independently toggle visibility
+  // alongside the existing top/bottom side toggles.
+  let silkscreenLayer: Container | null = null;
+  let silkscreenTop: Container | null = null;
+  let silkscreenBottom: Container | null = null;
+  if (board.silkscreen && board.silkscreen.length > 0) {
+    silkscreenLayer = new Container();
+    silkscreenLayer.label = 'silkscreen';
+    silkscreenTop = new Container();
+    silkscreenTop.label = 'silkscreen-top';
+    silkscreenBottom = new Container();
+    silkscreenBottom.label = 'silkscreen-bottom';
+
+    const SILK_TOP_COLOR    = 0xc8c8c8;
+    const SILK_BOTTOM_COLOR = 0x9aa8c0;
+    const SILK_WIDTH        = 1.5;
+    const SILK_ALPHA        = 0.85;
+
+    const topGfx = new Graphics();
+    const botGfx = new Graphics();
+    for (const path of board.silkscreen) {
+      const pts = path.points;
+      if (pts.length < 2) continue;
+      const g = path.side === 'top' ? topGfx : botGfx;
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    }
+    topGfx.stroke({ width: SILK_WIDTH, color: SILK_TOP_COLOR,    alpha: SILK_ALPHA, join: 'round', cap: 'round' });
+    botGfx.stroke({ width: SILK_WIDTH, color: SILK_BOTTOM_COLOR, alpha: SILK_ALPHA, join: 'round', cap: 'round' });
+    silkscreenTop.addChild(topGfx);
+    silkscreenBottom.addChild(botGfx);
+    silkscreenLayer.addChild(silkscreenBottom);
+    silkscreenLayer.addChild(silkscreenTop);
+    root.addChild(silkscreenLayer);
   }
 
   root.addChild(bottomLayer);
@@ -1394,5 +1438,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

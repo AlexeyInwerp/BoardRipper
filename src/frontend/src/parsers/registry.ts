@@ -35,6 +35,9 @@ export interface FormatDescriptor {
   /** Format can produce PCB traces — show traces toggle. */
   hasTraces?: boolean;
 
+  /** Format can produce per-component silkscreen / assembly outlines — show silkscreen toggle. */
+  hasSilkscreen?: boolean;
+
   /**
    * Content-based format detection.
    * Receives the first 512 bytes (or fewer if the file is smaller).

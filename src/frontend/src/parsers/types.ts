@@ -65,6 +65,13 @@ export interface Via {
   layers: number[];
 }
 
+/** Per-component silkscreen / assembly drawing — open polyline (segments + arc samples)
+ *  in board coordinates, already pre-rotated and pre-translated by the source format. */
+export interface SilkscreenPath {
+  points: Point[];
+  side: 'top' | 'bottom';
+}
+
 export interface BoardData {
   format: string; // format ID from FormatDescriptor.id (e.g. 'BVR1', 'BVR3', 'BRD')
   /** Format-specific version extracted from file (e.g. "GENCAD 1.4", "17.2", "v7"). */
@@ -77,6 +84,8 @@ export interface BoardData {
   traces?: Trace[];
   /** Via/drill holes for multi-layer boards */
   vias?: Via[];
+  /** Per-component silkscreen / assembly outline polylines, tagged by side. */
+  silkscreen?: SilkscreenPath[];
   /** Layer names for multi-layer formats (e.g. TVW butterfly columns). Index = column. */
   layerNames?: string[];
   /** Butterfly fold axis in board coordinates — renderer mirrors this axis for the bottom half.
