@@ -13,7 +13,7 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
+import type { BoardData, Pad, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { FmtVer, LayerClass } from './allegro-types';
@@ -22,11 +22,13 @@ import type {
   Blk0x05Track,
   Blk0x07ComponentInst,
   Blk0x08PinNumber,
+  Blk0x0DPad,
   Blk0x11PinName,
   Blk0x14Graphic,
   Blk0x15_16_17Segment,
   Blk0x01Arc,
   Blk0x1BNet,
+  Blk0x1CPadstack,
   Blk0x28Shape,
   Blk0x2ALayerList,
   Blk0x2BFootprintDef,
@@ -84,6 +86,9 @@ export function assembleBoard(db: AllegroDb): BoardData {
   // Extract per-component silkscreen / assembly outlines
   const silkscreen = extractSilkscreen(db, div);
 
+  // Extract copper pads (placed pad rectangles)
+  const pads = extractPads(db, div, netAssignMap);
+
   // Extract layer names
   const layerNames = extractLayerNames(db);
 
@@ -99,7 +104,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
     `${parts.reduce((n, p) => n + p.pins.length, 0)} pins, ` +
     `${traces.length} traces, ${vias.length} vias, ` +
     `${outline.length} outline pts, ${silkscreen.length} silkscreen paths, ` +
-    `${layerNames.length} layers`
+    `${pads.length} pads, ${layerNames.length} layers`
   );
 
   return {
@@ -113,6 +118,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,
+    pads: pads.length > 0 ? pads : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     primarySide: primarySide === 'bottom' ? 'bottom' : undefined,
   };
@@ -480,6 +486,78 @@ function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
       }
 
       key = gfx.next;
+    }
+  }
+
+  return out;
+}
+
+// ── Copper pads ───────────────────────────────────────────────────────────────
+
+/**
+ * Walk every Blk0x07 → Blk0x2D → firstPadPtr → Blk0x32 (placed-pad) chain.
+ * The 0x32 carries an axis-aligned bbox in board coordinates that's already
+ * pre-rotated and pre-translated by Allegro for the common 0/90/180/270°
+ * placements. Use it directly as the pad rectangle.
+ *
+ * Side: derived from the padstack (Blk0x1C) — layerCount > 1 means the pad
+ * connects multiple etch layers and is treated as through-hole (side='both');
+ * otherwise it's a single-side SMD pad on the footprint's side (fp.layer
+ * 0=top, 1=bottom).
+ */
+function extractPads(
+  db: AllegroDb,
+  div: number,
+  netAssignMap: Map<number, string>,
+): Pad[] {
+  const out: Pad[] = [];
+  const MAX_CHAIN = 100_000;
+
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x07) continue;
+    const inst = blk as Blk0x07ComponentInst;
+    const fp = db.getBlock(inst.fpInstPtr);
+    if (!fp || fp.blockType !== 0x2D) continue;
+    const fpInst = fp as Blk0x2DFootprintInst;
+    const fpSide: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+
+    let key = fpInst.firstPadPtr;
+    const visited = new Set<number>();
+    for (let i = 0; i < MAX_CHAIN; i++) {
+      if (key === 0 || visited.has(key)) break;
+      visited.add(key);
+      const placed = db.getBlock(key);
+      if (!placed || placed.blockType !== 0x32) break;
+      const pp = placed as Blk0x32PlacedPad;
+
+      // Pad shape — bbox already in board coords, already rotated.
+      const [bx1, by1, bx2, by2] = pp.coords;
+      const minX = Math.min(bx1, bx2) / div;
+      const maxX = Math.max(bx1, bx2) / div;
+      const minY = Math.min(by1, by2) / div;
+      const maxY = Math.max(by1, by2) / div;
+
+      // Only emit pads with a non-degenerate footprint.
+      if (maxX > minX && maxY > minY) {
+        // Resolve through-hole vs SMD via padstack.layerCount.
+        let side: 'top' | 'bottom' | 'both' = fpSide;
+        const padBlock = db.getBlock(pp.padPtr);
+        if (padBlock && padBlock.blockType === 0x0D) {
+          const ps = db.getBlock((padBlock as Blk0x0DPad).padStack);
+          if (ps && ps.blockType === 0x1C && (ps as Blk0x1CPadstack).layerCount > 1) {
+            side = 'both';
+          }
+        }
+
+        const net = netAssignMap.get(pp.netPtr);
+        out.push({
+          bounds: { minX, minY, maxX, maxY },
+          side,
+          net: net && net.length > 0 ? net : undefined,
+        });
+      }
+
+      key = pp.nextInFp;
     }
   }
 

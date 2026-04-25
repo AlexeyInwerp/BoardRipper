@@ -102,7 +102,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
 }
 
 function LayersTab() {
-  const { layerStates, showComponents, showVias, showTraces, showSilkscreen, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
+  const { layerStates, showComponents, showVias, showTraces, showSilkscreen, showPads, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
   const [componentsExpanded, setComponentsExpanded] = useState(true);
 
   // Compute which layers have traces for the currently highlighted net
@@ -228,6 +228,15 @@ function LayersTab() {
             title={showSilkscreen ? 'Hide silkscreen' : 'Show silkscreen'}
           >
             <span className="toggle-check">{showSilkscreen ? '■' : '□'}</span> Silkscreen
+          </button>
+        )}
+        {board?.pads && board.pads.length > 0 && (
+          <button
+            className={`visibility-toggle ${showPads ? '' : 'off'}`}
+            onClick={() => boardStore.togglePads()}
+            title={showPads ? 'Hide copper pads' : 'Show copper pads'}
+          >
+            <span className="toggle-check">{showPads ? '■' : '□'}</span> Pads
           </button>
         )}
         <div className="visibility-toggle-group">

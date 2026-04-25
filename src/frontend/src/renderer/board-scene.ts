@@ -151,6 +151,10 @@ export interface BoardSceneGraph {
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
   silkscreenBottom: Container | null;
+  /** Copper pad overlay — toggled by showPads. Same side-split pattern. */
+  padsLayer: Container | null;
+  padsTop: Container | null;
+  padsBottom: Container | null;
   /** Via/drill hole overlay container — toggled by showVias */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
@@ -517,6 +521,47 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     silkscreenLayer.addChild(silkscreenBottom);
     silkscreenLayer.addChild(silkscreenTop);
     root.addChild(silkscreenLayer);
+  }
+
+  // ── Copper pads ─────────────────────────────────────────────────────────────
+  // Filled rectangles in board coordinates (already pre-rotated/translated).
+  // Through-hole pads (side='both') render on both side containers so they
+  // remain visible regardless of which side is selected.
+  let padsLayer: Container | null = null;
+  let padsTop: Container | null = null;
+  let padsBottom: Container | null = null;
+  if (board.pads && board.pads.length > 0) {
+    padsLayer = new Container();
+    padsLayer.label = 'pads';
+    padsTop = new Container();
+    padsTop.label = 'pads-top';
+    padsBottom = new Container();
+    padsBottom.label = 'pads-bottom';
+
+    const PAD_TOP_COLOR    = 0xd4a64a;  // warm copper
+    const PAD_BOTTOM_COLOR = 0x8da6c0;  // cool copper-grey
+    const PAD_ALPHA        = 0.9;
+
+    const topGfx = new Graphics();
+    const botGfx = new Graphics();
+    for (const p of board.pads) {
+      const w = p.bounds.maxX - p.bounds.minX;
+      const h = p.bounds.maxY - p.bounds.minY;
+      if (w <= 0 || h <= 0) continue;
+      if (p.side === 'top' || p.side === 'both') {
+        topGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+      }
+      if (p.side === 'bottom' || p.side === 'both') {
+        botGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+      }
+    }
+    topGfx.fill({ color: PAD_TOP_COLOR,    alpha: PAD_ALPHA });
+    botGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: PAD_ALPHA });
+    padsTop.addChild(topGfx);
+    padsBottom.addChild(botGfx);
+    padsLayer.addChild(padsBottom);
+    padsLayer.addChild(padsTop);
+    root.addChild(padsLayer);
   }
 
   root.addChild(bottomLayer);
@@ -1438,5 +1483,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsLayer, padsTop, padsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

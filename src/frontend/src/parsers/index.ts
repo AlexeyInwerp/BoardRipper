@@ -24,7 +24,7 @@ registerFormat(CADFormat);
 registerFormat(XZZFormat);
 registerFormat(TVWFormat);
 
-export type { BoardData, BoardRevision, GhostComponent, Part, Pin, Net, Point, BBox, SilkscreenPath, Trace, Via } from './types';
+export type { BoardData, BoardRevision, GhostComponent, Part, Pin, Net, Point, BBox, Pad, SilkscreenPath, Trace, Via } from './types';
 export { computeBBox, buildNets } from './types';
 export type { FormatDescriptor, FormatId } from './registry';
 export { getFormat, getAllFormats, getAllExtensions, getFileExtension } from './registry';

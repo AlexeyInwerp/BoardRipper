@@ -38,6 +38,9 @@ export interface FormatDescriptor {
   /** Format can produce per-component silkscreen / assembly outlines — show silkscreen toggle. */
   hasSilkscreen?: boolean;
 
+  /** Format can produce copper pad rectangles — show pads toggle. */
+  hasPads?: boolean;
+
   /**
    * Content-based format detection.
    * Receives the first 512 bytes (or fewer if the file is smaller).

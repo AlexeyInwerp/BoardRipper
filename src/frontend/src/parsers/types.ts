@@ -72,6 +72,15 @@ export interface SilkscreenPath {
   side: 'top' | 'bottom';
 }
 
+/** Copper pad — axis-aligned bounding rectangle in board coordinates,
+ *  already pre-rotated and pre-translated. SMD pads have side='top'/'bottom';
+ *  through-hole pads have side='both'. */
+export interface Pad {
+  bounds: BBox;
+  side: 'top' | 'bottom' | 'both';
+  net?: string;
+}
+
 export interface BoardData {
   format: string; // format ID from FormatDescriptor.id (e.g. 'BVR1', 'BVR3', 'BRD')
   /** Format-specific version extracted from file (e.g. "GENCAD 1.4", "17.2", "v7"). */
@@ -86,6 +95,8 @@ export interface BoardData {
   vias?: Via[];
   /** Per-component silkscreen / assembly outline polylines, tagged by side. */
   silkscreen?: SilkscreenPath[];
+  /** Copper pad rectangles, tagged by side ('both' = through-hole). */
+  pads?: Pad[];
   /** Layer names for multi-layer formats (e.g. TVW butterfly columns). Index = column. */
   layerNames?: string[];
   /** Butterfly fold axis in board coordinates — renderer mirrors this axis for the bottom half.
