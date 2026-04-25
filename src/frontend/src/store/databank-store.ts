@@ -202,7 +202,23 @@ class DatabankStore extends Emitter {
       return stored ? JSON.parse(stored) : null;
     } catch { return null; }
   })();
-  private _stats: DatabankStats | null = null;
+  /** `_stats` doubles as the persistent header counter — restoring the last
+   *  observed value from localStorage at construction lets the panel render
+   *  "N boards, M PDFs" at t=0 instead of waiting for /api/databank/stats. */
+  private _stats: DatabankStats | null = (() => {
+    try {
+      const raw = localStorage.getItem('boardripper-stats');
+      return raw ? (JSON.parse(raw) as DatabankStats) : null;
+    } catch { return null; }
+  })();
+
+  private _persistStats() {
+    try {
+      if (this._stats) {
+        localStorage.setItem('boardripper-stats', JSON.stringify(this._stats));
+      }
+    } catch { /* ignore */ }
+  }
   private _browseMode: 'database' | 'live' = (() => {
     try { return (localStorage.getItem('boardripper-library-browse-mode') as 'database' | 'live') || 'database'; }
     catch { return 'database' as const; }
@@ -457,7 +473,10 @@ class DatabankStore extends Emitter {
       this.apiFetch<DatabankStats>('/api/databank/stats'),
       libraryCache.getRaw(),
     ]);
-    if (stats) this._stats = stats;
+    if (stats) {
+      this._stats = stats;
+      this._persistStats();
+    }
 
     if (stats) {
       const signature = libraryCache.signatureFor(stats);
@@ -656,13 +675,13 @@ class DatabankStore extends Emitter {
         const idx = this._files.indexOf(existing);
         const next = [...this._files];
         next[idx] = { ...existing, ...update };
-        // Local edits don't bump the backend's `last_file_scan_at`, so we
-        // invalidate the on-disk cache (signature -> null) and rewrite it
-        // with the patched data. Next reload then sees the fresh edits.
-        this._setFiles(next, { complete: this._filesComplete, signature: null });
+        // Local edits don't bump the backend's `last_file_scan_at`, so the
+        // signature is preserved — patch the cached snapshot in place so
+        // the next reload still hits the warm cache instead of paying a
+        // full network refetch to recover one changed row.
+        this._setFiles(next, { complete: this._filesComplete, signature: this._filesSignature });
         if (this._filesComplete) {
-          // Best-effort: drop stale snapshot so we don't hand back pre-patch data.
-          libraryCache.clear();
+          libraryCache.patchFile(id, update);
         }
         this.notify();
       }
@@ -743,10 +762,11 @@ class DatabankStore extends Emitter {
         const idx = this._files.indexOf(existing);
         const next = [...this._files];
         next[idx] = { ...existing, has_preview: true };
-        // Same flag-only update as updateFile — invalidate the snapshot
-        // cache so a reload re-fetches with has_preview reflected.
-        this._setFiles(next, { complete: this._filesComplete, signature: null });
-        if (this._filesComplete) libraryCache.clear();
+        // Same flag-only update as updateFile — preserve the cache
+        // signature and patch the cached snapshot in place so warm reloads
+        // still skip the network round-trip.
+        this._setFiles(next, { complete: this._filesComplete, signature: this._filesSignature });
+        if (this._filesComplete) libraryCache.patchFile(file.id, { has_preview: true });
         this.notify();
       }
       return true;
@@ -766,7 +786,7 @@ class DatabankStore extends Emitter {
 
   async fetchStats(): Promise<void> {
     const data = await this.apiFetch<DatabankStats>('/api/databank/stats');
-    if (data) { this._stats = data; this.notify(); }
+    if (data) { this._stats = data; this._persistStats(); this.notify(); }
   }
 
   async resetAll(): Promise<boolean> {
@@ -776,7 +796,10 @@ class DatabankStore extends Emitter {
       this._setFiles([], { complete: false, signature: null });
       this._folderTree = null; this._scanStatus = null; this._stats = null;
       libraryCache.clear();
-      try { localStorage.removeItem('boardripper-scan-status'); } catch { /* ignored */ }
+      try {
+        localStorage.removeItem('boardripper-scan-status');
+        localStorage.removeItem('boardripper-stats');
+      } catch { /* ignored */ }
       await this.fetchStats();
       this.notify();
       return true;

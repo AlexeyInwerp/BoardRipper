@@ -148,6 +148,24 @@ func (h *DatabankHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	manufacturer := r.URL.Query().Get("manufacturer")
 	donorOnly := r.URL.Query().Get("donor") == "1"
 
+	// ETag fast-path: only meaningful for the unfiltered full-list query
+	// (the same request that the IDB snapshot caches). Filtered responses
+	// would need their own keys and aren't worth the bookkeeping here.
+	if fileType == "" && manufacturer == "" && !donorOnly {
+		if etag, err := h.db.FilesETag(); err == nil && etag != "" {
+			if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+				w.Header().Set("ETag", etag)
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", etag)
+			// Cache-Control: response is conditionally cacheable — clients
+			// must revalidate (so the ETag is checked) but the body can be
+			// reused on a 304.
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+	}
+
 	files, err := h.db.ListFiles(fileType, manufacturer, donorOnly)
 	if err != nil {
 		http.Error(w, "Failed to list files: "+err.Error(), http.StatusInternalServerError)
