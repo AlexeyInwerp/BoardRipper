@@ -660,16 +660,23 @@ func (s *Scanner) BrowseDir(relPath string) (*BrowseResult, error) {
 }
 
 // FolderNode represents a directory in the folder tree.
+//
+// `FileIDs` lists files in this directory by their database ID — the client
+// resolves them via its own Map<id,file>. Embedding full FileRecords here
+// duplicates the entire dataset on the wire (the same rows already ship via
+// /api/databank/files), so for 100k+ entries it doubles the cold-load
+// payload for no benefit.
 type FolderNode struct {
 	Name     string        `json:"name"`
 	Path     string        `json:"path"`
 	Children []*FolderNode `json:"children,omitempty"`
-	Files    []FileRecord  `json:"files,omitempty"`
+	FileIDs  []int64       `json:"file_ids,omitempty"`
 }
 
 // BuildFolderTree constructs a tree from all files in the database.
+// Only IDs are emitted per leaf; the client joins back to the file list.
 func (s *Scanner) BuildFolderTree() (*FolderNode, error) {
-	files, err := s.db.ListFiles("", "", false)
+	rows, err := s.db.AllFilePathsAndIDs()
 	if err != nil {
 		return nil, err
 	}
@@ -677,23 +684,13 @@ func (s *Scanner) BuildFolderTree() (*FolderNode, error) {
 	root := &FolderNode{Name: "/", Path: ""}
 	nodeMap := map[string]*FolderNode{"": root}
 
-	// Ensure all directories exist in tree
-	for _, f := range files {
-		dir := filepath.Dir(f.Path)
+	for _, r := range rows {
+		dir := filepath.Dir(r.Path)
 		if dir == "." {
 			dir = ""
 		}
-		ensureDirNode(nodeMap, root, dir)
-	}
-
-	// Place files into their directory nodes
-	for _, f := range files {
-		dir := filepath.Dir(f.Path)
-		if dir == "." {
-			dir = ""
-		}
-		node := nodeMap[dir]
-		node.Files = append(node.Files, f)
+		node := ensureDirNode(nodeMap, root, dir)
+		node.FileIDs = append(node.FileIDs, r.ID)
 	}
 
 	return root, nil

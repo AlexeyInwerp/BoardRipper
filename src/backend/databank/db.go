@@ -67,7 +67,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -101,6 +101,11 @@ func (db *DB) migrate() error {
 	if ver < 4 {
 		if err := db.migrateV4(); err != nil {
 			return fmt.Errorf("v4: %w", err)
+		}
+	}
+	if ver < 5 {
+		if err := db.migrateV5(); err != nil {
+			return fmt.Errorf("v5: %w", err)
 		}
 	}
 
@@ -270,6 +275,36 @@ func (db *DB) migrateV4() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 4); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// migrateV5 adds a covering composite index that matches the ListFiles
+// ORDER BY clause (manufacturer, board_number, filename). Without it the
+// query plan does a 100k+ row sort on every full list fetch.
+func (db *DB) migrateV5() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE INDEX IF NOT EXISTS idx_files_listing ON files(manufacturer, board_number, filename)`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 5); err != nil {
 		return err
 	}
 
@@ -645,6 +680,33 @@ func (db *DB) ListFilesByIDs(ids []int64) ([]FileRecord, error) {
 		files = append(files, *f)
 	}
 	return files, rows.Err()
+}
+
+// FilePathID is a thin (path, id) row used by the folder-tree builder to
+// avoid loading full FileRecords just to compute directory structure.
+type FilePathID struct {
+	ID   int64
+	Path string
+}
+
+// AllFilePathsAndIDs returns just the path+id of every file. Cheap enough
+// to call on every /api/databank/tree request — only two columns scanned.
+func (db *DB) AllFilePathsAndIDs() ([]FilePathID, error) {
+	rows, err := db.reader.Query(`SELECT id, path FROM files`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []FilePathID
+	for rows.Next() {
+		var r FilePathID
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // AllFilePaths returns all paths currently in the database (for incremental scan diff).
