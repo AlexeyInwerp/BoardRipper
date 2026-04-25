@@ -557,7 +557,11 @@ class BoardStore extends Emitter {
             tab.showTop = false;
             tab.showBottom = true;
           }
-          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, wantsBottomOnOpen ? 'bottom' : 'top');
+          // Trace-layer default is always TOP regardless of primarySide. The
+          // primarySide swap drives only the user-facing side toggle (which
+          // happened above); the layer list represents the file's etch stack
+          // so users expect TOP-of-stack visible on first open.
+          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
           if (cached.parserNotes) {
             for (const note of cached.parserNotes) this.addToast(note, 'info');
           }
@@ -602,7 +606,7 @@ class BoardStore extends Emitter {
           tab.showTop = false;
           tab.showBottom = true;
         }
-        if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames, wantsBottomOnOpen ? 'bottom' : 'top');
+        if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames);
 
         await boardCache.put(file.name, file.size, file.lastModified, board);
 
