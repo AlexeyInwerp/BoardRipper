@@ -109,6 +109,10 @@ interface BoardScene {
   traceLayer: Container | null;
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
   traceLayerContainers: Container[];
+  /** Silkscreen / assembly outlines — toggled by showSilkscreen */
+  silkscreenLayer: Container | null;
+  silkscreenTop: Container | null;
+  silkscreenBottom: Container | null;
   /** Via/drill hole overlay container */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
@@ -1177,7 +1181,7 @@ export class BoardRenderer {
 
   /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias, showComponents, showPins, showOutlines, showLabels } = boardStore;
+    const { layerStates, showTraces, showVias, showSilkscreen, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers
@@ -1187,6 +1191,10 @@ export class BoardRenderer {
     }
     // Via overlay
     if (scene.viaLayer) scene.viaLayer.visible = showVias;
+    // Silkscreen — master toggle, plus follow top/bottom side visibility
+    if (scene.silkscreenLayer)  scene.silkscreenLayer.visible  = showSilkscreen;
+    if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showTop;
+    if (scene.silkscreenBottom) scene.silkscreenBottom.visible = showBottom;
     // Component sub-layer visibility (master: showComponents)
     scene.topFillLayer.visible       = showComponents;
     scene.bottomFillLayer.visible    = showComponents;

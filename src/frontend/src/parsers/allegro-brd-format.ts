@@ -18,6 +18,7 @@ export const AllegroBRDFormat: FormatDescriptor = {
   docUrl: 'docs/formats/ALLEGRO_BRD_FORMAT.md',
   flipY: true,
   hasTraces: true,
+  hasSilkscreen: true,
 
   detect(header: Uint8Array): boolean {
     if (header.length < 12) return false;

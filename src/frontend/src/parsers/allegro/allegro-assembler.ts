@@ -13,7 +13,7 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Part, Pin, Point, Trace, Via } from '../types';
+import type { BoardData, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { FmtVer, LayerClass } from './allegro-types';
@@ -23,6 +23,7 @@ import type {
   Blk0x07ComponentInst,
   Blk0x08PinNumber,
   Blk0x11PinName,
+  Blk0x14Graphic,
   Blk0x15_16_17Segment,
   Blk0x01Arc,
   Blk0x1BNet,
@@ -80,6 +81,9 @@ export function assembleBoard(db: AllegroDb): BoardData {
   // Extract board outline
   const outline = extractOutline(db, ver, div);
 
+  // Extract per-component silkscreen / assembly outlines
+  const silkscreen = extractSilkscreen(db, div);
+
   // Extract layer names
   const layerNames = extractLayerNames(db);
 
@@ -94,7 +98,8 @@ export function assembleBoard(db: AllegroDb): BoardData {
     `Assembled: ${parts.length} parts, ` +
     `${parts.reduce((n, p) => n + p.pins.length, 0)} pins, ` +
     `${traces.length} traces, ${vias.length} vias, ` +
-    `${outline.length} outline pts, ${layerNames.length} layers`
+    `${outline.length} outline pts, ${silkscreen.length} silkscreen paths, ` +
+    `${layerNames.length} layers`
   );
 
   return {
@@ -107,6 +112,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
     bounds,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
+    silkscreen: silkscreen.length > 0 ? silkscreen : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     primarySide: primarySide === 'bottom' ? 'bottom' : undefined,
   };
@@ -429,6 +435,55 @@ function linearizeArc(
   }
 
   return traces;
+}
+
+// ── Silkscreen / assembly outlines ────────────────────────────────────────────
+
+/**
+ * Walk every Blk0x07ComponentInst → Blk0x2DFootprintInst → graphicPtr chain.
+ * Each 0x14 in the chain is one polyline (segments + arcs). Filter to
+ * PACKAGE_GEOMETRY (cc=0x09) — that's where Allegro stores per-part assembly
+ * and silkscreen drawings. Segments arrive in board coordinates already
+ * (pre-rotated, pre-translated), so no transform pass is needed here.
+ *
+ * Side comes from `fpInst.layer` (0=top, 1=bottom). The 0x14's own subclass
+ * also indicates side (0xF7=top, 0xF6=bottom for assembly drawings) but the
+ * footprint-instance flag is authoritative and avoids per-shape ambiguity.
+ */
+function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
+  const out: SilkscreenPath[] = [];
+  const MAX_CHAIN = 10_000; // safety cap per component
+
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x07) continue;
+    const inst = blk as Blk0x07ComponentInst;
+    const fp = db.getBlock(inst.fpInstPtr);
+    if (!fp || fp.blockType !== 0x2D) continue;
+    const fpInst = fp as Blk0x2DFootprintInst;
+    if (!fpInst.graphicPtr) continue;
+
+    const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+
+    let key = fpInst.graphicPtr;
+    const visited = new Set<number>();
+    for (let i = 0; i < MAX_CHAIN; i++) {
+      if (key === 0 || visited.has(key)) break;
+      visited.add(key);
+      const g = db.getBlock(key);
+      if (!g || g.blockType !== 0x14) break;
+      const gfx = g as Blk0x14Graphic;
+
+      // Filter to PACKAGE_GEOMETRY — drops layer-name text, board-level art, etc.
+      if (gfx.layer.classCode === LayerClass.PACKAGE_GEOMETRY) {
+        const points = walkSegmentChain(db, gfx.segmentPtr, div);
+        if (points.length >= 2) out.push({ points, side });
+      }
+
+      key = gfx.next;
+    }
+  }
+
+  return out;
 }
 
 // ── Vias ──────────────────────────────────────────────────────────────────────

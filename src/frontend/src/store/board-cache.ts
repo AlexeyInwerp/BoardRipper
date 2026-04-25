@@ -1,4 +1,4 @@
-import type { BoardData, BoardRevision, GhostComponent, Net, Point, Trace, Via } from '../parsers';
+import type { BoardData, BoardRevision, GhostComponent, Net, Point, SilkscreenPath, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
 // DB_VERSION is ONLY bumped for schema changes (new/removed object stores,
@@ -20,7 +20,7 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * separation from DB_VERSION means parser fixes don't nuke the
  * pdf-text cache or require any data migration.
  */
-const PARSER_VERSION = 15;
+const PARSER_VERSION = 16;
 
 interface CachedBoard {
   key: string;
@@ -43,6 +43,7 @@ interface SerializedBoardData {
   bounds: BoardData['bounds'];
   traces?: Trace[];
   vias?: Via[];
+  silkscreen?: SilkscreenPath[];
   layerNames?: string[];
   butterflyFoldAxis?: 'x' | 'y';
   rawOutline?: Point[];
@@ -85,6 +86,7 @@ function serialize(board: BoardData): SerializedBoardData {
     bounds: board.bounds,
     traces: board.traces,
     vias: board.vias,
+    silkscreen: board.silkscreen,
     layerNames: board.layerNames,
     butterflyFoldAxis: board.butterflyFoldAxis,
     rawOutline: board.rawOutline,
@@ -121,6 +123,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       bounds: data.bounds,
       traces: data.traces,
       vias: data.vias,
+      silkscreen: data.silkscreen,
       layerNames: data.layerNames,
       butterflyFoldAxis: data.butterflyFoldAxis,
       rawOutline: data.rawOutline,
