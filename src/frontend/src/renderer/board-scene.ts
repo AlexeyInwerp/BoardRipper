@@ -1297,9 +1297,11 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.addChild(padVertexGfx);
 
   // ── Via / drill hole markers ───────────────────────────────────────────────
-  // Rendered as crosshair + annular ring + black center hole.
-  // Static size (not scaled by drill diameter). Label shows actual connected layers
-  // resolved by finding trace endpoints near each via position.
+  // Rendered as a pad ring sized to the via's actual diameter, plus a
+  // proportionally smaller filled drill hole. No crosshair — boards with
+  // thousands of vias (LA-H271P: 10791) turn a fixed crosshair into visual
+  // noise that hides the real geometry. A small minimum radius keeps the
+  // smallest vias visible at far zoom; otherwise size tracks reality.
   let viaLayer: Container | null = null;
   const viaLabels: BitmapText[] = [];
   const viaConnectedLayers: number[][] = []; // parallel to board.vias — connected layer indices per via
@@ -1310,9 +1312,8 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const viaCenterGfx = new Graphics();
     const VIA_COLOR = 0xcccccc;
     const VIA_HOLE_COLOR = 0x111111;
-    const VIA_OUTER_R = 6;   // static outer radius (mils)
-    const VIA_INNER_R = 2;   // static hole radius (mils)
-    const VIA_ARM = 8;       // static crosshair arm length (mils)
+    const VIA_MIN_OUTER_R = 3;       // mil — visibility floor at far zoom
+    const VIA_DRILL_RATIO = 0.4;     // drill ≈ 40% of pad diameter (typical)
 
     // Short layer labels for overlay
     const layerShortNames = board.layerNames
@@ -1361,15 +1362,12 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
       const sorted = [...connected].sort((a, b) => a - b);
       viaConnectedLayers.push(sorted);
 
-      // Crosshair arms
-      viaGfx.moveTo(x - VIA_ARM, y).lineTo(x + VIA_ARM, y);
-      viaGfx.moveTo(x, y - VIA_ARM).lineTo(x, y + VIA_ARM);
+      // Pad ring sized to the via's real diameter, with a small visibility floor.
+      const outerR = Math.max(VIA_MIN_OUTER_R, via.diameter / 2);
+      const innerR = Math.max(0.5, outerR * VIA_DRILL_RATIO);
 
-      // Annular ring (outer circle)
-      viaGfx.circle(x, y, VIA_OUTER_R);
-
-      // Black hole center
-      viaCenterGfx.circle(x, y, VIA_INNER_R);
+      viaGfx.circle(x, y, outerR);
+      viaCenterGfx.circle(x, y, innerR);
 
       // Layer connectivity label — only show for vias with 2+ resolved layers
       if (layerShortNames.length > 0 && sorted.length >= 2) {
@@ -1383,7 +1381,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
         });
         label.anchor.set(0.5, 0);
         label.x = x;
-        label.y = y + VIA_ARM + 1;
+        label.y = y + outerR + 1;
         viaLayer.addChild(label);
         viaLabels.push(label);
       }
