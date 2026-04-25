@@ -39,6 +39,7 @@ export interface BoardTab {
   showComponents: boolean;
   showVias: boolean;
   showSilkscreen: boolean;
+  showPads: boolean;
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
@@ -333,6 +334,7 @@ class BoardStore extends Emitter {
   get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
   get showVias(): boolean { return this.activeTab?.showVias ?? false; }
   get showSilkscreen(): boolean { return this.activeTab?.showSilkscreen ?? true; }
+  get showPads(): boolean { return this.activeTab?.showPads ?? true; }
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
@@ -517,6 +519,7 @@ class BoardStore extends Emitter {
         showComponents: true,
         showVias: false,
         showSilkscreen: true,
+        showPads: true,
         showPins: true,
         showOutlines: true,
         showLabels: true,
@@ -1023,6 +1026,13 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showSilkscreen: !tab.showSilkscreen });
+    this.notify();
+  }
+
+  togglePads() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showPads: !tab.showPads });
     this.notify();
   }
 
