@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -172,6 +174,78 @@ func findSelfContainer() (*containerInfo, error) {
 	}, nil
 }
 
+// pullDockerImage pulls `image:tag` via the Engine API and waits for
+// completion. The Engine API does NOT auto-pull on `POST /containers/create`
+// (unlike `docker run` on the CLI), so without this step the orchestrator
+// fails on hosts that don't already have alpine:latest in their local image
+// cache — which is most fresh installs and any air-gapped Synology / homelab
+// box. logFn is forwarded the streamed status updates so the operator sees
+// progress in the Debug tab.
+func pullDockerImage(image, tag string, logFn func(string, string)) error {
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", dockerSocket)
+			},
+		},
+		Timeout: 5 * time.Minute,
+	}
+
+	q := url.Values{}
+	q.Set("fromImage", image)
+	q.Set("tag", tag)
+	endpoint := "http://docker/v1.41/images/create?" + q.Encode()
+
+	logFn(fmt.Sprintf("Pulling %s:%s ...", image, tag), "info")
+	req, _ := http.NewRequest("POST", endpoint, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("docker image pull request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("docker image pull returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Stream is newline-delimited JSON. We mostly drain it but surface a
+	// terminal `errorDetail` so the caller can react cleanly (instead of
+	// failing later at container-create with the more cryptic
+	// "no such image"). The last status line tells the operator whether
+	// the image was downloaded fresh or already current.
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var lastStatus, pullErr string
+	for scanner.Scan() {
+		var msg struct {
+			Status      string `json:"status"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+		if msg.ErrorDetail.Message != "" {
+			pullErr = msg.ErrorDetail.Message
+		} else if msg.Error != "" {
+			pullErr = msg.Error
+		}
+		if msg.Status != "" {
+			lastStatus = msg.Status
+		}
+	}
+	if pullErr != "" {
+		return fmt.Errorf("%s — try `docker pull %s:%s` manually and retry", pullErr, image, tag)
+	}
+	if lastStatus != "" {
+		logFn(lastStatus, "info")
+	}
+	return nil
+}
+
 // orchestrateRestart launches a lightweight Alpine container that:
 // 1. Stops the current container
 // 2. Renames it to -old
@@ -182,12 +256,21 @@ func findSelfContainer() (*containerInfo, error) {
 // This is necessary because the current container cannot stop itself
 // and continue executing — the Go process dies when Docker stops it.
 func orchestrateRestart(newVersion string, logFn func(string, string)) error {
+	logFn("Locating self container via Docker socket...", "info")
 	self, err := findSelfContainer()
 	if err != nil {
 		return fmt.Errorf("cannot identify self: %w", err)
 	}
 
-	logFn(fmt.Sprintf("Found container: %s (image: %s)", self.Name, self.Image), "info")
+	logFn(fmt.Sprintf("Self container: name=%s id=%s image=%s restart=%s", self.Name, shortID(self.ID), self.Image, self.Restart), "info")
+	logFn(fmt.Sprintf("Mounts: %d, env vars: %d, port bindings: %d", len(self.Mounts), len(self.Env), len(self.Ports)), "info")
+
+	// Ensure the orchestrator base image is present locally — Engine API
+	// won't auto-pull on container create. Fix for "no such image:
+	// alpine:latest" reported by users with a fresh Docker install.
+	if err := pullDockerImage("alpine", "latest", logFn); err != nil {
+		return fmt.Errorf("alpine:latest unavailable: %w", err)
+	}
 
 	newImage := fmt.Sprintf("boardripper:%s", newVersion)
 
@@ -278,18 +361,21 @@ echo "[orchestrator] Done."
 	}
 	orchJSON, _ := json.Marshal(orchBody)
 
-	logFn("Launching orchestrator container...", "info")
-	createReq, _ := http.NewRequest("POST",
-		"http://docker/v1.41/containers/create?name=boardripper-orchestrator",
-		bytes.NewReader(orchJSON))
-	createReq.Header.Set("Content-Type", "application/json")
+	logFn(fmt.Sprintf("Building orchestrator script (length=%d bytes, target image=%s)", len(script), newImage), "info")
 
 	// Delete any existing orchestrator container first
+	logFn("Removing leftover boardripper-orchestrator container if present...", "info")
 	delReq, _ := http.NewRequest("DELETE",
 		"http://docker/v1.41/containers/boardripper-orchestrator?force=true", nil)
 	if resp, err := client.Do(delReq); err == nil {
 		resp.Body.Close()
 	}
+
+	logFn("Creating orchestrator container...", "info")
+	createReq, _ := http.NewRequest("POST",
+		"http://docker/v1.41/containers/create?name=boardripper-orchestrator",
+		bytes.NewReader(orchJSON))
+	createReq.Header.Set("Content-Type", "application/json")
 
 	createResp, err := client.Do(createReq)
 	if err != nil {
@@ -306,8 +392,10 @@ echo "[orchestrator] Done."
 		ID string `json:"Id"`
 	}
 	json.NewDecoder(createResp.Body).Decode(&created)
+	logFn(fmt.Sprintf("Orchestrator created: id=%s", shortID(created.ID)), "info")
 
 	// Start the orchestrator
+	logFn("Starting orchestrator container...", "info")
 	startReq, _ := http.NewRequest("POST",
 		fmt.Sprintf("http://docker/v1.41/containers/%s/start", created.ID), nil)
 	startResp, err := client.Do(startReq)
@@ -316,8 +404,16 @@ echo "[orchestrator] Done."
 	}
 	startResp.Body.Close()
 
-	logFn("Orchestrator launched — container will restart momentarily", "done")
+	logFn("Orchestrator launched — this container will exit and the new image will start momentarily", "done")
 	return nil
+}
+
+// shortID returns the first 12 chars of a container ID for compact logging.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // bindsFromMounts converts Docker mount objects to bind strings.

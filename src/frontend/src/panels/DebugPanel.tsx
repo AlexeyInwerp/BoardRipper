@@ -1,6 +1,7 @@
 import { useSyncExternalStore, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { logStore, LOG_SCOPES, type LogScope, log } from '../store/log-store';
 import { boardCache } from '../store/board-cache';
+import { useUpdateStore } from '../hooks/useUpdateStore';
 
 const LS_SCOPES_KEY = 'boardripper-log-scopes';
 const LS_PERSIST_KEY = 'boardripper-log-persist';
@@ -65,9 +66,18 @@ export function DebugPanel() {
     setLoggingEnabled(prev => { const next = !prev; logStore.setEnabled(next); return next; });
   }, []);
 
+  // While an update is running, force-include `update`-scope entries so
+  // operators who haven't enabled the scope still see the live progress
+  // when the toolbar pivots them here. After the update completes the
+  // user's normal scope preferences resume.
+  const { updating } = useUpdateStore();
   const filtered = useMemo(
-    () => entries.filter(e => e.level === 'error' || enabledScopes[e.scope]),
-    [entries, enabledScopes],
+    () => entries.filter(e =>
+      e.level === 'error'
+      || enabledScopes[e.scope]
+      || (updating && e.scope === 'update'),
+    ),
+    [entries, enabledScopes, updating],
   );
 
   const lastEntryId = entries[entries.length - 1]?.id;

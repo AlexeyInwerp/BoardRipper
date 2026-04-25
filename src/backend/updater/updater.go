@@ -193,13 +193,15 @@ func (u *Updater) Apply() error {
 		u.mu.Unlock()
 	}()
 
+	u.logProgress(fmt.Sprintf("Update starting (current: %s)", Version), "info")
 	if !isDockerAvailable() {
-		u.logProgress("Docker socket not available — cannot self-update", "error")
+		u.logProgress("Docker socket not available at "+dockerSocket+" — cannot self-update", "error")
 		return fmt.Errorf("docker not available")
 	}
+	u.logProgress("Docker socket reachable: "+dockerSocket, "info")
 
 	// Ensure we have the latest release info
-	u.logProgress("Checking for latest release...", "info")
+	u.logProgress("Checking GitHub for latest release...", "info")
 	state, err := u.Check()
 	if err != nil {
 		u.logProgress(fmt.Sprintf("Failed to check for updates: %v", err), "error")
@@ -212,14 +214,17 @@ func (u *Updater) Apply() error {
 
 	rel := state.ReleaseInfo
 	version := rel.TagName
+	u.logProgress(fmt.Sprintf("Target release: %s (published %s, %d assets)", version, rel.PublishedAt, len(rel.Assets)), "info")
 
 	// Find the Docker image asset
 	var assetID int64
 	var assetSize int64
+	var assetName string
 	for _, a := range rel.Assets {
 		if strings.Contains(a.Name, "docker") && strings.HasSuffix(a.Name, ".tar.gz") {
 			assetID = a.ID
 			assetSize = a.Size
+			assetName = a.Name
 			break
 		}
 	}
@@ -227,6 +232,7 @@ func (u *Updater) Apply() error {
 		u.logProgress("No Docker image asset found in release", "error")
 		return fmt.Errorf("no docker asset in release %s", version)
 	}
+	u.logProgress(fmt.Sprintf("Selected asset: %s (id=%d, %s)", assetName, assetID, humanSize(assetSize)), "info")
 
 	// Use GitHub API endpoint for asset download (works with private repos)
 	assetURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/assets/%d",
@@ -234,30 +240,34 @@ func (u *Updater) Apply() error {
 
 	// Download the image
 	destPath := filepath.Join(u.dataDir, fmt.Sprintf("boardripper-docker-%s.tar.gz", version))
-	u.logProgress(fmt.Sprintf("Downloading %s (%s)...", version, humanSize(assetSize)), "info")
+	u.logProgress(fmt.Sprintf("Downloading %s → %s", version, destPath), "info")
 	if err := downloadAsset(assetURL, destPath); err != nil {
 		u.logProgress(fmt.Sprintf("Download failed: %v", err), "error")
 		return err
 	}
+	if info, err := os.Stat(destPath); err == nil {
+		u.logProgress(fmt.Sprintf("Download complete (%s on disk)", humanSize(info.Size())), "info")
+	} else {
+		u.logProgress("Download complete", "info")
+	}
 	defer os.Remove(destPath)
-	u.logProgress("Download complete", "info")
 
 	// Load image into Docker
-	u.logProgress("Loading Docker image...", "info")
+	u.logProgress("Loading Docker image (POST /images/load)...", "info")
 	if err := dockerLoad(destPath); err != nil {
 		u.logProgress(fmt.Sprintf("Docker load failed: %v", err), "error")
 		return err
 	}
-	u.logProgress("Image loaded", "info")
+	u.logProgress(fmt.Sprintf("Image loaded as boardripper:%s", version), "info")
 
 	// Orchestrate container restart
-	u.logProgress("Restarting container with new image...", "info")
+	u.logProgress("Beginning container restart sequence...", "info")
 	if err := orchestrateRestart(version, u.logProgress); err != nil {
 		u.logProgress(fmt.Sprintf("Restart failed: %v", err), "error")
 		return err
 	}
 
-	u.logProgress(fmt.Sprintf("Update to %s complete — restarting...", version), "done")
+	u.logProgress(fmt.Sprintf("Update to %s complete — container restart imminent", version), "done")
 	return nil
 }
 

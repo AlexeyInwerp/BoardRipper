@@ -49,11 +49,18 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
   return (
     <div className="update-badge-wrap" ref={ref}>
       <button
-        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}`}
-        onClick={() => { if (!open) updateStore.check(); setOpen(v => !v); }}
-        title={state.has_update ? `Update available: ${state.latest_version}` : `v${state.current_version} — click to check`}
+        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}${updating ? ' is-updating' : ''}`}
+        onClick={() => {
+          // Mid-update the badge becomes a shortcut to the live progress
+          // view: jump straight to the Debug tab instead of opening the
+          // dropdown (which would show stale "Update & Restart" actions).
+          if (updating) { showSidebarTab('debug'); return; }
+          if (!open) updateStore.check();
+          setOpen(v => !v);
+        }}
+        title={updating ? 'Updating — see Debug tab' : state.has_update ? `Update available: ${state.latest_version}` : `v${state.current_version} — click to check`}
       >
-        {updating ? 'Updating...' : state.has_update ? `${state.latest_version}` : `v${state.current_version}`}
+        {updating ? 'Updating…' : state.has_update ? `${state.latest_version}` : `v${state.current_version}`}
       </button>
 
       {open && (
@@ -92,14 +99,22 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
             </div>
           )}
 
-          {!updating && state.has_update && (
+          {state.has_update && (
             <div className="update-dropdown-actions">
               {state.docker_available ? (
                 <button
                   className="update-dropdown-btn"
-                  onClick={() => updateStore.apply()}
+                  disabled={updating}
+                  onClick={() => {
+                    // Reveal the Debug tab so the operator can watch the
+                    // verbose progress log scroll as the orchestrator
+                    // pulls images, swaps the container, and restarts.
+                    showSidebarTab('debug');
+                    updateStore.apply();
+                    setOpen(false);
+                  }}
                 >
-                  Update &amp; Restart
+                  {updating ? 'Updating…' : 'Update & Restart'}
                 </button>
               ) : (
                 <a
