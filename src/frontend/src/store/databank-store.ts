@@ -49,6 +49,13 @@ export interface FolderNode {
   name: string;
   path: string;
   children?: FolderNode[];
+  /** Database mode (Go backend): IDs of files in this directory. The
+   *  client resolves them via the store's id->file Map so the wire payload
+   *  doesn't duplicate the file list (which already shipped via /files). */
+  file_ids?: number[];
+  /** Electron mode legacy shape — full FileRecord objects, embedded by
+   *  desktop/main.js. Kept so the same FolderView component renders in
+   *  both modes without an extra adapter. */
   files?: DatabankFile[];
 }
 
@@ -157,6 +164,11 @@ class DatabankStore extends Emitter {
   private _filesInflight: Promise<void> | null = null;
   /** Cache signature corresponding to the current `_files` payload. */
   private _filesSignature: string | null = null;
+  /** O(1) lookup tables rebuilt whenever `_files` changes. Hot consumers
+   *  (binding resolution, search-result expansion) used to do `files.find`
+   *  per item — quadratic at 100k entries. */
+  private _filesById = new Map<number, DatabankFile>();
+  private _filesByPath = new Map<string, DatabankFile>();
   private _metadataCache: { version: number; tree: MetadataGroup[] } | null = null;
   private _modelCache: { version: number; tree: ModelGroup[] } | null = null;
 
@@ -167,9 +179,14 @@ class DatabankStore extends Emitter {
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
+    this._filesById = new Map(files.map(f => [f.id, f]));
+    this._filesByPath = new Map(files.map(f => [f.path, f]));
     if (opts.complete !== undefined) this._filesComplete = opts.complete;
     if (opts.signature !== undefined) this._filesSignature = opts.signature;
   }
+
+  fileById(id: number): DatabankFile | undefined { return this._filesById.get(id); }
+  fileByPath(path: string): DatabankFile | undefined { return this._filesByPath.get(path); }
   private _folderTree: FolderNode | null = null;
   private _scanStatus: ScanStatus | null = (() => {
     try {
@@ -501,9 +518,12 @@ class DatabankStore extends Emitter {
   async getBoundPdfs(boardFileId: number): Promise<DatabankFile[]> {
     const detail = await this.apiFetch<FileDetail>(`/api/databank/files/${boardFileId}`);
     if (!detail?.bindings) return [];
-    // Return the PDF file records for each binding
-    const pdfIds = detail.bindings.map(b => b.pdf_file_id);
-    return this._files.filter(f => pdfIds.includes(f.id));
+    const out: DatabankFile[] = [];
+    for (const b of detail.bindings) {
+      const f = this._filesById.get(b.pdf_file_id);
+      if (f) out.push(f);
+    }
+    return out;
   }
 
   private _scanPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -604,10 +624,11 @@ class DatabankStore extends Emitter {
       body: JSON.stringify(update),
     });
     if (data) {
-      const idx = this._files.findIndex(f => f.id === id);
-      if (idx >= 0) {
+      const existing = this._filesById.get(id);
+      if (existing) {
+        const idx = this._files.indexOf(existing);
         const next = [...this._files];
-        next[idx] = { ...next[idx], ...update };
+        next[idx] = { ...existing, ...update };
         // Local edits don't bump the backend's `last_file_scan_at`, so we
         // invalidate the on-disk cache (signature -> null) and rewrite it
         // with the patched data. Next reload then sees the fresh edits.
@@ -622,7 +643,7 @@ class DatabankStore extends Emitter {
   }
 
   async toggleDonor(id: number): Promise<void> {
-    const file = this._files.find(f => f.id === id);
+    const file = this._filesById.get(id);
     if (!file) return;
     await this.updateFile(id, { donor_pool: !file.donor_pool });
   }
@@ -690,10 +711,11 @@ class DatabankStore extends Emitter {
       if (!res.ok) return false;
 
       // Update local state
-      const idx = this._files.findIndex(f => f.id === file.id);
-      if (idx >= 0) {
+      const existing = this._filesById.get(file.id);
+      if (existing) {
+        const idx = this._files.indexOf(existing);
         const next = [...this._files];
-        next[idx] = { ...next[idx], has_preview: true };
+        next[idx] = { ...existing, has_preview: true };
         // Same flag-only update as updateFile — invalidate the snapshot
         // cache so a reload re-fetches with has_preview reflected.
         this._setFiles(next, { complete: this._filesComplete, signature: null });

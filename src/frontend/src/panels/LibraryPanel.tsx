@@ -170,7 +170,7 @@ export function LibraryPanel() {
           if (detail?.bindings) {
             for (const binding of detail.bindings) {
               try {
-                const pdfFile = files.find(f => f.id === binding.pdf_file_id);
+                const pdfFile = databankStore.fileById(binding.pdf_file_id);
                 if (!pdfFile) continue;
                 const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
                 boardStore.addPdf(pdfObj);
@@ -430,7 +430,7 @@ export function LibraryPanel() {
       {/* Content */}
       <div className="library-content">
         {pdfSearchMode && searchResults.length > 0 ? (
-          <SearchResultsView results={searchResults} files={files} onOpenFile={handleOpenFile} />
+          <SearchResultsView results={searchResults} onOpenFile={handleOpenFile} />
         ) : loading && files.length === 0 ? (
           <div className="library-empty">Loading...</div>
         ) : files.length === 0 ? (
@@ -722,7 +722,11 @@ function HistoryView({ onOpenFile, searchFilter }: {
   onOpenFile: (f: DatabankFile) => void;
   searchFilter: string;
 }) {
+  // Subscribe to `files` so the row resolution re-runs after a hydrate, but
+  // do path lookups via the store's Map<path,file> instead of rebuilding
+  // a per-component Map. With 100k entries the rebuild was ~10–30ms.
   const { recentItems, files } = useDatabank();
+  void files;
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
@@ -735,19 +739,13 @@ function HistoryView({ onOpenFile, searchFilter }: {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  const filesByPath = useMemo(() => {
-    const m = new Map<string, DatabankFile>();
-    for (const f of files) m.set(f.path, f);
-    return m;
-  }, [files]);
-
   const filteredItems = useMemo(() => {
     const q = searchFilter.trim().toLowerCase();
     if (!q) return recentItems;
     return recentItems.filter(item => {
       if (item.fileName.toLowerCase().includes(q)) return true;
       if (item.path.toLowerCase().includes(q)) return true;
-      const dbFile = filesByPath.get(item.path);
+      const dbFile = databankStore.fileByPath(item.path);
       if (!dbFile) return false;
       return (
         dbFile.board_number?.toLowerCase().includes(q) ||
@@ -755,7 +753,7 @@ function HistoryView({ onOpenFile, searchFilter }: {
         dbFile.model?.toLowerCase().includes(q)
       ) ?? false;
     });
-  }, [recentItems, filesByPath, searchFilter]);
+  }, [recentItems, searchFilter]);
 
   return (
     <div className="library-history">
@@ -766,7 +764,7 @@ function HistoryView({ onOpenFile, searchFilter }: {
       ) : (
         <div className="library-tree-children">
           {filteredItems.map((item, i) => {
-            const dbFile = filesByPath.get(item.path);
+            const dbFile = databankStore.fileByPath(item.path);
             return (
               <div
                 key={`${item.path}-${i}`}
@@ -790,9 +788,8 @@ function HistoryView({ onOpenFile, searchFilter }: {
 
 // --- Search Results View ---
 
-function SearchResultsView({ results, files, onOpenFile }: {
+function SearchResultsView({ results, onOpenFile }: {
   results: import('../store/databank-store').SearchResult[];
-  files: DatabankFile[];
   onOpenFile: (f: DatabankFile, pageNum?: number) => void;
 }) {
   return (
@@ -805,7 +802,7 @@ function SearchResultsView({ results, files, onOpenFile }: {
           key={`${r.file_id}-${r.page_num}-${i}`}
           className="library-search-result"
           onClick={() => {
-            const file = files.find(f => f.id === r.file_id);
+            const file = databankStore.fileById(r.file_id);
             if (file) onOpenFile(file, r.page_num);
           }}
         >
@@ -1024,16 +1021,31 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
 
 // --- Folder Tree View ---
 
+/** Resolve a folder node's files into DatabankFile records. Database mode
+ *  ships only IDs (cheap wire payload); Electron mode keeps embedding full
+ *  records so we read either shape. */
+function resolveNodeFiles(node: FolderNode): DatabankFile[] {
+  if (node.files && node.files.length > 0) return node.files;
+  if (!node.file_ids || node.file_ids.length === 0) return [];
+  const out: DatabankFile[] = [];
+  for (const id of node.file_ids) {
+    const f = databankStore.fileById(id);
+    if (f) out.push(f);
+  }
+  return out;
+}
+
 /** Recursively remove folders whose filtered file lists and all descendant
  *  folder file lists are empty. Used when a filter is active so empty
  *  directories disappear from the tree. */
 function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolean): FolderNode | null {
-  const files = (node.files ?? []).filter(filter);
+  const files = resolveNodeFiles(node).filter(filter);
   const children = (node.children ?? [])
     .map(c => pruneEmptyFolders(c, filter))
     .filter((c): c is FolderNode => c !== null);
   if (files.length === 0 && children.length === 0) return null;
-  return { ...node, files, children };
+  // Strip file_ids — pruning has materialized files into the `files` field.
+  return { ...node, files, file_ids: undefined, children };
 }
 
 function FolderView({ tree, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
@@ -1089,9 +1101,10 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
   onOpenFile: (f: DatabankFile) => void;
 }) {
   const isExpanded = expanded.has(node.path);
-  const hasChildren = (node.children && node.children.length > 0) || (node.files && node.files.length > 0);
+  const nodeFiles = resolveNodeFiles(node);
+  const hasChildren = (node.children && node.children.length > 0) || nodeFiles.length > 0;
 
-  const filteredFiles = (node.files || []).filter(filterFile);
+  const filteredFiles = nodeFiles.filter(filterFile);
 
   return (
     <div className="library-tree-group">
