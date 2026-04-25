@@ -547,11 +547,17 @@ function extractPads(
       if (maxX > minX && maxY > minY) {
         // Resolve through-hole vs SMD via padstack.layerCount.
         let side: 'top' | 'bottom' | 'both' = fpSide;
+        let drill: number | undefined;
         const padBlock = db.getBlock(pp.padPtr);
         if (padBlock && padBlock.blockType === 0x0D) {
           const ps = db.getBlock((padBlock as Blk0x0DPad).padStack);
-          if (ps && ps.blockType === 0x1C && (ps as Blk0x1CPadstack).layerCount > 1) {
-            side = 'both';
+          if (ps && ps.blockType === 0x1C) {
+            const padstack = ps as Blk0x1CPadstack;
+            if (padstack.layerCount > 1) side = 'both';
+            // Drill diameter only meaningful for through-hole pads.
+            if (side === 'both' && padstack.drill > 0) {
+              drill = padstack.drill / div;
+            }
           }
         }
 
@@ -560,6 +566,7 @@ function extractPads(
           bounds: { minX, minY, maxX, maxY },
           side,
           net: net && net.length > 0 ? net : undefined,
+          drill,
         });
       }
 
@@ -589,9 +596,19 @@ function extractVias(
     // Net from netPtr → net assign map
     const net = netAssignMap.get(via.netPtr) ?? '';
 
-    // Diameter from bbox
-    const [bx1, , bx2] = via.bbox;
-    const diameter = Math.abs(bx2 - bx1) / div;
+    // Drill diameter: prefer the padstack's drill field — that's the actual
+    // hole size. Fall back to the placed-via bbox extent (which is really
+    // the pad ring, so it overstates the drill, but at least it's non-zero).
+    const padstack = db.getBlock(via.padstack);
+    let diameter = 0;
+    if (padstack && padstack.blockType === 0x1C) {
+      const ps = padstack as Blk0x1CPadstack;
+      if (ps.drill > 0) diameter = ps.drill / div;
+    }
+    if (diameter <= 0) {
+      const [bx1, , bx2] = via.bbox;
+      diameter = Math.abs(bx2 - bx1) / div;
+    }
 
     vias.push({
       position: { x, y },
