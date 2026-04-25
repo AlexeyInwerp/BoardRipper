@@ -2559,9 +2559,13 @@ export class BoardRenderer {
             const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
             let arr = pinDrawsByColor.get(pinColor);
             if (!arr) { arr = []; pinDrawsByColor.set(pinColor, arr); }
+            const pb = pin.padBounds;
             if (storedPads && storedPads[pi]) {
               const padPoly = storedPads[pi];
               arr.push(() => drawPoly(gfx, padPoly));
+            } else if (pb) {
+              const w = pb.maxX - pb.minX, h = pb.maxY - pb.minY;
+              arr.push(() => gfx.rect(pb.minX, pb.minY, w, h));
             } else {
               const r = Math.min(computePinRadius(s, pin.radius), clamp);
               arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
@@ -2695,6 +2699,7 @@ export class BoardRenderer {
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
           const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
+          const pb = pin.padBounds;
           if (storedPads && storedPads[ref.pinIndex]) {
             // 2-pin: reuse exact pad polygon from scene build — same size as rendered pin
             const padPoly = storedPads[ref.pinIndex];
@@ -2705,6 +2710,19 @@ export class BoardRenderer {
               arr.push(() => drawPoly(gfx, padPoly));
             }
             highlights.push(() => drawPoly(gfx, padPoly));
+          } else if (pb) {
+            // Parser exposed a copper pad rect — draw highlight as the pad
+            // shape itself so a selected pin reads as the real geometry,
+            // not a circle stuck on top of the pad.
+            const grow = s.netHighlightGrow;
+            const w = pb.maxX - pb.minX, h = pb.maxY - pb.minY;
+            if (showDim) {
+              const colorMap = isBotGfx ? botByColor : topByColor;
+              let arr = colorMap.get(pinColor);
+              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
+              arr.push(() => gfx.rect(pb.minX, pb.minY, w, h));
+            }
+            highlights.push(() => gfx.rect(pb.minX - grow, pb.minY - grow, w + grow * 2, h + grow * 2));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
@@ -3522,6 +3540,22 @@ export class BoardRenderer {
         const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
         for (let pni = 0; pni < part.pins.length; pni++) {
           const pin = part.pins[pni];
+          // Prefer the actual copper-pad bbox when the parser exposes one —
+          // gives a tap anywhere on the pad the same effect as tapping the pin
+          // sprite, which matches what users expect after seeing the pad layer.
+          const pb = pin.padBounds;
+          if (pb && local.x >= pb.minX && local.x <= pb.maxX
+                 && local.y >= pb.minY && local.y <= pb.maxY) {
+            const cx = (pb.minX + pb.maxX) / 2;
+            const cy = (pb.minY + pb.maxY) / 2;
+            const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestPartIdx = pi;
+              bestPinIdx = pni;
+            }
+            continue;
+          }
           const dx = pin.position.x - local.x;
           const dy = pin.position.y - local.y;
           const dist = Math.sqrt(dx * dx + dy * dy);

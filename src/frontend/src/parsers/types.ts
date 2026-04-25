@@ -17,6 +17,10 @@ export interface Pin {
   radius: number;
   side: 'top' | 'bottom';
   net: string;
+  /** Copper-pad rectangle in board coords. Optional — formats that expose it
+   *  (Allegro) let the renderer hit-test and highlight the full pad area
+   *  rather than just the pin sprite. */
+  padBounds?: BBox;
 }
 
 export interface Part {
