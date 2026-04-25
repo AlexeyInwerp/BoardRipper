@@ -298,6 +298,11 @@ function extractPins(
 
     const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
 
+    const padMinX = Math.min(cx1, cx2) / div;
+    const padMaxX = Math.max(cx1, cx2) / div;
+    const padMinY = Math.min(cy1, cy2) / div;
+    const padMaxY = Math.max(cy1, cy2) / div;
+
     pins.push({
       name: pinName,
       number: pinNumber,
@@ -305,6 +310,7 @@ function extractPins(
       radius,
       side,
       net,
+      padBounds: { minX: padMinX, minY: padMinY, maxX: padMaxX, maxY: padMaxY },
     });
 
     // Follow nextInFp (NOT next!) for footprint pad chain
