@@ -56,12 +56,24 @@ export function setLibrarySearch(query: string): void {
 export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
-    selectedFileDetail, loading, metadataTree,
-    autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
+    selectedFileDetail, loading,
+    autoPdf, searchResults, searchQuery, backendAvailable,
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
     stats, filesComplete,
   } = useDatabank();
+
+  // Tree groupings are O(N) at 100k entries — only compute the one the user
+  // is actually looking at. Each is internally version-cached in the store,
+  // so flipping back to a previously-rendered tab is free.
+  const metadataTree = useMemo(
+    () => viewMode === 'metadata' ? databankStore.metadataTree : null,
+    [viewMode, files],
+  );
+  const modelTree = useMemo(
+    () => viewMode === 'model' ? databankStore.modelTree : null,
+    [viewMode, files],
+  );
   const [localSearch, setLocalSearch] = useState('');
 
   // Register external setter
@@ -206,7 +218,11 @@ export function LibraryPanel() {
     } catch (err) {
       log.ui.error('Failed to open file:', err);
     }
-  }, [files, autoPdf]);
+    // `files` is intentionally absent: the binding lookup goes through
+    // `databankStore.fileById` (always current). Re-creating this callback
+    // on every store notify would invalidate FileRow memoization and cost
+    // more than the current binding-resolution Map lookup saves.
+  }, [autoPdf, pdfSearchMode, searchQuery]);
 
   const handleSelectFile = useCallback((file: DatabankFile) => {
     databankStore.selectFile(file.id);
@@ -443,7 +459,7 @@ export function LibraryPanel() {
           <HistoryView onOpenFile={handleOpenFile} searchFilter={localSearch} />
         ) : viewMode === 'model' ? (
           <ModelView
-            groups={modelTree}
+            groups={modelTree ?? []}
             selectedFileId={selectedFileId}
             filterFile={filterFile}
             onSelectFile={handleSelectFile}
@@ -451,7 +467,7 @@ export function LibraryPanel() {
           />
         ) : viewMode === 'metadata' ? (
           <MetadataView
-            groups={metadataTree}
+            groups={metadataTree ?? []}
             selectedFileId={selectedFileId}
             filterFile={filterFile}
             onSelectFile={handleSelectFile}
@@ -594,12 +610,19 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
 
   const isBoard = detail.file_type === 'board';
 
-  // Available files to bind (opposite type, not already bound)
-  const boundIds = new Set(
-    detail.bindings.map(b => isBoard ? b.pdf_file_id : b.board_file_id)
+  // Available files to bind (opposite type, not already bound).
+  // Both Set construction and the .filter are O(N) — without memoization
+  // they'd re-run on every keystroke / store notify, scanning 100k rows
+  // every time the user types in the metadata-edit modal.
+  const boundIds = useMemo(
+    () => new Set(detail.bindings.map(b => isBoard ? b.pdf_file_id : b.board_file_id)),
+    [detail.bindings, isBoard],
   );
-  const bindCandidates = files.filter(f =>
-    f.file_type === (isBoard ? 'pdf' : 'board') && !boundIds.has(f.id)
+  const bindCandidates = useMemo(
+    () => files.filter(f =>
+      f.file_type === (isBoard ? 'pdf' : 'board') && !boundIds.has(f.id)
+    ),
+    [files, isBoard, boundIds],
   );
 
   return (

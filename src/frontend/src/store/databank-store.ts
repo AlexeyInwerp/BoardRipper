@@ -179,8 +179,16 @@ class DatabankStore extends Emitter {
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
-    this._filesById = new Map(files.map(f => [f.id, f]));
-    this._filesByPath = new Map(files.map(f => [f.path, f]));
+    // Build both lookup tables in a single pass — `new Map(files.map(...))`
+    // allocates 2N intermediate tuple arrays per Map (4N total at 100k rows).
+    const byId = new Map<number, DatabankFile>();
+    const byPath = new Map<string, DatabankFile>();
+    for (const f of files) {
+      byId.set(f.id, f);
+      byPath.set(f.path, f);
+    }
+    this._filesById = byId;
+    this._filesByPath = byPath;
     if (opts.complete !== undefined) this._filesComplete = opts.complete;
     if (opts.signature !== undefined) this._filesSignature = opts.signature;
   }
@@ -441,10 +449,14 @@ class DatabankStore extends Emitter {
       return;
     }
 
-    // Stats-driven cache key: if `last_file_scan_at` and `boards+pdfs` haven't
-    // changed since we last cached, the file list is byte-identical and we
-    // can skip the multi-MB JSON payload entirely.
-    const stats = await this.apiFetch<DatabankStats>('/api/databank/stats');
+    // Fire stats and IDB read in parallel — both add 50–300 ms each, and
+    // the cached snapshot is independent of the stats response (we just
+    // validate its signature after). On a warm load both finish in roughly
+    // the time of the slower one instead of summing.
+    const [stats, cachedSnapshot] = await Promise.all([
+      this.apiFetch<DatabankStats>('/api/databank/stats'),
+      libraryCache.getRaw(),
+    ]);
     if (stats) this._stats = stats;
 
     if (stats) {
@@ -455,10 +467,9 @@ class DatabankStore extends Emitter {
         this.notify();
         return;
       }
-      const cached = await libraryCache.get(signature);
-      if (cached) {
-        log.scan.log(`Library cache hit (${cached.length} files, sig ${signature})`);
-        this._setFiles(cached, { complete: true, signature });
+      if (cachedSnapshot && cachedSnapshot.signature === signature) {
+        log.scan.log(`Library cache hit (${cachedSnapshot.files.length} files, sig ${signature})`);
+        this._setFiles(cachedSnapshot.files, { complete: true, signature });
         this._loading = false;
         this.notify();
         return;
@@ -476,11 +487,27 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
+  private _filesByIdsInflight: Promise<void> | null = null;
+
   /** Fetch only the files referenced by the given IDs. Used for the History
    *  tab fast path so first paint doesn't block on the full 100k-row payload.
    *  Marks `_files` as partial — switching to a full-list view will trigger
-   *  `fetchFiles()` to hydrate the remainder. */
+   *  `fetchFiles()` to hydrate the remainder.
+   *
+   *  Coalesced: concurrent callers share the same inflight promise so a
+   *  remount during initial load doesn't double-fetch. */
   async fetchFilesByIds(ids: number[]): Promise<void> {
+    if (this._filesByIdsInflight) {
+      await this._filesByIdsInflight;
+      return;
+    }
+    this._filesByIdsInflight = this._doFetchFilesByIds(ids).finally(() => {
+      this._filesByIdsInflight = null;
+    });
+    await this._filesByIdsInflight;
+  }
+
+  private async _doFetchFilesByIds(ids: number[]): Promise<void> {
     if (isElectron() || ids.length === 0) return;
     if (this._filesComplete) return; // already have everything
     const params = new URLSearchParams({ ids: ids.join(',') });
