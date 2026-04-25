@@ -108,6 +108,42 @@ class LibraryCache {
       // non-critical
     }
   }
+
+  /** Patch a single file inside the cached snapshot in place. Used after a
+   *  PATCH/preview update so the warm cache survives the local edit — the
+   *  alternative was `clear()`, which forced the next reload to re-download
+   *  the full multi-MB list to recover one changed row.
+   *
+   *  No-op if the snapshot is missing or doesn't contain the id. The
+   *  signature is preserved (the backend's `last_file_scan_at` doesn't move
+   *  on metadata edits, so a stats match still validates the cache). */
+  async patchFile(id: number, patch: Partial<DatabankFile>): Promise<void> {
+    try {
+      const db = await this.openDB();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(FILES_STORE, 'readwrite');
+        const store = tx.objectStore(FILES_STORE);
+        const getReq = store.get(SNAPSHOT_KEY);
+        getReq.onsuccess = () => {
+          const snap = getReq.result as CachedSnapshot | undefined;
+          if (!snap) { resolve(); return; }
+          const idx = snap.files.findIndex(f => f.id === id);
+          if (idx < 0) { resolve(); return; }
+          // Mutate the array in-place — `snap` is a structured-clone, not
+          // shared with the live store reference, so this only affects the
+          // copy we're about to write back.
+          snap.files[idx] = { ...snap.files[idx], ...patch };
+          snap.timestamp = Date.now();
+          const putReq = store.put(snap);
+          putReq.onsuccess = () => resolve();
+          putReq.onerror = () => reject(putReq.error);
+        };
+        getReq.onerror = () => reject(getReq.error);
+      });
+    } catch {
+      // non-critical
+    }
+  }
 }
 
 export const libraryCache = new LibraryCache();

@@ -380,11 +380,20 @@ type DatabankStats struct {
 func (db *DB) Stats(dataDir string) (*DatabankStats, error) {
 	s := &DatabankStats{}
 
-	db.reader.QueryRow(`SELECT COUNT(*) FROM files WHERE file_type='board'`).Scan(&s.Boards)
-	db.reader.QueryRow(`SELECT COUNT(*) FROM files WHERE file_type='pdf'`).Scan(&s.Pdfs)
-	db.reader.QueryRow(`SELECT COUNT(*) FROM bindings`).Scan(&s.Bindings)
-	db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_pages WHERE page_num > 0`).Scan(&s.PdfPages)
-	db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_scan_errors`).Scan(&s.PdfErrors)
+	// Single-query aggregation across files + bindings + pdf_pages + errors.
+	// Five separate COUNT(*)s used to round-trip the SQLite driver five times
+	// per /api/databank/stats request — visible at 100k rows.
+	row := db.reader.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM files WHERE file_type='board'),
+			(SELECT COUNT(*) FROM files WHERE file_type='pdf'),
+			(SELECT COUNT(*) FROM bindings),
+			(SELECT COUNT(*) FROM pdf_pages WHERE page_num > 0),
+			(SELECT COUNT(*) FROM pdf_scan_errors)
+	`)
+	if err := row.Scan(&s.Boards, &s.Pdfs, &s.Bindings, &s.PdfPages, &s.PdfErrors); err != nil {
+		return nil, err
+	}
 
 	// Sum DB file sizes (main + WAL + SHM)
 	for _, suffix := range []string{"", "-wal", "-shm"} {
@@ -402,6 +411,25 @@ func (db *DB) Stats(dataDir string) (*DatabankStats, error) {
 	}
 
 	return s, nil
+}
+
+// FilesETag returns a fast-to-compute ETag for the /api/databank/files
+// response, matching the client-side cache signature exactly:
+// `${last_file_scan_at}:${boards+pdfs}`. Used for HTTP 304 responses so a
+// client without IDB (cleared site data, different browser) can skip the
+// multi-MB list transfer when it's already current.
+func (db *DB) FilesETag() (string, error) {
+	var total int
+	if err := db.reader.QueryRow(
+		`SELECT COUNT(*) FROM files WHERE file_type IN ('board','pdf')`,
+	).Scan(&total); err != nil {
+		return "", err
+	}
+	var lastScan int64
+	if v, err := db.GetConfig("last_file_scan_at"); err == nil && v != "" {
+		fmt.Sscanf(v, "%d", &lastScan)
+	}
+	return fmt.Sprintf(`"%d:%d"`, lastScan, total), nil
 }
 
 // ResetAll wipes all scan data from the database.
