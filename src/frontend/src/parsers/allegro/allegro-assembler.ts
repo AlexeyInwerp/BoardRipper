@@ -647,30 +647,45 @@ function walkSegmentChain(db: AllegroDb, headKey: number, div: number): Point[] 
 // ── Layer names ───────────────────────────────────────────────────────────────
 
 function extractLayerNames(db: AllegroDb): string[] {
-  const names: string[] = [];
-
-  // From header layerMap[LayerClass.ETCH].layerList0x2A → 0x2A block → entries → names
-  const etchIdx = LayerClass.ETCH; // 0x06
-  if (etchIdx >= db.header.layerMap.length) return names;
-
-  const layerEntry = db.header.layerMap[etchIdx];
-  if (!layerEntry || layerEntry.layerList0x2A === 0) return names;
-
-  const layerList = db.getBlockAs<Blk0x2ALayerList>(layerEntry.layerList0x2A, 0x2A);
-  if (!layerList) return names;
-
-  if (layerList.refEntries) {
-    // V165+: string table references
-    for (const entry of layerList.refEntries) {
-      const name = db.getString(entry.layerNameId);
-      if (name) names.push(name);
+  // Prefer layerMap[LayerClass.ETCH] — the slot that holds the ETCH list in
+  // v16/v17. v18.0.2 dropped the slot-by-class-code convention; LA-E331P puts
+  // the ETCH list at slot 1 instead. Fall back by scanning layerMap and
+  // picking the 0x2A block that's *most-referenced* by slots — empirically
+  // the ETCH list across every Allegro version (referenced by 8–11 slots)
+  // because each etch-aware layer entry points back at it.
+  const fromList = (layerList: Blk0x2ALayerList): string[] => {
+    const out: string[] = [];
+    if (layerList.refEntries) {
+      for (const e of layerList.refEntries) {
+        const name = db.getString(e.layerNameId);
+        if (name) out.push(name);
+      }
+    } else if (layerList.nonRefEntries) {
+      for (const e of layerList.nonRefEntries) if (e.name) out.push(e.name);
     }
-  } else if (layerList.nonRefEntries) {
-    // Pre-V165: inline strings
-    for (const entry of layerList.nonRefEntries) {
-      if (entry.name) names.push(entry.name);
-    }
+    return out;
+  };
+
+  const tryAt = (idx: number): string[] => {
+    if (idx < 0 || idx >= db.header.layerMap.length) return [];
+    const ent = db.header.layerMap[idx];
+    if (!ent || ent.layerList0x2A === 0) return [];
+    const ll = db.getBlockAs<Blk0x2ALayerList>(ent.layerList0x2A, 0x2A);
+    return ll ? fromList(ll) : [];
+  };
+
+  const primary = tryAt(LayerClass.ETCH);
+  if (primary.length > 0) return primary;
+
+  // Fallback: most-referenced 0x2A block in layerMap.
+  const refCount = new Map<number, number>();
+  for (const ent of db.header.layerMap) {
+    if (ent.layerList0x2A === 0) continue;
+    refCount.set(ent.layerList0x2A, (refCount.get(ent.layerList0x2A) ?? 0) + 1);
   }
-
-  return names;
+  let bestKey = 0, bestN = 0;
+  for (const [k, n] of refCount) if (n > bestN) { bestN = n; bestKey = k; }
+  if (bestKey === 0) return [];
+  const ll = db.getBlockAs<Blk0x2ALayerList>(bestKey, 0x2A);
+  return ll ? fromList(ll) : [];
 }
