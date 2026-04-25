@@ -78,11 +78,13 @@ export interface SilkscreenPath {
 
 /** Copper pad — axis-aligned bounding rectangle in board coordinates,
  *  already pre-rotated and pre-translated. SMD pads have side='top'/'bottom';
- *  through-hole pads have side='both'. */
+ *  through-hole pads have side='both' and may carry a drill diameter. */
 export interface Pad {
   bounds: BBox;
   side: 'top' | 'bottom' | 'both';
   net?: string;
+  /** Drill diameter in mils — set for through-hole pads, omitted for SMD. */
+  drill?: number;
 }
 
 export interface BoardData {

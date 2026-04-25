@@ -541,26 +541,42 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     const PAD_TOP_COLOR    = 0xd4a64a;  // warm copper
     const PAD_BOTTOM_COLOR = 0x8da6c0;  // cool copper-grey
     const PAD_ALPHA        = 0.9;
+    const DRILL_COLOR      = 0x111111;
+    const DRILL_ALPHA      = 0.95;
 
-    const topGfx = new Graphics();
-    const botGfx = new Graphics();
+    const topPadGfx = new Graphics();
+    const botPadGfx = new Graphics();
+    const drillGfx  = new Graphics();
+    let anyDrill = false;
     for (const p of board.pads) {
       const w = p.bounds.maxX - p.bounds.minX;
       const h = p.bounds.maxY - p.bounds.minY;
       if (w <= 0 || h <= 0) continue;
       if (p.side === 'top' || p.side === 'both') {
-        topGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+        topPadGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
       }
       if (p.side === 'bottom' || p.side === 'both') {
-        botGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+        botPadGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+      }
+      // Punch a drill hole through TH pads so the user can see the hole
+      // through the (otherwise solid) ground/power pad rectangle.
+      if (p.drill && p.drill > 0) {
+        const cx = (p.bounds.minX + p.bounds.maxX) / 2;
+        const cy = (p.bounds.minY + p.bounds.maxY) / 2;
+        drillGfx.circle(cx, cy, p.drill / 2);
+        anyDrill = true;
       }
     }
-    topGfx.fill({ color: PAD_TOP_COLOR,    alpha: PAD_ALPHA });
-    botGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: PAD_ALPHA });
-    padsTop.addChild(topGfx);
-    padsBottom.addChild(botGfx);
+    topPadGfx.fill({ color: PAD_TOP_COLOR,    alpha: PAD_ALPHA });
+    botPadGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: PAD_ALPHA });
+    if (anyDrill) drillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
+    padsTop.addChild(topPadGfx);
+    padsBottom.addChild(botPadGfx);
+    // Drill holes render above both side fills so the hole visually punches
+    // through whichever side is currently visible.
     padsLayer.addChild(padsBottom);
     padsLayer.addChild(padsTop);
+    if (anyDrill) padsLayer.addChild(drillGfx);
     root.addChild(padsLayer);
   }
 
