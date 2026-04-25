@@ -4,6 +4,7 @@ import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, Vi
 
 interface DatabankSnapshot {
   files: DatabankFile[];
+  filesComplete: boolean;
   folderTree: FolderNode | null;
   scanStatus: ScanStatus | null;
   searchResults: SearchResult[];
@@ -30,6 +31,7 @@ interface DatabankSnapshot {
 
 export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () => ({
   files: databankStore.files,
+  filesComplete: databankStore.filesComplete,
   folderTree: databankStore.folderTree,
   scanStatus: databankStore.scanStatus,
   searchResults: databankStore.searchResults,

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"boardripper/databank"
 )
@@ -116,8 +117,33 @@ func (h *DatabankHandler) ScanStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListFiles returns all files, with optional filtering.
-// Query params: type (board|pdf), manufacturer, donor (1), q (search query)
+// Query params:
+//
+//	type (board|pdf), manufacturer, donor (1), q (search query)
+//	ids (comma-separated id list — short-circuits other filters; capped at maxIDsPerRequest)
+//
+// The `ids` filter exists so the History tab can hydrate ≤ historyDepth
+// records on first paint without paying the cost of the full list.
 func (h *DatabankHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
+	if idsParam := r.URL.Query().Get("ids"); idsParam != "" {
+		ids, err := parseIDList(idsParam)
+		if err != nil {
+			http.Error(w, "Invalid ids: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		files, err := h.db.ListFilesByIDs(ids)
+		if err != nil {
+			http.Error(w, "Failed to list files: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if files == nil {
+			files = []databank.FileRecord{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(files)
+		return
+	}
+
 	fileType := r.URL.Query().Get("type")
 	manufacturer := r.URL.Query().Get("manufacturer")
 	donorOnly := r.URL.Query().Get("donor") == "1"
@@ -134,6 +160,30 @@ func (h *DatabankHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(files)
+}
+
+// maxIDsPerRequest caps a single `ids=` query so a malformed client can't
+// blow up the SQL placeholder list.
+const maxIDsPerRequest = 1024
+
+func parseIDList(s string) ([]int64, error) {
+	parts := strings.Split(s, ",")
+	if len(parts) > maxIDsPerRequest {
+		return nil, fmt.Errorf("too many ids (max %d)", maxIDsPerRequest)
+	}
+	ids := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // GetFile returns a single file record with its bindings (both directions).

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -594,6 +595,40 @@ func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([
 	}
 
 	query += ` ORDER BY manufacturer, board_number, filename`
+
+	rows, err := db.reader.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []FileRecord
+	for rows.Next() {
+		f, err := db.scanFile(rows)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, *f)
+	}
+	return files, rows.Err()
+}
+
+// ListFilesByIDs returns files for the given ID set. Order is unspecified.
+// Bounded by the caller to avoid unbounded SQL placeholder lists.
+func (db *DB) ListFilesByIDs(ids []int64) ([]FileRecord, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
+	                 board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
+	                 board_manufacturer, resolution_status
+	          FROM files WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 
 	rows, err := db.reader.Query(query, args...)
 	if err != nil {

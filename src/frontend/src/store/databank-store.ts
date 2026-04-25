@@ -1,6 +1,7 @@
 import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
+import { libraryCache } from './library-cache';
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
@@ -149,16 +150,25 @@ export interface ModelGroup {
 class DatabankStore extends Emitter {
   private _files: DatabankFile[] = [];
   private _filesVersion = 0;
+  /** True once the full file list has been fetched. False while we're showing
+   *  a partial subset (e.g. only the files referenced by the History tab). */
+  private _filesComplete = false;
+  /** Inflight promise for the full file fetch — coalesces concurrent requests. */
+  private _filesInflight: Promise<void> | null = null;
+  /** Cache signature corresponding to the current `_files` payload. */
+  private _filesSignature: string | null = null;
   private _metadataCache: { version: number; tree: MetadataGroup[] } | null = null;
   private _modelCache: { version: number; tree: ModelGroup[] } | null = null;
 
   /** Single mutation point for `_files`. Bumps the version so memoized
    *  getters (metadataTree/modelTree) know to recompute. */
-  private _setFiles(files: DatabankFile[]) {
+  private _setFiles(files: DatabankFile[], opts: { complete?: boolean; signature?: string | null } = {}) {
     this._files = files;
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
+    if (opts.complete !== undefined) this._filesComplete = opts.complete;
+    if (opts.signature !== undefined) this._filesSignature = opts.signature;
   }
   private _folderTree: FolderNode | null = null;
   private _scanStatus: ScanStatus | null = (() => {
@@ -207,6 +217,7 @@ class DatabankStore extends Emitter {
   private _electronMode = false;
 
   get files() { return this._files; }
+  get filesComplete() { return this._filesComplete; }
   get folderTree() { return this._folderTree; }
   get scanStatus() { return this._scanStatus; }
   get stats() { return this._stats; }
@@ -392,17 +403,75 @@ class DatabankStore extends Emitter {
   }
 
   async fetchFiles(): Promise<void> {
+    if (this._filesInflight) {
+      await this._filesInflight;
+      return;
+    }
+    this._filesInflight = this._doFetchFiles().finally(() => {
+      this._filesInflight = null;
+    });
+    await this._filesInflight;
+  }
+
+  private async _doFetchFiles(): Promise<void> {
     this._loading = true;
     this.notify();
 
     if (isElectron()) {
       await this._electronScan();
-    } else {
-      const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
-      if (data) this._setFiles(data);
+      this._loading = false;
+      this.notify();
+      return;
+    }
+
+    // Stats-driven cache key: if `last_file_scan_at` and `boards+pdfs` haven't
+    // changed since we last cached, the file list is byte-identical and we
+    // can skip the multi-MB JSON payload entirely.
+    const stats = await this.apiFetch<DatabankStats>('/api/databank/stats');
+    if (stats) this._stats = stats;
+
+    if (stats) {
+      const signature = libraryCache.signatureFor(stats);
+      // Already loaded the right signature in memory — nothing to do.
+      if (this._filesComplete && this._filesSignature === signature) {
+        this._loading = false;
+        this.notify();
+        return;
+      }
+      const cached = await libraryCache.get(signature);
+      if (cached) {
+        log.scan.log(`Library cache hit (${cached.length} files, sig ${signature})`);
+        this._setFiles(cached, { complete: true, signature });
+        this._loading = false;
+        this.notify();
+        return;
+      }
+    }
+
+    const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
+    if (data) {
+      const signature = stats ? libraryCache.signatureFor(stats) : null;
+      this._setFiles(data, { complete: true, signature });
+      if (signature) libraryCache.put(signature, data);
     }
 
     this._loading = false;
+    this.notify();
+  }
+
+  /** Fetch only the files referenced by the given IDs. Used for the History
+   *  tab fast path so first paint doesn't block on the full 100k-row payload.
+   *  Marks `_files` as partial — switching to a full-list view will trigger
+   *  `fetchFiles()` to hydrate the remainder. */
+  async fetchFilesByIds(ids: number[]): Promise<void> {
+    if (isElectron() || ids.length === 0) return;
+    if (this._filesComplete) return; // already have everything
+    const params = new URLSearchParams({ ids: ids.join(',') });
+    const data = await this.apiFetch<DatabankFile[]>(`/api/databank/files?${params}`);
+    if (!data || data.length === 0) return;
+    // Only adopt this partial set if we still don't have the complete list.
+    if (this._filesComplete) return;
+    this._setFiles(data, { complete: false, signature: null });
     this.notify();
   }
 
@@ -539,7 +608,14 @@ class DatabankStore extends Emitter {
       if (idx >= 0) {
         const next = [...this._files];
         next[idx] = { ...next[idx], ...update };
-        this._setFiles(next);
+        // Local edits don't bump the backend's `last_file_scan_at`, so we
+        // invalidate the on-disk cache (signature -> null) and rewrite it
+        // with the patched data. Next reload then sees the fresh edits.
+        this._setFiles(next, { complete: this._filesComplete, signature: null });
+        if (this._filesComplete) {
+          // Best-effort: drop stale snapshot so we don't hand back pre-patch data.
+          libraryCache.clear();
+        }
         this.notify();
       }
     }
@@ -618,7 +694,10 @@ class DatabankStore extends Emitter {
       if (idx >= 0) {
         const next = [...this._files];
         next[idx] = { ...next[idx], has_preview: true };
-        this._setFiles(next);
+        // Same flag-only update as updateFile — invalidate the snapshot
+        // cache so a reload re-fetches with has_preview reflected.
+        this._setFiles(next, { complete: this._filesComplete, signature: null });
+        if (this._filesComplete) libraryCache.clear();
         this.notify();
       }
       return true;
@@ -645,7 +724,9 @@ class DatabankStore extends Emitter {
     const res = await this.apiFetch<{ status: string }>('/api/databank/reset', { method: 'POST' });
     if (res) {
       log.scan.log('Database reset complete');
-      this._setFiles([]); this._folderTree = null; this._scanStatus = null; this._stats = null;
+      this._setFiles([], { complete: false, signature: null });
+      this._folderTree = null; this._scanStatus = null; this._stats = null;
+      libraryCache.clear();
       try { localStorage.removeItem('boardripper-scan-status'); } catch { /* ignored */ }
       await this.fetchStats();
       this.notify();
@@ -823,7 +904,7 @@ class DatabankStore extends Emitter {
       log.scan.warn('Electron scan error:', result.error);
       return;
     }
-    this._setFiles(result.files);
+    this._setFiles(result.files, { complete: true, signature: null });
     this._folderTree = result.tree;
     this._scanStatus = {
       running: false, scanned: result.files.length, total: result.files.length,

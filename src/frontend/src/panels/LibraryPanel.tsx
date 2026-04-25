@@ -60,6 +60,7 @@ export function LibraryPanel() {
     autoPdf, searchResults, searchQuery, modelTree, backendAvailable,
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
+    stats, filesComplete,
   } = useDatabank();
   const [localSearch, setLocalSearch] = useState('');
 
@@ -91,13 +92,44 @@ export function LibraryPanel() {
     // loadConfig must run first: it discovers library_dir / _scan_root
     // and flips _backendAvailable. Files + scan status can race.
     databankStore.loadConfig().then(() => {
-      Promise.all([
-        databankStore.fetchFiles(),
-        databankStore.checkScanStatus(),
-      ]);
+      databankStore.checkScanStatus();
+      // History is the default tab and only references a small fixed set
+      // of files (≤ historyDepth). With 100k+ entries the full payload is
+      // multiple MB — fetch only the referenced IDs first so first paint
+      // doesn't block on the giant list, then hydrate the rest in idle time.
+      const initialMode = databankStore.viewMode;
+      const recent = databankStore.recentItems;
+      const recentIds = recent.map(r => r.fileId).filter((v): v is number => typeof v === 'number');
+      if (initialMode === 'history' && recentIds.length > 0) {
+        // Stats power the boardCount/pdfCount counters and the cache key —
+        // fetch them in parallel with the partial file fetch so the header
+        // shows correct totals even before the full hydrate completes.
+        databankStore.fetchStats();
+        databankStore.fetchFilesByIds(recentIds).then(() => {
+          // Hydrate the full list in the background. requestIdleCallback so
+          // we don't compete with the initial render or any user action.
+          const hydrate = () => databankStore.fetchFiles();
+          if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+            (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => void })
+              .requestIdleCallback(hydrate, { timeout: 5000 });
+          } else {
+            setTimeout(hydrate, 500);
+          }
+        });
+      } else {
+        databankStore.fetchFiles();
+      }
     });
     // folderTree fetch is deferred to first use (see the effect below)
   }, []);
+
+  // When the user switches to a tab that needs the full file list, hydrate
+  // it now (no-op if already complete). Idempotent and coalesced upstream.
+  useEffect(() => {
+    if (electronMode || filesComplete) return;
+    if (viewMode === 'history') return;
+    databankStore.fetchFiles();
+  }, [viewMode, filesComplete, electronMode]);
 
   // Fetch folder tree only the first time the user opens the Folders tab
   // in database mode. For Electron mode the tree is built during _electronScan
@@ -194,10 +226,14 @@ export function LibraryPanel() {
 
   const scanning = scanStatus?.running ?? false;
   const { boardCount, pdfCount } = useMemo(() => {
+    // Stats are authoritative — they reflect the full database even when we
+    // only loaded a partial subset of files (History fast path). Fall back
+    // to counting `files` when stats haven't arrived yet (cold load).
+    if (stats) return { boardCount: stats.boards, pdfCount: stats.pdfs };
     let b = 0, p = 0;
     for (const f of files) { if (f.file_type === 'board') b++; else if (f.file_type === 'pdf') p++; }
     return { boardCount: b, pdfCount: p };
-  }, [files]);
+  }, [files, stats]);
 
   return (
     <div className="library-panel">
