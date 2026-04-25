@@ -105,8 +105,14 @@ ci_run_id_for_tag() {
 # Quota = any "CreateArtifact: ... storage quota" message in failed logs.
 classify_failed_run() {
   local id="$1"
-  if gh run view "$id" --log-failed 2>/dev/null \
-      | grep -qiE 'storage quota has been hit|Failed to CreateArtifact.*quota'; then
+  # Stage logs to a variable first: piping `gh run view` directly into
+  # `grep -q` under `set -o pipefail` makes grep close stdin on the first
+  # match, which gives `gh` SIGPIPE → the pipeline returns gh's 141 exit
+  # code → the if below treats a real quota failure as non-quota and
+  # falls through to die(). Reading once, grepping once is unambiguous.
+  local logs
+  logs=$(gh run view "$id" --log-failed 2>/dev/null) || true
+  if printf '%s\n' "$logs" | grep -qiE 'storage quota has been hit|Failed to CreateArtifact.*quota'; then
     echo "quota"
   else
     echo "fail"
