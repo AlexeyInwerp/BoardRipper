@@ -33,7 +33,8 @@ export function formatFromMagic(magic: number): FmtVer {
     case 0x00140900:
     case 0x00140E00: return FmtVer.V_174;
     case 0x00141500: return FmtVer.V_175;
-    case 0x00150000: return FmtVer.V_180;
+    case 0x00150000:
+    case 0x00150200: return FmtVer.V_180;
     default: break;
   }
 
@@ -184,8 +185,25 @@ export function parseHeader(stream: AllegroStream): FileHeader {
     x35End_V18    = stream.u32();
   }
 
+  // v18.0.2 tail: 4 extra LL pairs between x35End and the version string.
+  // Discovered on Dell XPS LA-E331P (magic 0x00150200): the version string
+  // sits at file offset 0x144 instead of 0x124. Each pair carries an
+  // increasing head value (e.g. 0x7d..0x80) with tail = 0; treated as
+  // opaque alignment-only data for now.
+  let LL_V18_7:  LinkedList | undefined;
+  let LL_V18_8:  LinkedList | undefined;
+  let LL_V18_9:  LinkedList | undefined;
+  let LL_V18_10: LinkedList | undefined;
+
+  if (ver >= FmtVer.V_180) {
+    LL_V18_7  = readLL(stream, ver);
+    LL_V18_8  = readLL(stream, ver);
+    LL_V18_9  = readLL(stream, ver);
+    LL_V18_10 = readLL(stream, ver);
+  }
+
   // Position assertion (matches KiCad's wxASSERT)
-  const expectedOffset = ver < FmtVer.V_180 ? 0xF8 : 0x124;
+  const expectedOffset = ver < FmtVer.V_180 ? 0xF8 : 0x144;
   const actualOffset   = stream.position - headerStartPos;
   if (actualOffset !== expectedOffset) {
     throw new Error(
@@ -308,6 +326,10 @@ export function parseHeader(stream: AllegroStream): FileHeader {
     LL_V18_4,
     LL_V18_5,
     LL_V18_6,
+    LL_V18_7,
+    LL_V18_8,
+    LL_V18_9,
+    LL_V18_10,
 
     x35Start,
     x35End,

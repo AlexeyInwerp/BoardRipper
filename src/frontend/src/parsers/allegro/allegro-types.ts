@@ -120,6 +120,14 @@ export interface FileHeader {
   LL_V18_5?: LinkedList;
   LL_V18_6?: LinkedList; // after the main 18 LL block
 
+  // v18.0.2-specific tail LLs (4 extra pairs between x35Start/End and the
+  // Allegro version string). Consumed only to keep the stream aligned —
+  // not read by downstream code today.
+  LL_V18_7?: LinkedList;
+  LL_V18_8?: LinkedList;
+  LL_V18_9?: LinkedList;
+  LL_V18_10?: LinkedList;
+
   // x35 file-ref range
   x35Start: number;
   x35End: number;
