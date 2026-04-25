@@ -65,12 +65,21 @@ func (h *UpdateHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
+	// Disable buffering on common reverse proxies — without this, Synology
+	// DSM / nginx hold the stream open and only release the buffered chunks
+	// when the connection closes. The orchestrator kills the container long
+	// before that happens, so the user sees zero progress lines.
+	w.Header().Set("X-Accel-Buffering", "no")
 	flusher.Flush()
 
 	sent := 0
-	ticker := time.NewTicker(500 * time.Millisecond)
+	// 100 ms tick: the entire Apply() can complete in well under 500 ms on a
+	// fast NAS (cached image load + already-pulled alpine), so a coarser
+	// poll loses entries to the orchestrator-stop race. 100 ms keeps
+	// CPU cost negligible and bounds loss to ~1–2 entries worst case.
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	ctx := r.Context()
