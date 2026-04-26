@@ -12,6 +12,7 @@ import (
 
 // BoardMatch is the result of resolving a board number against the reference DB.
 type BoardMatch struct {
+	UUID         string   `json:"uuid"`
 	BoardNumber  string   `json:"board_number"`
 	Brand        string   `json:"brand"`
 	Model        string   `json:"model"`
@@ -19,6 +20,7 @@ type BoardMatch struct {
 	BoardName    string   `json:"board_name,omitempty"`
 	ODM          string   `json:"odm"`
 	Type         string   `json:"board_number_type,omitempty"`
+	Color        string   `json:"color,omitempty"`
 	Aliases      []string `json:"aliases,omitempty"`
 	ModelAliases []string `json:"model_aliases,omitempty"`
 	Source       string   `json:"source,omitempty"`
