@@ -99,6 +99,10 @@ export interface RenderSettings {
 
   boardFillAlpha: number;
 
+  /** When true, board fill uses the matched colors.hex value instead of the
+   *  theme default. Falls back to theme default when no metadata color is set. */
+  useMetadataBoardColor: boolean;
+
   /** Show background-elevated label for selected component */
   showElevatedPartLabel: boolean;
   /** Show background-elevated label for selected pin */
@@ -261,6 +265,7 @@ export const DEFAULTS: RenderSettings = {
   netLinePulse: false,
 
   boardFillAlpha: 0.08,
+  useMetadataBoardColor: false,
 
   showElevatedPartLabel: false,
   showElevatedPinLabel: false,
