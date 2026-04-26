@@ -662,6 +662,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
           </>;
         })()}
         {detail.manufacturer && <span>Mfr: {detail.manufacturer}</span>}
+        {detail.board_color && <span>Color: {detail.board_color}</span>}
         {detail.model && <span>Model: {detail.model}</span>}
         {detail.part_count != null && <span>{detail.part_count} parts</span>}
         {detail.net_count != null && <span>{detail.net_count} nets</span>}
