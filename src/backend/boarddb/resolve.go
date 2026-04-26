@@ -12,7 +12,7 @@ var appleRevisionRe = regexp.MustCompile(`^(820-\d{4,5})-[A-Z0-9]+$`)
 // nmNoHyphenRe normalizes LCFC board numbers without hyphens: NMD821 → NM-D821
 var nmNoHyphenRe = regexp.MustCompile(`^NM([A-Z]\d{3,4})$`)
 
-const boardQuery = `SELECT b.id, b.uuid, b.brand, b.model, b.model_number, b.board_number, b.board_name, b.odm, b.board_number_type, c.name AS color, b.source FROM boards b LEFT JOIN colors c ON b.color_id = c.id`
+const boardQuery = `SELECT b.id, b.uuid, b.brand, b.model, b.model_number, b.board_number, b.board_name, b.odm, b.board_number_type, c.name AS color, c.hex AS color_hex, b.source FROM boards b LEFT JOIN colors c ON b.color_id = c.id`
 
 // Resolve looks up a board number in the reference database.
 // Checks: exact → prefix → base number (strip revision) → alias.
@@ -100,10 +100,10 @@ func (db *DB) ResolveFilename(filename string) ([]ExtractedNumber, *BoardMatch) 
 func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 	var id int64
 	m := &BoardMatch{}
-	var model, modelNum, boardName, odm, boardType, color, source *string
+	var model, modelNum, boardName, odm, boardType, color, colorHex, source *string
 
 	err := db.reader.QueryRow(query, args...).Scan(
-		&id, &m.UUID, &m.Brand, &model, &modelNum, &m.BoardNumber, &boardName, &odm, &boardType, &color, &source,
+		&id, &m.UUID, &m.Brand, &model, &modelNum, &m.BoardNumber, &boardName, &odm, &boardType, &color, &colorHex, &source,
 	)
 	if err != nil {
 		return nil
@@ -125,6 +125,9 @@ func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 	}
 	if color != nil {
 		m.Color = *color
+	}
+	if colorHex != nil {
+		m.ColorHex = *colorHex
 	}
 	if source != nil {
 		m.Source = *source
