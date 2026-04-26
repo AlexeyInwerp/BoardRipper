@@ -1271,6 +1271,35 @@ function PreviewThumbnail({ file }: { file: DatabankFile }) {
 
 // --- Metadata Edit Modal ---
 
+/** Read-only indicator shown above the editable fields in the metadata modal.
+ *  Surfaces whether the boards.db resolver match has a populated colors.hex —
+ *  so the user knows whether "Use board metadata color" will affect this file. */
+function PcbColorRow({ detail }: { detail: FileDetail }) {
+  const colorName = detail.board_color || '';
+  const colorHex = detail.board_color_hex || '';
+
+  let dotColor: string;
+  let labelText: string;
+  if (!colorName) {
+    dotColor = '#666';
+    labelText = '— (no resolver match)';
+  } else if (!colorHex) {
+    dotColor = '#666';
+    labelText = `${colorName} (no hex yet)`;
+  } else {
+    dotColor = colorHex;
+    labelText = `${colorName} (hex set)`;
+  }
+
+  return (
+    <div className="library-modal-pcb-color">
+      <span>PCB Color:</span>
+      <span className="library-modal-pcb-color-dot" style={{ background: dotColor }} aria-hidden="true" />
+      <span className="library-modal-pcb-color-text">{labelText}</span>
+    </div>
+  );
+}
+
 function MetadataEditModal({ detail, onClose }: {
   detail: FileDetail;
   onClose: () => void;
@@ -1298,6 +1327,8 @@ function MetadataEditModal({ detail, onClose }: {
       <div className="library-modal" onClick={(e) => e.stopPropagation()}>
         <div className="library-modal-title">Edit Metadata</div>
         <div className="library-modal-filename">{detail.filename}</div>
+
+        <PcbColorRow detail={detail} />
 
         <label className="library-modal-field">
           <span>Board Number</span>
