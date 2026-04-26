@@ -12,20 +12,20 @@ CREATE TABLE IF NOT EXISTS colors (
     sort_order INTEGER NOT NULL DEFAULT 0
 );
 
--- Color seed (12 entries: 4 core + 8 exceptions)
-INSERT OR IGNORE INTO colors (id, name, sort_order) VALUES
-    (1, 'black',   1),
-    (2, 'red',     2),
-    (3, 'green',   3),
-    (4, 'blue',    4),
-    (5, 'white',   5),
-    (6, 'yellow',  6),
-    (7, 'purple',  7),
-    (8, 'orange',  8),
-    (9, 'pink',    9),
-    (10, 'brown',  10),
-    (11, 'silver', 11),
-    (12, 'gold',   12);
+-- Color seed (12 entries: 4 core + 8 exceptions, hex tints populated for themes work)
+INSERT OR IGNORE INTO colors (id, name, hex, sort_order) VALUES
+    (1,  'black',  '#1a1a1a', 1),
+    (2,  'red',    '#8a1a1a', 2),
+    (3,  'green',  '#1a4a2a', 3),
+    (4,  'blue',   '#1a3a8a', 4),
+    (5,  'white',  '#e0e0e0', 5),
+    (6,  'yellow', '#a89030', 6),
+    (7,  'purple', '#5a2a8a', 7),
+    (8,  'orange', '#c06030', 8),
+    (9,  'pink',   '#c060a0', 9),
+    (10, 'brown',  '#6a4a2a', 10),
+    (11, 'silver', '#a8a8b0', 11),
+    (12, 'gold',   '#a89050', 12);
 
 -- Core boards table
 CREATE TABLE IF NOT EXISTS boards (
