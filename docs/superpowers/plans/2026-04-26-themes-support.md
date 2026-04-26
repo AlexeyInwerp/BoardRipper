@@ -1075,15 +1075,15 @@ Add a new method on the `BoardRenderer` class (place it near `onSettingsUpdate`)
   }
 ```
 
-- [ ] **Step 5: Confirm Application init reads through the themed background getter**
+- [ ] **Step 5: Update Application init to use the themed background**
 
 Run:
 
 ```bash
-grep -n "background: BOARD_COLORS.background\|background: COLORS.background\|background: 0x" src/frontend/src/renderer/BoardRenderer.ts
+grep -n "background: BOARD_COLORS.background\|background: COLORS.background" src/frontend/src/renderer/BoardRenderer.ts
 ```
 
-Expected: two matches at ~lines 667 and 776, both passing either `background: COLORS.background` (the local alias) or `background: BOARD_COLORS.background` to the PixiJS `Application` init. Both forms work — `COLORS` is aliased to `BOARD_COLORS` near line 32 of `BoardRenderer.ts`, so the read goes through the same theme-driven getter we set up in Task 9. No edit needed unless either match shows a bare hex literal (e.g. `background: 0x1a1a2e`); if so, change it to `COLORS.background`.
+Expected: matches at ~lines 667 and 776 (both pass `background: BOARD_COLORS.background` to PixiJS Application init). These already read through the getter — no edit needed. Confirm both lines reference `BOARD_COLORS.background` (not the bare hex literal); if either is still `0x1a1a2e`, change it now.
 
 - [ ] **Step 6: Add cleanup to the dispose path**
 
