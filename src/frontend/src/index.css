@@ -3483,16 +3483,18 @@ html, body, #root {
   font-size: 12px;
 }
 
-/* Row 1 — stats + scan buttons (top) */
+/* Status bar — pinned to bottom of the panel for visual consistency
+ * (tabs at top, status at bottom, mirroring SettingsPanel). */
 .library-statsbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background: var(--bg-tertiary);
   flex-shrink: 0;
+  margin-top: auto;
   min-height: 22px;
 }
 .library-statsbar-text {
