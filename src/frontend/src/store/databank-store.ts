@@ -28,6 +28,8 @@ export interface DatabankFile {
   has_preview: boolean;
   board_manufacturer: string;
   resolution_status: 'resolved' | 'pattern_matched' | 'unresolved' | '';
+  board_uuid?: string;
+  board_color?: string;
 }
 
 export interface DatabankBinding {
