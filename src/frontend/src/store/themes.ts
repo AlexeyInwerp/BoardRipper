@@ -22,6 +22,12 @@ export interface Theme {
     textSecondary: string;
     accent: string;
     border: string;
+    /** Library file-type badge backgrounds. Default uses green/red for
+     *  at-a-glance type recognition; monochrome themes (Landrex) lean on
+     *  brightness contrast (light vs dark gray) instead so no chromatic
+     *  noise leaks into the supermode aesthetic. */
+    iconBoardBg: string;
+    iconPdfBg: string;
   };
 
   /** Board canvas — drives PixiJS scene constants via the BOARD_COLORS getter. */
@@ -56,6 +62,8 @@ export const THEMES: Record<string, Theme> = {
       textSecondary: '#a0a0b0',
       accent:        '#4a9eff',
       border:        '#1a1a28',
+      iconBoardBg:   '#44cc44',
+      iconPdfBg:     '#cc4444',
     },
     board: {
       canvasBackground:   '#050508',
@@ -76,10 +84,17 @@ export const THEMES: Record<string, Theme> = {
       bgTertiary:    '#141414',
       textPrimary:   '#ffffff',
       textSecondary: '#b0b0b0',
-      // Muted gray accent — bright yellow buttons would defeat the
-      // "no visual clutter" intent. Yellow is reserved for selection only.
-      accent:        '#cccccc',
+      // Muted mid-gray accent — bright yellow buttons would defeat the
+      // "no visual clutter" intent (yellow stays reserved for selection).
+      // #888 is dark enough that white button text reads (contrast ~3:1)
+      // but light enough to read as the active-tab indicator on near-black bg.
+      accent:        '#888888',
       border:        '#262626',
+      // Monochrome icons — light gray for B (black letter), dark gray for P
+      // (white letter). Brightness contrast carries the type distinction
+      // without colour, keeping the supermode aesthetic clean.
+      iconBoardBg:   '#aaaaaa',
+      iconPdfBg:     '#555555',
     },
     board: {
       canvasBackground:   '#000000',
@@ -139,6 +154,8 @@ export function applyThemeToDOM(theme: Theme) {
   root.style.setProperty('--accent',         theme.ui.accent);
   root.style.setProperty('--border',         theme.ui.border);
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
+  root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);
+  root.style.setProperty('--icon-pdf-bg',    theme.ui.iconPdfBg);
 }
 
 /** Convert '#rrggbb' to a 24-bit integer for PixiJS color arguments. */

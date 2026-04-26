@@ -5,6 +5,8 @@
   --bg-secondary: #0f0f18;
   --bg-tertiary: #0c1424;
   --canvas-bg: #050508;
+  --icon-board-bg: #44cc44;
+  --icon-pdf-bg: #cc4444;
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0b0;
   --accent: #4a9eff;
@@ -3828,12 +3830,12 @@ html, body, #root {
 }
 
 .library-icon-board {
-  background: var(--green);
+  background: var(--icon-board-bg);
   color: #000;
 }
 
 .library-icon-pdf {
-  background: var(--red);
+  background: var(--icon-pdf-bg);
   color: #fff;
 }
 
