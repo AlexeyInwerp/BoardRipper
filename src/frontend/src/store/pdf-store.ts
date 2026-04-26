@@ -130,6 +130,15 @@ interface MergedLine {
   charToItem: number[];
   /** For each character in `text`, offset within that item's str */
   charToOffset: number[];
+  /** Dense text — same as `text` but with no synthetic gap-spaces inserted
+   *  between items. Lets whitespace-free identifier searches like
+   *  "-PWRSW_EC" match even when pdf.js splits the glyph run across items
+   *  with wide reported gaps (e.g. "-" as its own item with an under-
+   *  reported width). `denseCharToItem` / `denseCharToOffset` map back to
+   *  the original items just like the whitespace-preserving maps. */
+  denseText: string;
+  denseCharToItem: number[];
+  denseCharToOffset: number[];
   /** The item indices in this line (in order) */
   itemIndices: number[];
   /** Average Y position of the line (for multi-term spatial search) */
@@ -187,6 +196,9 @@ function buildLine(lineItems: { item: PdfTextItem; idx: number; x: number; y: nu
   let text = '';
   const charToItem: number[] = [];
   const charToOffset: number[] = [];
+  let denseText = '';
+  const denseCharToItem: number[] = [];
+  const denseCharToOffset: number[] = [];
   const itemIndices: number[] = [];
   let totalY = 0;
   let totalFontSize = 0;
@@ -203,7 +215,9 @@ function buildLine(lineItems: { item: PdfTextItem; idx: number; x: number; y: nu
       const prevEnd = prevLi.x + prevLi.item.width;
       const gap = li.x - prevEnd;
       if (gap > li.fontSize * 0.15) {
-        // Significant gap — insert space
+        // Significant gap — insert space in the whitespace-preserving text
+        // but NOT in the dense text, so identifier searches like "-PWRSW_EC"
+        // still match when pdf.js splits the glyph run.
         text += ' ';
         charToItem.push(-1); // space doesn't belong to any item
         charToOffset.push(-1);
@@ -214,6 +228,9 @@ function buildLine(lineItems: { item: PdfTextItem; idx: number; x: number; y: nu
       text += li.item.str[c];
       charToItem.push(li.idx);
       charToOffset.push(c);
+      denseText += li.item.str[c];
+      denseCharToItem.push(li.idx);
+      denseCharToOffset.push(c);
     }
   }
 
@@ -221,6 +238,9 @@ function buildLine(lineItems: { item: PdfTextItem; idx: number; x: number; y: nu
     text,
     charToItem,
     charToOffset,
+    denseText,
+    denseCharToItem,
+    denseCharToOffset,
     itemIndices,
     y: totalY / lineItems.length,
     x: lineItems[0].x,
@@ -238,6 +258,22 @@ export interface PdfBookmark {
 }
 
 const BOOKMARKS_KEY_PREFIX = 'boardripper-pdf-bookmarks-';
+
+/** UUID generator that works in insecure contexts (HTTP on LAN IPs).
+ *  `crypto.randomUUID()` is only exposed on secure origins, so the NAS
+ *  deploy over http://<ip>:8081 would throw on it. */
+function bookmarkId(): string {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  // Fallback: 16 random bytes formatted as a v4-style UUID.
+  const buf = new Uint8Array(16);
+  if (c?.getRandomValues) c.getRandomValues(buf);
+  else for (let i = 0; i < 16; i++) buf[i] = Math.floor(Math.random() * 256);
+  buf[6] = (buf[6] & 0x0f) | 0x40;
+  buf[8] = (buf[8] & 0x3f) | 0x80;
+  const hex = Array.from(buf, b => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 function loadBookmarks(fileName: string): PdfBookmark[] {
   try {
@@ -900,14 +936,15 @@ class PdfStore extends Emitter {
       for (const term of termsLower) {
         let found = false;
         for (const line of lines) {
-          const lower = line.text.toLowerCase();
+          // Dense text — @-separated terms are whitespace-free identifiers.
+          const lower = line.denseText.toLowerCase();
           const pos = lower.indexOf(term);
           if (pos !== -1) {
             // Find the primary item for this match (first contributing item)
             let bestItem = -1;
             let bestCharStart = 0;
             for (let c = pos; c < pos + term.length; c++) {
-              if (line.charToItem[c] >= 0) { bestItem = line.charToItem[c]; bestCharStart = line.charToOffset[c]; break; }
+              if (line.denseCharToItem[c] >= 0) { bestItem = line.denseCharToItem[c]; bestCharStart = line.denseCharToOffset[c]; break; }
             }
             if (bestItem >= 0) {
               pageMatches.push({ pageIndex: pi, itemIndex: bestItem, charStart: bestCharStart, charEnd: Math.min(bestCharStart + term.length, items[bestItem].str.length), item: items[bestItem] });
@@ -929,18 +966,22 @@ class PdfStore extends Emitter {
 
   private _searchSingleTerm(d: PdfDocument, query: string) {
     const qLower = query.toLowerCase();
+    // Single-term queries never contain spaces (multi-term branches split on
+    // \s+), so search the dense line text — that way identifiers like
+    // "-PWRSW_EC" still match when pdf.js splits the glyph run with a wide
+    // reported gap between "-" and "PWRSW_EC".
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
       const lines = mergeItemsIntoLines(items);
       for (const line of lines) {
-        const lower = line.text.toLowerCase();
+        const lower = line.denseText.toLowerCase();
         let pos = 0;
         while ((pos = lower.indexOf(qLower, pos)) !== -1) {
           // Map match back to original items — find all items that contribute to this match
           const matchEnd = pos + qLower.length;
           const itemsHit = new Set<number>();
           for (let c = pos; c < matchEnd; c++) {
-            if (line.charToItem[c] >= 0) itemsHit.add(line.charToItem[c]);
+            if (line.denseCharToItem[c] >= 0) itemsHit.add(line.denseCharToItem[c]);
           }
           // Create a match for each item that contributes (so all get highlighted)
           for (const ii of itemsHit) {
@@ -948,9 +989,9 @@ class PdfStore extends Emitter {
             // Compute char range within this specific item
             let itemCharStart = item.str.length, itemCharEnd = 0;
             for (let c = pos; c < matchEnd; c++) {
-              if (line.charToItem[c] === ii) {
-                itemCharStart = Math.min(itemCharStart, line.charToOffset[c]);
-                itemCharEnd = Math.max(itemCharEnd, line.charToOffset[c] + 1);
+              if (line.denseCharToItem[c] === ii) {
+                itemCharStart = Math.min(itemCharStart, line.denseCharToOffset[c]);
+                itemCharEnd = Math.max(itemCharEnd, line.denseCharToOffset[c] + 1);
               }
             }
             d.matches.push({
@@ -974,21 +1015,23 @@ class PdfStore extends Emitter {
       const items = d.textPages[pi];
       const lines = mergeItemsIntoLines(items);
 
-      // Find all hits per term using merged lines
+      // Find all hits per term using dense line text (each term is split on
+      // \s+ so it never contains whitespace — identifiers split across items
+      // by pdf.js must still match).
       const termHits: { ii: number; charStart: number; charEnd: number; x: number; y: number; fontSize: number }[][] = [];
       for (const term of termsLower) {
         const hits: typeof termHits[0] = [];
         for (const line of lines) {
-          const lower = line.text.toLowerCase();
+          const lower = line.denseText.toLowerCase();
           let pos = 0;
           while ((pos = lower.indexOf(term, pos)) !== -1) {
             // Find the primary item for spatial positioning
             let primaryItem = -1;
             let primaryCharStart = 0;
             for (let c = pos; c < pos + term.length; c++) {
-              if (line.charToItem[c] >= 0) {
-                primaryItem = line.charToItem[c];
-                primaryCharStart = line.charToOffset[c];
+              if (line.denseCharToItem[c] >= 0) {
+                primaryItem = line.denseCharToItem[c];
+                primaryCharStart = line.denseCharToOffset[c];
                 break;
               }
             }
@@ -1200,15 +1243,23 @@ class PdfStore extends Emitter {
     }
   }
 
-  /** Count text items containing `query` across all pages of a loaded document. */
+  /** Count occurrences of `query` across all pages of a loaded document.
+   *  Searches merged-line dense text so identifiers split across pdf.js
+   *  text items (e.g. "-PWRSW_EC" rendered as "-" + "PWRSW_EC") still count. */
   countTextMatches(fileName: string, query: string): number {
     const doc = this._documents.get(fileName);
     if (!doc?.textPages || !query) return 0;
     const ql = query.toLowerCase();
     let count = 0;
     for (const pageItems of doc.textPages) {
-      for (const item of pageItems) {
-        if (item.str.toLowerCase().includes(ql)) count++;
+      const lines = mergeItemsIntoLines(pageItems);
+      for (const line of lines) {
+        const text = line.denseText.toLowerCase();
+        let pos = 0;
+        while ((pos = text.indexOf(ql, pos)) !== -1) {
+          count++;
+          pos += ql.length;
+        }
       }
     }
     return count;
@@ -1244,14 +1295,15 @@ class PdfStore extends Emitter {
       const items = d.textPages[pi];
       const lines = mergeItemsIntoLines(items);
 
-      // Check mandatory primary term (component name) first — search merged lines
+      // Check mandatory primary term (component name) first — dense text so
+      // identifiers split across items by pdf.js still match.
       let primaryItem: PdfTextItem | null = null;
       for (const line of lines) {
-        const pos = line.text.toLowerCase().indexOf(component);
+        const pos = line.denseText.toLowerCase().indexOf(component);
         if (pos !== -1) {
           // Find the first contributing item for zoom target
           for (let c = pos; c < pos + component.length; c++) {
-            if (line.charToItem[c] >= 0) { primaryItem = items[line.charToItem[c]]; break; }
+            if (line.denseCharToItem[c] >= 0) { primaryItem = items[line.denseCharToItem[c]]; break; }
           }
           if (primaryItem) break;
         }
@@ -1271,10 +1323,10 @@ class PdfStore extends Emitter {
         for (const net of nets) {
           let netItem: PdfTextItem | null = null;
           for (const line of lines) {
-            const pos = line.text.toLowerCase().indexOf(net);
+            const pos = line.denseText.toLowerCase().indexOf(net);
             if (pos !== -1) {
               for (let c = pos; c < pos + net.length; c++) {
-                if (line.charToItem[c] >= 0) { netItem = items[line.charToItem[c]]; break; }
+                if (line.denseCharToItem[c] >= 0) { netItem = items[line.denseCharToItem[c]]; break; }
               }
               if (netItem) break;
             }
@@ -1339,7 +1391,7 @@ class PdfStore extends Emitter {
     const d = this._active;
     if (!d) return;
     const bm: PdfBookmark = {
-      id: crypto.randomUUID(),
+      id: bookmarkId(),
       page, zoom, panX, panY,
       label: `p${page}`,
     };
