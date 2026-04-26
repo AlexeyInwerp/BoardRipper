@@ -713,7 +713,7 @@ export class BoardRenderer {
     this.viewport.addChild(this.selectionLabelLayer);
 
     // Recreate elevated labels (see init() for detailed comments)
-    const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
+    const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
     this.elevatedPartBg.zIndex = 100;
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
@@ -837,7 +837,7 @@ export class BoardRenderer {
     // scene switches. Visibility is toggled in updateElevatedLabels() each frame.
     // High zIndex ensures they render above all board content (pins, borders,
     // selection highlight) regardless of child insertion order.
-    const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
+    const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
     this.elevatedPartBg.zIndex = 100;
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
@@ -2350,7 +2350,7 @@ export class BoardRenderer {
     } else {
       label = new BitmapText({
         text: srcLabel.text,
-        style: { fontSize: srcFontSize, fill: 0xffffff, fontFamily: srcFontFamily },
+        style: { fontSize: srcFontSize, fill: BOARD_COLORS.labelPin, fontFamily: srcFontFamily },
       });
       label.anchor.set(0.5, 0.5);
       this.netLabelLayer.addChild(label);
@@ -2480,13 +2480,13 @@ export class BoardRenderer {
       }
       for (const fn of topSearchOutlines) fn();
       if (topSearchOutlines.length > 0) {
-        this.selectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha * 0.5 });
-        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: 0x44aaff, alpha: 0.5 });
+        this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
+        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
       for (const fn of botSearchOutlines) fn();
       if (botSearchOutlines.length > 0) {
-        this.butterflySelectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha * 0.5 });
-        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: 0x44aaff, alpha: 0.5 });
+        this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
+        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
     }
 
@@ -2501,7 +2501,7 @@ export class BoardRenderer {
         } else {
           drawPartOutline(gfx, part, s.selectionPadding);
         }
-        gfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+        gfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
         // Blink red on odd phases, orange on even (0 = no blink = normal orange)
         const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
         const selColor = blinkRed ? 0xcc2222 : COLORS.partSelected;
@@ -2642,12 +2642,12 @@ export class BoardRenderer {
 
         for (const fn of topPartOutlines) fn();
         if (topPartOutlines.length > 0) {
-          this.selectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+          this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
           this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
         }
         for (const fn of botPartOutlines) fn();
         if (botPartOutlines.length > 0) {
-          this.butterflySelectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+          this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
           this.butterflySelectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
         }
 
