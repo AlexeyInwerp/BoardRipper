@@ -694,6 +694,21 @@ export function resolvePinColor(settings: RenderSettings, netName: string, side:
 }
 
 
+/**
+ * Theme overrides provider — set by themes.ts after both modules load. Avoids
+ * a circular import: render-settings.ts can't import themeStore at module top
+ * (themes.ts imports the RenderSettings type from here).
+ *
+ * Default returns undefined ⇒ no theme overrides ⇒ behaviour unchanged.
+ */
+type ThemeOverridesProvider = () => Partial<RenderSettings> | undefined;
+let themeOverridesProvider: ThemeOverridesProvider = () => undefined;
+
+/** Called by themes.ts at module init. Subsequent calls update the provider. */
+export function setThemeOverridesProvider(provider: ThemeOverridesProvider) {
+  themeOverridesProvider = provider;
+}
+
 const STORAGE_KEY = 'boardripper-render-settings';
 const BOARD_OVERRIDES_KEY = 'boardripper-board-overrides';
 
@@ -824,8 +839,12 @@ class RenderSettingsStore extends Emitter {
   private _effective: RenderSettings = this._global;
 
   private recomputeEffective() {
-    const ov = this._activeBoard ? (this._boardOverrides[this._activeBoard] ?? {}) : {};
-    this._effective = mergeSettings(this._global, ov);
+    const boardOv = this._activeBoard ? (this._boardOverrides[this._activeBoard] ?? {}) : {};
+    // Theme overrides layer ON TOP of board overrides — themes are the user's
+    // most recent intent ("I picked Landrex, please make everything monochrome")
+    // and should override saved board-specific settings.
+    const themeOv = themeOverridesProvider() ?? {};
+    this._effective = mergeSettings(mergeSettings(this._global, boardOv), themeOv);
   }
 
   /** Effective settings (global + active board overrides merged) */
