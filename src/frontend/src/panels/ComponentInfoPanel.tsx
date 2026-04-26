@@ -12,6 +12,15 @@ export function ComponentInfoPanel() {
     return <div className="panel-empty">Click a component to inspect</div>;
   }
 
+  const meta = selectedPart.meta;
+  const metaRows: Array<[string, string]> = [];
+  if (meta?.partType) metaRows.push(['Type', meta.partType]);
+  if (meta?.value) metaRows.push(['Value', meta.value]);
+  if (meta?.package) metaRows.push(['Package', meta.package]);
+  if (meta?.serial) metaRows.push(['Serial', meta.serial]);
+  if (meta?.heightMils != null) metaRows.push(['Height', `${meta.heightMils.toFixed(2)} mils`]);
+  if (meta?.angleDeg != null) metaRows.push(['Rotation', `${meta.angleDeg}°`]);
+
   return (
     <div className="panel-content component-info" data-testid="component-info">
       <div className="info-header">
@@ -22,6 +31,19 @@ export function ComponentInfoPanel() {
           <span className="badge">{selectedPart.pins.length} pins</span>
         </div>
       </div>
+
+      {metaRows.length > 0 && (
+        <table className="part-meta-table" data-testid="part-meta">
+          <tbody>
+            {metaRows.map(([k, v]) => (
+              <tr key={k}>
+                <th>{k}</th>
+                <td>{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       <div className="pin-table-container">
         <table className="pin-table">

@@ -8,7 +8,7 @@
  * Fixed32 coordinates (raw / 100 = mils), position-dependent string cipher.
  */
 
-import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via } from './types';
+import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via, SilkscreenPath, Pad } from './types';
 import { computeBBox, buildNets } from './types';
 import { log } from '../store/log-store';
 
@@ -255,7 +255,18 @@ interface TvwThroughLayer {
   slots: TvwDrillSlot[];
 }
 
-type TvwLayer = TvwLogicLayer | TvwThroughLayer;
+/** Placeholder for a layer that we couldn't fully parse — kept so the user
+ *  can still see "this layer exists" in the sidebar. Carries whatever
+ *  metadata we managed to read before parsing failed (or none). */
+interface TvwPlaceholderLayer {
+  objType: 'placeholder';
+  name: string;             // empty if we couldn't read the header
+  layerType: TvwLayerType;  // 0 if unknown
+  reason: string;           // why we couldn't parse it (for logs / debug)
+  startOffset: number;      // file offset where this layer starts
+}
+
+type TvwLayer = TvwLogicLayer | TvwThroughLayer | TvwPlaceholderLayer;
 
 interface TvwPin {
   handle: number;
@@ -272,11 +283,26 @@ interface TvwPart {
   partType: number;
   layer: number;  // 1=top-ish, 2=bottom-ish (but varies — eagleview uses 3/12)
   value: string;
+  packageName: string;   // e.g., "CHIP0603R"
+  serial: string;        // e.g., manufacturer P/N — empty if flag0 was unset
+  heightMils: number;    // Z-height in mils
   pins: TvwPin[];
   /** Second pin list for dual-sided edge connectors (Landrex variant).
    *  These pins resolve to pads on the opposite copper layer from `pins`. */
   pinsExt?: TvwPin[];
 }
+
+/** PartType enum → display name. From the TVW format spec; missing entries
+ *  fall back to "Unknown". */
+const TVW_PART_TYPE_NAMES: Record<number, string> = {
+  0: 'IC', 1: 'Diode', 2: 'Transistor', 3: 'Resistor', 4: 'Resistor Net (SI)',
+  5: 'Capacitor', 6: 'Capacitor Net (SI)', 7: 'Zener', 8: 'LED', 9: 'Jumper',
+  10: 'Battery', 11: 'Mask', 12: 'Relay', 13: 'Fuse', 14: 'Choke',
+  15: 'Crystal', 16: 'Switch', 17: 'Connector', 18: 'Test Point', 19: 'Transformer',
+  20: 'Potentiometer', 21: 'Mechanical', 22: 'Resistor Net (DI)', 23: 'Resistor Net (SB)',
+  24: 'Resistor Net (DB)', 25: 'Capacitor Net (DI)', 26: 'Capacitor Net (SB)',
+  27: 'Capacitor Net (DB)', 28: 'Strap', 29: 'Fiducial', 30: 'Unknown',
+};
 
 interface TvwBoard {
   header: {
@@ -651,6 +677,30 @@ function loadLayer(r: TvwReader): TvwLayer | null {
   }
 }
 
+/** Scan forward for the next layer-header signature so we can resume parsing
+ *  after a malformed/unknown layer. The signature is the first 16 bytes of
+ *  every layer: u32 leading-zero, u32 obj-type (1 or 3), u32 magic0=2, u32 magic1=1.
+ *  Returns the file offset of the leading zero, or -1 if not found within the
+ *  given window. The window cap keeps a corrupted file from triggering a
+ *  multi-MB linear scan. */
+function scanForNextLayerHeader(r: TvwReader, maxScanBytes = 0x100000): number {
+  const view = r.getView();
+  const start = r.tell();
+  const end = Math.min(r.size() - 16, start + maxScanBytes);
+  for (let p = start; p < end; p++) {
+    if (view.getUint32(p, true) !== 0) continue;
+    const ot = view.getUint32(p + 4, true);
+    if (ot !== 1 && ot !== 3) continue;
+    if (view.getUint32(p + 8, true) !== 2) continue;
+    if (view.getUint32(p + 12, true) !== 1) continue;
+    // Sanity: next byte (name pstr length) must be a plausible string length
+    const nameLen = view.getUint8(p + 16);
+    if (nameLen > 60) continue;
+    return p;
+  }
+  return -1;
+}
+
 // ─── Parts Parsing ──────────────────────────────────────────────────────────
 
 function loadPin(r: TvwReader, trailing = true): TvwPin {
@@ -671,14 +721,15 @@ function loadPart(r: TvwReader): TvwPart {
   r.readU32(); // decal index
   const partType = r.readU32();
   r.readU32(); // z1 = 0
-  r.readS32(); // height
+  const heightMils = r.readS32() / 100;  // Fixed32 → mils
   const flag0 = r.readBool8();
   const value = r.readPStr();
   r.readPStr(); // toleranceP
   r.readPStr(); // toleranceN
-  r.readPStr(); // desc
+  const packageName = r.readPStr();
+  let serial = '';
   if (flag0) {
-    r.readPStr(); // serial
+    serial = r.readPStr();
     r.readU32();  // z2 = 0
   }
   const pinCount = r.readU32();
@@ -707,7 +758,7 @@ function loadPart(r: TvwReader): TvwPart {
     }
   }
 
-  return { name, bboxMin, bboxMax, pos, angle, partType, layer, value, pins, pinsExt };
+  return { name, bboxMin, bboxMax, pos, angle, partType, layer, value, packageName, serial, heightMils, pins, pinsExt };
 }
 
 /** Peek ahead to detect a dual-list extension after a pin list.
@@ -953,24 +1004,38 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   log.parser.log(`"${type}" customer="${customer}" date="${date}" layers=${layerCount}`);
 
   // ─ Layers
+  // On parse failure for a single layer, scan forward for the next layer-header
+  // signature and resume. The failed layer is kept as a placeholder so it's
+  // still visible in the sidebar layer list. `layersParsedCleanly` tracks
+  // whether the final reader position lands cleanly on the post-layers
+  // separator — net-table recovery kicks in if not.
   const layers: TvwLayer[] = [];
   let layersParsedCleanly = true;
   for (let i = 0; i < layerCount; i++) {
+    const layerStart = r.tell();
     try {
       const layer = loadLayer(r);
       if (layer === null) {
-        // Unknown layer type — can't parse remaining layers
-        log.parser.log(`layer[${i}] unknown type, stopping layer parsing`);
+        const nextHdr = scanForNextLayerHeader(r);
+        const reason = `unknown obj type at 0x${layerStart.toString(16)}`;
+        layers.push({ objType: 'placeholder', name: '', layerType: 0, reason, startOffset: layerStart });
+        log.parser.warn(`layer[${i}] ${reason} — ${nextHdr >= 0 ? `recovering at 0x${nextHdr.toString(16)}` : 'no further layer header found'}`);
         layersParsedCleanly = false;
-        break;
+        if (nextHdr < 0) break;
+        r.seek(nextHdr);
+        continue;
       }
       layers.push(layer);
       log.parser.log(`layer[${i}] "${layer.name}" type=${layer.layerType} ${layer.objType === TvwObjectType.Logic ? `pads=${(layer as TvwLogicLayer).pads.length} lines=${(layer as TvwLogicLayer).lines.length}` : `holes=${(layer as TvwThroughLayer).holes.length}`}`);
     } catch (e) {
-      log.parser.warn(`failed to parse layer ${i} at offset 0x${r.tell().toString(16)}: ${e}`);
+      const reason = `parse error at 0x${r.tell().toString(16)}: ${e instanceof Error ? e.message : String(e)}`;
+      log.parser.warn(`layer[${i}] ${reason}`);
+      // Try to resume from the next layer-header signature past where we crashed
+      const nextHdr = scanForNextLayerHeader(r);
+      layers.push({ objType: 'placeholder', name: '', layerType: 0, reason, startOffset: layerStart });
       layersParsedCleanly = false;
-      // Can't reliably find the next layer boundary after a parse error
-      break;
+      if (nextHdr < 0) break;
+      r.seek(nextHdr);
     }
   }
 
@@ -1195,6 +1260,25 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
   const topLayerGlobalIdx = tvw.layers.findIndex(l => l.layerType === TvwLayerType.Top);
   const botLayerGlobalIdx = tvw.layers.findIndex(l => l.layerType === TvwLayerType.Bottom);
 
+  /** AABB of a TVW shape (D-code rect/round) at the given centre. For
+   *  non-axis rotations the AABB is widened to the rotated rect's extent.
+   *  Returns null if the shape is missing or zero-sized. Shared between the
+   *  per-pin `padBounds` and the global `pads[]` extraction so the
+   *  pin-selection highlight matches the rendered pad rectangle exactly. */
+  const computePadBounds = (cx: number, cy: number, shape: TvwShape | null): BBox | null => {
+    if (!shape || shape.width <= 0 || shape.height <= 0) return null;
+    let halfW = shape.width / 2;
+    let halfH = shape.height / 2;
+    if (shape.turn !== 0) {
+      const rad = shape.turn * Math.PI / 180;
+      const c = Math.abs(Math.cos(rad));
+      const s = Math.abs(Math.sin(rad));
+      halfW = (c * shape.width + s * shape.height) / 2;
+      halfH = (s * shape.width + c * shape.height) / 2;
+    }
+    return { minX: cx - halfW, minY: cy - halfH, maxX: cx + halfW, maxY: cy + halfH };
+  };
+
   const resolvePin = (tvwPin: TvwPin, padLayer: TvwLayer, side: 'top' | 'bottom'): Pin | null => {
     const pads = padLayer.objType === TvwObjectType.Logic ? (padLayer as TvwLogicLayer).pads : [];
     const padIdx = Math.floor(tvwPin.handle / 8);
@@ -1203,6 +1287,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     const netName = getNetName(tvw.nets, pad.net);
     const rawRadius = pad.shapeRef ? Math.max(pad.shapeRef.width, pad.shapeRef.height) / 2 : 15;
     const radius = Math.min(Math.max(rawRadius, 5), MAX_PIN_RADIUS);
+    const padBounds = computePadBounds(pad.pos.x, pad.pos.y, pad.shapeRef);
     return {
       name: tvwPin.name,
       number: String(tvwPin.id),
@@ -1210,6 +1295,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       radius,
       side,
       net: netName,
+      ...(padBounds ? { padBounds } : {}),
     };
   };
 
@@ -1248,6 +1334,19 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     const cy = tvwPart.pos.y;
     const origin: Point = { x: cx, y: cy };
 
+    // Pack source-format metadata for the Component Info panel. Empty strings
+    // and zero-height are dropped so the UI only renders fields that carry
+    // information.
+    const meta: NonNullable<Part['meta']> = {};
+    if (tvwPart.value) meta.value = tvwPart.value;
+    if (tvwPart.packageName) meta.package = tvwPart.packageName;
+    if (tvwPart.serial) meta.serial = tvwPart.serial;
+    if (tvwPart.heightMils > 0) meta.heightMils = tvwPart.heightMils;
+    if (tvwPart.angle !== 0) meta.angleDeg = tvwPart.angle;
+    const ptName = TVW_PART_TYPE_NAMES[tvwPart.partType];
+    if (ptName && tvwPart.partType !== 0xFFFFFFFF) meta.partType = ptName;
+    const hasMeta = Object.keys(meta).length > 0;
+
     // Primary side
     if (primaryPins.length > 0) {
       allParts.push({
@@ -1258,6 +1357,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         pins: primaryPins,
         bounds: computeBBox(primaryPins.map(p => p.position)),
         layer: col,
+        ...(hasMeta ? { meta } : {}),
       });
     }
 
@@ -1271,6 +1371,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         origin,
         pins: extPins,
         bounds: computeBBox(extPins.map(p => p.position)),
+        ...(hasMeta ? { meta } : {}),
         layer: oppCol ?? col,
       });
     }
@@ -1442,12 +1543,112 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     }
   }
 
-  // Build layer labels: copper columns + drill
+  // Build layer labels.
+  //
+  // Indices 0..copperLayers.length-1 must stay aligned with the `trace.layer`
+  // column index (renderer reads layerNames[trace.layer]). After that we
+  // append other parsed layers that actually carry geometry — silkscreen,
+  // soldermask, paste, drill, roul. Empty Document/placeholder layers are
+  // skipped: they're cds2f-export padding with zero content, and listing them
+  // just clutters the sidebar with un-toggleable entries.
+  const hasGeometry = (l: TvwLayer): boolean => {
+    if (l.objType === 'placeholder') return false;
+    if (l.objType === TvwObjectType.Logic) {
+      return l.shapes.length + l.pads.length + l.lines.length + l.arcs.length > 0;
+    }
+    return l.toolSizes.length + l.holes.length + l.slots.length > 0;
+  };
   const layerNames: string[] = copperLayers.map(l => {
     const typeName = LAYER_TYPE_NAMES[l.layerType] ?? '';
     return l.name !== typeName ? `${l.name} (${typeName})` : l.name;
   });
-  if (drillLayer) layerNames.push(drillLayer.name || 'Drill');
+  const copperSet = new Set<TvwLayer>(copperLayers);
+  for (const l of tvw.layers) {
+    if (copperSet.has(l)) continue;
+    if (!hasGeometry(l)) continue;
+    const typeName = LAYER_TYPE_NAMES[l.layerType] ?? `type ${l.layerType}`;
+    const display = l.name && l.name !== typeName ? `${l.name} (${typeName})` : (l.name || typeName);
+    layerNames.push(display);
+  }
+
+  // ── Silkscreen ──
+  // Convert silkscreen-layer lines (and tessellated arcs) into per-side
+  // SilkscreenPath entries that the renderer's silkscreen overlay knows how
+  // to draw. Each line is its own 2-point path; arcs are tessellated to 16
+  // segments. Side comes from the layer type (SilkTop=7 → 'top', SilkBot=8 →
+  // 'bottom'). The renderer toggles visibility via `showSilkscreen`.
+  const silkscreenPaths: SilkscreenPath[] = [];
+  for (const layer of tvw.layers) {
+    if (layer.objType !== TvwObjectType.Logic) continue;
+    if (layer.layerType !== TvwLayerType.SilkTop && layer.layerType !== TvwLayerType.SilkBottom) continue;
+    const side: 'top' | 'bottom' = layer.layerType === TvwLayerType.SilkTop ? 'top' : 'bottom';
+    for (const ln of layer.lines) {
+      silkscreenPaths.push({ side, points: [{ x: ln.start.x, y: ln.start.y }, { x: ln.end.x, y: ln.end.y }] });
+    }
+    for (const arc of layer.arcs) {
+      const steps = 16;
+      const startRad = arc.startAngle * Math.PI / 180;
+      const sweepRad = arc.sweepAngle * Math.PI / 180;
+      const pts: Point[] = [];
+      for (let s = 0; s <= steps; s++) {
+        const a = startRad + sweepRad * (s / steps);
+        pts.push({ x: arc.center.x + arc.radius * Math.cos(a), y: arc.center.y + arc.radius * Math.sin(a) });
+      }
+      silkscreenPaths.push({ side, points: pts });
+    }
+  }
+
+  // ── Pads ──
+  // Real copper pad rectangles, one entry per pad on the TOP and BOTTOM
+  // copper layers. The shape's width × height comes from the D-code table;
+  // for non-axis-aligned rotations the AABB is widened to the rotated rect's
+  // extent. Inner copper-layer pads are skipped — they'd just render as
+  // stacked dots at the same coords as the TOP layer pads (TVW butterfly
+  // mode keeps all layers aligned at native coords).
+  //
+  // Each pad is tagged with `attached: true` if its center coincides with a
+  // component pin (sub-mil tolerance via 2-decimal coord rounding) and
+  // `attached: false` otherwise. The unattached set is dominated by GND
+  // stitching pads, power-rail tie-downs, and mounting-hole pads — the
+  // renderer routes them to a separate, default-OFF visibility layer.
+  //
+  // We additionally exclude pins from "passive copper parts" — single-pin
+  // GND parts whose `partType` is `Mechanical` or unset — when building the
+  // pin-coord set. Those parts model bare copper features (mounting holes
+  // like H11..H32, shield pads like SH9..SH19) rather than real components,
+  // so their large GND-net pads visually behave like copper drops and the
+  // user expects them to follow the Copper-drops toggle. Real GND test
+  // points (partType=Test Point) are preserved as attached.
+  const isPassiveCopperPart = (part: Part): boolean => {
+    if (part.pins.length !== 1) return false;
+    if (!part.pins[0].net.toUpperCase().includes('GND')) return false;
+    const pt = part.meta?.partType;
+    return pt === 'Mechanical' || !pt;
+  };
+  const pinCoordKeys = new Set<string>();
+  const coordKey = (x: number, y: number): string => `${x.toFixed(2)},${y.toFixed(2)}`;
+  for (const part of allParts) {
+    if (isPassiveCopperPart(part)) continue;
+    for (const pin of part.pins) pinCoordKeys.add(coordKey(pin.position.x, pin.position.y));
+  }
+  const padRects: Pad[] = [];
+  for (const layer of tvw.layers) {
+    if (layer.objType !== TvwObjectType.Logic) continue;
+    if (layer.layerType !== TvwLayerType.Top && layer.layerType !== TvwLayerType.Bottom) continue;
+    const side: 'top' | 'bottom' = layer.layerType === TvwLayerType.Top ? 'top' : 'bottom';
+    for (const pad of layer.pads) {
+      const bounds = computePadBounds(pad.pos.x, pad.pos.y, pad.shapeRef);
+      if (!bounds) continue;
+      const netName = getNetName(tvw.nets, pad.net);
+      const attached = pinCoordKeys.has(coordKey(pad.pos.x, pad.pos.y));
+      padRects.push({
+        bounds,
+        side,
+        attached,
+        ...(netName ? { net: netName } : {}),
+      });
+    }
+  }
 
   const board: BoardData = {
     format: 'TVW',
@@ -1458,10 +1659,188 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     bounds: allBounds,
     traces: allTraces.length > 0 ? allTraces : undefined,
     vias: allVias.length > 0 ? allVias : undefined,
+    silkscreen: silkscreenPaths.length > 0 ? silkscreenPaths : undefined,
+    pads: padRects.length > 0 ? padRects : undefined,
     layerNames,
   };
 
-  log.parser.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers (stacked)`);
+  log.parser.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers, ${silkscreenPaths.length} silk paths, ${padRects.length} pad rects`);
 
   return board;
+}
+
+// ─── Debug: Per-Layer PNG Export ────────────────────────────────────────────
+
+/** Debug helper: render every parsed layer (copper, silkscreen, mask, paste,
+ *  drill, etc.) into its own PNG so each layer's geometry can be visually
+ *  inspected. Returns one entry per non-empty parsed layer with a Blob URL.
+ *  Caller is responsible for revoking the URLs.
+ *
+ *  This bypasses the BoardData converter (which only forwards copper-layer
+ *  traces) and walks the raw `TvwBoard` directly — that's the whole point of
+ *  the export, since silkscreen/mask geometry is otherwise not visible. */
+export interface TvwLayerImage {
+  index: number;
+  name: string;
+  layerType: number;
+  layerTypeName: string;
+  shapeCount: number;
+  padCount: number;
+  lineCount: number;
+  arcCount: number;
+  holeCount: number;
+  slotCount: number;
+  blob: Blob;
+}
+
+export async function debugRenderTvwLayersToPng(buffer: ArrayBuffer): Promise<TvwLayerImage[]> {
+  const tvw = parseTvwBinary(buffer);
+
+  // Compute shared bounds across every layer with geometry, so each PNG uses
+  // the same coordinate frame and they're directly visually comparable.
+  const allPts: Point[] = [];
+  for (const l of tvw.layers) {
+    if (l.objType === 'placeholder') continue;
+    if (l.objType === TvwObjectType.Logic) {
+      for (const p of l.pads) allPts.push(p.pos);
+      for (const ln of l.lines) { allPts.push(ln.start); allPts.push(ln.end); }
+      for (const a of l.arcs) {
+        allPts.push({ x: a.center.x - a.radius, y: a.center.y - a.radius });
+        allPts.push({ x: a.center.x + a.radius, y: a.center.y + a.radius });
+      }
+    } else {
+      for (const h of l.holes) allPts.push(h.pos);
+      for (const s of l.slots) { allPts.push(s.start); allPts.push(s.end); }
+    }
+  }
+  if (allPts.length === 0) return [];
+
+  const bbox = computeBBox(allPts);
+  const PAD = 50;             // mils of padding around the geometry
+  const TARGET_W = 2048;      // PNG width in pixels
+  const w = (bbox.maxX - bbox.minX) + PAD * 2;
+  const h = (bbox.maxY - bbox.minY) + PAD * 2;
+  const scale = TARGET_W / w;
+  const pxW = TARGET_W;
+  const pxH = Math.max(64, Math.ceil(h * scale));
+  const tx = (mx: number) => (mx - bbox.minX + PAD) * scale;
+  // Y-axis is flipped: PCB coords have Y growing up, image Y grows down
+  const ty = (my: number) => pxH - (my - bbox.minY + PAD) * scale;
+
+  const images: TvwLayerImage[] = [];
+
+  const canvasToBlob = (canvas: HTMLCanvasElement): Promise<Blob> =>
+    new Promise((resolve, reject) =>
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/png'));
+
+  for (let i = 0; i < tvw.layers.length; i++) {
+    const layer = tvw.layers[i];
+    if (layer.objType === 'placeholder') continue;
+
+    let shapeCount = 0, padCount = 0, lineCount = 0, arcCount = 0, holeCount = 0, slotCount = 0;
+    if (layer.objType === TvwObjectType.Logic) {
+      shapeCount = layer.shapes.length;
+      padCount = layer.pads.length;
+      lineCount = layer.lines.length;
+      arcCount = layer.arcs.length;
+    } else {
+      holeCount = layer.holes.length;
+      slotCount = layer.slots.length;
+    }
+    if (shapeCount + padCount + lineCount + arcCount + holeCount + slotCount === 0) continue;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = pxW;
+    canvas.height = pxH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) continue;
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, pxW, pxH);
+
+    // Draw a faint board outline rectangle for spatial reference
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tx(bbox.minX), ty(bbox.maxY), (bbox.maxX - bbox.minX) * scale, (bbox.maxY - bbox.minY) * scale);
+
+    if (layer.objType === TvwObjectType.Logic) {
+      // Pads
+      ctx.fillStyle = '#ff5050';
+      for (const p of layer.pads) {
+        const shape = resolveShape(layer.shapes, p.dcode);
+        const r = shape ? Math.max(shape.width, shape.height) / 2 * scale : 1.5;
+        ctx.beginPath();
+        ctx.arc(tx(p.pos.x), ty(p.pos.y), Math.max(r, 1), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Lines
+      ctx.strokeStyle = '#80ff80';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      for (const ln of layer.lines) {
+        ctx.moveTo(tx(ln.start.x), ty(ln.start.y));
+        ctx.lineTo(tx(ln.end.x), ty(ln.end.y));
+      }
+      ctx.stroke();
+      // Arcs (tessellated to 32 segments each — Canvas2D arcs would mis-render
+      // with the flipped Y axis if we used ctx.arc directly).
+      ctx.strokeStyle = '#ffff80';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      for (const arc of layer.arcs) {
+        const startRad = arc.startAngle * Math.PI / 180;
+        const sweepRad = arc.sweepAngle * Math.PI / 180;
+        const steps = 32;
+        for (let s = 0; s <= steps; s++) {
+          const a = startRad + sweepRad * (s / steps);
+          const px = tx(arc.center.x + arc.radius * Math.cos(a));
+          const py = ty(arc.center.y + arc.radius * Math.sin(a));
+          if (s === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+      }
+      ctx.stroke();
+    } else {
+      // Drill holes
+      ctx.fillStyle = '#80a0ff';
+      for (const hole of layer.holes) {
+        const sz = layer.toolSizes[hole.toolIndex] ?? 5;
+        ctx.beginPath();
+        ctx.arc(tx(hole.pos.x), ty(hole.pos.y), Math.max(sz / 2 * scale, 1.5), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Slots (drawn as thick lines)
+      ctx.strokeStyle = '#a0c0ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const s of layer.slots) {
+        ctx.moveTo(tx(s.start.x), ty(s.start.y));
+        ctx.lineTo(tx(s.end.x), ty(s.end.y));
+      }
+      ctx.stroke();
+    }
+
+    // Caption: layer name + element counts in the top-left corner
+    const layerTypeName = LAYER_TYPE_NAMES[layer.layerType] ?? `type ${layer.layerType}`;
+    ctx.fillStyle = '#e0e0e0';
+    ctx.font = '20px monospace';
+    ctx.textBaseline = 'top';
+    const labelLine1 = `[${i}] ${layer.name || '(unnamed)'} — ${layerTypeName}`;
+    const labelLine2 = layer.objType === TvwObjectType.Logic
+      ? `shapes=${shapeCount} pads=${padCount} lines=${lineCount} arcs=${arcCount}`
+      : `holes=${holeCount} slots=${slotCount} tools=${layer.toolSizes.length}`;
+    ctx.fillText(labelLine1, 12, 12);
+    ctx.fillText(labelLine2, 12, 36);
+
+    const blob = await canvasToBlob(canvas);
+    images.push({
+      index: i,
+      name: layer.name || `layer_${i}`,
+      layerType: layer.layerType,
+      layerTypeName,
+      shapeCount, padCount, lineCount, arcCount, holeCount, slotCount,
+      blob,
+    });
+  }
+
+  return images;
 }

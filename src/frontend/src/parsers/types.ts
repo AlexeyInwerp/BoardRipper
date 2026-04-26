@@ -38,6 +38,26 @@ export interface Part {
    *  index is preserved so `selection.partIndex` stays consistent across
    *  filter changes. Never set by parsers. */
   hidden?: boolean;
+  /** Optional source-format metadata surfaced in the Component Info panel.
+   *  Parsers populate whatever fields the format provides; consumers must
+   *  treat every field as optional. Currently filled by TVW (Teboview);
+   *  BVR/BDV/Allegro fill a subset where the same data exists. */
+  meta?: PartMeta;
+}
+
+export interface PartMeta {
+  /** BOM value, e.g. "100K", "10uF", "FCN-235P-G/0" */
+  value?: string;
+  /** Package / footprint name, e.g. "CHIP0603R", "QFN32" */
+  package?: string;
+  /** Human-readable part class, e.g. "IC", "Resistor", "Capacitor" */
+  partType?: string;
+  /** Manufacturer / part serial number */
+  serial?: string;
+  /** Component height in mils (Z-axis) */
+  heightMils?: number;
+  /** Rotation in degrees, if the source format records it */
+  angleDeg?: number;
 }
 
 export interface Nail {
@@ -85,6 +105,13 @@ export interface Pad {
   net?: string;
   /** Drill diameter in mils — set for through-hole pads, omitted for SMD. */
   drill?: number;
+  /** True when this pad sits under a component pin (real pin pad).
+   *  False/undefined for standalone copper drops (GND stitching, power-rail
+   *  tie pads, mounting-hole pads) that don't belong to any part. The
+   *  renderer routes these to a separate, default-OFF visibility layer so
+   *  the click-on-component view stays clean. Currently set by the TVW
+   *  parser; other parsers can opt in later. */
+  attached?: boolean;
 }
 
 export interface BoardData {

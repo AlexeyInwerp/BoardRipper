@@ -102,7 +102,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
 }
 
 function LayersTab() {
-  const { layerStates, showComponents, showVias, showTraces, showSilkscreen, showPads, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
+  const { layerStates, showComponents, showVias, showTraces, showSilkscreen, showPads, showCopperDrops, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
   const [componentsExpanded, setComponentsExpanded] = useState(true);
 
   // Compute which layers have traces for the currently highlighted net
@@ -239,6 +239,15 @@ function LayersTab() {
             <span className="toggle-check">{showPads ? '■' : '□'}</span> Pads
           </button>
         )}
+        {board?.pads && board.pads.some(p => p.attached === false) && (
+          <button
+            className={`visibility-toggle ${showCopperDrops ? '' : 'off'}`}
+            onClick={() => boardStore.toggleCopperDrops()}
+            title={showCopperDrops ? 'Hide standalone GND/power copper drops' : 'Show standalone GND/power copper drops'}
+          >
+            <span className="toggle-check">{showCopperDrops ? '■' : '□'}</span> Copper drops
+          </button>
+        )}
         <div className="visibility-toggle-group">
           <div className="visibility-toggle-row">
             <button
@@ -336,6 +345,15 @@ function InfoTab({ tabId }: { tabId: number }) {
   if (!board) return <div className="panel-empty">No board loaded</div>;
   if (!selectedPart) return <div className="panel-empty">Click a component to inspect</div>;
 
+  const meta = selectedPart.meta;
+  const metaRows: Array<[string, string]> = [];
+  if (meta?.partType) metaRows.push(['Type', meta.partType]);
+  if (meta?.value) metaRows.push(['Value', meta.value]);
+  if (meta?.package) metaRows.push(['Package', meta.package]);
+  if (meta?.serial) metaRows.push(['Serial', meta.serial]);
+  if (meta?.heightMils != null) metaRows.push(['Height', `${meta.heightMils.toFixed(2)} mils`]);
+  if (meta?.angleDeg != null) metaRows.push(['Rotation', `${meta.angleDeg}°`]);
+
   return (
     <div className="panel-content component-info" data-testid="component-info">
       <div className="info-header">
@@ -346,6 +364,18 @@ function InfoTab({ tabId }: { tabId: number }) {
           <span className="badge">{selectedPart.pins.length} pins</span>
         </div>
       </div>
+      {metaRows.length > 0 && (
+        <table className="part-meta-table" data-testid="part-meta">
+          <tbody>
+            {metaRows.map(([k, v]) => (
+              <tr key={k}>
+                <th>{k}</th>
+                <td>{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <div className="pin-table-container">
         <table className="pin-table">
           <thead>

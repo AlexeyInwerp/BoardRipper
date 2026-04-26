@@ -189,6 +189,13 @@ function extractComponents(
     if (fpDefBlk.blockType !== 0x2B) continue;
     const fpDef = fpDefBlk as Blk0x2BFootprintDef;
 
+    // Footprint name is shared by every instance of this 0x2B definition —
+    // resolve once. This is the package name as authored in Allegro
+    // (e.g., "RES_0402_R1", "QFN32_5x5_0p5"). Allegro doesn't store BOM
+    // values directly in the binary DB; values live in 0x31 STRING_GRAPHIC
+    // labels on the assembly layer and are out of scope here.
+    const footprintName = fpDef.fpStrRef ? db.getString(fpDef.fpStrRef) : '';
+
     // Walk 0x2D instance chain
     let instKey = fpDef.firstInstPtr;
     const MAX_INST = 1_000_000;
@@ -237,6 +244,7 @@ function extractComponents(
         origin,
         pins,
         bounds,
+        ...(footprintName ? { meta: { package: footprintName } } : {}),
       });
 
       instKey = inst.next;
