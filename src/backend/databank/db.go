@@ -67,7 +67,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 6
+const schemaVersion = 7
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -111,6 +111,11 @@ func (db *DB) migrate() error {
 	if ver < 6 {
 		if err := db.migrateV6(); err != nil {
 			return fmt.Errorf("v6: %w", err)
+		}
+	}
+	if ver < 7 {
+		if err := db.migrateV7(); err != nil {
+			return fmt.Errorf("v7: %w", err)
 		}
 	}
 
@@ -341,6 +346,30 @@ func (db *DB) migrateV6() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 6); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// migrateV7 adds the board_color_hex column to the files table.
+// Hex is denormalized from boards.db colors.hex at scan time so the renderer
+// can apply per-board fill colors without a per-file resolver fetch.
+func (db *DB) migrateV7() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`ALTER TABLE files ADD COLUMN board_color_hex TEXT`); err != nil {
+		return fmt.Errorf("add board_color_hex: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 7); err != nil {
 		return err
 	}
 
