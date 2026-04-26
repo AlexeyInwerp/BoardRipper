@@ -28,6 +28,9 @@ export interface DatabankFile {
   has_preview: boolean;
   board_manufacturer: string;
   resolution_status: 'resolved' | 'pattern_matched' | 'unresolved' | '';
+  board_uuid?: string;
+  board_color?: string;
+  board_color_hex?: string;
 }
 
 export interface DatabankBinding {
@@ -195,6 +198,14 @@ class DatabankStore extends Emitter {
 
   fileById(id: number): DatabankFile | undefined { return this._filesById.get(id); }
   fileByPath(path: string): DatabankFile | undefined { return this._filesByPath.get(path); }
+
+  /** Linear-scan lookup by basename. Used by the renderer for per-board
+   *  metadata-color resolution — called once per scene rebuild, so O(N) is fine. */
+  fileByFilename(name: string): DatabankFile | undefined {
+    if (!name) return undefined;
+    for (const f of this._files) if (f.filename === name) return f;
+    return undefined;
+  }
   private _folderTree: FolderNode | null = null;
   private _scanStatus: ScanStatus | null = (() => {
     try {

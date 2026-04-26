@@ -16,8 +16,10 @@ import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
+import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
+import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
@@ -176,6 +178,7 @@ export class BoardRenderer {
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
@@ -713,7 +716,7 @@ export class BoardRenderer {
     this.viewport.addChild(this.selectionLabelLayer);
 
     // Recreate elevated labels (see init() for detailed comments)
-    const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
+    const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
     this.elevatedPartBg.zIndex = 100;
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
@@ -837,7 +840,7 @@ export class BoardRenderer {
     // scene switches. Visibility is toggled in updateElevatedLabels() each frame.
     // High zIndex ensures they render above all board content (pins, borders,
     // selection highlight) regardless of child insertion order.
-    const labelStyle = { fontSize: 12, fill: 0xffffff, fontFamily: 'monospace' };
+    const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
     this.elevatedPartBg.zIndex = 100;
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
@@ -907,6 +910,7 @@ export class BoardRenderer {
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
+    this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
       if (cmd === 'pan' && this.tabId === boardStore.activeTabId) {
         this.panView(payload as PanDirection);
@@ -1371,7 +1375,7 @@ export class BoardRenderer {
     // Create butterfly root with a copy of the outline
     const broot = new Container();
     const boutline = new Graphics();
-    drawOutline(boutline, board, renderSettingsStore.settings);
+    drawOutline(boutline, board, renderSettingsStore.settings, this.activeBoardColorHex());
 
     broot.addChild(boutline);
 
@@ -1467,10 +1471,22 @@ export class BoardRenderer {
 
   // --- Scene cache management ---
 
+  /**
+   * Look up the metadata color hex for the active board file from the
+   * databank store. Returns undefined when there's no active board, no file
+   * record, or no resolver match for it.
+   */
+  private activeBoardColorHex(): string | undefined {
+    const fileName = boardStore.fileName;
+    if (!fileName) return undefined;
+    const file = databankStore.fileByFilename(fileName);
+    return file?.board_color_hex || undefined;
+  }
+
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings);
+      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex());
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
@@ -2299,6 +2315,19 @@ export class BoardRenderer {
     }
   }
 
+  /**
+   * Theme switched — swap the live PixiJS background color and trigger a full
+   * scene rebuild so getter-driven BOARD_COLORS values take effect.
+   */
+  private onThemeUpdate(): void {
+    if (this.app && this.app.renderer) {
+      this.app.renderer.background.color = hexToInt(themeStore.activeTheme().board.canvasBackground);
+    }
+    // Reuse the settings-change rebuild path — drops the cached scene and
+    // rebuilds with the new BOARD_COLORS values on next activate.
+    this.onSettingsUpdate();
+  }
+
   // --- Selection blink ---
 
   private startSelectionBlink() {
@@ -2350,7 +2379,7 @@ export class BoardRenderer {
     } else {
       label = new BitmapText({
         text: srcLabel.text,
-        style: { fontSize: srcFontSize, fill: 0xffffff, fontFamily: srcFontFamily },
+        style: { fontSize: srcFontSize, fill: BOARD_COLORS.labelPin, fontFamily: srcFontFamily },
       });
       label.anchor.set(0.5, 0.5);
       this.netLabelLayer.addChild(label);
@@ -2480,13 +2509,13 @@ export class BoardRenderer {
       }
       for (const fn of topSearchOutlines) fn();
       if (topSearchOutlines.length > 0) {
-        this.selectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha * 0.5 });
-        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: 0x44aaff, alpha: 0.5 });
+        this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
+        this.selectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
       for (const fn of botSearchOutlines) fn();
       if (botSearchOutlines.length > 0) {
-        this.butterflySelectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha * 0.5 });
-        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: 0x44aaff, alpha: 0.5 });
+        this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha * 0.5 });
+        this.butterflySelectionGfx.stroke({ width: s.selectionWidth * 0.7, color: BOARD_COLORS.butterflySelection, alpha: 0.5 });
       }
     }
 
@@ -2501,7 +2530,7 @@ export class BoardRenderer {
         } else {
           drawPartOutline(gfx, part, s.selectionPadding);
         }
-        gfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+        gfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
         // Blink red on odd phases, orange on even (0 = no blink = normal orange)
         const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
         const selColor = blinkRed ? 0xcc2222 : COLORS.partSelected;
@@ -2642,12 +2671,12 @@ export class BoardRenderer {
 
         for (const fn of topPartOutlines) fn();
         if (topPartOutlines.length > 0) {
-          this.selectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+          this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
           this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
         }
         for (const fn of botPartOutlines) fn();
         if (botPartOutlines.length > 0) {
-          this.butterflySelectionGfx.fill({ color: 0xffffff, alpha: s.selectionFillAlpha });
+          this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
           this.butterflySelectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
         }
 
@@ -3839,6 +3868,7 @@ export class BoardRenderer {
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
+    this.unsubscribeTheme?.();
     this.unsubscribeViewCommands?.();
     this.resizeObserver?.disconnect();
     if (this.boundShiftWheel) {

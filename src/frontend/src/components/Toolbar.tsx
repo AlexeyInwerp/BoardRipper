@@ -4,7 +4,7 @@ import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { toggleSidebar, showSidebarTab } from './Sidebar';
-import { exportToBVR3, getAllExtensions, getFormat } from '../parsers';
+import { exportToBVR3, getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
@@ -262,7 +262,7 @@ function GlobalSearch() {
 
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
+  // pdfInputRef removed — single Open button + unified file picker now.
   const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis } = useBoardStore();
 
   // For files where the label convention is inverted (primarySide='bottom'),
@@ -277,7 +277,10 @@ export function Toolbar() {
 
   useEffect(() => {
     fileInputRefs.board = fileInputRef.current;
-    fileInputRefs.pdf = pdfInputRef.current;
+    // Both Open Board and Open PDF shortcuts now route through the unified
+    // file input — picker shows boards + PDFs together and the change handler
+    // splits them by extension.
+    fileInputRefs.pdf = fileInputRef.current;
     return () => { fileInputRefs.board = null; fileInputRefs.pdf = null; };
   }, []);
 
@@ -285,22 +288,33 @@ export function Toolbar() {
     fileInputRef.current?.click();
   };
 
+  /**
+   * Single Open button — accepts both board files and PDFs in the same picker.
+   * Splits selected files by extension and routes each to the right loader.
+   */
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
-      await boardStore.loadFiles(files);
-    }
-    e.target.value = '';
-  };
-
-  const handlePdfOpen = () => {
-    pdfInputRef.current?.click();
-  };
-
-  const handlePdfChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
     if (!files || files.length === 0) { e.target.value = ''; return; }
-    await openPdfFiles(Array.from(files), { activeTabId });
+    const all = Array.from(files);
+    const pdfs: File[] = [];
+    const boards: File[] = [];
+    for (const f of all) {
+      if (getFileExtension(f.name).toLowerCase() === '.pdf') {
+        pdfs.push(f);
+      } else {
+        boards.push(f);
+      }
+    }
+    if (boards.length > 0) {
+      // Reuse the existing FileList-based loader by feeding it just the boards.
+      // boardStore.loadFiles wants a FileList — synthesise one via DataTransfer.
+      const dt = new DataTransfer();
+      for (const f of boards) dt.items.add(f);
+      await boardStore.loadFiles(dt.files);
+    }
+    if (pdfs.length > 0) {
+      await openPdfFiles(pdfs, { activeTabId });
+    }
     e.target.value = '';
   };
 
@@ -309,20 +323,11 @@ export function Toolbar() {
       <input
         ref={fileInputRef}
         type="file"
-        accept={getAllExtensions().join(',')}
+        accept={[...getAllExtensions(), '.pdf'].join(',')}
         multiple
         onChange={handleFileChange}
         style={{ display: 'none' }}
         data-testid="file-input"
-      />
-      <input
-        ref={pdfInputRef}
-        type="file"
-        accept=".pdf"
-        multiple
-        onChange={handlePdfChange}
-        style={{ display: 'none' }}
-        data-testid="pdf-input"
       />
       {/* ── Files ── */}
       <div className="toolbar-group">
@@ -333,11 +338,8 @@ export function Toolbar() {
         >
           &#x2261;
         </button>
-        <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn" data-tooltip={formatShortcut('openBoard')}>
-          Open Board
-        </button>
-        <button onClick={handlePdfOpen} className="toolbar-btn" data-tooltip={formatShortcut('openPdf')}>
-          Open PDF
+        <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn" data-tooltip="Open boards or PDFs">
+          Open
         </button>
       </div>
 
