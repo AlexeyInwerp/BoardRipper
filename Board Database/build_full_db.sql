@@ -404,3 +404,16 @@ VALUES ('17554330-5c5e-4231-a90e-22bf04e51218', 'Medion', 'AKOYA E15423 (MD64160
 
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('4c5c1cb7-af19-4d63-848d-7ed6e4873815', 'Rigol', 'DSO5000P Oscilloscope', 'DSO5000P', 'DSO5000P', NULL, 'Rigol', 'test_equipment', 'sample_filename');
+
+-- ============================================================
+-- COLOR ASSIGNMENT (PCB substrate by brand pattern)
+-- ============================================================
+-- Heuristic mapping. Apple/HP/ASUS/Acer/etc. ship mostly black FR-4;
+-- Dell standardised on blue; Lenovo on green; MSI famously red.
+-- Override per-row by setting color_id explicitly above this block.
+
+UPDATE boards SET color_id = 1 WHERE color_id IS NULL AND brand IN
+    ('Apple', 'HP', 'ASUS', 'Acer', 'Gigabyte', 'Clevo', 'Medion', 'Razer', 'Rigol', 'Samsung');
+UPDATE boards SET color_id = 2 WHERE color_id IS NULL AND brand = 'MSI';
+UPDATE boards SET color_id = 3 WHERE color_id IS NULL AND brand = 'Lenovo';
+UPDATE boards SET color_id = 4 WHERE color_id IS NULL AND brand = 'Dell';
