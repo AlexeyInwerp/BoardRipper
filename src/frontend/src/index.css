@@ -1,8 +1,10 @@
 :root {
-  --bg-primary: #0f0f1a;
-  --bg-secondary: #1a1a2e;
-  --bg-tertiary: #16213e;
-  --canvas-bg: #1a1a2e;
+  /* Default theme fallback — must match THEMES.default in store/themes.ts
+   * so the first paint (before themeStore.init()) doesn't flash. */
+  --bg-primary: #08080c;
+  --bg-secondary: #0f0f18;
+  --bg-tertiary: #0c1424;
+  --canvas-bg: #050508;
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0b0;
   --accent: #4a9eff;
@@ -11,7 +13,7 @@
   --red: #cc4444;
   --orange: #ffaa00;
   --yellow: #ffff44;
-  --border: #2a2a40;
+  --border: #1a1a28;
   --toolbar-height: 40px;
   --statusbar-height: 24px;
 }
