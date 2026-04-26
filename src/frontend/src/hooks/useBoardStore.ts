@@ -30,6 +30,7 @@ interface StoreSnapshot {
   showVias: boolean;
   showSilkscreen: boolean;
   showPads: boolean;
+  showCopperDrops: boolean;
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
@@ -69,6 +70,7 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   showVias: boardStore.showVias,
   showSilkscreen: boardStore.showSilkscreen,
   showPads: boardStore.showPads,
+  showCopperDrops: boardStore.showCopperDrops,
   showPins: boardStore.showPins,
   showOutlines: boardStore.showOutlines,
   showLabels: boardStore.showLabels,
