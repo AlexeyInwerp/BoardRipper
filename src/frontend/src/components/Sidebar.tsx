@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { IconArrowsLeftRight } from '@tabler/icons-react';
+import { IconLayoutSidebar, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { LibraryPanel } from '../panels/LibraryPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { DebugPanel } from '../panels/DebugPanel';
@@ -153,7 +153,7 @@ export function Sidebar() {
               onClick={flipSidebarSide}
               title="Move sidebar to left"
             >
-              <IconArrowsLeftRight size={14} />
+              <IconLayoutSidebar size={14} />
             </button>
           </div>
         )}
@@ -173,7 +173,7 @@ export function Sidebar() {
               onClick={flipSidebarSide}
               title="Move sidebar to right"
             >
-              <IconArrowsLeftRight size={14} />
+              <IconLayoutSidebarRight size={14} />
             </button>
             <button
               className="sidebar-tab sidebar-action-btn"
