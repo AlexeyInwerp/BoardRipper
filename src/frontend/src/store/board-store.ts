@@ -40,6 +40,12 @@ export interface BoardTab {
   showVias: boolean;
   showSilkscreen: boolean;
   showPads: boolean;
+  /** Show standalone copper pads not bound to any component pin (GND
+   *  stitching, power-rail drops, mounting-hole pads). Default OFF — these
+   *  visually clutter the board around components but carry no schematic
+   *  meaning. Only TVW currently tags pads with `attached`; for other
+   *  formats this flag is a no-op. */
+  showCopperDrops: boolean;
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
@@ -335,6 +341,7 @@ class BoardStore extends Emitter {
   get showVias(): boolean { return this.activeTab?.showVias ?? false; }
   get showSilkscreen(): boolean { return this.activeTab?.showSilkscreen ?? true; }
   get showPads(): boolean { return this.activeTab?.showPads ?? true; }
+  get showCopperDrops(): boolean { return this.activeTab?.showCopperDrops ?? false; }
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
@@ -520,6 +527,7 @@ class BoardStore extends Emitter {
         showVias: false,
         showSilkscreen: true,
         showPads: true,
+        showCopperDrops: false,
         showPins: true,
         showOutlines: true,
         showLabels: true,
@@ -877,6 +885,14 @@ class BoardStore extends Emitter {
   // cache layer so the user can pick the minimum they need rather than
   // wiping the whole database.
 
+  /** Local debug helper: returns the original File for the active tab so debug
+   *  tooling (per-layer PNG export, hex dumps) can re-read the raw bytes. */
+  getActiveFile(): File | null {
+    const tab = this.activeTab;
+    if (!tab) return null;
+    return this._openFiles.get(tab.fileName) ?? null;
+  }
+
   /** Re-parse the active tab's board from its original File bytes. Deletes
    *  its IDB cache entry first, then runs parseBoardFile and swaps the new
    *  BoardData into tab.board (new reference → renderer auto-rebuilds).
@@ -1037,6 +1053,13 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showPads: !tab.showPads });
+    this.notify();
+  }
+
+  toggleCopperDrops() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showCopperDrops: !tab.showCopperDrops });
     this.notify();
   }
 

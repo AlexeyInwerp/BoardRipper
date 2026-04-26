@@ -151,10 +151,17 @@ export interface BoardSceneGraph {
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
   silkscreenBottom: Container | null;
-  /** Copper pad overlay — toggled by showPads. Same side-split pattern. */
+  /** Copper pad overlay — toggled by showPads. Same side-split pattern.
+   *  Only includes pads where `attached === true` (pin-bound pads). */
   padsLayer: Container | null;
   padsTop: Container | null;
   padsBottom: Container | null;
+  /** Standalone copper-drop pads (GND stitching, power-rail tie pads,
+   *  mounting-hole pads) — pads where `attached === false`. Toggled by
+   *  showCopperDrops, default OFF. Same side-split pattern. */
+  copperDropsLayer: Container | null;
+  copperDropsTop: Container | null;
+  copperDropsBottom: Container | null;
   /** Via/drill hole overlay container — toggled by showVias */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
@@ -527,9 +534,19 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   // Filled rectangles in board coordinates (already pre-rotated/translated).
   // Through-hole pads (side='both') render on both side containers so they
   // remain visible regardless of which side is selected.
+  //
+  // Two parallel layer trees so the user can toggle them independently:
+  //   - padsLayer      = pads where pad.attached === true  (real component pins)
+  //   - copperDropsLayer = the rest (GND stitching, power drops, mounting pads)
+  // Parsers that don't tag attachment (Allegro/BVR/etc.) leave `attached`
+  // undefined; we treat undefined as "attached" so existing formats render
+  // exactly as before.
   let padsLayer: Container | null = null;
   let padsTop: Container | null = null;
   let padsBottom: Container | null = null;
+  let copperDropsLayer: Container | null = null;
+  let copperDropsTop: Container | null = null;
+  let copperDropsBottom: Container | null = null;
   if (board.pads && board.pads.length > 0) {
     padsLayer = new Container();
     padsLayer.label = 'pads';
@@ -537,26 +554,38 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     padsTop.label = 'pads-top';
     padsBottom = new Container();
     padsBottom.label = 'pads-bottom';
+    copperDropsLayer = new Container();
+    copperDropsLayer.label = 'copper-drops';
+    copperDropsTop = new Container();
+    copperDropsTop.label = 'copper-drops-top';
+    copperDropsBottom = new Container();
+    copperDropsBottom.label = 'copper-drops-bottom';
 
     const PAD_TOP_COLOR    = 0xd4a64a;  // warm copper
     const PAD_BOTTOM_COLOR = 0x8da6c0;  // cool copper-grey
     const PAD_ALPHA        = 0.9;
+    const DROP_ALPHA       = 0.55;      // dimmer than real pads — they're noise
     const DRILL_COLOR      = 0x111111;
     const DRILL_ALPHA      = 0.95;
 
-    const topPadGfx = new Graphics();
-    const botPadGfx = new Graphics();
-    const drillGfx  = new Graphics();
+    const topPadGfx  = new Graphics();
+    const botPadGfx  = new Graphics();
+    const topDropGfx = new Graphics();
+    const botDropGfx = new Graphics();
+    const drillGfx   = new Graphics();
     let anyDrill = false;
     for (const p of board.pads) {
       const w = p.bounds.maxX - p.bounds.minX;
       const h = p.bounds.maxY - p.bounds.minY;
       if (w <= 0 || h <= 0) continue;
+      const isAttached = p.attached !== false; // undefined → treat as attached
+      const topGfx = isAttached ? topPadGfx : topDropGfx;
+      const botGfx = isAttached ? botPadGfx : botDropGfx;
       if (p.side === 'top' || p.side === 'both') {
-        topPadGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+        topGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
       }
       if (p.side === 'bottom' || p.side === 'both') {
-        botPadGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+        botGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
       }
       // Punch a drill hole through TH pads so the user can see the hole
       // through the (otherwise solid) ground/power pad rectangle.
@@ -569,15 +598,26 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     }
     topPadGfx.fill({ color: PAD_TOP_COLOR,    alpha: PAD_ALPHA });
     botPadGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: PAD_ALPHA });
+    topDropGfx.fill({ color: PAD_TOP_COLOR,    alpha: DROP_ALPHA });
+    botDropGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: DROP_ALPHA });
     if (anyDrill) drillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
     padsTop.addChild(topPadGfx);
     padsBottom.addChild(botPadGfx);
-    // Drill holes render above both side fills so the hole visually punches
-    // through whichever side is currently visible.
+    copperDropsTop.addChild(topDropGfx);
+    copperDropsBottom.addChild(botDropGfx);
+    // Drops render BELOW pads so a drop pad sitting under a pin doesn't
+    // visually overpower the real pad.
+    copperDropsLayer.addChild(copperDropsBottom);
+    copperDropsLayer.addChild(copperDropsTop);
     padsLayer.addChild(padsBottom);
     padsLayer.addChild(padsTop);
-    if (anyDrill) padsLayer.addChild(drillGfx);
+    root.addChild(copperDropsLayer);
     root.addChild(padsLayer);
+    // Drill holes render above both side fills so the hole visually punches
+    // through whichever side is currently visible.
+    if (anyDrill) {
+      padsLayer.addChild(drillGfx);
+    }
   }
 
   root.addChild(bottomLayer);
@@ -1499,5 +1539,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsLayer, padsTop, padsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsLayer, padsTop, padsBottom, copperDropsLayer, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

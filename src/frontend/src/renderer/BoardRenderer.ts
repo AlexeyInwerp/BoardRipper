@@ -113,10 +113,14 @@ interface BoardScene {
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
   silkscreenBottom: Container | null;
-  /** Copper pad rectangles — toggled by showPads */
+  /** Copper pad rectangles — toggled by showPads (attached pads only) */
   padsLayer: Container | null;
   padsTop: Container | null;
   padsBottom: Container | null;
+  /** Standalone copper drops — toggled by showCopperDrops, default OFF */
+  copperDropsLayer: Container | null;
+  copperDropsTop: Container | null;
+  copperDropsBottom: Container | null;
   /** Via/drill hole overlay container */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
@@ -1185,7 +1189,7 @@ export class BoardRenderer {
 
   /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers
@@ -1203,6 +1207,11 @@ export class BoardRenderer {
     if (scene.padsLayer)        scene.padsLayer.visible        = showPads;
     if (scene.padsTop)          scene.padsTop.visible          = showTop;
     if (scene.padsBottom)       scene.padsBottom.visible       = showBottom;
+    // Standalone copper drops (GND stitching, power-rail tie pads, mounting
+    // pads). Default OFF — independent toggle from real pin pads.
+    if (scene.copperDropsLayer)    scene.copperDropsLayer.visible    = showCopperDrops;
+    if (scene.copperDropsTop)      scene.copperDropsTop.visible      = showTop;
+    if (scene.copperDropsBottom)   scene.copperDropsBottom.visible   = showBottom;
     // Component sub-layer visibility (master: showComponents)
     scene.topFillLayer.visible       = showComponents;
     scene.bottomFillLayer.visible    = showComponents;

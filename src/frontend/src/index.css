@@ -788,6 +788,29 @@ html, body, #root {
 .badge-bottom { background: #3a1a1a; color: var(--red); }
 .badge-both { background: #2a2a1a; color: var(--orange); }
 
+/* Part metadata table (BOM value, package, type, etc. — surfaced from
+   format-specific data like TVW). Compact two-column layout above the pin list. */
+.part-meta-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+  margin: 4px 0 8px 0;
+}
+
+.part-meta-table th {
+  text-align: left;
+  padding: 2px 8px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  width: 80px;
+}
+
+.part-meta-table td {
+  padding: 2px 8px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
 /* Pin Table */
 .pin-table-container {
   overflow: auto;

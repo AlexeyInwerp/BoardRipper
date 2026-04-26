@@ -1,7 +1,9 @@
 import { useSyncExternalStore, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { logStore, LOG_SCOPES, type LogScope, log } from '../store/log-store';
 import { boardCache } from '../store/board-cache';
+import { boardStore } from '../store/board-store';
 import { useUpdateStore } from '../hooks/useUpdateStore';
+import { debugRenderTvwLayersToPng } from '../parsers/tvw-parser';
 
 const LS_SCOPES_KEY = 'boardripper-log-scopes';
 const LS_PERSIST_KEY = 'boardripper-log-persist';
@@ -16,6 +18,43 @@ function loadPersistedScopes(): Partial<Record<LogScope, boolean>> {
 function loadPersist(): boolean {
   const raw = localStorage.getItem(LS_PERSIST_KEY);
   return raw === null ? true : raw === 'true';
+}
+
+/** Render every parsed TVW layer to its own PNG and trigger a sequence of
+ *  browser downloads. No ZIP — keeps the implementation dependency-free.
+ *  Scoped to the active tab; warns if the active tab is not a TVW file. */
+async function exportTvwLayerPngs(): Promise<void> {
+  const file = boardStore.getActiveFile();
+  if (!file) {
+    log.parser.warn('Export Layer PNGs: no active board file');
+    return;
+  }
+  if (!file.name.toLowerCase().endsWith('.tvw')) {
+    log.parser.warn(`Export Layer PNGs: ${file.name} is not a TVW file (this debug only handles TVW)`);
+    return;
+  }
+  log.parser.log(`Exporting per-layer PNGs for ${file.name}…`);
+  const buffer = await file.arrayBuffer();
+  const images = await debugRenderTvwLayersToPng(buffer);
+  if (images.length === 0) {
+    log.parser.warn('Export Layer PNGs: no layers with geometry to render');
+    return;
+  }
+  const baseName = file.name.replace(/\.tvw$/i, '');
+  for (const img of images) {
+    const url = URL.createObjectURL(img.blob);
+    const safeName = (img.name || `layer_${img.index}`).replace(/[^A-Za-z0-9_.-]+/g, '_');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${baseName}__${img.index.toString().padStart(2, '0')}_${safeName}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Hold the URL briefly so Chrome actually fetches it before revoke
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    log.parser.log(`  [${img.index}] ${img.name} (${img.layerTypeName}) — pads=${img.padCount} lines=${img.lineCount} arcs=${img.arcCount} holes=${img.holeCount} slots=${img.slotCount}`);
+  }
+  log.parser.log(`Exported ${images.length} layer PNG(s).`);
 }
 
 const SCOPE_COLORS: Record<LogScope, string> = {
@@ -108,6 +147,13 @@ export function DebugPanel() {
           title="Clear IndexedDB board cache — forces re-parse on next open"
         >
           Clear Cache
+        </button>
+        <button
+          onClick={() => exportTvwLayerPngs()}
+          className="debug-panel-btn debug-panel-btn-muted"
+          title="TVW only: render every parsed layer as a separate PNG and download as ZIP"
+        >
+          Export Layer PNGs
         </button>
         <button
           onClick={() => logStore.clear()}
