@@ -51,7 +51,8 @@ Version 18.0 is the most significant header layout change.
 | `0x00140400`   | V_172   | 17.2            |
 | `0x00140900`   | V_174   | 17.4            |
 | `0x00141500`   | V_175   | 17.5            |
-| `0x00150000`   | V_180   | 18.0+           |
+| `0x00150000`   | V_180   | 18.0            |
+| `0x00150200`   | V_180   | 18.0.2 (Dell XPS LA-E331P) — see V18.0.2 layout note |
 
 Additional check: bytes 8–11 as u32 LE == 1 distinguishes Allegro BRD from the
 obfuscated Apple/Mac BRD format (which shares the same file extension).
@@ -298,6 +299,14 @@ The board outline is stored as polygon shapes (0x28) with specific class + subcl
 Both subclass codes 0xEA and 0xFD must be checked. The outline geometry is a
 linked list of 0x15/0x16/0x17 line segments and 0x01 arcs forming a closed contour.
 
+**Pick by bounding-box area, not segment count.** Some Compal/Quanta files
+(LA-H271P) carry routing keepins and copper-pour boundaries on the BOUNDARY
+class with *more segments* than the actual board edge — a rounded-rect outline
+is just a few arcs + a few lines, while a keepin polygon may have 2000+
+segments. Ranking candidates by area (`(maxX-minX) * (maxY-minY)` of the
+walked points) consistently selects the true edge across every sample we
+have. The 0xEA tiebreaker is preserved for the rare exact-area collision.
+
 ---
 
 ## Record Size Tables (Empirically Verified)
@@ -366,6 +375,81 @@ x23=88  x2B=76  x2D=72  x33=76  x34=36  x3A=16
   set, and the Toolbar swaps which button highlights as active. The initial
   view on open also uses `showBottom=true` so the file loads onto the CPU side.
   Single-sided boards and normally-laid-out boards (tvk336169) are untouched.
+
+  **v18.0.2 sub-version** (Dell XPS LA-E331P) uses a different `0x2D.layer`
+  encoding: bottom is `3` (binary `0b011`) instead of the older `1`. Reading
+  it as `layer === 0 ? 'top' : 'bottom'` keeps the mapping correct without a
+  bitmask — bit 0 alone is the side bit; bit 1 in v18 is some unidentified
+  flag that's always set on the bottom side.
+
+- **v18.0.2 header layout (LA-E331P)**: between the existing V_180 header
+  fields and the Allegro version string, this sub-version inserts **4
+  additional linked-list pairs** (32 bytes), so the version string sits at
+  file offset `0x144` instead of the V_180 baseline `0x124`. Each pair has
+  an increasing head value (e.g. `0x7d..0x80`) with `tail = 0`; treated as
+  opaque alignment-only data — the parser reads them into `LL_V18_7..10`
+  to keep the stream aligned. The position assertion was widened to `0x144`
+  for V_180. v18.0.0 is not in the corpus to validate against; if a file
+  shows up missing these 4 pairs we'll branch by sub-magic.
+
+- **Layer-name extraction — most-referenced fallback**: in v16/v17 files the
+  ETCH layer list lives at `header.layerMap[LayerClass.ETCH]` (slot 6). v18
+  abandoned this slot-by-class-code convention — LA-E331P puts the ETCH list
+  at slot 1 with slot 6 empty. The robust signature across every sample is:
+  the ETCH list is the single `0x2A` block referenced by the *most* layer-map
+  slots (Y0D 11×, Z8IA 10×, LA-H271P 9×, LA-E331P 8×). Try slot 6 first to
+  preserve older behaviour, fall back to "most-referenced" when it's empty.
+
+- **Per-component silkscreen / assembly outlines**: each
+  `Blk0x2DFootprintInst` has a `graphicPtr` field that walks a chain of
+  `0x14 Graphic` blocks. Each `0x14` carries a `LayerInfo` of its own and a
+  `segmentPtr` head into the same `0x15/0x16/0x17/0x01` segment-and-arc
+  primitives the board outline walks. Filtering to `LayerClass.PACKAGE_GEOMETRY`
+  (`cc=0x09`) yields the per-part silkscreen / assembly polylines. **Segments
+  arrive in board coordinates already** — pre-rotated and pre-translated by
+  Allegro for the standard 0/90/180/270° placements — so no transform pass is
+  needed at extraction time. Side comes from `fpInst.layer`.
+
+  Subclass legend (`cc=0x09`):
+
+  | sc     | Block type    | Meaning                              |
+  |--------|---------------|--------------------------------------|
+  | `0xF7` | 0x14 lines    | ASSEMBLY_TOP outline (open polylines + arcs) |
+  | `0xF6` | 0x14 lines    | ASSEMBLY_BOTTOM                      |
+  | `0xFB` | 0x28 polygons | SILKSCREEN_TOP body (closed)         |
+  | `0xFA` | 0x28 polygons | SILKSCREEN_BOTTOM                    |
+  | `0xFD` | 0x14 lines    | package default                      |
+  | `0xF4` / `0xF3` | 0x28 polygons | place-bound / courtyard       |
+
+  BoardRipper extracts the `0x14` open polylines (not the `0x28` polygons)
+  because they include pin-1 markers, polarity ticks, and body outlines —
+  the visually richer set most closely matching what a CAD tool draws.
+
+- **Copper pads — placed-pad bbox**: `Blk0x07ComponentInst.fpInstPtr →
+  Blk0x2DFootprintInst.firstPadPtr` walks a chain of `Blk0x32 PlacedPad`
+  blocks (one per pin). Each `0x32` carries a `coords[4]` field that's the
+  axis-aligned bbox of the pad in board coordinates, already pre-rotated and
+  pre-translated for standard placements. Use it directly as the pad
+  rectangle. **Side**: through-hole vs SMD is decided by the pad's padstack
+  (`Blk0x32.padPtr → Blk0x0D.padStack → Blk0x1C`); when `Blk0x1C.layerCount
+  > 1` the pad spans multiple etch layers and is treated as `side='both'`,
+  otherwise SMD on `fpInst.layer`. Net is resolved through `Blk0x32.netPtr →
+  netAssignMap`.
+
+  The same bbox is also stored on each `Pin` as `padBounds` so the renderer
+  can hit-test a click anywhere on the pad area (selecting the pin) and draw
+  selection highlights as the pad rectangle rather than a circle stuck on
+  top.
+
+- **Drill diameter from padstack, not bbox**: vias (`Blk0x33`) and through-
+  hole pads (`Blk0x32` with multi-layer padstack) have their actual drill
+  size in `Blk0x1CPadstack.drill`. The placed-via `bbox` is the **pad ring**
+  (signal pad + clearance), not the drill — using it overstates the hole by
+  2–6×. Reading `padstack.drill` and falling back to bbox only when drill is
+  zero gives accurate per-via diameters. Through-hole pads also expose this
+  as `Pad.drill` so the renderer can punch a black drill disc through the
+  filled rectangle (otherwise the pad obscures the hole on power/ground TH
+  pins, which look like solid coloured rectangles with no visible hole).
 
 ---
 
