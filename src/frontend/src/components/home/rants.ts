@@ -5,9 +5,39 @@
  */
 export const welcomeRants: string[] = [
   // G — tight
-  `This is a board-in screen, not a Microsoft Edge onboarding funnel. No sign-in, no default-browser ceremony, no Copilot upsell, no "are you sure you want to close this tab" modal that reopens when you dismiss it. Open a file — this screen leaves without making a scene.`,
+  `Fun fact: you need fewer clicks to download and install Firefox if you simply use Win + R → explorer "https://mozilla.org/firefox" than if you go through the Edge onboarding screen. `,
   // H — mid-length
-  `This is a board-in screen. Unlike Edge, it will not: demand a Microsoft account, beg to be your default, push Bing, suggest Copilot, or hold the close button hostage until you have agreed to three things. Just open a file. It gets out of the way. Ignore it entirely if you prefer — that is also a fully supported workflow.`,
+  `A MacBook, a ThinkPad, and a Surface walk into a bar.
+
+The bartender says, “What happened to you guys?”
+
+The MacBook says, “Nothing, really. Just a little liquid damage.”
+
+Bartender says, “Beer?”
+
+MacBook says, “No, no… more like… atmosphere.”
+
+The ThinkPad says, “I’ve got a CPU issue.”
+
+Bartender says, “Overheating?”
+
+ThinkPad goes, “No, it’s more… philosophical. Some days it’s connected, some days it’s exploring other options.”
+
+And the Surface—
+
+Well, the Surface doesn’t say anything.
+
+Bartender says, “What’s your problem?”
+
+Surface says, “I don’t have one.”
+
+Bartender says, “Then why are you here?”
+
+Surface says, “I just stopped working.”
+
+Bartender goes, “That’s it?”
+
+Surface says, “Yeah. I’m not a complicated machine.”`,
 ];
 
 export const sessionRant: string =
