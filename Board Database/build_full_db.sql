@@ -19,154 +19,154 @@ DELETE FROM sqlite_sequence;
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('820b899d-bfde-4695-868f-c75a9800e1de', 'Apple', 'MacBook Air 13" Early 2015 - Mid 2017', 'A1466', '820-00165-A', 'J113', 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00165', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00165-A'), '820-00165', 'apple_820_no_rev');
 INSERT INTO model_aliases (board_id, model_name) VALUES
-    (last_insert_rowid(), 'MacBookAir7,2');
+    ((SELECT id FROM boards WHERE board_number = '820-00165-A'), 'MacBookAir7,2');
 
 -- 820-00239: MacBook Pro 13" Touch Bar Late 2016
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('fad0b09c-e67f-46bc-888b-1390e133fe2c', 'Apple', 'MacBook Pro 13" Touch Bar Late 2016', 'A1706', '820-00239-A', 'X362 MLB', 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00239', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00239-A'), '820-00239', 'apple_820_no_rev');
 
 -- 820-00244: MacBook 12" Early 2016
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('84a4b820-d92a-40ad-99df-85675270287a', 'Apple', 'MacBook 12" Early 2016', 'A1534', '820-00244-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00244', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00244-A'), '820-00244', 'apple_820_no_rev');
 
 -- 820-00281: MacBook Pro 15" Touch Bar Late 2016
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('88edb9d5-8536-4ea0-a809-85df46c8a721', 'Apple', 'MacBook Pro 15" Touch Bar Late 2016 / Mid 2017', 'A1707', '820-00281-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00281', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00281-A'), '820-00281', 'apple_820_no_rev');
 
 -- 820-00291: iMac 27" 5K Late 2015 (lower GPU)
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('09a00cd2-c9f3-48d5-bc4a-799582b3e25e', 'Apple', 'iMac 27" Retina 5K Late 2015', 'A1419', '820-00291-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00291', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00291-A'), '820-00291', 'apple_820_no_rev');
 
 -- 820-00292: iMac 27" 5K Late 2015 (higher GPU)
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('5786dbd9-2b0c-475a-b66e-9ae47409bd1d', 'Apple', 'iMac 27" Retina 5K Late 2015 (R9 M395/M395X)', 'A1419', '820-00292-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00292', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00292-A'), '820-00292', 'apple_820_no_rev');
 
 -- 820-00939: Mac mini 2018
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('01acf8fd-4397-4330-930d-acb098116f69', 'Apple', 'Mac mini 2018', 'A1993', '820-00939-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00939', 'apple_820_no_rev'),
-    (last_insert_rowid(), '820.00939', 'apple_820_typo');
+    ((SELECT id FROM boards WHERE board_number = '820-00939-A'), '820-00939', 'apple_820_no_rev'),
+    ((SELECT id FROM boards WHERE board_number = '820-00939-A'), '820.00939', 'apple_820_typo');
 
 -- 820-00967: iMac Pro 2017
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('fb5f9883-4bb2-4603-aba8-1e626af602ae', 'Apple', 'iMac Pro 27" 2017', 'A1862', '820-00967-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-00967', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-00967-A'), '820-00967', 'apple_820_no_rev');
 
 -- 820-01598: MacBook Pro 13" 2TB3 2019
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('95adef98-d683-412e-8b69-3088b54dbd8d', 'Apple', 'MacBook Pro 13" Two TB3 2019', 'A2159', '820-01598-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01598', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01598-A'), '820-01598', 'apple_820_no_rev');
 
 -- 820-01700: MacBook Pro 16" 2019
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('b18aa487-2e59-4932-b730-28545314e92d', 'Apple', 'MacBook Pro 16" 2019', 'A2141', '820-01700-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01700', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01700-A'), '820-01700', 'apple_820_no_rev');
 
 -- 820-01779: iMac 27" 5K 2019/2020 (lower GPU)
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('9f9a4a06-7fe9-478c-8737-b2fd980b3d45', 'Apple', 'iMac 27" Retina 5K 2019/2020', 'A2115', '820-01779-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01779', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01779-A'), '820-01779', 'apple_820_no_rev');
 
 -- 820-01814: MacBook Pro 15" 2019
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('89b15b6a-293b-491e-a0af-15e810afc927', 'Apple', 'MacBook Pro 15" Touch Bar 2019', 'A1990', '820-01814-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01814', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01814-A'), '820-01814', 'apple_820_no_rev');
 
 -- 820-01823: iMac 27" 5K 2019/2020 (higher GPU)
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('6f9363a5-0644-423c-b6cd-fbf4b2307770', 'Apple', 'iMac 27" Retina 5K 2019/2020 (5700/5700XT)', 'A2115', '820-01823-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01823', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01823-A'), '820-01823', 'apple_820_no_rev');
 
 -- 820-01949: MacBook Pro 13" 4TB3 2020
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('16cb09f8-4c61-4ed5-a2cd-8804d3fde7fd', 'Apple', 'MacBook Pro 13" Four TB3 2020', 'A2251', '820-01949-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01949', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01949-A'), '820-01949', 'apple_820_no_rev');
 
 -- 820-01987: MacBook Pro 13" 2TB3 2020
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('f5f0fe89-7a1a-42e9-aa6e-46126718ea51', 'Apple', 'MacBook Pro 13" Two TB3 2020', 'A2289', '820-01987-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-01987', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-01987-A'), '820-01987', 'apple_820_no_rev');
 
 -- 820-02016: MacBook Air 13" M1 2020
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('05a54754-30dc-44cb-b43e-8b20c6a11865', 'Apple', 'MacBook Air 13" M1 Late 2020', 'A2337', '820-02016-A', 'X1757', 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02016', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02016-A'), '820-02016', 'apple_820_no_rev');
 INSERT INTO model_aliases (board_id, model_name) VALUES
-    (last_insert_rowid(), 'MacBookAir10,1');
+    ((SELECT id FROM boards WHERE board_number = '820-02016-A'), 'MacBookAir10,1');
 
 -- 820-02020: MacBook Pro 13" M1 2020
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('89bb535e-1856-45f8-8b39-da4c0e411913', 'Apple', 'MacBook Pro 13" M1 Late 2020', 'A2338', '820-02020-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02020', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02020-A'), '820-02020', 'apple_820_no_rev');
 INSERT INTO model_aliases (board_id, model_name) VALUES
-    (last_insert_rowid(), 'MacBookPro17,1');
+    ((SELECT id FROM boards WHERE board_number = '820-02020-A'), 'MacBookPro17,1');
 
 -- 820-02098: MacBook Pro 14" M1 Pro 2021
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('d408e3d4-4cb3-4d01-8274-591689ebd4cf', 'Apple', 'MacBook Pro 14" 2021 (M1 Pro)', 'A2442', '820-02098-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02098', 'apple_820_no_rev'),
-    (last_insert_rowid(), '820-02098-07', 'apple_820_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02098-A'), '820-02098', 'apple_820_no_rev'),
+    ((SELECT id FROM boards WHERE board_number = '820-02098-A'), '820-02098-07', 'apple_820_rev');
 
 -- 820-02100: MacBook Pro 16" M1 Pro/Max 2021
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('5856e1fe-89af-47f9-8962-166bbd247424', 'Apple', 'MacBook Pro 16" 2021 (M1 Pro/Max)', 'A2485', '820-02100-A', NULL, 'Apple', 'apple_820', 'logiwiki');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02100', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02100-A'), '820-02100', 'apple_820_no_rev');
 
 -- 820-02443: MacBook Pro 14" M1 Max 2021
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('ef8782a7-d2f3-4192-96e6-583d84a33cc4', 'Apple', 'MacBook Pro 14" 2021 (M1 Max)', 'A2442', '820-02443-A', NULL, 'Apple', 'apple_820', 'logiwiki+badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02443', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02443-A'), '820-02443', 'apple_820_no_rev');
 
 -- 820-02652: MacBook Pro 16" M2 Max 2023
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('3ff728b8-bd55-4ffb-bef3-60e9504aad80', 'Apple', 'MacBook Pro 16" 2023 (M2 Max)', 'A2780', '820-02652-A', NULL, 'Apple', 'apple_820', 'logiwiki+ebay');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02652', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02652-A'), '820-02652', 'apple_820_no_rev');
 
 -- 820-02655: MacBook Pro 14" M2 Max 2023
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('6f5f0dfa-676b-48c5-bc7b-a73052f2ca9c', 'Apple', 'MacBook Pro 14" 2023 (M2 Max)', 'A2779', '820-02655-A', 'X2371 MLB-C', 'Apple', 'apple_820', 'logiwiki+ebay');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02655', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02655-A'), '820-02655', 'apple_820_no_rev');
 
 -- 820-02862: MacBook Air 13" M2 daughter board
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('3bd06600-325c-422d-b399-a289449d097d', 'Apple', 'MacBook Air 13" M2 2022 (daughter board)', 'A2681', '820-02862-A', NULL, 'Apple', 'apple_820', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02862', 'apple_820_no_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02862-A'), '820-02862', 'apple_820_no_rev');
 
 -- 820-02935: MacBook Pro 16" M3 Max 2023
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('f4710ee6-f54c-4408-b581-582190db7d74', 'Apple', 'MacBook Pro 16" 2023 (M3 Max)', 'A2991', '820-02935-A', NULL, 'Apple', 'apple_820', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '820-02935', 'apple_820_no_rev'),
-    (last_insert_rowid(), '820-02935-05', 'apple_820_rev');
+    ((SELECT id FROM boards WHERE board_number = '820-02935-A'), '820-02935', 'apple_820_no_rev'),
+    ((SELECT id FROM boards WHERE board_number = '820-02935-A'), '820-02935-05', 'apple_820_rev');
 
 -- ============================================================
 -- COMPAL / LA- BOARDS
@@ -192,7 +192,7 @@ VALUES ('b36c8d91-844f-4718-9c45-f2a0ab1b85cd', 'HP', 'ENVY x360 13-AY', '13-AY'
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('9522c25c-6e5f-4d95-942a-322dacec3a62', 'Dell', 'Alienware M15 R5 / G15 5515', NULL, 'LA-K453P', 'GDL56', 'Compal', 'compal_la', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'LA-K453', 'compal_la_no_suffix');
+    ((SELECT id FROM boards WHERE board_number = 'LA-K453P'), 'LA-K453', 'compal_la_no_suffix');
 
 -- LA-L191P: Acer Predator Triton/Nitro 5
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
@@ -210,7 +210,7 @@ VALUES ('8995fe33-57fd-4570-8bee-60b9ffcc461c', 'Lenovo', 'ThinkPad X1 Carbon 6t
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('eaf03b27-b5bd-4aa0-adf0-a6561bd41808', 'Lenovo', 'ThinkPad T580 / P52s', NULL, 'NM-B491', NULL, 'LCFC', 'lenovo_nm', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'NM-b491', 'lenovo_nm_lowercase');
+    ((SELECT id FROM boards WHERE board_number = 'NM-B491'), 'NM-b491', 'lenovo_nm_lowercase');
 
 -- NM-B741: Lenovo IdeaPad S145-15IWL
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
@@ -240,10 +240,10 @@ VALUES ('3b160bd3-899f-4425-87be-e8def16c9ead', 'Lenovo', 'ThinkPad/IdeaPad (Ald
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('583a410f-d13b-4879-b6c5-39f0b1b54343', 'Lenovo', 'Legion 5 15ARH7 / 5 Pro 16ARH7', NULL, 'NM-E471', NULL, 'LCFC', 'lenovo_nm', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'JY575', 'lcfc_project'),
-    (last_insert_rowid(), 'JY576', 'lcfc_project'),
-    (last_insert_rowid(), 'JY676', 'lcfc_project'),
-    (last_insert_rowid(), 'JY677', 'lcfc_project');
+    ((SELECT id FROM boards WHERE board_number = 'NM-E471'), 'JY575', 'lcfc_project'),
+    ((SELECT id FROM boards WHERE board_number = 'NM-E471'), 'JY576', 'lcfc_project'),
+    ((SELECT id FROM boards WHERE board_number = 'NM-E471'), 'JY676', 'lcfc_project'),
+    ((SELECT id FROM boards WHERE board_number = 'NM-E471'), 'JY677', 'lcfc_project');
 
 -- ============================================================
 -- QUANTA / DA0 BOARDS
@@ -269,13 +269,13 @@ VALUES ('47b941c9-f29b-44ab-8203-22ba6d3fb7ee', 'Acer', 'Predator Helios Neo 16 
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('1c346165-d866-44e8-b52f-7ee9d32364b4', 'HP', 'ZBook 15 G5 / ZBook 17 G5', NULL, 'DA0XW2MBAG0', 'Quanta XW2', 'Quanta', 'quanta_da0', 'amazon+thetechstall');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'Da0XW2MBAG0', 'quanta_da0_mixedcase');
+    ((SELECT id FROM boards WHERE board_number = 'DA0XW2MBAG0'), 'Da0XW2MBAG0', 'quanta_da0_mixedcase');
 
 -- DAG37AMB8D0: HP Omen 17-W / Pavilion 17-AB
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('15d166c2-71c7-4821-a301-839768201cda', 'HP', 'OMEN 17-W / Pavilion 17-AB', NULL, 'DAG37AMB8D0', 'Quanta G37A', 'Quanta', 'quanta_da0', 'ebay+newegg');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'dag37amb8d0', 'quanta_da0_lowercase');
+    ((SELECT id FROM boards WHERE board_number = 'DAG37AMB8D0'), 'dag37amb8d0', 'quanta_da0_lowercase');
 
 -- DAG3BEMBCD0: HP Omen 17-an100
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
@@ -297,7 +297,7 @@ VALUES ('44a4651c-9dfd-4c52-b104-03d4e562138c', 'Lenovo', 'ThinkPad L13 Gen 2 (A
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('f5db4eb3-bb12-43c2-a0c2-c607222b4dd6', 'Acer', 'Spin 5 SP513-51 / SP513-52N', 'SP513-52N', '16924-3M', 'WOODY KBL', 'Wistron', 'wistron_numeric', 'sample_filename');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '16924-2', 'wistron_earlier_rev');
+    ((SELECT id FROM boards WHERE board_number = '16924-3M'), '16924-2', 'wistron_earlier_rev');
 
 -- 12310-1: Acer Aspire 4810T
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
@@ -311,13 +311,13 @@ VALUES ('cf960f29-ea52-41e6-9c4a-361cc7293966', 'Acer', 'Aspire 4810T / 4810TZ',
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('c431a372-84c6-4a0a-a620-a31bcdc3da8b', 'HP', 'EliteBook 830 G6', NULL, '6050A3022401-MB-A01', 'CATALONIA', 'Inventec', 'inventec_6050a', 'badcaps+alexlaptoprepair');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '6050A3022401', 'inventec_6050a_short');
+    ((SELECT id FROM boards WHERE board_number = '6050A3022401-MB-A01'), '6050A3022401', 'inventec_6050a_short');
 
 -- 6050A3136201: HP EliteBook 830/840 G7
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('6962067a-976a-46d0-b913-806d0b941638', 'HP', 'EliteBook 830 G7 / 840 G7 / ZBook Firefly 14 G7', NULL, '6050A3136201-MB-A01', 'CAMELLIA', 'Wistron', 'inventec_6050a', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), '6050A3136201', 'inventec_6050a_short');
+    ((SELECT id FROM boards WHERE board_number = '6050A3136201-MB-A01'), '6050A3136201', 'inventec_6050a_short');
 
 -- ============================================================
 -- ASUS BOARDS
@@ -367,7 +367,7 @@ VALUES ('0d42be2c-b7a8-46ae-9af2-25d23a0221c3', 'Dell', 'G5 5590 / G7 7590 / G7 
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('f3a68780-af75-4313-94c6-61c9af68866e', 'Razer', 'Blade 15 Advanced 2021', 'RZ09-0409', 'RZ09-0409', NULL, 'Razer', 'razer_rz', 'badcaps');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'R09-0409', 'razer_short');
+    ((SELECT id FROM boards WHERE board_number = 'RZ09-0409'), 'R09-0409', 'razer_short');
 
 -- ============================================================
 -- SAMSUNG (phone)
@@ -376,7 +376,7 @@ INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
 INSERT INTO boards (uuid, brand, model, model_number, board_number, board_name, odm, board_number_type, source)
 VALUES ('313b820f-960e-4693-bfbf-621ea33d05c6', 'Samsung', 'Galaxy S7', 'SM-G930', 'SM-G930', NULL, 'Samsung', 'samsung_sm', 'sample_filename');
 INSERT INTO board_aliases (board_id, alias_number, alias_type) VALUES
-    (last_insert_rowid(), 'S7 SM-G930', 'samsung_common_name');
+    ((SELECT id FROM boards WHERE board_number = 'SM-G930'), 'S7 SM-G930', 'samsung_common_name');
 
 -- ============================================================
 -- DESKTOP BOARDS (not laptops, but in samples)
