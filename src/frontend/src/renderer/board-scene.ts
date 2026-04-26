@@ -35,19 +35,29 @@ import {
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
+import { themeStore, hexToInt } from '../store/themes';
 
+/**
+ * Themed color constants used throughout the renderer. Theme-driven entries
+ * are getters that read from the active theme on each access — switching
+ * themes is reflected on the next read (next scene rebuild). Static color
+ * literals (palette entries that are not theme slots) stay as plain numbers.
+ */
 export const BOARD_COLORS = {
-  background:        0x1a1a2e,
+  get background()         { return hexToInt(themeStore.activeTheme().board.canvasBackground); },
+  get netHighlight()       { return hexToInt(themeStore.activeTheme().board.selection); },
+  get butterflySelection() { return hexToInt(themeStore.activeTheme().board.butterflySelection); },
+  get labelPin()           { return hexToInt(themeStore.activeTheme().board.labelText); },
+  get boardFillDefault()   { return hexToInt(themeStore.activeTheme().board.boardFill); },
+  // Palette entries below are not theme slots in v1 — they remain static.
   outline:           0x4a9eff,
   partBoundsTop:     0x336633,
   partBoundsBottom:  0x663333,
   partSelected:      0xffaa00,
-  netHighlight:      0xffff44,
   pin1:              0xcc2222,
   labelPart:         0xcccccc,
-  labelPin:          0xffffff,
   labelNet:          0x88ccff,
-} as const;
+};
 
 const LABEL_FONT_FAMILY = 'monospace';
 
@@ -310,7 +320,7 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings):
   closeIfMatchingStart();
 
   if (s.boardFillAlpha > 0) {
-    gfx.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
+    gfx.fill({ color: BOARD_COLORS.boardFillDefault, alpha: s.boardFillAlpha });
   }
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }
