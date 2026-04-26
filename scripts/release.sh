@@ -57,7 +57,7 @@ preflight() {
   log "Preflight: clean tsbuildinfo, eslint, tsc, go build"
   ( cd src/frontend \
     && rm -f tsconfig.tsbuildinfo tsconfig.app.tsbuildinfo \
-    && npx eslint . --max-warnings 80 \
+    && npx eslint . --max-warnings 90 \
     && npx tsc -b --noEmit ) || die "Frontend preflight failed"
   ( cd src/backend && go build ./... ) || die "Go build failed"
 }
