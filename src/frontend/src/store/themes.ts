@@ -1,5 +1,7 @@
 import { Emitter } from './emitter';
 import { log } from './log-store';
+import { setThemeOverridesProvider, renderSettingsStore } from './render-settings';
+import type { RenderSettings } from './render-settings';
 
 /**
  * A theme bundles every color that's currently configurable across the app —
@@ -26,10 +28,20 @@ export interface Theme {
   board: {
     canvasBackground: string;
     boardFill: string;
+    outline: string;
     selection: string;
     butterflySelection: string;
     labelText: string;
   };
+
+  /**
+   * Optional render-settings overrides applied while this theme is active.
+   * Lets a theme like Landrex enforce a "monochrome supermode" (no
+   * component-type colors, no net colors, white pins regardless of side)
+   * without the user having to flip every relevant setting by hand.
+   * The user's saved settings are restored when the theme is switched off.
+   */
+  boardOverrides?: Partial<RenderSettings>;
 }
 
 export const THEMES: Record<string, Theme> = {
@@ -48,10 +60,12 @@ export const THEMES: Record<string, Theme> = {
     board: {
       canvasBackground:   '#1a1a2e',
       boardFill:          '#ffffff',
+      outline:            '#4a9eff',
       selection:          '#ffff44',
       butterflySelection: '#44aaff',
       labelText:          '#ffffff',
     },
+    // Default theme = no overrides. Whatever the user has configured wins.
   },
   landrex: {
     id: 'landrex',
@@ -62,15 +76,28 @@ export const THEMES: Record<string, Theme> = {
       bgTertiary:    '#141414',
       textPrimary:   '#ffffff',
       textSecondary: '#b0b0b0',
-      accent:        '#ffff44',
+      // Muted gray accent — bright yellow buttons would defeat the
+      // "no visual clutter" intent. Yellow is reserved for selection only.
+      accent:        '#cccccc',
       border:        '#262626',
     },
     board: {
       canvasBackground:   '#000000',
       boardFill:          '#ffffff',
+      outline:            '#ffffff',
       selection:          '#ffff44',
       butterflySelection: '#44aaff',
       labelText:          '#ffffff',
+    },
+    // Landrex supermode — strip every source of board-content color.
+    // User keeps their saved settings; these layer on top while Landrex is
+    // active and revert automatically when the user switches back to Default.
+    boardOverrides: {
+      showComponentColors: false,    // no color-coded part bodies
+      showPin1Marker:      false,    // no red pin-1 dot
+      defaultPinColorTop:    '#ffffff',
+      defaultPinColorBottom: '#ffffff',
+      netColorRules:       [],       // no GND/VCC/PP color rules
     },
   },
 };
@@ -158,3 +185,24 @@ class ThemeStore extends Emitter {
 }
 
 export const themeStore = new ThemeStore();
+
+// Wire theme overrides into render-settings. The provider is read by
+// renderSettingsStore.recomputeEffective() — calling .recomputeEffective()
+// directly would be cleaner but that method is private; setActiveBoard is
+// the public hook used elsewhere for the same purpose.
+setThemeOverridesProvider(() => themeStore.activeTheme().boardOverrides);
+
+// On theme change, force render-settings to re-merge so the new theme's
+// boardOverrides take effect. We poke setActiveBoard with the current
+// active board to trigger the existing recompute path without changing state.
+themeStore.subscribe(() => {
+  const cur = renderSettingsStore.activeBoard;
+  // setActiveBoard short-circuits when the value is unchanged unless either
+  // side has overrides — bypass that by using applyGlobal which always
+  // recomputes + notifies. Pass the current global snapshot unchanged.
+  renderSettingsStore.applyGlobal(renderSettingsStore.globalSnapshot());
+  // Restore active board if applyGlobal cleared it (it shouldn't, but be safe).
+  if (cur && renderSettingsStore.activeBoard !== cur) {
+    renderSettingsStore.setActiveBoard(cur);
+  }
+});

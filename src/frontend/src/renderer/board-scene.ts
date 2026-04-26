@@ -45,12 +45,12 @@ import { themeStore, hexToInt } from '../store/themes';
  */
 export const BOARD_COLORS = {
   get background()         { return hexToInt(themeStore.activeTheme().board.canvasBackground); },
+  get outline()            { return hexToInt(themeStore.activeTheme().board.outline); },
   get netHighlight()       { return hexToInt(themeStore.activeTheme().board.selection); },
   get butterflySelection() { return hexToInt(themeStore.activeTheme().board.butterflySelection); },
   get labelPin()           { return hexToInt(themeStore.activeTheme().board.labelText); },
   get boardFillDefault()   { return hexToInt(themeStore.activeTheme().board.boardFill); },
   // Palette entries below are not theme slots in v1 — they remain static.
-  outline:           0x4a9eff,
   partBoundsTop:     0x336633,
   partBoundsBottom:  0x663333,
   partSelected:      0xffaa00,
