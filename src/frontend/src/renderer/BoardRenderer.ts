@@ -16,6 +16,7 @@ import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
+import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
 import { themeStore, hexToInt } from '../store/themes';
@@ -1374,7 +1375,7 @@ export class BoardRenderer {
     // Create butterfly root with a copy of the outline
     const broot = new Container();
     const boutline = new Graphics();
-    drawOutline(boutline, board, renderSettingsStore.settings);
+    drawOutline(boutline, board, renderSettingsStore.settings, this.activeBoardColorHex());
 
     broot.addChild(boutline);
 
@@ -1470,10 +1471,22 @@ export class BoardRenderer {
 
   // --- Scene cache management ---
 
+  /**
+   * Look up the metadata color hex for the active board file from the
+   * databank store. Returns undefined when there's no active board, no file
+   * record, or no resolver match for it.
+   */
+  private activeBoardColorHex(): string | undefined {
+    const fileName = boardStore.fileName;
+    if (!fileName) return undefined;
+    const file = databankStore.fileByFilename(fileName);
+    return file?.board_color_hex || undefined;
+  }
+
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings);
+      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex());
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 

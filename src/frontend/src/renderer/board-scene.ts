@@ -283,7 +283,18 @@ function ensureShadowFont(fontSize: number): string {
  *  Duplicate consecutive points are skipped to keep the polygon clean.
  */
 const CLOSE_EPS = 2.0;
-export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings): void {
+
+/**
+ * Pick the effective board fill color for the current draw.
+ * Returns metadata hex when (a) `useMetadata` is true AND (b) `metadataHex`
+ * is non-empty. Otherwise returns the theme's default board fill.
+ */
+export function resolveBoardFillColor(metadataHex: string | undefined, useMetadata: boolean): number {
+  if (useMetadata && metadataHex) return hexToInt(metadataHex);
+  return BOARD_COLORS.boardFillDefault;
+}
+
+export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings, metadataHex?: string): void {
   const pts = board.outline;
   if (pts.length <= 1) return;
 
@@ -320,7 +331,7 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings):
   closeIfMatchingStart();
 
   if (s.boardFillAlpha > 0) {
-    gfx.fill({ color: BOARD_COLORS.boardFillDefault, alpha: s.boardFillAlpha });
+    gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
   }
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }
@@ -370,7 +381,7 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
-export function buildBoardScene(board: BoardData, s: RenderSettings): BoardSceneGraph {
+export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex?: string): BoardSceneGraph {
   // `board` arrives pre-derived via `boardStore.board` (see
   // `store/derive-board-view.ts`): filtered, folded, sides tagged. Hidden
   // parts stay at their raw array index with `hidden: true` so
@@ -633,7 +644,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.addChild(bottomLayer);
   root.addChild(topLayer);
 
-  drawOutline(outlineGfx, board, s);
+  drawOutline(outlineGfx, board, s, metadataHex);
 
   // ── Spatial grid for pin/triangle culling ────────────────────────────────────
   // Divide the board into NxN cells. Each cell has its own color-batched pin
