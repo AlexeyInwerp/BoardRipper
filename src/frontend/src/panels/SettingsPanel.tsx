@@ -1,4 +1,6 @@
-import { useState, useCallback, useRef, useMemo, useEffect, createContext, useContext } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
+import { themeStore, THEMES } from '../store/themes';
+import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import type { RenderSettings, LabelSize, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
@@ -1669,10 +1671,95 @@ export function SettingsPanel() {
   );
 }
 
+function useThemeId(): string {
+  return useSyncExternalStore(
+    (cb) => themeStore.subscribe(cb),
+    () => themeStore.activeId,
+  );
+}
+
 function ThemeTab() {
+  const activeId = useThemeId();
+  const themes: Theme[] = themeStore.list();
+
+  // Subscribe to global render-settings so the toggle reflects external changes.
+  const useMetadata = useSyncExternalStore(
+    (cb) => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.settings.useMetadataBoardColor,
+  );
+
+  const onToggleMetadata = (next: boolean) => {
+    const current = renderSettingsStore.globalSnapshot();
+    renderSettingsStore.applyGlobal({ ...current, useMetadataBoardColor: next });
+  };
+
   return (
-    <div style={{ padding: 16, color: 'var(--text-secondary)' }}>
-      Theme tab — content added in T15.
+    <div className="settings-section-body" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6 }}>
+          Theme
+        </div>
+        <div role="radiogroup" aria-label="Theme" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {themes.map(t => (
+            <label
+              key={t.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 8px',
+                borderRadius: 4,
+                cursor: 'pointer',
+                background: activeId === t.id ? 'var(--bg-secondary)' : 'transparent',
+              }}
+            >
+              <input
+                type="radio"
+                name="theme-picker"
+                value={t.id}
+                checked={activeId === t.id}
+                onChange={() => themeStore.setTheme(t.id)}
+              />
+              <span>{t.label}</span>
+              <span
+                style={{
+                  marginLeft: 'auto',
+                  width: 14,
+                  height: 14,
+                  borderRadius: 3,
+                  background: t.board.canvasBackground,
+                  border: `1px solid ${t.ui.border}`,
+                  boxShadow: `inset 0 0 0 1px ${t.board.boardFill}`,
+                }}
+                aria-hidden="true"
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6 }}>
+          Board fill
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={useMetadata}
+            onChange={(e) => onToggleMetadata(e.target.checked)}
+          />
+          <span>Use board metadata color</span>
+        </label>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 8px', marginTop: 4 }}>
+          When on, boards with a known PCB color (Apple → black, Dell → blue, etc.)
+          render with that tint instead of the theme default. Boards without a
+          metadata match silently fall back to the theme default. Adjust intensity
+          with the Board → Board Outline → Board Fill slider.
+        </div>
+      </div>
     </div>
   );
 }
+
+// Suppress unused-warning when THEMES is only referenced indirectly via themeStore.list().
+void THEMES;
