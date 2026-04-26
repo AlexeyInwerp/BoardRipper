@@ -66,6 +66,8 @@ type Metadata struct {
 	Model             string
 	BoardManufacturer string // ODM: "Compal", "Quanta", etc.
 	ResolutionStatus  string // "resolved", "pattern_matched", "unresolved"
+	BoardUUID         string // From boarddb.BoardMatch.UUID (resolver-derived)
+	BoardColor        string // From boarddb.BoardMatch.Color (canonical lowercase name)
 }
 
 var (
@@ -189,6 +191,8 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				m.Model = match.Model
 				m.BoardManufacturer = match.ODM
 				m.ResolutionStatus = "resolved"
+				m.BoardUUID = match.UUID
+				m.BoardColor = match.Color
 			}
 			return m
 		}
@@ -210,6 +214,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				return Metadata{
 					BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 					Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+					BoardUUID: match.UUID, BoardColor: match.Color,
 				}
 			}
 			// Strip trailing revision (R10, R20, Rev1, etc.) and retry
@@ -219,6 +224,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 					return Metadata{
 						BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 						Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+						BoardUUID: match.UUID, BoardColor: match.Color,
 					}
 				}
 				// Also try resolving as a board number (for NME471 → NM-E471)
@@ -226,6 +232,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 					return Metadata{
 						BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 						Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+						BoardUUID: match.UUID, BoardColor: match.Color,
 					}
 				}
 			}
@@ -238,6 +245,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				return Metadata{
 					BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 					Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
+					BoardUUID: match.UUID, BoardColor: match.Color,
 				}
 			}
 		}

@@ -406,6 +406,8 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 				Model:             meta.Model,
 				BoardManufacturer: meta.BoardManufacturer,
 				ResolutionStatus:  meta.ResolutionStatus,
+				BoardUUID:         meta.BoardUUID,
+				BoardColor:        meta.BoardColor,
 			})
 		}
 	}
