@@ -683,23 +683,8 @@ function loadLayer(r: TvwReader): TvwLayer | null {
  *  Returns the file offset of the leading zero, or -1 if not found within the
  *  given window. The window cap keeps a corrupted file from triggering a
  *  multi-MB linear scan. */
-function scanForNextLayerHeader(r: TvwReader, maxScanBytes = 0x100000): number {
-  const view = r.getView();
-  const start = r.tell();
-  const end = Math.min(r.size() - 16, start + maxScanBytes);
-  for (let p = start; p < end; p++) {
-    if (view.getUint32(p, true) !== 0) continue;
-    const ot = view.getUint32(p + 4, true);
-    if (ot !== 1 && ot !== 3) continue;
-    if (view.getUint32(p + 8, true) !== 2) continue;
-    if (view.getUint32(p + 12, true) !== 1) continue;
-    // Sanity: next byte (name pstr length) must be a plausible string length
-    const nameLen = view.getUint8(p + 16);
-    if (nameLen > 60) continue;
-    return p;
-  }
-  return -1;
-}
+// scanForNextLayerHeader removed by 3e0988c — false matches in parts data
+// were zeroing out clean files. Function deleted along with its call sites.
 
 // ─── Parts Parsing ──────────────────────────────────────────────────────────
 
