@@ -1004,11 +1004,16 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   log.parser.log(`"${type}" customer="${customer}" date="${date}" layers=${layerCount}`);
 
   // ─ Layers
-  // On parse failure for a single layer, scan forward for the next layer-header
-  // signature and resume. The failed layer is kept as a placeholder so it's
-  // still visible in the sidebar layer list. `layersParsedCleanly` tracks
-  // whether the final reader position lands cleanly on the post-layers
-  // separator — net-table recovery kicks in if not.
+  // On any layer-parse failure we record a placeholder, mark the parse as
+  // not-clean, and BREAK out — the rest of the file (net table + probes +
+  // parts) is then recovered via `scanForNetTable`. We previously tried to
+  // scan forward for the next layer-header signature inside the loop, but
+  // that produced false-positive matches deep inside the parts/probe data
+  // (the 16-byte `00 00 00 00 [01|03] 00 00 00 02 00 00 00 01 00 00 00`
+  // pattern occasionally appears as random data), which corrupted the
+  // reader position and zeroed out parts on otherwise-clean files like
+  // HY568. Stick to "fail fast on the layer section, recover via the
+  // net-table signature".
   const layers: TvwLayer[] = [];
   let layersParsedCleanly = true;
   for (let i = 0; i < layerCount; i++) {
@@ -1016,26 +1021,20 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
     try {
       const layer = loadLayer(r);
       if (layer === null) {
-        const nextHdr = scanForNextLayerHeader(r);
         const reason = `unknown obj type at 0x${layerStart.toString(16)}`;
         layers.push({ objType: 'placeholder', name: '', layerType: 0, reason, startOffset: layerStart });
-        log.parser.warn(`layer[${i}] ${reason} — ${nextHdr >= 0 ? `recovering at 0x${nextHdr.toString(16)}` : 'no further layer header found'}`);
+        log.parser.warn(`layer[${i}] ${reason} — stopping layer parsing, will recover via net-table scan`);
         layersParsedCleanly = false;
-        if (nextHdr < 0) break;
-        r.seek(nextHdr);
-        continue;
+        break;
       }
       layers.push(layer);
       log.parser.log(`layer[${i}] "${layer.name}" type=${layer.layerType} ${layer.objType === TvwObjectType.Logic ? `pads=${(layer as TvwLogicLayer).pads.length} lines=${(layer as TvwLogicLayer).lines.length}` : `holes=${(layer as TvwThroughLayer).holes.length}`}`);
     } catch (e) {
       const reason = `parse error at 0x${r.tell().toString(16)}: ${e instanceof Error ? e.message : String(e)}`;
       log.parser.warn(`layer[${i}] ${reason}`);
-      // Try to resume from the next layer-header signature past where we crashed
-      const nextHdr = scanForNextLayerHeader(r);
       layers.push({ objType: 'placeholder', name: '', layerType: 0, reason, startOffset: layerStart });
       layersParsedCleanly = false;
-      if (nextHdr < 0) break;
-      r.seek(nextHdr);
+      break;
     }
   }
 
