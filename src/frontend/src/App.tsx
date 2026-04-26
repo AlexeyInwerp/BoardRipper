@@ -22,6 +22,7 @@ import { pdfStore } from './store/pdf-store';
 import { openPdfFiles } from './store/file-actions';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
+import { themeStore } from './store/themes';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
@@ -48,6 +49,7 @@ function isSupportedFile(name: string): 'board' | 'pdf' | null {
 }
 
 function App() {
+  themeStore.init();
   useKeyboardShortcuts();
   const { toasts } = useBoardStore();
   const [dragOver, setDragOver] = useState(false);

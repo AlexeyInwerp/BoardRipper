@@ -35,19 +35,29 @@ import {
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
+import { themeStore, hexToInt } from '../store/themes';
 
+/**
+ * Themed color constants used throughout the renderer. Theme-driven entries
+ * are getters that read from the active theme on each access — switching
+ * themes is reflected on the next read (next scene rebuild). Static color
+ * literals (palette entries that are not theme slots) stay as plain numbers.
+ */
 export const BOARD_COLORS = {
-  background:        0x1a1a2e,
-  outline:           0x4a9eff,
+  get background()         { return hexToInt(themeStore.activeTheme().board.canvasBackground); },
+  get outline()            { return hexToInt(themeStore.activeTheme().board.outline); },
+  get netHighlight()       { return hexToInt(themeStore.activeTheme().board.selection); },
+  get butterflySelection() { return hexToInt(themeStore.activeTheme().board.butterflySelection); },
+  get labelPin()           { return hexToInt(themeStore.activeTheme().board.labelText); },
+  get boardFillDefault()   { return hexToInt(themeStore.activeTheme().board.boardFill); },
+  // Palette entries below are not theme slots in v1 — they remain static.
   partBoundsTop:     0x336633,
   partBoundsBottom:  0x663333,
   partSelected:      0xffaa00,
-  netHighlight:      0xffff44,
   pin1:              0xcc2222,
   labelPart:         0xcccccc,
-  labelPin:          0xffffff,
   labelNet:          0x88ccff,
-} as const;
+};
 
 const LABEL_FONT_FAMILY = 'monospace';
 
@@ -273,7 +283,18 @@ function ensureShadowFont(fontSize: number): string {
  *  Duplicate consecutive points are skipped to keep the polygon clean.
  */
 const CLOSE_EPS = 2.0;
-export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings): void {
+
+/**
+ * Pick the effective board fill color for the current draw.
+ * Returns metadata hex when (a) `useMetadata` is true AND (b) `metadataHex`
+ * is non-empty. Otherwise returns the theme's default board fill.
+ */
+export function resolveBoardFillColor(metadataHex: string | undefined, useMetadata: boolean): number {
+  if (useMetadata && metadataHex) return hexToInt(metadataHex);
+  return BOARD_COLORS.boardFillDefault;
+}
+
+export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings, metadataHex?: string): void {
   const pts = board.outline;
   if (pts.length <= 1) return;
 
@@ -310,7 +331,7 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings):
   closeIfMatchingStart();
 
   if (s.boardFillAlpha > 0) {
-    gfx.fill({ color: 0xffffff, alpha: s.boardFillAlpha });
+    gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
   }
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
 }
@@ -360,7 +381,7 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
-export function buildBoardScene(board: BoardData, s: RenderSettings): BoardSceneGraph {
+export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex?: string): BoardSceneGraph {
   // `board` arrives pre-derived via `boardStore.board` (see
   // `store/derive-board-view.ts`): filtered, folded, sides tagged. Hidden
   // parts stay at their raw array index with `hidden: true` so
@@ -623,7 +644,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings): BoardScene
   root.addChild(bottomLayer);
   root.addChild(topLayer);
 
-  drawOutline(outlineGfx, board, s);
+  drawOutline(outlineGfx, board, s, metadataHex);
 
   // ── Spatial grid for pin/triangle culling ────────────────────────────────────
   // Divide the board into NxN cells. Each cell has its own color-batched pin

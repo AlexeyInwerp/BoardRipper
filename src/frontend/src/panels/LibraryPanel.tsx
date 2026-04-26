@@ -251,66 +251,69 @@ export function LibraryPanel() {
     return { boardCount: b, pdfCount: p };
   }, [files, stats]);
 
+  // Stats bar — moved to the panel bottom for visual consistency with
+  // SettingsPanel and to keep the tabs row at the natural top of the view.
+  const statsBar = (
+    <div className="library-statsbar">
+      <div className="library-statsbar-text">
+        {scanning ? (
+          <>
+            <span className="library-indexing">
+              Indexing{scanStatus && scanStatus.total > 0
+                ? ` ${scanStatus.scanned}/${scanStatus.total}`
+                : ''}
+              {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
+            </span>
+            {scanStatus?.last_file && (
+              <div className="library-indexing-file" title={scanStatus.last_file}>
+                {tailTruncate(scanStatus.last_file)}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {boardCount} boards, {pdfCount} PDFs
+            {scanStatus && scanStatus.duration_ms > 0 && (
+              <span className="library-scan-result">
+                {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
+              </span>
+            )}
+            {scanStatus?.pdf_running && (
+              <span className="library-indexing" style={{ marginLeft: 8 }}>
+                PDF indexing {scanStatus.pdf_extracted}/{scanStatus.pdf_total}
+                {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
+              </span>
+            )}
+            {scanStatus?.pdf_running && scanStatus?.pdf_current && (
+              <div className="library-indexing-file" title={scanStatus.pdf_current}>
+                {tailTruncate(scanStatus.pdf_current)}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="library-statsbar-actions">
+        {scanStatus?.running ? (
+          <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
+        ) : scanStatus?.pdf_running ? (
+          <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
+        ) : (
+          <>
+            <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
+              <IconFolderSearch size={14} />
+            </button>
+            <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
+              <IconFileText size={14} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="library-panel">
-      {/* Stats + scan buttons (row 1) */}
-      <div className="library-statsbar">
-        <div className="library-statsbar-text">
-          {scanning ? (
-            <>
-              <span className="library-indexing">
-                Indexing{scanStatus && scanStatus.total > 0
-                  ? ` ${scanStatus.scanned}/${scanStatus.total}`
-                  : ''}
-                {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
-              </span>
-              {scanStatus?.last_file && (
-                <div className="library-indexing-file" title={scanStatus.last_file}>
-                  {tailTruncate(scanStatus.last_file)}
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              {boardCount} boards, {pdfCount} PDFs
-              {scanStatus && scanStatus.duration_ms > 0 && (
-                <span className="library-scan-result">
-                  {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
-                </span>
-              )}
-              {scanStatus?.pdf_running && (
-                <span className="library-indexing" style={{ marginLeft: 8 }}>
-                  PDF indexing {scanStatus.pdf_extracted}/{scanStatus.pdf_total}
-                  {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
-                </span>
-              )}
-              {scanStatus?.pdf_running && scanStatus?.pdf_current && (
-                <div className="library-indexing-file" title={scanStatus.pdf_current}>
-                  {tailTruncate(scanStatus.pdf_current)}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        <div className="library-statsbar-actions">
-          {scanStatus?.running ? (
-            <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
-          ) : scanStatus?.pdf_running ? (
-            <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
-          ) : (
-            <>
-              <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
-                <IconFolderSearch size={14} />
-              </button>
-              <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
-                <IconFileText size={14} />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Tabs + inline DB/Live pill (row 2) */}
+      {/* Tabs + inline DB/Live pill (row 1) */}
       <div className="library-tabs-row">
         <div className="library-tabs">
           <button
@@ -497,6 +500,10 @@ export function LibraryPanel() {
           onDeleteBinding={handleDeleteBinding}
         />
       )}
+
+      {/* Stats + scan buttons — pinned to bottom of the panel for visual
+       *  consistency with SettingsPanel (tabs at top, status at bottom). */}
+      {statsBar}
     </div>
   );
 }
@@ -662,6 +669,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
           </>;
         })()}
         {detail.manufacturer && <span>Mfr: {detail.manufacturer}</span>}
+        {detail.board_color && <span>Color: {detail.board_color}</span>}
         {detail.model && <span>Model: {detail.model}</span>}
         {detail.part_count != null && <span>{detail.part_count} parts</span>}
         {detail.net_count != null && <span>{detail.net_count} nets</span>}
@@ -1263,6 +1271,35 @@ function PreviewThumbnail({ file }: { file: DatabankFile }) {
 
 // --- Metadata Edit Modal ---
 
+/** Read-only indicator shown above the editable fields in the metadata modal.
+ *  Surfaces whether the boards.db resolver match has a populated colors.hex —
+ *  so the user knows whether "Use board metadata color" will affect this file. */
+function PcbColorRow({ detail }: { detail: FileDetail }) {
+  const colorName = detail.board_color || '';
+  const colorHex = detail.board_color_hex || '';
+
+  let dotColor: string;
+  let labelText: string;
+  if (!colorName) {
+    dotColor = '#666';
+    labelText = '— (no resolver match)';
+  } else if (!colorHex) {
+    dotColor = '#666';
+    labelText = `${colorName} (no hex yet)`;
+  } else {
+    dotColor = colorHex;
+    labelText = `${colorName} (hex set)`;
+  }
+
+  return (
+    <div className="library-modal-pcb-color">
+      <span>PCB Color:</span>
+      <span className="library-modal-pcb-color-dot" style={{ background: dotColor }} aria-hidden="true" />
+      <span className="library-modal-pcb-color-text">{labelText}</span>
+    </div>
+  );
+}
+
 function MetadataEditModal({ detail, onClose }: {
   detail: FileDetail;
   onClose: () => void;
@@ -1290,6 +1327,8 @@ function MetadataEditModal({ detail, onClose }: {
       <div className="library-modal" onClick={(e) => e.stopPropagation()}>
         <div className="library-modal-title">Edit Metadata</div>
         <div className="library-modal-filename">{detail.filename}</div>
+
+        <PcbColorRow detail={detail} />
 
         <label className="library-modal-field">
           <span>Board Number</span>

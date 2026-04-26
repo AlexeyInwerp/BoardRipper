@@ -12,7 +12,7 @@ var appleRevisionRe = regexp.MustCompile(`^(820-\d{4,5})-[A-Z0-9]+$`)
 // nmNoHyphenRe normalizes LCFC board numbers without hyphens: NMD821 → NM-D821
 var nmNoHyphenRe = regexp.MustCompile(`^NM([A-Z]\d{3,4})$`)
 
-const boardQuery = `SELECT id, brand, model, model_number, board_number, board_name, odm, board_number_type, source FROM boards`
+const boardQuery = `SELECT b.id, b.uuid, b.brand, b.model, b.model_number, b.board_number, b.board_name, b.odm, b.board_number_type, c.name AS color, c.hex AS color_hex, b.source FROM boards b LEFT JOIN colors c ON b.color_id = c.id`
 
 // Resolve looks up a board number in the reference database.
 // Checks: exact → prefix → base number (strip revision) → alias.
@@ -30,18 +30,18 @@ func (db *DB) Resolve(boardNumber string) *BoardMatch {
 	}
 
 	// 1. Exact match
-	if m := db.queryBoard(boardQuery+` WHERE upper(board_number) = ?`, upper); m != nil {
+	if m := db.queryBoard(boardQuery+` WHERE upper(b.board_number) = ?`, upper); m != nil {
 		return m
 	}
 
 	// 2. Prefix match (820-02016 matches 820-02016-A)
-	if m := db.queryBoard(boardQuery+` WHERE upper(board_number) LIKE ? LIMIT 1`, upper+"-%"); m != nil {
+	if m := db.queryBoard(boardQuery+` WHERE upper(b.board_number) LIKE ? LIMIT 1`, upper+"-%"); m != nil {
 		return m
 	}
 
 	// 3. Strip Apple revision suffix (820-02098-H → 820-02098%)
 	if base := appleRevisionRe.FindStringSubmatch(upper); base != nil {
-		if m := db.queryBoard(boardQuery+` WHERE upper(board_number) LIKE ? LIMIT 1`, base[1]+"%"); m != nil {
+		if m := db.queryBoard(boardQuery+` WHERE upper(b.board_number) LIKE ? LIMIT 1`, base[1]+"%"); m != nil {
 			return m
 		}
 	}
@@ -49,7 +49,7 @@ func (db *DB) Resolve(boardNumber string) *BoardMatch {
 	// 4. Normalize LCFC no-hyphen format (NMD821 → NM-D821)
 	if nm := nmNoHyphenRe.FindStringSubmatch(upper); nm != nil {
 		normalized := "NM-" + nm[1]
-		if m := db.queryBoard(boardQuery+` WHERE upper(board_number) = ?`, normalized); m != nil {
+		if m := db.queryBoard(boardQuery+` WHERE upper(b.board_number) = ?`, normalized); m != nil {
 			return m
 		}
 	}
@@ -60,7 +60,7 @@ func (db *DB) Resolve(boardNumber string) *BoardMatch {
 	if err != nil {
 		return nil
 	}
-	return db.queryBoard(boardQuery+` WHERE id = ?`, boardID)
+	return db.queryBoard(boardQuery+` WHERE b.id = ?`, boardID)
 }
 
 // ResolveByAlias looks up a string directly against the board_aliases table.
@@ -77,7 +77,7 @@ func (db *DB) ResolveByAlias(alias string) *BoardMatch {
 	if err != nil {
 		return nil
 	}
-	return db.queryBoard(boardQuery+` WHERE id = ?`, boardID)
+	return db.queryBoard(boardQuery+` WHERE b.id = ?`, boardID)
 }
 
 // ResolveFilename extracts board numbers from a filename and resolves the best match.
@@ -100,10 +100,10 @@ func (db *DB) ResolveFilename(filename string) ([]ExtractedNumber, *BoardMatch) 
 func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 	var id int64
 	m := &BoardMatch{}
-	var model, modelNum, boardName, odm, boardType, source *string
+	var model, modelNum, boardName, odm, boardType, color, colorHex, source *string
 
 	err := db.reader.QueryRow(query, args...).Scan(
-		&id, &m.Brand, &model, &modelNum, &m.BoardNumber, &boardName, &odm, &boardType, &source,
+		&id, &m.UUID, &m.Brand, &model, &modelNum, &m.BoardNumber, &boardName, &odm, &boardType, &color, &colorHex, &source,
 	)
 	if err != nil {
 		return nil
@@ -122,6 +122,12 @@ func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 	}
 	if boardType != nil {
 		m.Type = *boardType
+	}
+	if color != nil {
+		m.Color = *color
+	}
+	if colorHex != nil {
+		m.ColorHex = *colorHex
 	}
 	if source != nil {
 		m.Source = *source

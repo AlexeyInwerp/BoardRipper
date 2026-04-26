@@ -2,6 +2,7 @@
   --bg-primary: #0f0f1a;
   --bg-secondary: #1a1a2e;
   --bg-tertiary: #16213e;
+  --canvas-bg: #1a1a2e;
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0b0;
   --accent: #4a9eff;
@@ -25,7 +26,7 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--canvas-bg);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
   font-size: 13px;
@@ -3482,16 +3483,18 @@ html, body, #root {
   font-size: 12px;
 }
 
-/* Row 1 — stats + scan buttons (top) */
+/* Status bar — pinned to bottom of the panel for visual consistency
+ * (tabs at top, status at bottom, mirroring SettingsPanel). */
 .library-statsbar {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background: var(--bg-tertiary);
   flex-shrink: 0;
+  margin-top: auto;
   min-height: 22px;
 }
 .library-statsbar-text {
@@ -4298,6 +4301,27 @@ html, body, #root {
   font-size: 11px;
   color: var(--text-secondary);
   word-break: break-all;
+}
+
+.library-modal-pcb-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  margin: 4px 0 12px 0;
+  padding: 4px 0;
+}
+.library-modal-pcb-color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.library-modal-pcb-color-text {
+  font-family: monospace;
+  font-size: 12px;
 }
 
 .library-modal-field {
@@ -5355,4 +5379,10 @@ html, body, #root {
 .pdf-watermark-revert {
   /* inherits .settings-btn-option styling */
   flex: 0 0 auto;
+}
+
+/* Settings panel tab strip — reuses LibraryPanel tab visuals; tighten the
+ * surrounding spacing so the strip sits flush above CollapsibleSection content. */
+.settings-tabs-row {
+  margin-bottom: 4px;
 }
