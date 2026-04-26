@@ -228,7 +228,7 @@ function GlobalSearch() {
       <input
         ref={inputRef}
         type="text"
-        placeholder="Search..."
+        placeholder="Global search..."
         className="toolbar-search"
         value={query}
         onChange={handleChange}
