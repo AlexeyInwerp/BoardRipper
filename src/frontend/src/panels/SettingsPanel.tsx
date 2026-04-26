@@ -36,6 +36,72 @@ function useOverride(field: keyof RenderSettings) {
 
 type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'pdf';
 
+export type SettingsTabId = 'theme' | 'board' | 'input' | 'system';
+
+const TAB_ORDER: SettingsTabId[] = ['theme', 'board', 'input', 'system'];
+
+const TAB_LABELS: Record<SettingsTabId, string> = {
+  theme:  'Theme',
+  board:  'Board',
+  input:  'Input',
+  system: 'System',
+};
+
+/** Maps each section id to the tab that owns it. Used by focusSection deep-links. */
+export const SECTION_TO_TAB: Record<SectionId, SettingsTabId> = {
+  // Board tab
+  outline:           'board',
+  parts:             'board',
+  pins:              'board',
+  partTypeOverrides: 'board',
+  netColors:         'board',
+  selection:         'board',
+  netLines:          'board',
+  // Input tab
+  zoomLod:    'input',
+  navigation: 'input',
+  shortcuts:  'input',
+  // System tab
+  performance: 'system',
+  pdf:         'system',
+  server:      'system',
+};
+
+const ACTIVE_TAB_KEY = 'boardripper-settings-active-tab';
+
+function loadActiveTab(): SettingsTabId {
+  try {
+    const raw = localStorage.getItem(ACTIVE_TAB_KEY);
+    if (raw && TAB_ORDER.includes(raw as SettingsTabId)) return raw as SettingsTabId;
+  } catch { /* ignore */ }
+  return 'board';
+}
+
+function saveActiveTab(id: SettingsTabId) {
+  try { localStorage.setItem(ACTIVE_TAB_KEY, id); } catch { /* ignore */ }
+}
+
+function openSectionsKey(tab: SettingsTabId): string {
+  return `boardripper-settings-open-sections-${tab}`;
+}
+
+function loadOpenSections(tab: SettingsTabId): Set<SectionId> {
+  try {
+    const raw = localStorage.getItem(openSectionsKey(tab));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as SectionId[];
+    return new Set(parsed);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveOpenSections(tab: SettingsTabId, sections: Set<SectionId>) {
+  try {
+    localStorage.setItem(openSectionsKey(tab), JSON.stringify(Array.from(sections)));
+  } catch { /* ignore */ }
+}
+
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
 type RuleUpdater = {
   add: (pattern: string, color: string) => void;
@@ -1029,8 +1095,6 @@ function PdfInertiaToggle() {
 
 // ---- Main panel ----
 
-const INITIALLY_OPEN: SectionId[] = [];
-
 type SettingsMode = 'global' | 'board';
 
 /**
@@ -1111,8 +1175,21 @@ export function SettingsPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveMode, activeFileName]);
 
-  // Collapsible sections
-  const [openSections, setOpenSections] = useState<Set<SectionId>>(new Set(INITIALLY_OPEN));
+  // Tabs + collapsible sections
+  const [activeTab, setActiveTabState] = useState<SettingsTabId>(() => loadActiveTab());
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(() => loadOpenSections(loadActiveTab()));
+
+  // Persist open sections per tab whenever they change.
+  useEffect(() => {
+    saveOpenSections(activeTab, openSections);
+  }, [activeTab, openSections]);
+
+  const setActiveTab = useCallback((id: SettingsTabId) => {
+    setActiveTabState(id);
+    saveActiveTab(id);
+    setOpenSections(loadOpenSections(id));
+  }, []);
+
   const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1147,6 +1224,10 @@ export function SettingsPanel() {
   }, []);
 
   const focusSection = useCallback((id: SectionId) => {
+    const targetTab = SECTION_TO_TAB[id];
+    if (targetTab && targetTab !== activeTab) {
+      setActiveTab(targetTab);
+    }
     setOpenSections(prev => { const next = new Set(prev); next.add(id); return next; });
     requestAnimationFrame(() => {
       sectionRefsMapRef.current[id]?.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1154,7 +1235,7 @@ export function SettingsPanel() {
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
     setFocusedSection(id);
     focusTimerRef.current = setTimeout(() => setFocusedSection(null), 1400);
-  }, []);
+  }, [activeTab, setActiveTab]);
 
   const updateDraft: DraftUpdater = useCallback((partial) => {
     setDraft(prev => {
@@ -1268,6 +1349,22 @@ export function SettingsPanel() {
         {/* ── Cache control — prominent, quick-access ── */}
         <CacheControlBar hasBoard={hasBoard} />
 
+        {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
+        <div className="library-tabs-row settings-tabs-row">
+          <div className="library-tabs">
+            {TAB_ORDER.map(tab => (
+              <button
+                key={tab}
+                type="button"
+                className={`library-tab ${activeTab === tab ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {TAB_LABELS[tab]}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* ── Mode switch: Global vs Board ── */}
         <div className="settings-mode-switch">
           <button
@@ -1306,6 +1403,11 @@ export function SettingsPanel() {
       <OverrideContext.Provider value={overrideCtx}>
       <div className="settings-scroll">
 
+      {activeTab === 'theme' && (
+        <ThemeTab />
+      )}
+
+      {activeTab === SECTION_TO_TAB.outline && (
       <CollapsibleSection id="outline" title="Board Outline" isOpen={openSections.has('outline')}
         onToggle={toggleSection} sectionRef={outlineRef} isFocused={focusedSection === 'outline'}>
         <Slider label="Stroke Width" value={draft.outlineWidth} min={0.5} max={20} step={0.5} field="outlineWidth" onUpdate={updateDraft}
@@ -1315,7 +1417,9 @@ export function SettingsPanel() {
         <Slider label="Board Fill" value={draft.boardFillAlpha} min={0} max={0.5} step={0.01} field="boardFillAlpha" onUpdate={updateDraft}
           title="Semi-transparent fill inside the board outline. Helps distinguish the PCB area from the background" />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.parts && (
       <CollapsibleSection id="parts" title="Parts / Components" isOpen={openSections.has('parts')}
         onToggle={toggleSection} sectionRef={partsRef} isFocused={focusedSection === 'parts'}>
         <Slider label="Border Width" value={draft.partBorderWidth} min={0.1} max={10} step={0.1} field="partBorderWidth" onUpdate={updateDraft}
@@ -1336,7 +1440,9 @@ export function SettingsPanel() {
           title="Add a dark shadow halo behind part labels for better readability against colored or busy backgrounds" />
         <LabelSizeSelector draft={draft} onUpdate={updateDraft} />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.pins && (
       <CollapsibleSection id="pins" title="Pins / Pads" isOpen={openSections.has('pins')}
         onToggle={toggleSection} sectionRef={pinsRef} isFocused={focusedSection === 'pins'}>
         <Slider label="Min Radius" value={draft.pinMinRadius} min={1} max={20} step={0.5} field="pinMinRadius" onUpdate={updateDraft}
@@ -1358,7 +1464,9 @@ export function SettingsPanel() {
         <Slider label="BGA Label Gap" value={draft.bgaLabelGapFactor} min={0} max={1} step={0.05} field="bgaLabelGapFactor" onUpdate={updateDraft}
           title="Visible vertical gap between pin number and net name labels on dense BGA parts, as a fraction of pin radius. On BGAs, pin numbers and net names alternate above/below the pin center to avoid overlap. 0 = labels meet at the pin center; larger = more visible separation" />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.zoomLod && (
       <CollapsibleSection id="zoomLod" title="Zoom Level of Detail" isOpen={openSections.has('zoomLod')}
         onToggle={toggleSection} sectionRef={zoomLodRef} isFocused={focusedSection === 'zoomLod'}>
         <div className="color-rule-hint" style={{ marginBottom: 6 }}>Controls when text labels appear/disappear as you zoom. Higher = must zoom in more. At 100% zoom: 1 mil = 1 screen pixel.</div>
@@ -1373,12 +1481,16 @@ export function SettingsPanel() {
         <Slider label="Global Zoom Floor" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft}
           title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.partTypeOverrides && (
       <CollapsibleSection id="partTypeOverrides" title="Part Types" isOpen={openSections.has('partTypeOverrides')}
         onToggle={toggleSection} sectionRef={partTypeOverridesRef} isFocused={focusedSection === 'partTypeOverrides'}>
         <PartTypesSection types={draft.partTypes} actions={partTypeActions} />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.netColors && (
       <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}
         onToggle={toggleSection} sectionRef={netColorsRef} isFocused={focusedSection === 'netColors'}>
         <div className="settings-subsection-label">Default pin color (no rule matched)</div>
@@ -1401,7 +1513,9 @@ export function SettingsPanel() {
         <div className="settings-subsection-label">No-Connect Patterns</div>
         <NcNetPatternsSection patterns={draft.ncNetPatterns} onChange={onNcPatternsChange} />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.selection && (
       <CollapsibleSection id="selection" title="Selection & Highlight" isOpen={openSections.has('selection')}
         onToggle={toggleSection} sectionRef={selectionRef} isFocused={focusedSection === 'selection'}>
         <Slider label="Selection Border" value={draft.selectionWidth} min={0.5} max={10} step={0.5} field="selectionWidth" onUpdate={updateDraft}
@@ -1425,7 +1539,9 @@ export function SettingsPanel() {
         <Toggle label="Top Bar Overlay" value={draft.showSelectionOverlay} field="showSelectionOverlay" onUpdate={updateDraft}
           title="Show selected component and pin info in a text overlay bar at the top of the board viewport" />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.netLines && (
       <CollapsibleSection id="netLines" title="Net Lines" isOpen={openSections.has('netLines')}
         onToggle={toggleSection} sectionRef={netLinesRef} isFocused={focusedSection === 'netLines'}>
         <Slider label="Line Width" value={draft.netLineWidth} min={0.5} max={5} step={0.5} field="netLineWidth" onUpdate={updateDraft}
@@ -1439,7 +1555,9 @@ export function SettingsPanel() {
         <Toggle label="Pulse Animation" value={draft.netLinePulse} field="netLinePulse" onUpdate={updateDraft}
           title="Animate net lines with a red traveling pulse effect, making the connection path easier to follow across the board" />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.navigation && (
       <CollapsibleSection id="navigation" title="Navigation" isOpen={openSections.has('navigation')}
         onToggle={toggleSection} sectionRef={navigationRef} isFocused={focusedSection === 'navigation'}>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
@@ -1474,7 +1592,9 @@ export function SettingsPanel() {
         <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft}
           title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.performance && (
       <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft}
@@ -1486,7 +1606,9 @@ export function SettingsPanel() {
         <Toggle label="[Debug] Label Size Tiers" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft}
           title="Color part labels by their computed font-size tier: blue = small, yellow = medium, green = large. Useful for tuning the Small/Medium/Large size thresholds" />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.pdf && (
       <CollapsibleSection id="pdf" title="PDF Viewer" isOpen={openSections.has('pdf')}
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
         <div className="settings-subsection-label">Render quality</div>
@@ -1508,7 +1630,9 @@ export function SettingsPanel() {
         <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
         <ScrollBindingsEditor />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.server && (
       <CollapsibleSection id="server" title="Server / Library" isOpen={openSections.has('server')}
         onToggle={toggleSection} sectionRef={serverRef} isFocused={focusedSection === 'server'}>
         <LibraryFolderSetting />
@@ -1516,7 +1640,9 @@ export function SettingsPanel() {
         <DatabaseInfoSection />
         <LibrarySettingsSection />
       </CollapsibleSection>
+      )}
 
+      {activeTab === SECTION_TO_TAB.shortcuts && (
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
         onToggle={toggleSection} sectionRef={shortcutsRef} isFocused={focusedSection === 'shortcuts'}>
         {(['file', 'view', 'navigation', 'pdf'] as const).map(cat => (
@@ -1531,6 +1657,7 @@ export function SettingsPanel() {
           </div>
         ))}
       </CollapsibleSection>
+      )}
 
       <button className="settings-reset-btn" onClick={handleReset}
         title={isBoardMode ? 'Clear all board overrides — revert to global settings' : 'Reset all settings to defaults'}>
@@ -1538,6 +1665,14 @@ export function SettingsPanel() {
       </button>
       </div>
       </OverrideContext.Provider>
+    </div>
+  );
+}
+
+function ThemeTab() {
+  return (
+    <div style={{ padding: 16, color: 'var(--text-secondary)' }}>
+      Theme tab — content added in T15.
     </div>
   );
 }

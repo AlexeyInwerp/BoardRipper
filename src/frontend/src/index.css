@@ -5357,3 +5357,9 @@ html, body, #root {
   /* inherits .settings-btn-option styling */
   flex: 0 0 auto;
 }
+
+/* Settings panel tab strip — reuses LibraryPanel tab visuals; tighten the
+ * surrounding spacing so the strip sits flush above CollapsibleSection content. */
+.settings-tabs-row {
+  margin-bottom: 4px;
+}
