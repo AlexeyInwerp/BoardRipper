@@ -18,6 +18,7 @@ import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
+import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
@@ -176,6 +177,7 @@ export class BoardRenderer {
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
@@ -907,6 +909,7 @@ export class BoardRenderer {
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
+    this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
       if (cmd === 'pan' && this.tabId === boardStore.activeTabId) {
         this.panView(payload as PanDirection);
@@ -2297,6 +2300,19 @@ export class BoardRenderer {
       // The next onBoardUpdate (on resume or tab switch) will detect the missing
       // scene and re-activate it via the "recovering lost scene" path.
     }
+  }
+
+  /**
+   * Theme switched — swap the live PixiJS background color and trigger a full
+   * scene rebuild so getter-driven BOARD_COLORS values take effect.
+   */
+  private onThemeUpdate(): void {
+    if (this.app && this.app.renderer) {
+      this.app.renderer.background.color = hexToInt(themeStore.activeTheme().board.canvasBackground);
+    }
+    // Reuse the settings-change rebuild path — drops the cached scene and
+    // rebuilds with the new BOARD_COLORS values on next activate.
+    this.onSettingsUpdate();
   }
 
   // --- Selection blink ---
@@ -3839,6 +3855,7 @@ export class BoardRenderer {
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
+    this.unsubscribeTheme?.();
     this.unsubscribeViewCommands?.();
     this.resizeObserver?.disconnect();
     if (this.boundShiftWheel) {
