@@ -30,6 +30,7 @@ export interface DatabankFile {
   resolution_status: 'resolved' | 'pattern_matched' | 'unresolved' | '';
   board_uuid?: string;
   board_color?: string;
+  board_color_hex?: string;
 }
 
 export interface DatabankBinding {
