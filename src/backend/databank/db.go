@@ -67,7 +67,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -106,6 +106,11 @@ func (db *DB) migrate() error {
 	if ver < 5 {
 		if err := db.migrateV5(); err != nil {
 			return fmt.Errorf("v5: %w", err)
+		}
+	}
+	if ver < 6 {
+		if err := db.migrateV6(); err != nil {
+			return fmt.Errorf("v6: %w", err)
 		}
 	}
 
@@ -305,6 +310,37 @@ func (db *DB) migrateV5() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 5); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// migrateV6 adds board_uuid and board_color columns to the files table.
+// These are denormalized from boards.db at scan time so the frontend can
+// render them without an extra resolver fetch.
+func (db *DB) migrateV6() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE files ADD COLUMN board_uuid TEXT`,
+		`ALTER TABLE files ADD COLUMN board_color TEXT`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:40], err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 6); err != nil {
 		return err
 	}
 
