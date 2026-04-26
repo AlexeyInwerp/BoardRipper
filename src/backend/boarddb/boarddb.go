@@ -21,6 +21,7 @@ type BoardMatch struct {
 	ODM          string   `json:"odm"`
 	Type         string   `json:"board_number_type,omitempty"`
 	Color        string   `json:"color,omitempty"`
+	ColorHex     string   `json:"color_hex,omitempty"`
 	Aliases      []string `json:"aliases,omitempty"`
 	ModelAliases []string `json:"model_aliases,omitempty"`
 	Source       string   `json:"source,omitempty"`
