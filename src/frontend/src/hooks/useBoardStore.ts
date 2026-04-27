@@ -1,7 +1,7 @@
 import { boardStore } from '../store/board-store';
 import { createStoreHook } from './createStoreHook';
 import type { BoardData, Part, Pin } from '../parsers';
-import type { SelectionState, BoardTab, Toast } from '../store/board-store';
+import type { SelectionState, BoardTab, Toast, NetLineMode } from '../store/board-store';
 import type { LayerState } from '../store/layer-store';
 
 interface StoreSnapshot {
@@ -21,7 +21,7 @@ interface StoreSnapshot {
   mirrorX: boolean;
   mirrorY: boolean;
   flipAxis: 'x' | 'y';
-  showNetLines: boolean;
+  netLineMode: NetLineMode;
   showNetDim: boolean;
   showHoverInfo: boolean;
   followPdf: boolean;
@@ -61,7 +61,7 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   mirrorX: boardStore.mirrorX,
   mirrorY: boardStore.mirrorY,
   flipAxis: boardStore.flipAxis,
-  showNetLines: boardStore.showNetLines,
+  netLineMode: boardStore.netLineMode,
   showNetDim: boardStore.showNetDim,
   showHoverInfo: boardStore.showHoverInfo,
   followPdf: boardStore.followPdf,
