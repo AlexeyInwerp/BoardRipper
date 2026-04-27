@@ -306,25 +306,32 @@ function extractPins(
 
     const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
 
-    const padMinX = Math.min(cx1, cx2) / div;
-    const padMaxX = Math.max(cx1, cx2) / div;
-    const padMinY = Math.min(cy1, cy2) / div;
-    const padMaxY = Math.max(cy1, cy2) / div;
-
-    // Resolve pad shape via the padstack so the selection highlight uses
-    // the same primitive as the pad layer. Pin selection on a BGA ball
-    // should draw a circle, not the AABB square.
+    // Resolve pad shape & real copper dims via the padstack so the
+    // selection highlight matches the rendered pad rectangle exactly.
+    // For THT pads the placedPad coords are the clearance frame, not the
+    // copper — recompute the bounds from the resolved pad dims centred on
+    // the pin position.
+    const fallbackW = Math.abs(cx2 - cx1) / div;
+    const fallbackH = Math.abs(cy2 - cy1) / div;
     let padShape: PadShape | undefined;
+    let padW = fallbackW;
+    let padH = fallbackH;
     const padBlock = db.getBlockAs<Blk0x0DPad>(pad.padPtr, 0x0D);
     if (padBlock) {
       const ps = db.getBlockAs<Blk0x1CPadstack>(padBlock.padStack, 0x1C);
       if (ps) {
         const resolved = resolvePadShape(ps);
-        if (resolved) padShape = resolved.shape;
+        if (resolved) {
+          padShape = resolved.shape;
+          padW = resolved.w / div;
+          padH = resolved.h / div;
+        }
       }
     }
-    const padW = padMaxX - padMinX;
-    const padH = padMaxY - padMinY;
+    const padMinX = px - padW / 2;
+    const padMaxX = px + padW / 2;
+    const padMinY = py - padH / 2;
+    const padMaxY = py + padH / 2;
     const padCornerRadius = padShape === 'roundrect' ? Math.min(padW, padH) / 2 : undefined;
 
     pins.push({
@@ -557,11 +564,19 @@ function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
  * real pad shape. Falls back to undefined when the data doesn't match a
  * recognised primitive — the renderer then draws the AABB rectangle.
  */
-function resolvePadShape(
-  padstack: Blk0x1CPadstack,
-): { shape: PadShape; aspectIsCircle: boolean } | null {
+/** Resolved pad geometry: the primitive shape plus the actual copper-pad
+ *  dimensions in raw padstack units (Allegro stores w/h as int with
+ *  `div`-scaled mils). Caller divides w/h by `div` for board-space mils. */
+interface ResolvedPad {
+  shape: PadShape;
+  w: number;     // raw padstack units (divide by `div` for mils)
+  h: number;     // raw padstack units
+  isCircle: boolean;
+}
+
+function resolvePadShape(padstack: Blk0x1CPadstack): ResolvedPad | null {
   // Pick the relevant component: comp[0] for SMD, first non-clearance
-  // shape for THT (skip leading `type=6` clearance frames).
+  // shape for THT (skip leading `type=6` clearance frames + thermals).
   const isSmd = padstack.layerCount <= 1;
   let comp = padstack.components[0];
   if (!isSmd) {
@@ -574,17 +589,17 @@ function resolvePadShape(
     }
   }
   if (!comp || comp.type === 0 || comp.w <= 0 || comp.h <= 0) return null;
-  const aspectIsCircle = comp.w === comp.h;
+  const isCircle = comp.w === comp.h;
+  let shape: PadShape;
   switch (comp.type) {
-    case 2:  return { shape: 'round', aspectIsCircle: true };
-    case 6:  return { shape: 'rect', aspectIsCircle };
+    case 2:  shape = 'round'; break;
+    case 6:  shape = 'rect'; break;
     case 12:
-    case 22: return aspectIsCircle
-                ? { shape: 'round', aspectIsCircle: true }
-                : { shape: 'roundrect', aspectIsCircle: false };
-    case 23: return { shape: 'poly', aspectIsCircle };
+    case 22: shape = isCircle ? 'round' : 'roundrect'; break;
+    case 23: shape = 'poly'; break;
     default: return null;
   }
+  return { shape, w: comp.w, h: comp.h, isCircle };
 }
 
 function extractPads(
@@ -612,51 +627,64 @@ function extractPads(
       if (!placed || placed.blockType !== 0x32) break;
       const pp = placed as Blk0x32PlacedPad;
 
-      // Pad shape — bbox already in board coords, already rotated.
+      // The placedPad's `coords` is the ROTATED AABB of the *outermost*
+      // padstack component (= the actual pad for SMD, but the *clearance
+      // keep-out frame* for THT). We use coords only for centring. Real
+      // pad-copper dims come from `resolvePadShape` (components[1] for
+      // THT), so a 712-mil GND chassis pad doesn't show up rendered as
+      // a 712-mil disc when the actual copper is only ~150 mils.
       const [bx1, by1, bx2, by2] = pp.coords;
-      const minX = Math.min(bx1, bx2) / div;
-      const maxX = Math.max(bx1, bx2) / div;
-      const minY = Math.min(by1, by2) / div;
-      const maxY = Math.max(by1, by2) / div;
+      const ccx = ((bx1 + bx2) / 2) / div;
+      const ccy = ((by1 + by2) / 2) / div;
+      const fallbackW = Math.abs(bx2 - bx1) / div;
+      const fallbackH = Math.abs(by2 - by1) / div;
 
-      // Only emit pads with a non-degenerate footprint.
-      if (maxX > minX && maxY > minY) {
-        // Resolve through-hole vs SMD via padstack.layerCount, plus the
-        // actual pad shape for shape-aware rendering. Without the shape
-        // resolution every Allegro pad would draw as the AABB rectangle —
-        // BGA balls would render as squares stuck on top of round pin
-        // sprites, exactly the artefact seen on TVW before its fix.
-        let side: 'top' | 'bottom' | 'both' = fpSide;
-        let drill: number | undefined;
-        let shape: PadShape | undefined;
-        const padBlock = db.getBlock(pp.padPtr);
-        if (padBlock && padBlock.blockType === 0x0D) {
-          const ps = db.getBlock((padBlock as Blk0x0DPad).padStack);
-          if (ps && ps.blockType === 0x1C) {
-            const padstack = ps as Blk0x1CPadstack;
-            if (padstack.layerCount > 1) side = 'both';
-            // Drill diameter only meaningful for through-hole pads.
-            if (side === 'both' && padstack.drill > 0) {
-              drill = padstack.drill / div;
-            }
-            const resolved = resolvePadShape(padstack);
-            if (resolved) shape = resolved.shape;
+      // Resolve through-hole vs SMD via padstack.layerCount, plus the
+      // actual pad shape & dims for shape-aware rendering.
+      let side: 'top' | 'bottom' | 'both' = fpSide;
+      let drill: number | undefined;
+      let shape: PadShape | undefined;
+      let padW = fallbackW;
+      let padH = fallbackH;
+      const padBlock = db.getBlock(pp.padPtr);
+      if (padBlock && padBlock.blockType === 0x0D) {
+        const ps = db.getBlock((padBlock as Blk0x0DPad).padStack);
+        if (ps && ps.blockType === 0x1C) {
+          const padstack = ps as Blk0x1CPadstack;
+          if (padstack.layerCount > 1) side = 'both';
+          if (side === 'both' && padstack.drill > 0) {
+            drill = padstack.drill / div;
+          }
+          const resolved = resolvePadShape(padstack);
+          if (resolved) {
+            shape = resolved.shape;
+            padW = resolved.w / div;
+            padH = resolved.h / div;
           }
         }
-
-        const w = maxX - minX;
-        const h = maxY - minY;
-        const cornerRadius = shape === 'roundrect' ? Math.min(w, h) / 2 : undefined;
-        const net = netAssignMap.get(pp.netPtr);
-        out.push({
-          bounds: { minX, minY, maxX, maxY },
-          side,
-          net: net && net.length > 0 ? net : undefined,
-          drill,
-          ...(shape ? { shape, width: w, height: h } : {}),
-          ...(cornerRadius != null ? { cornerRadius } : {}),
-        });
       }
+
+      // Drop degenerate pads — both fallback bbox and resolved dims unusable.
+      if (padW <= 0 || padH <= 0) { key = pp.nextInFp; continue; }
+
+      // Re-centre the bounds around the pad position using the real
+      // copper dims. For SMD this matches the placedPad bbox by
+      // construction; for THT it shrinks the rect to the actual pad copper.
+      const minX = ccx - padW / 2;
+      const maxX = ccx + padW / 2;
+      const minY = ccy - padH / 2;
+      const maxY = ccy + padH / 2;
+
+      const cornerRadius = shape === 'roundrect' ? Math.min(padW, padH) / 2 : undefined;
+      const net = netAssignMap.get(pp.netPtr);
+      out.push({
+        bounds: { minX, minY, maxX, maxY },
+        side,
+        net: net && net.length > 0 ? net : undefined,
+        drill,
+        ...(shape ? { shape, width: padW, height: padH } : {}),
+        ...(cornerRadius != null ? { cornerRadius } : {}),
+      });
 
       key = pp.nextInFp;
     }
