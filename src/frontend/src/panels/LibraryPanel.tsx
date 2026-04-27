@@ -839,10 +839,12 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
             isBoard={isBoard}
             focal={detail}
             candidates={bindCandidates}
-            onPick={(f, category) => {
-              const autoOpen = autoOpenDefault(category);
-              if (isBoard) onCreateBinding(detail.id, f.id, category, autoOpen);
-              else onCreateBinding(f.id, detail.id, category, autoOpen);
+            onPick={(f) => {
+              // New bindings default to 'schematic' — the common case.
+              // The user re-categorizes via the row's dropdown after if
+              // it's actually a datasheet or other reference doc.
+              if (isBoard) onCreateBinding(detail.id, f.id, 'schematic', true);
+              else onCreateBinding(f.id, detail.id, 'schematic', true);
               setShowBindPicker(false);
             }}
           />
@@ -992,9 +994,8 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
   isBoard: boolean;
   focal: DatabankFile;
   candidates: DatabankFile[];
-  onPick: (file: DatabankFile, category: BindingCategory) => void;
+  onPick: (file: DatabankFile) => void;
 }) {
-  const [category, setCategory] = useState<BindingCategory>('schematic');
   const [filter, setFilter] = useState('');
 
   // Score each candidate against the focal file. Filename match handles the
@@ -1016,8 +1017,8 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
   }, [candidates, focal, isBoard]);
 
   // Substring filter — case-insensitive — so the user can narrow a long
-  // candidate list (100k databank entries → ≤100 of opposite type, but
-  // even those benefit from a search box).
+  // candidate list. Matches filename and the metadata fields the library's
+  // own search uses (board_number, manufacturer, model).
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return scored;
@@ -1032,20 +1033,10 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
   return (
     <div className="library-bind-picker">
       <div className="library-bind-picker-toolbar">
-        <span>Category:</span>
-        <select
-          className="library-binding-category"
-          value={category}
-          onChange={(e) => setCategory(normalizeCategory(e.target.value))}
-        >
-          {BINDING_CATEGORIES.map(c => (
-            <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
-          ))}
-        </select>
         <input
           type="text"
           className="library-bind-picker-filter"
-          placeholder="Filter…"
+          placeholder={`Filter ${isBoard ? 'PDFs' : 'boards'}…`}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           autoFocus
@@ -1062,7 +1053,7 @@ function BindPicker({ isBoard, focal, candidates, onPick }: {
           <div
             key={f.id}
             className="library-bind-candidate"
-            onClick={() => onPick(f, category)}
+            onClick={() => onPick(f)}
             title={score >= 50 ? `Likely match (score ${score})` : undefined}
           >
             <span className={`library-file-icon ${f.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
