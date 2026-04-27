@@ -4049,6 +4049,18 @@ html, body, #root {
   color: #fff;
 }
 
+.library-bind-match-badge {
+  margin-left: auto;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  flex-shrink: 0;
+}
+
 .library-bind-picker-toolbar {
   display: flex;
   align-items: center;

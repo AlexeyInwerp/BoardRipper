@@ -641,6 +641,34 @@ function normalizeCategory(c: string): BindingCategory {
   return (BINDING_CATEGORIES as readonly string[]).includes(c) ? (c as BindingCategory) : 'other';
 }
 
+const APPLE_BOARD_RE = /820-\d{5}(?:-\d+)?/i;
+
+function stripExt(filename: string): string {
+  const i = filename.lastIndexOf('.');
+  return (i > 0 ? filename.slice(0, i) : filename).toLowerCase();
+}
+
+/** Mirror of backend `MatchScore` (src/backend/databank/metadata.go).
+ *  Returns 0–100; ≥50 implies a strong likelihood the PDF is the schematic
+ *  for the board. Used to sort the bind-picker so the obvious match floats
+ *  to the top instead of alphabetically far away. */
+function nameMatchScore(boardFilename: string, pdfFilename: string): number {
+  const boardBase = stripExt(boardFilename);
+  const pdfBase = stripExt(pdfFilename);
+  if (boardBase === pdfBase) return 100;
+
+  const appleMatch = boardFilename.match(APPLE_BOARD_RE);
+  if (appleMatch && pdfBase.includes(appleMatch[0].toLowerCase())) return 80;
+
+  if (pdfBase.includes(boardBase) || boardBase.includes(pdfBase)) return 50;
+
+  const tokenize = (s: string) => s.replace(/[-_]/g, ' ').split(/\s+/).filter(t => t.length >= 3);
+  const boardTokens = new Set(tokenize(boardBase));
+  let overlap = 0;
+  for (const pt of tokenize(pdfBase)) if (boardTokens.has(pt)) overlap++;
+  return overlap > 0 ? overlap * 20 : 0;
+}
+
 /** A binding row as rendered. v1 only emits 'binding' rows from the
  *  `bindings` table. The 'derived' arm is a forward hook for a future
  *  board↔datasheet many-to-many lookup populated from external data —
@@ -753,6 +781,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         {showBindPicker && (
           <BindPicker
             isBoard={isBoard}
+            focalFilename={detail.filename}
             candidates={bindCandidates}
             onPick={(f, category) => {
               const autoOpen = autoOpenDefault(category);
@@ -903,12 +932,28 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
   );
 }
 
-function BindPicker({ isBoard, candidates, onPick }: {
+function BindPicker({ isBoard, focalFilename, candidates, onPick }: {
   isBoard: boolean;
+  focalFilename: string;
   candidates: DatabankFile[];
   onPick: (file: DatabankFile, category: BindingCategory) => void;
 }) {
   const [category, setCategory] = useState<BindingCategory>('schematic');
+
+  // Score each candidate against the focal file's filename. Sort score
+  // descending so a fuzzy schematic match (e.g. "820-02188-A.brd" ↔
+  // "820-02188-A 051-06019 Rev 5.0.0.pdf", score 80) floats to the top
+  // instead of being lost in an alphabetical list. Strong matches (≥50)
+  // get a small badge so the user knows which one is the obvious schematic.
+  const scored = useMemo(() => {
+    const scoreFor = (f: DatabankFile) => isBoard
+      ? nameMatchScore(focalFilename, f.filename)
+      : nameMatchScore(f.filename, focalFilename);
+    return candidates
+      .map(f => ({ f, score: scoreFor(f) }))
+      .sort((a, b) => b.score - a.score || a.f.filename.localeCompare(b.f.filename));
+  }, [candidates, focalFilename, isBoard]);
+
   return (
     <div className="library-bind-picker">
       <div className="library-bind-picker-toolbar">
@@ -923,21 +968,25 @@ function BindPicker({ isBoard, candidates, onPick }: {
           ))}
         </select>
       </div>
-      {candidates.length === 0 ? (
+      {scored.length === 0 ? (
         <div className="library-binding-empty">
           No {isBoard ? 'PDFs' : 'boards'} available to bind
         </div>
       ) : (
-        candidates.map(f => (
+        scored.map(({ f, score }) => (
           <div
             key={f.id}
             className="library-bind-candidate"
             onClick={() => onPick(f, category)}
+            title={score >= 50 ? `Likely match (score ${score})` : undefined}
           >
             <span className={`library-file-icon ${f.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
               {f.file_type === 'board' ? 'B' : 'P'}
             </span>
             <span>{f.filename}</span>
+            {score >= 50 && (
+              <span className="library-bind-match-badge" title={`Likely match (score ${score})`}>match</span>
+            )}
           </div>
         ))
       )}
