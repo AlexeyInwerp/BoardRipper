@@ -30,6 +30,7 @@ interface DatabankSnapshot {
   browsing: boolean;
   recentItems: RecentItem[];
   historyDepth: number;
+  favoritePaths: Set<string>;
 }
 
 export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () => ({
@@ -55,4 +56,5 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   browsing: databankStore.browsing,
   recentItems: databankStore.recentItems,
   historyDepth: databankStore.historyDepth,
+  favoritePaths: databankStore.favoritePaths,
 }));
