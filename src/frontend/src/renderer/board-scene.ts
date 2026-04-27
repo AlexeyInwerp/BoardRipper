@@ -595,24 +595,60 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
     const botDropGfx = new Graphics();
     const drillGfx   = new Graphics();
     let anyDrill = false;
+    /** Lay down the pad geometry on the given Graphics using its actual
+     *  shape. Falls back to drawing the AABB rectangle when the parser
+     *  didn't tag a shape (legacy parsers / poly pads). */
+    const drawPadGeometry = (gfx: Graphics, p: import('../parsers').Pad, cx: number, cy: number, aabbW: number, aabbH: number) => {
+      // Original pre-rotation dims; fall back to AABB if missing
+      const w = (p.width  != null && p.width  > 0) ? p.width  : aabbW;
+      const h = (p.height != null && p.height > 0) ? p.height : aabbH;
+      const ang = p.angleDeg ?? 0;
+      const axisAligned = ang === 0 || Math.abs(((ang % 180) + 180) % 180) < 0.01 || Math.abs(((ang % 180) + 180) % 180 - 90) < 0.01;
+      // Round → circle. Diameter = max(w,h), centered on the pad position.
+      if (p.shape === 'round') {
+        gfx.circle(cx, cy, Math.max(w, h) / 2);
+        return;
+      }
+      // Axis-aligned (or 90° rotated) rect / round-rect — use native primitives.
+      if (axisAligned) {
+        // 90/270 rotation swaps w/h
+        const swapped = Math.abs(((ang % 180) + 180) % 180 - 90) < 0.01;
+        const rw = swapped ? h : w;
+        const rh = swapped ? w : h;
+        if (p.shape === 'roundrect' && p.cornerRadius && p.cornerRadius > 0) {
+          gfx.roundRect(cx - rw / 2, cy - rh / 2, rw, rh, p.cornerRadius);
+        } else {
+          gfx.rect(cx - rw / 2, cy - rh / 2, rw, rh);
+        }
+        return;
+      }
+      // Off-axis rotation — emit the rotated rectangle as a 4-vertex polygon.
+      const rad = ang * Math.PI / 180;
+      const co = Math.cos(rad), si = Math.sin(rad);
+      const hx = w / 2, hy = h / 2;
+      const pts: [number, number][] = [
+        [-hx, -hy], [ hx, -hy], [ hx,  hy], [-hx,  hy],
+      ].map(([x, y]) => [cx + x * co - y * si, cy + x * si + y * co]);
+      gfx.poly(pts.flat());
+    };
     for (const p of board.pads) {
-      const w = p.bounds.maxX - p.bounds.minX;
-      const h = p.bounds.maxY - p.bounds.minY;
-      if (w <= 0 || h <= 0) continue;
+      const aabbW = p.bounds.maxX - p.bounds.minX;
+      const aabbH = p.bounds.maxY - p.bounds.minY;
+      if (aabbW <= 0 || aabbH <= 0) continue;
+      const cx = (p.bounds.minX + p.bounds.maxX) / 2;
+      const cy = (p.bounds.minY + p.bounds.maxY) / 2;
       const isAttached = p.attached !== false; // undefined → treat as attached
       const topGfx = isAttached ? topPadGfx : topDropGfx;
       const botGfx = isAttached ? botPadGfx : botDropGfx;
       if (p.side === 'top' || p.side === 'both') {
-        topGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+        drawPadGeometry(topGfx, p, cx, cy, aabbW, aabbH);
       }
       if (p.side === 'bottom' || p.side === 'both') {
-        botGfx.rect(p.bounds.minX, p.bounds.minY, w, h);
+        drawPadGeometry(botGfx, p, cx, cy, aabbW, aabbH);
       }
       // Punch a drill hole through TH pads so the user can see the hole
       // through the (otherwise solid) ground/power pad rectangle.
       if (p.drill && p.drill > 0) {
-        const cx = (p.bounds.minX + p.bounds.maxX) / 2;
-        const cy = (p.bounds.minY + p.bounds.maxY) / 2;
         drillGfx.circle(cx, cy, p.drill / 2);
         anyDrill = true;
       }

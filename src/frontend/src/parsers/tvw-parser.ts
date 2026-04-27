@@ -1615,6 +1615,20 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     if (isPassiveCopperPart(part)) continue;
     for (const pin of part.pins) pinCoordKeys.add(coordKey(pin.position.x, pin.position.y));
   }
+  // Map TVW shape type → BoardData PadShape discriminator. Round → 'round'
+  // (renderer draws a filled circle so BGA balls don't get squared-off
+  // halos under each pin). Rect/RoundRect keep their angle + corner radius
+  // so the renderer can lay them down with the right primitive instead of
+  // approximating with the AABB.
+  const tvwShapeToPadShape = (st: TvwShapeType | undefined): Pad['shape'] => {
+    switch (st) {
+      case TvwShapeType.Round:     return 'round';
+      case TvwShapeType.Rect:      return 'rect';
+      case TvwShapeType.RoundRect: return 'roundrect';
+      case TvwShapeType.Poly:      return 'poly';
+      default: return undefined;
+    }
+  };
   const padRects: Pad[] = [];
   for (const layer of tvw.layers) {
     if (layer.objType !== TvwObjectType.Logic) continue;
@@ -1625,11 +1639,18 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       if (!bounds) continue;
       const netName = getNetName(tvw.nets, pad.net);
       const attached = pinCoordKeys.has(coordKey(pad.pos.x, pad.pos.y));
+      const shape = tvwShapeToPadShape(pad.shapeRef?.type);
       padRects.push({
         bounds,
         side,
         attached,
         ...(netName ? { net: netName } : {}),
+        ...(shape ? { shape } : {}),
+        ...(pad.shapeRef ? {
+          width: pad.shapeRef.width,
+          height: pad.shapeRef.height,
+          ...(pad.shapeRef.turn !== 0 ? { angleDeg: pad.shapeRef.turn } : {}),
+        } : {}),
       });
     }
   }

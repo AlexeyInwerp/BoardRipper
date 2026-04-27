@@ -96,6 +96,12 @@ export interface SilkscreenPath {
   side: 'top' | 'bottom';
 }
 
+/** Discriminator for the original copper-pad shape so the renderer can draw
+ *  the right primitive. `bounds` always holds the axis-aligned envelope (used
+ *  for hit-test and clipping); `shape` + `width`/`height`/`angleDeg`/
+ *  `cornerRadius` describe the actual geometry. */
+export type PadShape = 'round' | 'rect' | 'roundrect' | 'poly';
+
 /** Copper pad — axis-aligned bounding rectangle in board coordinates,
  *  already pre-rotated and pre-translated. SMD pads have side='top'/'bottom';
  *  through-hole pads have side='both' and may carry a drill diameter. */
@@ -112,6 +118,20 @@ export interface Pad {
    *  the click-on-component view stays clean. Currently set by the TVW
    *  parser; other parsers can opt in later. */
   attached?: boolean;
+  /** Original pad shape from the format. Undefined → renderer falls back to
+   *  drawing `bounds` as a plain rectangle (legacy behaviour). */
+  shape?: PadShape;
+  /** Original pre-rotation width/height in mils — distinct from `bounds`,
+   *  which carries the rotated AABB. Required for correct drawing of
+   *  rotated rects/round-rects. */
+  width?: number;
+  height?: number;
+  /** Rotation in degrees CCW around the pad centre. Multiples of 90 leave the
+   *  AABB axis-aligned and are drawn directly with `gfx.rect`/`roundRect`;
+   *  other angles fall back to a rotated polygon. */
+  angleDeg?: number;
+  /** RoundRect corner radius in mils. */
+  cornerRadius?: number;
 }
 
 export interface BoardData {
