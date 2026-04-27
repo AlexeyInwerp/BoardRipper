@@ -4071,6 +4071,21 @@ html, body, #root {
   color: var(--text-secondary);
 }
 
+.library-bind-picker-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.library-bind-picker-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .library-binding-category {
   font-size: 10px;
   padding: 1px 4px;

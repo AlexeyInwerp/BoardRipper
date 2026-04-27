@@ -203,7 +203,49 @@ export function LibraryPanel() {
         }
       } else if (file.file_type === 'pdf') {
         boardStore.addPdf(fileObj);
-        boardStore.autoBindPdf(fileObj.name);
+        const matchedBoardName = boardStore.autoBindPdf(fileObj.name);
+        // Promote a strong match (filename or metadata) to a persistent DB
+        // binding when both files are in the databank and no binding yet
+        // exists. This is what makes "open board, open matching PDF →
+        // they're permanently linked" actually work without the user
+        // touching the + button.
+        let promoteBoardDbFile: DatabankFile | null = null;
+        if (matchedBoardName) {
+          // Filename-based match (Apple 820-XXXXX heuristic via boardStore).
+          promoteBoardDbFile = databankStore.fileByFilename(matchedBoardName) ?? null;
+        }
+        if (!promoteBoardDbFile) {
+          // Metadata-based match: any open board tab whose file shares
+          // board_number or manufacturer+model with this PDF. Pick the best
+          // metadata match across open tabs.
+          let bestScore = 0;
+          for (const tab of boardStore.tabs) {
+            const tabDb = databankStore.fileByFilename(tab.fileName);
+            if (!tabDb) continue;
+            const s = metadataMatchScore(tabDb, file);
+            if (s > bestScore) {
+              bestScore = s;
+              promoteBoardDbFile = tabDb;
+            }
+          }
+          if (bestScore < 60) promoteBoardDbFile = null;
+        }
+        if (promoteBoardDbFile) {
+          try {
+            const detail = await databankStore.fetchFileDetail(promoteBoardDbFile.id);
+            const alreadyBound = detail?.bindings.some(b => b.pdf_file_id === file.id) ?? false;
+            if (!alreadyBound) {
+              await databankStore.createBinding(promoteBoardDbFile.id, file.id, 'schematic', true);
+              // Read selectedFileId off the store rather than the closure
+              // — the FileRow memoization comment below explains why we
+              // keep `selectedFileId` out of this useCallback's deps.
+              const sel = databankStore.selectedFileId;
+              if (sel) databankStore.fetchFileDetail(sel);
+            }
+          } catch (err) {
+            log.ui.error('Failed to promote match to DB binding:', err);
+          }
+        }
         await pdfStore.loadFile(fileObj);
         ensurePdfPanel(fileObj.name);
         pdfStore.switchTo(fileObj.name);
@@ -648,6 +690,20 @@ function stripExt(filename: string): string {
   return (i > 0 ? filename.slice(0, i) : filename).toLowerCase();
 }
 
+/** Shared metadata suggests the two files belong to the same board even when
+ *  filenames don't match cleanly (e.g. a TVW with an obfuscated revision-coded
+ *  name vs. a PDF labelled by manufacturer/model). The library's own grouping
+ *  logic uses the same fields, so anything that shows up in the same Model
+ *  group should also rank highly here. */
+function metadataMatchScore(a: DatabankFile, b: DatabankFile): number {
+  if (a.board_number && b.board_number && a.board_number === b.board_number) return 70;
+  if (a.manufacturer && b.manufacturer
+      && a.manufacturer.toLowerCase() === b.manufacturer.toLowerCase()
+      && a.model && b.model
+      && a.model.toLowerCase() === b.model.toLowerCase()) return 60;
+  return 0;
+}
+
 /** Mirror of backend `MatchScore` (src/backend/databank/metadata.go).
  *  Returns 0–100; ≥50 implies a strong likelihood the PDF is the schematic
  *  for the board. Used to sort the bind-picker so the obvious match floats
@@ -781,7 +837,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         {showBindPicker && (
           <BindPicker
             isBoard={isBoard}
-            focalFilename={detail.filename}
+            focal={detail}
             candidates={bindCandidates}
             onPick={(f, category) => {
               const autoOpen = autoOpenDefault(category);
@@ -932,27 +988,46 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
   );
 }
 
-function BindPicker({ isBoard, focalFilename, candidates, onPick }: {
+function BindPicker({ isBoard, focal, candidates, onPick }: {
   isBoard: boolean;
-  focalFilename: string;
+  focal: DatabankFile;
   candidates: DatabankFile[];
   onPick: (file: DatabankFile, category: BindingCategory) => void;
 }) {
   const [category, setCategory] = useState<BindingCategory>('schematic');
+  const [filter, setFilter] = useState('');
 
-  // Score each candidate against the focal file's filename. Sort score
-  // descending so a fuzzy schematic match (e.g. "820-02188-A.brd" ↔
-  // "820-02188-A 051-06019 Rev 5.0.0.pdf", score 80) floats to the top
-  // instead of being lost in an alphabetical list. Strong matches (≥50)
-  // get a small badge so the user knows which one is the obvious schematic.
+  // Score each candidate against the focal file. Filename match handles the
+  // 820-XXXXX-style cases; metadata match handles cases where the file
+  // names diverge but the board_number / manufacturer+model align (e.g. a
+  // Lenovo TVW with a revision-coded filename vs. a PDF labelled by model
+  // — the library's Model-tab already groups them, so the picker should too).
+  // Take the max of the two signals.
   const scored = useMemo(() => {
-    const scoreFor = (f: DatabankFile) => isBoard
-      ? nameMatchScore(focalFilename, f.filename)
-      : nameMatchScore(f.filename, focalFilename);
     return candidates
-      .map(f => ({ f, score: scoreFor(f) }))
+      .map(f => {
+        const board = isBoard ? focal : f;
+        const pdf = isBoard ? f : focal;
+        const nm = nameMatchScore(board.filename, pdf.filename);
+        const mm = metadataMatchScore(board, pdf);
+        return { f, score: Math.max(nm, mm) };
+      })
       .sort((a, b) => b.score - a.score || a.f.filename.localeCompare(b.f.filename));
-  }, [candidates, focalFilename, isBoard]);
+  }, [candidates, focal, isBoard]);
+
+  // Substring filter — case-insensitive — so the user can narrow a long
+  // candidate list (100k databank entries → ≤100 of opposite type, but
+  // even those benefit from a search box).
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return scored;
+    return scored.filter(({ f }) =>
+      f.filename.toLowerCase().includes(q) ||
+      f.board_number?.toLowerCase().includes(q) ||
+      f.manufacturer?.toLowerCase().includes(q) ||
+      f.model?.toLowerCase().includes(q)
+    );
+  }, [scored, filter]);
 
   return (
     <div className="library-bind-picker">
@@ -967,13 +1042,23 @@ function BindPicker({ isBoard, focalFilename, candidates, onPick }: {
             <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
           ))}
         </select>
+        <input
+          type="text"
+          className="library-bind-picker-filter"
+          placeholder="Filter…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          autoFocus
+        />
       </div>
-      {scored.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="library-binding-empty">
-          No {isBoard ? 'PDFs' : 'boards'} available to bind
+          {scored.length === 0
+            ? `No ${isBoard ? 'PDFs' : 'boards'} available to bind`
+            : `No matches for "${filter}"`}
         </div>
       ) : (
-        scored.map(({ f, score }) => (
+        filtered.map(({ f, score }) => (
           <div
             key={f.id}
             className="library-bind-candidate"
