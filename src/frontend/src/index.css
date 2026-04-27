@@ -4073,28 +4073,6 @@ html, body, #root {
   color: var(--text-primary);
 }
 
-.library-binding-pin {
-  visibility: hidden;
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 0 2px;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.library-binding-row:hover .library-binding-pin,
-.library-binding-pin.is-overriding {
-  visibility: visible;
-}
-.library-binding-pin.is-pinned {
-  color: var(--accent);
-}
-.library-binding-pin:hover {
-  color: var(--text-primary);
-}
-
 .library-binding-group-header {
   font-size: 10px;
   text-transform: uppercase;
