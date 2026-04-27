@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
-import { IconHierarchy, IconTooltip, IconObjectScan, IconGhost2, IconHandMove, IconZoomIn } from '@tabler/icons-react';
+import { IconHierarchy, IconHierarchyOff, IconChartDots3, IconTooltip, IconObjectScan, IconGhost2, IconHandMove, IconZoomIn } from '@tabler/icons-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -27,7 +27,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
-  const { tabs, activeTabId, showNetLines, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
+  const { tabs, activeTabId, netLineMode, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
   const bareAction = useBareScrollAction();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
@@ -245,11 +245,23 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
             ◐
           </button>
           <button
-            className={`board-netlines-toggle ${showNetLines ? 'active' : ''}`}
-            onClick={() => boardStore.toggleNetLines()}
-            title={showNetLines ? 'Net lines: ON' : 'Net lines: OFF'}
+            className={`board-netlines-toggle ${netLineMode !== 'off' ? 'active' : ''}`}
+            onClick={() => boardStore.cycleNetLineMode()}
+            title={
+              netLineMode === 'off'
+                ? 'Net lines: off (click for star)'
+                : netLineMode === 'star'
+                ? 'Net lines: star — radiate from selected part (click for chain)'
+                : 'Net lines: chain — nearest-neighbor MST (click to turn off)'
+            }
           >
-            <IconHierarchy size={16} />
+            {netLineMode === 'off' ? (
+              <IconHierarchyOff size={16} />
+            ) : netLineMode === 'star' ? (
+              <IconHierarchy size={16} />
+            ) : (
+              <IconChartDots3 size={16} />
+            )}
           </button>
           <button
             className={`board-netlines-toggle ${showGhosts ? 'active' : ''}`}

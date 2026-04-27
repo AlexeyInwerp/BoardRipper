@@ -392,7 +392,7 @@ export class BoardRenderer {
     // Net line pulse animation — only when there's an active selection with net lines.
     // Skip during active zoom (net lines are hidden, no point redrawing).
     const hasGhosts = this.crossSideGhostParts.length > 0;
-    if (!this.netLinesHiddenForZoom && ((boardStore.showNetLines && boardStore.selection.highlightedNet) || hasGhosts)) {
+    if (!this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
       const s = renderSettingsStore.settings;
       const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts;
       if (needsPulse) {
@@ -3133,7 +3133,8 @@ export class BoardRenderer {
     this.netLineFadeDist = 0;
     this.netLinesDirty = false;
 
-    if (!this.board || !boardStore.showNetLines) return;
+    const mode = boardStore.netLineMode;
+    if (!this.board || mode === 'off') return;
 
     const sel = boardStore.selection;
     if (!sel.highlightedNet) return;
@@ -3147,8 +3148,13 @@ export class BoardRenderer {
     const netUpper = sel.highlightedNet.toUpperCase();
     if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
 
-    if (sel.partIndex !== null) {
-      // ── Selected part mode: star topology from selected part to all others ──
+    // Star requires an anchor (selected part). When the highlight came from a
+    // PDF net lookup, partIndex is null and star draws nothing — the user
+    // explicitly opted out of the chain visualization.
+    if (mode === 'star' && sel.partIndex === null) return;
+
+    if (mode === 'star') {
+      // ── Star topology from selected part to all others on the net ──
       const selectedPart = this.board.parts[sel.partIndex];
       if (!selectedPart) return;
 
@@ -3200,7 +3206,7 @@ export class BoardRenderer {
       const vpScale = Math.abs(this.viewport.scale.x);
       this.netLineFadeDist = targetCount > 8 ? 60 / vpScale : 0;
     } else {
-      // ── Net-only mode (no selected part): nearest-neighbor chain ──
+      // ── Chain mode: greedy MST connecting every part on the net ──
       // Collect visible parts with world-space centers (only computed for this mode).
       type NetPartInfo = { partIndex: number; center: Point; eb: ReturnType<typeof computePartRenderBounds>; root: Container | undefined };
       const netParts: NetPartInfo[] = [];

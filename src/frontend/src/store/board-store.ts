@@ -16,6 +16,18 @@ export interface SelectionState {
   highlightedNet: string | null;
 }
 
+/**
+ * Net-line visualization mode. Cycles via the toolbar button:
+ *   off   → no connecting lines drawn
+ *   star  → lines radiate from the selected pin/part to nearest pin on every
+ *           other part on the net (anchor required — nothing drawn if no part
+ *           is selected, e.g. when the net came from a PDF lookup)
+ *   chain → greedy minimum-spanning tree across all parts on the net; works
+ *           with or without a selected part (this is what PDF lookups always
+ *           used before the toggle existed)
+ */
+export type NetLineMode = 'off' | 'star' | 'chain';
+
 export interface BoardTab {
   id: number;
   fileName: string;
@@ -31,7 +43,7 @@ export interface BoardTab {
   mirrorX: boolean;
   mirrorY: boolean;
   flipAxis: 'x' | 'y';
-  showNetLines: boolean;
+  netLineMode: NetLineMode;
   showNetDim: boolean;
   showHoverInfo: boolean;
   followPdf: boolean;
@@ -176,13 +188,13 @@ let nextTabId = 1;
 const VIEW_PREFS_KEY = 'boardripper-view-prefs';
 
 interface ViewPrefs {
-  showNetLines: boolean;
+  netLineMode: NetLineMode;
   showNetDim: boolean;
   showHoverInfo: boolean;
   followPdf: boolean;
 }
 
-const DEFAULT_VIEW_PREFS: ViewPrefs = { showNetLines: false, showNetDim: true, showHoverInfo: true, followPdf: false };
+const DEFAULT_VIEW_PREFS: ViewPrefs = { netLineMode: 'off', showNetDim: true, showHoverInfo: true, followPdf: false };
 
 /**
  * Build a renderable BoardData from a base board + a chosen revision +
@@ -252,7 +264,21 @@ function syntheticRevisionFromBoard(b: BoardData): BoardRevision {
 function loadViewPrefs(): ViewPrefs {
   try {
     const raw = localStorage.getItem(VIEW_PREFS_KEY);
-    if (raw) return { ...DEFAULT_VIEW_PREFS, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ViewPrefs> & { showNetLines?: boolean };
+      // Migrate legacy boolean: false → 'off', true → 'star' (the most common
+      // previous behavior, since users typically had a part selected when
+      // net lines were on; PDF lookups still get chain regardless).
+      const merged: ViewPrefs = { ...DEFAULT_VIEW_PREFS, ...parsed };
+      if (parsed.netLineMode === undefined && typeof parsed.showNetLines === 'boolean') {
+        merged.netLineMode = parsed.showNetLines ? 'star' : 'off';
+      }
+      // Sanitize against invalid persisted values
+      if (merged.netLineMode !== 'off' && merged.netLineMode !== 'star' && merged.netLineMode !== 'chain') {
+        merged.netLineMode = 'off';
+      }
+      return merged;
+    }
   } catch { /* ignore */ }
   return { ...DEFAULT_VIEW_PREFS };
 }
@@ -335,7 +361,7 @@ class BoardStore extends Emitter {
   get mirrorX(): boolean { return this.activeTab?.mirrorX ?? false; }
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get flipAxis(): 'x' | 'y' { return this.activeTab?.flipAxis ?? 'x'; }
-  get showNetLines(): boolean { return this.activeTab?.showNetLines ?? false; }
+  get netLineMode(): NetLineMode { return this.activeTab?.netLineMode ?? 'off'; }
   get showTraces(): boolean { return this.activeTab?.showTraces ?? true; }
   get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
   get showVias(): boolean { return this.activeTab?.showVias ?? false; }
@@ -526,7 +552,7 @@ class BoardStore extends Emitter {
         mirrorX: false,
         mirrorY: false,
         flipAxis: 'x',
-        showNetLines: vp.showNetLines,
+        netLineMode: vp.netLineMode,
         showNetDim: vp.showNetDim,
         showHoverInfo: vp.showHoverInfo,
         followPdf: vp.followPdf,
@@ -1018,13 +1044,17 @@ class BoardStore extends Emitter {
   private _saveCurrentViewPrefs() {
     const tab = this.activeTab;
     if (!tab) return;
-    saveViewPrefs({ showNetLines: tab.showNetLines, showNetDim: tab.showNetDim, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
+    saveViewPrefs({ netLineMode: tab.netLineMode, showNetDim: tab.showNetDim, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
-  toggleNetLines() {
+  /** Cycle the net-line visualization: off → star → chain → off. */
+  cycleNetLineMode() {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ showNetLines: !tab.showNetLines });
+    const next: NetLineMode =
+      tab.netLineMode === 'off' ? 'star' :
+      tab.netLineMode === 'star' ? 'chain' : 'off';
+    this.updateActiveTab({ netLineMode: next });
     this._saveCurrentViewPrefs();
     this.notify();
   }

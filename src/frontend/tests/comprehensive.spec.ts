@@ -33,7 +33,7 @@ test.describe('Comprehensive Board Tests', () => {
     await expect(page.locator('.toolbar-btn', { hasText: 'Top' })).toBeVisible();
     await expect(page.locator('.toolbar-btn', { hasText: 'Bottom' })).toBeVisible();
     await expect(page.locator('.toolbar-btn', { hasText: 'Butterfly' })).toBeVisible();
-    await expect(page.locator('.toolbar-btn', { hasText: 'Net Lines' })).toBeVisible();
+    await expect(page.locator('.board-netlines-toggle')).toBeVisible();
     await expect(page.locator('.toolbar-btn', { hasText: 'Settings' }).or(page.locator('.toolbar-btn-icon', { hasText: '⚙' }))).toBeVisible();
     await expect(page.getByTestId('search-input')).toBeVisible();
   });
@@ -324,18 +324,29 @@ test.describe('Comprehensive Board Tests', () => {
   // 8. NET LINES TOGGLE
   // ═══════════════════════════════════════════════════════════════════════
 
-  test('net lines toggle button works', async ({ page }) => {
+  test('net lines toggle cycles off → star → chain → off', async ({ page }) => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const netLinesBtn = page.locator('.toolbar-btn', { hasText: 'Net Lines' });
+    const netLinesBtn = page.locator('.board-netlines-toggle');
+    const readMode = () => page.evaluate(() => {
+      const raw = localStorage.getItem('boardripper-view-prefs');
+      return raw ? JSON.parse(raw).netLineMode : null;
+    });
+
     await expect(netLinesBtn).not.toHaveClass(/active/);
 
     await netLinesBtn.click();
     await expect(netLinesBtn).toHaveClass(/active/);
+    expect(await readMode()).toBe('star');
+
+    await netLinesBtn.click();
+    await expect(netLinesBtn).toHaveClass(/active/);
+    expect(await readMode()).toBe('chain');
 
     await netLinesBtn.click();
     await expect(netLinesBtn).not.toHaveClass(/active/);
+    expect(await readMode()).toBe('off');
   });
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -546,7 +557,7 @@ test.describe('Comprehensive Board Tests', () => {
     const topBtn = page.locator('.toolbar-btn', { hasText: 'Top' });
     const bottomBtn = page.locator('.toolbar-btn', { hasText: 'Bottom' });
     const butterflyBtn = page.locator('.toolbar-btn', { hasText: 'Butterfly' });
-    const netLinesBtn = page.locator('.toolbar-btn', { hasText: 'Net Lines' });
+    const netLinesBtn = page.locator('.board-netlines-toggle');
 
     await topBtn.click();
     await bottomBtn.click();
@@ -579,46 +590,41 @@ test.describe('Comprehensive Board Tests', () => {
   // 17. TOGGLE PERSISTENCE (localStorage)
   // ═══════════════════════════════════════════════════════════════════════
 
-  test('net lines toggle persists across board loads', async ({ page }) => {
+  test('net lines mode persists across board loads', async ({ page }) => {
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
-    const netLinesBtn = page.locator('.toolbar-btn', { hasText: 'Net Lines' });
+    const netLinesBtn = page.locator('.board-netlines-toggle');
 
-    // Enable net lines
+    // Cycle off → star
     await netLinesBtn.click();
     await expect(netLinesBtn).toHaveClass(/active/);
 
-    // Verify localStorage was set
     const stored = await page.evaluate(() => localStorage.getItem('boardripper-view-prefs'));
     expect(stored).toBeTruthy();
     const prefs = JSON.parse(stored!);
-    expect(prefs.showNetLines).toBe(true);
+    expect(prefs.netLineMode).toBe('star');
 
-    // Load a second board — net lines should still be active by default
+    // Load a second board — mode should carry over (button stays active)
     await loadBoard(page, REAL_BVR3, '3075');
     await expect(netLinesBtn).toHaveClass(/active/);
   });
 
-  test('net lines toggle OFF persists for new boards', async ({ page }) => {
+  test('legacy showNetLines:true migrates to netLineMode:star', async ({ page }) => {
     await page.goto('/');
 
-    // Pre-seed localStorage with showNetLines=true
+    // Pre-seed localStorage with the pre-3-state boolean
     await page.evaluate(() => {
       localStorage.setItem('boardripper-view-prefs', JSON.stringify({ showNetLines: true, showNetDim: true, showHoverInfo: true }));
     });
 
     await loadBoard(page, TEST_BVR1);
-    const netLinesBtn = page.locator('.toolbar-btn', { hasText: 'Net Lines' });
+    const netLinesBtn = page.locator('.board-netlines-toggle');
+    // Migration should have surfaced as 'star' (active button). One more click cycles to 'chain'.
     await expect(netLinesBtn).toHaveClass(/active/);
-
-    // Turn it off
     await netLinesBtn.click();
-    await expect(netLinesBtn).not.toHaveClass(/active/);
-
-    // Load new board — should default to OFF
-    await loadBoard(page, REAL_BVR3, '3075');
-    await expect(netLinesBtn).not.toHaveClass(/active/);
+    const stored = await page.evaluate(() => localStorage.getItem('boardripper-view-prefs'));
+    expect(JSON.parse(stored!).netLineMode).toBe('chain');
   });
 
   test('PDF night mode persists across panel reloads', async ({ page }) => {
