@@ -13,7 +13,7 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Pad, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
+import type { BoardData, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { FmtVer, LayerClass } from './allegro-types';
@@ -311,6 +311,22 @@ function extractPins(
     const padMinY = Math.min(cy1, cy2) / div;
     const padMaxY = Math.max(cy1, cy2) / div;
 
+    // Resolve pad shape via the padstack so the selection highlight uses
+    // the same primitive as the pad layer. Pin selection on a BGA ball
+    // should draw a circle, not the AABB square.
+    let padShape: PadShape | undefined;
+    const padBlock = db.getBlockAs<Blk0x0DPad>(pad.padPtr, 0x0D);
+    if (padBlock) {
+      const ps = db.getBlockAs<Blk0x1CPadstack>(padBlock.padStack, 0x1C);
+      if (ps) {
+        const resolved = resolvePadShape(ps);
+        if (resolved) padShape = resolved.shape;
+      }
+    }
+    const padW = padMaxX - padMinX;
+    const padH = padMaxY - padMinY;
+    const padCornerRadius = padShape === 'roundrect' ? Math.min(padW, padH) / 2 : undefined;
+
     pins.push({
       name: pinName,
       number: pinNumber,
@@ -319,6 +335,8 @@ function extractPins(
       side,
       net,
       padBounds: { minX: padMinX, minY: padMinY, maxX: padMaxX, maxY: padMaxY },
+      ...(padShape ? { padShape, padWidth: padW, padHeight: padH } : {}),
+      ...(padCornerRadius != null ? { padCornerRadius } : {}),
     });
 
     // Follow nextInFp (NOT next!) for footprint pad chain
@@ -519,6 +537,56 @@ function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
  * otherwise it's a single-side SMD pad on the footprint's side (fp.layer
  * 0=top, 1=bottom).
  */
+/**
+ * Resolve the geometric pad shape from a 0x1C Padstack's per-layer
+ * components.
+ *
+ * Each padstack carries an array of `components` with a `type` byte that
+ * encodes the primitive Allegro used (researched empirically against real
+ * Quanta/Acer boards):
+ *
+ *   type=2  → Round / Circle      (testpoints, BGA balls, vias)
+ *   type=6  → Rectangle           (default SMD pad — `RE148X60`, `S0402-…`)
+ *   type=12 → Oblong / Oval       (`O10X14M10X14`, `O8X12M8X12` — capsule)
+ *   type=22 → Oblong-class        (treat the same as 12 for rendering)
+ *   type=23 → Custom shape (poly) (`TR134X148X40-45` thermal reliefs)
+ *
+ * For SMD padstacks (`padType=0`, `layerCount=1`) the actual pad is in
+ * `components[0]`. For through-hole padstacks (`padType=2`, `layerCount>1`)
+ * `components[0]` is the clearance keep-out and `components[1]` carries the
+ * real pad shape. Falls back to undefined when the data doesn't match a
+ * recognised primitive — the renderer then draws the AABB rectangle.
+ */
+function resolvePadShape(
+  padstack: Blk0x1CPadstack,
+): { shape: PadShape; aspectIsCircle: boolean } | null {
+  // Pick the relevant component: comp[0] for SMD, first non-clearance
+  // shape for THT (skip leading `type=6` clearance frames).
+  const isSmd = padstack.layerCount <= 1;
+  let comp = padstack.components[0];
+  if (!isSmd) {
+    for (let i = 1; i < padstack.components.length; i++) {
+      const c = padstack.components[i];
+      if (c.type !== 0 && c.w > 0 && c.h > 0 && c.type !== 23) {
+        comp = c;
+        break;
+      }
+    }
+  }
+  if (!comp || comp.type === 0 || comp.w <= 0 || comp.h <= 0) return null;
+  const aspectIsCircle = comp.w === comp.h;
+  switch (comp.type) {
+    case 2:  return { shape: 'round', aspectIsCircle: true };
+    case 6:  return { shape: 'rect', aspectIsCircle };
+    case 12:
+    case 22: return aspectIsCircle
+                ? { shape: 'round', aspectIsCircle: true }
+                : { shape: 'roundrect', aspectIsCircle: false };
+    case 23: return { shape: 'poly', aspectIsCircle };
+    default: return null;
+  }
+}
+
 function extractPads(
   db: AllegroDb,
   div: number,
@@ -553,9 +621,14 @@ function extractPads(
 
       // Only emit pads with a non-degenerate footprint.
       if (maxX > minX && maxY > minY) {
-        // Resolve through-hole vs SMD via padstack.layerCount.
+        // Resolve through-hole vs SMD via padstack.layerCount, plus the
+        // actual pad shape for shape-aware rendering. Without the shape
+        // resolution every Allegro pad would draw as the AABB rectangle —
+        // BGA balls would render as squares stuck on top of round pin
+        // sprites, exactly the artefact seen on TVW before its fix.
         let side: 'top' | 'bottom' | 'both' = fpSide;
         let drill: number | undefined;
+        let shape: PadShape | undefined;
         const padBlock = db.getBlock(pp.padPtr);
         if (padBlock && padBlock.blockType === 0x0D) {
           const ps = db.getBlock((padBlock as Blk0x0DPad).padStack);
@@ -566,15 +639,22 @@ function extractPads(
             if (side === 'both' && padstack.drill > 0) {
               drill = padstack.drill / div;
             }
+            const resolved = resolvePadShape(padstack);
+            if (resolved) shape = resolved.shape;
           }
         }
 
+        const w = maxX - minX;
+        const h = maxY - minY;
+        const cornerRadius = shape === 'roundrect' ? Math.min(w, h) / 2 : undefined;
         const net = netAssignMap.get(pp.netPtr);
         out.push({
           bounds: { minX, minY, maxX, maxY },
           side,
           net: net && net.length > 0 ? net : undefined,
           drill,
+          ...(shape ? { shape, width: w, height: h } : {}),
+          ...(cornerRadius != null ? { cornerRadius } : {}),
         });
       }
 
