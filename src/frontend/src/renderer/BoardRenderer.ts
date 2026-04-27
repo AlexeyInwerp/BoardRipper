@@ -3155,7 +3155,10 @@ export class BoardRenderer {
 
     if (mode === 'star') {
       // ── Star topology from selected part to all others on the net ──
-      const selectedPart = this.board.parts[sel.partIndex];
+      // partIndex is guaranteed non-null by the early-return above; capture
+      // it locally so the index expression stays narrowed.
+      const selectedPartIdx = sel.partIndex as number;
+      const selectedPart = this.board.parts[selectedPartIdx];
       if (!selectedPart) return;
 
       const selectedRoot = this.rootForPart(selectedPart);
