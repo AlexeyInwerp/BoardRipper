@@ -4437,6 +4437,34 @@ html, body, #root {
   cursor: default !important;
 }
 
+.library-history-pin {
+  visibility: hidden;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.library-file-row:hover .library-history-pin,
+.library-history-pin.is-pinned {
+  visibility: visible;
+}
+.library-history-pin.is-pinned {
+  color: var(--accent);
+}
+.library-history-pin:hover {
+  color: var(--text-primary);
+}
+
+.library-history-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 8px;
+}
+
 /* Part type overrides section */
 .part-type-overrides {
   display: flex;

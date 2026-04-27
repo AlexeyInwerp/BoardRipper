@@ -6,7 +6,7 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText, IconPin, IconPinFilled } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
@@ -459,7 +459,12 @@ export function LibraryPanel() {
         ) : pdfSearchMode && searchQuery && searchResults.length === 0 ? (
           <div className="library-empty">No results for "{searchQuery}"</div>
         ) : viewMode === 'history' ? (
-          <HistoryView onOpenFile={handleOpenFile} searchFilter={localSearch} />
+          <HistoryView
+            onOpenFile={handleOpenFile}
+            onSelectFile={handleSelectFile}
+            selectedFileId={selectedFileId}
+            searchFilter={localSearch}
+          />
         ) : viewMode === 'model' ? (
           <ModelView
             groups={modelTree ?? []}
@@ -749,14 +754,16 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
 
 // --- History View ---
 
-function HistoryView({ onOpenFile, searchFilter }: {
+function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }: {
   onOpenFile: (f: DatabankFile) => void;
+  onSelectFile: (f: DatabankFile) => void;
+  selectedFileId: number | null;
   searchFilter: string;
 }) {
   // Subscribe to `files` so the row resolution re-runs after a hydrate, but
   // do path lookups via the store's Map<path,file> instead of rebuilding
   // a per-component Map. With 100k entries the rebuild was ~10–30ms.
-  const { recentItems, files } = useDatabank();
+  const { recentItems, files, favoritePaths } = useDatabank();
   void files;
 
   const formatTime = (ts: number) => {
@@ -786,6 +793,44 @@ function HistoryView({ onOpenFile, searchFilter }: {
     });
   }, [recentItems, searchFilter]);
 
+  const { pinned, recent } = useMemo(() => {
+    const pinned: typeof filteredItems = [];
+    const recent: typeof filteredItems = [];
+    for (const item of filteredItems) {
+      (favoritePaths.has(item.path) ? pinned : recent).push(item);
+    }
+    return { pinned, recent };
+  }, [filteredItems, favoritePaths]);
+
+  const renderRow = (item: (typeof filteredItems)[number], idx: number) => {
+    const dbFile = databankStore.fileByPath(item.path);
+    const isPinned = favoritePaths.has(item.path);
+    const selected = dbFile != null && dbFile.id === selectedFileId;
+    return (
+      <div
+        key={`${item.path}-${idx}`}
+        className={`library-file-row${dbFile ? '' : ' library-file-missing'}${selected ? ' selected' : ''}`}
+        onClick={() => { if (dbFile) onSelectFile(dbFile); }}
+        onDoubleClick={() => { if (dbFile) onOpenFile(dbFile); }}
+        title={dbFile ? item.path : `${item.path} (not in library)`}
+      >
+        <span className={`library-file-icon ${item.fileType === 'pdf' ? 'library-icon-pdf' : 'library-icon-board'}`}>
+          {item.fileType === 'pdf' ? 'P' : 'B'}
+        </span>
+        <span className="library-file-name">{item.fileName}</span>
+        <span className="library-history-time">{formatTime(item.openedAt)}</span>
+        <button
+          className={`library-history-pin${isPinned ? ' is-pinned' : ''}`}
+          onClick={(e) => { e.stopPropagation(); databankStore.toggleFavorite(item.path); }}
+          title={isPinned ? 'Unpin from top' : 'Pin to top'}
+          aria-label={isPinned ? 'Unpin from top' : 'Pin to top'}
+        >
+          {isPinned ? <IconPinFilled size={14} /> : <IconPin size={14} />}
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="library-history">
       {recentItems.length === 0 ? (
@@ -794,23 +839,11 @@ function HistoryView({ onOpenFile, searchFilter }: {
         <div className="library-empty">No recent files match "{searchFilter}".</div>
       ) : (
         <div className="library-tree-children">
-          {filteredItems.map((item, i) => {
-            const dbFile = databankStore.fileByPath(item.path);
-            return (
-              <div
-                key={`${item.path}-${i}`}
-                className={`library-file-row${dbFile ? '' : ' library-file-missing'}`}
-                onClick={() => { if (dbFile) onOpenFile(dbFile); }}
-                title={dbFile ? item.path : `${item.path} (not in library)`}
-              >
-                <span className={`library-file-icon ${item.fileType === 'pdf' ? 'library-icon-pdf' : 'library-icon-board'}`}>
-                  {item.fileType === 'pdf' ? 'P' : 'B'}
-                </span>
-                <span className="library-file-name">{item.fileName}</span>
-                <span className="library-history-time">{formatTime(item.openedAt)}</span>
-              </div>
-            );
-          })}
+          {pinned.map((item, i) => renderRow(item, i))}
+          {pinned.length > 0 && recent.length > 0 && (
+            <div className="library-history-divider" aria-hidden="true" />
+          )}
+          {recent.map((item, i) => renderRow(item, pinned.length + i))}
         </div>
       )}
     </div>

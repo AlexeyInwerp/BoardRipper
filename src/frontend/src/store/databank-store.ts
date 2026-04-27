@@ -267,6 +267,15 @@ class DatabankStore extends Emitter {
   private _backendAvailable = true; // assume yes until first failure
   private _libraryPath: string | null = null;
   private _electronMode = false;
+  // Pinned-to-top entries in History. Keyed by `path` (matches RecentItem
+  // identity) so a pin survives databank rescans that change file IDs.
+  // Stored separately from history so `clearHistory` doesn't drop pins.
+  private _favoritePaths: Set<string> = (() => {
+    try {
+      const raw = localStorage.getItem('boardripper-favorites');
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch { return new Set(); }
+  })();
 
   get files() { return this._files; }
   get filesComplete() { return this._filesComplete; }
@@ -290,6 +299,20 @@ class DatabankStore extends Emitter {
   get electronMode() { return this._electronMode; }
   get recentItems() { return this._recentItems; }
   get historyDepth() { return this._historyDepth; }
+  get favoritePaths() { return this._favoritePaths; }
+
+  isFavorite(path: string): boolean {
+    return this._favoritePaths.has(path);
+  }
+
+  toggleFavorite(path: string): void {
+    const next = new Set(this._favoritePaths);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    this._favoritePaths = next;
+    try { localStorage.setItem('boardripper-favorites', JSON.stringify([...next])); } catch { /* ignore */ }
+    this.notify();
+  }
 
   get metadataTree(): MetadataGroup[] {
     if (this._metadataCache && this._metadataCache.version === this._filesVersion) {
@@ -882,12 +905,27 @@ class DatabankStore extends Emitter {
       openedAt: Date.now(),
       fileId: file.id,
     });
-    // Trim to depth limit
-    if (this._recentItems.length > this._historyDepth) {
-      this._recentItems = this._recentItems.slice(0, this._historyDepth);
-    }
+    this._recentItems = this._trimHistoryRespectingFavorites(this._recentItems);
     try { localStorage.setItem('boardripper-history', JSON.stringify(this._recentItems)); } catch { /* ignore */ }
     this.notify();
+  }
+
+  /** The historyDepth cap applies only to non-favorite entries — pinned
+   *  items are explicit user intent and shouldn't silently fall off. Returns
+   *  a new array preserving original order, with non-favorites trimmed. */
+  private _trimHistoryRespectingFavorites(items: RecentItem[]): RecentItem[] {
+    let nonFavCount = 0;
+    const out: RecentItem[] = [];
+    for (const item of items) {
+      if (this._favoritePaths.has(item.path)) {
+        out.push(item);
+        continue;
+      }
+      if (nonFavCount >= this._historyDepth) continue;
+      out.push(item);
+      nonFavCount++;
+    }
+    return out;
   }
 
   clearHistory() {
@@ -898,9 +936,9 @@ class DatabankStore extends Emitter {
 
   setHistoryDepth(n: number) {
     this._historyDepth = Math.min(100, Math.max(1, n));
-    // Trim if needed
-    if (this._recentItems.length > this._historyDepth) {
-      this._recentItems = this._recentItems.slice(0, this._historyDepth);
+    const trimmed = this._trimHistoryRespectingFavorites(this._recentItems);
+    if (trimmed.length !== this._recentItems.length) {
+      this._recentItems = trimmed;
       try { localStorage.setItem('boardripper-history', JSON.stringify(this._recentItems)); } catch { /* ignore */ }
     }
     try { localStorage.setItem('boardripper-history-depth', String(this._historyDepth)); } catch { /* ignore */ }
