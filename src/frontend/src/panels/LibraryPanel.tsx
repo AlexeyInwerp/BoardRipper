@@ -809,17 +809,23 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         <MetadataEditModal detail={detail} onClose={() => setShowEditModal(false)} />
       )}
 
-      {/* Bindings section */}
+      {/* Bindings section. Board side = full editor (group by category,
+       *  per-row category dropdown, + bind picker). PDF side = simple
+       *  back-reference list of boards this PDF appears on (no category UI,
+       *  no manual binding — that's done from the board's side where the
+       *  semantics line up). */}
       <div className="library-detail-bindings">
         <div className="library-detail-bindings-header">
-          <span>Bindings ({detail.bindings.length})</span>
-          <button
-            className="library-detail-bind-btn"
-            onClick={() => setShowBindPicker(!showBindPicker)}
-            title={isBoard ? 'Bind a PDF' : 'Bind to a board'}
-          >
-            +
-          </button>
+          <span>{isBoard ? `Bindings (${detail.bindings.length})` : `Linked boards (${detail.bindings.length})`}</span>
+          {isBoard && (
+            <button
+              className="library-detail-bind-btn"
+              onClick={() => setShowBindPicker(!showBindPicker)}
+              title="Bind a PDF"
+            >
+              +
+            </button>
+          )}
         </div>
 
         <BindingsGrouped
@@ -831,10 +837,10 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         />
 
         {detail.bindings.length === 0 && !showBindPicker && (
-          <div className="library-binding-empty">No bindings</div>
+          <div className="library-binding-empty">{isBoard ? 'No bindings' : 'Not linked to any board'}</div>
         )}
 
-        {showBindPicker && (
+        {isBoard && showBindPicker && (
           <BindPicker
             isBoard={isBoard}
             focal={detail}
@@ -843,8 +849,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
               // New bindings default to 'schematic' — the common case.
               // The user re-categorizes via the row's dropdown after if
               // it's actually a datasheet or other reference doc.
-              if (isBoard) onCreateBinding(detail.id, f.id, 'schematic', true);
-              else onCreateBinding(f.id, detail.id, 'schematic', true);
+              onCreateBinding(detail.id, f.id, 'schematic', true);
               setShowBindPicker(false);
             }}
           />
@@ -854,7 +859,15 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
   );
 }
 
-// --- Bindings, grouped by category ---
+// --- Bindings list ---
+//
+// Board's detail pane: bindings group by category (Schematic / Datasheet /
+// Other) and each row gets a category dropdown — the category describes
+// the bound PDF, which is what's shown.
+// PDF's detail pane: flat back-reference list of boards. No category UI and
+// no grouping; the same PDF can have different categories per-board, but
+// labelling a row of "boards" with "Schematic" reads as if the BOARD itself
+// were a schematic, which is wrong (a board isn't a schematic, the PDF is).
 
 function BindingsGrouped({ bindings, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: {
   bindings: DatabankBinding[];
@@ -885,6 +898,36 @@ function BindingsGrouped({ bindings, isBoard, onOpen, onUpdateBinding, onDeleteB
     }
     return buckets;
   }, [rendered]);
+
+  const flatSorted = useMemo(() => {
+    const out = [...rendered];
+    out.sort((a, b) => {
+      const am = a.source === 'binding' ? Number(a.auto_matched) : 0;
+      const bm = b.source === 'binding' ? Number(b.auto_matched) : 0;
+      if (am !== bm) return am - bm;
+      const an = a.source === 'binding' ? a.board_filename : a.pdf_filename;
+      const bn = b.source === 'binding' ? b.board_filename : b.pdf_filename;
+      return an.localeCompare(bn);
+    });
+    return out;
+  }, [rendered]);
+
+  if (!isBoard) {
+    return (
+      <>
+        {flatSorted.map(r => (
+          <BindingRow
+            key={r.source === 'binding' ? `b-${r.id}` : `d-${r.pdf_file_id}`}
+            row={r}
+            isBoard={isBoard}
+            onOpen={onOpen}
+            onUpdateBinding={onUpdateBinding}
+            onDeleteBinding={onDeleteBinding}
+          />
+        ))}
+      </>
+    );
+  }
 
   const visibleGroups = BINDING_CATEGORIES.filter(c => groups[c].length > 0);
 
@@ -965,18 +1008,26 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
         {isBoard ? 'P' : 'B'}
       </span>
       <span className="library-binding-name">{filename}</span>
-      <select
-        className="library-binding-category"
-        value={normalizeCategory(row.category)}
-        onChange={handleCategoryChange}
-        onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => e.stopPropagation()}
-        title={row.auto_open ? 'Auto-opens with board' : 'Listed only'}
-      >
-        {BINDING_CATEGORIES.map(c => (
-          <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
-        ))}
-      </select>
+      {/* Category control lives on the board's detail pane only — that's
+       *  where "this PDF is a schematic" reads correctly. On the PDF's
+       *  pane the bound rows are boards, and putting a category dropdown
+       *  next to a board name reads as "this board is a schematic", which
+       *  is wrong (a board isn't a schematic, the PDF is). Edits go through
+       *  the board side. */}
+      {isBoard && (
+        <select
+          className="library-binding-category"
+          value={normalizeCategory(row.category)}
+          onChange={handleCategoryChange}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title={row.auto_open ? 'Auto-opens with board' : 'Listed only'}
+        >
+          {BINDING_CATEGORIES.map(c => (
+            <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+          ))}
+        </select>
+      )}
       {row.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
       <button
         className="library-binding-remove"
