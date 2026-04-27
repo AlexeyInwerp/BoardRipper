@@ -698,24 +698,35 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
           </button>
         </div>
 
-        {detail.bindings.map(b => (
-          <div key={b.id} className="library-binding-row">
-            <span className={`library-file-icon ${isBoard ? 'library-icon-pdf' : 'library-icon-board'}`}>
-              {isBoard ? 'P' : 'B'}
-            </span>
-            <span className="library-binding-name">
-              {isBoard ? b.pdf_filename : b.board_filename}
-            </span>
-            {b.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
-            <button
-              className="library-binding-remove"
-              onClick={() => onDeleteBinding(b.id)}
-              title="Remove binding"
+        {detail.bindings.map(b => {
+          const boundFileId = isBoard ? b.pdf_file_id : b.board_file_id;
+          const boundFile = databankStore.fileById(boundFileId);
+          return (
+            <div
+              key={b.id}
+              className="library-binding-row"
+              onDoubleClick={() => { if (boundFile) onOpen(boundFile); }}
+              title={boundFile ? `Double-click to open ${boundFile.filename}` : undefined}
+              style={boundFile ? { cursor: 'pointer' } : undefined}
             >
-              x
-            </button>
-          </div>
-        ))}
+              <span className={`library-file-icon ${isBoard ? 'library-icon-pdf' : 'library-icon-board'}`}>
+                {isBoard ? 'P' : 'B'}
+              </span>
+              <span className="library-binding-name">
+                {isBoard ? b.pdf_filename : b.board_filename}
+              </span>
+              {b.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
+              <button
+                className="library-binding-remove"
+                onClick={(e) => { e.stopPropagation(); onDeleteBinding(b.id); }}
+                onDoubleClick={(e) => e.stopPropagation()}
+                title="Remove binding"
+              >
+                x
+              </button>
+            </div>
+          );
+        })}
 
         {detail.bindings.length === 0 && !showBindPicker && (
           <div className="library-binding-empty">No bindings</div>
