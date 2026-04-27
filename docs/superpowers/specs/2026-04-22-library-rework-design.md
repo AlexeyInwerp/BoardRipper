@@ -13,9 +13,16 @@ Date: 2026-04-22
 
 Non-goals:
 
-- No changes to scanning, Live browser contents, file-detail pane, binding UI, or preview thumbnail pipeline.
+- No changes to scanning, Live browser contents, file-detail pane, ~~binding UI~~ (see follow-up below), or preview thumbnail pipeline.
 - No changes to Electron-mode-specific flows beyond the header restyle.
 - No virtualization of file lists in this release.
+
+> **Follow-up (2026-04-27):** binding metadata is now in scope as a separate
+> spec — see [Binding categorization & auto-open filter](2026-04-27-binding-categorization-design.md).
+> Per-binding `category` (schematic / datasheet / other) and `auto_open` flag,
+> visual grouping in the FileDetailPane, and a forward-compatible row type
+> for a future board↔datasheet many-to-many lookup. Bound PDF documentation
+> (datasheets vs schematics) should be stored that way going forward.
 
 ---
 
