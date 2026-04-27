@@ -21,6 +21,19 @@ export interface Pin {
    *  (Allegro) let the renderer hit-test and highlight the full pad area
    *  rather than just the pin sprite. */
   padBounds?: BBox;
+  /** Pad shape — when set, the selection-highlight renderer draws the
+   *  matching primitive (circle for 'round', rounded rect for 'roundrect'
+   *  etc.) instead of the AABB rectangle. Mirrors `Pad.shape` and is
+   *  populated by the same parser path; legacy parsers leave it undefined
+   *  and the highlight falls back to drawing `padBounds` as a rectangle. */
+  padShape?: PadShape;
+  /** Original pre-rotation pad width/height in mils. Required for accurate
+   *  drawing of rotated rects (where `padBounds` carries the rotated AABB,
+   *  not the original dims). */
+  padWidth?: number;
+  padHeight?: number;
+  padAngleDeg?: number;
+  padCornerRadius?: number;
 }
 
 export interface Part {
