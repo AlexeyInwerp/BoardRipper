@@ -71,6 +71,75 @@ function computeGridSize(pinCount: number): number {
   return 8;
 }
 
+/** Lay down a pad's geometry on a Graphics using its actual shape. Used by
+ *  the pad-layer rendering and by the pin-selection highlight so both reads
+ *  the same primitive (a round D-code becomes a circle, not a square AABB).
+ *
+ *  - `bounds`     AABB envelope (carries position via centre + size fallback).
+ *  - `shape`      'round' | 'rect' | 'roundrect' | 'poly' | undefined →
+ *                 falls through to a plain rect (legacy parsers).
+ *  - `width/height` original pre-rotation dims; required to draw rotated
+ *                 rects without the AABB widening.
+ *  - `angleDeg`   CCW rotation. 0/90/180/270 → axis-aligned primitive;
+ *                 anything else → 4-vertex polygon.
+ *  - `cornerRadius` for 'roundrect' shapes.
+ *  - `grow`       outward expansion in mils. Used by selection highlights to
+ *                 produce a halo around the pad. Negative is allowed.
+ */
+export interface PadGeometry {
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  shape?: 'round' | 'rect' | 'roundrect' | 'poly';
+  width?: number;
+  height?: number;
+  angleDeg?: number;
+  cornerRadius?: number;
+}
+
+export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
+  const cx = (p.bounds.minX + p.bounds.maxX) / 2;
+  const cy = (p.bounds.minY + p.bounds.maxY) / 2;
+  const aabbW = p.bounds.maxX - p.bounds.minX;
+  const aabbH = p.bounds.maxY - p.bounds.minY;
+  const w = (p.width  != null && p.width  > 0) ? p.width  : aabbW;
+  const h = (p.height != null && p.height > 0) ? p.height : aabbH;
+  const ang = p.angleDeg ?? 0;
+  const gW = w + grow * 2;
+  const gH = h + grow * 2;
+
+  // Round D-code → filled circle. Use max so non-square Round entries
+  // (rare) still cover the full AABB.
+  if (p.shape === 'round') {
+    gfx.circle(cx, cy, Math.max(gW, gH) / 2);
+    return;
+  }
+
+  // Quantise to detect axis-aligned cases (turn=0/90/180/270 within ~0.01°)
+  const mod90 = Math.abs(((ang % 90) + 90) % 90);
+  const axisAligned = mod90 < 0.01 || mod90 > 89.99;
+  if (axisAligned) {
+    const mod180 = Math.abs(((ang % 180) + 180) % 180);
+    const swapped = Math.abs(mod180 - 90) < 0.01;
+    const rw = swapped ? gH : gW;
+    const rh = swapped ? gW : gH;
+    if (p.shape === 'roundrect' && p.cornerRadius && p.cornerRadius > 0) {
+      gfx.roundRect(cx - rw / 2, cy - rh / 2, rw, rh, p.cornerRadius + grow);
+    } else {
+      gfx.rect(cx - rw / 2, cy - rh / 2, rw, rh);
+    }
+    return;
+  }
+
+  // Off-axis rotation — emit the rotated rect as a 4-vertex polygon.
+  const rad = ang * Math.PI / 180;
+  const co = Math.cos(rad), si = Math.sin(rad);
+  const hx = gW / 2, hy = gH / 2;
+  const pts: number[] = [];
+  for (const [x, y] of [[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]]) {
+    pts.push(cx + x * co - y * si, cy + x * si + y * co);
+  }
+  gfx.poly(pts);
+}
+
 /** Border rectangle data for batched redraw */
 export interface BorderRect {
   x: number; y: number; w: number; h: number;
@@ -595,60 +664,20 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
     const botDropGfx = new Graphics();
     const drillGfx   = new Graphics();
     let anyDrill = false;
-    /** Lay down the pad geometry on the given Graphics using its actual
-     *  shape. Falls back to drawing the AABB rectangle when the parser
-     *  didn't tag a shape (legacy parsers / poly pads). */
-    const drawPadGeometry = (gfx: Graphics, p: import('../parsers').Pad, cx: number, cy: number, aabbW: number, aabbH: number) => {
-      // Original pre-rotation dims; fall back to AABB if missing
-      const w = (p.width  != null && p.width  > 0) ? p.width  : aabbW;
-      const h = (p.height != null && p.height > 0) ? p.height : aabbH;
-      const ang = p.angleDeg ?? 0;
-      const axisAligned = ang === 0 || Math.abs(((ang % 180) + 180) % 180) < 0.01 || Math.abs(((ang % 180) + 180) % 180 - 90) < 0.01;
-      // Round → circle. Diameter = max(w,h), centered on the pad position.
-      if (p.shape === 'round') {
-        gfx.circle(cx, cy, Math.max(w, h) / 2);
-        return;
-      }
-      // Axis-aligned (or 90° rotated) rect / round-rect — use native primitives.
-      if (axisAligned) {
-        // 90/270 rotation swaps w/h
-        const swapped = Math.abs(((ang % 180) + 180) % 180 - 90) < 0.01;
-        const rw = swapped ? h : w;
-        const rh = swapped ? w : h;
-        if (p.shape === 'roundrect' && p.cornerRadius && p.cornerRadius > 0) {
-          gfx.roundRect(cx - rw / 2, cy - rh / 2, rw, rh, p.cornerRadius);
-        } else {
-          gfx.rect(cx - rw / 2, cy - rh / 2, rw, rh);
-        }
-        return;
-      }
-      // Off-axis rotation — emit the rotated rectangle as a 4-vertex polygon.
-      const rad = ang * Math.PI / 180;
-      const co = Math.cos(rad), si = Math.sin(rad);
-      const hx = w / 2, hy = h / 2;
-      const pts: [number, number][] = [
-        [-hx, -hy], [ hx, -hy], [ hx,  hy], [-hx,  hy],
-      ].map(([x, y]) => [cx + x * co - y * si, cy + x * si + y * co]);
-      gfx.poly(pts.flat());
-    };
     for (const p of board.pads) {
       const aabbW = p.bounds.maxX - p.bounds.minX;
       const aabbH = p.bounds.maxY - p.bounds.minY;
       if (aabbW <= 0 || aabbH <= 0) continue;
-      const cx = (p.bounds.minX + p.bounds.maxX) / 2;
-      const cy = (p.bounds.minY + p.bounds.maxY) / 2;
       const isAttached = p.attached !== false; // undefined → treat as attached
       const topGfx = isAttached ? topPadGfx : topDropGfx;
       const botGfx = isAttached ? botPadGfx : botDropGfx;
-      if (p.side === 'top' || p.side === 'both') {
-        drawPadGeometry(topGfx, p, cx, cy, aabbW, aabbH);
-      }
-      if (p.side === 'bottom' || p.side === 'both') {
-        drawPadGeometry(botGfx, p, cx, cy, aabbW, aabbH);
-      }
+      if (p.side === 'top' || p.side === 'both') drawPadShape(topGfx, p);
+      if (p.side === 'bottom' || p.side === 'both') drawPadShape(botGfx, p);
       // Punch a drill hole through TH pads so the user can see the hole
       // through the (otherwise solid) ground/power pad rectangle.
       if (p.drill && p.drill > 0) {
+        const cx = (p.bounds.minX + p.bounds.maxX) / 2;
+        const cy = (p.bounds.minY + p.bounds.maxY) / 2;
         drillGfx.circle(cx, cy, p.drill / 2);
         anyDrill = true;
       }

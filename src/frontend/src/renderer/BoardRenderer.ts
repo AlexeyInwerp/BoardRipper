@@ -24,8 +24,8 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands } from '../store/view-commands';
 import type { PanDirection } from '../store/view-commands';
-import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS } from './board-scene';
-import type { BorderBatch } from './board-scene';
+import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
+import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
@@ -2602,8 +2602,15 @@ export class BoardRenderer {
               const padPoly = storedPads[pi];
               arr.push(() => drawPoly(gfx, padPoly));
             } else if (pb) {
-              const w = pb.maxX - pb.minX, h = pb.maxY - pb.minY;
-              arr.push(() => gfx.rect(pb.minX, pb.minY, w, h));
+              const padGeom: PadGeometry = {
+                bounds: pb,
+                shape: pin.padShape,
+                width: pin.padWidth,
+                height: pin.padHeight,
+                angleDeg: pin.padAngleDeg,
+                cornerRadius: pin.padCornerRadius,
+              };
+              arr.push(() => drawPadShape(gfx, padGeom));
             } else {
               const r = Math.min(computePinRadius(s, pin.radius), clamp);
               arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
@@ -2749,18 +2756,25 @@ export class BoardRenderer {
             }
             highlights.push(() => drawPoly(gfx, padPoly));
           } else if (pb) {
-            // Parser exposed a copper pad rect — draw highlight as the pad
-            // shape itself so a selected pin reads as the real geometry,
-            // not a circle stuck on top of the pad.
+            // Parser exposed a copper pad — draw highlight using the actual
+            // pad shape (round → circle, roundrect → rounded rect, etc.) so
+            // a selected pin reads as the real geometry, not a square halo.
             const grow = s.netHighlightGrow;
-            const w = pb.maxX - pb.minX, h = pb.maxY - pb.minY;
+            const padGeom: PadGeometry = {
+              bounds: pb,
+              shape: pin.padShape,
+              width: pin.padWidth,
+              height: pin.padHeight,
+              angleDeg: pin.padAngleDeg,
+              cornerRadius: pin.padCornerRadius,
+            };
             if (showDim) {
               const colorMap = isBotGfx ? botByColor : topByColor;
               let arr = colorMap.get(pinColor);
               if (!arr) { arr = []; colorMap.set(pinColor, arr); }
-              arr.push(() => gfx.rect(pb.minX, pb.minY, w, h));
+              arr.push(() => drawPadShape(gfx, padGeom));
             }
-            highlights.push(() => gfx.rect(pb.minX - grow, pb.minY - grow, w + grow * 2, h + grow * 2));
+            highlights.push(() => drawPadShape(gfx, padGeom, grow));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
