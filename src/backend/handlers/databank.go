@@ -303,10 +303,14 @@ func (h *DatabankHandler) Tree(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateBinding creates a new board-PDF binding.
+// Optional `category` (default "schematic") and `auto_open` (default true)
+// drive the FileDetailPane grouping and the Auto-PDF filter respectively.
 func (h *DatabankHandler) CreateBinding(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		BoardFileID int64 `json:"board_file_id"`
-		PdfFileID   int64 `json:"pdf_file_id"`
+		BoardFileID int64   `json:"board_file_id"`
+		PdfFileID   int64   `json:"pdf_file_id"`
+		Category    *string `json:"category,omitempty"`
+		AutoOpen    *bool   `json:"auto_open,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -318,7 +322,16 @@ func (h *DatabankHandler) CreateBinding(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	id, err := h.db.InsertBinding(req.BoardFileID, req.PdfFileID, false)
+	category := "schematic"
+	if req.Category != nil {
+		category = *req.Category
+	}
+	autoOpen := true
+	if req.AutoOpen != nil {
+		autoOpen = *req.AutoOpen
+	}
+
+	id, err := h.db.InsertBinding(req.BoardFileID, req.PdfFileID, false, category, autoOpen)
 	if err != nil {
 		http.Error(w, "Failed to create binding: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -326,6 +339,38 @@ func (h *DatabankHandler) CreateBinding(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int64{"id": id})
+}
+
+// UpdateBinding patches a binding's category and/or auto_open flag.
+func (h *DatabankHandler) UpdateBinding(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid binding ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Category *string `json:"category,omitempty"`
+		AutoOpen *bool   `json:"auto_open,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Category == nil && req.AutoOpen == nil {
+		http.Error(w, "must set at least one of category, auto_open", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.UpdateBinding(id, req.Category, req.AutoOpen); err != nil {
+		http.Error(w, "Failed to update binding: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // DeleteBinding removes a binding by ID.

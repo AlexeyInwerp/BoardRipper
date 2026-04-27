@@ -536,7 +536,7 @@ func (s *Scanner) autoMatchBindings() {
 		}
 
 		if bestPdf != nil && bestScore >= 50 {
-			if _, err := s.db.InsertBinding(board.ID, bestPdf.ID, true); err != nil {
+			if _, err := s.db.InsertBinding(board.ID, bestPdf.ID, true, "schematic", true); err != nil {
 				log.Printf("Scanner: auto-bind error %s->%s: %v", board.Filename, bestPdf.Filename, err)
 			} else {
 				log.Printf("Scanner: auto-bound %s <-> %s (score=%d)", board.Filename, bestPdf.Filename, bestScore)

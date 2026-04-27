@@ -93,6 +93,7 @@ func main() {
 	mux.HandleFunc("PATCH /api/databank/files/{id}", dbHandler.UpdateFile)
 	mux.HandleFunc("GET /api/databank/tree", dbHandler.Tree)
 	mux.HandleFunc("POST /api/databank/bindings", dbHandler.CreateBinding)
+	mux.HandleFunc("PATCH /api/databank/bindings/{id}", dbHandler.UpdateBinding)
 	mux.HandleFunc("DELETE /api/databank/bindings/{id}", dbHandler.DeleteBinding)
 	mux.HandleFunc("GET /api/databank/search", dbHandler.Search)
 	mux.HandleFunc("POST /api/databank/scan/pdf", dbHandler.ScanPdf)

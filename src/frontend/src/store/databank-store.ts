@@ -38,6 +38,14 @@ export interface DatabankBinding {
   board_file_id: number;
   pdf_file_id: number;
   auto_matched: boolean;
+  /** Open vocabulary; v1 dropdown: 'schematic' | 'datasheet' | 'other'.
+   *  Stored as plain text so future curated sources can introduce richer
+   *  labels without a schema migration. */
+  category: string;
+  /** Filters the Auto-PDF flow: only bindings with auto_open=true open with
+   *  the board. Independent of category so a user can pin a datasheet to
+   *  auto-open or keep a schematic listed-only. */
+  auto_open: boolean;
   board_filename: string;
   board_path: string;
   pdf_filename: string;
@@ -744,11 +752,33 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
-  async createBinding(boardFileId: number, pdfFileId: number): Promise<void> {
+  async createBinding(
+    boardFileId: number,
+    pdfFileId: number,
+    category?: string,
+    autoOpen?: boolean,
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      board_file_id: boardFileId,
+      pdf_file_id: pdfFileId,
+    };
+    if (category !== undefined) body.category = category;
+    if (autoOpen !== undefined) body.auto_open = autoOpen;
     await this.apiFetch<{ id: number }>('/api/databank/bindings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ board_file_id: boardFileId, pdf_file_id: pdfFileId }),
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateBinding(
+    id: number,
+    patch: { category?: string; auto_open?: boolean },
+  ): Promise<void> {
+    await this.apiFetch<{ status: string }>(`/api/databank/bindings/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
     });
   }
 
