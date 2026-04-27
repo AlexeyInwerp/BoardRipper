@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import type { DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, ViewMode } from '../store/databank-store';
+import type { DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, ViewMode } from '../store/databank-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
@@ -181,6 +181,7 @@ export function LibraryPanel() {
           const detail = await databankStore.fetchFileDetail(file.id);
           if (detail?.bindings) {
             for (const binding of detail.bindings) {
+              if (!binding.auto_open) continue;
               try {
                 const pdfFile = databankStore.fileById(binding.pdf_file_id);
                 if (!pdfFile) continue;
@@ -229,9 +230,21 @@ export function LibraryPanel() {
     databankStore.fetchFileDetail(file.id);
   }, []);
 
-  const handleCreateBinding = useCallback(async (boardFileId: number, pdfFileId: number) => {
-    await databankStore.createBinding(boardFileId, pdfFileId);
-    // Refresh the detail
+  const handleCreateBinding = useCallback(async (
+    boardFileId: number,
+    pdfFileId: number,
+    category?: string,
+    autoOpen?: boolean,
+  ) => {
+    await databankStore.createBinding(boardFileId, pdfFileId, category, autoOpen);
+    if (selectedFileId) databankStore.fetchFileDetail(selectedFileId);
+  }, [selectedFileId]);
+
+  const handleUpdateBinding = useCallback(async (
+    bindingId: number,
+    patch: { category?: string; auto_open?: boolean },
+  ) => {
+    await databankStore.updateBinding(bindingId, patch);
     if (selectedFileId) databankStore.fetchFileDetail(selectedFileId);
   }, [selectedFileId]);
 
@@ -502,6 +515,7 @@ export function LibraryPanel() {
           files={files}
           onOpen={handleOpenFile}
           onCreateBinding={handleCreateBinding}
+          onUpdateBinding={handleUpdateBinding}
           onDeleteBinding={handleDeleteBinding}
         />
       )}
@@ -610,11 +624,37 @@ function LiveBrowser({ browseResult, browsing }: {
 
 // --- File Detail Pane ---
 
-function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBinding }: {
+const BINDING_CATEGORIES = ['schematic', 'datasheet', 'other'] as const;
+type BindingCategory = (typeof BINDING_CATEGORIES)[number];
+const CATEGORY_LABEL: Record<string, string> = {
+  schematic: 'Schematic',
+  datasheet: 'Datasheet',
+  other: 'Other',
+};
+/** Auto-open default per category. Schematics open with their board;
+ *  everything else is listed-only. The user can override per-binding via
+ *  the pin button. */
+function autoOpenDefault(category: string): boolean {
+  return category === 'schematic';
+}
+function normalizeCategory(c: string): BindingCategory {
+  return (BINDING_CATEGORIES as readonly string[]).includes(c) ? (c as BindingCategory) : 'other';
+}
+
+/** A binding row as rendered. v1 only emits 'binding' rows from the
+ *  `bindings` table. The 'derived' arm is a forward hook for a future
+ *  board↔datasheet many-to-many lookup populated from external data —
+ *  see docs/superpowers/specs/2026-04-27-binding-categorization-design.md. */
+type RenderedBinding =
+  | (DatabankBinding & { source: 'binding' })
+  | { source: 'derived'; pdf_file_id: number; pdf_filename: string; category: string };
+
+function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding }: {
   detail: FileDetail;
   files: DatabankFile[];
   onOpen: (f: DatabankFile) => void;
-  onCreateBinding: (boardId: number, pdfId: number) => void;
+  onCreateBinding: (boardId: number, pdfId: number, category?: string, autoOpen?: boolean) => void;
+  onUpdateBinding: (bindingId: number, patch: { category?: string; auto_open?: boolean }) => void;
   onDeleteBinding: (bindingId: number) => void;
 }) {
   const [showBindPicker, setShowBindPicker] = useState(false);
@@ -698,67 +738,224 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onDeleteBindin
           </button>
         </div>
 
-        {detail.bindings.map(b => {
-          const boundFileId = isBoard ? b.pdf_file_id : b.board_file_id;
-          const boundFile = databankStore.fileById(boundFileId);
-          return (
-            <div
-              key={b.id}
-              className="library-binding-row"
-              onDoubleClick={() => { if (boundFile) onOpen(boundFile); }}
-              title={boundFile ? `Double-click to open ${boundFile.filename}` : undefined}
-              style={boundFile ? { cursor: 'pointer' } : undefined}
-            >
-              <span className={`library-file-icon ${isBoard ? 'library-icon-pdf' : 'library-icon-board'}`}>
-                {isBoard ? 'P' : 'B'}
-              </span>
-              <span className="library-binding-name">
-                {isBoard ? b.pdf_filename : b.board_filename}
-              </span>
-              {b.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
-              <button
-                className="library-binding-remove"
-                onClick={(e) => { e.stopPropagation(); onDeleteBinding(b.id); }}
-                onDoubleClick={(e) => e.stopPropagation()}
-                title="Remove binding"
-              >
-                x
-              </button>
-            </div>
-          );
-        })}
+        <BindingsGrouped
+          bindings={detail.bindings}
+          isBoard={isBoard}
+          onOpen={onOpen}
+          onUpdateBinding={onUpdateBinding}
+          onDeleteBinding={onDeleteBinding}
+        />
 
         {detail.bindings.length === 0 && !showBindPicker && (
           <div className="library-binding-empty">No bindings</div>
         )}
 
         {showBindPicker && (
-          <div className="library-bind-picker">
-            {bindCandidates.length === 0 ? (
-              <div className="library-binding-empty">
-                No {isBoard ? 'PDFs' : 'boards'} available to bind
-              </div>
-            ) : (
-              bindCandidates.map(f => (
-                <div
-                  key={f.id}
-                  className="library-bind-candidate"
-                  onClick={() => {
-                    if (isBoard) onCreateBinding(detail.id, f.id);
-                    else onCreateBinding(f.id, detail.id);
-                    setShowBindPicker(false);
-                  }}
-                >
-                  <span className={`library-file-icon ${f.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
-                    {f.file_type === 'board' ? 'B' : 'P'}
-                  </span>
-                  <span>{f.filename}</span>
-                </div>
-              ))
-            )}
-          </div>
+          <BindPicker
+            isBoard={isBoard}
+            candidates={bindCandidates}
+            onPick={(f, category) => {
+              const autoOpen = autoOpenDefault(category);
+              if (isBoard) onCreateBinding(detail.id, f.id, category, autoOpen);
+              else onCreateBinding(f.id, detail.id, category, autoOpen);
+              setShowBindPicker(false);
+            }}
+          />
         )}
       </div>
+    </div>
+  );
+}
+
+// --- Bindings, grouped by category ---
+
+function BindingsGrouped({ bindings, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: {
+  bindings: DatabankBinding[];
+  isBoard: boolean;
+  onOpen: (f: DatabankFile) => void;
+  onUpdateBinding: (bindingId: number, patch: { category?: string; auto_open?: boolean }) => void;
+  onDeleteBinding: (bindingId: number) => void;
+}) {
+  // Tag with `source` so future derived rows (board↔datasheet M2M) slot in
+  // without restructuring this file. Today only 'binding' is emitted.
+  const rendered: RenderedBinding[] = useMemo(
+    () => bindings.map(b => ({ ...b, source: 'binding' as const })),
+    [bindings],
+  );
+
+  const groups = useMemo(() => {
+    const buckets: Record<BindingCategory, RenderedBinding[]> = {
+      schematic: [], datasheet: [], other: [],
+    };
+    for (const r of rendered) buckets[normalizeCategory(r.category)].push(r);
+    for (const k of BINDING_CATEGORIES) {
+      buckets[k].sort((a, b) => {
+        const am = a.source === 'binding' ? Number(a.auto_matched) : 0;
+        const bm = b.source === 'binding' ? Number(b.auto_matched) : 0;
+        if (am !== bm) return am - bm;  // manual (0) before auto-matched (1)
+        return a.pdf_filename.localeCompare(b.pdf_filename);
+      });
+    }
+    return buckets;
+  }, [rendered]);
+
+  const visibleGroups = BINDING_CATEGORIES.filter(c => groups[c].length > 0);
+
+  return (
+    <>
+      {visibleGroups.map((cat, i) => (
+        <div key={cat}>
+          {i > 0 && <div className="library-history-divider" aria-hidden="true" />}
+          <div className="library-binding-group-header">{CATEGORY_LABEL[cat]}</div>
+          {groups[cat].map(r => (
+            <BindingRow
+              key={r.source === 'binding' ? `b-${r.id}` : `d-${r.pdf_file_id}`}
+              row={r}
+              isBoard={isBoard}
+              onOpen={onOpen}
+              onUpdateBinding={onUpdateBinding}
+              onDeleteBinding={onDeleteBinding}
+            />
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: {
+  row: RenderedBinding;
+  isBoard: boolean;
+  onOpen: (f: DatabankFile) => void;
+  onUpdateBinding: (bindingId: number, patch: { category?: string; auto_open?: boolean }) => void;
+  onDeleteBinding: (bindingId: number) => void;
+}) {
+  const boundFileId = row.source === 'binding'
+    ? (isBoard ? row.pdf_file_id : row.board_file_id)
+    : row.pdf_file_id;
+  const boundFile = databankStore.fileById(boundFileId);
+  const filename = row.source === 'binding'
+    ? (isBoard ? row.pdf_filename : row.board_filename)
+    : row.pdf_filename;
+
+  const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (row.source !== 'binding') return;
+    const newCategory = e.target.value;
+    const oldDefault = autoOpenDefault(row.category);
+    const overriding = row.auto_open !== oldDefault;
+    // Preserve auto_open when the user has explicitly overridden the
+    // category default — only change the label. Otherwise follow the new
+    // category's default behavior.
+    const patch: { category: string; auto_open?: boolean } = { category: newCategory };
+    if (!overriding) patch.auto_open = autoOpenDefault(newCategory);
+    onUpdateBinding(row.id, patch);
+  };
+
+  // Derived rows (future): no controls, no pin, no x.
+  if (row.source === 'derived') {
+    return (
+      <div
+        className="library-binding-row"
+        onDoubleClick={() => { if (boundFile) onOpen(boundFile); }}
+        title={boundFile ? `Double-click to open ${filename}` : undefined}
+        style={boundFile ? { cursor: 'pointer' } : undefined}
+      >
+        <span className="library-file-icon library-icon-pdf">P</span>
+        <span className="library-binding-name">{filename}</span>
+        <span className="library-binding-auto" title="Auto-detected from board metadata">D</span>
+      </div>
+    );
+  }
+
+  const categoryDefault = autoOpenDefault(row.category);
+  const overriding = row.auto_open !== categoryDefault;
+
+  return (
+    <div
+      className="library-binding-row"
+      onDoubleClick={() => { if (boundFile) onOpen(boundFile); }}
+      title={boundFile ? `Double-click to open ${filename}` : undefined}
+      style={boundFile ? { cursor: 'pointer' } : undefined}
+    >
+      <span className={`library-file-icon ${isBoard ? 'library-icon-pdf' : 'library-icon-board'}`}>
+        {isBoard ? 'P' : 'B'}
+      </span>
+      <span className="library-binding-name">{filename}</span>
+      <select
+        className="library-binding-category"
+        value={normalizeCategory(row.category)}
+        onChange={handleCategoryChange}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title="Category"
+      >
+        {BINDING_CATEGORIES.map(c => (
+          <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+        ))}
+      </select>
+      <button
+        className={`library-binding-pin${row.auto_open ? ' is-pinned' : ''}${overriding ? ' is-overriding' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onUpdateBinding(row.id, { auto_open: !row.auto_open });
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title={row.auto_open ? 'Auto-opens with board (click to disable)' : 'Listed only (click to auto-open)'}
+        aria-label={row.auto_open ? 'Disable auto-open' : 'Enable auto-open'}
+      >
+        {row.auto_open ? <IconPinFilled size={14} /> : <IconPin size={14} />}
+      </button>
+      {row.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
+      <button
+        className="library-binding-remove"
+        onClick={(e) => { e.stopPropagation(); onDeleteBinding(row.id); }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title="Remove binding"
+      >
+        x
+      </button>
+    </div>
+  );
+}
+
+function BindPicker({ isBoard, candidates, onPick }: {
+  isBoard: boolean;
+  candidates: DatabankFile[];
+  onPick: (file: DatabankFile, category: BindingCategory) => void;
+}) {
+  const [category, setCategory] = useState<BindingCategory>('schematic');
+  return (
+    <div className="library-bind-picker">
+      <div className="library-bind-picker-toolbar">
+        <span>Category:</span>
+        <select
+          className="library-binding-category"
+          value={category}
+          onChange={(e) => setCategory(normalizeCategory(e.target.value))}
+        >
+          {BINDING_CATEGORIES.map(c => (
+            <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+          ))}
+        </select>
+      </div>
+      {candidates.length === 0 ? (
+        <div className="library-binding-empty">
+          No {isBoard ? 'PDFs' : 'boards'} available to bind
+        </div>
+      ) : (
+        candidates.map(f => (
+          <div
+            key={f.id}
+            className="library-bind-candidate"
+            onClick={() => onPick(f, category)}
+          >
+            <span className={`library-file-icon ${f.file_type === 'board' ? 'library-icon-board' : 'library-icon-pdf'}`}>
+              {f.file_type === 'board' ? 'B' : 'P'}
+            </span>
+            <span>{f.filename}</span>
+          </div>
+        ))
+      )}
     </div>
   );
 }

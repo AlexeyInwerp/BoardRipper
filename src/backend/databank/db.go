@@ -67,7 +67,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -116,6 +116,11 @@ func (db *DB) migrate() error {
 	if ver < 7 {
 		if err := db.migrateV7(); err != nil {
 			return fmt.Errorf("v7: %w", err)
+		}
+	}
+	if ver < 8 {
+		if err := db.migrateV8(); err != nil {
+			return fmt.Errorf("v8: %w", err)
 		}
 	}
 
@@ -352,6 +357,36 @@ func (db *DB) migrateV6() error {
 	return tx.Commit()
 }
 
+// migrateV8 adds binding categorization fields. `category` is open-vocabulary
+// text (v1 dropdown: schematic / datasheet / other) so future curated sources
+// can add labels without schema churn. `auto_open` gates the Auto-PDF flow:
+// schematics open with the board, datasheets are listed-only by default.
+// Existing rows take the defaults (schematic + auto_open=true), preserving
+// today's behavior.
+func (db *DB) migrateV8() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`ALTER TABLE bindings ADD COLUMN category TEXT NOT NULL DEFAULT 'schematic'`); err != nil {
+		return fmt.Errorf("add bindings.category: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE bindings ADD COLUMN auto_open INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("add bindings.auto_open: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 8); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // migrateV7 adds the board_color_hex column to the files table.
 // Hex is denormalized from boards.db colors.hex at scan time so the renderer
 // can apply per-board fill colors without a per-file resolver fetch.
@@ -572,10 +607,12 @@ type FileRecord struct {
 
 // BindingRecord represents a row in the bindings table.
 type BindingRecord struct {
-	ID          int64 `json:"id"`
-	BoardFileID int64 `json:"board_file_id"`
-	PdfFileID   int64 `json:"pdf_file_id"`
-	AutoMatched bool  `json:"auto_matched"`
+	ID          int64  `json:"id"`
+	BoardFileID int64  `json:"board_file_id"`
+	PdfFileID   int64  `json:"pdf_file_id"`
+	AutoMatched bool   `json:"auto_matched"`
+	Category    string `json:"category"`
+	AutoOpen    bool   `json:"auto_open"`
 }
 
 // BindingDetail is a BindingRecord enriched with the linked file's name and path.
@@ -830,7 +867,8 @@ func (db *DB) AllFilePaths() (map[string]struct{ ID, Size, ModTime int64 }, erro
 // GetBindingsForBoard returns all PDF bindings for a board file.
 func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
 	rows, err := db.reader.Query(
-		`SELECT id, board_file_id, pdf_file_id, auto_matched FROM bindings WHERE board_file_id = ?`,
+		`SELECT id, board_file_id, pdf_file_id, auto_matched, category, auto_open
+		   FROM bindings WHERE board_file_id = ?`,
 		boardFileID,
 	)
 	if err != nil {
@@ -841,11 +879,12 @@ func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
 	var bindings []BindingRecord
 	for rows.Next() {
 		var b BindingRecord
-		var auto int
-		if err := rows.Scan(&b.ID, &b.BoardFileID, &b.PdfFileID, &auto); err != nil {
+		var auto, autoOpen int
+		if err := rows.Scan(&b.ID, &b.BoardFileID, &b.PdfFileID, &auto, &b.Category, &autoOpen); err != nil {
 			return nil, err
 		}
 		b.AutoMatched = auto != 0
+		b.AutoOpen = autoOpen != 0
 		bindings = append(bindings, b)
 	}
 	return bindings, rows.Err()
@@ -854,7 +893,7 @@ func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
 // GetBindingsForFile returns all bindings involving a file (as board or PDF), with filenames.
 func (db *DB) GetBindingsForFile(fileID int64) ([]BindingDetail, error) {
 	rows, err := db.reader.Query(
-		`SELECT b.id, b.board_file_id, b.pdf_file_id, b.auto_matched,
+		`SELECT b.id, b.board_file_id, b.pdf_file_id, b.auto_matched, b.category, b.auto_open,
 		        bf.filename, bf.path, pf.filename, pf.path
 		 FROM bindings b
 		 JOIN files bf ON bf.id = b.board_file_id
@@ -870,30 +909,67 @@ func (db *DB) GetBindingsForFile(fileID int64) ([]BindingDetail, error) {
 	var bindings []BindingDetail
 	for rows.Next() {
 		var bd BindingDetail
-		var auto int
-		if err := rows.Scan(&bd.ID, &bd.BoardFileID, &bd.PdfFileID, &auto,
+		var auto, autoOpen int
+		if err := rows.Scan(&bd.ID, &bd.BoardFileID, &bd.PdfFileID, &auto, &bd.Category, &autoOpen,
 			&bd.BoardFilename, &bd.BoardPath, &bd.PdfFilename, &bd.PdfPath); err != nil {
 			return nil, err
 		}
 		bd.AutoMatched = auto != 0
+		bd.AutoOpen = autoOpen != 0
 		bindings = append(bindings, bd)
 	}
 	return bindings, rows.Err()
 }
 
 // InsertBinding creates a board-PDF binding.
-func (db *DB) InsertBinding(boardFileID, pdfFileID int64, autoMatched bool) (int64, error) {
+// `category` is open-vocabulary (v1: schematic / datasheet / other);
+// `autoOpen` gates the Auto-PDF flow on the frontend.
+func (db *DB) InsertBinding(boardFileID, pdfFileID int64, autoMatched bool, category string, autoOpen bool) (int64, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	if category == "" {
+		category = "schematic"
+	}
+
 	res, err := db.writer.Exec(
-		`INSERT OR IGNORE INTO bindings (board_file_id, pdf_file_id, auto_matched) VALUES (?, ?, ?)`,
-		boardFileID, pdfFileID, boolToInt(autoMatched),
+		`INSERT OR IGNORE INTO bindings (board_file_id, pdf_file_id, auto_matched, category, auto_open)
+		 VALUES (?, ?, ?, ?, ?)`,
+		boardFileID, pdfFileID, boolToInt(autoMatched), category, boolToInt(autoOpen),
 	)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// UpdateBinding patches a binding's category and/or auto_open. Nil fields are
+// left untouched. Returns nil even if no row matches the id (caller validates).
+func (db *DB) UpdateBinding(id int64, category *string, autoOpen *bool) error {
+	if category == nil && autoOpen == nil {
+		return nil
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	sets := make([]string, 0, 2)
+	args := make([]any, 0, 3)
+	if category != nil {
+		sets = append(sets, "category = ?")
+		args = append(args, *category)
+	}
+	if autoOpen != nil {
+		sets = append(sets, "auto_open = ?")
+		args = append(args, boolToInt(*autoOpen))
+	}
+	args = append(args, id)
+
+	_, err := db.writer.Exec(
+		`UPDATE bindings SET `+strings.Join(sets, ", ")+` WHERE id = ?`,
+		args...,
+	)
+	return err
 }
 
 // DeleteBinding removes a binding by ID.
