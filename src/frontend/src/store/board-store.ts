@@ -441,16 +441,24 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  /** Bind a newly-opened PDF: name-match first, fall back to the active tab */
-  autoBindPdf(pdfFileName: string) {
+  /** Bind a newly-opened PDF to an open board tab whose filename matches.
+   *  Returns the matched tab's filename so the caller can promote a strong
+   *  match to a persistent DB binding (in databank-store). Returns null when
+   *  no name match exists — we no longer fall back to the active tab,
+   *  because that caused the active board to "absorb" any stray PDF the
+   *  user opened, including PDFs unrelated to it. */
+  autoBindPdf(pdfFileName: string): string | null {
     const matchName = findBestNameMatch(pdfFileName, this._tabs.map(t => t.fileName));
-    const tab = (matchName && this._tabs.find(t => t.fileName === matchName)) ?? this.activeTab;
-    if (tab && !tab.pdfFileNames.includes(pdfFileName)) {
+    if (!matchName) return null;
+    const tab = this._tabs.find(t => t.fileName === matchName);
+    if (!tab) return null;
+    if (!tab.pdfFileNames.includes(pdfFileName)) {
       tab.pdfFileNames.push(pdfFileName);
       const entry = this._pdfFiles.get(pdfFileName);
       if (entry) entry.boundTabIds.add(tab.id);
       this.notify();
     }
+    return matchName;
   }
 
   /** Try to auto-bind a board tab to an existing PDF by partial filename match */

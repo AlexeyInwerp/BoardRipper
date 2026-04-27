@@ -436,11 +436,19 @@ class DatabankStore extends Emitter {
 
   /** Safely fetch JSON from the backend, returning null if unavailable. */
   private async apiFetch<T>(url: string, init?: RequestInit): Promise<T | null> {
+    const method = init?.method ?? 'GET';
     try {
       const res = await fetch(url, init);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // Surface the status + URL on every failure so a stale backend
+        // (e.g. missing the PATCH /api/databank/bindings/{id} route) shows
+        // up in devtools instead of silently leaving the UI unchanged.
+        log.scan.warn(`API ${method} ${url} → HTTP ${res.status}`);
+        throw new Error(`HTTP ${res.status}`);
+      }
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
+        log.scan.warn(`API ${method} ${url} → unexpected content-type: ${contentType}`);
         throw new Error('Expected JSON, got ' + contentType);
       }
       this._backendWarned = false;
