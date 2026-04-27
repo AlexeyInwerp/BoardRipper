@@ -841,17 +841,17 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (row.source !== 'binding') return;
     const newCategory = e.target.value;
-    const oldDefault = autoOpenDefault(row.category);
-    const overriding = row.auto_open !== oldDefault;
-    // Preserve auto_open when the user has explicitly overridden the
-    // category default — only change the label. Otherwise follow the new
-    // category's default behavior.
-    const patch: { category: string; auto_open?: boolean } = { category: newCategory };
-    if (!overriding) patch.auto_open = autoOpenDefault(newCategory);
-    onUpdateBinding(row.id, patch);
+    if (newCategory === row.category) return;
+    // Auto-open follows the category default. The schema keeps the columns
+    // independent for future flexibility, but the UI ties them together —
+    // a separate pin override per row was confusing in practice.
+    onUpdateBinding(row.id, {
+      category: newCategory,
+      auto_open: autoOpenDefault(newCategory),
+    });
   };
 
-  // Derived rows (future): no controls, no pin, no x.
+  // Derived rows (future): no controls, no x.
   if (row.source === 'derived') {
     return (
       <div
@@ -866,9 +866,6 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
       </div>
     );
   }
-
-  const categoryDefault = autoOpenDefault(row.category);
-  const overriding = row.auto_open !== categoryDefault;
 
   return (
     <div
@@ -887,24 +884,12 @@ function BindingRow({ row, isBoard, onOpen, onUpdateBinding, onDeleteBinding }: 
         onChange={handleCategoryChange}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
-        title="Category"
+        title={row.auto_open ? 'Auto-opens with board' : 'Listed only'}
       >
         {BINDING_CATEGORIES.map(c => (
           <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
         ))}
       </select>
-      <button
-        className={`library-binding-pin${row.auto_open ? ' is-pinned' : ''}${overriding ? ' is-overriding' : ''}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onUpdateBinding(row.id, { auto_open: !row.auto_open });
-        }}
-        onDoubleClick={(e) => e.stopPropagation()}
-        title={row.auto_open ? 'Auto-opens with board (click to disable)' : 'Listed only (click to auto-open)'}
-        aria-label={row.auto_open ? 'Disable auto-open' : 'Enable auto-open'}
-      >
-        {row.auto_open ? <IconPinFilled size={14} /> : <IconPin size={14} />}
-      </button>
       {row.auto_matched && <span className="library-binding-auto" title="Auto-matched">A</span>}
       <button
         className="library-binding-remove"
