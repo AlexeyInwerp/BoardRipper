@@ -157,5 +157,78 @@ class TestFamilyResolution(unittest.TestCase):
         self.assertFalse(matched)
 
 
+class TestParseSparqlRow(unittest.TestCase):
+    """Phase A internal: each SPARQL binding maps to a well-shaped staging row."""
+
+    @classmethod
+    def setUpClass(cls):
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location('iwm', SCRIPT)
+        cls.m = module_from_spec(spec)
+        spec.loader.exec_module(cls.m)
+
+    def test_full_row_with_series_label(self):
+        binding = FIXTURE_SPARQL_RESPONSE['results']['bindings'][0]  # MacBook Pro 16
+        row = self.m.parse_sparql_row(binding)
+        self.assertEqual(row['wikidata_qid'], 'Q9001')
+        self.assertEqual(row['family'], 'MacBook Pro')
+        self.assertEqual(row['model_number'], 'A2141')
+        self.assertEqual(row['display_name'], 'MacBook Pro 16-inch (Late 2019)')
+        self.assertEqual(row['year'], 2019)
+        self.assertEqual(row['emc'], '3348')
+        self.assertEqual(row['raw_label'], 'MacBook Pro 16-inch (Late 2019)')
+        self.assertFalse(row['skip'])
+
+    def test_no_emc_no_series(self):
+        binding = FIXTURE_SPARQL_RESPONSE['results']['bindings'][1]  # iMac (Mid 2011)
+        row = self.m.parse_sparql_row(binding)
+        self.assertEqual(row['family'], 'iMac')
+        self.assertEqual(row['model_number'], 'A1311')
+        self.assertEqual(row['year'], 2011)
+        self.assertIsNone(row['emc'])
+
+    def test_no_a_number_yields_empty_string(self):
+        binding = FIXTURE_SPARQL_RESPONSE['results']['bindings'][3]  # Mystery Mac
+        row = self.m.parse_sparql_row(binding)
+        self.assertEqual(row['model_number'], '')
+        self.assertIsNone(row['family'])  # 'Mystery Mac' doesn't match any pattern
+        self.assertEqual(row['year'], 2025)
+
+
+class TestExtractPipeline(unittest.TestCase):
+    """Phase A end-to-end with mocked HTTP. Confirms the staging file is written
+    in the documented shape with the correct counts."""
+
+    @classmethod
+    def setUpClass(cls):
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location('iwm', SCRIPT)
+        cls.m = module_from_spec(spec)
+        spec.loader.exec_module(cls.m)
+
+    def test_extract_writes_staging_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / 'import-staging'
+            # Patch the staging directory location inside the module by
+            # patching its __file__-derived path.
+            with patch.object(self.m, 'fetch_wikidata_macs', return_value=FIXTURE_SPARQL_RESPONSE), \
+                 patch.object(self.m, '__file__', str(Path(tmp) / 'scripts' / 'import-wikidata-macs.py')):
+                # Make sure the parent of the patched __file__ exists so mkdir
+                # finds its target.
+                (Path(tmp) / 'scripts').mkdir(parents=True, exist_ok=True)
+                ret = self.m.extract()
+            self.assertEqual(ret, 0)
+            files = list(out_dir.glob('wikidata-macs-*.json'))
+            self.assertEqual(len(files), 1, 'expected exactly one staging file written')
+            payload = json.loads(files[0].read_text())
+            self.assertEqual(payload['row_count'], 4)
+            qids = {r['wikidata_qid'] for r in payload['rows']}
+            self.assertEqual(qids, {'Q9001', 'Q9002', 'Q9003', 'Q9004'})
+            # Spot-check the canonical row
+            mbp = next(r for r in payload['rows'] if r['wikidata_qid'] == 'Q9001')
+            self.assertEqual(mbp['family'], 'MacBook Pro')
+            self.assertEqual(mbp['model_number'], 'A2141')
+
+
 if __name__ == '__main__':
     unittest.main()
