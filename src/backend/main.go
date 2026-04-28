@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"boardripper/boarddb"
@@ -193,7 +197,39 @@ func main() {
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Server failed: %v", err)
+
+	// Graceful shutdown. On SIGTERM (Docker stop / Synology container
+	// restart) or SIGINT (Ctrl-C in dev): cancel any active scan, stop
+	// accepting new HTTP connections, drain in-flight requests for up to
+	// 30s, then close the DB. The drain bound matters: long-running
+	// endpoints (PDF extract, file upload) hold the connection, so we
+	// cap shutdown so the container actually exits.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	serverErrCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrCh <- err
+		}
+		close(serverErrCh)
+	}()
+
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			log.Fatalf("Server failed: %v", err)
+		}
+	case sig := <-sigCh:
+		log.Printf("Received %s — shutting down (30s drain timeout)", sig)
+		// Cancel active scan first so workers stop hitting the DB.
+		scanner.StopScan()
+		// Stop accepting new connections; let in-flight ones finish.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Graceful shutdown failed: %v (forcing close)", err)
+			_ = srv.Close()
+		}
+		log.Print("Shutdown complete")
 	}
 }

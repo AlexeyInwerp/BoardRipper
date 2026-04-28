@@ -2,6 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import pkg from './package.json' with { type: 'json' }
 
+// Backend port for the dev proxy. Default 1336 matches the documented
+// dev setup (CLAUDE.md). Playwright passes BOARDRIPPER_BACKEND_PORT to
+// point at its own ephemeral backend so test runs don't collide with a
+// dev server on 1336.
+const BACKEND_PORT = process.env.BOARDRIPPER_BACKEND_PORT ?? '1336';
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -13,7 +19,7 @@ export default defineConfig({
     port: 8082,
     proxy: {
       '/api': {
-        target: 'http://localhost:1336',
+        target: `http://localhost:${BACKEND_PORT}`,
         changeOrigin: true,
         // Silence Vite's default ECONNREFUSED logging when the Go backend
         // isn't running (Playwright / pure-frontend dev / CI). The app
