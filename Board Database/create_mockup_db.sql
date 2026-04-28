@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS colors (
     hex TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
-INSERT OR IGNORE INTO colors (id, name, sort_order) VALUES
-    (1,'black',1),  (2,'red',2),    (3,'green',3),  (4,'blue',4),
-    (5,'white',5),  (6,'yellow',6), (7,'purple',7), (8,'orange',8),
-    (9,'pink',9),   (10,'brown',10),(11,'silver',11),(12,'gold',12);
+INSERT OR IGNORE INTO colors (id, name, hex, sort_order) VALUES
+    (1,'black','#1a1a1a',1),  (2,'red','#8a1a1a',2),    (3,'green','#1a4a2a',3),  (4,'blue','#1a3a8a',4),
+    (5,'white','#e8e8e8',5),  (6,'yellow','#c8b020',6), (7,'purple','#5a1a8a',7), (8,'orange','#c86020',8),
+    (9,'pink','#c87090',9),   (10,'brown','#604030',10),(11,'silver','#c0c0c0',11),(12,'gold','#c8a020',12);
 
 -- ============================================================
 -- Entity hierarchy

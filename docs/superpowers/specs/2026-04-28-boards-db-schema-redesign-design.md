@@ -236,7 +236,11 @@ This is the cleaner path because the future Database Editor naturally writes SQL
 
 ### Starting-state assumption
 
-**v1 was never executed.** The v1 spec/plan (UUID injection + flat color column) sits in the repo as committed-but-unimplemented design. The migration's input state is the **current production schema** as committed today: no UUIDs in `boards`, no `colors` table, no `color_id` column. The script generates everything fresh — including all UUIDs. No preservation of any prior UUID values; this is a clean cut.
+v1 was *partially* executed in main before this v2 spec was written: commits `2075277` (BoardUUID + BoardColor plumbing through Metadata/FileRecord) and `22625fe` (BoardColorHex extension) shipped the resolver-to-databank pipeline against an as-yet-unrealized boards.db schema. Databank `migrateV6` (board_uuid + board_color columns) and `migrateV7` (board_color_hex column) shipped alongside.
+
+What was *not* in place: the boards.db schema actually had no UUIDs, no colors table, and no color_id column — the resolver was reading fields that didn't yet exist on the source side. v2 fills in the boards.db side and reconnects the existing pipeline.
+
+The migration generates fresh UUIDs for every entity. Any pre-existing `files.board_uuid` rows in the user's databank.db (none in production today; they would be empty strings or stale) are harmless: a rescan re-resolves them. No preservation of prior UUID values; this is a clean cut on the boards.db side, transparent on the databank.db side.
 
 ### Migration steps (in transaction)
 
