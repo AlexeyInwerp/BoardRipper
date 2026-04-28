@@ -230,5 +230,135 @@ class TestExtractPipeline(unittest.TestCase):
             self.assertEqual(mbp['model_number'], 'A2141')
 
 
+class TestApplyStaging(unittest.TestCase):
+    """Phase B end-to-end: staging JSON + fixture DB → INSERT OR IGNORE merge."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.db = self.tmp / 'boards.db'
+        build_db(self.db)
+        self.staging = self.tmp / 'staging.json'
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_staging(self, rows: list[dict]):
+        self.staging.write_text(json.dumps({
+            'fetched_at': '2026-04-28T18:00:00Z',
+            'source_query': 'TEST',
+            'row_count': len(rows),
+            'rows': rows,
+        }))
+
+    def test_inserts_new_models_skips_existing(self):
+        self._write_staging([
+            # New
+            {'wikidata_qid': 'Q9001', 'family': 'MacBook Pro', 'model_number': 'A2141',
+             'display_name': 'MacBook Pro 16-inch (Late 2019)', 'year': 2019, 'emc': '3348',
+             'raw_label': 'MacBook Pro 16-inch (Late 2019)', 'skip': False},
+            # Existing — manual A1466 row should be untouched
+            {'wikidata_qid': 'Q9003', 'family': 'MacBook Air', 'model_number': 'A1466',
+             'display_name': 'MacBook Air 13-inch Mid 2013', 'year': 2013, 'emc': None,
+             'raw_label': 'MacBook Air 13-inch Mid 2013', 'skip': False},
+        ])
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 0,
+                         f"unexpected exit: stdout={result.stdout} stderr={result.stderr}")
+        self.assertIn('1 inserted', result.stdout)
+        self.assertIn('1 existing', result.stdout)
+
+        with sqlite3.connect(self.db) as c:
+            # New row landed
+            new = c.execute(
+                "SELECT display_name, notes FROM models WHERE model_number = 'A2141'"
+            ).fetchone()
+            self.assertIsNotNone(new)
+            self.assertEqual(new[0], 'MacBook Pro 16-inch (Late 2019)')
+            self.assertEqual(new[1], 'wikidata:Q9001; year:2019; emc:3348')
+            # Existing row preserved
+            existing = c.execute(
+                "SELECT display_name, notes FROM models WHERE model_number = 'A1466'"
+            ).fetchone()
+            self.assertEqual(existing[0], 'MacBook Air 13" (manual)')
+            self.assertEqual(existing[1], 'manual:original')
+
+    def test_skipped_rows_yield_exit_1(self):
+        self._write_staging([
+            {'wikidata_qid': 'Q9001', 'family': 'MacBook Pro', 'model_number': 'A2141',
+             'display_name': 'X', 'year': 2019, 'emc': None,
+             'raw_label': 'X', 'skip': False},
+            {'wikidata_qid': 'Q9999', 'family': None, 'model_number': '',
+             'display_name': 'Junk', 'year': None, 'emc': None,
+             'raw_label': 'Junk', 'skip': True},
+        ])
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        # Exit 1 signals "human review surfaced something" (skip=true)
+        self.assertEqual(result.returncode, 1, f"stderr={result.stderr}")
+        self.assertIn('1 skipped', result.stdout)
+
+    def test_missing_family_is_fatal(self):
+        self._write_staging([
+            {'wikidata_qid': 'Q9001', 'family': None, 'model_number': 'A2141',
+             'display_name': 'X', 'year': 2019, 'emc': None,
+             'raw_label': 'X', 'skip': False},
+        ])
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('no family', result.stderr)
+
+    def test_missing_model_number_is_fatal(self):
+        self._write_staging([
+            {'wikidata_qid': 'Q9001', 'family': 'MacBook Pro', 'model_number': '',
+             'display_name': 'X', 'year': 2019, 'emc': None,
+             'raw_label': 'X', 'skip': False},
+        ])
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('no model_number', result.stderr)
+
+    def test_creates_new_family(self):
+        self._write_staging([
+            {'wikidata_qid': 'Q9001', 'family': 'Mac Studio', 'model_number': 'A2615',
+             'display_name': 'Mac Studio (2022)', 'year': 2022, 'emc': None,
+             'raw_label': 'Mac Studio (2022)', 'skip': False},
+        ])
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('Mac Studio', result.stdout)  # mentioned in "new families created"
+        with sqlite3.connect(self.db) as c:
+            row = c.execute(
+                "SELECT f.name FROM families f JOIN brands b ON f.brand_uuid=b.uuid "
+                "WHERE b.name='Apple' AND f.name='Mac Studio'"
+            ).fetchone()
+            self.assertIsNotNone(row)
+
+    def test_idempotent_rerun(self):
+        rows = [{'wikidata_qid': 'Q9001', 'family': 'MacBook Pro', 'model_number': 'A2141',
+                 'display_name': 'MacBook Pro 16-inch', 'year': 2019, 'emc': None,
+                 'raw_label': 'X', 'skip': False}]
+        self._write_staging(rows)
+        first = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(first.returncode, 0)
+        self.assertIn('1 inserted', first.stdout)
+
+        second = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(second.returncode, 0)
+        self.assertIn('0 inserted', second.stdout)
+        self.assertIn('1 existing', second.stdout)
+
+    def test_db_below_schema_v2_fails(self):
+        # Wipe the schema_version to 1
+        with sqlite3.connect(self.db) as c:
+            c.execute("DELETE FROM schema_version")
+            c.execute("INSERT INTO schema_version (version) VALUES (1)")
+            c.commit()
+        self._write_staging([{'wikidata_qid': 'Q1', 'family': 'MacBook Pro', 'model_number': 'A1',
+                              'display_name': 'X', 'year': 2020, 'emc': None,
+                              'raw_label': 'X', 'skip': False}])
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('schema_version 2', result.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()
