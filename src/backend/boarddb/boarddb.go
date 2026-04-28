@@ -15,13 +15,13 @@ type BoardMatch struct {
 	UUID         string   `json:"uuid"`
 	BoardNumber  string   `json:"board_number"`
 	Brand        string   `json:"brand"`
+	Family       string   `json:"family"`
 	Model        string   `json:"model"`
 	ModelNumber  string   `json:"model_number,omitempty"`
 	BoardName    string   `json:"board_name,omitempty"`
 	ODM          string   `json:"odm"`
 	Type         string   `json:"board_number_type,omitempty"`
 	Color        string   `json:"color,omitempty"`
-	ColorHex     string   `json:"color_hex,omitempty"`
 	Aliases      []string `json:"aliases,omitempty"`
 	ModelAliases []string `json:"model_aliases,omitempty"`
 	Source       string   `json:"source,omitempty"`
@@ -98,7 +98,15 @@ func (db *DB) Stats() BoardStats {
 	db.reader.QueryRow("SELECT count(*) FROM boards").Scan(&s.Total)
 	db.reader.QueryRow("SELECT count(*) FROM board_aliases").Scan(&s.AliasCount)
 
-	rows, _ := db.reader.Query("SELECT brand, count(*) FROM boards GROUP BY brand ORDER BY count(*) DESC")
+	rows, _ := db.reader.Query(`
+		SELECT br.name, count(*)
+		FROM boards b
+		JOIN models m   ON b.model_uuid  = m.uuid
+		JOIN families f ON m.family_uuid = f.uuid
+		JOIN brands br  ON f.brand_uuid  = br.uuid
+		GROUP BY br.name
+		ORDER BY count(*) DESC
+	`)
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -108,7 +116,11 @@ func (db *DB) Stats() BoardStats {
 			s.ByBrand[brand] = cnt
 		}
 	}
-	rows2, _ := db.reader.Query("SELECT odm, count(*) FROM boards WHERE odm IS NOT NULL AND odm != '' GROUP BY odm ORDER BY count(*) DESC")
+	rows2, _ := db.reader.Query(`
+		SELECT odm, count(*) FROM boards
+		WHERE odm IS NOT NULL AND odm != ''
+		GROUP BY odm ORDER BY count(*) DESC
+	`)
 	if rows2 != nil {
 		defer rows2.Close()
 		for rows2.Next() {

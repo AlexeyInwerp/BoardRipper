@@ -194,7 +194,6 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				m.ResolutionStatus = "resolved"
 				m.BoardUUID = match.UUID
 				m.BoardColor = match.Color
-				m.BoardColorHex = match.ColorHex
 			}
 			return m
 		}
@@ -216,7 +215,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				return Metadata{
 					BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 					Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
-					BoardUUID: match.UUID, BoardColor: match.Color, BoardColorHex: match.ColorHex,
+					BoardUUID: match.UUID, BoardColor: match.Color,
 				}
 			}
 			// Strip trailing revision (R10, R20, Rev1, etc.) and retry
@@ -226,7 +225,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 					return Metadata{
 						BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 						Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
-						BoardUUID: match.UUID, BoardColor: match.Color, BoardColorHex: match.ColorHex,
+						BoardUUID: match.UUID, BoardColor: match.Color,
 					}
 				}
 				// Also try resolving as a board number (for NME471 → NM-E471)
@@ -234,7 +233,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 					return Metadata{
 						BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 						Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
-						BoardUUID: match.UUID, BoardColor: match.Color, BoardColorHex: match.ColorHex,
+						BoardUUID: match.UUID, BoardColor: match.Color,
 					}
 				}
 			}
@@ -247,7 +246,7 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				return Metadata{
 					BoardNumber: match.BoardNumber, Manufacturer: match.Brand,
 					Model: match.Model, BoardManufacturer: match.ODM, ResolutionStatus: "resolved",
-					BoardUUID: match.UUID, BoardColor: match.Color, BoardColorHex: match.ColorHex,
+					BoardUUID: match.UUID, BoardColor: match.Color,
 				}
 			}
 		}
