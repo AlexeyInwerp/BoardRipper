@@ -214,8 +214,115 @@ def extract() -> int:
 
 
 def apply_staging(staging_path: Path, db_path: Path) -> int:
-    print("Phase B (apply) not yet implemented — Task 3 fills in.", file=sys.stderr)
-    return 1
+    if not staging_path.exists():
+        print(f"error: staging file not found: {staging_path}", file=sys.stderr)
+        return 1
+    if not db_path.exists():
+        print(f"error: database not found: {db_path}", file=sys.stderr)
+        return 1
+
+    payload = json.loads(staging_path.read_text())
+    rows = payload.get('rows', [])
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+        # Schema-version guard.
+        ver_row = conn.execute(
+            "SELECT version FROM schema_version LIMIT 1"
+        ).fetchone()
+        if not ver_row or ver_row[0] < 2:
+            print("error: boards.db is below schema_version 2 — run migrate-boarddb-v2.py first",
+                  file=sys.stderr)
+            return 1
+
+        # Apple brand must exist.
+        apple_row = conn.execute(
+            "SELECT uuid FROM brands WHERE name = 'Apple'"
+        ).fetchone()
+        if not apple_row:
+            print("error: Apple brand not in DB — bootstrap from create_mockup_db.sql first",
+                  file=sys.stderr)
+            return 1
+        apple_uuid = apple_row[0]
+
+        # Validate. Any non-skipped row missing family or model_number is fatal.
+        actionable: list[dict] = []
+        skipped_count = 0
+        for r in rows:
+            if r.get('skip'):
+                skipped_count += 1
+                continue
+            if not r.get('family'):
+                print(f"error: row {r['wikidata_qid']} has no family (set skip:true or fill it in)",
+                      file=sys.stderr)
+                return 2
+            if not r.get('model_number'):
+                print(f"error: row {r['wikidata_qid']} has no model_number (set skip:true or fill it in)",
+                      file=sys.stderr)
+                return 2
+            actionable.append(r)
+
+        # Family cache: family_name -> family_uuid (within Apple)
+        family_uuids: dict[str, str] = {}
+        for fam_uuid, fam_name in conn.execute(
+            "SELECT uuid, name FROM families WHERE brand_uuid = ?", (apple_uuid,)
+        ):
+            family_uuids[fam_name] = fam_uuid
+
+        new_families: list[str] = []
+        inserted = 0
+        existing = 0
+
+        conn.execute("BEGIN")
+        for r in actionable:
+            family = r['family']
+            if family not in family_uuids:
+                new_uuid = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO families (uuid, brand_uuid, name) VALUES (?, ?, ?)",
+                    (new_uuid, apple_uuid, family),
+                )
+                family_uuids[family] = new_uuid
+                new_families.append(family)
+            family_uuid = family_uuids[family]
+
+            # Build notes string from non-null provenance fields.
+            parts = [f"wikidata:{r['wikidata_qid']}"]
+            if r.get('year') is not None:
+                parts.append(f"year:{r['year']}")
+            if r.get('emc'):
+                parts.append(f"emc:{r['emc']}")
+            notes = '; '.join(parts)
+
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO models "
+                "(uuid, family_uuid, model_number, display_name, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), family_uuid, r['model_number'], r['display_name'], notes),
+            )
+            if cur.rowcount > 0:
+                inserted += 1
+            else:
+                existing += 1
+        conn.commit()
+
+        print(f"wikidata-macs apply complete:")
+        print(f"  {len(rows)} rows in staging file")
+        print(f"  {inserted} inserted (new models)")
+        print(f"  {existing} existing (already in DB, untouched)")
+        print(f"  {skipped_count} skipped (skip:true in staging)")
+        if new_families:
+            print(f"  new families created: {', '.join(new_families)}")
+
+        return 1 if skipped_count > 0 else 0
+    except Exception as e:
+        conn.rollback()
+        print(f"apply failed: {e}", file=sys.stderr)
+        raise
+    finally:
+        conn.close()
 
 
 if __name__ == '__main__':
