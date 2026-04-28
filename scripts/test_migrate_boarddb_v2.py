@@ -120,15 +120,130 @@ class MigrationTests(unittest.TestCase):
     def conn(self):
         return sqlite3.connect(self.db_path)
 
-    def test_migration_runs_clean(self):
+    def test_migration_runs_without_crashing(self):
+        # Fixture intentionally includes a NoBrand row that triggers the fallback warning,
+        # so exit 1 is the expected non-error outcome. Assert no crash and no exception.
         result = run_migration(self.db_path)
-        self.assertEqual(result.returncode, 0,
-                         f"migration failed: stdout={result.stdout} stderr={result.stderr}")
+        self.assertIn(result.returncode, (0, 1),
+                      f"unexpected exit: returncode={result.returncode} "
+                      f"stderr={result.stderr}")
+        self.assertNotIn("Traceback", result.stderr,
+                         f"migration crashed: stderr={result.stderr}")
 
     def test_schema_version_is_2(self):
         run_migration(self.db_path)
         with self.conn() as c:
             self.assertEqual(c.execute("SELECT version FROM schema_version").fetchone()[0], 2)
+
+    def test_entity_counts(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            n_brands = c.execute("SELECT count(*) FROM brands").fetchone()[0]
+            n_families = c.execute("SELECT count(*) FROM families").fetchone()[0]
+            n_models = c.execute("SELECT count(*) FROM models").fetchone()[0]
+            n_boards = c.execute("SELECT count(*) FROM boards").fetchone()[0]
+        # Fixture has 5 distinct brands (Apple, Lenovo, Dell, Acer, NoBrand), 8 boards,
+        # and at least 6 distinct (brand, model_number) pairs => 6+ models.
+        self.assertEqual(n_brands, 5)
+        self.assertGreaterEqual(n_families, 5)
+        self.assertGreaterEqual(n_models, 6)
+        self.assertEqual(n_boards, 8)
+
+    def test_every_board_has_full_chain(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            row = c.execute("""
+                SELECT count(*) FROM boards b
+                LEFT JOIN models m ON b.model_uuid = m.uuid
+                LEFT JOIN families f ON m.family_uuid = f.uuid
+                LEFT JOIN brands br ON f.brand_uuid = br.uuid
+                WHERE m.uuid IS NULL OR f.uuid IS NULL OR br.uuid IS NULL
+            """).fetchone()[0]
+        self.assertEqual(row, 0, "every board must reach a brand via JOINs")
+
+    def test_uuid_uniqueness(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            for table in ('brands', 'families', 'models', 'boards', 'board_aliases', 'model_aliases'):
+                dupes = c.execute(
+                    f"SELECT count(*) FROM (SELECT uuid FROM {table} GROUP BY uuid HAVING count(*) > 1)"
+                ).fetchone()[0]
+                self.assertEqual(dupes, 0, f"{table} has duplicate UUIDs")
+
+    def test_apple_macbook_pro_family_extracted(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            row = c.execute("""
+                SELECT br.name, f.name, m.model_number, b.board_number
+                FROM boards b
+                JOIN models m ON b.model_uuid = m.uuid
+                JOIN families f ON m.family_uuid = f.uuid
+                JOIN brands br ON f.brand_uuid = br.uuid
+                WHERE b.board_number = '820-00239-A'
+            """).fetchone()
+        self.assertEqual(row, ('Apple', 'MacBook Pro', 'A1706', '820-00239-A'))
+
+    def test_lenovo_legion_family_extracted(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            row = c.execute("""
+                SELECT f.name FROM boards b
+                JOIN models m ON b.model_uuid = m.uuid
+                JOIN families f ON m.family_uuid = f.uuid
+                WHERE b.board_number = 'NM-D862'
+            """).fetchone()
+        self.assertEqual(row[0], 'Legion')
+
+    def test_brand_fallback_for_nobrand_row(self):
+        # NoBrand fixture row should land in the '_' fallback ('Uncategorized')
+        # AND the migration should have warned + exited non-zero.
+        result = run_migration(self.db_path)
+        self.assertNotEqual(result.returncode, 0,
+                            "expected non-zero exit when family fallbacks were used")
+        with self.conn() as c:
+            row = c.execute("""
+                SELECT f.name FROM boards b
+                JOIN models m ON b.model_uuid = m.uuid
+                JOIN families f ON m.family_uuid = f.uuid
+                WHERE b.board_number = 'XYZ-9999'
+            """).fetchone()
+        self.assertEqual(row[0], 'Uncategorized')
+
+    def test_old_columns_dropped(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            cols = [r[1] for r in c.execute("PRAGMA table_info(boards)")]
+        self.assertNotIn('brand', cols)
+        self.assertNotIn('model', cols)
+        self.assertNotIn('model_number', cols)
+        self.assertIn('uuid', cols)
+        self.assertIn('model_uuid', cols)
+
+    def test_aliases_carried_over(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            n = c.execute("SELECT count(*) FROM board_aliases").fetchone()[0]
+            n_m = c.execute("SELECT count(*) FROM model_aliases").fetchone()[0]
+        # Fixture has 8 board aliases, 3 model aliases.
+        self.assertEqual(n, 8)
+        self.assertEqual(n_m, 3)
+
+    def test_model_alias_type_inference(self):
+        run_migration(self.db_path)
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT alias_type FROM model_aliases WHERE alias = 'MacBookPro13,2'"
+            ).fetchone()
+        self.assertEqual(row[0], 'apple_model_id')
+
+    def test_idempotent(self):
+        # First run migrates; assert non-zero exit due to NoBrand fallback warning.
+        first = run_migration(self.db_path)
+        self.assertNotEqual(first.returncode, 0)
+        # Second run should be a clean no-op.
+        second = run_migration(self.db_path)
+        self.assertEqual(second.returncode, 0)
+        self.assertIn("already at schema version", second.stdout)
 
 
 if __name__ == '__main__':
