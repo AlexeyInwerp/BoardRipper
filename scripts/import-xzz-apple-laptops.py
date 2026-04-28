@@ -96,8 +96,78 @@ def main():
 
 
 def extract(xzz_root: Path) -> int:
-    print("Phase A (extract) not yet implemented — Task 2 fills in.", file=sys.stderr)
-    return 1
+    if not xzz_root.exists():
+        print(f"error: XZZ root does not exist: {xzz_root}", file=sys.stderr)
+        print("hint: Synology Drive may be paused or the path may be wrong.",
+              file=sys.stderr)
+        print(f"hint: pass --xzz-root <path> to override (default: {DEFAULT_XZZ_ROOT})",
+              file=sys.stderr)
+        return 1
+
+    print(f"scanning {xzz_root} …", file=sys.stderr)
+
+    boards: list[dict] = []
+    a_numbers_acc: dict[str, list[str]] = {}  # a_number -> sorted list of source folders
+    bucket_count = 0
+
+    for bucket in sorted(xzz_root.iterdir()):
+        if not bucket.is_dir():
+            continue
+        if not BUCKET_RE.match(bucket.name):
+            continue
+        bucket_count += 1
+        for entry in sorted(bucket.iterdir()):
+            if not entry.is_dir():
+                continue
+            parsed = parse_folder_name(entry.name)
+            if parsed is None:
+                continue
+            boards.append({
+                'a_number': parsed['a_number'],
+                'board_number': parsed['board_number'],
+                'codename': parsed['codename'],
+                'year_hint': parsed['year_hint'],
+                'source_folder': entry.name,
+                'bucket': bucket.name,
+                'skip': False,
+            })
+            a_numbers_acc.setdefault(parsed['a_number'], []).append(entry.name)
+
+    a_number_rows = [
+        {
+            'a_number': a,
+            'family': None,
+            'display_name': None,
+            'source_folders': sorted(set(folders)),
+            'skip': False,
+        }
+        for a, folders in sorted(a_numbers_acc.items())
+    ]
+
+    out_dir = Path(__file__).resolve().parent.parent / 'import-staging'
+    out_dir.mkdir(exist_ok=True)
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    out_path = out_dir / f'xzz-apple-laptops-{today}.json'
+
+    payload = {
+        'fetched_at': datetime.now(timezone.utc).isoformat(),
+        'source_root': str(xzz_root),
+        'bucket_count': bucket_count,
+        'board_count': len(boards),
+        'unique_a_numbers': len(a_number_rows),
+        'a_numbers': a_number_rows,
+        'boards': boards,
+    }
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+
+    print(f"wrote {out_path}", file=sys.stderr)
+    print(f"  {bucket_count} buckets scanned", file=sys.stderr)
+    print(f"  {len(boards)} boards extracted, "
+          f"{len(a_number_rows)} unique A-numbers", file=sys.stderr)
+    print(f"\nReview {out_path} and fill in 'family' for each A-number, "
+          f"then run:", file=sys.stderr)
+    print(f"  scripts/import-xzz-apple-laptops.py --apply {out_path}", file=sys.stderr)
+    return 0
 
 
 def apply_staging(staging_path: Path, db_path: Path) -> int:

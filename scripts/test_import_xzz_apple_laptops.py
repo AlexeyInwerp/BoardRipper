@@ -161,5 +161,76 @@ class TestParseFolderName(unittest.TestCase):
         self.assertIsNone(self.m.parse_folder_name('Power on sequence'))
 
 
+class TestExtractPipeline(unittest.TestCase):
+    """Phase A end-to-end: filesystem walk + staging file write."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = load_script()
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.xzz_root = self.tmp / 'XZZ_apple_root'
+        self.xzz_root.mkdir()
+        build_xzz_fixture(self.xzz_root)
+        # Patch the script's __file__ so the staging dir lands in tmp.
+        self._orig_file = self.m.__file__
+        scripts_dir = self.tmp / 'scripts'
+        scripts_dir.mkdir()
+        self.m.__file__ = str(scripts_dir / 'import-xzz-apple-laptops.py')
+
+    def tearDown(self):
+        self.m.__file__ = self._orig_file
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_extract_writes_staging_file(self):
+        ret = self.m.extract(self.xzz_root)
+        self.assertEqual(ret, 0)
+        staging_files = list((self.tmp / 'import-staging').glob('xzz-apple-laptops-*.json'))
+        self.assertEqual(len(staging_files), 1)
+        payload = json.loads(staging_files[0].read_text())
+        self.assertEqual(payload['bucket_count'], 2)        # A14xx + A22xx
+        self.assertEqual(payload['board_count'], 4)         # 4 entry folders matched
+        self.assertEqual(payload['unique_a_numbers'], 3)    # A1466, A1419, A2141
+
+    def test_extract_aggregates_a_number_source_folders(self):
+        self.m.extract(self.xzz_root)
+        staging_files = list((self.tmp / 'import-staging').glob('xzz-apple-laptops-*.json'))
+        payload = json.loads(staging_files[0].read_text())
+        a1466 = next(r for r in payload['a_numbers'] if r['a_number'] == 'A1466')
+        # Both A1466 entries should be in source_folders
+        self.assertEqual(set(a1466['source_folders']),
+                         {'A1466_820-00165 J113', 'A1466 820-3209 J13'})
+
+    def test_extract_skips_repair_case_and_non_bucket_dirs(self):
+        self.m.extract(self.xzz_root)
+        staging_files = list((self.tmp / 'import-staging').glob('xzz-apple-laptops-*.json'))
+        payload = json.loads(staging_files[0].read_text())
+        # 'Old model', 'Power on sequence', '0 A12xx Repair Case' should be ignored
+        # '0 A14xx Repair Case' inside A14xx bucket should also be ignored
+        self.assertNotIn('Old model',
+                         {b['source_folder'] for b in payload['boards']})
+        self.assertNotIn('Power on sequence',
+                         {b['source_folder'] for b in payload['boards']})
+        self.assertNotIn('0 A14xx Repair Case',
+                         {b['source_folder'] for b in payload['boards']})
+
+    def test_extract_codename_and_year_hint(self):
+        self.m.extract(self.xzz_root)
+        staging_files = list((self.tmp / 'import-staging').glob('xzz-apple-laptops-*.json'))
+        payload = json.loads(staging_files[0].read_text())
+        a1466_first = next(b for b in payload['boards']
+                           if b['source_folder'] == 'A1466_820-00165 J113')
+        self.assertEqual(a1466_first['codename'], 'J113')
+        self.assertIsNone(a1466_first['year_hint'])
+        a1419 = next(b for b in payload['boards']
+                     if b['source_folder'].startswith('A1419'))
+        self.assertEqual(a1419['year_hint'], '2015')
+
+    def test_extract_missing_xzz_root_returns_1(self):
+        ret = self.m.extract(Path('/nonexistent/xzz/root'))
+        self.assertEqual(ret, 1)
+
+
 if __name__ == '__main__':
     unittest.main()
