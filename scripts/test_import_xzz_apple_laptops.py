@@ -232,5 +232,191 @@ class TestExtractPipeline(unittest.TestCase):
         self.assertEqual(ret, 1)
 
 
+class TestApplyStaging(unittest.TestCase):
+    """Phase B end-to-end: staging JSON + fixture DB → INSERT OR IGNORE merge."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.db = self.tmp / 'boards.db'
+        build_db(self.db)
+        self.staging = self.tmp / 'staging.json'
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, a_numbers, boards):
+        self.staging.write_text(json.dumps({
+            'fetched_at': '2026-04-28T20:00:00Z',
+            'source_root': '/test',
+            'bucket_count': 1,
+            'board_count': len(boards),
+            'unique_a_numbers': len(a_numbers),
+            'a_numbers': a_numbers,
+            'boards': boards,
+        }))
+
+    def test_inserts_new_models_and_boards_skips_existing(self):
+        self._write(
+            a_numbers=[
+                # New
+                {'a_number': 'A2141', 'family': 'MacBook Pro',
+                 'display_name': 'MacBook Pro 16" 2019',
+                 'source_folders': ['A2141_820-02141'], 'skip': False},
+                # Already in DB (A1466 was seeded by build_db)
+                {'a_number': 'A1466', 'family': 'MacBook Air',
+                 'display_name': None,
+                 'source_folders': ['A1466_820-00165 J113'], 'skip': False},
+            ],
+            boards=[
+                {'a_number': 'A2141', 'board_number': '820-02141',
+                 'codename': None, 'year_hint': None,
+                 'source_folder': 'A2141_820-02141', 'bucket': 'A22xx', 'skip': False},
+                {'a_number': 'A1466', 'board_number': '820-00165',
+                 'codename': 'J113', 'year_hint': None,
+                 'source_folder': 'A1466_820-00165 J113',
+                 'bucket': 'A14xx', 'skip': False},
+            ],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 0,
+                         f"unexpected exit: stdout={result.stdout} stderr={result.stderr}")
+        self.assertIn('1 inserted, 1 existing', result.stdout)  # A-number summary
+        with sqlite3.connect(self.db) as c:
+            # New A2141 model created
+            row = c.execute(
+                "SELECT display_name, notes FROM models WHERE model_number='A2141'"
+            ).fetchone()
+            self.assertEqual(row[0], 'MacBook Pro 16" 2019')
+            self.assertEqual(row[1], 'xzz:A2141_820-02141')
+            # Existing A1466 preserved (not overwritten)
+            row = c.execute(
+                "SELECT display_name, notes FROM models WHERE model_number='A1466'"
+            ).fetchone()
+            self.assertEqual(row[0], 'MacBook Air 13" (manual)')
+            self.assertEqual(row[1], 'manual:original')
+            # Both boards inserted
+            board = c.execute(
+                "SELECT board_number, source, notes FROM boards WHERE board_number='820-02141'"
+            ).fetchone()
+            self.assertIsNotNone(board)
+            self.assertEqual(board[1], 'xzz')
+            self.assertEqual(board[2], 'xzz:A2141_820-02141')
+
+    def test_skip_true_yields_exit_1(self):
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': 'MacBook Pro',
+                 'display_name': None, 'source_folders': ['x'], 'skip': False},
+                {'a_number': 'A9999', 'family': None,
+                 'display_name': None, 'source_folders': ['x'], 'skip': True},
+            ],
+            boards=[
+                {'a_number': 'A2141', 'board_number': '820-02141',
+                 'codename': None, 'year_hint': None,
+                 'source_folder': 'x', 'bucket': 'X', 'skip': False},
+            ],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('1 skipped', result.stdout)
+
+    def test_missing_family_is_fatal(self):
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': None,
+                 'display_name': None, 'source_folders': ['x'], 'skip': False},
+            ],
+            boards=[],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('no family', result.stderr)
+
+    def test_invalid_family_is_fatal(self):
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': 'Macbook 8K Plus',  # not in canonical set
+                 'display_name': None, 'source_folders': ['x'], 'skip': False},
+            ],
+            boards=[],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('invalid family', result.stderr)
+
+    def test_orphan_board_is_fatal(self):
+        # Board references an A-number whose row was skipped → fatal
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': None,
+                 'display_name': None, 'source_folders': ['x'], 'skip': True},
+            ],
+            boards=[
+                {'a_number': 'A2141', 'board_number': '820-02141',
+                 'codename': None, 'year_hint': None,
+                 'source_folder': 'x', 'bucket': 'X', 'skip': False},
+            ],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('not in DB', result.stderr)
+
+    def test_creates_new_family(self):
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': 'MacBook Pro',
+                 'display_name': None,
+                 'source_folders': ['A2141_820-02141'], 'skip': False},
+            ],
+            boards=[],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('MacBook Pro', result.stdout)  # in "new families created" line
+        with sqlite3.connect(self.db) as c:
+            row = c.execute(
+                "SELECT f.name FROM families f JOIN brands b ON f.brand_uuid=b.uuid "
+                "WHERE b.name='Apple' AND f.name='MacBook Pro'"
+            ).fetchone()
+            self.assertIsNotNone(row)
+
+    def test_idempotent_rerun(self):
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': 'MacBook Pro',
+                 'display_name': None,
+                 'source_folders': ['A2141_820-02141'], 'skip': False},
+            ],
+            boards=[
+                {'a_number': 'A2141', 'board_number': '820-02141',
+                 'codename': None, 'year_hint': None,
+                 'source_folder': 'A2141_820-02141', 'bucket': 'A22xx', 'skip': False},
+            ],
+        )
+        first = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(first.returncode, 0)
+        self.assertIn('1 inserted', first.stdout)
+        second = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(second.returncode, 0)
+        # Second run: 0 inserted, 1 existing for both A-numbers and boards
+        self.assertIn('0 inserted, 1 existing', second.stdout)
+
+    def test_db_below_schema_v2_fails(self):
+        with sqlite3.connect(self.db) as c:
+            c.execute("DELETE FROM schema_version")
+            c.execute("INSERT INTO schema_version (version) VALUES (1)")
+            c.commit()
+        self._write(
+            a_numbers=[
+                {'a_number': 'A2141', 'family': 'MacBook Pro',
+                 'display_name': None, 'source_folders': ['x'], 'skip': False},
+            ],
+            boards=[],
+        )
+        result = run_script(['--apply', str(self.staging), '--db', str(self.db)])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('schema_version 2', result.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()
