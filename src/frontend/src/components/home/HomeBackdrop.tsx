@@ -7,6 +7,7 @@ import {
   isAutoSwitchLinked,
   setAutoSwitchLinked,
   onAutoSwitchChange,
+  getDockviewApi,
 } from '../../store/dockview-api';
 import { showSidebarTab } from '../Sidebar';
 import { shortcuts, formatShortcut } from '../../store/keyboard-shortcuts';
@@ -31,6 +32,46 @@ function usePdfCount(): number {
     (cb) => pdfStore.subscribe(cb),
     () => pdfStore.loadedFileNames.length,
   );
+}
+
+// Tracks total panel count in Dockview so the home backdrop can hide whenever
+// any panel exists, not just board/pdf panels. Without this, opening a
+// non-board/non-pdf panel (e.g. Database Editor) leaves the backdrop on top.
+function useDockviewPanelCount(): number {
+  const [count, setCount] = useState(() => getDockviewApi()?.panels.length ?? 0);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      if (cancelled) return;
+      setCount(getDockviewApi()?.panels.length ?? 0);
+    };
+    // The api may not be ready on first render; poll briefly until it is, then
+    // subscribe to add/remove events.
+    let pollDispose: (() => void) | undefined;
+    let addDispose: (() => void) | undefined;
+    let removeDispose: (() => void) | undefined;
+    const wire = () => {
+      const api = getDockviewApi();
+      if (!api) {
+        const t = window.setTimeout(wire, 100);
+        pollDispose = () => window.clearTimeout(t);
+        return;
+      }
+      refresh();
+      const a = api.onDidAddPanel(refresh);
+      const r = api.onDidRemovePanel(refresh);
+      addDispose = () => a.dispose();
+      removeDispose = () => r.dispose();
+    };
+    wire();
+    return () => {
+      cancelled = true;
+      pollDispose?.();
+      addDispose?.();
+      removeDispose?.();
+    };
+  }, []);
+  return count;
 }
 
 function useUpdateState() {
@@ -653,7 +694,8 @@ function Footer() {
 export function HomeBackdrop() {
   const { tabs } = useBoardStore();
   const pdfCount = usePdfCount();
-  const visible = tabs.length === 0 && pdfCount === 0;
+  const dockPanelCount = useDockviewPanelCount();
+  const visible = tabs.length === 0 && pdfCount === 0 && dockPanelCount === 0;
 
   return (
     <div className={`home-backdrop${visible ? '' : ' hidden'}`} aria-hidden={!visible}>
