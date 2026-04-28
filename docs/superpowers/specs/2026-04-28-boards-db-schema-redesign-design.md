@@ -236,9 +236,7 @@ This is the cleaner path because the future Database Editor naturally writes SQL
 
 ### Starting-state assumption
 
-**v1 was never executed.** The v1 spec/plan (UUID injection + flat color column) sits in the repo as committed-but-unimplemented design. Therefore the migration's input state is the **current production schema** as committed today: no UUIDs in `boards`, no `colors` table, no `color_id` column. The script generates everything fresh.
-
-For robustness, the script *also* detects post-v1 state (presence of `boards.uuid` column, `colors` table) and preserves data from it if found — but this is defensive rather than expected.
+**v1 was never executed.** The v1 spec/plan (UUID injection + flat color column) sits in the repo as committed-but-unimplemented design. The migration's input state is the **current production schema** as committed today: no UUIDs in `boards`, no `colors` table, no `color_id` column. The script generates everything fresh — including all UUIDs. No preservation of any prior UUID values; this is a clean cut.
 
 ### Migration steps (in transaction)
 
@@ -249,16 +247,14 @@ For robustness, the script *also* detects post-v1 state (presence of `boards.uui
 5. **Populate brands.** `SELECT DISTINCT brand FROM boards` → one row per unique value. Fresh UUIDs.
 6. **Populate families.** For each existing board, derive family via the pattern table. INSERT INTO families if `(brand_uuid, family_name)` not yet present. Log unmatched rows for developer review (warnings, not errors). Fresh UUIDs.
 7. **Populate models.** For each `(brand, model_number)` unique pair, insert one models row with `display_name = old boards.model` (one canonical marketing string picked arbitrarily if multiple boards of the same model have different `boards.model` strings — others become `model_aliases` rows in step 10). Fresh UUIDs.
-8. **Populate boards (new shape).** One row per old board. UUID strategy:
-   - If old `boards.uuid` column exists and is populated (post-v1 state), **preserve** the existing UUID.
-   - Otherwise (the expected case), generate a fresh UUID v4 per board.
-   `model_uuid` FK populated based on the `(brand, model_number)` lookup. `board_number`, `board_name`, `odm`, `board_number_type`, `source`, `source_url` all carried over verbatim.
+8. **Populate boards (new shape).** One row per old board. **Always generate a fresh UUID v4 per board** — no preservation of prior values. `model_uuid` FK populated based on the `(brand, model_number)` lookup. `board_number`, `board_name`, `odm`, `board_number_type`, `source`, `source_url` all carried over verbatim.
 9. **Populate board_aliases (new shape).** Move rows from old `board_aliases` (keyed by `board_id` rowid) → new shape (keyed by `board_uuid`). Map old rowids to new UUIDs via a temporary lookup. Fresh UUIDs for the alias rows themselves. `alias_type` carried over.
 10. **Populate model_aliases (new shape).** Move rows from old `model_aliases` (keyed by `board_id`, semantically wrong) → new shape (keyed by `model_uuid`, semantically correct). Multiple old rows mapping to the same `(model_uuid, alias)` collapse into one. **Also**: any `boards.model` strings that became aliases (because step 7 picked a different one as canonical `display_name`) get inserted here with `alias_type='oem_marketing'`. Fresh UUIDs.
-11. **Populate entity_color from old `boards.color_id`** (post-v1 only). If the old `boards.color_id` column doesn't exist, skip. If it does, for each old board with a non-null color_id, insert `entity_color('board', board.uuid, color_id)`. Pre-v1 state has nothing to copy.
-12. **Drop obsolete columns and tables.** Old `boards.brand`, `boards.model`, `boards.model_number`, `boards.color_id` (if present). Old-shape `board_aliases` and `model_aliases` tables (the new-shape ones live alongside under different names during migration; rename at the end). Use SQLite's `ALTER TABLE ... DROP COLUMN` (3.35+) or the table-rebuild idiom (`CREATE TABLE _new ... ; INSERT INTO _new SELECT ... ; DROP TABLE old; ALTER TABLE _new RENAME TO old`) — implementation plan picks one based on the SQLite version target.
-13. **Update schema_version to 2.**
-14. **Commit transaction.** If any step fails, the transaction rolls back and `boards.db` remains at v1.
+11. **Drop obsolete columns and tables.** Old `boards.brand`, `boards.model`, `boards.model_number`. Old-shape `board_aliases` and `model_aliases` tables (the new-shape ones live alongside under different names during migration; rename at the end). Use SQLite's `ALTER TABLE ... DROP COLUMN` (3.35+) or the table-rebuild idiom (`CREATE TABLE _new ... ; INSERT INTO _new SELECT ... ; DROP TABLE old; ALTER TABLE _new RENAME TO old`) — implementation plan picks one based on the SQLite version target.
+12. **Update schema_version to 2.**
+13. **Commit transaction.** If any step fails, the transaction rolls back and `boards.db` remains at v1.
+
+`entity_color` starts empty after the migration. There's no v1 data to import (v1 was never run), so no boards have an explicit color yet. Color metadata gets populated later — manually for one-off cases, or in bulk when the adaptive coloring scheme lands with theming work.
 
 ### Migration script properties
 
