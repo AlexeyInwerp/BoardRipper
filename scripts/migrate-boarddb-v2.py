@@ -107,23 +107,23 @@ def main():
         sys.exit(1)
 
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys=ON")
-
-    ver = get_schema_version(conn)
-    if ver >= 2:
-        print(f"already at schema version {ver}; nothing to do.")
-        conn.close()
-        sys.exit(0)
-
-    print("starting migration to v2…")
     try:
-        conn.execute("BEGIN")
-        # Steps 1-13 from the spec. Implemented in subsequent tasks.
-        # PLACEHOLDER: real implementation lives in Task 2 (subsequent tasks).
-        raise NotImplementedError("Task 1 only stubs main(); steps fill in")
-    except Exception:
-        conn.rollback()
-        raise
+        conn.execute("PRAGMA foreign_keys=ON")
+
+        ver = get_schema_version(conn)
+        if ver >= 2:
+            print(f"already at schema version {ver}; nothing to do.")
+            return
+
+        print("starting migration to v2…")
+        try:
+            conn.execute("BEGIN")
+            # Steps 1-13 from the spec. Implemented in subsequent tasks.
+            # PLACEHOLDER: real implementation lives in Task 2 (subsequent tasks).
+            raise NotImplementedError("Task 1 only stubs main(); steps fill in")
+        except Exception:
+            conn.rollback()
+            raise
     finally:
         conn.close()
 
