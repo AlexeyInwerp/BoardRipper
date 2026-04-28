@@ -22,38 +22,49 @@ from pathlib import Path
 # Family-extraction pattern table (brand, model_regex, family_name).
 # Evaluated in order; first match wins. Anything that doesn't match falls
 # through to BRAND_FALLBACK[brand] (or BRAND_FALLBACK['_'] if brand absent).
+#
+# Brand key matching is case-insensitive (real-world DB has 'ASUS' alongside
+# 'Apple' / 'Dell' / 'HP'). Pattern regexes use IGNORECASE.
 FAMILY_PATTERNS = [
-    ('Apple',  r'^MacBook Pro\b',       'MacBook Pro'),
-    ('Apple',  r'^MacBook Air\b',       'MacBook Air'),
-    ('Apple',  r'^MacBook\b',           'MacBook'),
-    ('Apple',  r'^iMac\b',              'iMac'),
-    ('Apple',  r'^Mac mini\b',          'Mac mini'),
-    ('Apple',  r'^Mac Pro\b',           'Mac Pro'),
-    ('Apple',  r'^Mac Studio\b',        'Mac Studio'),
-    ('Lenovo', r'^ThinkPad\b',          'ThinkPad'),
-    ('Lenovo', r'^Legion\b',            'Legion'),
-    ('Lenovo', r'^IdeaPad\b',           'IdeaPad'),
-    ('Lenovo', r'^Yoga\b',              'Yoga'),
-    ('Lenovo', r'^ThinkBook\b',         'ThinkBook'),
-    ('Dell',   r'^Inspiron\b',          'Inspiron'),
-    ('Dell',   r'^Latitude\b',          'Latitude'),
-    ('Dell',   r'^XPS\b',               'XPS'),
-    ('Dell',   r'^Precision\b',         'Precision'),
-    ('Dell',   r'^Vostro\b',            'Vostro'),
-    ('Dell',   r'^Alienware\b',         'Alienware'),
-    ('HP',     r'^EliteBook\b',         'EliteBook'),
-    ('HP',     r'^ProBook\b',           'ProBook'),
-    ('HP',     r'^Pavilion\b',          'Pavilion'),
-    ('HP',     r'^Spectre\b',           'Spectre'),
-    ('HP',     r'^Omen\b',              'Omen'),
-    ('HP',     r'^ZBook\b',             'ZBook'),
-    ('Acer',   r'^Aspire\b',            'Aspire'),
-    ('Acer',   r'^Predator\b',          'Predator'),
-    ('Acer',   r'^Swift\b',             'Swift'),
-    ('Asus',   r'^ZenBook\b',           'ZenBook'),
-    ('Asus',   r'^VivoBook\b',          'VivoBook'),
-    ('Asus',   r'^ROG\b',               'ROG'),
-    ('Asus',   r'^TUF\b',               'TUF'),
+    ('Apple',  r'^MacBook Pro\b',         'MacBook Pro'),
+    ('Apple',  r'^MacBook Air\b',         'MacBook Air'),
+    ('Apple',  r'^MacBook\b',             'MacBook'),
+    ('Apple',  r'^iMac\b',                'iMac'),
+    ('Apple',  r'^Mac mini\b',            'Mac mini'),
+    ('Apple',  r'^Mac Pro\b',             'Mac Pro'),
+    ('Apple',  r'^Mac Studio\b',          'Mac Studio'),
+    ('Lenovo', r'^ThinkPad\b',            'ThinkPad'),
+    ('Lenovo', r'^Legion\b',              'Legion'),
+    ('Lenovo', r'^IdeaPad\b',             'IdeaPad'),
+    ('Lenovo', r'^Yoga\b',                'Yoga'),
+    ('Lenovo', r'^ThinkBook\b',           'ThinkBook'),
+    ('Dell',   r'^Inspiron\b',            'Inspiron'),
+    ('Dell',   r'^Latitude\b',            'Latitude'),
+    ('Dell',   r'^XPS\b',                 'XPS'),
+    ('Dell',   r'^Precision\b',           'Precision'),
+    ('Dell',   r'^Vostro\b',              'Vostro'),
+    ('Dell',   r'^Alienware\b',           'Alienware'),
+    ('Dell',   r'^G[357]\b',              'G Series'),
+    ('HP',     r'^EliteBook\b',           'EliteBook'),
+    ('HP',     r'^ProBook\b',             'ProBook'),
+    ('HP',     r'^Pavilion\b',            'Pavilion'),
+    ('HP',     r'^Spectre\b',             'Spectre'),
+    ('HP',     r'^OMEN\b',                'Omen'),
+    ('HP',     r'^ENVY\b',                'Envy'),
+    ('HP',     r'^ZBook\b',               'ZBook'),
+    ('Acer',   r'^Aspire\b',              'Aspire'),
+    ('Acer',   r'^Predator\b',            'Predator'),
+    ('Acer',   r'^Swift\b',               'Swift'),
+    ('Acer',   r'^Nitro\b',               'Nitro'),
+    ('Acer',   r'^Spin\b',                'Spin'),
+    ('ASUS',   r'^ZenBook\b',             'ZenBook'),
+    ('ASUS',   r'^VivoBook\b',            'VivoBook'),
+    ('ASUS',   r'^ROG\b',                 'ROG'),
+    ('ASUS',   r'^TUF\b',                 'TUF'),
+    ('ASUS',   r'\bDesktop Motherboard\b','Motherboard'),
+    ('Gigabyte', r'^Z\d+',                 'Motherboard'),
+    ('MSI',    r'^GS\d+\b.*Stealth\b',    'Stealth'),
+    ('MSI',    r'^Stealth\b',             'Stealth'),
 ]
 
 BRAND_FALLBACK = {
@@ -62,7 +73,7 @@ BRAND_FALLBACK = {
     'Dell':   'Laptop',
     'HP':     'Laptop',
     'Acer':   'Laptop',
-    'Asus':   'Laptop',
+    'ASUS':   'Laptop',
     'MSI':    'Laptop',
     '_':      'Uncategorized',
 }
@@ -79,12 +90,21 @@ def gen_uuid() -> str:
 
 
 def derive_family(brand: str, model: str | None) -> tuple[str, bool]:
-    """Return (family_name, was_matched). False = used fallback."""
+    """Return (family_name, was_matched). False = used fallback.
+
+    Brand keys and regexes match case-insensitively so 'ASUS'/'Asus'/'asus'
+    in source data all hit the same patterns.
+    """
     if model:
+        brand_ci = brand.casefold()
         for pat_brand, pat_re, fam in FAMILY_PATTERNS:
-            if pat_brand == brand and re.search(pat_re, model):
+            if pat_brand.casefold() == brand_ci and re.search(pat_re, model, re.IGNORECASE):
                 return fam, True
-    return BRAND_FALLBACK.get(brand, BRAND_FALLBACK['_']), False
+    # Brand fallback also case-insensitive
+    for k, v in BRAND_FALLBACK.items():
+        if k != '_' and k.casefold() == brand.casefold():
+            return v, False
+    return BRAND_FALLBACK['_'], False
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
