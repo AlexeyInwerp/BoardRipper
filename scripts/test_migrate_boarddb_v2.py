@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for migrate-boarddb-v2.py against a synthetic fixture."""
-import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -115,9 +115,7 @@ class MigrationTests(unittest.TestCase):
         build_fixture(self.db_path)
 
     def tearDown(self):
-        for f in Path(self.tmpdir).glob('*'):
-            f.unlink()
-        os.rmdir(self.tmpdir)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def conn(self):
         return sqlite3.connect(self.db_path)
