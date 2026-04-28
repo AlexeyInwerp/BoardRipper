@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Walk the user's local XZZ Synology Drive Apple-laptop folder, extract
 A-number/board-code linkage from folder names, and merge into boards.db.
 
