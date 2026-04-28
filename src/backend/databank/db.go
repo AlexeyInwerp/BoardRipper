@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -735,8 +736,8 @@ func (db *DB) GetFileByPath(path string) (*FileRecord, error) {
 }
 
 // GetFileByID returns a file record by its ID.
-func (db *DB) GetFileByID(id int64) (*FileRecord, error) {
-	return db.scanFile(db.reader.QueryRow(
+func (db *DB) GetFileByID(ctx context.Context, id int64) (*FileRecord, error) {
+	return db.scanFile(db.reader.QueryRowContext(ctx,
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
 		        board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
@@ -745,7 +746,9 @@ func (db *DB) GetFileByID(id int64) (*FileRecord, error) {
 }
 
 // ListFiles returns all files, optionally filtered.
-func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([]FileRecord, error) {
+// `ctx` carries the per-request deadline so a slowloris-class slow client
+// or a wedged SQLite reader can't pin the query indefinitely.
+func (db *DB) ListFiles(ctx context.Context, fileType string, manufacturer string, donorOnly bool) ([]FileRecord, error) {
 	query := `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 	                 board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
 	                 board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
@@ -766,7 +769,7 @@ func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([
 
 	query += ` ORDER BY manufacturer, board_number, filename`
 
-	rows, err := db.reader.Query(query, args...)
+	rows, err := db.reader.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -785,7 +788,7 @@ func (db *DB) ListFiles(fileType string, manufacturer string, donorOnly bool) ([
 
 // ListFilesByIDs returns files for the given ID set. Order is unspecified.
 // Bounded by the caller to avoid unbounded SQL placeholder lists.
-func (db *DB) ListFilesByIDs(ids []int64) ([]FileRecord, error) {
+func (db *DB) ListFilesByIDs(ctx context.Context, ids []int64) ([]FileRecord, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -800,7 +803,7 @@ func (db *DB) ListFilesByIDs(ids []int64) ([]FileRecord, error) {
 	                 board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
 	          FROM files WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 
-	rows, err := db.reader.Query(query, args...)
+	rows, err := db.reader.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -826,8 +829,8 @@ type FilePathID struct {
 
 // AllFilePathsAndIDs returns just the path+id of every file. Cheap enough
 // to call on every /api/databank/tree request — only two columns scanned.
-func (db *DB) AllFilePathsAndIDs() ([]FilePathID, error) {
-	rows, err := db.reader.Query(`SELECT id, path FROM files`)
+func (db *DB) AllFilePathsAndIDs(ctx context.Context) ([]FilePathID, error) {
+	rows, err := db.reader.QueryContext(ctx, `SELECT id, path FROM files`)
 	if err != nil {
 		return nil, err
 	}
@@ -865,8 +868,8 @@ func (db *DB) AllFilePaths() (map[string]struct{ ID, Size, ModTime int64 }, erro
 }
 
 // GetBindingsForBoard returns all PDF bindings for a board file.
-func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
-	rows, err := db.reader.Query(
+func (db *DB) GetBindingsForBoard(ctx context.Context, boardFileID int64) ([]BindingRecord, error) {
+	rows, err := db.reader.QueryContext(ctx,
 		`SELECT id, board_file_id, pdf_file_id, auto_matched, category, auto_open
 		   FROM bindings WHERE board_file_id = ?`,
 		boardFileID,
@@ -891,8 +894,8 @@ func (db *DB) GetBindingsForBoard(boardFileID int64) ([]BindingRecord, error) {
 }
 
 // GetBindingsForFile returns all bindings involving a file (as board or PDF), with filenames.
-func (db *DB) GetBindingsForFile(fileID int64) ([]BindingDetail, error) {
-	rows, err := db.reader.Query(
+func (db *DB) GetBindingsForFile(ctx context.Context, fileID int64) ([]BindingDetail, error) {
+	rows, err := db.reader.QueryContext(ctx,
 		`SELECT b.id, b.board_file_id, b.pdf_file_id, b.auto_matched, b.category, b.auto_open,
 		        bf.filename, bf.path, pf.filename, pf.path
 		 FROM bindings b

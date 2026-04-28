@@ -129,7 +129,7 @@ func (e *PdfExtractor) SetScanner(s *Scanner) {
 // Uses a worker pool with the given concurrency.
 // Reports progress through the scanner's status if available.
 func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
-	files, err := e.db.ListFiles("pdf", "", false)
+	files, err := e.db.ListFiles(context.Background(), "pdf", "", false)
 	if err != nil {
 		log.Printf("PdfExtractor: failed to list PDFs: %v", err)
 		return 0, 1
@@ -213,7 +213,7 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 // ExtractAllCancellable is like ExtractAll but accepts a done channel for cancellation.
 // Workers stop when the done channel is closed.
 func (e *PdfExtractor) ExtractAllCancellable(concurrency int, done <-chan struct{}) (extracted, errors int) {
-	files, err := e.db.ListFiles("pdf", "", false)
+	files, err := e.db.ListFiles(context.Background(), "pdf", "", false)
 	if err != nil {
 		log.Printf("PdfExtractor: failed to list PDFs: %v", err)
 		return 0, 1
