@@ -25,7 +25,8 @@ SELECT
     m.display_name AS model_display,
     f.name AS family_name,
     br.name AS brand_name,
-    c.name AS color_name
+    c.name AS color_name,
+    c.hex AS color_hex
 FROM boards b
 JOIN models m   ON b.model_uuid  = m.uuid
 JOIN families f ON m.family_uuid = f.uuid
@@ -130,7 +131,7 @@ func (db *DB) ResolveFilename(filename string) ([]ExtractedNumber, *BoardMatch) 
 func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 	m := &BoardMatch{}
 	var modelUUID string
-	var boardName, odm, boardType, source, modelNumber, modelDisplay, color *string
+	var boardName, odm, boardType, source, modelNumber, modelDisplay, color, colorHex *string
 
 	err := db.reader.QueryRow(query, args...).Scan(
 		&m.UUID,
@@ -145,6 +146,7 @@ func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 		&m.Family,
 		&m.Brand,
 		&color,
+		&colorHex,
 	)
 	if err != nil {
 		return nil
@@ -169,6 +171,9 @@ func (db *DB) queryBoard(query string, args ...any) *BoardMatch {
 	}
 	if color != nil {
 		m.Color = *color
+	}
+	if colorHex != nil {
+		m.ColorHex = *colorHex
 	}
 
 	// Load board aliases (now keyed by board_uuid)
