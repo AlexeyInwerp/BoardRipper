@@ -1,9 +1,9 @@
--- Board Resolution Query
+-- Board Resolution Query (v2 schema)
 -- Usage: sqlite3 boards.db < resolve_board.sql
--- Or interactively: sqlite3 boards.db then paste a query
-
--- Resolves a board number by checking both primary board_number AND aliases
--- Replace :query with the board number to look up
+-- Or interactively: sqlite3 boards.db then paste a query.
+--
+-- Resolves a board number against boards/models/families/brands by either
+-- the canonical board_number or via board_aliases.
 
 .mode column
 .headers on
@@ -15,27 +15,32 @@
 SELECT '--- Resolving: NM-A251 ---' AS '';
 
 SELECT
-    b.brand,
-    b.model,
-    b.model_number,
+    br.name AS brand,
+    f.name  AS family,
+    m.display_name AS model,
+    m.model_number,
     b.board_number,
     b.board_name,
     b.odm,
     b.board_number_type
 FROM boards b
+JOIN models m   ON b.model_uuid  = m.uuid
+JOIN families f ON m.family_uuid = f.uuid
+JOIN brands br  ON f.brand_uuid  = br.uuid
 WHERE b.board_number = 'NM-A251'
-   OR b.id IN (SELECT board_id FROM board_aliases WHERE alias_number = 'NM-A251');
+   OR b.uuid IN (SELECT board_uuid FROM board_aliases WHERE alias = 'NM-A251');
 
 SELECT 'Aliases:' AS '';
-SELECT a.alias_number, a.alias_type
+SELECT a.alias, a.alias_type
 FROM board_aliases a
-JOIN boards b ON a.board_id = b.id
+JOIN boards b ON a.board_uuid = b.uuid
 WHERE b.board_number = 'NM-A251';
 
-SELECT 'Compatible models:' AS '';
-SELECT m.model_name
-FROM model_aliases m
-JOIN boards b ON m.board_id = b.id
+SELECT 'Compatible model aliases:' AS '';
+SELECT ma.alias, ma.alias_type
+FROM model_aliases ma
+JOIN models m ON ma.model_uuid = m.uuid
+JOIN boards b ON b.model_uuid = m.uuid
 WHERE b.board_number = 'NM-A251';
 
 -- ============================================================
@@ -45,27 +50,32 @@ SELECT '' AS '';
 SELECT '--- Resolving: 820-02016 ---' AS '';
 
 SELECT
-    b.brand,
-    b.model,
-    b.model_number,
+    br.name AS brand,
+    f.name  AS family,
+    m.display_name AS model,
+    m.model_number,
     b.board_number,
     b.board_name,
     b.odm,
     b.board_number_type
 FROM boards b
+JOIN models m   ON b.model_uuid  = m.uuid
+JOIN families f ON m.family_uuid = f.uuid
+JOIN brands br  ON f.brand_uuid  = br.uuid
 WHERE b.board_number LIKE '820-02016%'
-   OR b.id IN (SELECT board_id FROM board_aliases WHERE alias_number LIKE '820-02016%');
+   OR b.uuid IN (SELECT board_uuid FROM board_aliases WHERE alias LIKE '820-02016%');
 
 SELECT 'Aliases:' AS '';
-SELECT a.alias_number, a.alias_type
+SELECT a.alias, a.alias_type
 FROM board_aliases a
-JOIN boards b ON a.board_id = b.id
+JOIN boards b ON a.board_uuid = b.uuid
 WHERE b.board_number LIKE '820-02016%';
 
-SELECT 'Compatible models:' AS '';
-SELECT m.model_name
-FROM model_aliases m
-JOIN boards b ON m.board_id = b.id
+SELECT 'Compatible model aliases:' AS '';
+SELECT ma.alias, ma.alias_type
+FROM model_aliases ma
+JOIN models m ON ma.model_uuid = m.uuid
+JOIN boards b ON b.model_uuid = m.uuid
 WHERE b.board_number LIKE '820-02016%';
 
 -- ============================================================
@@ -75,28 +85,20 @@ SELECT '' AS '';
 SELECT '--- Resolving: DA0R09MB6H1 ---' AS '';
 
 SELECT
-    b.brand,
-    b.model,
-    b.model_number,
+    br.name AS brand,
+    f.name  AS family,
+    m.display_name AS model,
+    m.model_number,
     b.board_number,
     b.board_name,
     b.odm,
     b.board_number_type
 FROM boards b
+JOIN models m   ON b.model_uuid  = m.uuid
+JOIN families f ON m.family_uuid = f.uuid
+JOIN brands br  ON f.brand_uuid  = br.uuid
 WHERE b.board_number = 'DA0R09MB6H1'
-   OR b.id IN (SELECT board_id FROM board_aliases WHERE alias_number = 'DA0R09MB6H1');
-
-SELECT 'Aliases:' AS '';
-SELECT a.alias_number, a.alias_type
-FROM board_aliases a
-JOIN boards b ON a.board_id = b.id
-WHERE b.board_number = 'DA0R09MB6H1';
-
-SELECT 'Compatible models:' AS '';
-SELECT m.model_name
-FROM model_aliases m
-JOIN boards b ON m.board_id = b.id
-WHERE b.board_number = 'DA0R09MB6H1';
+   OR b.uuid IN (SELECT board_uuid FROM board_aliases WHERE alias = 'DA0R09MB6H1');
 
 -- ============================================================
 -- BONUS: Resolve by alias (e.g., Dell DPN or Lenovo FRU)
@@ -105,40 +107,49 @@ SELECT '' AS '';
 SELECT '--- Bonus: Resolve by alias 00HN525 (Lenovo FRU) ---' AS '';
 
 SELECT
-    b.brand,
-    b.model,
+    br.name AS brand,
+    f.name  AS family,
+    m.display_name AS model,
     b.board_number,
-    b.board_name,
-    a.alias_number AS matched_alias,
+    a.alias AS matched_alias,
     a.alias_type
 FROM boards b
-JOIN board_aliases a ON a.board_id = b.id
-WHERE a.alias_number = '00HN525';
+JOIN models m   ON b.model_uuid  = m.uuid
+JOIN families f ON m.family_uuid = f.uuid
+JOIN brands br  ON f.brand_uuid  = br.uuid
+JOIN board_aliases a ON a.board_uuid = b.uuid
+WHERE a.alias = '00HN525';
 
 SELECT '' AS '';
 SELECT '--- Bonus: Resolve by alias 661-16819 (Apple service part) ---' AS '';
 
 SELECT
-    b.brand,
-    b.model,
+    br.name AS brand,
+    f.name  AS family,
+    m.display_name AS model,
     b.board_number,
-    b.board_name,
-    a.alias_number AS matched_alias,
+    a.alias AS matched_alias,
     a.alias_type
 FROM boards b
-JOIN board_aliases a ON a.board_id = b.id
-WHERE a.alias_number = '661-16819';
+JOIN models m   ON b.model_uuid  = m.uuid
+JOIN families f ON m.family_uuid = f.uuid
+JOIN brands br  ON f.brand_uuid  = br.uuid
+JOIN board_aliases a ON a.board_uuid = b.uuid
+WHERE a.alias = '661-16819';
 
 SELECT '' AS '';
 SELECT '--- Bonus: Resolve by alias 072P0M (Dell DPN) ---' AS '';
 
 SELECT
-    b.brand,
-    b.model,
+    br.name AS brand,
+    f.name  AS family,
+    m.display_name AS model,
     b.board_number,
-    b.board_name,
-    a.alias_number AS matched_alias,
+    a.alias AS matched_alias,
     a.alias_type
 FROM boards b
-JOIN board_aliases a ON a.board_id = b.id
-WHERE a.alias_number = '072P0M';
+JOIN models m   ON b.model_uuid  = m.uuid
+JOIN families f ON m.family_uuid = f.uuid
+JOIN brands br  ON f.brand_uuid  = br.uuid
+JOIN board_aliases a ON a.board_uuid = b.uuid
+WHERE a.alias = '072P0M';
