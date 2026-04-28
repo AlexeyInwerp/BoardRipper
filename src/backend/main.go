@@ -123,6 +123,7 @@ func main() {
 	boardsHandler := handlers.NewBoardsHandler(bdb)
 	mux.HandleFunc("GET /api/boards/resolve", read(boardsHandler.Resolve))
 	mux.HandleFunc("GET /api/boards/stats", read(boardsHandler.Stats))
+	mux.HandleFunc("GET /api/boards/hierarchy", read(boardsHandler.Hierarchy))
 
 	// Config API routes
 	mux.HandleFunc("GET /api/config", read(dbHandler.GetConfig))

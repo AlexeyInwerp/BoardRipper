@@ -13,6 +13,7 @@ import { ContextMenu } from './components/ContextMenu';
 import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide } from './components/Sidebar';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
+import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel';
 import { BoardTab } from './components/BoardTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
@@ -27,6 +28,7 @@ import { themeStore } from './store/themes';
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
   pdfViewer: (props) => <PdfViewerPanel {...props} />,
+  databaseEditor: (props) => <DatabaseEditorPanel {...props} />,
 };
 
 const tabComponents = {

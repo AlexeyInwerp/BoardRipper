@@ -12,6 +12,8 @@ import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
 import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
+import { getDockviewApi } from '../store/dockview-api';
+import { log } from '../store/log-store';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -612,7 +614,14 @@ function DatabaseInfoSection() {
           </div>
         </>
       )}
-      <div className="settings-db-actions" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+      <div className="settings-db-actions" style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          className="settings-action-btn"
+          onClick={openDatabaseEditor}
+          title="Open the read-only Database Editor in a Dockview panel"
+        >
+          Open Database Editor
+        </button>
         <button
           className="settings-action-btn"
           onClick={handleResetPdf}
@@ -633,6 +642,28 @@ function DatabaseInfoSection() {
       </div>
     </div>
   );
+}
+
+/** Open (or focus, if already open) the read-only Database Editor panel.
+ *  Uses a stable id so repeated clicks reactivate instead of stacking duplicates. */
+function openDatabaseEditor(): void {
+  try {
+    const api = getDockviewApi();
+    if (!api) return;
+    const id = 'database-editor';
+    const existing = api.getPanel(id);
+    if (existing) {
+      existing.api.setActive();
+      return;
+    }
+    api.addPanel({
+      id,
+      component: 'databaseEditor',
+      title: 'Database Editor',
+    });
+  } catch (err) {
+    log.ui.error('Failed to open Database Editor panel:', err);
+  }
 }
 
 // ---- Library settings (auto-pdf, history depth, clear history) ----

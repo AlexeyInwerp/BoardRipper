@@ -79,6 +79,219 @@ func (db *DB) Close() {
 	}
 }
 
+// HierarchyBrand is a brand node in the Database Editor hierarchy tree.
+type HierarchyBrand struct {
+	UUID     string             `json:"uuid"`
+	Name     string             `json:"name"`
+	Notes    string             `json:"notes,omitempty"`
+	Families []*HierarchyFamily `json:"families"`
+}
+
+// HierarchyFamily is a family node grouped under a brand.
+type HierarchyFamily struct {
+	UUID   string            `json:"uuid"`
+	Name   string            `json:"name"`
+	Notes  string            `json:"notes,omitempty"`
+	Models []*HierarchyModel `json:"models"`
+}
+
+// HierarchyModel is a model node grouped under a family.
+type HierarchyModel struct {
+	UUID        string            `json:"uuid"`
+	ModelNumber string            `json:"model_number"`
+	DisplayName string            `json:"display_name,omitempty"`
+	Notes       string            `json:"notes,omitempty"`
+	Aliases     []HierarchyAlias  `json:"aliases,omitempty"`
+	Boards      []*HierarchyBoard `json:"boards"`
+}
+
+// HierarchyBoard is a board node grouped under a model.
+type HierarchyBoard struct {
+	UUID            string           `json:"uuid"`
+	BoardNumber     string           `json:"board_number"`
+	BoardName       string           `json:"board_name,omitempty"`
+	ODM             string           `json:"odm,omitempty"`
+	BoardNumberType string           `json:"board_number_type,omitempty"`
+	Source          string           `json:"source,omitempty"`
+	SourceURL       string           `json:"source_url,omitempty"`
+	Notes           string           `json:"notes,omitempty"`
+	Aliases         []HierarchyAlias `json:"aliases,omitempty"`
+}
+
+// HierarchyAlias is a single alias attached to a board or model.
+type HierarchyAlias struct {
+	UUID      string `json:"uuid"`
+	Alias     string `json:"alias"`
+	AliasType string `json:"alias_type,omitempty"`
+}
+
+// Hierarchy returns the full Brand → Family → Model → Board hierarchy with
+// aliases attached at the appropriate scope. Suitable for the Database Editor
+// panel — small payload (~150 entities at v2 scale), single fetch on demand.
+//
+// Implementation: 6 simple queries (4 entity tables + 2 alias tables) and
+// build the tree in memory. No joins; all linking happens client-side via
+// flat UUID lookups. Read-only.
+func (db *DB) Hierarchy() []*HierarchyBrand {
+	if !db.Available() {
+		return nil
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// --- Brands ---
+	brandByUUID := map[string]*HierarchyBrand{}
+	var brands []*HierarchyBrand
+	rows, _ := db.reader.Query("SELECT uuid, name, notes FROM brands ORDER BY name")
+	if rows != nil {
+		for rows.Next() {
+			b := &HierarchyBrand{}
+			var notes *string
+			if err := rows.Scan(&b.UUID, &b.Name, &notes); err != nil {
+				continue
+			}
+			if notes != nil {
+				b.Notes = *notes
+			}
+			brandByUUID[b.UUID] = b
+			brands = append(brands, b)
+		}
+		rows.Close()
+	}
+
+	// --- Families ---
+	familyByUUID := map[string]*HierarchyFamily{}
+	rows2, _ := db.reader.Query("SELECT uuid, brand_uuid, name, notes FROM families ORDER BY name")
+	if rows2 != nil {
+		for rows2.Next() {
+			f := &HierarchyFamily{}
+			var brandUUID string
+			var notes *string
+			if err := rows2.Scan(&f.UUID, &brandUUID, &f.Name, &notes); err != nil {
+				continue
+			}
+			if notes != nil {
+				f.Notes = *notes
+			}
+			familyByUUID[f.UUID] = f
+			if parent, ok := brandByUUID[brandUUID]; ok {
+				parent.Families = append(parent.Families, f)
+			}
+		}
+		rows2.Close()
+	}
+
+	// --- Models ---
+	modelByUUID := map[string]*HierarchyModel{}
+	rows3, _ := db.reader.Query(`
+		SELECT uuid, family_uuid, model_number, display_name, notes
+		FROM models ORDER BY model_number`)
+	if rows3 != nil {
+		for rows3.Next() {
+			m := &HierarchyModel{}
+			var familyUUID string
+			var displayName, notes *string
+			if err := rows3.Scan(&m.UUID, &familyUUID, &m.ModelNumber, &displayName, &notes); err != nil {
+				continue
+			}
+			if displayName != nil {
+				m.DisplayName = *displayName
+			}
+			if notes != nil {
+				m.Notes = *notes
+			}
+			modelByUUID[m.UUID] = m
+			if parent, ok := familyByUUID[familyUUID]; ok {
+				parent.Models = append(parent.Models, m)
+			}
+		}
+		rows3.Close()
+	}
+
+	// --- Boards ---
+	boardByUUID := map[string]*HierarchyBoard{}
+	rows4, _ := db.reader.Query(`
+		SELECT uuid, model_uuid, board_number, board_name, odm,
+		       board_number_type, source, source_url, notes
+		FROM boards ORDER BY board_number`)
+	if rows4 != nil {
+		for rows4.Next() {
+			b := &HierarchyBoard{}
+			var modelUUID string
+			var boardName, odm, btype, source, sourceURL, notes *string
+			if err := rows4.Scan(&b.UUID, &modelUUID, &b.BoardNumber, &boardName, &odm,
+				&btype, &source, &sourceURL, &notes); err != nil {
+				continue
+			}
+			if boardName != nil {
+				b.BoardName = *boardName
+			}
+			if odm != nil {
+				b.ODM = *odm
+			}
+			if btype != nil {
+				b.BoardNumberType = *btype
+			}
+			if source != nil {
+				b.Source = *source
+			}
+			if sourceURL != nil {
+				b.SourceURL = *sourceURL
+			}
+			if notes != nil {
+				b.Notes = *notes
+			}
+			boardByUUID[b.UUID] = b
+			if parent, ok := modelByUUID[modelUUID]; ok {
+				parent.Boards = append(parent.Boards, b)
+			}
+		}
+		rows4.Close()
+	}
+
+	// --- Board aliases ---
+	rowsBA, _ := db.reader.Query("SELECT uuid, board_uuid, alias, alias_type FROM board_aliases ORDER BY alias")
+	if rowsBA != nil {
+		for rowsBA.Next() {
+			var aliasUUID, boardUUID, alias string
+			var aliasType *string
+			if err := rowsBA.Scan(&aliasUUID, &boardUUID, &alias, &aliasType); err != nil {
+				continue
+			}
+			if board, ok := boardByUUID[boardUUID]; ok {
+				a := HierarchyAlias{UUID: aliasUUID, Alias: alias}
+				if aliasType != nil {
+					a.AliasType = *aliasType
+				}
+				board.Aliases = append(board.Aliases, a)
+			}
+		}
+		rowsBA.Close()
+	}
+
+	// --- Model aliases ---
+	rowsMA, _ := db.reader.Query("SELECT uuid, model_uuid, alias, alias_type FROM model_aliases ORDER BY alias")
+	if rowsMA != nil {
+		for rowsMA.Next() {
+			var aliasUUID, modelUUID, alias string
+			var aliasType *string
+			if err := rowsMA.Scan(&aliasUUID, &modelUUID, &alias, &aliasType); err != nil {
+				continue
+			}
+			if model, ok := modelByUUID[modelUUID]; ok {
+				a := HierarchyAlias{UUID: aliasUUID, Alias: alias}
+				if aliasType != nil {
+					a.AliasType = *aliasType
+				}
+				model.Aliases = append(model.Aliases, a)
+			}
+		}
+		rowsMA.Close()
+	}
+
+	return brands
+}
+
 // BoardStats holds aggregate statistics about the board database.
 type BoardStats struct {
 	Total      int            `json:"total"`
