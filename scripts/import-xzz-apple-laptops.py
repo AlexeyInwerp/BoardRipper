@@ -171,8 +171,185 @@ def extract(xzz_root: Path) -> int:
 
 
 def apply_staging(staging_path: Path, db_path: Path) -> int:
-    print("Phase B (apply) not yet implemented — Task 3 fills in.", file=sys.stderr)
-    return 1
+    if not staging_path.exists():
+        print(f"error: staging file not found: {staging_path}", file=sys.stderr)
+        return 1
+    if not db_path.exists():
+        print(f"error: database not found: {db_path}", file=sys.stderr)
+        return 1
+
+    payload = json.loads(staging_path.read_text())
+    a_number_rows = payload.get('a_numbers', [])
+    board_rows = payload.get('boards', [])
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+        # Schema-version guard.
+        ver_row = conn.execute(
+            "SELECT version FROM schema_version LIMIT 1"
+        ).fetchone()
+        if not ver_row or ver_row[0] < 2:
+            print("error: boards.db is below schema_version 2 — run migrate-boarddb-v2.py first",
+                  file=sys.stderr)
+            return 1
+
+        # Apple brand must exist.
+        apple_row = conn.execute(
+            "SELECT uuid FROM brands WHERE name = 'Apple'"
+        ).fetchone()
+        if not apple_row:
+            print("error: Apple brand not in DB — bootstrap from create_mockup_db.sql first",
+                  file=sys.stderr)
+            return 1
+        apple_uuid = apple_row[0]
+
+        # Validate A-number rows. Any non-skipped row must have a canonical family.
+        actionable_a: list[dict] = []
+        skipped_a = 0
+        for r in a_number_rows:
+            if r.get('skip'):
+                skipped_a += 1
+                continue
+            if not r.get('family'):
+                print(f"error: A-number {r['a_number']} has no family "
+                      f"(set skip:true or fill it in)", file=sys.stderr)
+                return 2
+            if r['family'] not in CANONICAL_LAPTOP_FAMILIES:
+                print(f"error: A-number {r['a_number']} has invalid family "
+                      f"{r['family']!r} (must be one of {sorted(CANONICAL_LAPTOP_FAMILIES)})",
+                      file=sys.stderr)
+                return 2
+            actionable_a.append(r)
+
+        # Validate board rows. Each must reference an A-number that's either
+        # in the staging file's a_numbers (non-skipped) or already in the DB.
+        actionable_b: list[dict] = []
+        skipped_b = 0
+        for r in board_rows:
+            if r.get('skip'):
+                skipped_b += 1
+                continue
+            if not r.get('a_number'):
+                print(f"error: board {r.get('board_number','?')} has no a_number",
+                      file=sys.stderr)
+                return 2
+            if not r.get('board_number'):
+                print(f"error: board entry {r.get('source_folder','?')} has no board_number",
+                      file=sys.stderr)
+                return 2
+            actionable_b.append(r)
+
+        # Family cache.
+        family_uuids: dict[str, str] = {}
+        for fam_uuid, fam_name in conn.execute(
+            "SELECT uuid, name FROM families WHERE brand_uuid = ?", (apple_uuid,)
+        ):
+            family_uuids[fam_name] = fam_uuid
+
+        new_families: list[str] = []
+        models_inserted = 0
+        models_existing = 0
+        boards_inserted = 0
+        boards_existing = 0
+
+        conn.execute("BEGIN")
+
+        # Pass 1: A-numbers → models.
+        for r in actionable_a:
+            family = r['family']
+            if family not in family_uuids:
+                new_uuid = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO families (uuid, brand_uuid, name) VALUES (?, ?, ?)",
+                    (new_uuid, apple_uuid, family),
+                )
+                family_uuids[family] = new_uuid
+                new_families.append(family)
+            family_uuid = family_uuids[family]
+
+            folders = r.get('source_folders') or []
+            shown = folders[:5]
+            extra = len(folders) - len(shown)
+            notes_folders = ','.join(shown)
+            if extra > 0:
+                notes_folders += f',...{extra} more'
+            notes = f'xzz:{notes_folders}'
+            display_name = r.get('display_name') or r['a_number']
+
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO models "
+                "(uuid, family_uuid, model_number, display_name, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), family_uuid, r['a_number'], display_name, notes),
+            )
+            if cur.rowcount > 0:
+                models_inserted += 1
+            else:
+                models_existing += 1
+
+        # Build a_number → model_uuid map (incl. pre-existing models).
+        a_to_model: dict[str, str] = {}
+        for a, model_uuid_val in conn.execute(
+            """
+            SELECT m.model_number, m.uuid
+            FROM models m
+            JOIN families f ON m.family_uuid = f.uuid
+            WHERE f.brand_uuid = ?
+            """, (apple_uuid,)
+        ):
+            a_to_model[a] = model_uuid_val
+
+        # Pass 2: boards.
+        for r in actionable_b:
+            a = r['a_number']
+            model_uuid_val = a_to_model.get(a)
+            if model_uuid_val is None:
+                # Parent A-number was skipped or doesn't exist; refuse.
+                print(f"error: board {r['board_number']} references A-number {a} "
+                      f"which is not in DB (was its A-number row skipped?)",
+                      file=sys.stderr)
+                conn.rollback()
+                return 2
+            board_notes_parts = [f"xzz:{r.get('source_folder','')}"]
+            if r.get('codename'):
+                board_notes_parts.append(f"codename:{r['codename']}")
+            if r.get('year_hint'):
+                board_notes_parts.append(f"year_hint:{r['year_hint']}")
+            board_notes = '; '.join(board_notes_parts)
+
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO boards "
+                "(uuid, model_uuid, board_number, board_number_type, source, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), model_uuid_val, r['board_number'],
+                 'apple_820', 'xzz', board_notes),
+            )
+            if cur.rowcount > 0:
+                boards_inserted += 1
+            else:
+                boards_existing += 1
+
+        conn.commit()
+
+        print(f"xzz-apple-laptops apply complete:")
+        print(f"  {len(a_number_rows)} A-number rows in staging "
+              f"({models_inserted} inserted, {models_existing} existing, "
+              f"{skipped_a} skipped)")
+        print(f"  {len(board_rows)} board rows in staging "
+              f"({boards_inserted} inserted, {boards_existing} existing, "
+              f"{skipped_b} skipped)")
+        if new_families:
+            print(f"  new families created: {', '.join(new_families)}")
+
+        return 1 if (skipped_a > 0 or skipped_b > 0) else 0
+    except Exception as e:
+        conn.rollback()
+        print(f"apply failed: {e}", file=sys.stderr)
+        raise
+    finally:
+        conn.close()
 
 
 if __name__ == '__main__':
