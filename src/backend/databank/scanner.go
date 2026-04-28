@@ -2,6 +2,7 @@ package databank
 
 import (
 	"boardripper/boarddb"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -511,12 +512,12 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 
 // autoMatchBindings creates bindings between boards and PDFs based on filename matching.
 func (s *Scanner) autoMatchBindings() {
-	boards, err := s.db.ListFiles("board", "", false)
+	boards, err := s.db.ListFiles(context.Background(), "board", "", false)
 	if err != nil {
 		log.Printf("Scanner: auto-match error listing boards: %v", err)
 		return
 	}
-	pdfs, err := s.db.ListFiles("pdf", "", false)
+	pdfs, err := s.db.ListFiles(context.Background(), "pdf", "", false)
 	if err != nil {
 		log.Printf("Scanner: auto-match error listing PDFs: %v", err)
 		return
@@ -524,7 +525,7 @@ func (s *Scanner) autoMatchBindings() {
 
 	for _, board := range boards {
 		// Check if board already has bindings
-		existing, _ := s.db.GetBindingsForBoard(board.ID)
+		existing, _ := s.db.GetBindingsForBoard(context.Background(), board.ID)
 		if len(existing) > 0 {
 			continue // already has bindings, don't override
 		}
@@ -684,7 +685,7 @@ type FolderNode struct {
 // BuildFolderTree constructs a tree from all files in the database.
 // Only IDs are emitted per leaf; the client joins back to the file list.
 func (s *Scanner) BuildFolderTree() (*FolderNode, error) {
-	rows, err := s.db.AllFilePathsAndIDs()
+	rows, err := s.db.AllFilePathsAndIDs(context.Background())
 	if err != nil {
 		return nil, err
 	}

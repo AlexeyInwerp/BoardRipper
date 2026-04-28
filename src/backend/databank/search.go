@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -32,7 +33,7 @@ type SearchResponse struct {
 // Search performs a full-text search across all indexed PDF pages.
 // Supports multi-term queries (all terms must match).
 // If donorOnly is true, only returns results from PDFs bound to donor-pool boards.
-func (db *DB) Search(query string, donorOnly bool) (*SearchResponse, error) {
+func (db *DB) Search(ctx context.Context, query string, donorOnly bool) (*SearchResponse, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return &SearchResponse{Results: []SearchResult{}, Query: query}, nil
@@ -52,7 +53,7 @@ func (db *DB) Search(query string, donorOnly bool) (*SearchResponse, error) {
 		LIMIT 1000
 	`
 
-	rows, err := db.reader.Query(sqlQuery, ftsQuery)
+	rows, err := db.reader.QueryContext(ctx, sqlQuery, ftsQuery)
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}

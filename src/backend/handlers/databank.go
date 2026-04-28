@@ -131,7 +131,7 @@ func (h *DatabankHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid ids: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		files, err := h.db.ListFilesByIDs(ids)
+		files, err := h.db.ListFilesByIDs(r.Context(), ids)
 		if err != nil {
 			http.Error(w, "Failed to list files: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -166,7 +166,7 @@ func (h *DatabankHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	files, err := h.db.ListFiles(fileType, manufacturer, donorOnly)
+	files, err := h.db.ListFiles(r.Context(), fileType, manufacturer, donorOnly)
 	if err != nil {
 		http.Error(w, "Failed to list files: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -213,14 +213,14 @@ func (h *DatabankHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, err := h.db.GetFileByID(id)
+	file, err := h.db.GetFileByID(r.Context(), id)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
 
 	// Include bindings (both directions: file as board or as PDF)
-	bindings, _ := h.db.GetBindingsForFile(id)
+	bindings, _ := h.db.GetBindingsForFile(r.Context(), id)
 	if bindings == nil {
 		bindings = []databank.BindingDetail{}
 	}
@@ -244,7 +244,7 @@ func (h *DatabankHandler) UpdateFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get existing record
-	existing, err := h.db.GetFileByID(id)
+	existing, err := h.db.GetFileByID(r.Context(), id)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
@@ -425,7 +425,7 @@ func (h *DatabankHandler) PreviewPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify file exists
-	_, err = h.db.GetFileByID(id)
+	_, err = h.db.GetFileByID(r.Context(), id)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
@@ -469,7 +469,7 @@ func (h *DatabankHandler) Search(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	donorOnly := r.URL.Query().Get("donor") == "1"
 
-	results, err := h.db.Search(query, donorOnly)
+	results, err := h.db.Search(r.Context(), query, donorOnly)
 	if err != nil {
 		http.Error(w, "Search failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -488,7 +488,7 @@ func (h *DatabankHandler) DumpText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, err := h.db.GetFileByID(id)
+	file, err := h.db.GetFileByID(r.Context(), id)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
@@ -609,7 +609,7 @@ func (h *DatabankHandler) UploadText(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify file exists and is a PDF
-	file, err := h.db.GetFileByID(id)
+	file, err := h.db.GetFileByID(r.Context(), id)
 	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return

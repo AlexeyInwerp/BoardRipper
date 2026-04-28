@@ -73,59 +73,66 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Per-route handler timeouts. Reads get 30s (covers full-list queries
+	// at 100k rows + FTS5 search). Writes get 10s. Long-running endpoints
+	// (scan trigger, file upload/download, update apply) stay unwrapped —
+	// they have their own cancellation channels or are streaming.
+	read := withTimeout(30 * time.Second)
+	write := withTimeout(10 * time.Second)
+
 	// File API routes (existing)
 	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot)
-	mux.HandleFunc("POST /api/upload", fileHandler.Upload)
-	mux.HandleFunc("GET /api/files", fileHandler.List)
-	mux.HandleFunc("GET /api/files/{name}", fileHandler.Get)
-	mux.HandleFunc("DELETE /api/files/{name}", fileHandler.Delete)
+	mux.HandleFunc("POST /api/upload", fileHandler.Upload)                  // streaming upload — no wrap
+	mux.HandleFunc("GET /api/files", read(fileHandler.List))
+	mux.HandleFunc("GET /api/files/{name}", fileHandler.Get)                // streaming download — no wrap
+	mux.HandleFunc("DELETE /api/files/{name}", write(fileHandler.Delete))
 
 	// Recursive file serving for databank (subdirectory support)
-	mux.HandleFunc("GET /api/files/path/{path...}", fileHandler.GetByPath)
+	mux.HandleFunc("GET /api/files/path/{path...}", fileHandler.GetByPath)  // streaming download — no wrap
 
 	// Databank API routes
 	dbHandler := handlers.NewDatabankHandler(db, scanner, extractor, dataDir)
-	mux.HandleFunc("POST /api/databank/scan", dbHandler.Scan)
-	mux.HandleFunc("POST /api/databank/scan/stop", dbHandler.ScanStop)
-	mux.HandleFunc("GET /api/databank/scan/status", dbHandler.ScanStatus)
-	mux.HandleFunc("GET /api/databank/files", dbHandler.ListFiles)
-	mux.HandleFunc("GET /api/databank/files/{id}", dbHandler.GetFile)
-	mux.HandleFunc("PATCH /api/databank/files/{id}", dbHandler.UpdateFile)
-	mux.HandleFunc("GET /api/databank/tree", dbHandler.Tree)
-	mux.HandleFunc("POST /api/databank/bindings", dbHandler.CreateBinding)
-	mux.HandleFunc("PATCH /api/databank/bindings/{id}", dbHandler.UpdateBinding)
-	mux.HandleFunc("DELETE /api/databank/bindings/{id}", dbHandler.DeleteBinding)
-	mux.HandleFunc("GET /api/databank/search", dbHandler.Search)
-	mux.HandleFunc("POST /api/databank/scan/pdf", dbHandler.ScanPdf)
-	mux.HandleFunc("GET /api/databank/stats", dbHandler.Stats)
-	mux.HandleFunc("POST /api/databank/reset", dbHandler.Reset)
-	mux.HandleFunc("POST /api/databank/reset-pdf", dbHandler.ResetPdf)
-	mux.HandleFunc("GET /api/databank/browse", dbHandler.Browse)
-	mux.HandleFunc("GET /api/databank/pdf-errors", dbHandler.PdfScanErrors)
-	mux.HandleFunc("DELETE /api/databank/pdf-errors", dbHandler.PdfScanErrorsClear)
-	mux.HandleFunc("GET /api/databank/files/{id}/dump", dbHandler.DumpText)
-	mux.HandleFunc("PUT /api/databank/files/{id}/text", dbHandler.UploadText)
-	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)
-	mux.HandleFunc("PUT /api/databank/preview/{id}", dbHandler.PreviewPut)
+	mux.HandleFunc("POST /api/databank/scan", dbHandler.Scan)               // returns immediately, scan runs in goroutine
+	mux.HandleFunc("POST /api/databank/scan/stop", write(dbHandler.ScanStop))
+	mux.HandleFunc("GET /api/databank/scan/status", read(dbHandler.ScanStatus))
+	mux.HandleFunc("GET /api/databank/files", read(dbHandler.ListFiles))
+	mux.HandleFunc("GET /api/databank/files/{id}", read(dbHandler.GetFile))
+	mux.HandleFunc("PATCH /api/databank/files/{id}", write(dbHandler.UpdateFile))
+	mux.HandleFunc("GET /api/databank/tree", read(dbHandler.Tree))
+	mux.HandleFunc("POST /api/databank/bindings", write(dbHandler.CreateBinding))
+	mux.HandleFunc("PATCH /api/databank/bindings/{id}", write(dbHandler.UpdateBinding))
+	mux.HandleFunc("DELETE /api/databank/bindings/{id}", write(dbHandler.DeleteBinding))
+	mux.HandleFunc("GET /api/databank/search", read(dbHandler.Search))
+	mux.HandleFunc("POST /api/databank/scan/pdf", dbHandler.ScanPdf)        // returns immediately, extraction runs in workers
+	mux.HandleFunc("GET /api/databank/stats", read(dbHandler.Stats))
+	mux.HandleFunc("POST /api/databank/reset", write(dbHandler.Reset))
+	mux.HandleFunc("POST /api/databank/reset-pdf", write(dbHandler.ResetPdf))
+	mux.HandleFunc("GET /api/databank/browse", read(dbHandler.Browse))
+	mux.HandleFunc("GET /api/databank/pdf-errors", read(dbHandler.PdfScanErrors))
+	mux.HandleFunc("DELETE /api/databank/pdf-errors", write(dbHandler.PdfScanErrorsClear))
+	mux.HandleFunc("GET /api/databank/files/{id}/dump", read(dbHandler.DumpText))
+	mux.HandleFunc("PUT /api/databank/files/{id}/text", write(dbHandler.UploadText))
+	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)  // streaming PNG — no wrap
+	mux.HandleFunc("PUT /api/databank/preview/{id}", write(dbHandler.PreviewPut))
 
 	// Board reference database API routes
 	boardsHandler := handlers.NewBoardsHandler(bdb)
-	mux.HandleFunc("GET /api/boards/resolve", boardsHandler.Resolve)
-	mux.HandleFunc("GET /api/boards/stats", boardsHandler.Stats)
+	mux.HandleFunc("GET /api/boards/resolve", read(boardsHandler.Resolve))
+	mux.HandleFunc("GET /api/boards/stats", read(boardsHandler.Stats))
 
 	// Config API routes
-	mux.HandleFunc("GET /api/config", dbHandler.GetConfig)
-	mux.HandleFunc("PUT /api/config", dbHandler.SetConfig)
+	mux.HandleFunc("GET /api/config", read(dbHandler.GetConfig))
+	mux.HandleFunc("PUT /api/config", write(dbHandler.SetConfig))
 
 	// Update API routes
 	upd := updater.New(dataDir)
 	upd.StartBackgroundChecker(6 * time.Hour)
 	defer upd.Stop()
 	updateHandler := handlers.NewUpdateHandler(upd)
-	mux.HandleFunc("GET /api/update/status", updateHandler.Status)
-	mux.HandleFunc("POST /api/update/check", updateHandler.Check)
-	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)
-	mux.HandleFunc("GET /api/update/progress", updateHandler.Progress)
+	mux.HandleFunc("GET /api/update/status", read(updateHandler.Status))
+	mux.HandleFunc("POST /api/update/check", updateHandler.Check)           // hits GitHub, can take 30s+
+	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)           // long-running — Docker pull + restart
+	mux.HandleFunc("GET /api/update/progress", read(updateHandler.Progress))
 
 	// Serve static frontend files.
 	//
@@ -173,7 +180,20 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", port)
 	handler := gzipMiddleware(mux)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	// Protocol-level timeouts (slowloris defence). ReadHeaderTimeout caps
+	// how long a client can drip-feed headers; ReadTimeout caps the whole
+	// request including body (file uploads up to ~5 min); WriteTimeout
+	// caps response generation (large list payloads + 100MB+ static
+	// downloads); IdleTimeout drops kept-alive connections that go quiet.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
