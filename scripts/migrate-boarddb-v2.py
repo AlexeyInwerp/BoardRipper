@@ -116,14 +116,17 @@ def main():
             return
 
         print("starting migration to v2…")
+        current_step = "init"
         try:
             conn.execute("BEGIN")
 
+            current_step = "1: schema_version bootstrap"
             # 1. Bootstrap schema_version
             conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
             if conn.execute("SELECT count(*) FROM schema_version").fetchone()[0] == 0:
                 conn.execute("INSERT INTO schema_version (version) VALUES (1)")
 
+            current_step = "2: create colors table + seed"
             # 2. Create colors lookup table and seed
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS colors (
@@ -138,6 +141,7 @@ def main():
                 COLOR_SEED,
             )
 
+            current_step = "3: create entity tables"
             # 3. Create entity tables (with _v2 suffix; renamed at step 10)
             conn.executescript("""
                 CREATE TABLE brands (
@@ -209,6 +213,7 @@ def main():
                 CREATE INDEX idx_obd_board ON board_openboarddata(board_uuid);
             """)
 
+            current_step = "4: populate brands"
             # 4. Populate brands
             brands = {}
             for (brand,) in conn.execute("SELECT DISTINCT brand FROM boards"):
@@ -216,6 +221,7 @@ def main():
                 brands[brand] = u
                 conn.execute("INSERT INTO brands (uuid, name) VALUES (?, ?)", (u, brand))
 
+            current_step = "5: populate families"
             # 5. Populate families (with unmatched-pattern logging)
             families = {}  # (brand_uuid, family_name) -> uuid
             unmatched_count = 0
@@ -235,6 +241,7 @@ def main():
                         (u, brands[brand], family),
                     )
 
+            current_step = "6: populate models"
             # 6. Populate models — one per (brand, model_number)
             models = {}
             for brand, model_text, model_number in conn.execute(
@@ -253,6 +260,7 @@ def main():
                     (u, family_uuid, mn, model_text),
                 )
 
+            current_step = "7: populate boards_v2"
             # 7. Populate boards_v2 with fresh UUIDs
             old_to_new = {}  # old boards.id -> (new boards_v2.uuid, model_uuid)
             for old_id, brand, model_number, board_number, board_name, odm, btype, source, source_url in conn.execute("""
@@ -268,10 +276,16 @@ def main():
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (new_uuid, models[mkey], board_number, board_name, odm, btype, source, source_url))
 
+            current_step = "8: populate board_aliases_v2"
             # 8. Populate board_aliases_v2
             for old_id, alias, alias_type in conn.execute(
                 "SELECT board_id, alias_number, alias_type FROM board_aliases"
             ):
+                if old_id not in old_to_new:
+                    raise RuntimeError(
+                        f"orphan board_aliases row references nonexistent boards.id={old_id} "
+                        f"(alias={alias!r}); clean source DB before migrating"
+                    )
                 new_uuid, _ = old_to_new[old_id]
                 conn.execute(
                     "INSERT OR IGNORE INTO board_aliases_v2 (uuid, board_uuid, alias, alias_type) "
@@ -279,11 +293,17 @@ def main():
                     (gen_uuid(), new_uuid, alias, alias_type),
                 )
 
+            current_step = "9: populate model_aliases_v2"
             # 9. Populate model_aliases_v2 — semantic fix (model_uuid not board_uuid), dedup
             seen = set()
             for old_id, alias in conn.execute(
                 "SELECT board_id, model_name FROM model_aliases"
             ):
+                if old_id not in old_to_new:
+                    raise RuntimeError(
+                        f"orphan model_aliases row references nonexistent boards.id={old_id} "
+                        f"(alias={alias!r}); clean source DB before migrating"
+                    )
                 _, model_uuid = old_to_new[old_id]
                 key = (model_uuid, alias)
                 if key in seen:
@@ -297,6 +317,7 @@ def main():
                     (gen_uuid(), model_uuid, alias, alias_type),
                 )
 
+            current_step = "10: drop+rename+reindex"
             # 10. Drop old tables and rename _v2 -> final names
             conn.executescript("""
                 DROP TABLE board_aliases;
@@ -315,9 +336,11 @@ def main():
                 CREATE INDEX idx_model_aliases_alias ON model_aliases(alias);
             """)
 
+            current_step = "11: bump schema_version"
             # 11. Bump schema_version
             conn.execute("UPDATE schema_version SET version = 2")
 
+            current_step = "post-commit"
             conn.commit()
             n_boards = conn.execute("SELECT count(*) FROM boards").fetchone()[0]
             n_models = conn.execute("SELECT count(*) FROM models").fetchone()[0]
@@ -329,7 +352,8 @@ def main():
                 print(f"warning: {unmatched_count} board(s) fell back to brand-default family. "
                       f"Add patterns to FAMILY_PATTERNS to fix.", file=sys.stderr)
                 sys.exit(1)
-        except Exception:
+        except Exception as e:
+            print(f"migration failed at step {current_step}: {e}", file=sys.stderr)
             conn.rollback()
             raise
     finally:
