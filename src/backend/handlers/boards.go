@@ -51,6 +51,22 @@ func (h *BoardsHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// Hierarchy handles GET /api/boards/hierarchy — returns the full
+// Brand → Family → Model → Board tree (with aliases) for the Database
+// Editor panel. Read-only; small payload at v2 scale (~150 entities).
+func (h *BoardsHandler) Hierarchy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.bdb == nil || !h.bdb.Available() {
+		json.NewEncoder(w).Encode(map[string]any{"available": false})
+		return
+	}
+	brands := h.bdb.Hierarchy()
+	json.NewEncoder(w).Encode(map[string]any{
+		"available": true,
+		"brands":    brands,
+	})
+}
+
 // Stats handles GET /api/boards/stats
 func (h *BoardsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	if h.bdb == nil || !h.bdb.Available() {
