@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -163,8 +164,13 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 
 	// Bounded worker pool: only `concurrency` goroutines, fed via channel.
 	// Avoids allocating goroutines for all PDFs upfront (which caused OOM on NAS).
+	// Counters are atomic.Int64 so each worker increments and the
+	// progress-reporting Load() is consistent without holding a lock that
+	// could race with another worker's increment between increment and
+	// Load (the previous mutex-then-release-then-reacquire pattern allowed
+	// SetPdfStatus to observe values from two different worker iterations).
 	work := make(chan FileRecord, concurrency)
-	var mu sync.Mutex
+	var extractedCount, errCount atomic.Int64
 	var wg sync.WaitGroup
 
 	for i := 0; i < concurrency; i++ {
@@ -175,19 +181,13 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 				if err := e.ExtractOne(file); err != nil {
 					log.Printf("PdfExtractor: error extracting %s: %v", file.Filename, err)
 					e.logScanError(file, err)
-					mu.Lock()
-					errors++
-					mu.Unlock()
+					errCount.Add(1)
 				} else {
-					mu.Lock()
-					extracted++
-					mu.Unlock()
+					extractedCount.Add(1)
 				}
 
 				if e.scanner != nil {
-					mu.Lock()
-					e.scanner.SetPdfStatus(true, int64(extracted), total, int64(errors), file.Filename)
-					mu.Unlock()
+					e.scanner.SetPdfStatus(true, extractedCount.Load(), total, errCount.Load(), file.Filename)
 				}
 			}
 		}()
@@ -198,14 +198,16 @@ func (e *PdfExtractor) ExtractAll(concurrency int) (extracted, errors int) {
 	}
 	close(work)
 	wg.Wait()
-	log.Printf("PdfExtractor: done — %d extracted, %d errors", extracted, errors)
+
+	finalExtracted, finalErrors := extractedCount.Load(), errCount.Load()
+	log.Printf("PdfExtractor: done — %d extracted, %d errors", finalExtracted, finalErrors)
 
 	// Report phase 2 complete
 	if e.scanner != nil {
-		e.scanner.SetPdfStatus(false, int64(extracted), total, int64(errors), "")
+		e.scanner.SetPdfStatus(false, finalExtracted, total, finalErrors, "")
 	}
 
-	return extracted, errors
+	return int(finalExtracted), int(finalErrors)
 }
 
 // ExtractAllCancellable is like ExtractAll but accepts a done channel for cancellation.
@@ -242,7 +244,7 @@ func (e *PdfExtractor) ExtractAllCancellable(concurrency int, done <-chan struct
 	}
 
 	work := make(chan FileRecord, concurrency)
-	var mu sync.Mutex
+	var extractedCount, errCount atomic.Int64
 	var wg sync.WaitGroup
 
 	for i := 0; i < concurrency; i++ {
@@ -253,19 +255,13 @@ func (e *PdfExtractor) ExtractAllCancellable(concurrency int, done <-chan struct
 				if err := e.ExtractOneCancellable(file, done); err != nil {
 					log.Printf("PdfExtractor: error extracting %s: %v", file.Filename, err)
 					e.logScanError(file, err)
-					mu.Lock()
-					errors++
-					mu.Unlock()
+					errCount.Add(1)
 				} else {
-					mu.Lock()
-					extracted++
-					mu.Unlock()
+					extractedCount.Add(1)
 				}
 
 				if e.scanner != nil {
-					mu.Lock()
-					e.scanner.SetPdfStatus(true, int64(extracted), total, int64(errors), file.Filename)
-					mu.Unlock()
+					e.scanner.SetPdfStatus(true, extractedCount.Load(), total, errCount.Load(), file.Filename)
 				}
 			}
 		}()
@@ -286,13 +282,15 @@ func (e *PdfExtractor) ExtractAllCancellable(concurrency int, done <-chan struct
 cancelled:
 	close(work)
 	wg.Wait()
-	log.Printf("PdfExtractor: done — %d extracted, %d errors", extracted, errors)
+
+	finalExtracted, finalErrors := extractedCount.Load(), errCount.Load()
+	log.Printf("PdfExtractor: done — %d extracted, %d errors", finalExtracted, finalErrors)
 
 	if e.scanner != nil {
-		e.scanner.SetPdfStatus(false, int64(extracted), total, int64(errors), "")
+		e.scanner.SetPdfStatus(false, finalExtracted, total, finalErrors, "")
 	}
 
-	return extracted, errors
+	return int(finalExtracted), int(finalErrors)
 }
 
 // ExtractOneCancellable is like ExtractOne but respects a done channel for cancellation.

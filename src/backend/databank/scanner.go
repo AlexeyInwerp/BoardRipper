@@ -361,8 +361,36 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 	s.status.Phase = "Processing files"
 	s.mu.Unlock()
 
-	// Separate files into updates (existing, changed) and inserts (new)
-	var toInsert []FileRecord
+	// Stream-insert new files in batches so a freshly-indexed library of
+	// 100k+ files doesn't accumulate the entire FileRecord slice in memory
+	// before any DB write happens. Pre-allocated `pending` buffer is
+	// reused across flushes (length reset, capacity retained).
+	const batchSize = 1000
+	pending := make([]FileRecord, 0, batchSize)
+	flushPending := func() {
+		if len(pending) == 0 {
+			return
+		}
+		err := s.db.WriteTx(func(tx *sql.Tx) error {
+			for j := range pending {
+				if _, err := InsertFileTx(tx, &pending[j]); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			log.Printf("Scanner: batch insert error (%d files): %v", len(pending), err)
+			atomic.AddInt64(&errors, int64(len(pending)))
+		} else {
+			for i := range pending {
+				log.Printf("Scanner: + %s [%s] %s", pending[i].Path, pending[i].FileType, formatSize(pending[i].Size))
+			}
+			atomic.AddInt64(&added, int64(len(pending)))
+		}
+		pending = pending[:0]
+	}
+
 	for _, df := range diskFiles {
 		if cancelled() {
 			break
@@ -388,12 +416,12 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			}
 			atomic.AddInt64(&updated, 1)
 		} else {
-			// New file — collect for batch insert
+			// New file — append to the pending insert buffer; flush when full.
 			meta := ExtractMetadataWithBoardDB(df.relPath, s.boardDB)
 			fileType := FileTypeFromExt(df.relPath)
 			ext := strings.ToLower(filepath.Ext(df.relPath))
 
-			toInsert = append(toInsert, FileRecord{
+			pending = append(pending, FileRecord{
 				Path:              df.relPath,
 				Filename:          filepath.Base(df.relPath),
 				Extension:         ext,
@@ -410,38 +438,15 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 				BoardColor:        meta.BoardColor,
 				BoardColorHex:     meta.BoardColorHex,
 			})
+			if len(pending) >= batchSize {
+				flushPending()
+			}
 		}
 	}
 
-	// Batch insert new files in transactions of 100
-	const batchSize = 100
-	for i := 0; i < len(toInsert); i += batchSize {
-		if cancelled() {
-			break
-		}
-		end := i + batchSize
-		if end > len(toInsert) {
-			end = len(toInsert)
-		}
-		batch := toInsert[i:end]
-		err := s.db.WriteTx(func(tx *sql.Tx) error {
-			for j := range batch {
-				if _, err := InsertFileTx(tx, &batch[j]); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			log.Printf("Scanner: batch insert error (%d files): %v", len(batch), err)
-			atomic.AddInt64(&errors, int64(len(batch)))
-		} else {
-			for _, f := range batch {
-				log.Printf("Scanner: + %s [%s] %s", f.Path, f.FileType, formatSize(f.Size))
-			}
-			atomic.AddInt64(&added, int64(len(batch)))
-		}
-	}
+	// Final drain of any remaining pending inserts (also runs on cancel,
+	// so partial scans persist whatever was already queued).
+	flushPending()
 
 	if !cancelled() {
 		// Phase 4: Delete DB records for files no longer on disk
