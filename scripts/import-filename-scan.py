@@ -82,8 +82,100 @@ def find_or_create_model(conn: sqlite3.Connection, family_uuid: str,
 
 
 def main():
-    print("Importer body not implemented yet — Task 3 fills in.", file=sys.stderr)
-    return 1
+    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap.add_argument('staging_json', metavar='STAGING_JSON',
+                    help='Path to import-staging/filename-scan-<date>.json')
+    ap.add_argument('--db', metavar='PATH',
+                    default=str(Path(__file__).resolve().parent.parent /
+                                'Board Database' / 'boards.db'),
+                    help='Path to boards.db (default: Board Database/boards.db relative to repo)')
+    args = ap.parse_args()
+
+    staging_path = Path(args.staging_json)
+    db_path = Path(args.db)
+
+    if not staging_path.exists():
+        print(f"error: staging file not found: {staging_path}", file=sys.stderr)
+        return 1
+    if not db_path.exists():
+        print(f"error: database not found: {db_path}", file=sys.stderr)
+        return 1
+
+    payload = json.loads(staging_path.read_text())
+
+    conn = sqlite3.connect(db_path)
+    try:
+        # Schema-version guard
+        ver_row = conn.execute(
+            "SELECT version FROM schema_version LIMIT 1"
+        ).fetchone()
+        if not ver_row or ver_row[0] < 2:
+            print("error: boards.db is below schema_version 2 — run migrate-boarddb-v2.py first",
+                  file=sys.stderr)
+            return 1
+
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("BEGIN")
+
+        # Find-or-create the placeholder hierarchy (1 brand + 7 families + 7 models)
+        brand_uuid = find_or_create_brand(conn, PLACEHOLDER_BRAND)
+        pattern_to_model_uuid: dict[str, str] = {}
+        for pattern, (family_name, model_number) in PATTERN_TO_FAMILY.items():
+            family_uuid = find_or_create_family(conn, brand_uuid, family_name)
+            model_uuid = find_or_create_model(conn, family_uuid, model_number,
+                                               PLACEHOLDER_MODEL_DISPLAY)
+            pattern_to_model_uuid[pattern] = model_uuid
+
+        # Insert boards per pattern
+        inserted_per_pattern: dict[str, int] = {}
+        existing_per_pattern: dict[str, int] = {}
+        for pattern in PATTERN_TO_FAMILY:
+            inserted_per_pattern[pattern] = 0
+            existing_per_pattern[pattern] = 0
+            stats = payload.get('per_pattern', {}).get(pattern, {})
+            new_full = stats.get('new_full', [])
+            first_filename = stats.get('first_filename', {})
+            if not new_full:
+                continue
+
+            model_uuid = pattern_to_model_uuid[pattern]
+            for code in new_full:
+                sample = first_filename.get(code, '(unknown)')
+                notes = f"filename-scan:{pattern}; sample:{sample}"
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO boards "
+                    "(uuid, model_uuid, board_number, board_number_type, source, notes) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), model_uuid, code, pattern,
+                     'filename-scan', notes),
+                )
+                if cur.rowcount > 0:
+                    inserted_per_pattern[pattern] += 1
+                else:
+                    existing_per_pattern[pattern] += 1
+
+        conn.commit()
+
+        # Summary
+        total_inserted = sum(inserted_per_pattern.values())
+        total_existing = sum(existing_per_pattern.values())
+        print(f"filename-scan import complete:")
+        print(f"  {total_inserted} board(s) inserted")
+        print(f"  {total_existing} board(s) skipped (already in DB)")
+        print(f"  per pattern:")
+        for pattern in PATTERN_TO_FAMILY:
+            ins = inserted_per_pattern.get(pattern, 0)
+            ex = existing_per_pattern.get(pattern, 0)
+            if ins or ex:
+                print(f"    {pattern}: {ins} inserted, {ex} existing")
+
+        return 0
+    except Exception as e:
+        conn.rollback()
+        print(f"import failed: {e}", file=sys.stderr)
+        raise
+    finally:
+        conn.close()
 
 
 if __name__ == '__main__':
