@@ -344,6 +344,15 @@ class TestScanIntegration(unittest.TestCase):
         self.assertIn('apple_820', payload['per_pattern'])
         self.assertEqual(payload['per_pattern']['apple_820']['already_in_db_count'], 1)
         self.assertEqual(payload['per_pattern']['apple_820']['new_count'], 1)
+        # new_full has all net-new codes (not just top-20 samples)
+        self.assertEqual(payload['per_pattern']['apple_820']['new_full'],
+                         ['820-99999'])  # 1 new apple_820 code in fixture
+        # first_filename maps each unique code to a sample filename
+        self.assertIn('820-00165', payload['per_pattern']['apple_820']['first_filename'])
+        self.assertEqual(
+            payload['per_pattern']['apple_820']['first_filename']['820-99999'],
+            '820-99999_unknown.pdf'
+        )
 
     def test_xref_disabled_when_db_missing(self):
         scan_data = self.m.scan_sources([self.src])
