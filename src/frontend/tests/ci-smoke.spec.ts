@@ -27,20 +27,13 @@ test('open BVR board — tab appears', async ({ page }) => {
 
 test('open PDF — tab appears', async ({ page }) => {
   await page.goto('/');
-  const pdfInput = page.getByTestId('pdf-input');
-  await pdfInput.setInputFiles(PDF_FILE);
-  // PDF tab should appear in Dockview
+  await page.getByTestId('file-input').setInputFiles(PDF_FILE);
   await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
 });
 
 test('open board + PDF together', async ({ page }) => {
   await page.goto('/');
-  // Load board
-  await page.getByTestId('file-input').setInputFiles(BVR_FILE);
+  await page.getByTestId('file-input').setInputFiles([BVR_FILE, PDF_FILE]);
   await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible({ timeout: 15000 });
-  // Load PDF
-  await page.getByTestId('pdf-input').setInputFiles(PDF_FILE);
   await expect(page.locator('.dv-tab', { hasText: '820-02016.pdf' })).toBeVisible({ timeout: 10000 });
-  // Both tabs should exist
-  await expect(page.locator('.dv-tab', { hasText: '820-02016.bvr' })).toBeVisible();
 });
