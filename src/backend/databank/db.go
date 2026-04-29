@@ -848,23 +848,60 @@ func (db *DB) AllFilePathsAndIDs(ctx context.Context) ([]FilePathID, error) {
 }
 
 // AllFilePaths returns all paths currently in the database (for incremental scan diff).
-func (db *DB) AllFilePaths() (map[string]struct{ ID, Size, ModTime int64 }, error) {
-	rows, err := db.reader.Query(`SELECT id, path, size, mod_time FROM files`)
+// AllFileRow is the snapshot the scanner uses to diff disk vs DB and to
+// detect whether a re-resolution against an updated boards.db would improve
+// an existing row's metadata.
+type AllFileRow struct {
+	ID        int64
+	Size      int64
+	ModTime   int64
+	BoardUUID string // empty for unresolved or pre-v6 rows
+}
+
+func (db *DB) AllFilePaths() (map[string]AllFileRow, error) {
+	rows, err := db.reader.Query(`SELECT id, path, size, mod_time, board_uuid FROM files`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	result := make(map[string]struct{ ID, Size, ModTime int64 })
+	result := make(map[string]AllFileRow)
 	for rows.Next() {
 		var id, size, modTime int64
 		var path string
-		if err := rows.Scan(&id, &path, &size, &modTime); err != nil {
+		var boardUUID sql.NullString
+		if err := rows.Scan(&id, &path, &size, &modTime, &boardUUID); err != nil {
 			return nil, err
 		}
-		result[path] = struct{ ID, Size, ModTime int64 }{id, size, modTime}
+		result[path] = AllFileRow{ID: id, Size: size, ModTime: modTime, BoardUUID: boardUUID.String}
 	}
 	return result, rows.Err()
+}
+
+// UpdateFileResolution refreshes all metadata fields that come out of
+// ExtractMetadataWithBoardDB. Used by the scanner's unchanged-file path
+// when a richer boards.db now resolves a file that was previously
+// Unsorted / unresolved. The file's id, path, size, mod_time, scan_time,
+// donor_pool, and has_preview are intentionally left alone.
+func (db *DB) UpdateFileResolution(
+	id int64,
+	boardNumber, manufacturer, model, boardManufacturer, resolutionStatus,
+	boardUUID, boardColor, boardColorHex string,
+) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	_, err := db.writer.Exec(
+		`UPDATE files
+		 SET board_number = ?, manufacturer = ?, model = ?, board_manufacturer = ?,
+		     resolution_status = ?, board_uuid = ?, board_color = ?, board_color_hex = ?
+		 WHERE id = ?`,
+		nullStr(boardNumber), nullStr(manufacturer), nullStr(model),
+		nullStr(boardManufacturer), coalesceStr(resolutionStatus, "unresolved"),
+		nullStr(boardUUID), nullStr(boardColor), nullStr(boardColorHex),
+		id,
+	)
+	return err
 }
 
 // GetBindingsForBoard returns all PDF bindings for a board file.

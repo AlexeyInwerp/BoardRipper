@@ -267,7 +267,7 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 		}
 	}
 
-	var added, updated, deleted, errors, scanned, total int64
+	var added, updated, deleted, errors, scanned, total, reresolved int64
 
 	// Phase 1: Walk filesystem and collect all supported files
 	type diskFile struct {
@@ -407,7 +407,29 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 		if rec, ok := existing[df.relPath]; ok {
 			// File exists in DB — check if changed
 			if rec.Size == df.size && rec.ModTime == df.modTime {
-				continue // unchanged
+				// Disk-unchanged. Re-resolve metadata against the current
+				// boards.db so a freshly-imported reference DB (e.g. apple-
+				// boards.ts promotion) can lift previously-Unsorted rows
+				// into proper hierarchy without forcing the user to Reset
+				// All. Only triggers when board_uuid actually changes, so
+				// this is a no-op on a stable DB.
+				if s.boardDB != nil && s.boardDB.Available() {
+					meta := ExtractMetadataWithBoardDB(df.relPath, s.boardDB)
+					if meta.BoardUUID != rec.BoardUUID {
+						if err := s.db.UpdateFileResolution(
+							rec.ID,
+							meta.BoardNumber, meta.Manufacturer, meta.Model,
+							meta.BoardManufacturer, meta.ResolutionStatus,
+							meta.BoardUUID, meta.BoardColor, meta.BoardColorHex,
+						); err != nil {
+							log.Printf("Scanner: re-resolve error for %s: %v", df.relPath, err)
+							atomic.AddInt64(&errors, 1)
+						} else {
+							atomic.AddInt64(&reresolved, 1)
+						}
+					}
+				}
+				continue
 			}
 			// Changed — update scan fields
 			if err := s.db.UpdateFileScan(rec.ID, df.size, df.modTime, time.Now().Unix()); err != nil {
@@ -472,6 +494,9 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 		s.autoMatchBindings()
 	}
 
+	if reresolved > 0 {
+		log.Printf("Scanner: re-resolved %d unchanged file(s) against current boards.db", reresolved)
+	}
 	s.finishScan(scanned, total, added, updated, deleted, errors, start, cancelled())
 }
 
