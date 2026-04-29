@@ -1,0 +1,1561 @@
+{
+  "fetched_at": "2026-04-28T20:18:12.519923+00:00",
+  "source_root": "/Users/besitzer/Library/CloudStorage/SynologyDrive-Mac/XZZ/Computers/1 Laptop/APPLE",
+  "bucket_count": 15,
+  "board_count": 119,
+  "unique_a_numbers": 45,
+  "a_numbers": [
+    {
+      "a_number": "A1278",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Unibody (2008–2012)",
+      "source_folders": [
+        "A1278_820-2530 K24",
+        "A1278_820-2879 K6",
+        "A1278_820-2936 K90I",
+        "A1278_820-3115 J30"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1279",
+      "family": "MacBook (other)",
+      "display_name": null,
+      "source_folders": [
+        "A1279_820-2489"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1286",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 15\" Unibody (2008–2012)",
+      "source_folders": [
+        "A1286 820-2565",
+        "A1286_820-2330",
+        "A1286_820-2523 K19",
+        "A1286_820-2532",
+        "A1286_820-2533 K19i",
+        "A1286_820-2850 K18",
+        "A1286_820-2915 K91",
+        "A1286_820-3330 J31"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1297",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 17\" Unibody (2009–2011)",
+      "source_folders": [
+        "A1297_820-2610 K20A",
+        "A1297_820-2849 K17",
+        "A1297_820-2914 K92"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1311",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1311 820-2492-A Apple iMac",
+        "A1311_820-2494 K22",
+        "A1311_820-2641 K60",
+        "A1311_820-2784 K74",
+        "A1311_820-3126 K60"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1312",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1312_820-2507 K23",
+        "A1312_820-2733 K23F",
+        "A1312_820-2828 K62",
+        "A1312_820-2901 K75"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1342",
+      "family": "MacBook",
+      "display_name": "MacBook 13\" White Unibody (Late 2009 / Mid 2010)",
+      "source_folders": [
+        "A1342_820-2567 K84",
+        "A1342_820-2877 K87",
+        "A1342_820-2883 K84"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1347",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1347_820-2993",
+        "A1347_820-3017",
+        "A1347_820-3059",
+        "A1347_820-3227",
+        "A1347_820-3228",
+        "A1347_820-5509"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1369",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 13\" (2010–2012)",
+      "source_folders": [
+        "A1369_820-2838 K16",
+        "A1369_820-3023 K21"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1370",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 11\" (2010–2011)",
+      "source_folders": [
+        "A1370_820-2796 K99",
+        "A1370_820-2855-A",
+        "A1370_820-3024 K78",
+        "A1370_820-3053"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 15\" Retina (2012–2015)",
+      "source_folders": [
+        "A1398_820-00138 J45X425",
+        "A1398_820-00163 X425G(820-00462 Available for reference)",
+        "A1398_820-00426",
+        "A1398_820-3071 small board",
+        "A1398_820-3332 D2",
+        "A1398_820-3662 J45",
+        "A1398_820-3787 J45G"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1418",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1418_820-00034",
+        "A1418_820-00134 J95",
+        "A1418_820-00430",
+        "A1418_820-00431-A",
+        "A1418_820-00597 X647",
+        "A1418_820-3302 D7",
+        "A1418_820-3482 J16",
+        "A1418_820-3588 J16",
+        "A1418_820-4668 J70"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1419 820-00134",
+        "A1419 820-00291",
+        "A1419 820-00292(At the end of 2015)",
+        "A1419 820-00609",
+        "A1419 820-3481",
+        "A1419 820-4652-A",
+        "A1419_820-3298 D8",
+        "A1419_820-3299 D8",
+        "A1419_820-3478 J17",
+        "A1419_820-3481",
+        "A1419_820-4652"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1425",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Retina (Late 2012 / Early 2013)",
+      "source_folders": [
+        "A1425_820-3190",
+        "A1425_820-3462 D1"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1465",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 11\" (2012–2015)",
+      "source_folders": [
+        "A1465_820-00164 J110",
+        "A1465_820-3208 J11",
+        "A1465_820-3435 J41"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1466",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 13\" (2012–2017)",
+      "source_folders": [
+        "A1466_820-00165 J113",
+        "A1466_820-2839",
+        "A1466_820-3209 J13",
+        "A1466_820-3437 J43"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1502",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Retina (Late 2013 – Early 2015)",
+      "source_folders": [
+        "A1502_820-3476 J44",
+        "A1502_820-3536 J44",
+        "A1502_820-3539_USB small board",
+        "A1502_820-4924 X304"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1534",
+      "family": "MacBook",
+      "display_name": "MacBook 12\" Retina (2015–2017)",
+      "source_folders": [
+        "A1534_820-00045 J92",
+        "A1534_820-00244 X260",
+        "A1534_820-00687 A1534"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1706",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Touch Bar (2016–2017)",
+      "source_folders": [
+        "A1706_820-00239 J79",
+        "A1706_820-00923"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1707",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 15\" Touch Bar (2016–2017)",
+      "source_folders": [
+        "A1707_820-00281 J80",
+        "A1707_820-00928"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1708",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Function Keys (2016–2017)",
+      "source_folders": [
+        "A1708_820-00840",
+        "A1708_820-00875 J130"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1862",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1862 820-00967 IMac Pro 27 late 2017"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A1932",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 13\" Retina (2018–2019)",
+      "source_folders": [
+        "A1932_820-01124 USB IO",
+        "A1932_820-01521 J140"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1989",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" (2018–2019)",
+      "source_folders": [
+        "A1989_820-00850"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1990",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 15\" (2018–2019)",
+      "source_folders": [
+        "A1990_820-01041",
+        "A1990_820-01814"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A1993",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A1993_820-00939-A 2018mini"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A2115",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A2115_820-01236"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A2141",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 16\" (2019)",
+      "source_folders": [
+        "A2141_820-01700"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2159",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Two TB ports (2019)",
+      "source_folders": [
+        "A2159_820-01598"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2179",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 13\" (2020 Intel)",
+      "source_folders": [
+        "A2179_820-01055",
+        "A2179_820-01958 X1783 J230 MacBookAir9,1"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2251",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Four TB ports (2020)",
+      "source_folders": [
+        "A2251_820-01949"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2289",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" Two TB ports (2020)",
+      "source_folders": [
+        "A2289_820-01987 X1782 J223 MacBookAir9,1"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2337",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air M1 (Late 2020)",
+      "source_folders": [
+        "A2337_820-02016 MacBook Air M1"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2338",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 13\" M1 / M2",
+      "source_folders": [
+        "A2338_820-02020 MacBook Pro M1",
+        "A2338_820-02773 MacBook Pro M2"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2439",
+      "family": null,
+      "display_name": null,
+      "source_folders": [
+        "A2439_820-02188 iMac M1 24"
+      ],
+      "skip": true
+    },
+    {
+      "a_number": "A2442",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 14\" M1 Pro/Max / M3 (2021/2023)",
+      "source_folders": [
+        "A2442_820-02098 MacBook Pro",
+        "A2442_820-02443 MacBook Pro"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2485",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 16\" M1 Pro/Max (2021)",
+      "source_folders": [
+        "A2485_820-02100 MacBook Pro 16 2021 (M1X)",
+        "A2485_820-02382 MacBook Pro (2021) M1 Pro"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2681",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 13\" M2 (2022)",
+      "source_folders": [
+        "A2681 820-02862 M2"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2779",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 14\" M2 Pro/Max (2023)",
+      "source_folders": [
+        "A2779 820-02655 820-02841"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2780",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 16\" M2 Pro/Max (2023)",
+      "source_folders": [
+        "A2780 820-02652 820-06890"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2941",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 15\" M2 (2023)",
+      "source_folders": [
+        "A2941 820-03160"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2991",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 14\" M3 Pro/Max (2023)",
+      "source_folders": [
+        "A2991 820-02935"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A2992",
+      "family": "MacBook Pro",
+      "display_name": "MacBook Pro 16\" M3 Pro/Max (2023)",
+      "source_folders": [
+        "A2992 820-02918"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A3113",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 13\" M3 (2024)",
+      "source_folders": [
+        "A3113 820-03285"
+      ],
+      "skip": false
+    },
+    {
+      "a_number": "A3114",
+      "family": "MacBook Air",
+      "display_name": "MacBook Air 15\" M3 (2024)",
+      "source_folders": [
+        "A3114 820-03286"
+      ],
+      "skip": false
+    }
+  ],
+  "boards": [
+    {
+      "a_number": "A1278",
+      "board_number": "820-2530",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1278_820-2530 K24",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1278",
+      "board_number": "820-2879",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1278_820-2879 K6",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1278",
+      "board_number": "820-2936",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1278_820-2936 K90I",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1278",
+      "board_number": "820-3115",
+      "codename": "J30",
+      "year_hint": null,
+      "source_folder": "A1278_820-3115 J30",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1279",
+      "board_number": "820-2489",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1279_820-2489",
+      "bucket": "A12xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2565",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286 820-2565",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2330",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286_820-2330",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2523",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286_820-2523 K19",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2532",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286_820-2532",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2533",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286_820-2533 K19i",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2850",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286_820-2850 K18",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-2915",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1286_820-2915 K91",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1286",
+      "board_number": "820-3330",
+      "codename": "J31",
+      "year_hint": null,
+      "source_folder": "A1286_820-3330 J31",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1297",
+      "board_number": "820-2610",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1297_820-2610 K20A",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1297",
+      "board_number": "820-2849",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1297_820-2849 K17",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1297",
+      "board_number": "820-2914",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1297_820-2914 K92",
+      "bucket": "A12xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1311",
+      "board_number": "820-2492-A",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1311 820-2492-A Apple iMac",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1311",
+      "board_number": "820-2494",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1311_820-2494 K22",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1311",
+      "board_number": "820-2641",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1311_820-2641 K60",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1311",
+      "board_number": "820-2784",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1311_820-2784 K74",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1311",
+      "board_number": "820-3126",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1311_820-3126 K60",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1312",
+      "board_number": "820-2507",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1312_820-2507 K23",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1312",
+      "board_number": "820-2733",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1312_820-2733 K23F",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1312",
+      "board_number": "820-2828",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1312_820-2828 K62",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1312",
+      "board_number": "820-2901",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1312_820-2901 K75",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1342",
+      "board_number": "820-2567",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1342_820-2567 K84",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1342",
+      "board_number": "820-2877",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1342_820-2877 K87",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1342",
+      "board_number": "820-2883",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1342_820-2883 K84",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1347",
+      "board_number": "820-2993",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1347_820-2993",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1347",
+      "board_number": "820-3017",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1347_820-3017",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1347",
+      "board_number": "820-3059",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1347_820-3059",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1347",
+      "board_number": "820-3227",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1347_820-3227",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1347",
+      "board_number": "820-3228",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1347_820-3228",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1347",
+      "board_number": "820-5509",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1347_820-5509",
+      "bucket": "A13xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1369",
+      "board_number": "820-2838",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1369_820-2838 K16",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1369",
+      "board_number": "820-3023",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1369_820-3023 K21",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1370",
+      "board_number": "820-2796",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1370_820-2796 K99",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1370",
+      "board_number": "820-2855-A",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1370_820-2855-A",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1370",
+      "board_number": "820-3024",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1370_820-3024 K78",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1370",
+      "board_number": "820-3053",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1370_820-3053",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-00138",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1398_820-00138 J45X425",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-00163",
+      "codename": null,
+      "year_hint": "0046",
+      "source_folder": "A1398_820-00163 X425G(820-00462 Available for reference)",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-00426",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1398_820-00426",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-3071",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1398_820-3071 small board",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-3332",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1398_820-3332 D2",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-3662",
+      "codename": "J45",
+      "year_hint": null,
+      "source_folder": "A1398_820-3662 J45",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1398",
+      "board_number": "820-3787",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1398_820-3787 J45G",
+      "bucket": "A13xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-00034",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1418_820-00034",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-00134",
+      "codename": "J95",
+      "year_hint": null,
+      "source_folder": "A1418_820-00134 J95",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-00430",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1418_820-00430",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-00431-A",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1418_820-00431-A",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-00597",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1418_820-00597 X647",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-3302",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1418_820-3302 D7",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-3482",
+      "codename": "J16",
+      "year_hint": null,
+      "source_folder": "A1418_820-3482 J16",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-3588",
+      "codename": "J16",
+      "year_hint": null,
+      "source_folder": "A1418_820-3588 J16",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1418",
+      "board_number": "820-4668",
+      "codename": "J70",
+      "year_hint": null,
+      "source_folder": "A1418_820-4668 J70",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-00134",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419 820-00134",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-00291",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419 820-00291",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-00292",
+      "codename": null,
+      "year_hint": "2015",
+      "source_folder": "A1419 820-00292(At the end of 2015)",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-00609",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419 820-00609",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-3481",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419 820-3481",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-4652-A",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419 820-4652-A",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-3298",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419_820-3298 D8",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-3299",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419_820-3299 D8",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-3478",
+      "codename": "J17",
+      "year_hint": null,
+      "source_folder": "A1419_820-3478 J17",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-3481",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419_820-3481",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1419",
+      "board_number": "820-4652",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1419_820-4652",
+      "bucket": "A14xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1425",
+      "board_number": "820-3190",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1425_820-3190",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1425",
+      "board_number": "820-3462",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1425_820-3462 D1",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1465",
+      "board_number": "820-00164",
+      "codename": "J110",
+      "year_hint": null,
+      "source_folder": "A1465_820-00164 J110",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1465",
+      "board_number": "820-3208",
+      "codename": "J11",
+      "year_hint": null,
+      "source_folder": "A1465_820-3208 J11",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1465",
+      "board_number": "820-3435",
+      "codename": "J41",
+      "year_hint": null,
+      "source_folder": "A1465_820-3435 J41",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1466",
+      "board_number": "820-00165",
+      "codename": "J113",
+      "year_hint": null,
+      "source_folder": "A1466_820-00165 J113",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1466",
+      "board_number": "820-2839",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1466_820-2839",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1466",
+      "board_number": "820-3209",
+      "codename": "J13",
+      "year_hint": null,
+      "source_folder": "A1466_820-3209 J13",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1466",
+      "board_number": "820-3437",
+      "codename": "J43",
+      "year_hint": null,
+      "source_folder": "A1466_820-3437 J43",
+      "bucket": "A14xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1502",
+      "board_number": "820-3476",
+      "codename": "J44",
+      "year_hint": null,
+      "source_folder": "A1502_820-3476 J44",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1502",
+      "board_number": "820-3536",
+      "codename": "J44",
+      "year_hint": null,
+      "source_folder": "A1502_820-3536 J44",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1502",
+      "board_number": "820-3539",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1502_820-3539_USB small board",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1502",
+      "board_number": "820-4924",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1502_820-4924 X304",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1534",
+      "board_number": "820-00045",
+      "codename": "J92",
+      "year_hint": null,
+      "source_folder": "A1534_820-00045 J92",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1534",
+      "board_number": "820-00244",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1534_820-00244 X260",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1534",
+      "board_number": "820-00687",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1534_820-00687 A1534",
+      "bucket": "A15xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1706",
+      "board_number": "820-00239",
+      "codename": "J79",
+      "year_hint": null,
+      "source_folder": "A1706_820-00239 J79",
+      "bucket": "A17xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1706",
+      "board_number": "820-00923",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1706_820-00923",
+      "bucket": "A17xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1707",
+      "board_number": "820-00281",
+      "codename": "J80",
+      "year_hint": null,
+      "source_folder": "A1707_820-00281 J80",
+      "bucket": "A17xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1707",
+      "board_number": "820-00928",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1707_820-00928",
+      "bucket": "A17xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1708",
+      "board_number": "820-00840",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1708_820-00840",
+      "bucket": "A17xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1708",
+      "board_number": "820-00875",
+      "codename": "J130",
+      "year_hint": null,
+      "source_folder": "A1708_820-00875 J130",
+      "bucket": "A17xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1862",
+      "board_number": "820-00967",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1862 820-00967 IMac Pro 27 late 2017",
+      "bucket": "A18xx",
+      "skip": true
+    },
+    {
+      "a_number": "A1932",
+      "board_number": "820-01124",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1932_820-01124 USB IO",
+      "bucket": "A19xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1932",
+      "board_number": "820-01521",
+      "codename": "J140",
+      "year_hint": null,
+      "source_folder": "A1932_820-01521 J140",
+      "bucket": "A19xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1989",
+      "board_number": "820-00850",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1989_820-00850",
+      "bucket": "A19xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1990",
+      "board_number": "820-01041",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1990_820-01041",
+      "bucket": "A19xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1990",
+      "board_number": "820-01814",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1990_820-01814",
+      "bucket": "A19xx",
+      "skip": false
+    },
+    {
+      "a_number": "A1993",
+      "board_number": "820-00939-A",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A1993_820-00939-A 2018mini",
+      "bucket": "A19xx",
+      "skip": true
+    },
+    {
+      "a_number": "A2115",
+      "board_number": "820-01236",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2115_820-01236",
+      "bucket": "A21xx",
+      "skip": true
+    },
+    {
+      "a_number": "A2141",
+      "board_number": "820-01700",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2141_820-01700",
+      "bucket": "A21xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2159",
+      "board_number": "820-01598",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2159_820-01598",
+      "bucket": "A21xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2179",
+      "board_number": "820-01055",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2179_820-01055",
+      "bucket": "A21xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2179",
+      "board_number": "820-01958",
+      "codename": "J230",
+      "year_hint": null,
+      "source_folder": "A2179_820-01958 X1783 J230 MacBookAir9,1",
+      "bucket": "A21xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2251",
+      "board_number": "820-01949",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2251_820-01949",
+      "bucket": "A22xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2289",
+      "board_number": "820-01987",
+      "codename": "J223",
+      "year_hint": null,
+      "source_folder": "A2289_820-01987 X1782 J223 MacBookAir9,1",
+      "bucket": "A22xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2337",
+      "board_number": "820-02016",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2337_820-02016 MacBook Air M1",
+      "bucket": "A23xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2338",
+      "board_number": "820-02020",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2338_820-02020 MacBook Pro M1",
+      "bucket": "A23xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2338",
+      "board_number": "820-02773",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2338_820-02773 MacBook Pro M2",
+      "bucket": "A23xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2439",
+      "board_number": "820-02188",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2439_820-02188 iMac M1 24",
+      "bucket": "A24xx",
+      "skip": true
+    },
+    {
+      "a_number": "A2442",
+      "board_number": "820-02098",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2442_820-02098 MacBook Pro",
+      "bucket": "A24xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2442",
+      "board_number": "820-02443",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2442_820-02443 MacBook Pro",
+      "bucket": "A24xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2485",
+      "board_number": "820-02100",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2485_820-02100 MacBook Pro 16 2021 (M1X)",
+      "bucket": "A24xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2485",
+      "board_number": "820-02382",
+      "codename": null,
+      "year_hint": "2021",
+      "source_folder": "A2485_820-02382 MacBook Pro (2021) M1 Pro",
+      "bucket": "A24xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2681",
+      "board_number": "820-02862",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2681 820-02862 M2",
+      "bucket": "A26xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2779",
+      "board_number": "820-02655",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2779 820-02655 820-02841",
+      "bucket": "A27xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2780",
+      "board_number": "820-02652",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2780 820-02652 820-06890",
+      "bucket": "A27xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2941",
+      "board_number": "820-03160",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2941 820-03160",
+      "bucket": "A29xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2991",
+      "board_number": "820-02935",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2991 820-02935",
+      "bucket": "A29xx",
+      "skip": false
+    },
+    {
+      "a_number": "A2992",
+      "board_number": "820-02918",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A2992 820-02918",
+      "bucket": "A29xx",
+      "skip": false
+    },
+    {
+      "a_number": "A3113",
+      "board_number": "820-03285",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A3113 820-03285",
+      "bucket": "A31xx",
+      "skip": false
+    },
+    {
+      "a_number": "A3114",
+      "board_number": "820-03286",
+      "codename": null,
+      "year_hint": null,
+      "source_folder": "A3114 820-03286",
+      "bucket": "A31xx",
+      "skip": false
+    }
+  ]
+}

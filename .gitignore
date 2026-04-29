@@ -60,3 +60,6 @@ release-artifacts/
 
 # Claude scheduled-tasks lockfile
 .claude/scheduled_tasks.lock
+
+# Transient import-review staging files; never committed
+import-staging/
