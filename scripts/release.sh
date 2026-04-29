@@ -215,12 +215,11 @@ build_electron() {
 local_build() {
   mkdir -p "$ARTIFACTS"
   build_frontend
-  build_go_binaries
-  package_server_bundles
   build_docker
-  # Electron desktop builds (Mac/Win) are intentionally skipped — desktop
-  # apps are paused until the embedded-backend story is sorted out. Re-enable
-  # by adding `build_electron` here when the desktop track resumes.
+  # Standalone Go binary bundles (linux/macos/windows .tar.gz / .zip) and
+  # Electron desktop apps are intentionally skipped — Docker is the only
+  # supported deployment target right now. Re-enable build_go_binaries +
+  # package_server_bundles + build_electron here when other tracks resume.
   log "Local artifacts ready:"
   ls -lh "$ARTIFACTS" | awk 'NR>1 {print "  " $9, $5}'
 }

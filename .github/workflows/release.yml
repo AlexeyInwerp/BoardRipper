@@ -39,102 +39,10 @@ jobs:
           curl -f http://localhost:8080/
           docker stop br-release
 
-  # Build standalone binaries for Windows, macOS, macOS ARM, and Linux
-  build-binaries:
-    needs: validate
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ github.ref_name }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: src/frontend/package-lock.json
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-          cache-dependency-path: src/backend/go.sum
-
-      # Build frontend once
-      - name: Build frontend
-        run: cd src/frontend && npm ci && npm run build
-
-      - name: Verify frontend build
-        run: |
-          test -f src/frontend/dist/index.html || { echo "FATAL: frontend dist missing"; exit 1; }
-          echo "Frontend dist OK ($(find src/frontend/dist -type f | wc -l) files)"
-
-      # Build Go server for all platforms
-      - name: Build Go binaries
-        working-directory: src/backend
-        run: |
-          set -euxo pipefail
-          LDFLAGS="-s -w -X boardripper/updater.Version=${VERSION}"
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-linux-amd64" .
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-windows-amd64.exe" .
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-macos-amd64" .
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -o "$GITHUB_WORKSPACE/boardripper-macos-arm64" .
-
-      - name: Verify Go binaries
-        run: |
-          set -euo pipefail
-          for bin in boardripper-linux-amd64 boardripper-windows-amd64.exe boardripper-macos-amd64 boardripper-macos-arm64; do
-            test -f "$bin" || { echo "FATAL: $bin not found"; exit 1; }
-            SIZE=$(stat --format=%s "$bin")
-            if [ "$SIZE" -lt 1000000 ]; then
-              echo "FATAL: $bin too small (${SIZE} bytes)"; exit 1
-            fi
-            echo "OK: $bin ($(numfmt --to=iec $SIZE))"
-          done
-
-      # Package each platform: binary + frontend dist
-      - name: Package releases
-        run: |
-          set -euxo pipefail
-          for PLATFORM in linux-amd64 macos-amd64 macos-arm64; do
-            mkdir -p "pkg-${PLATFORM}/static"
-            cp "boardripper-${PLATFORM}" "pkg-${PLATFORM}/boardripper"
-            chmod +x "pkg-${PLATFORM}/boardripper"
-            cp -r src/frontend/dist/* "pkg-${PLATFORM}/static/"
-            tar -czf "boardripper-${PLATFORM}-${VERSION}.tar.gz" -C "pkg-${PLATFORM}" .
-          done
-          # Windows: zip instead of tar.gz
-          mkdir -p pkg-windows-amd64/static
-          cp boardripper-windows-amd64.exe pkg-windows-amd64/boardripper.exe
-          cp -r src/frontend/dist/* pkg-windows-amd64/static/
-          cd pkg-windows-amd64 && zip -r "../boardripper-windows-amd64-${VERSION}.zip" . && cd ..
-
-      - name: Validate release contents
-        run: |
-          set -euo pipefail
-          for file in boardripper-*-${VERSION}.tar.gz; do
-            echo "=== $file ==="
-            CONTENTS=$(tar -tzf "$file")
-            echo "$CONTENTS" | grep -q '^\./boardripper$' || { echo "FATAL: binary missing from $file"; exit 1; }
-            echo "$CONTENTS" | grep -q '^\./static/index.html$' || { echo "FATAL: static missing from $file"; exit 1; }
-            echo "OK: binary + static present"
-          done
-          echo "=== boardripper-windows-amd64-${VERSION}.zip ==="
-          CONTENTS=$(unzip -l "boardripper-windows-amd64-${VERSION}.zip")
-          echo "$CONTENTS" | grep -q 'boardripper.exe' || { echo "FATAL: exe missing from zip"; exit 1; }
-          echo "$CONTENTS" | grep -q 'static/index.html' || { echo "FATAL: static missing from zip"; exit 1; }
-          echo "OK: exe + static present"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-binaries
-          path: |
-            boardripper-linux-amd64-*.tar.gz
-            boardripper-macos-amd64-*.tar.gz
-            boardripper-macos-arm64-*.tar.gz
-            boardripper-windows-amd64-*.zip
-
-  # Electron desktop builds (mac/win) are intentionally paused until the
-  # embedded-backend story is sorted out. Re-enable by restoring the
-  # build-desktop-mac / build-desktop-win jobs and adding them back to
-  # create-release.needs.
+  # Standalone Go binary bundles (linux/macos/windows) and Electron desktop
+  # apps are intentionally paused — Docker is the only supported deployment
+  # target right now. Re-enable by restoring build-binaries / build-desktop-*
+  # jobs and adding them back to create-release.needs.
 
   # Build and push multi-arch Docker image
   build-docker:
@@ -163,7 +71,7 @@ jobs:
 
   # Create GitHub release with all artifacts
   create-release:
-    needs: [build-binaries, build-docker]
+    needs: [build-docker]
     runs-on: ubuntu-latest
     steps:
       # Full history + tags needed so the changelog step can diff against
@@ -172,11 +80,6 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-binaries
-          path: artifacts/
 
       - uses: actions/download-artifact@v4
         with:
@@ -209,8 +112,7 @@ jobs:
             fi
             echo
             echo "### Downloads"
-            echo "- \`boardripper-docker-${TAG}.tar.gz\` — server / NAS"
-            echo "- \`boardripper-{linux,macos,windows}-{amd64,arm64}-${TAG}\` — standalone"
+            echo "- \`boardripper-docker-${TAG}.tar.gz\` — Docker image (only supported deployment target)"
           } > RELEASE_NOTES.md
           echo "---- generated release notes ----"
           cat RELEASE_NOTES.md
@@ -218,10 +120,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/boardripper-linux-amd64-*.tar.gz
-            artifacts/boardripper-macos-amd64-*.tar.gz
-            artifacts/boardripper-macos-arm64-*.tar.gz
-            artifacts/boardripper-windows-amd64-*.zip
             artifacts/boardripper-docker-*.tar.gz
           body_path: RELEASE_NOTES.md
           generate_release_notes: false

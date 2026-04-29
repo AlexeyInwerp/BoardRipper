@@ -511,7 +511,17 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 }
 
 // autoMatchBindings creates bindings between boards and PDFs based on filename matching.
+//
+// Failure budget: when InsertBinding starts returning errors for *every* row
+// (seen on libraries with FK-constraint pathology), we'd otherwise log one
+// line per pair and hammer the writer mutex for thousands of iterations,
+// which makes the API look unresponsive. The first few failures get full
+// diagnostics; after consecutiveFKThreshold consecutive FK errors we abort
+// the phase and log a single summary so the rest of the scan completes.
 func (s *Scanner) autoMatchBindings() {
+	const sampleErrLimit = 5
+	const consecutiveFKThreshold = 50
+
 	boards, err := s.db.ListFiles(context.Background(), "board", "", false)
 	if err != nil {
 		log.Printf("Scanner: auto-match error listing boards: %v", err)
@@ -523,16 +533,16 @@ func (s *Scanner) autoMatchBindings() {
 		return
 	}
 
+	var bound, errs, consecutiveErrs, skipped int
+
 	for _, board := range boards {
-		// Check if board already has bindings
 		existing, _ := s.db.GetBindingsForBoard(context.Background(), board.ID)
 		if len(existing) > 0 {
-			continue // already has bindings, don't override
+			continue
 		}
 
 		var bestPdf *FileRecord
 		bestScore := 0
-
 		for i := range pdfs {
 			score := MatchScore(board.Filename, pdfs[i].Filename)
 			if score > bestScore {
@@ -540,14 +550,43 @@ func (s *Scanner) autoMatchBindings() {
 				bestPdf = &pdfs[i]
 			}
 		}
-
-		if bestPdf != nil && bestScore >= 50 {
-			if _, err := s.db.InsertBinding(board.ID, bestPdf.ID, true, "schematic", true); err != nil {
-				log.Printf("Scanner: auto-bind error %s->%s: %v", board.Filename, bestPdf.Filename, err)
-			} else {
-				log.Printf("Scanner: auto-bound %s <-> %s (score=%d)", board.Filename, bestPdf.Filename, bestScore)
-			}
+		if bestPdf == nil || bestScore < 50 {
+			continue
 		}
+
+		if _, err := s.db.InsertBinding(board.ID, bestPdf.ID, true, "schematic", true); err != nil {
+			errs++
+			consecutiveErrs++
+			if errs <= sampleErrLimit {
+				log.Printf("Scanner: auto-bind error board#%d %q -> pdf#%d %q: %v",
+					board.ID, board.Filename, bestPdf.ID, bestPdf.Filename, err)
+			}
+			if consecutiveErrs >= consecutiveFKThreshold {
+				skipped = len(boards)
+				log.Printf("Scanner: auto-bind aborted after %d consecutive errors — likely a structural issue with the bindings table; skipping remaining %d boards in this phase",
+					consecutiveErrs, skipped)
+				break
+			}
+			continue
+		}
+
+		consecutiveErrs = 0
+		bound++
+		if bound <= sampleErrLimit {
+			log.Printf("Scanner: auto-bound board#%d %q <-> pdf#%d %q (score=%d)",
+				board.ID, board.Filename, bestPdf.ID, bestPdf.Filename, bestScore)
+		}
+	}
+
+	if bound+errs > 0 {
+		log.Printf("Scanner: auto-bind summary — %d bound, %d failed%s",
+			bound, errs,
+			func() string {
+				if skipped > 0 {
+					return ", phase aborted early"
+				}
+				return ""
+			}())
 	}
 }
 
