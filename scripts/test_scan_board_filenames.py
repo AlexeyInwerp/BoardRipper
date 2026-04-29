@@ -243,5 +243,118 @@ class TestTokenizeUnmatched(unittest.TestCase):
         self.assertEqual(counter['cezanne'], 3)
 
 
+class TestScanIntegration(unittest.TestCase):
+    """End-to-end: walk a synthetic file tree, run cross-ref, write reports."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.db = self.tmp / 'boards.db'
+        build_fixture_db(self.db)
+        self.src = self.tmp / 'src'
+        self.src.mkdir()
+        # Build a synthetic file tree with diverse filenames
+        for name in [
+            'A1466_820-00165 J113.brd',           # known apple
+            '820-99999_unknown.pdf',              # new apple
+            'ACER C5V01 LA-E891P REV 2A.pdf',     # new compal
+            'Lenovo NM-A251.pdf',                 # known LCFC (alias)
+            '203075-1_cezanne.pdf',               # unmatched -> tokenize
+            'SR1YJ_testpoints.jpg',               # unmatched
+            'readme.txt',                         # noise
+        ]:
+            (self.src / name).touch()
+        # Subdir with one more file
+        sub = self.src / 'subdir'
+        sub.mkdir()
+        (sub / 'DA0R09MB6H1_test.pdf').touch()
+        # Hidden file/dir should be skipped
+        (self.src / '.hidden_file').touch()
+        hidden_dir = self.src / '.hidden_dir'
+        hidden_dir.mkdir()
+        (hidden_dir / 'should_not_appear.pdf').touch()
+        # Patch __file__ so import-staging lands in tmp
+        self.m = load_script()
+        self._orig_file = self.m.__file__
+        scripts_dir = self.tmp / 'scripts'
+        scripts_dir.mkdir()
+        self.m.__file__ = str(scripts_dir / 'scan-board-filenames.py')
+
+    def tearDown(self):
+        self.m.__file__ = self._orig_file
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_scan_walks_and_extracts(self):
+        scan_data = self.m.scan_sources([self.src])
+        self.assertEqual(scan_data['sources'][0]['accessible'], True)
+        # 8 files (incl. subdir), 1 hidden (skipped) -> files_scanned=8
+        self.assertEqual(scan_data['sources'][0]['files_scanned'], 8)
+        # 5 of those have at least one pattern match:
+        #  - A1466_820-00165 J113.brd (apple_a_number + apple_820)
+        #  - 820-99999_unknown.pdf (apple_820)
+        #  - ACER C5V01 LA-E891P REV 2A.pdf (compal_la)
+        #  - Lenovo NM-A251.pdf (lcfc_nm)
+        #  - subdir/DA0R09MB6H1_test.pdf (quanta_da0)
+        # readme.txt, 203075-1_cezanne.pdf, SR1YJ_testpoints.jpg → no pattern match
+        self.assertEqual(scan_data['sources'][0]['files_with_match'], 5)
+        # readme.txt, 203075-1_cezanne.pdf, SR1YJ_testpoints.jpg are fully unmatched
+        self.assertGreaterEqual(len(scan_data['unmatched_filenames']), 3)
+
+    def test_scan_skips_hidden(self):
+        scan_data = self.m.scan_sources([self.src])
+        for _pat, _val, _src, path in scan_data['matches']:
+            self.assertNotIn('.hidden', path)
+
+    def test_scan_handles_missing_source(self):
+        scan_data = self.m.scan_sources([Path('/nonexistent/path')])
+        self.assertEqual(scan_data['sources'][0]['accessible'], False)
+        self.assertEqual(scan_data['sources'][0]['files_scanned'], 0)
+
+    def test_main_writes_both_reports(self):
+        # Patch DEFAULT_SOURCES and DEFAULT_DB so the no-flag invocation
+        # doesn't hit the user's real paths.
+        # Simpler: invoke scan_sources + write helpers directly.
+        scan_data = self.m.scan_sources([self.src])
+        codes_by_pattern = {p[0]: set() for p in self.m.PATTERNS}
+        for pat_name, value, _src, _path in scan_data['matches']:
+            codes_by_pattern[pat_name].add(value)
+        xref = self.m.cross_reference_db(self.db, codes_by_pattern)
+        weak_pool = scan_data['unmatched_filenames'] + scan_data['a_number_only_filenames']
+        counter = self.m.tokenize_unmatched(weak_pool)
+        top50 = counter.most_common(50)
+
+        out_dir = self.tmp / 'import-staging'
+        out_dir.mkdir()
+        md = out_dir / 'filename-scan-test.md'
+        json_p = out_dir / 'filename-scan-test.json'
+        self.m.write_markdown_report(md, scan_data, xref, top50, self.db)
+        self.m.write_json_sidecar(json_p, scan_data, xref, top50, self.db)
+
+        self.assertTrue(md.exists())
+        self.assertTrue(json_p.exists())
+
+        # Check Markdown content
+        md_text = md.read_text()
+        self.assertIn('Filename Scan', md_text)
+        self.assertIn('Per-pattern results', md_text)
+        self.assertIn('820-99999', md_text)  # appears as a "new" sample
+
+        # Check JSON content
+        payload = json.loads(json_p.read_text())
+        self.assertEqual(payload['summary']['files_scanned_total'], 8)
+        self.assertIn('apple_820', payload['per_pattern'])
+        self.assertEqual(payload['per_pattern']['apple_820']['already_in_db_count'], 1)
+        self.assertEqual(payload['per_pattern']['apple_820']['new_count'], 1)
+
+    def test_xref_disabled_when_db_missing(self):
+        scan_data = self.m.scan_sources([self.src])
+        codes_by_pattern = {p[0]: set() for p in self.m.PATTERNS}
+        for pat_name, value, _src, _path in scan_data['matches']:
+            codes_by_pattern[pat_name].add(value)
+        xref = self.m.cross_reference_db(None, codes_by_pattern)
+        # All buckets should be 'unknown_db_state'
+        for pat_name in xref:
+            self.assertIn('unknown_db_state', xref[pat_name])
+
+
 if __name__ == '__main__':
     unittest.main()
