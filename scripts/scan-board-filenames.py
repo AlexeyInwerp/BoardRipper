@@ -233,6 +233,15 @@ def write_json_sidecar(out_path: Path, scan_data: dict, xref: dict,
         already = sorted(xref_p.get('already_in_db', set()))
         new = sorted(xref_p.get('new', set()))
         unknown = sorted(xref_p.get('unknown_db_state', set()))
+
+        # First-encountered filename per code (basename only — not the full path).
+        # Iterates scan_data['matches'] in original (deterministic) order;
+        # setdefault keeps the FIRST match per code.
+        first_filename: dict[str, str] = {}
+        for m_pat, m_value, _src, m_path in scan_data['matches']:
+            if m_pat == pat_name:
+                first_filename.setdefault(m_value, Path(m_path).name)
+
         per_pattern[pat_name] = {
             'unique_codes': len(codes),
             'file_count': len(files),
@@ -241,6 +250,9 @@ def write_json_sidecar(out_path: Path, scan_data: dict, xref: dict,
             'unknown_db_state_count': len(unknown),
             'samples_new': new[:20],
             'samples_already_in_db': already[:5],
+            # New fields for the importer:
+            'new_full': new,                # full sorted list of net-new codes
+            'first_filename': first_filename,  # code -> sample filename (basename)
         }
 
     # Per-source
