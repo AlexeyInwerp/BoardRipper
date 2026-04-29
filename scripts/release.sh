@@ -218,7 +218,9 @@ local_build() {
   build_go_binaries
   package_server_bundles
   build_docker
-  build_electron
+  # Electron desktop builds (Mac/Win) are intentionally skipped — desktop
+  # apps are paused until the embedded-backend story is sorted out. Re-enable
+  # by adding `build_electron` here when the desktop track resumes.
   log "Local artifacts ready:"
   ls -lh "$ARTIFACTS" | awk 'NR>1 {print "  " $9, $5}'
 }

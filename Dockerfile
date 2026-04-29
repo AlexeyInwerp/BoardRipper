@@ -22,6 +22,10 @@ FROM scratch
 COPY --from=backend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=backend /app/backend/server /server
 COPY --from=frontend /app/frontend/dist /static
+# Bundled board reference database. Backend prefers DATA_DIR/boards.db when
+# the user has staged a curated copy on their volume; falls back here when
+# /data is empty (default fresh install). Override with BOARDDB_PATH.
+COPY ["Board Database/boards.db", "/boards.db"]
 EXPOSE 8080
 ENV STATIC_DIR=/static
 ENV DATA_DIR=/data

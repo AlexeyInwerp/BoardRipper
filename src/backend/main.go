@@ -46,8 +46,21 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize board reference database (optional — disabled if boards.db missing)
-	boardDBPath := filepath.Join(dataDir, "boards.db")
+	// Initialize board reference database (optional — disabled if boards.db missing).
+	// Resolution order:
+	//   1. BOARDDB_PATH env (explicit override — production / docker-compose)
+	//   2. DATA_DIR/boards.db (user-curated DB on a mounted volume)
+	//   3. /boards.db (image-bundled fallback so the Docker container ships
+	//      with a populated reference DB even when /data is an empty volume)
+	boardDBPath := os.Getenv("BOARDDB_PATH")
+	if boardDBPath == "" {
+		boardDBPath = filepath.Join(dataDir, "boards.db")
+		if _, err := os.Stat(boardDBPath); errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Stat("/boards.db"); err == nil {
+				boardDBPath = "/boards.db"
+			}
+		}
+	}
 	bdb := boarddb.Open(boardDBPath)
 	if bdb != nil {
 		defer bdb.Close()
