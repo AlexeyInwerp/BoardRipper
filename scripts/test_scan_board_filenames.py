@@ -139,5 +139,109 @@ class TestExtractMatches(unittest.TestCase):
         self.assertEqual(set(out['apple_a_number']), {'A1706', 'A1708'})
 
 
+class TestCrossReferenceDB(unittest.TestCase):
+    """Each unique extracted code is split into already_in_db vs new."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.db = self.tmp / 'boards.db'
+        build_fixture_db(self.db)
+        self.m = load_script()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_known_apple_820_marked_already_in_db(self):
+        result = self.m.cross_reference_db(
+            self.db, {'apple_820': {'820-00165', '820-99999'}}
+        )
+        self.assertEqual(result['apple_820']['already_in_db'], {'820-00165'})
+        self.assertEqual(result['apple_820']['new'], {'820-99999'})
+
+    def test_alias_match_counts_as_already_in_db(self):
+        # The fixture has alias '820-00165-A' for board '820-00165'
+        result = self.m.cross_reference_db(
+            self.db, {'apple_820': {'820-00165-A'}}
+        )
+        self.assertEqual(result['apple_820']['already_in_db'], {'820-00165-A'})
+
+    def test_apple_a_number_queries_models_table(self):
+        # Fixture has model A1466
+        result = self.m.cross_reference_db(
+            self.db, {'apple_a_number': {'A1466', 'A9999'}}
+        )
+        self.assertEqual(result['apple_a_number']['already_in_db'], {'A1466'})
+        self.assertEqual(result['apple_a_number']['new'], {'A9999'})
+
+    def test_missing_db_returns_unknown_state(self):
+        result = self.m.cross_reference_db(
+            Path('/nonexistent/db.db'),
+            {'apple_820': {'820-00165'}}
+        )
+        self.assertIn('unknown_db_state', result['apple_820'])
+        self.assertEqual(result['apple_820']['unknown_db_state'], {'820-00165'})
+
+    def test_db_below_schema_v2_returns_unknown(self):
+        # Wipe schema_version → 1
+        with sqlite3.connect(self.db) as c:
+            c.execute("DELETE FROM schema_version")
+            c.execute("INSERT INTO schema_version (version) VALUES (1)")
+            c.commit()
+        result = self.m.cross_reference_db(
+            self.db, {'apple_820': {'820-00165'}}
+        )
+        self.assertIn('unknown_db_state', result['apple_820'])
+
+
+class TestTokenizeUnmatched(unittest.TestCase):
+    """Unmatched-substring tokenization for pattern-discovery."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = load_script()
+
+    def test_drops_stopwords(self):
+        counter = self.m.tokenize_unmatched(['Apple Boardview Schematic.pdf'])
+        self.assertNotIn('Apple', counter)
+        self.assertNotIn('apple', counter)
+        self.assertNotIn('Boardview', counter)
+        self.assertNotIn('Schematic', counter)
+        self.assertNotIn('pdf', counter)
+
+    def test_drops_short_tokens(self):
+        counter = self.m.tokenize_unmatched(['ABC ab DEF abc.txt'])
+        self.assertNotIn('abc', counter)  # 3 chars
+        self.assertNotIn('ABC', counter)  # 3 chars
+        self.assertNotIn('ab', counter)   # 2 chars
+        self.assertNotIn('DEF', counter)  # 3 chars
+
+    def test_keeps_likely_codes(self):
+        counter = self.m.tokenize_unmatched([
+            '203075-1_cezanne.pdf',
+            'SR1YJ_testpoints.jpg',
+            'DABTU14MB6E0_layout.pdf',
+        ])
+        self.assertGreater(counter.get('cezanne', 0), 0)
+        self.assertGreater(counter.get('SR1YJ', 0), 0)
+        self.assertGreater(counter.get('DABTU14MB6E0', 0), 0)
+
+    def test_drops_pure_short_digits(self):
+        counter = self.m.tokenize_unmatched(['part_1234_revision_5.pdf'])
+        self.assertNotIn('1234', counter)
+        self.assertNotIn('5', counter)
+
+    def test_keeps_long_digit_runs(self):
+        counter = self.m.tokenize_unmatched(['serial_12345678.bin'])
+        self.assertEqual(counter.get('12345678', 0), 1)
+
+    def test_counts_repeats_across_filenames(self):
+        counter = self.m.tokenize_unmatched([
+            '203075-1_cezanne.pdf',
+            'A1234_cezanne.pdf',
+            'B2345_cezanne_layout.pdf',
+        ])
+        self.assertEqual(counter['cezanne'], 3)
+
+
 if __name__ == '__main__':
     unittest.main()

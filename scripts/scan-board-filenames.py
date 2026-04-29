@@ -76,6 +76,75 @@ def extract_matches(filename: str) -> dict[str, list[str]]:
     return out
 
 
+def cross_reference_db(
+    db_path: Optional[Path],
+    codes_by_pattern: dict[str, set[str]],
+) -> dict[str, dict[str, set[str]]]:
+    """Split each pattern's unique codes into 'already_in_db' vs 'new'.
+
+    Returns {pattern_name: {'already_in_db': set, 'new': set}}.
+    If db_path is None or schema is wrong, returns 'unknown_db_state' for all.
+    """
+    if db_path is None or not db_path.exists():
+        return {p: {'unknown_db_state': set(codes)} for p, codes in codes_by_pattern.items()}
+
+    conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+    try:
+        ver_row = conn.execute(
+            "SELECT version FROM schema_version LIMIT 1"
+        ).fetchone()
+        if not ver_row or ver_row[0] < 2:
+            return {p: {'unknown_db_state': set(codes)} for p, codes in codes_by_pattern.items()}
+
+        result: dict[str, dict[str, set[str]]] = {}
+        for pattern_name, codes in codes_by_pattern.items():
+            already: set[str] = set()
+            new: set[str] = set()
+            for code in codes:
+                if pattern_name == 'apple_a_number':
+                    row = conn.execute(
+                        "SELECT 1 FROM models WHERE upper(model_number) = ? LIMIT 1",
+                        (code.upper(),)
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT 1 FROM boards WHERE upper(board_number) = ? "
+                        "OR uuid IN (SELECT board_uuid FROM board_aliases WHERE upper(alias) = ?) "
+                        "LIMIT 1",
+                        (code.upper(), code.upper())
+                    ).fetchone()
+                if row:
+                    already.add(code)
+                else:
+                    new.add(code)
+            result[pattern_name] = {'already_in_db': already, 'new': new}
+        return result
+    finally:
+        conn.close()
+
+
+def tokenize_unmatched(filenames: Iterable[str]) -> Counter:
+    """Tokenize filenames that didn't strongly match any pattern.
+
+    Drops STOPWORDS, drops tokens shorter than 4 chars, drops pure-digit
+    tokens shorter than 5 chars. Returns Counter of token frequencies.
+    """
+    counter: Counter = Counter()
+    for name in filenames:
+        # Strip extension
+        stem = name.rsplit('.', 1)[0] if '.' in name else name
+        for tok in TOKENIZE_SPLIT_RE.split(stem):
+            tok_lower = tok.lower()
+            if len(tok) < 4:
+                continue
+            if tok_lower in STOPWORDS:
+                continue
+            if tok.isdigit() and len(tok) < 5:
+                continue
+            counter[tok] += 1
+    return counter
+
+
 def main():
     print("Phase: scaffold (Task 1) — main not implemented yet.", file=sys.stderr)
     return 1
