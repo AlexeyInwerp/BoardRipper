@@ -90,6 +90,106 @@ def regex_brand_from_text(text: str) -> str | None:
     return best
 
 
+# ─── Filename-list mode helpers ─────────────────────────────────────────
+
+
+# Map regex pattern name → ODM/source label fed to the LLM. Mirrors
+# scan-board-filenames.py's `owner` field but normalized to ODMs where
+# applicable (some patterns name a brand, others an ODM; for the LLM
+# hint we want the manufacturer of the bare PCB).
+_PATTERN_ODM = {
+    "apple_820":      "Apple",
+    "compal_la":      "Compal",
+    "lcfc_nm":        "LCFC",
+    "quanta_da0":     "Quanta",
+    "msi_ms":         "MSI",
+    "asus_60nr":      "ASUS",
+    "oem_6050":       "Foxconn",
+    "apple_a_number": "Apple",
+}
+
+
+def _load_scan_module():
+    """Import scan-board-filenames.py (hyphenated, not directly importable)
+    so we can reuse its compiled regex patterns."""
+    from importlib import util as _u
+    p = Path(__file__).resolve().parent / "scan-board-filenames.py"
+    spec = _u.spec_from_file_location("scan_board_filenames", str(p))
+    mod = _u.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def rows_from_filename_list(
+    path: Path, limit: int = 0,
+) -> list[tuple[str, str | None, str]]:
+    """Returns [(board_number, sample_filename, odm)] extracted from an
+    arbitrary filename list. Accepts either:
+
+      - plain text: one filename per line
+      - JSON list of objects: e.g. /api/databank/files output, where
+        each entry has at least `filename` and optionally `path`,
+        `extension`, `resolution_status`. Already-resolved entries
+        (resolution_status == 'resolved') are skipped.
+    """
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    filenames: list[str] = []
+
+    raw_stripped = raw.lstrip()
+    if raw_stripped.startswith("[") or raw_stripped.startswith("{"):
+        # JSON. Could be a list, or an object with a `files` key (some
+        # API wrappers do that).
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = data.get("files") or data.get("items") or []
+        if not isinstance(data, list):
+            print("FATAL: --filenames-from JSON must be a list (or "
+                  "{files: [...]} wrapper)", file=sys.stderr)
+            sys.exit(1)
+        for entry in data:
+            if isinstance(entry, str):
+                filenames.append(entry)
+                continue
+            if not isinstance(entry, dict):
+                continue
+            # Skip already-resolved files.
+            if entry.get("resolution_status") == "resolved":
+                continue
+            name = entry.get("filename") or entry.get("path") or entry.get("name")
+            if name:
+                filenames.append(name)
+    else:
+        for line in raw.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                filenames.append(line)
+
+    scan_mod = _load_scan_module()
+    rows: list[tuple[str, str | None, str]] = []
+    seen: set[str] = set()  # dedupe by board_number
+    for fname in filenames:
+        # Trim path component — regex patterns expect basenames.
+        basename = fname.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        matches = scan_mod.extract_matches(basename)
+        if not matches:
+            continue
+        # Take the first matching pattern → first board code. Order
+        # matches PATTERNS list (apple_820, compal_la, lcfc_nm, …).
+        for pat in scan_mod.PATTERNS:
+            key = pat[0]
+            if key in matches and matches[key]:
+                board_number = sorted(matches[key])[0]
+                if board_number in seen:
+                    break
+                seen.add(board_number)
+                odm = _PATTERN_ODM.get(key, "Unknown")
+                rows.append((board_number, basename, odm))
+                break
+        if limit and len(rows) >= limit:
+            break
+    return rows
+
+
 # ─── DB helpers ─────────────────────────────────────────────────────────
 
 
@@ -245,6 +345,15 @@ def main() -> int:
                    help="Skip the web-search step. The local LLM gets just the "
                         "board code, sample filename, and ODM hint — no snippets. "
                         "Use when the search backend is exhausted.")
+    p.add_argument("--filenames-from", type=Path,
+                   help="Bypass the boards.db Unsorted query and instead extract "
+                        "board codes from an arbitrary list of filenames. Accepts "
+                        "either plain text (one filename per line) or a JSON list "
+                        "of objects (e.g. /api/databank/files output) — board codes "
+                        "are extracted via the same regex set scan-board-filenames "
+                        "uses. Output JSON is keyed by extracted board code; pair "
+                        "with apply-research-findings.py --insert-missing to write "
+                        "fresh board records into boards.db.")
     p.add_argument("--dry-run", action="store_true",
                    help="Search + classify but do not write the JSON.")
     p.add_argument("--verbose", action="store_true")
@@ -252,19 +361,23 @@ def main() -> int:
                    help="Persist intermediate JSON every N boards.")
     args = p.parse_args()
 
-    if not args.db.exists():
+    if not args.filenames_from and not args.db.exists():
         print(f"FATAL: {args.db} not found", file=sys.stderr)
         return 1
 
-    conn = sqlite3.connect(str(args.db))
-    rows = list_unsorted_rows(
-        conn,
-        odm_filter=[s.strip() for s in args.odm.split(",") if s.strip()] or None,
-        skip_already_tried=args.resume,
-        limit=args.limit,
-    )
-    conn.close()
-    print(f"residue rows in scope: {len(rows)}")
+    if args.filenames_from:
+        rows = rows_from_filename_list(args.filenames_from, limit=args.limit)
+        print(f"filenames in scope: {len(rows)}")
+    else:
+        conn = sqlite3.connect(str(args.db))
+        rows = list_unsorted_rows(
+            conn,
+            odm_filter=[s.strip() for s in args.odm.split(",") if s.strip()] or None,
+            skip_already_tried=args.resume,
+            limit=args.limit,
+        )
+        conn.close()
+        print(f"residue rows in scope: {len(rows)}")
     if not rows:
         return 0
 
