@@ -64,3 +64,4 @@ release-artifacts/
 # Transient import-review staging files; never committed
 import-staging/
 scripts/lib/__pycache__/
+.tavily-env
