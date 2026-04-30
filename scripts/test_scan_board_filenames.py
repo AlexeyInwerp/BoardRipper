@@ -105,6 +105,16 @@ class TestExtractMatches(unittest.TestCase):
         out = self.m.extract_matches('Dell_Inspiron_DA0R09MB6H1_schematic.pdf')
         self.assertIn('DA0R09MB6H1', out['quanta_da0'])
 
+    def test_quanta_dan_rev_variant(self):
+        # Quanta uses DAN/DAF/DAB/etc. as revision-letter prefixes for
+        # alternate board layouts. The DA0-only regex missed these.
+        out = self.m.extract_matches('Asus FX506H Quanta NJJ DANJJMB1AA0 Rev 1A schematic.pdf')
+        self.assertIn('DANJJMB1AA0', out['quanta_da0'])
+
+    def test_quanta_dax_dag_variants(self):
+        out = self.m.extract_matches('Some Quanta DAGZ8IAMBAC0 board.brd')
+        self.assertIn('DAGZ8IAMBAC0', out['quanta_da0'])
+
     def test_msi_ms(self):
         out = self.m.extract_matches('MSI Stealth MS-16GF1 boardview.tvw')
         self.assertIn('MS-16GF1', out['msi_ms'])

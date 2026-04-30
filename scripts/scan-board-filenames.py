@@ -36,7 +36,11 @@ PATTERNS: list[tuple[str, str, re.Pattern]] = [
     # compal_la: leading letter optional (LA-E891P style AND LA-6901P style both occur in the wild)
     ('compal_la',      'Compal',         re.compile(r'LA-[A-Z]?\d{3,4}[A-Z]?', re.IGNORECASE)),
     ('lcfc_nm',        'LCFC',           re.compile(r'NM-[A-Z]\d{3,4}', re.IGNORECASE)),
-    ('quanta_da0',     'Quanta',         re.compile(r'DA0[A-Z0-9]{8,12}', re.IGNORECASE)),
+    # Quanta motherboard codes — stay in sync with src/backend/boarddb/odm.go.
+    # Captures DA + optional rev char (0/letter) + 2-8 char project code +
+    # MB + 2-5 char suffix. Catches DAN/DAF/DAB/DAJ revision variants that
+    # the previous DA0-only literal missed.
+    ('quanta_da0',     'Quanta',         re.compile(r'DA[0A-Z][A-Z0-9]{2,8}MB[A-Z0-9]{2,5}', re.IGNORECASE)),
     # msi_ms: alphanumeric tail of 4-8 chars (MS-16GF1, MS-16J51, MS-16P51, MS-16R1 all valid)
     ('msi_ms',         'MSI',            re.compile(r'\bMS-[A-Z0-9]{4,8}\b', re.IGNORECASE)),
     # asus_60nr: 4-8 alphanumeric chars after 60NR (e.g., 60NR02A0, 60NR0F90)
