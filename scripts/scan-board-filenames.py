@@ -152,8 +152,25 @@ DEFAULT_SOURCES = [
 ]
 DEFAULT_DB = Path(__file__).resolve().parent.parent / 'Board Database' / 'boards.db'
 
+# Extension whitelist — keep in sync with src/backend/databank/metadata.go.
+# We only ingest filenames the boardviewer itself can open, plus PDFs (which
+# typically carry schematics/service docs naming boards). BIOS dumps, archives,
+# and disk images frequently embed board codes in their filenames but are not
+# useful sources of provenance — they pollute boards.db with samples no one can
+# load.
+ALLOWED_EXTENSIONS: set[str] = {
+    '.bvr', '.bv',     # BVR1, BVR3
+    '.brd',            # BRD (Apple/Mac), BDV, Allegro
+    '.bdv',            # BDV, BDV ASC
+    '.fz',             # FZ (ASUS)
+    '.cad',            # GenCAD 1.4
+    '.pcb',            # XZZ
+    '.tvw',            # Teboview
+    '.pdf',            # documentation (schematics, service manuals)
+}
 
-def scan_sources(sources: list[Path]) -> dict:
+
+def scan_sources(sources: list[Path], *, all_extensions: bool = False) -> dict:
     """Walk all sources, extract matches per filename. Returns aggregated data.
 
     Output shape:
@@ -177,7 +194,7 @@ def scan_sources(sources: list[Path]) -> dict:
             sources_meta.append(meta)
             continue
 
-        for p in _walk(src):
+        for p in _walk(src, all_extensions=all_extensions):
             meta['files_scanned'] += 1
             extracted = extract_matches(p.name)
             if extracted:
@@ -200,18 +217,24 @@ def scan_sources(sources: list[Path]) -> dict:
     }
 
 
-def _walk(root: Path) -> Iterable[Path]:
-    """Yield all files under root. Skips hidden dirs/files (dotfiles).
-    Catches PermissionError per-subtree and continues."""
+def _walk(root: Path, *, all_extensions: bool = False) -> Iterable[Path]:
+    """Yield files under root whose extension is in ALLOWED_EXTENSIONS.
+
+    Skips hidden dirs/files (dotfiles). Catches PermissionError per-subtree
+    and continues. Pass `all_extensions=True` to bypass the whitelist (the
+    legacy behavior — useful for ad-hoc forensic scans, not for populating
+    boards.db).
+    """
     try:
         for entry in root.iterdir():
             if entry.name.startswith('.'):
                 continue
             try:
                 if entry.is_dir():
-                    yield from _walk(entry)
+                    yield from _walk(entry, all_extensions=all_extensions)
                 elif entry.is_file():
-                    yield entry
+                    if all_extensions or entry.suffix.lower() in ALLOWED_EXTENSIONS:
+                        yield entry
             except PermissionError as e:
                 print(f"warning: {e}", file=sys.stderr)
     except PermissionError as e:
@@ -382,6 +405,11 @@ def main():
                     help='Source directory to walk (repeatable). Defaults to 3 known paths.')
     ap.add_argument('--db', metavar='PATH', default=str(DEFAULT_DB),
                     help='Path to boards.db (read-only). Default: Board Database/boards.db')
+    ap.add_argument('--all-extensions', action='store_true',
+                    help='Bypass the boardview/PDF extension whitelist. Useful for '
+                         'forensic dumps but DO NOT pipe the result into '
+                         'import-filename-scan.py — it will pollute boards.db with '
+                         'samples from BIOS dumps, archives, etc.')
     args = ap.parse_args()
 
     sources = [Path(s) for s in args.source] if args.source else DEFAULT_SOURCES
@@ -391,8 +419,10 @@ def main():
               file=sys.stderr)
         db_path = None
 
-    print(f"scanning {len(sources)} source(s) …", file=sys.stderr)
-    scan_data = scan_sources(sources)
+    ext_msg = ('all extensions' if args.all_extensions
+               else f"whitelist ({', '.join(sorted(ALLOWED_EXTENSIONS))})")
+    print(f"scanning {len(sources)} source(s) — {ext_msg} …", file=sys.stderr)
+    scan_data = scan_sources(sources, all_extensions=args.all_extensions)
 
     # Collect unique codes per pattern for cross-reference
     codes_by_pattern: dict[str, set[str]] = {p[0]: set() for p in PATTERNS}
