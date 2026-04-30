@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import os
 import random
 import re
@@ -365,27 +366,83 @@ def _search_mojeek(query: str, limit: int) -> list[SearchResult]:
     return out
 
 
+# ─── Tavily JSON API ────────────────────────────────────────────────────
+
+
+def _search_tavily(query: str, limit: int) -> list[SearchResult]:
+    """Tavily is the recommended backend in 2026: 1000 credits/mo on the
+    free plan, no card on file, no CAPTCHA risk, response shape is
+    {title, url, content} which maps 1-1 onto our SearchResult.
+    Set TAVILY_API_KEY in env. Get a key at https://app.tavily.com.
+    """
+    body = _read_fixture("tavily", query)
+    if body is None:
+        api_key = os.environ.get("TAVILY_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "TAVILY_API_KEY env var not set. Sign up free at "
+                "https://app.tavily.com (no credit card)."
+            )
+        payload = json.dumps({
+            "query": query,
+            "max_results": max(limit, 5),
+            # Plain web search is enough; we don't need the LLM-summarised
+            # `answer` field, and toggling it off saves ~half a credit.
+            "include_answer": False,
+            "search_depth": "basic",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.tavily.com/search",
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        body = _http(req, timeout=30.0)
+        _write_fixture("tavily", query, body)
+
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return []
+
+    out: list[SearchResult] = []
+    for item in parsed.get("results", [])[:limit]:
+        title = (item.get("title") or "").strip()
+        url = (item.get("url") or "").strip()
+        snippet = (item.get("content") or "").strip()
+        if title and url:
+            out.append(SearchResult(title=title, snippet=snippet, url=url))
+    return out
+
+
 def search(
     query: str,
     limit: int = 8,
-    backend: str = "mojeek",
+    backend: str = "tavily",
     throttle_s: float = 1.5,
 ) -> list[SearchResult]:
-    """Throttled HTML-scraping search. backend ∈ {mojeek, ddg, bing}.
+    """Throttled search. backend ∈ {tavily, mojeek, ddg, bing}.
 
-    Default is Mojeek — the only public engine I've found in 2026 that
-    doesn't aggressively CAPTCHA-wall scrapers AND returns relevant
-    results for cryptic PCB codes (eBay/AliExpress listing snippets land
-    in its index). DDG and Bing are kept as escape hatches: DDG
-    CAPTCHAs after a burst, Bing has a habit of mis-tokenising codes
-    like LA-9063P (Los Angeles fires in the first page of results).
+    Default is Tavily — JSON API, 1000 credits/mo free in 2026, no
+    CAPTCHA risk, clean (title, url, content) shape designed for LLM
+    RAG. Requires TAVILY_API_KEY env var.
 
-    Empty result list is a valid outcome — the LLM upstream is responsible
-    for deciding what to do with no signal.
+    HTML scrapers as escape hatches: Mojeek returns the most relevant
+    snippets when it works but bans on bursts; DDG CAPTCHAs after a
+    handful of queries; Bing mis-tokenises laptop codes (e.g.
+    LA-9063P → Los Angeles fires).
+
+    Empty result list is a valid outcome — the LLM upstream decides
+    what to do with no signal.
     """
     if not query.strip():
         return []
     _polite_sleep(throttle_s)
+    if backend == "tavily":
+        return _search_tavily(query, limit)
     if backend == "mojeek":
         return _search_mojeek(query, limit)
     if backend == "ddg":
