@@ -3,7 +3,7 @@
 
 Pulls Unsorted rows from Board Database/boards.db, queries DuckDuckGo (or
 Bing) HTML for each, feeds the snippets to a local Ollama daemon running
-qwen3:7b-instruct (configurable), and writes a JSON file in the format
+qwen3:8b (configurable), and writes a JSON file in the format
 scripts/apply-research-findings.py consumes:
 
   {
@@ -226,9 +226,9 @@ def main() -> int:
     p.add_argument("--resume", action="store_true",
                    help="Skip rows whose notes already contain 'researched:'.")
     p.add_argument("--throttle-s", type=float, default=1.5)
-    p.add_argument("--search-backend", choices=("ddg", "bing"), default="ddg")
+    p.add_argument("--search-backend", choices=("mojeek", "ddg", "bing"), default="mojeek")
     p.add_argument("--ollama-host", default="http://localhost:11434")
-    p.add_argument("--ollama-model", default="qwen3:7b-instruct")
+    p.add_argument("--ollama-model", default="qwen3:8b")
     p.add_argument("--confidence-floor", type=float, default=0.5)
     p.add_argument("--no-llm", action="store_true",
                    help="Regex on snippets only; brand-only output.")
