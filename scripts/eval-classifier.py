@@ -90,9 +90,9 @@ def main() -> int:
                    help="Comma-separated brand allow-list "
                         "(default: any brand).")
     p.add_argument("--throttle-s", type=float, default=1.5)
-    p.add_argument("--search-backend", choices=("ddg", "bing"), default="ddg")
+    p.add_argument("--search-backend", choices=("mojeek", "ddg", "bing"), default="mojeek")
     p.add_argument("--ollama-host", default="http://localhost:11434")
-    p.add_argument("--ollama-model", default="qwen3:7b-instruct")
+    p.add_argument("--ollama-model", default="qwen3:8b")
     p.add_argument("--no-llm", action="store_true",
                    help="Regex-on-snippets baseline.")
     p.add_argument("--dump-disagreements", type=Path,

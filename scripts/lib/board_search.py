@@ -230,30 +230,71 @@ def _search_ddg(query: str, limit: int) -> list[SearchResult]:
 # ─── Bing HTML ─────────────────────────────────────────────────────────
 
 
-_BING_RESULT_RE = re.compile(
-    r'<li class="b_algo".*?<h2>\s*<a [^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
-    r'(?:<div class="b_caption">|<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>)'
-    r"(.*?)</p>",
-    re.DOTALL,
+_BING_LI_RE = re.compile(r'<li class="b_algo".*?</li>', re.DOTALL)
+_BING_H2A_RE = re.compile(
+    r'<h2[^>]*>.*?<a [^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.DOTALL
 )
+# Two snippet shapes Bing has shipped over the past year:
+#   <p class="b_lineclamp...">...</p>
+#   <div class="b_caption"><p>...</p></div>
+_BING_SNIPPET_RES = (
+    re.compile(r'<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>(.*?)</p>', re.DOTALL),
+    re.compile(r'<div[^>]*class="[^"]*b_caption[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>',
+               re.DOTALL),
+)
+_BING_REDIRECT_RE = re.compile(r"^https?://www\.bing\.com/ck/a\?", re.I)
 
 
 def _strip_html(raw: str) -> str:
-    return re.sub(r"<[^>]+>", "", raw or "").strip()
+    txt = re.sub(r"<[^>]+>", " ", raw or "")
+    txt = re.sub(r"&amp;", "&", txt)
+    txt = re.sub(r"&nbsp;|&#0?160;", " ", txt)
+    txt = re.sub(r"&#0?183;|&middot;", "·", txt)
+    txt = re.sub(r"&#0?228;", "ä", txt)
+    txt = re.sub(r"&quot;", '"', txt)
+    txt = re.sub(r"&apos;|&#39;", "'", txt)
+    txt = re.sub(r"&lt;", "<", txt)
+    txt = re.sub(r"&gt;", ">", txt)
+    txt = re.sub(r"\s+", " ", txt)
+    return txt.strip()
+
+
+def _unwrap_bing_url(href: str) -> str:
+    """Bing wraps real URLs in /ck/a?u=... base64-ish encodes them. Best
+    effort: pull the `u=` parameter and base64-decode if it starts with
+    'a1' (Bing's tag) — otherwise return the passed href unchanged."""
+    if not _BING_REDIRECT_RE.match(href):
+        return href
+    qs = urllib.parse.urlparse(href).query
+    params = urllib.parse.parse_qs(qs)
+    u = (params.get("u") or [""])[0]
+    if not u.startswith("a1"):
+        return href
+    import base64
+
+    raw = u[2:]
+    raw += "=" * (-len(raw) % 4)
+    try:
+        return base64.urlsafe_b64decode(raw).decode("utf-8", errors="replace")
+    except Exception:
+        return href
 
 
 def _search_bing(query: str, limit: int) -> list[SearchResult]:
     body = _read_fixture("bing", query)
     if body is None:
+        # `mkt=en-US` + `setlang=en` defends against Bing serving in the
+        # caller's geo-default language; we want consistent English snippets
+        # for downstream prompt parsing.
         url = "https://www.bing.com/search?" + urllib.parse.urlencode(
-            {"q": query, "form": "QBLH"}
+            {"q": query, "form": "QBLH", "mkt": "en-US", "setlang": "en", "cc": "US"}
         )
         req = urllib.request.Request(
             url,
             headers={
                 "User-Agent": random.choice(_USER_AGENTS),
                 "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Language": "en-US,en;q=0.9",
                 "Accept-Encoding": "gzip",
             },
         )
@@ -261,15 +302,21 @@ def _search_bing(query: str, limit: int) -> list[SearchResult]:
         _write_fixture("bing", query, body)
 
     out: list[SearchResult] = []
-    for m in _BING_RESULT_RE.finditer(body):
-        url, title, snippet = m.group(1), m.group(2), m.group(3)
-        out.append(
-            SearchResult(
-                title=_strip_html(title),
-                snippet=_strip_html(snippet),
-                url=url,
-            )
-        )
+    for li_m in _BING_LI_RE.finditer(body):
+        block = li_m.group(0)
+        h2 = _BING_H2A_RE.search(block)
+        if not h2:
+            continue
+        url = _unwrap_bing_url(h2.group(1).replace("&amp;", "&"))
+        title = _strip_html(h2.group(2))
+        snippet = ""
+        for sr in _BING_SNIPPET_RES:
+            m = sr.search(block)
+            if m:
+                snippet = _strip_html(m.group(1))
+                break
+        if title:
+            out.append(SearchResult(title=title, snippet=snippet, url=url))
         if len(out) >= limit:
             break
     return out
@@ -278,13 +325,60 @@ def _search_bing(query: str, limit: int) -> list[SearchResult]:
 # ─── public ────────────────────────────────────────────────────────────
 
 
+_MOJEEK_LI_RE = re.compile(
+    r'<a [^>]*class="(?:ob|title)[^"]*"[^>]*href="(https?://[^"]+)"[^>]*>'
+    r'(.*?)</a>(.*?)<p class="s">(.*?)</p>',
+    re.DOTALL,
+)
+
+
+def _search_mojeek(query: str, limit: int) -> list[SearchResult]:
+    body = _read_fixture("mojeek", query)
+    if body is None:
+        url = "https://www.mojeek.com/search?" + urllib.parse.urlencode(
+            {"q": query}
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": random.choice(_USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip",
+            },
+        )
+        body = _http(req)
+        _write_fixture("mojeek", query, body)
+
+    out: list[SearchResult] = []
+    seen_urls: set[str] = set()
+    for m in _MOJEEK_LI_RE.finditer(body):
+        url = m.group(1).replace("&amp;", "&")
+        title = _strip_html(m.group(2))
+        snippet = _strip_html(m.group(4))
+        if not title or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        out.append(SearchResult(title=title, snippet=snippet, url=url))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def search(
     query: str,
     limit: int = 8,
-    backend: str = "ddg",
+    backend: str = "mojeek",
     throttle_s: float = 1.5,
 ) -> list[SearchResult]:
-    """Throttled HTML-scraping search. backend ∈ {ddg, bing}.
+    """Throttled HTML-scraping search. backend ∈ {mojeek, ddg, bing}.
+
+    Default is Mojeek — the only public engine I've found in 2026 that
+    doesn't aggressively CAPTCHA-wall scrapers AND returns relevant
+    results for cryptic PCB codes (eBay/AliExpress listing snippets land
+    in its index). DDG and Bing are kept as escape hatches: DDG
+    CAPTCHAs after a burst, Bing has a habit of mis-tokenising codes
+    like LA-9063P (Los Angeles fires in the first page of results).
 
     Empty result list is a valid outcome — the LLM upstream is responsible
     for deciding what to do with no signal.
@@ -292,6 +386,8 @@ def search(
     if not query.strip():
         return []
     _polite_sleep(throttle_s)
+    if backend == "mojeek":
+        return _search_mojeek(query, limit)
     if backend == "ddg":
         return _search_ddg(query, limit)
     if backend == "bing":

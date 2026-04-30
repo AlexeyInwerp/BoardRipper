@@ -4,13 +4,13 @@ given a board code, optional sample filename, ODM hint, and a handful of
 search-result snippets pulled by board_search.
 
 Stdlib only (urllib + json). Default endpoint is http://localhost:11434
-(Ollama's default). The model is qwen3:7b-instruct unless overridden;
+(Ollama's default). The model is qwen3:8b unless overridden;
 swap to phi-4:14b or llama3.3:70b-instruct for higher recall.
 
 Public surface:
 
     classify(board_number, sample_filename, odm, search_results,
-             model="qwen3:7b-instruct",
+             model="qwen3:8b",
              host="http://localhost:11434",
              timeout=60.0) -> Classification
 
@@ -151,7 +151,7 @@ def classify(
     sample_filename: Optional[str],
     odm: str,
     search_results: Iterable,
-    model: str = "qwen3:7b-instruct",
+    model: str = "qwen3:8b",
     host: str = "http://localhost:11434",
     timeout: float = 60.0,
 ) -> Classification:
@@ -167,14 +167,18 @@ def classify(
         "model": model,
         "stream": False,
         "format": _JSON_SCHEMA,
+        # Qwen 3 emits a chain-of-thought "thinking" block by default,
+        # which burns the per-call token budget before any JSON appears.
+        # Disable it for this structured-output use case.
+        "think": False,
         "options": {
             "temperature": 0.1,
             "top_p": 0.9,
-            "num_predict": 200,
+            "num_predict": 256,
         },
         "messages": [
             {"role": "system", "content": sys_prompt},
-            {"role": "user",   "content": user_msg},
+            {"role": "user",   "content": user_msg + "\n/no_think"},
         ],
     }
 
@@ -222,7 +226,7 @@ if __name__ == "__main__":
     cli.add_argument("board_number")
     cli.add_argument("--sample", default=None)
     cli.add_argument("--odm", default="Compal")
-    cli.add_argument("--model", default="qwen3:7b-instruct")
+    cli.add_argument("--model", default="qwen3:8b")
     cli.add_argument("--host", default="http://localhost:11434")
     cli.add_argument(
         "--snippets-stdin",
