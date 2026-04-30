@@ -8,18 +8,19 @@ import (
 	"strings"
 )
 
-// Board extensions recognized by the databank scanner.
+// Board extensions recognized by the databank scanner. Must stay in sync
+// with FormatDescriptor.extensions across src/frontend/src/parsers/*. Any
+// extension here without a frontend parser is dead — the scanner indexes
+// files no viewer can open.
 var boardExtensions = map[string]bool{
-	".bvr": true,
-	".bv":  true,
-	".brd": true,
-	".bdv": true,
-	".fz":  true,
-	".cae": true,
-	".cad": true,
-	".pcb": true,
-	".tvw": true,
-	".xzz": true,
+	".bvr": true, // BVR1, BVR3
+	".bv":  true, // BVR1, BVR3
+	".brd": true, // BRD (Apple/Mac), BDV, Allegro
+	".bdv": true, // BDV, BDV ASC
+	".fz":  true, // FZ (ASUS)
+	".cad": true, // GenCAD 1.4
+	".pcb": true, // XZZ
+	".tvw": true, // Teboview
 }
 
 // PDF extension.
@@ -45,6 +46,24 @@ func ExtensionsFingerprint() string {
 func IsSupportedFile(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return boardExtensions[ext] || pdfExtensions[ext]
+}
+
+// IsBoardFile returns true if the extension is a recognized board format.
+// PDFs do not count.
+func IsBoardFile(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return boardExtensions[ext]
+}
+
+// BoardExtensionList returns a sorted, comma-separated list of board
+// extensions for human-readable error messages.
+func BoardExtensionList() string {
+	exts := make([]string, 0, len(boardExtensions))
+	for e := range boardExtensions {
+		exts = append(exts, e)
+	}
+	sort.Strings(exts)
+	return strings.Join(exts, ", ")
 }
 
 // FileTypeFromExt returns "board", "pdf", or "" for unsupported.

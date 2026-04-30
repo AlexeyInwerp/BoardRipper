@@ -9,34 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"boardripper/databank"
 )
-
-// allowedExtensions is the single source of truth for accepted board file formats.
-// To add a new format, append its lowercase extension here.
-var allowedExtensions = map[string]bool{
-	".bvr": true,
-	".bv":  true,
-	".brd": true,
-	".fz":  true,
-	".cae": true,
-	".cad": true,
-	".pcb": true,
-	".bdv": true,
-	".xzz": true,
-	".tvw": true,
-}
-
-// allowedExtensionList returns a human-readable list for error messages.
-func allowedExtensionList() string {
-	list := ""
-	for ext := range allowedExtensions {
-		if list != "" {
-			list += ", "
-		}
-		list += ext
-	}
-	return list
-}
 
 // ScanRootFunc returns the current scan root directory.
 type ScanRootFunc func() string
@@ -68,9 +43,8 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Validate file extension
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if !allowedExtensions[ext] {
-		http.Error(w, "Supported formats: "+allowedExtensionList(), http.StatusBadRequest)
+	if !databank.IsBoardFile(header.Filename) {
+		http.Error(w, "Supported formats: "+databank.BoardExtensionList(), http.StatusBadRequest)
 		return
 	}
 
@@ -99,13 +73,6 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// allAllowedExtensions includes both board and PDF extensions for listing.
-var allAllowedExtensions = map[string]bool{
-	".bvr": true, ".bv": true, ".brd": true, ".bdv": true, ".fz": true,
-	".cae": true, ".cad": true, ".pcb": true, ".xzz": true, ".tvw": true,
-	".pdf": true,
-}
-
 func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(h.dataDir)
 	if err != nil {
@@ -118,8 +85,7 @@ func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 		if entry.IsDir() {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(entry.Name()))
-		if !allAllowedExtensions[ext] {
+		if !databank.IsSupportedFile(entry.Name()) {
 			continue
 		}
 		info, err := entry.Info()
@@ -195,7 +161,7 @@ func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
 	contentType := "application/octet-stream"
 	if ext == ".pdf" {
 		contentType = "application/pdf"
-	} else if allowedExtensions[ext] {
+	} else if databank.IsBoardFile(safeName) {
 		contentType = "text/plain; charset=utf-8"
 	}
 
