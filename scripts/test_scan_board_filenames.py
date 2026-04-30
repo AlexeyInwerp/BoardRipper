@@ -286,18 +286,23 @@ class TestScanIntegration(unittest.TestCase):
     def test_scan_walks_and_extracts(self):
         scan_data = self.m.scan_sources([self.src])
         self.assertEqual(scan_data['sources'][0]['accessible'], True)
-        # 8 files (incl. subdir), 1 hidden (skipped) -> files_scanned=8
-        self.assertEqual(scan_data['sources'][0]['files_scanned'], 8)
+        # Whitelist drops readme.txt and SR1YJ_testpoints.jpg -> files_scanned=6
+        # (8 visible files minus the 2 non-whitelisted; hidden file already skipped)
+        self.assertEqual(scan_data['sources'][0]['files_scanned'], 6)
         # 5 of those have at least one pattern match:
         #  - A1466_820-00165 J113.brd (apple_a_number + apple_820)
         #  - 820-99999_unknown.pdf (apple_820)
         #  - ACER C5V01 LA-E891P REV 2A.pdf (compal_la)
         #  - Lenovo NM-A251.pdf (lcfc_nm)
         #  - subdir/DA0R09MB6H1_test.pdf (quanta_da0)
-        # readme.txt, 203075-1_cezanne.pdf, SR1YJ_testpoints.jpg → no pattern match
         self.assertEqual(scan_data['sources'][0]['files_with_match'], 5)
-        # readme.txt, 203075-1_cezanne.pdf, SR1YJ_testpoints.jpg are fully unmatched
-        self.assertGreaterEqual(len(scan_data['unmatched_filenames']), 3)
+        # 203075-1_cezanne.pdf is whitelisted but has no pattern match.
+        self.assertGreaterEqual(len(scan_data['unmatched_filenames']), 1)
+
+    def test_scan_all_extensions_bypasses_whitelist(self):
+        scan_data = self.m.scan_sources([self.src], all_extensions=True)
+        # readme.txt + SR1YJ_testpoints.jpg are now included -> files_scanned=8
+        self.assertEqual(scan_data['sources'][0]['files_scanned'], 8)
 
     def test_scan_skips_hidden(self):
         scan_data = self.m.scan_sources([self.src])
@@ -340,7 +345,9 @@ class TestScanIntegration(unittest.TestCase):
 
         # Check JSON content
         payload = json.loads(json_p.read_text())
-        self.assertEqual(payload['summary']['files_scanned_total'], 8)
+        # 6 = 8 visible fixture files minus readme.txt and SR1YJ_testpoints.jpg
+        # (whitelist drops them).
+        self.assertEqual(payload['summary']['files_scanned_total'], 6)
         self.assertIn('apple_820', payload['per_pattern'])
         self.assertEqual(payload['per_pattern']['apple_820']['already_in_db_count'], 1)
         self.assertEqual(payload['per_pattern']['apple_820']['new_count'], 1)
