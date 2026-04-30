@@ -160,24 +160,33 @@ def classify_one(
     backend: str,
     throttle_s: float,
     use_llm: bool,
+    no_search: bool,
     ollama_host: str,
     ollama_model: str,
     confidence_floor: float,
     verbose: bool,
 ) -> dict | None:
-    query = build_query(board_number, sample_filename)
-    try:
-        results = board_search.search(
-            query, limit=8, backend=backend, throttle_s=throttle_s
-        )
-    except urllib.error.HTTPError as e:
-        if verbose:
-            print(f"  ! search HTTPError on {board_number}: {e}", file=sys.stderr)
-        return None
-    except Exception as e:
-        if verbose:
-            print(f"  ! search error on {board_number}: {e}", file=sys.stderr)
-        return None
+    if no_search:
+        # Filename-only classification — local Ollama gets just the
+        # board code, the sample filename, and the ODM hint. Useful when
+        # the search backend is exhausted/unavailable, or when the
+        # filename itself is rich enough (brand + model spelled out) to
+        # not need web evidence.
+        results = []
+    else:
+        query = build_query(board_number, sample_filename)
+        try:
+            results = board_search.search(
+                query, limit=8, backend=backend, throttle_s=throttle_s
+            )
+        except urllib.error.HTTPError as e:
+            if verbose:
+                print(f"  ! search HTTPError on {board_number}: {e}", file=sys.stderr)
+            return None
+        except Exception as e:
+            if verbose:
+                print(f"  ! search error on {board_number}: {e}", file=sys.stderr)
+            return None
 
     if not use_llm:
         text = " ".join(
@@ -232,6 +241,10 @@ def main() -> int:
     p.add_argument("--confidence-floor", type=float, default=0.5)
     p.add_argument("--no-llm", action="store_true",
                    help="Regex on snippets only; brand-only output.")
+    p.add_argument("--no-search", action="store_true",
+                   help="Skip the web-search step. The local LLM gets just the "
+                        "board code, sample filename, and ODM hint — no snippets. "
+                        "Use when the search backend is exhausted.")
     p.add_argument("--dry-run", action="store_true",
                    help="Search + classify but do not write the JSON.")
     p.add_argument("--verbose", action="store_true")
@@ -275,6 +288,7 @@ def main() -> int:
                 backend=args.search_backend,
                 throttle_s=args.throttle_s,
                 use_llm=not args.no_llm,
+                no_search=args.no_search,
                 ollama_host=args.ollama_host,
                 ollama_model=args.ollama_model,
                 confidence_floor=args.confidence_floor,

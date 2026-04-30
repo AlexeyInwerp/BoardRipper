@@ -37,6 +37,10 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "Microsoft", "Gigabyte", "Clevo", "Medion", "Panasonic", "Mechrevo",
     "Hasee", "Tongfang", "Haier", "Founder", "Eurocom", "Origin PC",
     "System76", "Avita", "Vaio",
+    # Older / regional consumer brands seen in the residue:
+    "BenQ", "Gateway", "NEC", "Packard Bell", "Compaq", "Sharp",
+    "Sager", "Schenker", "Tuxedo", "Honor", "DEXP", "Chuwi",
+    "Teclast", "Jumper", "Realme", "Olivetti", "Mio",
 )
 
 
