@@ -8,6 +8,7 @@ import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
 import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText, IconPin, IconPinFilled } from '@tabler/icons-react';
 import { log } from '../store/log-store';
+import { ObdSection } from '../components/ObdSection';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
  *  Closing a parent keeps children's keys in the Set so re-opening restores them. */
@@ -855,6 +856,10 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
           />
         )}
       </div>
+
+      {isBoard && detail.board_number && (
+        <ObdSection boardNumber={detail.board_number} />
+      )}
     </div>
   );
 }
