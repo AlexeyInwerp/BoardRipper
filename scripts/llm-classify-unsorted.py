@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""Driver for the local-LLM board classifier.
+
+Pulls Unsorted rows from Board Database/boards.db, queries DuckDuckGo (or
+Bing) HTML for each, feeds the snippets to a local Ollama daemon running
+qwen3:7b-instruct (configurable), and writes a JSON file in the format
+scripts/apply-research-findings.py consumes:
+
+  {
+    "<board_number>": {"brand": "...", "family": "...", "model": "..."},
+    "<board_number>": null,
+    ...
+  }
+
+The classifier never asks for confirmation — the user wanted full
+autonomy. Defaults are tuned to be polite + cheap:
+  - 1.5 s throttle between web searches
+  - confidence gate: anything < 0.5 is recorded as null
+  - resumable: rows already tagged `researched:` in their notes are
+    skipped on subsequent runs
+
+When Ollama is unavailable, --no-llm runs a regex fallback against the
+search snippets — same brand vocabulary, no family/model. Useful for
+proving the search half works on a machine without local inference.
+
+CLI:
+  python3 scripts/llm-classify-unsorted.py [flags]
+
+Typical run on full residue:
+  python3 scripts/llm-classify-unsorted.py --out /tmp/findings.json
+  python3 scripts/apply-research-findings.py --json /tmp/findings.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sqlite3
+import sys
+import time
+import urllib.error
+from collections import Counter
+from pathlib import Path
+
+# Make `lib` importable when run from repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib import board_search, board_llm  # type: ignore  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB = REPO_ROOT / "Board Database/boards.db"
+
+
+# ─── Regex fallback (for --no-llm) ──────────────────────────────────────
+
+
+# Reuse the same brand keyword table the offline classifier uses.
+BRAND_KW: list[tuple[str, list[str]]] = [
+    ("Lenovo",    ["lenovo", "thinkpad", "ideapad", "yoga", "legion",
+                   "thinkbook", "thinkcentre", "lenog", "联想"]),
+    ("HP",        ["hewlett-packard", "hewlett packard", "hp pavilion",
+                   "hp envy", "hp probook", "hp elitebook", "hp omen",
+                   "hp compaq", "hp spectre", "hp stream", "hp zbook",
+                   "elitebook", "probook", "spectre", "zbook",
+                   "pavilion", "compaq", "惠普"]),
+    ("Acer",      ["acer", "aspire", "extensa", "travelmate", "predator",
+                   "nitro", "swift", "spin", "ferrari", "宏碁", "宏基"]),
+    ("Dell",      ["dell ", "inspiron", "latitude", "vostro", "precision",
+                   "alienware", "studio xps", "戴尔"]),
+    ("ASUS",      ["asus", "zenbook", "vivobook", "rog ", "tuf gaming",
+                   "expertbook", "chromebook", "华硕"]),
+    ("Toshiba",   ["toshiba", "satellite", "tecra", "qosmio", "portege",
+                   "dynabook", "东芝"]),
+    ("Fujitsu",   ["fujitsu", "fujistu", "lifebook", "stylistic",
+                   "esprimo", "celsius", "富士通"]),
+    ("Samsung",   ["samsung", "三星"]),
+    ("Sony",      ["sony", "vaio"]),
+    ("Apple",     ["macbook", "imac", "mac mini", "iphone", "ipad",
+                   "苹果"]),
+]
+
+
+def regex_brand_from_text(text: str) -> str | None:
+    fl = text.lower()
+    best, best_len = None, 0
+    for brand, kws in BRAND_KW:
+        for k in kws:
+            if k in fl and len(k) > best_len:
+                best, best_len = brand, len(k)
+    return best
+
+
+# ─── DB helpers ─────────────────────────────────────────────────────────
+
+
+def list_unsorted_rows(
+    conn: sqlite3.Connection,
+    odm_filter: list[str] | None,
+    skip_already_tried: bool,
+    limit: int,
+) -> list[tuple[str, str | None, str]]:
+    """Returns list of (board_number, sample_filename, odm)."""
+    sql = """
+        SELECT b.board_number, b.notes, f.name AS odm
+        FROM boards b
+        JOIN models m ON b.model_uuid = m.uuid
+        JOIN families f ON m.family_uuid = f.uuid
+        JOIN brands br ON f.brand_uuid = br.uuid
+        WHERE br.name = 'Unsorted'
+    """
+    args: list = []
+    if odm_filter:
+        placeholders = ",".join("?" * len(odm_filter))
+        sql += f" AND f.name IN ({placeholders})"
+        args.extend(odm_filter)
+    sql += " ORDER BY f.name, b.board_number"
+    if limit > 0:
+        sql += " LIMIT ?"
+        args.append(limit)
+
+    rows = conn.execute(sql, args).fetchall()
+
+    out: list[tuple[str, str | None, str]] = []
+    for board_number, notes, odm in rows:
+        if skip_already_tried and notes and "researched:" in notes:
+            continue
+        sample = None
+        if notes:
+            m = re.search(r"sample:(.+?)(?:\s*;|\s*$)", notes)
+            if m:
+                sample = m.group(1).strip()
+        out.append((board_number, sample, odm))
+    return out
+
+
+# ─── Per-board pipeline ─────────────────────────────────────────────────
+
+
+def build_query(board_number: str, sample_filename: str | None) -> str:
+    """Add a hint token from the sample filename if it looks model-y."""
+    base = f'"{board_number}" laptop motherboard'
+    if not sample_filename:
+        return base
+    # Strip extension and the board code itself, then take the first
+    # non-numeric token of length ≥ 3 as a hint.
+    stem = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", sample_filename)
+    stem = stem.replace(board_number, " ")
+    tokens = re.split(r"[\s_\-+,()\[\]]+", stem)
+    for tok in tokens:
+        if len(tok) >= 3 and not tok.isdigit() and not re.match(r"\d", tok):
+            return f"{base} {tok}"
+    return base
+
+
+def classify_one(
+    board_number: str,
+    sample_filename: str | None,
+    odm: str,
+    *,
+    backend: str,
+    throttle_s: float,
+    use_llm: bool,
+    ollama_host: str,
+    ollama_model: str,
+    confidence_floor: float,
+    verbose: bool,
+) -> dict | None:
+    query = build_query(board_number, sample_filename)
+    try:
+        results = board_search.search(
+            query, limit=8, backend=backend, throttle_s=throttle_s
+        )
+    except urllib.error.HTTPError as e:
+        if verbose:
+            print(f"  ! search HTTPError on {board_number}: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        if verbose:
+            print(f"  ! search error on {board_number}: {e}", file=sys.stderr)
+        return None
+
+    if not use_llm:
+        text = " ".join(
+            f"{r.title} {r.snippet}" for r in results
+        )
+        b = regex_brand_from_text(text)
+        if not b:
+            return None
+        return {"brand": b, "family": None, "model": None}
+
+    cls = board_llm.classify(
+        board_number,
+        sample_filename,
+        odm,
+        results,
+        model=ollama_model,
+        host=ollama_host,
+    )
+    if verbose:
+        print(
+            f"  ◦ {board_number} [{odm}] → "
+            f"brand={cls.brand!r} family={cls.family!r} "
+            f"model={cls.model_number!r} conf={cls.confidence:.2f} "
+            f"({cls.reasoning[:80]})"
+        )
+    if cls.brand is None or cls.confidence < confidence_floor:
+        return None
+    return {
+        "brand": cls.brand,
+        "family": cls.family,
+        "model": cls.model_number,
+    }
+
+
+# ─── Driver ─────────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--db", type=Path, default=DEFAULT_DB)
+    p.add_argument("--out", type=Path, default=Path("research-output.json"))
+    p.add_argument("--limit", type=int, default=0,
+                   help="0 = all (default).")
+    p.add_argument("--odm", default="",
+                   help="Comma-separated ODM names (e.g. Compal,Quanta).")
+    p.add_argument("--resume", action="store_true",
+                   help="Skip rows whose notes already contain 'researched:'.")
+    p.add_argument("--throttle-s", type=float, default=1.5)
+    p.add_argument("--search-backend", choices=("ddg", "bing"), default="ddg")
+    p.add_argument("--ollama-host", default="http://localhost:11434")
+    p.add_argument("--ollama-model", default="qwen3:7b-instruct")
+    p.add_argument("--confidence-floor", type=float, default=0.5)
+    p.add_argument("--no-llm", action="store_true",
+                   help="Regex on snippets only; brand-only output.")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Search + classify but do not write the JSON.")
+    p.add_argument("--verbose", action="store_true")
+    p.add_argument("--flush-every", type=int, default=25,
+                   help="Persist intermediate JSON every N boards.")
+    args = p.parse_args()
+
+    if not args.db.exists():
+        print(f"FATAL: {args.db} not found", file=sys.stderr)
+        return 1
+
+    conn = sqlite3.connect(str(args.db))
+    rows = list_unsorted_rows(
+        conn,
+        odm_filter=[s.strip() for s in args.odm.split(",") if s.strip()] or None,
+        skip_already_tried=args.resume,
+        limit=args.limit,
+    )
+    conn.close()
+    print(f"residue rows in scope: {len(rows)}")
+    if not rows:
+        return 0
+
+    findings: dict[str, dict | None] = {}
+    by_brand: Counter = Counter()
+    null_count = 0
+    started = time.monotonic()
+
+    def _flush() -> None:
+        if args.dry_run:
+            return
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(findings, indent=2, ensure_ascii=False))
+
+    try:
+        for i, (board_number, sample, odm) in enumerate(rows, start=1):
+            res = classify_one(
+                board_number,
+                sample,
+                odm,
+                backend=args.search_backend,
+                throttle_s=args.throttle_s,
+                use_llm=not args.no_llm,
+                ollama_host=args.ollama_host,
+                ollama_model=args.ollama_model,
+                confidence_floor=args.confidence_floor,
+                verbose=args.verbose,
+            )
+            findings[board_number] = res
+            if res is None:
+                null_count += 1
+            else:
+                by_brand[res["brand"]] += 1
+
+            if i % args.flush_every == 0:
+                _flush()
+                rate = i / max(time.monotonic() - started, 0.001)
+                print(
+                    f"  [{i}/{len(rows)}]  matched={sum(by_brand.values())} "
+                    f"null={null_count}  {rate:.2f} boards/s"
+                )
+        _flush()
+    except KeyboardInterrupt:
+        print("\ninterrupted — flushing partial findings…", file=sys.stderr)
+        _flush()
+        return 130
+
+    print()
+    print("classify summary:")
+    print(f"  total boards:           {len(rows)}")
+    print(f"  matched (brand found):  {sum(by_brand.values())}")
+    print(f"  null  (no match):       {null_count}")
+    if by_brand:
+        print()
+        print("  by brand:")
+        for b, n in by_brand.most_common():
+            print(f"    {b:<14} {n:>5}")
+    if not args.dry_run:
+        print()
+        print(f"  output JSON: {args.out}")
+        print(
+            "  next:  python3 scripts/apply-research-findings.py --json "
+            f"{args.out}"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
