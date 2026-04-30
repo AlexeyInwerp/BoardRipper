@@ -1,0 +1,31 @@
+OBDATA_V002 https://openboarddata.org
+TIMESTAMP 1714521600
+BOARDPATH laptops/apple/820-00045
+ID demo-id-42
+BRAND apple
+CATEGORY laptops
+COMMENT Test fixture for parser unit tests
+
+DIAGNOSIS_DATA_START
+Won't power on: check PP3V3_S0_REG.
+If diode reading on AGND_PMIC > 0.05, replace U7000.
+DIAGNOSIS_DATA_END
+
+COMPONENTS_DATA_START
+### refdes attr_key attr_value (m=misc, p=package, r=rating, v=value, l=flag, s=status)
+C1804 m 6.3V
+C1804 p 0201
+C1804 r 10%
+R7000 v 47k
+R7000 p 0402
+COMPONENTS_DATA_END
+
+NETS_DATA_START
+### name/qualifier type value 'comment'   (d=diode r=resistance v=voltage a=alias t=net-comment)
+AGND_PMIC/Default d 0.000 ''
+PP3V3_S0_REG/Default d 0.450 ''
+PP3V3_S0_REG/Default v 3.30 ''
+PP3V3_S0_REG/Default r 47k ''
+PP3V3_S0_REG/Default a PP3V3_REG ''
+PP3V3_S0_REG/Default t 'measure with PMIC enabled'
+NETS_DATA_END
