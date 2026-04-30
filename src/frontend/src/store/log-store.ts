@@ -1,9 +1,9 @@
 import { Emitter } from './emitter';
 
 export type LogLevel = 'log' | 'warn' | 'error';
-export type LogScope = 'parser' | 'render' | 'pdf' | 'scan' | 'ui' | 'cache' | 'perf' | 'update';
+export type LogScope = 'parser' | 'render' | 'pdf' | 'scan' | 'ui' | 'cache' | 'perf' | 'update' | 'obd';
 
-export const LOG_SCOPES: readonly LogScope[] = ['parser', 'render', 'pdf', 'scan', 'ui', 'cache', 'perf', 'update'] as const;
+export const LOG_SCOPES: readonly LogScope[] = ['parser', 'render', 'pdf', 'scan', 'ui', 'cache', 'perf', 'update', 'obd'] as const;
 
 export interface LogEntry {
   id: number;
@@ -105,4 +105,5 @@ export const log = {
   cache:  logStore.createScopedLogger('cache'),
   perf:   logStore.createScopedLogger('perf'),
   update: logStore.createScopedLogger('update'),
+  obd:    logStore.createScopedLogger('obd'),
 };
