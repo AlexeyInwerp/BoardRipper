@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -233,6 +232,3 @@ func (h *ObdHandler) CacheDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
-
-// Compile-time guard: errors import used elsewhere in package.
-var _ = errors.New
