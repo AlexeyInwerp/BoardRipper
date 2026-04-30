@@ -91,6 +91,14 @@ def main() -> int:
         type=Path,
         help="JSON file with {board_number: brand|null}. Reads stdin if omitted.",
     )
+    p.add_argument(
+        "--insert-missing",
+        action="store_true",
+        help="Create new board records for codes not already in boards.db. "
+             "Use when classifying filenames straight off the NAS — codes the "
+             "filename-scan import never saw won't be in Unsorted, so the "
+             "default 'skip' policy would silently drop them.",
+    )
     args = p.parse_args()
 
     if args.json:
@@ -111,6 +119,7 @@ def main() -> int:
     by_brand: Counter = Counter()
     by_placement: Counter = Counter()
     promoted = 0
+    inserted = 0
     tagged_only = 0
     skipped_already_classified = 0
     skipped_not_found = 0
@@ -143,7 +152,57 @@ def main() -> int:
         ).fetchall()
 
         if not rows:
-            skipped_not_found += 1
+            if not args.insert_missing or brand is None:
+                # Default: skip. Or: --insert-missing was set but the
+                # classification is null (nothing to insert).
+                skipped_not_found += 1
+                continue
+            # --insert-missing: but first guard against duplicates —
+            # if this board_number is already in the DB under any
+            # non-Unsorted brand, leave it alone. The classifier may
+            # have a different opinion than what's already curated;
+            # silent overwrites would lose hand-fixed data.
+            already = conn.execute(
+                "SELECT 1 FROM boards WHERE board_number = ? LIMIT 1",
+                (board_number,),
+            ).fetchone()
+            if already:
+                skipped_already_classified += 1
+                continue
+            # Build the target row from scratch, then INSERT.
+            target_brand_uuid = find_or_create_brand(conn, brand)
+            target_family_name = family or "(researched — TODO: family)"
+            target_family_uuid = find_or_create_family(
+                conn, target_brand_uuid, target_family_name
+            )
+            if model_number:
+                target_model_label = model_number
+                target_display = model_number
+                placement_kind = "brand+family+model" if family else "brand+model"
+            else:
+                target_model_label = (
+                    "(researched — TODO: model)" if family
+                    else "(researched — TODO: model)"
+                )
+                target_display = f"{family or brand} — TODO: curate model"
+                placement_kind = "brand+family" if family else "brand-only"
+            target_model_uuid = find_or_create_model(
+                conn, target_family_uuid, target_model_label, target_display,
+            )
+            new_uuid = str(uuid_module.uuid4())
+            note = f"researched:filename-list brand={brand}"
+            if family:
+                note += f"; family={family}"
+            if model_number:
+                note += f"; model={model_number}"
+            conn.execute(
+                "INSERT INTO boards (uuid, model_uuid, board_number, source, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (new_uuid, target_model_uuid, board_number, "filename-list-llm", note),
+            )
+            inserted += 1
+            by_brand[brand] += 1
+            by_placement[placement_kind] += 1
             continue
 
         for board_uuid, notes, _old_model_uuid, odm in rows:
@@ -228,6 +287,8 @@ def main() -> int:
 
     print(f"applied research findings:")
     print(f"  promoted:                    {promoted}")
+    if inserted:
+        print(f"  inserted (new board records): {inserted}")
     print(f"  tagged 'researched:no-match': {tagged_only}")
     print(f"  skipped (already classified): {skipped_already_classified}")
     print(f"  skipped (not in Unsorted):    {skipped_not_found}")
