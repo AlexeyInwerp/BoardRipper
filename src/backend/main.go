@@ -15,6 +15,7 @@ import (
 	"boardripper/boarddb"
 	"boardripper/databank"
 	"boardripper/handlers"
+	"boardripper/obd"
 	"boardripper/updater"
 )
 
@@ -151,6 +152,23 @@ func main() {
 	mux.HandleFunc("POST /api/update/check", updateHandler.Check)           // hits GitHub, can take 30s+
 	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)           // long-running — Docker pull + restart
 	mux.HandleFunc("GET /api/update/progress", read(updateHandler.Progress))
+
+	// OpenBoardData (OBD) API routes — independent filesystem-backed data layer
+	// rooted at <library_root>/.boardripper/openboarddata/. The store is nil
+	// when no library_dir is configured; the handler returns 503 in that case.
+	var obdStore *obd.Store
+	if libRoot, _ := db.GetConfig("library_dir"); libRoot != "" {
+		obdStore = obd.NewStore(filepath.Join(libRoot, ".boardripper", "openboarddata"))
+	} else if libraryDir != "" {
+		obdStore = obd.NewStore(filepath.Join(libraryDir, ".boardripper", "openboarddata"))
+	}
+	obdScraper := obd.NewScraper("https://openboarddata.org")
+	obdHandler := handlers.NewObdHandler(obdStore, obdScraper)
+	mux.HandleFunc("POST /api/obd/index/sync", obdHandler.IndexSync) // long-running — no wrap
+	mux.HandleFunc("GET /api/obd/match", read(obdHandler.Match))
+	mux.HandleFunc("GET /api/obd/data", read(obdHandler.Data))
+	mux.HandleFunc("POST /api/obd/fetch", obdHandler.Fetch) // 30s upstream timeout — no wrap
+	mux.HandleFunc("DELETE /api/obd/cache", write(obdHandler.CacheDelete))
 
 	// Serve static frontend files.
 	//

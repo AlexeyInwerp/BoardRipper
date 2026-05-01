@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
+import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
 
@@ -342,6 +343,14 @@ function InfoTab({ tabId }: { tabId: number }) {
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
   const selectedPart = board && selection.partIndex !== null ? board.parts[selection.partIndex] : null;
 
+  // OpenBoardData enrichment, scoped to this tab's board number.
+  const tabFileName = tab?.fileName ?? '';
+  const boardNumber = extractBoardNumberFromFilename(tabFileName) ?? undefined;
+  const obd = useObdNetLookup(boardNumber);
+  useEffect(() => {
+    if (boardNumber) obdStore.loadMatches(boardNumber);
+  }, [boardNumber]);
+
   if (!board) return <div className="panel-empty">No board loaded</div>;
   if (!selectedPart) return <div className="panel-empty">Click a component to inspect</div>;
 
@@ -362,6 +371,16 @@ function InfoTab({ tabId }: { tabId: number }) {
           <span className={`badge badge-${selectedPart.side}`}>{selectedPart.side}</span>
           <span className="badge">{selectedPart.type}</span>
           <span className="badge">{selectedPart.pins.length} pins</span>
+          {obd.hasData && (
+            <span
+              className="badge"
+              data-testid="obd-badge"
+              title={`OpenBoardData loaded: ${obd.variantCount} variant(s)`}
+              style={{ background: '#3a5', color: '#fff' }}
+            >
+              OBD ×{obd.variantCount}
+            </span>
+          )}
         </div>
       </div>
       {metaRows.length > 0 && (
@@ -379,12 +398,18 @@ function InfoTab({ tabId }: { tabId: number }) {
       <div className="pin-table-container">
         <table className="pin-table">
           <thead>
-            <tr><th>#</th><th>Name</th><th>Net</th></tr>
+            <tr>
+              <th>#</th>
+              <th>Name</th>
+              <th>Net</th>
+              {obd.hasData && <th title="diode / V / Ω from OpenBoardData">OBD</th>}
+            </tr>
           </thead>
           <tbody>
             {selectedPart.pins.map((pin, idx) => {
               const isSelected = selection.pinIndex === idx;
               const isNetHighlighted = selection.highlightedNet === pin.net && pin.net !== '';
+              const obdNets = obd.hasData ? obd.lookup(pin.net) : [];
               return (
                 <tr
                   key={idx}
@@ -411,6 +436,11 @@ function InfoTab({ tabId }: { tabId: number }) {
                   >
                     {pin.net}
                   </td>
+                  {obd.hasData && (
+                    <td className="pin-obd" data-testid="pin-obd-cell">
+                      <ObdSidebarCell nets={obdNets} />
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -418,6 +448,34 @@ function InfoTab({ tabId }: { tabId: number }) {
         </table>
       </div>
     </div>
+  );
+}
+
+/** Same shape as ComponentInfoPanel.tsx's ObdCell — kept local to avoid
+ *  cross-file coupling for a 20-line render helper. If a third info-pane
+ *  appears we should hoist this into a shared component. */
+function ObdSidebarCell({ nets }: { nets: ObdNet[] }) {
+  if (nets.length === 0) return <span style={{ color: '#666' }}>—</span>;
+  const dedupe = (xs: (string | null | undefined)[]) =>
+    Array.from(new Set(xs.filter((v): v is string => typeof v === 'string' && v.length > 0)));
+  const diodes = dedupe(nets.map(n => n.diode));
+  const volts = dedupe(nets.map(n => n.voltage));
+  const ohms = dedupe(nets.map(n => n.resistance));
+  const allComments = Array.from(new Set(
+    nets.flatMap(n => Array.isArray(n.comments) ? n.comments : [])
+        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0),
+  ));
+  const parts: string[] = [];
+  if (diodes.length) parts.push(`d ${diodes.join('/')}`);
+  if (volts.length) parts.push(`${volts.join('/')} V`);
+  if (ohms.length) parts.push(`${ohms.join('/')} Ω`);
+  return (
+    <span style={{ fontSize: 11, fontFamily: 'monospace' }}>
+      {parts.length > 0 ? parts.join(' · ') : <span style={{ color: '#666' }}>—</span>}
+      {allComments.length > 0 && (
+        <span title={allComments.join('\n')} style={{ marginLeft: 4, cursor: 'help' }}>📝</span>
+      )}
+    </span>
   );
 }
 

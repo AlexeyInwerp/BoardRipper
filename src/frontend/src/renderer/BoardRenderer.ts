@@ -30,9 +30,21 @@ import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
+import { obdNetLookup, extractBoardNumberFromFilename } from '../store/obd-store';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
+
+/** Unique non-empty values pulled from a list via a getter. Used by the
+ *  OBD tooltip formatter, which collapses readings across variants. */
+function uniqOf<T>(items: T[], get: (x: T) => string | null | undefined): string[] {
+  const seen = new Set<string>();
+  for (const it of items) {
+    const v = get(it);
+    if (v && !seen.has(v)) seen.add(v);
+  }
+  return Array.from(seen);
+}
 
 // Selected-part name currently uses a simple alpha fade when pin numbers come
 // into view (see updateElevatedLabels). A read-under-text invert effect was
@@ -188,6 +200,7 @@ export class BoardRenderer {
   private tooltipEl: HTMLDivElement | null = null;
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
+  private tooltipObdSpan: HTMLSpanElement | null = null;  // OBD diode/V/Ω line
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
   private boundHideTooltip: (() => void) | null = null;
@@ -878,7 +891,14 @@ export class BoardRenderer {
     this.tooltipNetSpan.className = 'pnt-net';
     this.tooltipDetailSpan = document.createElement('span');
     this.tooltipDetailSpan.className = 'pnt-detail';
-    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan);
+    this.tooltipObdSpan = document.createElement('span');
+    this.tooltipObdSpan.className = 'pnt-obd';
+    this.tooltipObdSpan.style.display = 'none';
+    this.tooltipObdSpan.style.fontFamily = 'monospace';
+    this.tooltipObdSpan.style.fontSize = '11px';
+    this.tooltipObdSpan.style.color = '#9f9';
+    this.tooltipObdSpan.style.marginTop = '2px';
+    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     this.boundHover = (e: PointerEvent) => this.handleHover(e);
@@ -3757,6 +3777,13 @@ export class BoardRenderer {
     if (this.tooltipDetailSpan) {
       this.tooltipDetailSpan.textContent = `${info.part} · pin ${info.pin}`;
     }
+    // OBD enrichment: if the hovered net has cached OpenBoardData readings,
+    // append a compact "d 0.45 · 3.30 V · 47k Ω · 📝" line.
+    if (this.tooltipObdSpan) {
+      const obdLine = hasNet ? this.formatObdForNet(info.net) : '';
+      this.tooltipObdSpan.textContent = obdLine;
+      this.tooltipObdSpan.style.display = obdLine ? '' : 'none';
+    }
 
     el.style.display = 'block';
     el.style.left = '0';
@@ -3772,6 +3799,34 @@ export class BoardRenderer {
 
   private hideTooltip() {
     if (this.tooltipEl) this.tooltipEl.style.display = 'none';
+  }
+
+  /** Compose the OBD reading line for the currently-hovered net. Empty
+   *  string when there is no board number, no cached OBD data, or no net
+   *  match — the caller hides the span in that case. Hot path: called on
+   *  every pin-hover move, so the work beyond a Map lookup must be cheap.
+   *  Wrapped in try/catch because a throw here would propagate up through
+   *  the pointermove handler and noisily fill the console on every move. */
+  private formatObdForNet(netName: string): string {
+    try {
+      const bn = extractBoardNumberFromFilename(boardStore.fileName);
+      if (!bn) return '';
+      const nets = obdNetLookup(bn, netName);
+      if (nets.length === 0) return '';
+      const diodes = uniqOf(nets, n => n.diode);
+      const volts = uniqOf(nets, n => n.voltage);
+      const ohms = uniqOf(nets, n => n.resistance);
+      const hasComment = nets.some(n => Array.isArray(n.comments) && n.comments.length > 0);
+      const parts: string[] = [];
+      if (diodes.length) parts.push(`d ${diodes.join('/')}`);
+      if (volts.length) parts.push(`${volts.join('/')} V`);
+      if (ohms.length) parts.push(`${ohms.join('/')} Ω`);
+      if (parts.length === 0 && !hasComment) return '';
+      return (parts.join(' · ') + (hasComment ? ' 📝' : '')).trim();
+    } catch (e) {
+      log.render.warn('OBD tooltip lookup failed', e);
+      return '';
+    }
   }
 
   private handleClick(world: Point) {

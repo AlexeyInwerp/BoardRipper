@@ -14,6 +14,7 @@ import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrol
 import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
 import { getDockviewApi } from '../store/dockview-api';
 import { log } from '../store/log-store';
+import { useObdForBoard } from '../store/obd-store';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -40,15 +41,16 @@ function useOverride(field: keyof RenderSettings) {
 
 type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'pdf';
 
-export type SettingsTabId = 'theme' | 'board' | 'input' | 'system';
+export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system';
 
-const TAB_ORDER: SettingsTabId[] = ['theme', 'board', 'input', 'system'];
+const TAB_ORDER: SettingsTabId[] = ['theme', 'board', 'input', 'library', 'system'];
 
 const TAB_LABELS: Record<SettingsTabId, string> = {
-  theme:  'Theme',
-  board:  'Board',
-  input:  'Input',
-  system: 'System',
+  theme:   'Theme',
+  board:   'Board',
+  input:   'Input',
+  library: 'Library',
+  system:  'System',
 };
 
 /** Maps each section id to the tab that owns it. Used by focusSection deep-links. */
@@ -1692,6 +1694,10 @@ export function SettingsPanel() {
       </CollapsibleSection>
       )}
 
+      {activeTab === 'library' && (
+        <LibraryTab />
+      )}
+
       <button className="settings-reset-btn" onClick={handleReset}
         title={isBoardMode ? 'Clear all board overrides — revert to global settings' : 'Reset all settings to defaults'}>
         {isBoardMode ? 'Reset to Global' : 'Reset to Defaults'}
@@ -1794,3 +1800,64 @@ function ThemeTab() {
 
 // Suppress unused-warning when THEMES is only referenced indirectly via themeStore.list().
 void THEMES;
+
+function LibraryTab() {
+  const obd = useObdForBoard(undefined);
+  const [confirming, setConfirming] = useState(false);
+
+  // Cold-start: when the user opens this tab, refresh the index status
+  // from disk so "Last synced: ..." reflects index.json without waiting
+  // for the user to view a board first.
+  useEffect(() => { obd.refreshStatus(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="settings-tab-body" data-testid="settings-library-tab">
+      <div className="settings-section">
+        <div className="settings-section-body">
+          <h3 style={{ margin: '0 0 8px' }}>OpenBoardData</h3>
+          <p style={{ fontSize: 12, color: '#888', lineHeight: 1.4, margin: '0 0 12px' }}>
+            Per-net diagnostic measurements (diode / voltage / resistance) and repair notes from{' '}
+            <a href="https://openboarddata.org" target="_blank" rel="noopener noreferrer">openboarddata.org</a>.
+            Data is community-contributed under the <strong>ODbL 1.0</strong> license. BoardRipper does not bundle this data;
+            you fetch it on demand. Re-distribution requires keeping the same license — see{' '}
+            <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener noreferrer">
+              the license terms
+            </a>.
+          </p>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+            <button
+              onClick={() => obd.syncIndex()}
+              disabled={obd.syncing}
+              data-testid="obd-sync-btn"
+            >
+              {obd.syncing ? 'Syncing…' : 'Sync OBD index'}
+            </button>
+            <span style={{ fontSize: 12, color: '#888' }}>
+              {obd.indexSynced
+                ? `Last synced: ${obd.indexSyncedAt} · ${obd.indexBoardCount} boards`
+                : 'Never synced'}
+            </span>
+          </div>
+          {obd.error && (
+            <div style={{ color: '#c33', fontSize: 12, marginBottom: 8 }}>{obd.error}</div>
+          )}
+
+          <div style={{ marginTop: 12 }}>
+            {!confirming ? (
+              <button onClick={() => setConfirming(true)}>Delete all OBD data</button>
+            ) : (
+              <span>
+                <strong>Are you sure?</strong>{' '}
+                <button onClick={async () => { await obd.clearCache(); setConfirming(false); }}>
+                  Yes, delete
+                </button>{' '}
+                <button onClick={() => setConfirming(false)}>Cancel</button>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
