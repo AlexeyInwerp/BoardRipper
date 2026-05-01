@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
-import { boardStore } from '../store/board-store';
+import { boardStore, ghostPairSig } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
 
@@ -480,7 +480,7 @@ function ObdSidebarCell({ nets }: { nets: ObdNet[] }) {
 }
 
 function RevisionsTab() {
-  const { board, fileName, hideGhosts } = useBoardStore();
+  const { board, fileName, hideGhosts, swappedGhostPairs } = useBoardStore();
   const revisions = board?.revisions;
   const ghosts = board?.ghosts;
   const active = board?.activeRevision ?? (revisions && revisions.length > 0
@@ -557,49 +557,67 @@ function RevisionsTab() {
             <div className="ghosts-subtitle">
               {ghosts.length} component{ghosts.length === 1 ? '' : 's'} overlap
               another part with a superset of the same nets — likely stale
-              refdes left from an earlier revision.
+              refdes left from an earlier revision. The strikethrough side
+              gets hidden when the toggle below is on; click ⇄ to swap if the
+              detector picked the wrong side.
             </div>
             <button
               className={`ghost-hide-toggle ${hideGhosts ? 'on' : ''}`}
               onClick={() => boardStore.toggleHideGhosts()}
-              title={hideGhosts ? 'Show stale parts' : 'Hide all stale parts from the board'}
+              title={hideGhosts
+                ? 'Show all overlap parts (currently hiding strikethrough side)'
+                : 'Hide the strikethrough side of every pair from the board'}
             >
-              {hideGhosts ? '◉ Hidden' : '○ Hide all stale'}
+              {hideGhosts ? '◉ Hiding strikethrough' : '○ Hide strikethrough side'}
             </button>
           </div>
           <div className="ghosts-list">
-            {ghosts.map(g => (
-              <div key={`${g.partIndex}-${g.dominatorIndex}`} className="ghost-item">
-                <button
-                  className="ghost-name ghost-stale"
-                  onClick={() => {
-                    if (hideGhosts) boardStore.toggleHideGhosts();
-                    boardStore.focusPart(g.partName);
-                  }}
-                  title={hideGhosts
-                    ? 'Show & focus the stale part'
-                    : 'Focus the suspected stale part'}
-                >
-                  {g.partName}
-                </button>
-                <span className="ghost-arrow">↔</span>
-                <button
-                  className="ghost-name ghost-keep"
-                  onClick={() => boardStore.focusPart(g.dominatorName)}
-                  title="Focus the dominator part (likely the real one)"
-                >
-                  {g.dominatorName}
-                </button>
-                <span className="ghost-distance">{Math.round(g.distance)} mils</span>
-              </div>
-            ))}
+            {ghosts.map(g => {
+              // Default: g.partName = stale (smaller), g.dominatorName = keep.
+              // Swapped: roles flipped — dominator becomes the strikethrough one.
+              const swapped = swappedGhostPairs.has(ghostPairSig(g.partIndex, g.dominatorIndex));
+              const staleName = swapped ? g.dominatorName : g.partName;
+              const keepName  = swapped ? g.partName     : g.dominatorName;
+              return (
+                <div key={`${g.partIndex}-${g.dominatorIndex}`} className="ghost-item">
+                  <button
+                    className="ghost-name ghost-stale"
+                    onClick={() => {
+                      if (hideGhosts) boardStore.toggleHideGhosts();
+                      boardStore.focusPart(staleName);
+                    }}
+                    title={hideGhosts
+                      ? `Show & focus ${staleName} (currently hidden)`
+                      : `Focus ${staleName} — will be hidden when toggle is on`}
+                  >
+                    {staleName}
+                  </button>
+                  <button
+                    className="ghost-swap"
+                    onClick={() => boardStore.swapGhostPair(g.partIndex, g.dominatorIndex)}
+                    title={swapped
+                      ? 'Swap back to the auto-detected role (smaller part as stale)'
+                      : 'Swap which side is treated as the stale one for this pair'}
+                  >
+                    ⇄
+                  </button>
+                  <button
+                    className="ghost-name ghost-keep"
+                    onClick={() => boardStore.focusPart(keepName)}
+                    title={`Focus ${keepName} — kept on the board`}
+                  >
+                    {keepName}
+                  </button>
+                  <span className="ghost-distance">{Math.round(g.distance)} mils</span>
+                </div>
+              );
+            })}
           </div>
           <div className="revisions-help">
-            Verify against the physical board: the part on the left is likely
-            absent in real life (e.g. an older refdes the source CAD failed to
-            delete after replacement). Click either side to focus it on the
-            board, or use Hide all to filter the strikethrough parts out of
-            the rendered scene.
+            The auto-detector picks the smaller part of each overlap as the
+            stale one (strikethrough). Click ⇄ on a row to flip that choice
+            when you know which is really absent. The toggle above hides the
+            strikethrough side of every pair from the rendered scene.
           </div>
         </div>
       )}

@@ -36,6 +36,7 @@ interface StoreSnapshot {
   showLabels: boolean;
   showGhosts: boolean;
   hideGhosts: boolean;
+  swappedGhostPairs: ReadonlySet<string>;
   foldMode: 'suggested' | 'all-sides';
   selectedBoardIndex: number | null;
   layerStates: LayerState[];
@@ -76,6 +77,7 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   showLabels: boardStore.showLabels,
   showGhosts: boardStore.showGhosts,
   hideGhosts: boardStore.hideGhosts,
+  swappedGhostPairs: boardStore.swappedGhostPairs,
   foldMode: boardStore.foldMode,
   selectedBoardIndex: boardStore.selectedBoardIndex,
   layerStates: boardStore.layerStates,

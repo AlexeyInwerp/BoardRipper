@@ -70,6 +70,12 @@ export interface BoardTab {
    *  parts list. Set via toggleHideGhosts(). Persists across revision switches
    *  on the same tab. */
   hideGhosts: boolean;
+  /** Per-pair role overrides for the ghost detector. Set entries are pair
+   *  signatures `${minIdx}-${maxIdx}` whose role is flipped (the auto-detected
+   *  dominator is treated as the stale one and vice-versa). Used by the
+   *  Revisions tab swap button so the user can override the detector when
+   *  the heuristic picks the wrong side. */
+  swappedGhostPairs: Set<string>;
   /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
    *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
   foldMode: FoldMode;
@@ -203,10 +209,19 @@ const DEFAULT_VIEW_PREFS: ViewPrefs = { netLineMode: 'off', showNetDim: true, sh
  * remaining geometry. When off, the revision's full part list is used.
  * Returns a NEW object reference so the renderer's identity check fires.
  */
+/** Symmetric signature for a ghost-detector pair; used as a Set key. */
+export function ghostPairSig(a: number, b: number): string {
+  return a < b ? `${a}-${b}` : `${b}-${a}`;
+}
+
+/** Stable empty-set fallback so the snapshot getter doesn't churn identity. */
+const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set<string>();
+
 function buildRenderedBoard(
   base: BoardData,
   rev: BoardRevision,
   hideGhosts: boolean,
+  swappedPairs: Set<string>,
 ): BoardData {
   // Per-revision traces/vias/layerNames override global ones when present
   const traceOverrides: Partial<BoardData> = {};
@@ -226,7 +241,14 @@ function buildRenderedBoard(
       activeRevision: rev.index,
     };
   }
-  const drop = new Set<number>(rev.ghosts.map(g => g.partIndex));
+  // Hide whichever side of each pair the user has currently chosen as the
+  // ghost — auto-detected `partIndex` by default, `dominatorIndex` when the
+  // pair's role has been swapped via the Revisions tab.
+  const drop = new Set<number>();
+  for (const g of rev.ghosts) {
+    const sig = ghostPairSig(g.partIndex, g.dominatorIndex);
+    drop.add(swappedPairs.has(sig) ? g.dominatorIndex : g.partIndex);
+  }
   const filteredParts: Part[] = [];
   for (let i = 0; i < rev.parts.length; i++) {
     if (!drop.has(i)) filteredParts.push(rev.parts[i]);
@@ -373,6 +395,7 @@ class BoardStore extends Emitter {
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
+  get swappedGhostPairs(): ReadonlySet<string> { return this.activeTab?.swappedGhostPairs ?? EMPTY_GHOST_SWAPS; }
   get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
@@ -570,6 +593,7 @@ class BoardStore extends Emitter {
         pdfFileNames: [],
         cacheKey: '',
         hideGhosts: false,
+        swappedGhostPairs: new Set<string>(),
         foldMode: 'suggested',
         selectedBoardIndex: null,
       };
@@ -844,7 +868,7 @@ class BoardStore extends Emitter {
     const target = tab.board.revisions.find(r => r.index === index);
     if (!target) return;
     if (tab.board.activeRevision === index && !tab.hideGhosts) return;
-    tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts);
+    tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts, tab.swappedGhostPairs);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     tab.searchQuery = '';
@@ -866,9 +890,33 @@ class BoardStore extends Emitter {
     // for single-revision .cad files where revisions is unset).
     const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
       ?? syntheticRevisionFromBoard(tab.board);
-    tab.board = buildRenderedBoard(tab.board, rev, next);
+    tab.board = buildRenderedBoard(tab.board, rev, next, tab.swappedGhostPairs);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
+    this.notify();
+  }
+
+  /**
+   * Toggle which side of an overlap pair is treated as the ghost. By default
+   * the part with the smaller pin count is flagged; calling this swaps the
+   * two so the dominator is hidden instead. Rebuilds the rendered board only
+   * when hide-mode is on (otherwise just notifies so the UI restyles).
+   */
+  swapGhostPair(partIndex: number, dominatorIndex: number) {
+    const tab = this.activeTab;
+    if (!tab || !tab.board) return;
+    const sig = ghostPairSig(partIndex, dominatorIndex);
+    // Replace the Set so identity changes (snapshot consumers rerender).
+    const next = new Set(tab.swappedGhostPairs);
+    if (next.has(sig)) next.delete(sig); else next.add(sig);
+    tab.swappedGhostPairs = next;
+    if (tab.hideGhosts) {
+      const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
+        ?? syntheticRevisionFromBoard(tab.board);
+      tab.board = buildRenderedBoard(tab.board, rev, true, next);
+      invalidateDerivedBoard(tab);
+      tab.selection = emptySelection;
+    }
     this.notify();
   }
 
