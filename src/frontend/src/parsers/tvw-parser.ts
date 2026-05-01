@@ -11,6 +11,7 @@
 import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via, SilkscreenPath, Pad } from './types';
 import { computeBBox, buildNets } from './types';
 import { log } from '../store/log-store';
+import { detectPositionOverlapRevisions } from './post-processing/detect-revisions';
 
 const textDecoder = new TextDecoder('utf-8');
 
@@ -1706,6 +1707,14 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
   };
 
   log.parser.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers, ${silkscreenPaths.length} silk paths, ${padRects.length} pad rects`);
+
+  // BOM/revision detection — TVW writers (Tebo-ictview / Landrex) often
+  // accumulate every BOM revision into one component list, with multiple
+  // refdes occupying the same footprint. The detector groups overlapping
+  // parts into per-revision sets and exposes them via the Revisions tab.
+  // No-op when no overlap pattern is found. See detect-revisions.ts for
+  // the heuristics + the rationale for keeping this TVW-local for now.
+  detectPositionOverlapRevisions(board);
 
   return board;
 }
