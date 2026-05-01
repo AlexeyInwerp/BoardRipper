@@ -165,3 +165,76 @@ NETS_DATA_END
 		t.Errorf("expected 1 net, got %v", data.Nets)
 	}
 }
+
+// TestParse_StructuredDiagnosis verifies the SECT_START/NOTE_START
+// hierarchy round-trips into ObdData.Sections. Body text including
+// inline references is preserved verbatim — the frontend renders the
+// `[n:NET]` and `[p:PART]` tokens as clickable chips.
+func TestParse_StructuredDiagnosis(t *testing.T) {
+	src := `OBDATA_V002
+DIAGNOSIS_DATA_START
+SECT_START Backlight
+NOTE_START Diagnosing
+Check your voltage on backlight output.
+If 8.4V check EN signal on [p:U7701:3], if present, check [n:BKL_PWM].
+NOTE_END
+SECT_END
+SECT_START Power Rails
+NOTE_START S5
+[n:PPBUS_G3H]
+[n:PP3V42_G3H]
+NOTE_END
+NOTE_START S0
+[n:PP1V05_S0]
+[n:PPVCC_S0_CPU]
+NOTE_END
+SECT_END
+DIAGNOSIS_DATA_END
+`
+	data, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if len(data.Sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d: %+v", len(data.Sections), data.Sections)
+	}
+	if data.Sections[0].Title != "Backlight" {
+		t.Errorf("section 0 title = %q, want Backlight", data.Sections[0].Title)
+	}
+	if len(data.Sections[0].Notes) != 1 || data.Sections[0].Notes[0].Title != "Diagnosing" {
+		t.Errorf("section 0 notes = %+v", data.Sections[0].Notes)
+	}
+	if !strings.Contains(data.Sections[0].Notes[0].Body, "[n:BKL_PWM]") {
+		t.Errorf("note body lost the [n:BKL_PWM] reference: %q", data.Sections[0].Notes[0].Body)
+	}
+	if len(data.Sections[1].Notes) != 2 {
+		t.Errorf("Power Rails should have 2 notes (S5, S0), got %d", len(data.Sections[1].Notes))
+	}
+	if data.Sections[1].Notes[0].Title != "S5" || data.Sections[1].Notes[1].Title != "S0" {
+		t.Errorf("note titles = %+v", data.Sections[1].Notes)
+	}
+	if !strings.Contains(data.Diagnosis, "Check your voltage") {
+		t.Errorf("legacy raw Diagnosis lost text: %q", data.Diagnosis)
+	}
+}
+
+// TestParse_DiagnosisDefensive: section / note left unterminated at
+// EOF should still flush — guards against malformed upstream files.
+func TestParse_DiagnosisDefensive(t *testing.T) {
+	src := `OBDATA_V002
+DIAGNOSIS_DATA_START
+SECT_START Loose
+NOTE_START Trailing
+some body text
+` // no NOTE_END, no SECT_END, no DIAGNOSIS_DATA_END
+	data, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(data.Sections) != 1 || len(data.Sections[0].Notes) != 1 {
+		t.Fatalf("expected one section + one note, got %+v", data.Sections)
+	}
+	if !strings.Contains(data.Sections[0].Notes[0].Body, "some body text") {
+		t.Errorf("body not flushed: %q", data.Sections[0].Notes[0].Body)
+	}
+}

@@ -29,12 +29,25 @@ export interface ObdHeader {
   category: string | null;
   comment: string | null;
 }
+/** One note within a section. `body` keeps inline references like
+ *  `[n:NET_NAME]` and `[p:PART_NAME:PIN]` verbatim; the renderer turns
+ *  them into clickable chips. */
+export interface ObdNote {
+  title: string;
+  body: string;
+}
+/** Top-level section of the structured DIAGNOSIS_DATA block. */
+export interface ObdSection {
+  title: string;
+  notes: ObdNote[];
+}
 export interface ObdData {
   bpath: string;
   source_url: string;
   fetched_at: string;
   header: ObdHeader;
-  diagnosis: string;
+  diagnosis: string;        // legacy raw text fallback; prefer `sections` for display
+  sections?: ObdSection[];  // optional — older cached payloads will be missing it
   components: ObdComponent[];
   nets: ObdNet[];
 }
@@ -273,20 +286,25 @@ function buildNetIndex(snap: ReturnType<ObdStore['getSnapshot']>, boardNumber: s
 
 /** React hook: net-keyed lookup for the active board. Returns a function
  *  `(netName) => ObdNet[]` plus the count of fetched variants (useful for
- *  showing a small badge). Used by ComponentInfoPanel and BoardRenderer. */
+ *  showing a small badge). Used by ComponentInfoPanel and BoardRenderer.
+ *  Also returns `loadedVariants` so callers that want the full ObdData
+ *  payload (e.g. to render the DIAGNOSIS sections) can read it without a
+ *  second snapshot subscription. */
 export function useObdNetLookup(boardNumber: string | undefined) {
   const snap = useSyncExternalStore(
     (cb) => obdStore.subscribe(cb),
     () => obdStore.getSnapshot(),
   );
   const index = buildNetIndex(snap, boardNumber);
-  const variantCount = boardNumber
-    ? (snap.matchesByBn.get(boardNumber) ?? []).filter(m => snap.data.has(m.bpath)).length
-    : 0;
+  const matches = boardNumber ? (snap.matchesByBn.get(boardNumber) ?? []) : [];
+  const loadedVariants: ObdData[] = matches
+    .map(m => snap.data.get(m.bpath))
+    .filter((d): d is ObdData => !!d);
   return {
-    variantCount,
+    variantCount: loadedVariants.length,
     lookup: (netName: string): ObdNet[] => netName ? (index.get(netName) ?? []) : [],
-    hasData: variantCount > 0,
+    hasData: loadedVariants.length > 0,
+    loadedVariants,
   };
 }
 
