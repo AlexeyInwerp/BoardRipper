@@ -1,8 +1,19 @@
+import { useEffect } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
+import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
 
 export function ComponentInfoPanel() {
-  const { selectedPart, selection, board } = useBoardStore();
+  const { selectedPart, selection, board, fileName } = useBoardStore();
+  const boardNumber = extractBoardNumberFromFilename(fileName) ?? undefined;
+  const obd = useObdNetLookup(boardNumber);
+
+  // Auto-load matches + cached data when the active board changes. Cheap:
+  // hits the backend's match endpoint once per board, and the per-bpath
+  // cache loaders are short-circuited if already in memory.
+  useEffect(() => {
+    if (boardNumber) obdStore.loadMatches(boardNumber);
+  }, [boardNumber]);
 
   if (!board) {
     return <div className="panel-empty">No board loaded</div>;
@@ -29,6 +40,16 @@ export function ComponentInfoPanel() {
           <span className={`badge badge-${selectedPart.side}`}>{selectedPart.side}</span>
           <span className="badge">{selectedPart.type}</span>
           <span className="badge">{selectedPart.pins.length} pins</span>
+          {obd.hasData && (
+            <span
+              className="badge"
+              data-testid="obd-badge"
+              title={`OpenBoardData loaded: ${obd.variantCount} variant(s)`}
+              style={{ background: '#3a5', color: '#fff' }}
+            >
+              OBD ×{obd.variantCount}
+            </span>
+          )}
         </div>
       </div>
 
@@ -52,12 +73,14 @@ export function ComponentInfoPanel() {
               <th>#</th>
               <th>Name</th>
               <th>Net</th>
+              {obd.hasData && <th title="diode / V / Ω from OpenBoardData">OBD</th>}
             </tr>
           </thead>
           <tbody>
             {selectedPart.pins.map((pin, idx) => {
               const isSelected = selection.pinIndex === idx;
               const isNetHighlighted = selection.highlightedNet === pin.net && pin.net !== '';
+              const obdNets = obd.hasData ? obd.lookup(pin.net) : [];
               return (
                 <tr
                   key={idx}
@@ -84,6 +107,11 @@ export function ComponentInfoPanel() {
                   >
                     {pin.net}
                   </td>
+                  {obd.hasData && (
+                    <td className="pin-obd" data-testid="pin-obd-cell">
+                      <ObdCell nets={obdNets} />
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -92,4 +120,31 @@ export function ComponentInfoPanel() {
       </div>
     </div>
   );
+}
+
+function ObdCell({ nets }: { nets: ObdNet[] }) {
+  if (nets.length === 0) return <span style={{ color: '#666' }}>—</span>;
+  // Defensive against null arrays (older cached payloads, future API drift).
+  const diodes = unique(nets.map(n => n.diode).filter((v): v is string => !!v));
+  const volts = unique(nets.map(n => n.voltage).filter((v): v is string => !!v));
+  const ohms = unique(nets.map(n => n.resistance).filter((v): v is string => !!v));
+  const allComments = unique(
+    nets.flatMap(n => n.comments ?? []).filter((c): c is string => typeof c === 'string' && c.trim().length > 0),
+  );
+  const parts: string[] = [];
+  if (diodes.length) parts.push(`d ${diodes.join('/')}`);
+  if (volts.length) parts.push(`${volts.join('/')} V`);
+  if (ohms.length) parts.push(`${ohms.join('/')} Ω`);
+  return (
+    <span style={{ fontSize: 11, fontFamily: 'monospace' }}>
+      {parts.length > 0 ? parts.join(' · ') : <span style={{ color: '#666' }}>—</span>}
+      {allComments.length > 0 && (
+        <span title={allComments.join('\n')} style={{ marginLeft: 4, cursor: 'help' }}>📝</span>
+      )}
+    </span>
+  );
+}
+
+function unique<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
 }
