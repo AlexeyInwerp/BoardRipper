@@ -9,6 +9,8 @@ import type { BoardData } from '../parsers';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
 
+const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set();
+
 interface BoardSidebarProps {
   visible: boolean;
   onClose: () => void;
@@ -21,7 +23,10 @@ interface BoardSidebarProps {
 }
 
 export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
-  const { layerStates, board } = useBoardStore();
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  const board = tab?.board ?? null;
+  const layerStates = tab?.layerStates ?? [];
   const hasLayers = layerStates.length > 0;
   const hasRevisions = (board?.revisions?.length ?? 0) > 1;
   const hasGhosts = (board?.ghosts?.length ?? 0) > 0;
@@ -96,17 +101,32 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
         </button>
       </div>
       <div className="board-sidebar-content">
-        {activeTab === 'layers' && <LayersTab />}
+        {activeTab === 'layers' && <LayersTab tabId={tabId} />}
         {activeTab === 'info' && <InfoTab tabId={tabId} />}
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
-        {activeTab === 'revisions' && showRevisionsTab && <RevisionsTab />}
+        {activeTab === 'revisions' && showRevisionsTab && <RevisionsTab tabId={tabId} />}
       </div>
     </div>
   );
 }
 
-function LayersTab() {
-  const { layerStates, showComponents, showVias, showTraces, showSilkscreen, showPads, showCopperDrops, showPins, showOutlines, showLabels, board, selection, foldMode, selectedBoardIndex } = useBoardStore();
+function LayersTab({ tabId }: { tabId: number }) {
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  const board = tab?.board ?? null;
+  const layerStates = tab?.layerStates ?? [];
+  const showComponents = tab?.showComponents ?? true;
+  const showVias = tab?.showVias ?? false;
+  const showTraces = tab?.showTraces ?? true;
+  const showSilkscreen = tab?.showSilkscreen ?? true;
+  const showPads = tab?.showPads ?? true;
+  const showCopperDrops = tab?.showCopperDrops ?? false;
+  const showPins = tab?.showPins ?? true;
+  const showOutlines = tab?.showOutlines ?? true;
+  const showLabels = tab?.showLabels ?? true;
+  const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
+  const foldMode = tab?.foldMode ?? 'suggested';
+  const selectedBoardIndex = tab?.selectedBoardIndex ?? null;
   const [componentsExpanded, setComponentsExpanded] = useState(true);
 
   // Compute which layers have traces for the currently highlighted net
@@ -355,7 +375,23 @@ function InfoTab({ tabId }: { tabId: number }) {
   }, [boardNumber]);
 
   if (!board) return <div className="panel-empty">No board loaded</div>;
-  if (!selectedPart) return <div className="panel-empty">Click a component to inspect</div>;
+
+  // DIAGNOSIS_DATA notes from openboarddata.org are board-level (not pin-
+  // specific), so render them regardless of whether a component is selected.
+  const obdNotes = obd.loadedVariants
+    .filter(v => v.sections && v.sections.length > 0)
+    .map(v => (
+      <DiagnosisNotes key={v.bpath} sections={v.sections!} board={board} />
+    ));
+
+  if (!selectedPart) {
+    return (
+      <div className="panel-content component-info" data-testid="component-info">
+        <div className="panel-empty">Click a component to inspect</div>
+        {obdNotes}
+      </div>
+    );
+  }
 
   const meta = selectedPart.meta;
   const metaRows: Array<[string, string]> = [];
@@ -453,15 +489,7 @@ function InfoTab({ tabId }: { tabId: number }) {
       {/* Structured DIAGNOSIS_DATA from openboarddata.org — power
           sequencing, repair notes, etc. Each variant shown sequentially;
           most boards only have one variant fetched. */}
-      {obd.loadedVariants
-        .filter(v => v.sections && v.sections.length > 0)
-        .map(v => (
-          <DiagnosisNotes
-            key={v.bpath}
-            sections={v.sections!}
-            board={board}
-          />
-        ))}
+      {obdNotes}
     </div>
   );
 }
@@ -494,8 +522,13 @@ function ObdSidebarCell({ nets }: { nets: ObdNet[] }) {
   );
 }
 
-function RevisionsTab() {
-  const { board, fileName, hideGhosts, swappedGhostPairs } = useBoardStore();
+function RevisionsTab({ tabId }: { tabId: number }) {
+  const { tabs } = useBoardStore();
+  const tab = tabs.find(t => t.id === tabId);
+  const board = tab?.board ?? null;
+  const fileName = tab?.fileName ?? '';
+  const hideGhosts = tab?.hideGhosts ?? false;
+  const swappedGhostPairs: ReadonlySet<string> = tab?.swappedGhostPairs ?? EMPTY_GHOST_SWAPS;
   const revisions = board?.revisions;
   const ghosts = board?.ghosts;
   const active = board?.activeRevision ?? (revisions && revisions.length > 0
@@ -693,10 +726,11 @@ function NetComponentsSublist({ board, pinIndices }: NetComponentsSublistProps) 
 }
 
 function SearchTab({ tabId }: { tabId: number }) {
-  const { tabs, searchQuery: storeQuery } = useBoardStore();
+  const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
+  const storeQuery = tab?.searchQuery ?? '';
 
   const [query, setQuery] = useState(storeQuery || '');
   const [showSuggestions, setShowSuggestions] = useState(false);

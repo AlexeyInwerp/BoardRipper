@@ -28,7 +28,14 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
-  const { tabs, activeTabId, netLineMode, showNetDim, showHoverInfo, showGhosts, followPdf, layerStates } = useBoardStore();
+  const { tabs } = useBoardStore();
+  const thisTab = tabId != null ? tabs.find(t => t.id === tabId) : undefined;
+  const netLineMode = thisTab?.netLineMode ?? 'off';
+  const showNetDim = thisTab?.showNetDim ?? true;
+  const showHoverInfo = thisTab?.showHoverInfo ?? true;
+  const showGhosts = thisTab?.showGhosts ?? true;
+  const followPdf = thisTab?.followPdf ?? false;
+  const layerStates = thisTab?.layerStates ?? [];
   const bareAction = useBareScrollAction();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
@@ -36,8 +43,6 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const [sliderVisible, setSliderVisible] = useState(false);
   const sliderGroupRef = useRef<HTMLDivElement>(null);
   const prevLayerCountRef = useRef(0);
-
-  const isActivePanel = activeTabId === tabId;
 
   // Register per-tab handler for toolbar → board search
   useEffect(() => {
@@ -54,22 +59,30 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     return () => { _boardSearchHandlers.delete(tabId); };
   }, [tabId, props.api]);
 
-  // Auto-open sidebar to layers tab when a multi-layer board is loaded
-  if (isActivePanel && layerStates.length > 0 && prevLayerCountRef.current === 0) {
-    if (!sidebarOpen) setSidebarOpen(true);
-    setSidebarTab('layers');
-  }
-  prevLayerCountRef.current = layerStates.length;
+  // Auto-open sidebar to layers tab when this tab's board first loads with
+  // layers. Per-tab layerStates means each panel tracks its own transition
+  // 0 → N independently — no need to gate on the active-panel check. rAF
+  // defers the setState to satisfy the no-setState-in-effect rule.
+  useEffect(() => {
+    const wasZero = prevLayerCountRef.current === 0;
+    prevLayerCountRef.current = layerStates.length;
+    if (layerStates.length > 0 && wasZero) {
+      const frame = requestAnimationFrame(() => {
+        setSidebarOpen(true);
+        setSidebarTab('layers');
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [layerStates.length]);
 
   // Find this panel's tab to check PDF bindings
-  const tab = tabId != null ? tabs.find(t => t.id === tabId) : null;
-  const linkedPdfs = tab?.pdfFileNames ?? [];
+  const linkedPdfs = thisTab?.pdfFileNames ?? [];
 
   // Auto-load OpenBoardData for this tab's board so the canvas hover
   // tooltip + ComponentInfoPanel surface readings without requiring the
   // user to detour through the Library detail pane. Best-effort: when the
   // backend has no library_dir or no index, this no-ops cleanly.
-  const tabFileName = tab?.fileName ?? '';
+  const tabFileName = thisTab?.fileName ?? '';
   useEffect(() => {
     const bn = extractBoardNumberFromFilename(tabFileName);
     if (bn) obdStore.loadMatches(bn);
@@ -175,7 +188,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         className="board-panel-canvas"
         data-testid="board-canvas"
       />
-      {tab && !tab.board && (
+      {thisTab && !thisTab.board && (
         <div className="board-loading-overlay">
           <div className="board-loading-spinner" />
           <span className="board-loading-text">Loading board...</span>
