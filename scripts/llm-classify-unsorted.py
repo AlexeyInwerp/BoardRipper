@@ -133,7 +133,12 @@ def rows_from_filename_list(
         (resolution_status == 'resolved') are skipped.
     """
     raw = path.read_text(encoding="utf-8", errors="replace")
-    filenames: list[str] = []
+    # Each entry: (board_number_or_None, filename, odm_or_None) — the
+    # latter two come straight from the NAS API when available, since
+    # the backend's regex set is broader than ours (e.g. Wistron
+    # XXXXX-N codes are extracted server-side but not by the Python
+    # patterns).
+    typed_entries: list[tuple[str | None, str, str | None]] = []
 
     raw_stripped = raw.lstrip()
     if raw_stripped.startswith("[") or raw_stripped.startswith("{"):
@@ -148,7 +153,7 @@ def rows_from_filename_list(
             sys.exit(1)
         for entry in data:
             if isinstance(entry, str):
-                filenames.append(entry)
+                typed_entries.append((None, entry, None))
                 continue
             if not isinstance(entry, dict):
                 continue
@@ -156,35 +161,41 @@ def rows_from_filename_list(
             if entry.get("resolution_status") == "resolved":
                 continue
             name = entry.get("filename") or entry.get("path") or entry.get("name")
-            if name:
-                filenames.append(name)
+            if not name:
+                continue
+            typed_entries.append((
+                (entry.get("board_number") or None),
+                name,
+                (entry.get("board_manufacturer") or entry.get("manufacturer") or None),
+            ))
     else:
         for line in raw.splitlines():
             line = line.strip()
             if line and not line.startswith("#"):
-                filenames.append(line)
+                typed_entries.append((None, line, None))
 
     scan_mod = _load_scan_module()
     rows: list[tuple[str, str | None, str]] = []
     seen: set[str] = set()  # dedupe by board_number
-    for fname in filenames:
-        # Trim path component — regex patterns expect basenames.
+    for bn_hint, fname, odm_hint in typed_entries:
         basename = fname.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        matches = scan_mod.extract_matches(basename)
-        if not matches:
-            continue
-        # Take the first matching pattern → first board code. Order
-        # matches PATTERNS list (apple_820, compal_la, lcfc_nm, …).
-        for pat in scan_mod.PATTERNS:
-            key = pat[0]
-            if key in matches and matches[key]:
-                board_number = sorted(matches[key])[0]
-                if board_number in seen:
+        board_number: str | None = (bn_hint or "").strip() or None
+        odm: str | None = odm_hint
+        if not board_number:
+            # Fall back to local regex extraction.
+            matches = scan_mod.extract_matches(basename)
+            if not matches:
+                continue
+            for pat in scan_mod.PATTERNS:
+                key = pat[0]
+                if key in matches and matches[key]:
+                    board_number = sorted(matches[key])[0]
+                    odm = odm or _PATTERN_ODM.get(key, "Unknown")
                     break
-                seen.add(board_number)
-                odm = _PATTERN_ODM.get(key, "Unknown")
-                rows.append((board_number, basename, odm))
-                break
+        if not board_number or board_number in seen:
+            continue
+        seen.add(board_number)
+        rows.append((board_number, basename, odm or "Unknown"))
         if limit and len(rows) >= limit:
             break
     return rows
