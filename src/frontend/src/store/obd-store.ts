@@ -96,12 +96,43 @@ class ObdStore extends Emitter {
         };
       }
       this._bump();
+      // Auto-load already-fetched payloads from disk so the BoardViewer's
+      // tooltip + ComponentInfoPanel surfaces have data without forcing
+      // the user back to the Library detail panel to click "Fetch".
+      // Fire-and-forget; the bump on each cached load triggers re-renders.
+      for (const m of json.matches) {
+        if (m.fetched && !this._data.has(m.bpath)) {
+          this.loadCachedData(m.bpath).catch(e => log.obd.warn('cache load failed', m.bpath, e));
+        }
+      }
       return json.matches;
     } catch (e) {
       log.obd.error('match fetch error', e);
       this._matchesByBn.set(boardNumber, []);
       this._bump();
       return [];
+    }
+  }
+
+  /** GET /api/obd/data?bpath=… — read parsed JSON from disk cache without
+   *  hitting openboarddata.org. 404 means "not cached"; we treat that as a
+   *  no-op rather than an error. */
+  async loadCachedData(bpath: string): Promise<ObdData | null> {
+    if (this._data.has(bpath)) return this._data.get(bpath)!;
+    try {
+      const res = await fetch(`/api/obd/data?bpath=${encodeURIComponent(bpath)}`);
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        log.obd.warn('loadCachedData failed', res.status);
+        return null;
+      }
+      const data = await res.json() as ObdData;
+      this._data.set(bpath, data);
+      this._bump();
+      return data;
+    } catch (e) {
+      log.obd.warn('loadCachedData error', e);
+      return null;
     }
   }
 
@@ -190,6 +221,90 @@ class ObdStore extends Emitter {
 }
 
 export const obdStore = new ObdStore();
+
+// Dev-only window handle so e2e and console debugging can inspect store
+// state without going through React. Mirrors the boardStore convention.
+if (typeof window !== 'undefined') {
+  (window as { __obdStore?: ObdStore }).__obdStore = obdStore;
+}
+
+/** Extract a recognisable board number from a board file's name. Covers the
+ *  patterns OBD's catalogue actually uses (Apple 820-NNNNN/3-4-digit suffix,
+ *  iP* iphone codes, generic alphanumerics with dashes). Returns the first
+ *  match — multi-variant disambiguation happens upstream via the match
+ *  endpoint's substring fuzz. */
+export function extractBoardNumberFromFilename(fileName: string): string | null {
+  if (!fileName) return null;
+  const stem = fileName.replace(/\.[^.]+$/, '');
+  const patterns = [
+    /\b(820-\d{4,5})\b/i,
+    /\b(LA-\w{4,6})\b/i,
+    /\b(DA0?\w{4,8})\b/i,
+    /\b(NM-\w{3,6})\b/i,
+    /\b(60[A-Z0-9]{6,})\b/i,
+    /\b(iP\d+[a-z_]+)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = stem.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** Build a (netName) → ObdNet[] lookup map from all variants currently loaded
+ *  for the given board number. Keys are net names (case-sensitive — OBD's
+ *  net names are upper-snake_case and bvr/brd nets typically match exactly).
+ *  Returns an empty map if no data is loaded for the board. */
+function buildNetIndex(snap: ReturnType<ObdStore['getSnapshot']>, boardNumber: string | undefined): Map<string, ObdNet[]> {
+  const out = new Map<string, ObdNet[]>();
+  if (!boardNumber) return out;
+  const matches = snap.matchesByBn.get(boardNumber) ?? [];
+  for (const m of matches) {
+    const data = snap.data.get(m.bpath);
+    if (!data) continue;
+    for (const net of data.nets) {
+      const arr = out.get(net.name);
+      if (arr) arr.push(net);
+      else out.set(net.name, [net]);
+    }
+  }
+  return out;
+}
+
+/** React hook: net-keyed lookup for the active board. Returns a function
+ *  `(netName) => ObdNet[]` plus the count of fetched variants (useful for
+ *  showing a small badge). Used by ComponentInfoPanel and BoardRenderer. */
+export function useObdNetLookup(boardNumber: string | undefined) {
+  const snap = useSyncExternalStore(
+    (cb) => obdStore.subscribe(cb),
+    () => obdStore.getSnapshot(),
+  );
+  const index = buildNetIndex(snap, boardNumber);
+  const variantCount = boardNumber
+    ? (snap.matchesByBn.get(boardNumber) ?? []).filter(m => snap.data.has(m.bpath)).length
+    : 0;
+  return {
+    variantCount,
+    lookup: (netName: string): ObdNet[] => netName ? (index.get(netName) ?? []) : [],
+    hasData: variantCount > 0,
+  };
+}
+
+/** Imperative companion for non-React consumers (e.g. BoardRenderer). Reads
+ *  the current snapshot directly. */
+export function obdNetLookup(boardNumber: string | undefined, netName: string): ObdNet[] {
+  if (!boardNumber || !netName) return [];
+  const snap = obdStore.getSnapshot();
+  const matches = snap.matchesByBn.get(boardNumber) ?? [];
+  const out: ObdNet[] = [];
+  for (const m of matches) {
+    const data = snap.data.get(m.bpath);
+    if (!data) continue;
+    const net = data.nets.find(n => n.name === netName);
+    if (net) out.push(net);
+  }
+  return out;
+}
 
 /** React hook: returns { matches, fetched, fetch, update, isFetching } for one board. */
 export function useObdForBoard(boardNumber: string | undefined) {

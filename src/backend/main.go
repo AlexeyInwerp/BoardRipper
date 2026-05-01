@@ -166,7 +166,8 @@ func main() {
 	obdHandler := handlers.NewObdHandler(obdStore, obdScraper)
 	mux.HandleFunc("POST /api/obd/index/sync", obdHandler.IndexSync) // long-running — no wrap
 	mux.HandleFunc("GET /api/obd/match", read(obdHandler.Match))
-	mux.HandleFunc("POST /api/obd/fetch", obdHandler.Fetch)           // 30s upstream timeout — no wrap
+	mux.HandleFunc("GET /api/obd/data", read(obdHandler.Data))
+	mux.HandleFunc("POST /api/obd/fetch", obdHandler.Fetch) // 30s upstream timeout — no wrap
 	mux.HandleFunc("DELETE /api/obd/cache", write(obdHandler.CacheDelete))
 
 	// Serve static frontend files.

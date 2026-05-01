@@ -10,6 +10,7 @@ import { pdfStore } from '../store/pdf-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
 import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
+import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 
 // Per-tab handlers for toolbar search → board sidebar integration
 const _boardSearchHandlers = new Map<number, (query: string) => void>();
@@ -63,6 +64,16 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   // Find this panel's tab to check PDF bindings
   const tab = tabId != null ? tabs.find(t => t.id === tabId) : null;
   const linkedPdfs = tab?.pdfFileNames ?? [];
+
+  // Auto-load OpenBoardData for this tab's board so the canvas hover
+  // tooltip + ComponentInfoPanel surface readings without requiring the
+  // user to detour through the Library detail pane. Best-effort: when the
+  // backend has no library_dir or no index, this no-ops cleanly.
+  const tabFileName = tab?.fileName ?? '';
+  useEffect(() => {
+    const bn = extractBoardNumberFromFilename(tabFileName);
+    if (bn) obdStore.loadMatches(bn);
+  }, [tabFileName]);
 
   // Create and destroy the renderer with the panel
   useEffect(() => {

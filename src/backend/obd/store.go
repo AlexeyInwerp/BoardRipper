@@ -120,7 +120,9 @@ func (s *Store) WriteBoard(bpath, raw string, parsed *ObdData) error {
 }
 
 // ReadParsed loads the cached parsed payload for the given bpath, or
-// (nil, nil) when missing.
+// (nil, nil) when missing. Normalises nil slices to empty so older
+// cached files (parsed before the slice-init fix) round-trip cleanly
+// through the JSON contract the frontend relies on.
 func (s *Store) ReadParsed(bpath string) (*ObdData, error) {
 	if err := validateBpath(bpath); err != nil {
 		return nil, err
@@ -136,6 +138,14 @@ func (s *Store) ReadParsed(bpath string) (*ObdData, error) {
 	var d ObdData
 	if err := json.Unmarshal(body, &d); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", parsedPath, err)
+	}
+	for i := range d.Nets {
+		if d.Nets[i].Aliases == nil {
+			d.Nets[i].Aliases = []string{}
+		}
+		if d.Nets[i].Comments == nil {
+			d.Nets[i].Comments = []string{}
+		}
 	}
 	return &d, nil
 }

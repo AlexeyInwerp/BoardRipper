@@ -95,6 +95,18 @@ func Parse(src string) (*ObdData, error) {
 		}
 	}
 
+	// Normalise nil slices to empty so JSON emits [] not null. Frontend
+	// code does `n.comments.length` and similar on every hover; nil →
+	// "Cannot read properties of null" in the browser otherwise.
+	for i := range out.Nets {
+		if out.Nets[i].Aliases == nil {
+			out.Nets[i].Aliases = []string{}
+		}
+		if out.Nets[i].Comments == nil {
+			out.Nets[i].Comments = []string{}
+		}
+	}
+
 	return out, nil
 }
 
