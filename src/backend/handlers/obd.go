@@ -44,6 +44,9 @@ func (h *ObdHandler) requireLibrary(w http.ResponseWriter) bool {
 	return true
 }
 
+// writeJSON serializes v as JSON to the response. The encode error is
+// intentionally discarded — by the time it could fire, the 200 status
+// line has already been flushed and there is no useful recovery path.
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
