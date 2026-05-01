@@ -2,8 +2,10 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore, ghostPairSig } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
+import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
 import { DiagnosisNotes } from './DiagnosisNotes';
+import type { BoardData } from '../parsers';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
 
@@ -650,6 +652,46 @@ export function focusBoardSearchInput(): void {
   _pendingFocus = true;
 }
 
+interface NetComponentsSublistProps {
+  board: BoardData;
+  pinIndices: Array<{ partIndex: number; pinIndex: number }>;
+}
+
+/** Spoiler body shown beneath a selected net row in the search Nets section.
+ *  Lists every component on the net (deduped, both sides), sorted by name.
+ *  Pin count = pins of that part touching THIS net (not the part's total). */
+function NetComponentsSublist({ board, pinIndices }: NetComponentsSublistProps) {
+  const components = useMemo(() => {
+    const pinsByPart = new Map<number, number>();
+    for (const { partIndex } of pinIndices) {
+      pinsByPart.set(partIndex, (pinsByPart.get(partIndex) ?? 0) + 1);
+    }
+    const rows: { name: string; side: string; netPinCount: number }[] = [];
+    for (const [partIndex, netPinCount] of pinsByPart) {
+      const part = board.parts[partIndex];
+      if (!part) continue;
+      rows.push({ name: part.name, side: part.side, netPinCount });
+    }
+    return rows.sort((a, b) => a.name.localeCompare(b.name));
+  }, [board, pinIndices]);
+
+  return (
+    <div className="net-components-sublist">
+      {components.map(c => (
+        <div
+          key={c.name}
+          className="search-result-item search-result-sub"
+          onClick={() => boardStore.focusPart(c.name)}
+        >
+          <span className="result-name">{c.name}</span>
+          <span className={`badge badge-${c.side}`}>{c.side}</span>
+          <span className="result-pins">{c.netPinCount} pin{c.netPinCount === 1 ? '' : 's'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SearchTab({ tabId }: { tabId: number }) {
   const { tabs, searchQuery: storeQuery } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
@@ -818,16 +860,27 @@ function SearchTab({ tabId }: { tabId: number }) {
             {netsOpen && (
               <div className="search-section-body">
                 {matchedNets.length === 0 && <div className="search-section-empty">No matching nets</div>}
-                {matchedNets.map(([name, net]) => (
-                  <div
-                    key={name}
-                    className={`net-item ${selection.highlightedNet === name ? 'net-highlighted' : ''}`}
-                    onClick={() => boardStore.highlightNet(selection.highlightedNet === name ? null : name)}
-                  >
-                    <span className="net-name">{name}</span>
-                    <span className="net-count">{net.pinIndices.length}</span>
-                  </div>
-                ))}
+                {matchedNets.map(([name, net]) => {
+                  const isHighlighted = selection.highlightedNet === name;
+                  const upper = name.toUpperCase();
+                  const skipExpand = upper.includes('GND') || isNcNet(upper, renderSettingsStore.settings.ncNetPatterns);
+                  const expanded = isHighlighted && !skipExpand;
+                  return (
+                    <div key={name}>
+                      <div
+                        className={`net-item ${isHighlighted ? 'net-highlighted' : ''}`}
+                        onClick={() => boardStore.highlightNet(isHighlighted ? null : name)}
+                      >
+                        <span className="net-item-arrow">{skipExpand ? '' : expanded ? '▾' : '▸'}</span>
+                        <span className="net-name">{name}</span>
+                        <span className="net-count">{net.pinIndices.length}</span>
+                      </div>
+                      {expanded && board && (
+                        <NetComponentsSublist board={board} pinIndices={net.pinIndices} />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

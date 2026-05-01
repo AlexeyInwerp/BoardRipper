@@ -1315,8 +1315,14 @@ class BoardStore extends Emitter {
       }
     }
 
+    // Preserve the active net highlight when focusing a part that touches it
+    // (e.g. clicking a component inside the search Nets spoiler). Otherwise
+    // clear it — selecting an unrelated part shouldn't keep stale net state.
+    const prevNet = tab.selection.highlightedNet;
+    const keepNet = prevNet != null && part.pins.some(p => p.net === prevNet);
+
     this.updateActiveTab({
-      selection: { partIndex: idx, pinIndex: null, highlightedNet: null },
+      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null },
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
     this.notify();
