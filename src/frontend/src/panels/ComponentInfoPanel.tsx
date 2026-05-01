@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
+import { DiagnosisNotes } from '../components/DiagnosisNotes';
 
 export function ComponentInfoPanel() {
   const { selectedPart, selection, board, fileName } = useBoardStore();
@@ -118,6 +119,15 @@ export function ComponentInfoPanel() {
           </tbody>
         </table>
       </div>
+      {obd.loadedVariants
+        .filter(v => v.sections && v.sections.length > 0)
+        .map(v => (
+          <DiagnosisNotes
+            key={v.bpath}
+            sections={v.sections!}
+            board={board}
+          />
+        ))}
     </div>
   );
 }

@@ -147,6 +147,14 @@ func (s *Store) ReadParsed(bpath string) (*ObdData, error) {
 			d.Nets[i].Comments = []string{}
 		}
 	}
+	if d.Sections == nil {
+		d.Sections = []DiagnosisSection{}
+	}
+	for i := range d.Sections {
+		if d.Sections[i].Notes == nil {
+			d.Sections[i].Notes = []DiagnosisNote{}
+		}
+	}
 	return &d, nil
 }
 
