@@ -741,15 +741,26 @@ function loadPart(r: TvwReader): TvwPart {
     pins.push(loadPin(r));
   }
 
-  // Landrex-variant extension: edge-connector parts (e.g., "MPCIE1" PCIe x16)
-  // with partType == 0xFFFFFFFF carry a second pin list for the OPPOSITE copper
-  // layer. After the first pin list: (contFlag:u32, reserved:u32) then `pinCount`
-  // more pins. The *last* pin of the extension has no trailing z2 — the writer
-  // packs the next part's pstr there. Detected via peek to avoid triggering on
-  // normal 0xFFFFFFFF parts in LianBao samples. Extension pins are kept in a
-  // separate list so the converter can look them up in the opposite layer.
+  // Landrex-variant extension: parts whose pad layer reaches both copper
+  // sides (edge connectors, through-hole connectors) carry a second pin
+  // list for the OPPOSITE copper layer. After the first pin list:
+  //   (contFlag:u32, reserved:u32) then `pinCount` more pins.
+  // The *last* pin of the extension has no trailing z2 — the writer packs
+  // the next part's pstr there.
+  //
+  // Originally this only fired for partType == 0xFFFFFFFF (LianBao Apple
+  // edge connectors). The Gigabyte/Landrex GV-N5080 GPU has a vertical
+  // power connector with partType=0x11 that ALSO carries the extension
+  // block — without reading it, the parser walks into the next part's
+  // bytes and runs to EOF after ~28 parts (only 28 of 3161 loaded).
+  //
+  // We trust looksLikePinExtension's 5 conjoined heuristics (small
+  // contFlag, zero reserved, nonzero handle, zero z1, small id) to gate
+  // this for ALL part types; false positives would need 4 simultaneous
+  // numeric coincidences inside the next part's pstr-prefixed name field,
+  // which is vanishingly unlikely in practice.
   let pinsExt: TvwPin[] | undefined;
-  if (partType === 0xFFFFFFFF && pinCount > 0 && looksLikePinExtension(r)) {
+  if (pinCount > 0 && looksLikePinExtension(r)) {
     r.readU32(); // contFlag
     r.readU32(); // reserved
     pinsExt = [];
