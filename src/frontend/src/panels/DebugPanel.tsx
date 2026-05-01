@@ -66,6 +66,7 @@ const SCOPE_COLORS: Record<LogScope, string> = {
   cache:  '#fbbf24',
   perf:   '#f472b6',
   update: '#22d3ee',
+  obd:    '#86efac',
 };
 
 export function DebugPanel() {
