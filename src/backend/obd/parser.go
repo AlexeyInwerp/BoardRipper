@@ -24,9 +24,16 @@ func Parse(src string) (*ObdData, error) {
 	out := &ObdData{
 		Components: []Component{},
 		Nets:       []Net{},
+		Sections:   []DiagnosisSection{},
 	}
 	componentsIdx := map[string]int{} // refdes → index in out.Components
 	netsIdx := map[string]int{}        // "name|qualifier" → index in out.Nets
+	// Structured DIAGNOSIS state: SECT_START → currentSection, NOTE_START →
+	// currentNote, lines accumulate into noteBodyBuf until NOTE_END flushes.
+	var currentSection *DiagnosisSection
+	var currentNoteTitle string
+	var noteBodyBuf []string
+	inNote := false
 
 	type section int
 	const (
@@ -65,6 +72,20 @@ func Parse(src string) (*ObdData, error) {
 		case "DIAGNOSIS_DATA_END":
 			out.Diagnosis = strings.TrimSpace(strings.Join(diagnosisBuf, "\n"))
 			diagnosisBuf = nil
+			// Flush any unterminated structured note/section that the
+			// upstream file forgot to close before DIAGNOSIS_DATA_END.
+			if inNote && currentSection != nil {
+				currentSection.Notes = append(currentSection.Notes, DiagnosisNote{
+					Title: currentNoteTitle,
+					Body:  strings.TrimSpace(strings.Join(noteBodyBuf, "\n")),
+				})
+				noteBodyBuf = nil
+				inNote = false
+			}
+			if currentSection != nil {
+				out.Sections = append(out.Sections, *currentSection)
+				currentSection = nil
+			}
 			cur = secNone
 			continue
 		case "COMPONENTS_DATA_START":
@@ -87,12 +108,83 @@ func Parse(src string) (*ObdData, error) {
 			// variants) on bare lines outside any section.
 			parseHeaderLine(out, trimmed, i)
 		case secDiagnosis:
+			// Always feed the raw buffer so the legacy `Diagnosis` string
+			// stays populated for callers that don't use the structured shape.
 			diagnosisBuf = append(diagnosisBuf, line)
+
+			// Structured parse: SECT_START / NOTE_START / NOTE_END / SECT_END.
+			// Anything else inside a note appends to the note body.
+			if strings.HasPrefix(trimmed, "SECT_START ") || trimmed == "SECT_START" {
+				if currentSection != nil {
+					// Implicit close of previous section without SECT_END.
+					out.Sections = append(out.Sections, *currentSection)
+				}
+				title := strings.TrimSpace(strings.TrimPrefix(trimmed, "SECT_START"))
+				currentSection = &DiagnosisSection{Title: title, Notes: []DiagnosisNote{}}
+				inNote = false
+				continue
+			}
+			if trimmed == "SECT_END" {
+				if inNote && currentSection != nil {
+					// Implicit close of trailing note within section.
+					currentSection.Notes = append(currentSection.Notes, DiagnosisNote{
+						Title: currentNoteTitle,
+						Body:  strings.TrimSpace(strings.Join(noteBodyBuf, "\n")),
+					})
+					noteBodyBuf = nil
+					inNote = false
+				}
+				if currentSection != nil {
+					out.Sections = append(out.Sections, *currentSection)
+					currentSection = nil
+				}
+				continue
+			}
+			if strings.HasPrefix(trimmed, "NOTE_START ") || trimmed == "NOTE_START" {
+				if inNote && currentSection != nil {
+					currentSection.Notes = append(currentSection.Notes, DiagnosisNote{
+						Title: currentNoteTitle,
+						Body:  strings.TrimSpace(strings.Join(noteBodyBuf, "\n")),
+					})
+				}
+				currentNoteTitle = strings.TrimSpace(strings.TrimPrefix(trimmed, "NOTE_START"))
+				noteBodyBuf = nil
+				inNote = true
+				continue
+			}
+			if trimmed == "NOTE_END" {
+				if currentSection == nil {
+					// Stray NOTE_END outside a section — synthesise a fallback section.
+					currentSection = &DiagnosisSection{Title: "", Notes: []DiagnosisNote{}}
+				}
+				currentSection.Notes = append(currentSection.Notes, DiagnosisNote{
+					Title: currentNoteTitle,
+					Body:  strings.TrimSpace(strings.Join(noteBodyBuf, "\n")),
+				})
+				noteBodyBuf = nil
+				inNote = false
+				continue
+			}
+			if inNote {
+				noteBodyBuf = append(noteBodyBuf, line)
+			}
 		case secComponents:
 			parseComponentLine(out, componentsIdx, trimmed, i)
 		case secNets:
 			parseNetLine(out, netsIdx, trimmed, i)
 		}
+	}
+
+	// Close any unterminated section/note at EOF — defensively handles
+	// upstream files that drop a trailing SECT_END.
+	if inNote && currentSection != nil {
+		currentSection.Notes = append(currentSection.Notes, DiagnosisNote{
+			Title: currentNoteTitle,
+			Body:  strings.TrimSpace(strings.Join(noteBodyBuf, "\n")),
+		})
+	}
+	if currentSection != nil {
+		out.Sections = append(out.Sections, *currentSection)
 	}
 
 	// Normalise nil slices to empty so JSON emits [] not null. Frontend

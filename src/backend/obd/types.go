@@ -28,13 +28,29 @@ type Match struct {
 // ObdData is the parsed OBDATA_V002 payload returned by /api/obd/fetch
 // and cached as <bpath>.parsed.json.
 type ObdData struct {
-	Bpath     string     `json:"bpath"`
-	SourceURL string     `json:"source_url"`
-	FetchedAt string     `json:"fetched_at"` // RFC3339
-	Header    Header     `json:"header"`
-	Diagnosis string     `json:"diagnosis"`
-	Components []Component `json:"components"`
-	Nets      []Net       `json:"nets"`
+	Bpath      string             `json:"bpath"`
+	SourceURL  string             `json:"source_url"`
+	FetchedAt  string             `json:"fetched_at"` // RFC3339
+	Header     Header             `json:"header"`
+	Diagnosis  string             `json:"diagnosis"` // raw diagnosis text — kept for round-trip + fallback display
+	Sections   []DiagnosisSection `json:"sections"`  // structured sections/notes parsed from DIAGNOSIS_DATA
+	Components []Component        `json:"components"`
+	Nets       []Net              `json:"nets"`
+}
+
+// DiagnosisSection groups one or more notes under a heading
+// (e.g. "Power Rails", "Power Sequence", "Backlight").
+type DiagnosisSection struct {
+	Title string         `json:"title"`
+	Notes []DiagnosisNote `json:"notes"`
+}
+
+// DiagnosisNote is one note within a section. Body is preserved verbatim
+// — including inline references like [n:NET_NAME] and [p:PART_NAME:PIN]
+// which the frontend renders as clickable chips.
+type DiagnosisNote struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
 }
 
 type Header struct {
