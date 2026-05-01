@@ -615,6 +615,21 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
   r.readU32(); // 0
   r.readU32(); // 0
   let toolCount = r.readU32();
+  // Empty placeholder Through layer (Landrex variant on Gigabyte boards):
+  // toolCount=0 with no body. eagleview asserts toolCount > 0 and never tested
+  // this case, so following the eagleview-style read further would consume 25
+  // bytes of the next layer's header and break the layer chain. Bail out here
+  // and treat as an empty drill layer.
+  if (toolCount === 0) {
+    return {
+      objType: TvwObjectType.Through,
+      name: header.name,
+      layerType: header.layerType,
+      toolSizes: [],
+      holes: [],
+      slots: [],
+    };
+  }
   toolCount--; // eagleview does toolCount--
   const toolSizes: number[] = [];
   for (let i = 0; i < toolCount; i++) {
