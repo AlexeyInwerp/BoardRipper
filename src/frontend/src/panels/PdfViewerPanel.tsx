@@ -6,6 +6,7 @@ import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
 import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked, setAutoSwitchLinked, onAutoSwitchChange } from '../store/dockview-api';
+import { openBoardSearch } from './BoardViewerPanel';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
@@ -2401,13 +2402,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
     clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 4000);
 
-    // Focus part/net on board if it matches
+    // Focus part/net on board AND mirror the term into the board search panel
+    // (board → PDF lookup is symmetric; this closes the reverse direction).
     const board = boardStore.board;
     if (board) {
       const upper = hit.word.toUpperCase();
       const isPart = board.parts.some(p => p.name.toUpperCase() === upper);
+      const isNet = !isPart && [...board.nets.keys()].some(n => n.toUpperCase() === upper);
       if (isPart) boardStore.focusPart(hit.word);
-      else if ([...board.nets.keys()].some(n => n.toUpperCase() === upper)) boardStore.focusNet(hit.word);
+      else if (isNet) boardStore.focusNet(hit.word);
+      if (isPart || isNet) openBoardSearch(hit.word);
     }
   }, [hitTestWord, pdfFileName]);
 
@@ -2434,6 +2438,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       } else {
         boardStore.focusNet(hit.word);
       }
+      openBoardSearch(hit.word);
     }
   }, [hitTestWord, pdfFileName]);
 

@@ -1920,9 +1920,12 @@ export class BoardRenderer {
     const sh = this.containerEl.clientHeight;
     if (sw === 0 || sh === 0) return;
 
-    // Target scale magnitude — part should fill ~viewFraction of the smaller screen dimension
+    // Target scale magnitude — part should fill ~viewFraction of the smaller
+    // screen dimension. Cap at 6 (= 600%) so tiny components (0402, 0201) don't
+    // zoom past the practical pin-pick limit, where sub-pixel pan jitter makes
+    // it hard to click an already-selected pin.
     const maxDim = Math.max(bw, bh, 1);
-    const targetMag = (Math.min(sw, sh) * viewFraction) / maxDim;
+    const targetMag = Math.min((Math.min(sw, sh) * viewFraction) / maxDim, 6);
 
     // Preserve sign of current scale (negative = flipped)
     const signX = this.viewport.scale.x < 0 ? -1 : 1;
@@ -3168,16 +3171,12 @@ export class BoardRenderer {
     const netUpper = sel.highlightedNet.toUpperCase();
     if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
 
-    // Star requires an anchor (selected part). When the highlight came from a
-    // PDF net lookup, partIndex is null and star draws nothing — the user
-    // explicitly opted out of the chain visualization.
-    if (mode === 'star' && sel.partIndex === null) return;
-
-    if (mode === 'star') {
+    // Star needs an anchor (selected part). When the highlight came from a PDF
+    // net lookup or trace click, partIndex is null — fall through to chain so
+    // the user still sees the connectivity.
+    if (mode === 'star' && sel.partIndex !== null) {
       // ── Star topology from selected part to all others on the net ──
-      // partIndex is guaranteed non-null by the early-return above; capture
-      // it locally so the index expression stays narrowed.
-      const selectedPartIdx = sel.partIndex as number;
+      const selectedPartIdx = sel.partIndex;
       const selectedPart = this.board.parts[selectedPartIdx];
       if (!selectedPart) return;
 
