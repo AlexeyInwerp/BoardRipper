@@ -12,19 +12,20 @@ import (
 
 const (
 	defaultUserAgent   = "BoardRipper/dev (+https://boardripper.app)"
-	defaultMaxPages    = 50
 	defaultDropGuard   = 0.5 // reject if new index drops below 50% of prior
 	defaultHTTPTimeout = 30 * time.Second
 	maxResponseBytes   = 8 << 20 // 8 MiB cap per upstream response
 )
 
-// Scraper walks openboarddata.org's category index pages and downloads per-board files.
+// Scraper fetches openboarddata.org's root page (which contains the entire
+// board catalog as a single HTML table) and downloads per-board OBDATA files.
+//
+// The site has no per-category listing endpoint; the root page is the index.
 type Scraper struct {
-	BaseURL      string        // e.g. "https://openboarddata.org"
+	BaseURL      string // e.g. "https://openboarddata.org"
 	UserAgent    string
 	RequestDelay time.Duration
 	HTTPClient   *http.Client
-	MaxPages     int
 }
 
 // NewScraper returns a configured scraper.
@@ -34,49 +35,30 @@ func NewScraper(baseURL string) *Scraper {
 		UserAgent:    defaultUserAgent,
 		RequestDelay: 250 * time.Millisecond,
 		HTTPClient:   &http.Client{Timeout: defaultHTTPTimeout},
-		MaxPages:     defaultMaxPages,
 	}
 }
 
-var fallbackCategories = []string{"consoles", "desktops", "laptops", "phones"}
-
-// SyncIndex walks every category and returns an in-memory Index.
+// SyncIndex fetches the root page once and extracts every bpath from its
+// catalog table. There is no category walk — the whole index lives on a
+// single page.
 func (s *Scraper) SyncIndex() (*Index, error) {
-	pagesWalked := 0
-
 	rootHTML, err := s.get(s.BaseURL + "/")
-	pagesWalked++
 	if err != nil {
 		return nil, fmt.Errorf("scrape root: %w", err)
 	}
-	cats := extractCategories(rootHTML)
-	if len(cats) == 0 {
-		cats = fallbackCategories
-	}
 
-	var entries []IndexEntry
-	for _, cat := range cats {
-		if pagesWalked >= s.MaxPages {
-			return nil, fmt.Errorf("scrape: hard cap of %d pages exceeded", s.MaxPages)
-		}
-		s.sleep()
-		listHTML, err := s.get(fmt.Sprintf("%s/?a=showboards&category=%s", s.BaseURL, cat))
-		pagesWalked++
-		if err != nil {
-			// Per-category failure is non-fatal — log and continue.
+	bpaths := extractBpaths(rootHTML)
+	entries := make([]IndexEntry, 0, len(bpaths))
+	for _, bp := range bpaths {
+		seg := strings.Split(bp, "/")
+		if len(seg) < 3 {
 			continue
 		}
-		for _, bp := range extractBpaths(listHTML) {
-			seg := strings.Split(bp, "/")
-			if len(seg) < 3 {
-				continue
-			}
-			entries = append(entries, IndexEntry{
-				Bpath:    bp,
-				Category: seg[0],
-				Brand:    seg[1],
-			})
-		}
+		entries = append(entries, IndexEntry{
+			Bpath:    bp,
+			Category: seg[0],
+			Brand:    seg[1],
+		})
 	}
 
 	return &Index{
@@ -105,7 +87,10 @@ func (s *Scraper) SyncIndexWithGuard(prev *Index) (*Index, error) {
 }
 
 // FetchBoard downloads the OBDATA_V002 body for one bpath. Returns the
-// raw text. Rejects responses that don't start with the magic line.
+// raw text. The magic line (`OBDATA_V002 …`) appears as the second
+// physical line, inside the `HEADER_DATA_START`/`HEADER_DATA_END`
+// block; we only require that the magic appears within the first 500
+// bytes — anything else is treated as an HTML error page or junk.
 func (s *Scraper) FetchBoard(bpath string) (string, error) {
 	if err := validateBpath(bpath); err != nil {
 		return "", err
@@ -114,16 +99,14 @@ func (s *Scraper) FetchBoard(bpath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(strings.TrimSpace(body), "OBDATA_V002") {
-		return "", errors.New("upstream response does not start with OBDATA_V002 magic")
+	head := body
+	if len(head) > 500 {
+		head = head[:500]
+	}
+	if !strings.Contains(head, "OBDATA_V002") {
+		return "", errors.New("upstream response missing OBDATA_V002 magic in first 500 bytes")
 	}
 	return body, nil
-}
-
-func (s *Scraper) sleep() {
-	if s.RequestDelay > 0 {
-		time.Sleep(s.RequestDelay)
-	}
 }
 
 func (s *Scraper) get(u string) (string, error) {
@@ -140,8 +123,6 @@ func (s *Scraper) get(u string) (string, error) {
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, u)
 	}
-	// Cap upstream response size; a malformed page or sneaky redirect
-	// shouldn't be able to OOM the backend with an unbounded read.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", err
@@ -149,33 +130,20 @@ func (s *Scraper) get(u string) (string, error) {
 	return string(body), nil
 }
 
-// extractCategories pulls "category" query params from anchors whose
-// href contains "a=showboards&category=...".
-var categoryRE = regexp.MustCompile(`a=showboards(?:&|&amp;)category=([a-z]+)`)
-
-func extractCategories(html string) []string {
-	matches := categoryRE.FindAllStringSubmatch(html, -1)
-	seen := map[string]struct{}{}
-	var out []string
-	for _, m := range matches {
-		if _, ok := seen[m[1]]; ok {
-			continue
-		}
-		seen[m[1]] = struct{}{}
-		out = append(out, m[1])
-	}
-	return out
-}
-
-// extractBpaths pulls "bpath" query params from anchors whose href
-// contains "a=showboardsolutions&bpath=...". The bpath is URL-encoded
-// in the source but our fixture uses literal slashes — handle both.
-var bpathRE = regexp.MustCompile(`a=showboardsolutions(?:&|&amp;)bpath=([^"&\s]+)`)
+// extractBpaths pulls "bpath" query params from anchors in the root
+// catalog page. The real openboarddata.org markup looks like
+//
+//	<a href=?a=showboardsolutions&bpath=laptops/apple/820-00045>...</a>
+//
+// — note the unquoted href and the lack of HTML escaping. The character
+// class `[^"&\s>]+` stops the bpath capture at the closing `>` of the
+// anchor tag.
+var bpathRE = regexp.MustCompile(`a=showboardsolutions(?:&|&amp;)bpath=([^"&\s>]+)`)
 
 func extractBpaths(html string) []string {
 	matches := bpathRE.FindAllStringSubmatch(html, -1)
 	seen := map[string]struct{}{}
-	var out []string
+	out := make([]string, 0, len(matches))
 	for _, m := range matches {
 		bp := strings.ReplaceAll(m[1], "%2F", "/")
 		if _, ok := seen[bp]; ok {

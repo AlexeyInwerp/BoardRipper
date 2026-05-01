@@ -7,12 +7,18 @@ import (
 )
 
 // Parse reads an OBDATA_V002 text body and returns the parsed payload.
-// Returns an error only when the magic line is missing or malformed —
-// unknown keys / duplicate writes are tolerated and logged.
+// Returns an error only when the magic line is missing — unknown keys
+// and duplicate writes are tolerated and logged.
+//
+// The real format opens with `HEADER_DATA_START` followed by the
+// `OBDATA_V002 …` magic line. Headers (TIMESTAMP, BOARDPATH, etc.)
+// live INSIDE that bracketed block, not as bare lines. We accept the
+// magic anywhere inside the first `HEADER_DATA` section as well as on
+// any unbracketed lead-in (some files in the wild may not use the
+// bracketed form).
 func Parse(src string) (*ObdData, error) {
-	lines := strings.Split(src, "\n")
-	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "OBDATA_V002") {
-		return nil, errors.New("obd: missing OBDATA_V002 magic line")
+	if !strings.Contains(src[:min500(src)], "OBDATA_V002") {
+		return nil, errors.New("obd: missing OBDATA_V002 magic in first 500 bytes")
 	}
 
 	out := &ObdData{
@@ -25,6 +31,7 @@ func Parse(src string) (*ObdData, error) {
 	type section int
 	const (
 		secNone section = iota
+		secHeader
 		secDiagnosis
 		secComponents
 		secNets
@@ -32,7 +39,7 @@ func Parse(src string) (*ObdData, error) {
 	cur := secNone
 	var diagnosisBuf []string
 
-	for i, raw := range lines {
+	for i, raw := range strings.Split(src, "\n") {
 		line := strings.TrimRight(raw, "\r")
 		trimmed := strings.TrimSpace(line)
 
@@ -46,6 +53,12 @@ func Parse(src string) (*ObdData, error) {
 
 		// Section delimiters.
 		switch trimmed {
+		case "HEADER_DATA_START":
+			cur = secHeader
+			continue
+		case "HEADER_DATA_END":
+			cur = secNone
+			continue
 		case "DIAGNOSIS_DATA_START":
 			cur = secDiagnosis
 			continue
@@ -69,19 +82,27 @@ func Parse(src string) (*ObdData, error) {
 		}
 
 		switch cur {
+		case secHeader, secNone:
+			// Header K/V — both inside HEADER_DATA and (for legacy / future
+			// variants) on bare lines outside any section.
+			parseHeaderLine(out, trimmed, i)
 		case secDiagnosis:
 			diagnosisBuf = append(diagnosisBuf, line)
 		case secComponents:
 			parseComponentLine(out, componentsIdx, trimmed, i)
 		case secNets:
 			parseNetLine(out, netsIdx, trimmed, i)
-		case secNone:
-			// Header line: "KEY VALUE..."
-			parseHeaderLine(out, trimmed, i)
 		}
 	}
 
 	return out, nil
+}
+
+func min500(s string) int {
+	if len(s) < 500 {
+		return len(s)
+	}
+	return 500
 }
 
 func parseHeaderLine(out *ObdData, line string, lineNum int) {

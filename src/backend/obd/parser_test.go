@@ -134,3 +134,34 @@ NETS_DATA_END
 		t.Errorf("Expected one net with diode set, got %v", data.Nets)
 	}
 }
+
+// TestParse_RealHeaderBlock verifies headers are read from inside the
+// HEADER_DATA_START/END block — the actual shape openboarddata.org
+// serves. The first physical line is the section delimiter, NOT the
+// magic.
+func TestParse_RealHeaderBlock(t *testing.T) {
+	src := `HEADER_DATA_START
+OBDATA_V002 https://openboarddata.org
+TIMESTAMP 1777617215
+BOARDPATH laptops/apple/820-00165
+ID 820-00165
+BRAND apple
+HEADER_DATA_END
+NETS_DATA_START
+PP_X/Default d 0.5 ''
+NETS_DATA_END
+`
+	data, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if data.Header.ID == nil || *data.Header.ID != "820-00165" {
+		t.Errorf("Header.ID = %v, want 820-00165", data.Header.ID)
+	}
+	if data.Header.Brand == nil || *data.Header.Brand != "apple" {
+		t.Errorf("Header.Brand = %v, want apple", data.Header.Brand)
+	}
+	if len(data.Nets) != 1 {
+		t.Errorf("expected 1 net, got %v", data.Nets)
+	}
+}
