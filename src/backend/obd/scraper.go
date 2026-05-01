@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	defaultUserAgent  = "BoardRipper/dev (+https://boardripper.app)"
-	defaultMaxPages   = 50
-	defaultDropGuard  = 0.5  // reject if new index drops below 50% of prior
+	defaultUserAgent   = "BoardRipper/dev (+https://boardripper.app)"
+	defaultMaxPages    = 50
+	defaultDropGuard   = 0.5 // reject if new index drops below 50% of prior
 	defaultHTTPTimeout = 30 * time.Second
+	maxResponseBytes   = 8 << 20 // 8 MiB cap per upstream response
 )
 
 // Scraper walks openboarddata.org's category index pages and downloads per-board files.
@@ -139,7 +140,9 @@ func (s *Scraper) get(u string) (string, error) {
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, u)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// Cap upstream response size; a malformed page or sneaky redirect
+	// shouldn't be able to OOM the backend with an unbounded read.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", err
 	}
