@@ -60,7 +60,7 @@ html, body, #root {
   border: 1px solid var(--border);
   color: var(--text-primary);
   padding: 4px 12px;
-  border-radius: 4px;
+  border-radius: 1px;
   cursor: pointer;
   font-size: 0.9em;
   white-space: nowrap;
@@ -2306,9 +2306,21 @@ html, body, #root {
 .ghost-keep:hover {
   background: rgba(92, 184, 92, 0.15);
 }
-.ghost-arrow {
+.ghost-swap {
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.ghost-swap:hover {
+  background: var(--hover);
+  border-color: var(--border);
+  color: var(--text-primary);
 }
 .ghost-distance {
   margin-left: auto;
