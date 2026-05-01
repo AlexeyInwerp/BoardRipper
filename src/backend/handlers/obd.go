@@ -224,6 +224,31 @@ func (h *ObdHandler) Fetch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, parsed)
 }
 
+// Data returns the cached parsed payload for one bpath without
+// touching the network. 404 if not cached. Used by the BoardViewer
+// flow to surface OBD readings in tooltips and the ComponentInfoPanel
+// without re-hitting openboarddata.org on every board open.
+func (h *ObdHandler) Data(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLibrary(w) {
+		return
+	}
+	bpath := r.URL.Query().Get("bpath")
+	if bpath == "" {
+		http.Error(w, "bpath query param required", http.StatusBadRequest)
+		return
+	}
+	parsed, err := h.store.ReadParsed(bpath)
+	if err != nil {
+		http.Error(w, "read cache: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if parsed == nil {
+		http.Error(w, "not cached", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, parsed)
+}
+
 // CacheDelete wipes the entire OBD cache.
 func (h *ObdHandler) CacheDelete(w http.ResponseWriter, r *http.Request) {
 	if !h.requireLibrary(w) {

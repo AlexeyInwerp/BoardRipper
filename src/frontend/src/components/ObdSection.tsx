@@ -178,7 +178,10 @@ function ObdMeasurementTable({ variants }: {
                   {(() => {
                     const allComments = new Set<string>();
                     for (const [, n] of byBpath) {
-                      n.comments.forEach(c => c.trim() && allComments.add(c.trim()));
+                      const list = Array.isArray(n.comments) ? n.comments : [];
+                      for (const c of list) {
+                        if (typeof c === 'string' && c.trim()) allComments.add(c.trim());
+                      }
                     }
                     if (allComments.size === 0) return null;
                     return (
