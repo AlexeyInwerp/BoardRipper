@@ -20,13 +20,6 @@ func newTestHandler(t *testing.T) (*ObdHandler, *obd.Store, *httptest.Server) {
 		case "":
 			b, _ := os.ReadFile("../obd/testdata/sample-index-root.html")
 			w.Write(b)
-		case "showboards":
-			if r.URL.Query().Get("category") == "laptops" {
-				b, _ := os.ReadFile("../obd/testdata/sample-index-laptops.html")
-				w.Write(b)
-				return
-			}
-			w.Write([]byte("empty"))
 		case "generate":
 			b, _ := os.ReadFile("../obd/testdata/sample.obd.txt")
 			w.Write(b)
@@ -77,13 +70,13 @@ func TestIndexSyncThenMatch(t *testing.T) {
 	if len(single.Matches) != 1 || single.Matches[0].Fetched {
 		t.Errorf("single match: %v", single.Matches)
 	}
-	if !single.Index.Synced || single.Index.BoardCount != 4 {
+	if !single.Index.Synced || single.Index.BoardCount != 6 {
 		t.Errorf("Index status = %+v", single.Index)
 	}
 
-	// Multi-variant match.
+	// Multi-variant match: iphone8 has _intel and _qualcomm variants in fixture.
 	w = httptest.NewRecorder()
-	h.Match(w, httptest.NewRequest("GET", "/api/obd/match?board_number=iP7P", nil))
+	h.Match(w, httptest.NewRequest("GET", "/api/obd/match?board_number=iphone8", nil))
 	var multi struct {
 		Matches []obd.Match `json:"matches"`
 		Index   IndexStatus `json:"index"`
@@ -198,15 +191,15 @@ func TestIndexSync_ConcurrentReturns409(t *testing.T) {
 	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		<-hangDone // block until the test signals done
 	}))
-	t.Cleanup(func() {
-		close(hangDone) // unblock all handler goroutines
-		hang.Close()
-	})
 	sc := obd.NewScraper(hang.URL)
 	sc.HTTPClient = &http.Client{} // no timeout
 	h.scraper = sc
 
-	go h.IndexSync(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/obd/index/sync", nil))
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		h.IndexSync(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/obd/index/sync", nil))
+	}()
 
 	// Give the goroutine a moment to take the lock and start the HTTP call.
 	for i := 0; i < 200; i++ {
@@ -224,6 +217,12 @@ func TestIndexSync_ConcurrentReturns409(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Errorf("second sync code = %d, want 409", w.Code)
 	}
+
+	// Order matters: unblock the leader, then wait for it to finish writing
+	// (or failing) before the testing framework removes TempDir under our feet.
+	close(hangDone)
+	<-leaderDone
+	hang.Close()
 }
 
 func TestCacheDelete(t *testing.T) {
