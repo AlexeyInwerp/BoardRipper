@@ -3,6 +3,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore, ghostPairSig } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
+import { DiagnosisNotes } from './DiagnosisNotes';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
 
@@ -447,6 +448,18 @@ function InfoTab({ tabId }: { tabId: number }) {
           </tbody>
         </table>
       </div>
+      {/* Structured DIAGNOSIS_DATA from openboarddata.org — power
+          sequencing, repair notes, etc. Each variant shown sequentially;
+          most boards only have one variant fetched. */}
+      {obd.loadedVariants
+        .filter(v => v.sections && v.sections.length > 0)
+        .map(v => (
+          <DiagnosisNotes
+            key={v.bpath}
+            sections={v.sections!}
+            board={board}
+          />
+        ))}
     </div>
   );
 }
