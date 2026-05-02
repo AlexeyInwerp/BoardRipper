@@ -35,7 +35,20 @@ type Status struct {
 	LastRunExit    int    `json:"last_run_exit"`
 	LastRunMessage string `json:"last_run_message"`
 	NextRunAtISO   string `json:"next_run_at_iso"`
+
+	// RecentErrors is a ring buffer of the most recent per-file errors
+	// (most recent last). Capped at maxRecentErrors. Cleared on Start.
+	RecentErrors []ErrorEntry `json:"recent_errors"`
 }
+
+// ErrorEntry captures a single per-file failure surfaced to the UI.
+type ErrorEntry struct {
+	TimeISO string `json:"time_iso"`
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
+
+const maxRecentErrors = 50
 
 // Engine performs library sync runs in a background goroutine, mirroring the
 // scanner.Status pattern for thread-safe progress reporting and cancellation.
@@ -153,6 +166,7 @@ func (e *Engine) Start(parent context.Context) (Status, error) {
 	e.status.BytesDone = 0
 	e.status.CurrentFile = ""
 	e.status.Errors = 0
+	e.status.RecentErrors = nil
 	st := e.status
 	e.mu.Unlock()
 
@@ -329,9 +343,7 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 		written, err := e.downloadFile(ctx, cfg, item.path)
 		if err != nil {
 			fmt.Printf("librarysync: download failed for %s: %v\n", item.path, err)
-			e.mu.Lock()
-			e.status.Errors++
-			e.mu.Unlock()
+			e.recordError(item.path, err)
 			continue
 		}
 		e.mu.Lock()
@@ -367,6 +379,25 @@ func (e *Engine) setPhase(phase, description, currentFile string) {
 	e.status.Description = description
 	if currentFile != "" {
 		e.status.CurrentFile = currentFile
+	}
+	e.mu.Unlock()
+}
+
+// recordError appends a per-file failure to the ring buffer (capped) and
+// increments the error count. Both updates happen under the lock so the
+// frontend never sees an inconsistent count vs. list.
+func (e *Engine) recordError(path string, err error) {
+	entry := ErrorEntry{
+		TimeISO: time.Now().UTC().Format(time.RFC3339),
+		Path:    path,
+		Message: err.Error(),
+	}
+	e.mu.Lock()
+	e.status.Errors++
+	e.status.RecentErrors = append(e.status.RecentErrors, entry)
+	if len(e.status.RecentErrors) > maxRecentErrors {
+		// Drop oldest, keep most recent.
+		e.status.RecentErrors = e.status.RecentErrors[len(e.status.RecentErrors)-maxRecentErrors:]
 	}
 	e.mu.Unlock()
 }
