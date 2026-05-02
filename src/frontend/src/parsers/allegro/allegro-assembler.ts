@@ -176,6 +176,14 @@ function extractComponents(
   div: number,
   netAssignMap: Map<number, string>,
 ): { parts: Part[]; allPinPositions: Point[] } {
+  // v15 takes a separate path: BLK_0x2D records are not chained per-footprint
+  // (single contiguous file region, mixed-fpDef order) and BLK_0x07/0x32 walks
+  // are not yet implemented. Build parts directly from BLK_0x2D coords +
+  // BLK_0x2B (footprint definition) bbox + name. Refdes is synthesized as
+  // {fpName}_{idx} until BLK_0x07 lands.
+  if (ver === FmtVer.V_15X) {
+    return extractComponentsV15(db, div);
+  }
   const parts: Part[] = [];
   const allPinPositions: Point[] = [];
 
@@ -249,6 +257,74 @@ function extractComponents(
 
       instKey = inst.next;
     }
+  }
+
+  return { parts, allPinPositions };
+}
+
+/**
+ * v15-specific component extraction. Builds parts directly from BLK_0x2D
+ * records (placed-instance coordinates) and their referenced BLK_0x2B
+ * footprint definitions (name + footprint-local bbox). No pins are produced
+ * yet — BLK_0x07/0x32 walking is the next milestone, after which pins, nets,
+ * and proper refdes-from-instance-strings will replace the synthesized values.
+ */
+function extractComponentsV15(
+  db: AllegroDb,
+  div: number,
+): { parts: Part[]; allPinPositions: Point[] } {
+  const parts: Part[] = [];
+  const allPinPositions: Point[] = [];
+  // Counter for synthesized refdes per footprint name
+  const fpCounters = new Map<string, number>();
+
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x2D) continue;
+    const inst = blk as unknown as {
+      key: number;
+      coordX: number;
+      coordY: number;
+      unknownPtr1: number;  // fpDefRef stash from db.parseBlocksV15
+    };
+
+    // Resolve footprint definition → name + local bbox
+    const fpDef = db.blocks.get(inst.unknownPtr1) as unknown as {
+      blockType: number;
+      fpStrRef?: number;
+      coords?: [number, number, number, number];
+    } | undefined;
+
+    let fpName = '';
+    let fpBbox: [number, number, number, number] = [-100, -100, 100, 100];
+    if (fpDef && fpDef.blockType === 0x2B) {
+      if (fpDef.fpStrRef) fpName = db.getString(fpDef.fpStrRef);
+      if (fpDef.coords) fpBbox = fpDef.coords;
+    }
+    if (!fpName) fpName = 'UNK';
+
+    // Synthesize per-footprint counter so refdes is unique
+    const ix = (fpCounters.get(fpName) ?? 0) + 1;
+    fpCounters.set(fpName, ix);
+    const refdes = ix === 1 ? fpName : `${fpName}_${ix}`;
+
+    const ox = inst.coordX / div;
+    const oy = inst.coordY / div;
+    const bounds = {
+      minX: ox + fpBbox[0] / div,
+      minY: oy + fpBbox[1] / div,
+      maxX: ox + fpBbox[2] / div,
+      maxY: oy + fpBbox[3] / div,
+    };
+
+    parts.push({
+      name: refdes,
+      side: 'top', // v15 layer not yet decoded — assume top until BLK_0x2D layout is finalized
+      type: 'smd',
+      origin: { x: ox, y: oy },
+      pins: [],
+      bounds,
+      meta: { package: fpName },
+    });
   }
 
   return { parts, allPinPositions };

@@ -280,6 +280,114 @@ export class AllegroDb {
       dbg.log(`v15: walked LL_0x2B → ${nFootprints} footprints`);
     }
 
+    // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
+    // records, no LL in the header. The records are NOT grouped per footprint
+    // — each record's m_FpDefRef (at +0x18) points to whichever BLK_0x2B is
+    // its parent. Walker scans starting at min(BLK_0x2B.firstInstPtr) − addend
+    // and stops when the prefix byte 1 is no longer 0xB4.
+    //
+    // Once read, records are grouped by m_FpDefRef and synthetic m_Next chains
+    // are wired into BLK_0x2B.firstInstPtr → next → next → 0 so the existing
+    // assembler walking pattern works unchanged.
+    //
+    // v15 BLK_0x2D 60-byte layout (validated on COMPAL LA-7321P):
+    //   +0x00  prefix `00 b4 0X 00`  (0X is per-instance sub-type / counter)
+    //   +0x04  m_Key
+    //   +0x08  unknown (zero in record 0)
+    //   +0x0C  unknown
+    //   +0x10  i32 m_CoordX (signed mils*divisor)
+    //   +0x14  i32 m_CoordY
+    //   +0x18  m_FpDefRef → BLK_0x2B
+    //   +0x1C  m_CompDefRef → BLK_0x06 (or unknown ptr)
+    //   +0x20..0x38  pointers / zeros
+    let firstInst2D = Infinity;
+    for (const blk of map.values()) {
+      if (blk.blockType !== 0x2B) continue;
+      const fp = blk as { firstInstPtr: number };
+      if (fp.firstInstPtr > 0 && fp.firstInstPtr < firstInst2D) {
+        firstInst2D = fp.firstInstPtr;
+      }
+    }
+    if (firstInst2D !== Infinity) {
+      const start = firstInst2D - globalAddend;
+      let scanPos = start;
+      let n2D = 0;
+      while (scanPos + 60 <= stream.size) {
+        // Validate prefix shape `00 b4 XX 00`
+        stream.seek(scanPos);
+        const p0 = stream.u8();
+        const p1 = stream.u8();
+        stream.skip(1); // sub-type counter
+        const p3 = stream.u8();
+        if (p0 !== 0x00 || p1 !== 0xb4 || p3 !== 0x00) break;
+        // m_Key at +0x04
+        const mKey = stream.u32();
+        stream.seek(scanPos + 16);
+        const coordX = stream.s32();
+        const coordY = stream.s32();
+        const fpDefRef = stream.u32();
+        const compDefRef = stream.u32();
+        const ptr20 = stream.u32();
+        const ptr24 = stream.u32();
+        const ptr28 = stream.u32();
+        const ptr2c = stream.u32();
+        const ptr30 = stream.u32();
+        void ptr20; void ptr24; void ptr28; void ptr30;
+
+        // Build a Blk0x2DFootprintInst-shaped record. v15 doesn't expose all
+        // the v16+ fields; we leave those zero/empty so the assembler chain
+        // walk doesn't trip on them. The synthesized `next` is wired below.
+        map.set(mKey, {
+          blockType: 0x2D,
+          offset: scanPos,
+          key: mKey,
+          next: 0,
+          unknownByte1: 0,
+          layer: 0, // v15 layer not yet decoded — default top
+          unknownByte2: 0,
+          unknown1: undefined,
+          instRef16x: ptr2c, // best-guess pointer to BLK_0x07 (m_TextPtr-ish slot)
+          unknown2: 0,
+          unknown3: 0,
+          unknown4: undefined,
+          flags: 0,
+          rotation: 0,
+          coordX,
+          coordY,
+          instRef: undefined,
+          graphicPtr: 0,
+          firstPadPtr: 0,
+          textPtr: 0,
+          assemblyPtr: 0,
+          areasPtr: 0,
+          unknownPtr1: fpDefRef, // stash fpDefRef here for the v15 assembler path
+          unknownPtr2: compDefRef,
+        } as AllegroBlock);
+        n2D++;
+        scanPos += 60;
+      }
+      dbg.log(`v15: scanned BLK_0x2D → ${n2D} placed instances at 0x${start.toString(16)}..0x${scanPos.toString(16)}`);
+
+      // Group BLK_0x2D records by their fpDefRef (stashed in unknownPtr1) and
+      // synthesize per-footprint next chains so the existing assembler can
+      // walk fpDef.firstInstPtr → inst.next → ... unchanged.
+      const groups = new Map<number, AllegroBlock[]>();
+      for (const blk of map.values()) {
+        if (blk.blockType !== 0x2D) continue;
+        const inst = blk as unknown as { unknownPtr1: number };
+        const arr = groups.get(inst.unknownPtr1) ?? [];
+        arr.push(blk);
+        groups.set(inst.unknownPtr1, arr);
+      }
+      for (const arr of groups.values()) {
+        for (let i = 0; i < arr.length - 1; i++) {
+          (arr[i] as unknown as { next: number }).next = arr[i + 1].key;
+        }
+        // Last record's next stays 0 (terminator) so the assembler walk ends.
+      }
+      dbg.log(`v15: synthesized ${groups.size} BLK_0x2D chains`);
+    }
+
     return map;
   }
 
