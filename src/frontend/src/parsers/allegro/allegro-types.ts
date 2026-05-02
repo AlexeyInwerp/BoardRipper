@@ -10,19 +10,25 @@
 
 // ── Version ─────────────────────────────────────────────────────────────────
 
-/** Format version — determines struct field layouts */
+/** Format version — determines struct field layouts.
+ *  Numeric values are in chronological order so `ver >= V_X` and `ver < V_X`
+ *  range checks treat older formats as smaller values. */
 export const FmtVer = {
-  V_PRE_V16: -1, // Pre-v16 Allegro (unsupported binary format)
+  V_PRE_V16: -1, // Pre-v15 Allegro (truly unsupported binary format)
   V_UNKNOWN: 0,
-  V_160: 1,  // 0x00130000
-  V_162: 2,  // 0x00130400
-  V_164: 3,  // 0x00130C00
-  V_165: 4,  // 0x00131000
-  V_166: 5,  // 0x00131500
-  V_172: 6,  // 0x00140400–0x00140700
-  V_174: 7,  // 0x00140900, 0x00140E00
-  V_175: 8,  // 0x00141500
-  V_180: 9,  // 0x00150000
+  // v15.x family — header + string-table layout matches v16/v17 pre-V172;
+  // block records have a 4-byte prefix instead of the 3-byte type-tag prefix
+  // of v16+. See docs/formats/ALLEGRO_V15_FORMAT.md.
+  V_15X: 1,   // 0x00120200, 0x00120A00 (Allegro 15.5.x)
+  V_160: 2,   // 0x00130000
+  V_162: 3,   // 0x00130400
+  V_164: 4,   // 0x00130C00
+  V_165: 5,   // 0x00131000
+  V_166: 6,   // 0x00131500
+  V_172: 7,   // 0x00140400–0x00140700
+  V_174: 8,   // 0x00140900, 0x00140E00
+  V_175: 9,   // 0x00141500
+  V_180: 10,  // 0x00150000
 } as const;
 export type FmtVer = typeof FmtVer[keyof typeof FmtVer];
 
