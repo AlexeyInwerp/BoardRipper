@@ -63,6 +63,11 @@ function hex(val, width = 8) {
 // ── Section 1: Magic & family decoding ────────────────────────────────────────
 
 const magic = readU32LE(0x00);
+// The "family" is the high 16 bits of the u32 magic — Cadence encodes the
+// Allegro major version line there: 0x0012 = v15, 0x0013 = v16, 0x0014 = v17,
+// 0x0015 = v18. The low 16 bits are a minor/build code (e.g. 0x0a06 in
+// COMPAL LA-7321P). Matches the same shift in
+// src/frontend/src/parsers/allegro/allegro-header.ts:formatFromMagic.
 const family = (magic >>> 16) & 0xFFFF;
 const discriminator = readU32LE(0x08);
 
