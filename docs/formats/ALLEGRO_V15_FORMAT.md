@@ -20,12 +20,60 @@ What we know for certain (confirmed from the dumper output and the existing v16+
 | Version string | Offset `0xF8`, 60-byte fixed field, NUL-padded — same offset as pre-v18 v16/v17 |
 | Coordinate unit | Mils (assumed; matches every other known Allegro-family format) |
 
-What is **not yet confirmed** for v15 and is the subject of Phase 0.5 RE work:
+## Phase 0.5 Findings (2026-05-02)
 
-- Header field layout between offset `0x14` and the version string at `0xF8`. The v16+ parser reads `objectCount` at `0x14` and `stringsCount` at `0x18`; in our v15 corpus those positions hold values that don't match those semantics (LA-7321P has `0x000A0D0A` = the bytes `\n\r\n\0` at `0x18`, not a count).
-- String table format and offset.
-- Block-table format, block-type opcode mapping, per-block-type field layouts.
-- Linked-list ordering convention (v16/v17 store `(tail, head)`; v18 flipped to `(head, tail)`; v15 unknown).
+The header and string table layout for v15 are **identical to v16/v17 pre-V172**. Only the post-string-table block region diverges. Verified by running the existing v16+ `parseHeader()` and `parseStringTable()` against both corpus files with the magic switch temporarily mapping `0x00120200` and `0x00120A00` → `FmtVer.V_166`.
+
+### What works unchanged
+
+| Region | v15 vs v16/v17 | Evidence |
+|---|---|---|
+| Magic + first 5 fixed fields (0x00..0x14) | Identical | `m_Unknown1a`=0x03, `m_FileRole`=0x01, `m_Unknown1b`=0x03, `m_WriterProgram`=0x09 in both v15 files |
+| `m_ObjectCount` (0x14) | Identical | LA-7321P: 604,787; v13tl-0629: 674,856 — both plausible |
+| `m_UnknownMagic` (0x18) | Identical, value `0x000A0D0A` | KiCad's `allegro_pcb_structs.h:299` documents this as a known constant `"This is always 0x000a0d0a?"`. Both v15 files match exactly. |
+| `m_UnknownFlags` (0x1C) | Same field shape, value in observed range (0x05000000 / 0x00000000) | Within KiCad's documented range "0x01000000, 0x04000000, 0x06000000" |
+| `m_Unknown2_preV18[7]` (0x20..0x3C) | Same shape, same documented invariants ([3]==[4], [5]≈[6]) | LA-7321P: [3]=[4]=0x7530, [5]=[6]=0x85; v13tl-0629: [3]=[4]=0x7530, [5]=0x228≈[6]=0x1BD |
+| 22 linked-list pairs | Same shape, walks cleanly | Existing parser consumes them without bounds error |
+| Version string (0xF8, 60 bytes, NUL-padded) | Identical | "allv15-57/13/allv15-55/9/2..." and "allv15-57/13/mbsv15-57/11/..." parse correctly |
+| Layer map (25 × 2 u32 pairs near 0x428) | Identical | Existing parser walks to end of header without divergence |
+| `m_StringCount_preV18` location | Identical | LA-7321P reads 1775; v13tl-0629 reads 2843 — both produce sane string counts |
+| String table at 0x1200 | **Identical format** ([u32 id][cString][word-align padding]) | All strings parse to readable, real values. LA-7321P first 25 strings are net names from the .cad oracle (`LPC_CLK0`, `BATT_TEMP`, `DDR_A_D31`, …); v13tl-0629 first strings are drill-symbol names (`DRILLSYMB9`, …). |
+
+**Implication:** the existing pre-V180 codepath in `parseHeader()` and `parseStringTable()` handles v15 unchanged. Phase 1 (magic registration) and Phase 2 (string table) of the implementation plan collapse to a 5-line change in `formatFromMagic`.
+
+### What diverges — block region
+
+After the string table ends, the v16+ parser expects byte 0 of the next u32 to be a block-type tag in `0x01..0x3C`. In our v15 files, the byte at that position is `0x00`, which the parser interprets as "end of objects" and stops with `blocks.size = 0`.
+
+Raw bytes at the start of the v15 block region for LA-7321P (string table ends at file offset `0x7EE0`):
+
+```
+0x7ee0:  00 18 02 00  20 00 ae 07  44 00 ae 07  43 2b 3f 05
+0x7ef0:  43 2b 3f 05  d8 4a ae 07  58 16 ae 07  d8 ca 57 09
+0x7f00:  00 00 00 00  00 18 03 00  44 00 ae 07  68 00 ae 07
+0x7f10:  2e 2b 3f 05  2e 2b 3f 05  18 4b ae 07  ac 16 ae 07
+0x7f20:  a8 cc 56 09  00 00 00 00  00 18 03 00  68 00 ae 07
+```
+
+Compare to v17 Quanta Z8I's block region start:
+```
+06 00 02 00  08 80 94 26  11 80 94 26  d2 2f 6c 7b ...
+```
+
+v17's first byte `0x06` = `BLK_0x06_COMPONENT`. v15 starts with `0x00`, then `0x18 0x02 0x00`, which doesn't match any documented block-type tag.
+
+The repeating pattern in v15 (`00 18 0X 00 ...` every ~32–36 bytes, separated by `00 00 00 00`) suggests fixed-size records with a leading 4-byte header where the third byte (0x02, 0x03, …) is a counter or sub-type. **This is a v15-specific data structure that does not exist in v16+ and is the only remaining RE target.**
+
+### Probe methodology used
+
+To validate the header/string table claim:
+1. Temporarily added `case 0x00120200: case 0x00120A00: return FmtVer.V_166;` to `formatFromMagic`.
+2. Suppressed the V_PRE_V16 friendly-error throw.
+3. Ran the existing `new AllegroDb(buffer)` against both v15 files via `tsx`.
+4. Inspected the parsed `header` and `strings` against the .cad oracle.
+5. Reverted both edits — no production code modified.
+
+This methodology should be re-used for any future v15 sub-RE: hack the magic switch in a worktree, run the existing parser against a candidate sample, inspect `db.header.*` and `db.strings.*`, revert.
 
 ---
 
