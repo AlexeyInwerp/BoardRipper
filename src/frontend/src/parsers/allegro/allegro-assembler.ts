@@ -284,6 +284,8 @@ function extractComponentsV15(
       key: number;
       coordX: number;
       coordY: number;
+      layer: number;        // 0=top, 1=bottom (decoded from prefix byte 2)
+      rotation: number;     // millidegrees
       unknownPtr1: number;  // fpDefRef → BLK_0x2B
       instRef16x: number;   // → BLK_0x07 for refdes (v15-specific link via +0x1C)
     };
@@ -332,7 +334,7 @@ function extractComponentsV15(
 
     parts.push({
       name: refdes,
-      side: 'top', // v15 layer not yet decoded — top/bottom may be encoded in BLK_0x2D's prefix sub-type byte
+      side: inst.layer === 1 ? 'bottom' : 'top',
       type: 'smd',
       origin: { x: ox, y: oy },
       pins: [],

@@ -376,19 +376,27 @@ export class AllegroDb {
       let scanPos = start;
       let n2D = 0;
       while (scanPos + 60 <= stream.size) {
-        // Validate prefix shape `00 b4 XX 00`
+        // Validate prefix shape `00 b4 layerByte 00` — prefix byte 2 encodes
+        // layer: 0x00 = top, 0x01 = bottom (verified via 1178/731 split on
+        // LA-7321P, matches typical motherboard top/bottom ratio).
         stream.seek(scanPos);
         const p0 = stream.u8();
         const p1 = stream.u8();
-        stream.skip(1); // sub-type counter
+        const layerByte = stream.u8();
         const p3 = stream.u8();
         if (p0 !== 0x00 || p1 !== 0xb4 || p3 !== 0x00) break;
         // m_Key at +0x04
         const mKey = stream.u32();
-        stream.seek(scanPos + 16);
+        // +0x08 looks like flags (0x00000000 ~ 0x01cb_xxxx); skip for now
+        stream.skip(4);
+        // +0x0C = rotation in millidegrees (verified: 0x2BF20 = 180000 = 180°)
+        const rotationMillideg = stream.u32();
+        // +0x10/+0x14 = signed coords
         const coordX = stream.s32();
         const coordY = stream.s32();
+        // +0x18 = m_FpDefRef → BLK_0x2B
         const fpDefRef = stream.u32();
+        // +0x1C = m_InstRef → BLK_0x07 (refdes lookup)
         const compDefRef = stream.u32();
         const ptr20 = stream.u32();
         const ptr24 = stream.u32();
@@ -406,15 +414,15 @@ export class AllegroDb {
           key: mKey,
           next: 0,
           unknownByte1: 0,
-          layer: 0, // v15 layer not yet decoded — default top
+          layer: layerByte, // 0=top, 1=bottom (v15 prefix byte 2)
           unknownByte2: 0,
           unknown1: undefined,
-          instRef16x: compDefRef, // verified: BLK_0x2D +0x1C resolves to BLK_0x07.m_Key (refdes)
+          instRef16x: compDefRef,
           unknown2: 0,
           unknown3: 0,
           unknown4: undefined,
           flags: 0,
-          rotation: 0,
+          rotation: rotationMillideg,
           coordX,
           coordY,
           instRef: undefined,
@@ -423,7 +431,7 @@ export class AllegroDb {
           textPtr: 0,
           assemblyPtr: 0,
           areasPtr: 0,
-          unknownPtr1: fpDefRef, // stash fpDefRef here for the v15 assembler path
+          unknownPtr1: fpDefRef,
           unknownPtr2: compDefRef,
         } as AllegroBlock);
         n2D++;
