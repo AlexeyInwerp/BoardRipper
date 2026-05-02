@@ -15,9 +15,25 @@ import (
 )
 
 // allowedConfigKeys is the set of config keys that can be set via the API.
+//
+// Library Sync owns the `sync_*` namespace. The secret password key
+// (`__sync_secret_pass`) is intentionally NOT in this set: it can only be
+// written via PUT /api/sync/config so it never appears as a free-form value
+// in the generic /api/config payload.
 var allowedConfigKeys = map[string]bool{
-	"auto_scan":   true,
-	"library_dir": true,
+	"auto_scan":             true,
+	"library_dir":           true,
+	"sync_enabled":          true,
+	"sync_url":              true,
+	"sync_user":             true,
+	"sync_target":           true,
+	"sync_schedule":         true,
+	"sync_strict":           true,
+	"sync_last_run_iso":     true,
+	"sync_last_run_files":   true,
+	"sync_last_run_bytes":   true,
+	"sync_last_run_exit":    true,
+	"sync_last_run_message": true,
 }
 
 // DatabankHandler serves all /api/databank/* endpoints.

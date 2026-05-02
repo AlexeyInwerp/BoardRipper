@@ -15,6 +15,7 @@ import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewer
 import { getDockviewApi } from '../store/dockview-api';
 import { log } from '../store/log-store';
 import { useObdForBoard } from '../store/obd-store';
+import { LibrarySyncSection } from './LibrarySyncSection';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -1812,6 +1813,8 @@ function LibraryTab() {
 
   return (
     <div className="settings-tab-body" data-testid="settings-library-tab">
+      <LibrarySyncSection />
+
       <div className="settings-section">
         <div className="settings-section-body">
           <h3 style={{ margin: '0 0 8px' }}>OpenBoardData</h3>
