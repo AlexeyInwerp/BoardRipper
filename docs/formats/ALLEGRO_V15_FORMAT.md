@@ -113,6 +113,20 @@ Sample resolved footprint names: `KC_FBMA-L10-160808-301LMT_2P`, `AO4712L_SO8`, 
 ```
 Records are NOT grouped per-footprint within their region; consecutive records reference different `m_FpDefRef` values. Walker scans sequentially with stride 60, validating prefix shape `00 b4 ?? 00`. Records of the same parent footprint can be discovered post-hoc by grouping on `m_FpDefRef`.
 
+### BLK_0x32 placed-pad region — partial RE lead
+
+`BLK_0x2D` field `+0x28` (cross-pool pointer) for the head record (`m_Key=0x07b20784`, `CoordY=-83450`) holds value `0x0881a6e4`. The file contains this u32 at offset `0xb9e8c0`. The 8 bytes immediately following (`+0x04` and `+0x08` from that offset) are:
+
+```
+0xb9e8c0:  e4 a6 81 08   ← m_Key = 0x0881a6e4 ✓
+0xb9e8c4:  2a d3 fd ff   ← i32 = -147670  (looks like x_min of a pad bbox)
+0xb9e8c8:  06 ba fe ff   ← i32 = -83450   (matches BLK_0x2D #1 CoordY exactly)
+```
+
+The matching CoordY is strong evidence this is the placed-pad record for BLK_0x2D #1's first pin. However, bytes immediately preceding (`0xb9e8bc`) are `74 eb 73 08` — *not* the `00 XX YY 00` v15 prefix shape we see on BLK_0x06/2B/2D. KiCad's `BLK_0x32` struct begins with `u8 m_Type` + `LAYER_INFO` (2 bytes) before `m_Key`, so v15 BLK_0x32 may use a 3-byte prefix (matching the v16 layout) instead of the 4-byte aligned prefix used by other v15 block types. The bytes at `0xb9e8bd..0xb9e8bf` (= `eb 73 08`) would then be `m_Type=0xEB`, `LAYER_INFO classCode=0x73, subclass=0x08`. Those values are plausible Allegro layer codes.
+
+This means BLK_0x32's prefix and offset math differs from the rest of pool 1. Needs a dedicated probe + walker — deferred to follow-up.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
