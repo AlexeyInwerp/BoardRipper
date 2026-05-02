@@ -42,8 +42,12 @@ export class AllegroDb {
     this.strings = this.parseStringTable(stream);
     dbg.log(`String table: ${this.strings.size} entries`);
 
-    // Phase 3: Blocks
-    this.blocks = this.parseBlocks(stream);
+    // Phase 3: Blocks. v15 uses a per-type-contiguous layout with no inline
+    // type tags; v16+ uses an interleaved single stream tagged by 1-byte block
+    // type. The two require different walkers.
+    this.blocks = this.header.fmtVer === FmtVer.V_15X
+      ? this.parseBlocksV15(stream)
+      : this.parseBlocks(stream);
     dbg.log(`Blocks: ${this.blocks.size} objects parsed`);
   }
 
@@ -168,6 +172,86 @@ export class AllegroDb {
       }
     }
 
+    return map;
+  }
+
+  /**
+   * v15 block walker. v15 lays out blocks per-type contiguously with no inline
+   * type tag — each LL group sits at a single contiguous file region. Records
+   * within a group share a 4-byte prefix `00 18 0X 00` (where 0X is a per-record
+   * sub-type byte) followed by 8 × u32 of payload.
+   *
+   * Key↔offset relation: `m_Key = file_offset + globalAddend`, with
+   * `globalAddend = LL_0x06.head - string_table_end_offset` (constant per file).
+   * Verified on COMPAL LA-7321P (addend 0x07a82140) and v13tl-0629 (0x081e174c).
+   *
+   * This first cut walks LL_0x06 (component definitions) only. Other LLs
+   * (LL_0x2B, LL_0x07, LL_0x2D, LL_0x32, LL_0x1C…) are deferred to follow-up
+   * commits — assembleBoard will produce an empty parts list until those land.
+   */
+  private parseBlocksV15(stream: AllegroStream): Map<number, AllegroBlock> {
+    const map = new Map<number, AllegroBlock>();
+    const stringTableEndOffset = stream.position;
+    const ll0x06 = this.header.LL_0x06;
+    if (!ll0x06 || ll0x06.head === 0) {
+      dbg.warn('v15: LL_0x06 head is null — no components to walk');
+      return map;
+    }
+
+    // Compute the file-wide key→offset addend from the known head record's position.
+    const globalAddend = ll0x06.head - stringTableEndOffset;
+    dbg.log(`v15: key addend = 0x${globalAddend.toString(16)} (LL_0x06.head 0x${ll0x06.head.toString(16)} - strEnd 0x${stringTableEndOffset.toString(16)})`);
+
+    let nComponents = 0;
+    let key = ll0x06.head;
+    const visited = new Set<number>();
+    const MAX_ITER = 1_000_000;
+    for (let i = 0; i < MAX_ITER && key !== 0 && key !== ll0x06.tail; i++) {
+      if (visited.has(key)) {
+        dbg.warn(`v15: LL_0x06 cycle detected at key 0x${key.toString(16)}, stopping`);
+        break;
+      }
+      visited.add(key);
+
+      const offset = key - globalAddend;
+      if (offset < 0 || offset + 36 > stream.size) {
+        dbg.warn(`v15: LL_0x06 record at key 0x${key.toString(16)} → offset 0x${offset.toString(16)} out of bounds`);
+        break;
+      }
+      stream.seek(offset);
+      const prefix = stream.u32(); // [00 18 0X 00] — sub-type byte at position 2
+      void prefix;
+      const mKey = stream.u32();
+      const mNext = stream.u32();
+      const compDeviceType = stream.u32();
+      const symbolName = stream.u32();
+      const firstInstPtr = stream.u32();
+      const ptrFunctionSlot = stream.u32();
+      const ptrPinNumber = stream.u32();
+      const fields = stream.u32();
+
+      if (mKey !== key) {
+        dbg.warn(`v15: LL_0x06 record at offset 0x${offset.toString(16)} has m_Key 0x${mKey.toString(16)} != expected 0x${key.toString(16)}`);
+        break;
+      }
+
+      map.set(mKey, {
+        blockType: 0x06,
+        offset,
+        key: mKey,
+        next: mNext,
+        compDeviceType,
+        symbolName,
+        firstInstPtr,
+        ptrFunctionSlot,
+        ptrPinNumber,
+        fields,
+        unknown1: undefined, // V_172+ field — n/a for v15
+      });
+      nComponents++;
+      key = mNext;
+    }
+    dbg.log(`v15: walked LL_0x06 → ${nComponents} components`);
     return map;
   }
 }
