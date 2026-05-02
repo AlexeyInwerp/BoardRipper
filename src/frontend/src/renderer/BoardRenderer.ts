@@ -404,8 +404,13 @@ export class BoardRenderer {
 
     // Net line pulse animation — only when there's an active selection with net lines.
     // Skip during active zoom (net lines are hidden, no point redrawing).
+    // Also skip when the page is hidden or the window has lost focus: nobody can
+    // see the pulse, so advancing the phase + forcing a GPU render is pure waste.
+    // Selection changes still draw ghosts via renderSelection(), so the static
+    // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.length > 0;
-    if (!this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
+    const pageVisible = !document.hidden && document.hasFocus();
+    if (pageVisible && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
       const s = renderSettingsStore.settings;
       const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts;
       if (needsPulse) {
