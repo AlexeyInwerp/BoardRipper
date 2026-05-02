@@ -391,15 +391,20 @@ func (e *Engine) fetchManifest(ctx context.Context, cfg runConfig) ([]string, er
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1<<20)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := strings.TrimRight(scanner.Text(), "\r\n")
+		// Trim leading whitespace only; trailing whitespace would be inside
+		// (or at the end of) a filename, which is legal on most filesystems
+		// and definitely the case for copyparty.
+		line = strings.TrimLeft(line, " \t")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Take the first whitespace-separated token to be tolerant of
-		// "<path> <size>" style manifests if the operator decides to add a
-		// size column later.
-		if idx := strings.IndexAny(line, " \t"); idx > 0 {
-			line = line[:idx]
+		// If the operator ever adds a tab-separated size column ("path\tsize"),
+		// drop the trailing column. We explicitly use TAB (not any whitespace)
+		// so paths containing spaces — which copyparty's manifest emits as
+		// "Computers/1 Laptop/foo.pdf" — are preserved verbatim.
+		if idx := strings.LastIndexByte(line, '\t'); idx > 0 {
+			line = strings.TrimRight(line[:idx], " \t")
 		}
 		// Reject path traversal.
 		clean := filepath.ToSlash(filepath.Clean(line))
