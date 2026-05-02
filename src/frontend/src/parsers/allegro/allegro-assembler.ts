@@ -107,13 +107,18 @@ export function assembleBoard(db: AllegroDb): BoardData {
     `${pads.length} pads, ${layerNames.length} layers`
   );
 
+  // For v15, the per-pin connectivity isn't yet decoded so buildNets(parts)
+  // would produce an empty map. Use BLK_0x1B records directly to surface
+  // the net-name list in the Net List panel.
+  const nets = ver === FmtVer.V_15X ? buildV15Nets(db) : buildNets(parts);
+
   return {
     format: 'ALLEGRO_BRD',
     formatVersion: fmtVerLabel(ver),
     outline,
     parts,
     nails: [],
-    nets: buildNets(parts),
+    nets,
     bounds,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
@@ -269,6 +274,24 @@ function extractComponents(
  * yet — BLK_0x07/0x32 walking is the next milestone, after which pins, nets,
  * and proper refdes-from-instance-strings will replace the synthesized values.
  */
+/**
+ * v15-only: build a Net map directly from BLK_0x1B records (instead of from
+ * pin connectivity, which we don't have yet — BLK_0x32 is still pending).
+ * Each named net gets an empty `pinKeys` list. Once BLK_0x32 lands the pins
+ * will populate the net map.
+ */
+export function buildV15Nets(db: AllegroDb): Map<string, { name: string; pinKeys: string[] }> {
+  const m = new Map<string, { name: string; pinKeys: string[] }>();
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x1B) continue;
+    const netBlk = blk as unknown as { netName: number };
+    const name = db.getString(netBlk.netName);
+    if (!name) continue;
+    if (!m.has(name)) m.set(name, { name, pinKeys: [] });
+  }
+  return m;
+}
+
 function extractComponentsV15(
   db: AllegroDb,
   div: number,
