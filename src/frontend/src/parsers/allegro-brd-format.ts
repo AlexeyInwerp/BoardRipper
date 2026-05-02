@@ -6,7 +6,8 @@ import { parseAllegroBRD } from './allegro/allegro-brd-parser';
  *
  * Supports multi-layer boards with components, nets, and traces.
  * The first 4 bytes (uint32 LE) encode the Allegro version as a magic number.
- * Known version families: 16.x (0x0013xxxx) and 17.x (0x0014xxxx).
+ * Known version families: 15.x (0x0012xxxx, detected for clear error only),
+ * 16.x (0x0013xxxx), 17.x (0x0014xxxx), 18.x (0x0015xxxx).
  *
  * Spec: docs/formats/ALLEGRO_BRD_FORMAT.md
  */
@@ -28,8 +29,10 @@ export const AllegroBRDFormat: FormatDescriptor = {
     const magic = header[0] | (header[1] << 8) | (header[2] << 16) | (header[3] << 24);
     const family = (magic >>> 16) & 0xFFFF;
 
-    // General Allegro pattern: high word is 0x0013 (v16.x) or 0x0014 (v17.x)
-    if (family !== 0x0013 && family !== 0x0014 && family !== 0x0015) return false;
+    // General Allegro pattern: high word is 0x0012 (v15.x — caught for a clear
+    // "unsupported version" error inside the parser), 0x0013 (v16.x),
+    // 0x0014 (v17.x), or 0x0015 (v18.x).
+    if (family !== 0x0012 && family !== 0x0013 && family !== 0x0014 && family !== 0x0015) return false;
 
     // Additionally verify bytes[8..11] as uint32 LE == 1
     // This distinguishes Allegro BRD from other formats sharing .brd
