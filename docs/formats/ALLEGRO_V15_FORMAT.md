@@ -141,6 +141,33 @@ Identifying the correct layout requires either:
 - More v15 sample diversity (e.g. find a sample where pin coordinates exactly match a known board's drawn coords from the .cad oracle, then back-solve)
 - Or comparison with a v15.x source (Cadence Allegro Free Physical Viewer, if it can export pin data)
 
+### Verified additional layouts (2026-05-03 push 2)
+
+**`BLK_0x07_COMPONENT_INST` (64 bytes):**
+```
++0x00  prefix `00 1c 00 00`
++0x04  m_Key
++0x08  m_RefDes (32-byte inline NUL-padded ASCII string — v15 inlines refdes
+        directly; v16+ uses a string-table pointer)
++0x28  back-pointer to BLK_0x06 (component def)
++0x2C..0x3C  4 more pointers (unknown role)
+```
+**Verified**: first 5 records resolve to `L124, CLRP1, PQ306, U11, U32` — exact match with the .cad oracle's first 5 part refdes for LA-7321P. Same exact match for v13tl-0629's first 10: `CN5, CN1008, CN6, C1361, C1360, C1359, C1358, C1357, C1356, C1355`.
+
+**BLK_0x2D refinement — layer + rotation decoded:**
+- Prefix byte 2 (the "sub-type counter") is the layer flag: `0x00` = top, `0x01` = bottom. Verified by population split — LA-7321P 1178/731 = 62%/38% top/bottom; v13tl-0629 619/749 = 45%/55%. Realistic for motherboards.
+- `+0x0C u32` = rotation in millidegrees (matches KiCad's pre-V172 m_Rotation semantics). Recognizable values: `0x0002BF20 = 180000 = 180°`, `0x00015F90 = 90000 = 90°`, `0x00041EB0 = 270000 = 270°`.
+- `+0x1C` is the `m_InstRef` pointer to BLK_0x07 — verified by traversing the link and getting the matching refdes.
+
+**LL_0x14 partial probe:**
+
+Head record at file offset `0x47F44C` (LA-7321P). Layout differs from BLK_0x06/2B/2D — first u32 is a back-pointer (not a `00 XX YY 00` prefix), m_Key is at `+0x04`. Stride needs more investigation. Visible coord-like fields:
+- `+0x10`, `+0x14` = signed i32 (e.g. `-120392, 50111`) — likely line segment endpoint
+- `+0x18`, `+0x1C` = signed i32 (e.g. `-120498, 50038`) — second endpoint
+- Coords don't match board coordinate scale (board is ~7800 × 7500 mils, these values are 15× larger) — possibly nanometer-scaled or in a footprint-local scale.
+
+LL_Shapes head `0x0958f3b0` is in yet another pool with addend not yet decoded.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
