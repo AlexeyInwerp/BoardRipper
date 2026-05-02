@@ -127,6 +127,20 @@ The matching CoordY is strong evidence this is the placed-pad record for BLK_0x2
 
 This means BLK_0x32's prefix and offset math differs from the rest of pool 1. Needs a dedicated probe + walker — deferred to follow-up.
 
+**Layout probe attempt (failed):** Tried KiCad's pre-V172 `BLK_0x32_PLACED_PAD` layout starting at `0xb9e8bd` (3-byte prefix `eb 73 08` = m_Type + layerClass + layerSub, then m_Key at +3). Most decoded fields are nonsense:
+- `m_ParentFp` decodes to `0xfb11c400` — should be `0x07b20784` (BLK_0x2D #1's key) if parent
+- `m_NextInFp` decodes to `0x0079616b` — those are ASCII bytes `kay\0`
+- `m_NextInCompInst` decodes to `0x54524150` — ASCII `PART`
+
+The bytes around offset `0xb9e8bd` clearly contain pad-related data (CoordY match is exact, embedded ASCII suggests pin name like `PART#`), but the field-to-byte mapping differs from KiCad's v16+ struct. v15 BLK_0x32 may have:
+- A different prefix size (not 3 bytes, not 4 bytes — something else)
+- Inline string fields (vs v16's pointer-based name lookup)
+- A reordered or expanded set of fields
+
+Identifying the correct layout requires either:
+- More v15 sample diversity (e.g. find a sample where pin coordinates exactly match a known board's drawn coords from the .cad oracle, then back-solve)
+- Or comparison with a v15.x source (Cadence Allegro Free Physical Viewer, if it can export pin data)
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
