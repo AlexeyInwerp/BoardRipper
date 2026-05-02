@@ -275,7 +275,7 @@ function extractComponentsV15(
 ): { parts: Part[]; allPinPositions: Point[] } {
   const parts: Part[] = [];
   const allPinPositions: Point[] = [];
-  // Counter for synthesized refdes per footprint name
+  // Counter for fallback refdes when BLK_0x07 lookup fails
   const fpCounters = new Map<string, number>();
 
   for (const blk of db.blocks.values()) {
@@ -284,7 +284,8 @@ function extractComponentsV15(
       key: number;
       coordX: number;
       coordY: number;
-      unknownPtr1: number;  // fpDefRef stash from db.parseBlocksV15
+      unknownPtr1: number;  // fpDefRef → BLK_0x2B
+      instRef16x: number;   // → BLK_0x07 for refdes (v15-specific link via +0x1C)
     };
 
     // Resolve footprint definition → name + local bbox
@@ -302,10 +303,23 @@ function extractComponentsV15(
     }
     if (!fpName) fpName = 'UNK';
 
-    // Synthesize per-footprint counter so refdes is unique
-    const ix = (fpCounters.get(fpName) ?? 0) + 1;
-    fpCounters.set(fpName, ix);
-    const refdes = ix === 1 ? fpName : `${fpName}_${ix}`;
+    // Real refdes via BLK_0x07 lookup (v15 stores it inline at +0x08)
+    let refdes = '';
+    if (inst.instRef16x) {
+      const compInst = db.blocks.get(inst.instRef16x) as unknown as {
+        blockType: number;
+        v15Refdes?: string;
+      } | undefined;
+      if (compInst && compInst.blockType === 0x07 && compInst.v15Refdes) {
+        refdes = compInst.v15Refdes;
+      }
+    }
+    if (!refdes) {
+      // Fallback when BLK_0x07 link missing — synthesize from footprint name
+      const ix = (fpCounters.get(fpName) ?? 0) + 1;
+      fpCounters.set(fpName, ix);
+      refdes = ix === 1 ? fpName : `${fpName}_${ix}`;
+    }
 
     const ox = inst.coordX / div;
     const oy = inst.coordY / div;
@@ -318,7 +332,7 @@ function extractComponentsV15(
 
     parts.push({
       name: refdes,
-      side: 'top', // v15 layer not yet decoded — assume top until BLK_0x2D layout is finalized
+      side: 'top', // v15 layer not yet decoded — top/bottom may be encoded in BLK_0x2D's prefix sub-type byte
       type: 'smd',
       origin: { x: ox, y: oy },
       pins: [],

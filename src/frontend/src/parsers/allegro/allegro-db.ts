@@ -280,26 +280,89 @@ export class AllegroDb {
       dbg.log(`v15: walked LL_0x2B → ${nFootprints} footprints`);
     }
 
+    // BLK_0x07 (Component instances) — sequential 64-byte records, prefix
+    // `00 1c 00 00`. Refdes is stored INLINE as a fixed 32-byte string field
+    // at +0x08 (NUL-padded), not via a string-table pointer like v16+. Verified
+    // against the .cad oracle: first 5 records resolve to L124, CLRP1, PQ306,
+    // U11, U32 — exact match with .cad's first 5 part refdes.
+    //
+    // BLK_0x07 records are addressable via the same pool-1 global addend as
+    // LL_0x06/0x2B/0x2D. Each BLK_0x06 component definition has a m_FirstInstPtr
+    // pointing to its first BLK_0x07; we walk sequentially from there.
+    //
+    // v15 BLK_0x07 64-byte layout:
+    //   +0x00  prefix `00 1c 00 00`
+    //   +0x04  m_Key
+    //   +0x08  m_RefDes (32-byte inline string, NUL-padded)
+    //   +0x28  back-pointer to BLK_0x06 (component def)
+    //   +0x2C..0x3C  4 more pointers (unknown role)
+    let firstInst07 = Infinity;
+    for (const blk of map.values()) {
+      if (blk.blockType !== 0x06) continue;
+      const c = blk as { firstInstPtr: number };
+      if (c.firstInstPtr > 0 && c.firstInstPtr < firstInst07) {
+        firstInst07 = c.firstInstPtr;
+      }
+    }
+    if (firstInst07 !== Infinity) {
+      const start07 = firstInst07 - globalAddend;
+      let scan07 = start07;
+      let n07 = 0;
+      while (scan07 + 64 <= stream.size) {
+        stream.seek(scan07);
+        const p0 = stream.u8();
+        const p1 = stream.u8();
+        stream.skip(1);
+        const p3 = stream.u8();
+        if (p0 !== 0x00 || p1 !== 0x1c || p3 !== 0x00) break;
+        const mKey = stream.u32();
+        // Refdes inline at +0x08, max 32 bytes, NUL-terminated
+        stream.seek(scan07 + 8);
+        const refdesBytes = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) refdesBytes[i] = stream.u8();
+        let endIdx = 0;
+        while (endIdx < 32 && refdesBytes[endIdx] !== 0) endIdx++;
+        const refdes = new TextDecoder('utf-8', { fatal: false }).decode(refdesBytes.subarray(0, endIdx));
+        // Pointers
+        stream.seek(scan07 + 0x28);
+        const compDefBack = stream.u32();
+        map.set(mKey, {
+          blockType: 0x07,
+          offset: scan07,
+          key: mKey,
+          next: 0, // v15 doesn't chain instances by m_Next
+          unknownPtr1: 0,
+          instRef16x: 0, // v15-specific: not used (we use the inline refdes directly)
+          functionInst: 0,
+          firstPadPtr: 0,
+          unknown3: 0,
+          layer: 0,
+          refDesStrPtr: 0, // v15 inlines refdes — no string-table key. v15Refdes below carries the resolved value.
+          v15Refdes: refdes,         // non-standard field consumed by extractComponentsV15
+          v15CompDefBack: compDefBack,
+        } as unknown as AllegroBlock);
+        n07++;
+        scan07 += 64;
+      }
+      dbg.log(`v15: scanned BLK_0x07 → ${n07} component instances at 0x${start07.toString(16)}..0x${scan07.toString(16)}`);
+    }
+
     // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
     // records, no LL in the header. The records are NOT grouped per footprint
     // — each record's m_FpDefRef (at +0x18) points to whichever BLK_0x2B is
     // its parent. Walker scans starting at min(BLK_0x2B.firstInstPtr) − addend
     // and stops when the prefix byte 1 is no longer 0xB4.
     //
-    // Once read, records are grouped by m_FpDefRef and synthetic m_Next chains
-    // are wired into BLK_0x2B.firstInstPtr → next → next → 0 so the existing
-    // assembler walking pattern works unchanged.
-    //
     // v15 BLK_0x2D 60-byte layout (validated on COMPAL LA-7321P):
     //   +0x00  prefix `00 b4 0X 00`  (0X is per-instance sub-type / counter)
     //   +0x04  m_Key
-    //   +0x08  unknown (zero in record 0)
+    //   +0x08  unknown
     //   +0x0C  unknown
     //   +0x10  i32 m_CoordX (signed mils*divisor)
     //   +0x14  i32 m_CoordY
     //   +0x18  m_FpDefRef → BLK_0x2B
-    //   +0x1C  m_CompDefRef → BLK_0x06 (or unknown ptr)
-    //   +0x20..0x38  pointers / zeros
+    //   +0x1C  m_InstRef → BLK_0x07 (verified — resolves to refdes match in .cad oracle)
+    //   +0x20..0x38  cross-pool pointers (BLK_0x32, BLK_0x14, etc — pending)
     let firstInst2D = Infinity;
     for (const blk of map.values()) {
       if (blk.blockType !== 0x2B) continue;
@@ -346,7 +409,7 @@ export class AllegroDb {
           layer: 0, // v15 layer not yet decoded — default top
           unknownByte2: 0,
           unknown1: undefined,
-          instRef16x: ptr2c, // best-guess pointer to BLK_0x07 (m_TextPtr-ish slot)
+          instRef16x: compDefRef, // verified: BLK_0x2D +0x1C resolves to BLK_0x07.m_Key (refdes)
           unknown2: 0,
           unknown3: 0,
           unknown4: undefined,
