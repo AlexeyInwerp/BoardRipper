@@ -86,6 +86,18 @@ export function parseHeader(stream: AllegroStream): FileHeader {
   const magic = stream.u32();
   const ver = formatFromMagic(magic);
 
+  // V_PRE_V16 (Allegro v15.x — family 0x0012) shares the outer magic shape
+  // (bytes [8..11] == 1) so it routes here, but the binary layout below differs
+  // and would parse to garbage. Surface a clear, actionable error instead of
+  // letting the caller see a misleading "BDV corrupt" downstream.
+  if (ver === FmtVer.V_PRE_V16) {
+    throw new Error(
+      `Allegro v15.x BRD files are not yet supported (magic 0x${magic.toString(16).padStart(8, '0')}). ` +
+      `The current parser supports Allegro v16.0–v18.0. ` +
+      `Workaround: re-save the board from Cadence Allegro as v16+ and reopen.`
+    );
+  }
+
   // Fixed initial fields
   stream.u32(); // m_Unknown1a
   stream.u32(); // m_FileRole
