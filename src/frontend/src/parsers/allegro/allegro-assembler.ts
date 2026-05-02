@@ -13,7 +13,7 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
+import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { FmtVer, LayerClass } from './allegro-types';
@@ -277,17 +277,17 @@ function extractComponents(
 /**
  * v15-only: build a Net map directly from BLK_0x1B records (instead of from
  * pin connectivity, which we don't have yet — BLK_0x32 is still pending).
- * Each named net gets an empty `pinKeys` list. Once BLK_0x32 lands the pins
- * will populate the net map.
+ * Each named net gets an empty `pinIndices` list. Once BLK_0x32 lands the
+ * pins will populate the net map.
  */
-export function buildV15Nets(db: AllegroDb): Map<string, { name: string; pinKeys: string[] }> {
-  const m = new Map<string, { name: string; pinKeys: string[] }>();
+export function buildV15Nets(db: AllegroDb): Map<string, Net> {
+  const m = new Map<string, Net>();
   for (const blk of db.blocks.values()) {
     if (blk.blockType !== 0x1B) continue;
     const netBlk = blk as unknown as { netName: number };
     const name = db.getString(netBlk.netName);
     if (!name) continue;
-    if (!m.has(name)) m.set(name, { name, pinKeys: [] });
+    if (!m.has(name)) m.set(name, { name, pinIndices: [] });
   }
   return m;
 }
