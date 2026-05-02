@@ -127,10 +127,18 @@ The matching CoordY is strong evidence this is the placed-pad record for BLK_0x2
 
 This means BLK_0x32's prefix and offset math differs from the rest of pool 1. Needs a dedicated probe + walker — deferred to follow-up.
 
-**Layout probe attempt (failed):** Tried KiCad's pre-V172 `BLK_0x32_PLACED_PAD` layout starting at `0xb9e8bd` (3-byte prefix `eb 73 08` = m_Type + layerClass + layerSub, then m_Key at +3). Most decoded fields are nonsense:
+**Layout probe attempt (failed but informative):** Tried KiCad's pre-V172 `BLK_0x32_PLACED_PAD` layout starting at `0xb9e8bd` (3-byte prefix `eb 73 08` = m_Type + layerClass + layerSub, then m_Key at +3). Most decoded fields are nonsense — but the nonsense is *itself* a clue:
 - `m_ParentFp` decodes to `0xfb11c400` — should be `0x07b20784` (BLK_0x2D #1's key) if parent
 - `m_NextInFp` decodes to `0x0079616b` — those are ASCII bytes `kay\0`
 - `m_NextInCompInst` decodes to `0x54524150` — ASCII `PART`
+- Bytes at +0x2c through +0x33 spell `"PART#\0\0\0\0"` — a pin/pad name fragment
+
+**The ASCII fragments are pin names embedded inline** (similar to how BLK_0x07 inlines refdes). v15 `BLK_0x32` likely has a *variable-length* record with one or more NUL-terminated pin-name strings — not the fixed-stride layout v16+ uses with string-table pointers. A walker for v15 BLK_0x32 needs to:
+1. Read fixed-width header fields (m_Key, padCoordX, padCoordY, flags)
+2. Read inline pin-name string(s), advancing past the NUL terminator
+3. Resume reading fixed fields after string padding
+
+The first BLK_0x32 record's `padCoordY = -83450` matches L124's CoordY exactly, confirming the region IS pad data — just stored differently than the v16+ layout.
 
 The bytes around offset `0xb9e8bd` clearly contain pad-related data (CoordY match is exact, embedded ASCII suggests pin name like `PART#`), but the field-to-byte mapping differs from KiCad's v16+ struct. v15 BLK_0x32 may have:
 - A different prefix size (not 3 bytes, not 4 bytes — something else)
