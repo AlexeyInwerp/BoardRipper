@@ -60,6 +60,7 @@ export function LibrarySyncSection() {
     <>
       <SyncConfigCard />
       <SyncProgressCard />
+      <SyncErrorsCard />
       <IndexingStatusCard />
       <UpdateStatusCard />
     </>
@@ -359,6 +360,56 @@ function Bar({ value }: { value: number }) {
   return (
     <div style={{ height: 2, background: 'var(--border-color, #333)', margin: '4px 0 8px' }}>
       <div style={{ width: `${Math.min(100, Math.max(0, value))}%`, height: '100%', background: '#5b8def', transition: 'width 0.25s linear' }} />
+    </div>
+  );
+}
+
+// ---- 2b. Recent errors -----------------------------------------------------
+
+function SyncErrorsCard() {
+  const { status } = useLibrarySync();
+  const errs = status.recent_errors || [];
+  if (errs.length === 0 && status.errors === 0) return null;
+
+  return (
+    <div className="settings-section">
+      <div className="settings-section-body">
+        <h3 style={{ margin: '0 0 8px' }}>
+          Recent sync errors
+          <span style={{ marginLeft: 8, fontSize: 12, color: '#c33' }}>
+            {status.errors > 0 ? `${status.errors} total` : ''}
+          </span>
+        </h3>
+        {errs.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#888' }}>
+            ({status.errors} earlier — buffer cleared on next run)
+          </div>
+        ) : (
+          <div style={{
+            background: 'var(--bg-primary, #0a0a0a)',
+            border: '1px solid var(--border-color, #333)',
+            maxHeight: 240,
+            overflow: 'auto',
+            fontFamily: 'var(--font-mono, monospace)',
+            fontSize: 11,
+            padding: 8,
+          }}>
+            {errs.slice().reverse().map((e, i) => (
+              <div key={`${e.time_iso}-${i}`} style={{ padding: '2px 0', borderBottom: i < errs.length - 1 ? '1px solid var(--border-color, #222)' : 'none' }}>
+                <span style={{ color: '#888' }}>{new Date(e.time_iso).toLocaleTimeString()}</span>
+                {' '}
+                <span style={{ color: '#c33' }}>✕</span>
+                {' '}
+                <span style={{ color: '#ccc' }}>{e.path}</span>
+                <div style={{ color: '#c66', paddingLeft: 8 }}>{e.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>
+          Showing last {errs.length} of {status.errors}. Full log: <code>docker logs boardripper</code> on the NAS.
+        </div>
+      </div>
     </div>
   );
 }

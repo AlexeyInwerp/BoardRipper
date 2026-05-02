@@ -14,6 +14,12 @@ export interface SyncConfig {
   strict: boolean;
 }
 
+export interface SyncErrorEntry {
+  time_iso: string;
+  path: string;
+  message: string;
+}
+
 export interface SyncStatus {
   running: boolean;
   phase: 'idle' | 'manifest' | 'diff' | 'download' | 'done' | 'error' | 'cancelled';
@@ -31,6 +37,7 @@ export interface SyncStatus {
   last_run_exit?: number;
   last_run_message?: string;
   next_run_at_iso?: string;
+  recent_errors?: SyncErrorEntry[];
 }
 
 export interface TargetCheck {
