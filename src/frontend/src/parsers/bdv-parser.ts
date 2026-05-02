@@ -180,10 +180,27 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
   // in the top-parent case and assign the pin to the side opposite the
   // part's declared side (through-hole exits on the back of the component).
   //
-  // The mirror axis must be the declared BRDOUT height — earlier revisions
-  // used max(partY1, partY2), which undershoots by ~80 mils and scatters
-  // mounting-hole pins away from their holes.
-  const mirrorY = sec.brdout.height > 0 ? sec.brdout.height : 0;
+  // The mirror axis is the declared BRDOUT height when present — earlier
+  // revisions used per-part max(partY1, partY2), which undershoots by ~80 mils
+  // and scatters mounting-hole pins away from their holes.
+  //
+  // When BRDOUT is degenerate (creator 1457685 = DAG3BEMBCD0 ships
+  // `BRDOUT: 5 0 0`), fall back to the global max part Y. Since the topmost
+  // part bbox sits within a few mils of the board edge, this approximates the
+  // true axis closely enough that mirrored pins land inside their parent
+  // part's bounds. Without this fallback, top-side parts with side=0
+  // through-hole pins (notably connectors like CN1001/CN1014/CN2C/CN2U) skip
+  // the mirror entirely, scattering pins to the opposite end of the board and
+  // stretching the part bbox by 5×–137×.
+  let mirrorY = sec.brdout.height > 0 ? sec.brdout.height : 0;
+  if (mirrorY === 0 && rawParts.length > 0) {
+    let maxPartY = 0;
+    for (const rp of rawParts) {
+      if (rp.y1 > maxPartY) maxPartY = rp.y1;
+      if (rp.y2 > maxPartY) maxPartY = rp.y2;
+    }
+    mirrorY = maxPartY;
+  }
 
   const parts: Part[] = [];
   for (let i = 0; i < rawParts.length; i++) {
