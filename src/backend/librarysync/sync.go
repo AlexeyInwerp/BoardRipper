@@ -304,8 +304,12 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 		manifestSet[entry] = true
 		local := filepath.Join(cfg.Target, filepath.FromSlash(entry))
 		info, err := os.Stat(local)
-		if err == nil && !info.IsDir() && info.Size() > 0 {
-			// Already present locally — skip.
+		if err == nil && !info.IsDir() {
+			// Already present locally (any size). The manifest carries no size
+			// column, so we can't tell whether a non-zero local file is stale
+			// vs the source — and crucially, some source files legitimately
+			// have content-length 0 (placeholders), so requiring `Size() > 0`
+			// would cause those to be re-queued every single run.
 			continue
 		}
 		queue = append(queue, queueEntry{path: entry})
