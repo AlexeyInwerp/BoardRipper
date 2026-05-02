@@ -168,6 +168,20 @@ Head record at file offset `0x47F44C` (LA-7321P). Layout differs from BLK_0x06/2
 
 LL_Shapes head `0x0958f3b0` is in yet another pool with addend not yet decoded.
 
+### byte1=0x32 record probe
+
+A v15 record with prefix byte 1 = `0x32` exists at file offset `0x47A28` for LA-7321P. Layout:
+- prefix `00 32 00 00`
+- +0x04 m_Key = `0x07b1fb90` (pool 1 keys but addend doesn't match — this record's m_Key/offset relation differs from BLK_0x06/2B/2D/0x07)
+- +0x08 = `0x07b3ca38` (pointer)
+- +0x28 begins a BLK_0x2B record (`0003ac00` prefix), implying byte1=0x32 record is exactly 40 bytes
+
+These records do NOT form contiguous runs (search found only this single occurrence). Probably scattered as sub-records or pre-amble entries. **Not the same as BLK_0x32_PLACED_PAD** despite the matching byte1.
+
+### byte1=0x20 record probe (BLK_0x06.m_PtrPinNumber destination)
+
+BLK_0x06 #0's `m_PtrPinNumber = 0x0957cad8` resolves at file offset `0x1368e48` to a record with prefix `00 20 00 00`. Bytes after m_Key contain `0x32 = 50` — possibly pin count (though SI7840DP_SO8 is an 8-pin part, so 50 doesn't fit as count for that specific component). Could be a "pin number list" header pointing to BLK_0x08 records elsewhere. Pool 0x095 — different addend from pool 1.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
