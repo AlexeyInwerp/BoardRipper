@@ -41,28 +41,85 @@ The header and string table layout for v15 are **identical to v16/v17 pre-V172**
 
 **Implication:** the existing pre-V180 codepath in `parseHeader()` and `parseStringTable()` handles v15 unchanged. Phase 1 (magic registration) and Phase 2 (string table) of the implementation plan collapse to a 5-line change in `formatFromMagic`.
 
-### What diverges — block region
+### Block region — per-type contiguous layout
 
-After the string table ends, the v16+ parser expects byte 0 of the next u32 to be a block-type tag in `0x01..0x3C`. In our v15 files, the byte at that position is `0x00`, which the parser interprets as "end of objects" and stops with `blocks.size = 0`.
+v16+ stores blocks as a single interleaved stream `[type-byte][payload][type-byte][payload]...`. v15 stores blocks **per-type contiguously**: each linked-list group occupies a single contiguous file region, no inline type tag, fixed stride per region.
 
-Raw bytes at the start of the v15 block region for LA-7321P (string table ends at file offset `0x7EE0`):
+Each v15 block record has a 4-byte prefix `[0x00][typeTag][subType][0x00]` followed by the same field layout KiCad documents for the equivalent v16 pre-V172 struct (the v16 struct's 1-byte type-tag + 2-byte filler maps to v15's 4-byte prefix).
 
+**Block-type signatures observed (byte 1 of prefix = v15 type tag):**
+
+| Tag (b1) | KiCad type | Stride | Count (LA-7321P) | Count (v13tl-0629) |
+|---|---|---|---|---|
+| `0x18` | `BLK_0x06_COMPONENT` | 36 | 158 | 443 |
+| `0xAC` | `BLK_0x2B_FOOTPRINT_DEF` | 68 | 219 | 703 |
+| `0xB4` | `BLK_0x2D_FOOTPRINT_INST` (placed) | 60 | 1909 | 1368 |
+| `0xB6` | sibling of `0xB4` (placement variant) | 60 | small | small |
+| `0x32` `0x52` `0x6C` `0x70` `0xC0` `0xDC` etc. | unmapped — future RE | varies | n/a | n/a |
+
+(Counts vs. CAD oracle: 1909 / 1914 placements = 99.7% match for LA-7321P.)
+
+### Key↔offset addend
+
+Each "key pool" in the file has a constant addend such that `m_Key = file_offset + addend`. We've identified one pool that contains LL_0x06, LL_0x2B, LL_0x1B_Nets, LL_0x1C, LL_0x1D_0x1E_0x1F: addend = `LL_0x06.head − string_table_end_offset`. For LA-7321P this is `0x07AD8140`; for v13tl-0629 it's `0x081E174C`.
+
+Other LLs (`LL_0x04`, `LL_0x14`, `LL_0x24_0x28`, `LL_0x03_0x30`, `LL_0x0A`, `LL_0x38`, `LL_0x2C`, `LL_0x0C_2`) have **different** addends — v15 appears to use multiple memory pools. Per-pool addend can be discovered by searching the file for the head-key u32 pattern; the location at offset `O+4` (where `O+0..O+3` is a valid prefix) gives a record's m_Key, so `addend = head_key − O`.
+
+### Verified record layouts
+
+**`BLK_0x06_COMPONENT` (36 bytes):**
 ```
-0x7ee0:  00 18 02 00  20 00 ae 07  44 00 ae 07  43 2b 3f 05
-0x7ef0:  43 2b 3f 05  d8 4a ae 07  58 16 ae 07  d8 ca 57 09
-0x7f00:  00 00 00 00  00 18 03 00  44 00 ae 07  68 00 ae 07
-0x7f10:  2e 2b 3f 05  2e 2b 3f 05  18 4b ae 07  ac 16 ae 07
-0x7f20:  a8 cc 56 09  00 00 00 00  00 18 03 00  68 00 ae 07
++0x00  prefix `00 18 0X 00`
++0x04  m_Key             (u32)
++0x08  m_Next            (u32)
++0x0C  m_CompDeviceType  (u32, → string)
++0x10  m_SymbolName      (u32, → string; same value as DeviceType in observed records)
++0x14  m_FirstInstPtr    (u32, → BLK_0x07; cross-pool pointer)
++0x18  m_PtrFunctionSlot (u32)
++0x1C  m_PtrPinNumber    (u32, → BLK_0x08)
++0x20  m_Fields          (u32, → BLK_0x03)
 ```
+Sample resolved DeviceType strings from LA-7321P: `SI7840DP-T1-E3_SO8`, `PD10943-T7_SOD323-2`, `R0603_SHORT`, `M25P80-VMW6TP_SO8`.
 
-Compare to v17 Quanta Z8I's block region start:
+**`BLK_0x2B_FOOTPRINT_DEF` (68 bytes):**
 ```
-06 00 02 00  08 80 94 26  11 80 94 26  d2 2f 6c 7b ...
++0x00  prefix `00 ac 01 00`
++0x04  m_Key
++0x08  m_FpStrRef        (u32, → string for footprint name)
++0x0C  m_Unknown1
++0x10  m_Coords[4]       (4× s32, signed footprint-local bbox)
++0x20  m_Next
++0x24  m_FirstInstPtr    (u32, → BLK_0x2D)
++0x28..0x40  7×u32 unknown pointers (last 2 typically 0)
 ```
+Sample resolved footprint names: `KC_FBMA-L10-160808-301LMT_2P`, `AO4712L_SO8`, `MX25L1606EM2I-12G_SO8`.
 
-v17's first byte `0x06` = `BLK_0x06_COMPONENT`. v15 starts with `0x00`, then `0x18 0x02 0x00`, which doesn't match any documented block-type tag.
+**`BLK_0x2D_FOOTPRINT_INST` (60 bytes):**
+```
++0x00  prefix `00 b4 0X 00`  (0X is per-instance sub-type / index)
++0x04  m_Key
++0x08  unknown (zero in head record; nonzero in others — possibly m_Flags + m_Rotation)
++0x0C  unknown
++0x10  m_CoordX (s32, board-absolute, mils × divisor)
++0x14  m_CoordY (s32)
++0x18  m_FpDefRef        (u32, → BLK_0x2B parent footprint definition)
++0x1C  m_CompDefRef      (u32, → BLK_0x06 component definition)
++0x20  ?                  (u32, pool-1 — possibly m_GraphicPtr or m_InstRef → BLK_0x07)
++0x24  ?                  (u32, pool 0x086 — different pool)
++0x28  ?                  (u32, pool 0x088 — possibly m_FirstPadPtr → BLK_0x32)
++0x2C  zero
++0x30  ?                  (u32, pool 0x087 — possibly m_TextPtr → BLK_0x30)
++0x34..0x38  zero
+```
+Records are NOT grouped per-footprint within their region; consecutive records reference different `m_FpDefRef` values. Walker scans sequentially with stride 60, validating prefix shape `00 b4 ?? 00`. Records of the same parent footprint can be discovered post-hoc by grouping on `m_FpDefRef`.
 
-The repeating pattern in v15 (`00 18 0X 00 ...` every ~32–36 bytes, separated by `00 00 00 00`) suggests fixed-size records with a leading 4-byte header where the third byte (0x02, 0x03, …) is a counter or sub-type. **This is a v15-specific data structure that does not exist in v16+ and is the only remaining RE target.**
+### Open questions (deferred RE)
+
+1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
+2. **BLK_0x32 (placed pads) location** — pin geometry. Cross-pool pointers from BLK_0x2D's `+0x24/+0x28/+0x30` fields land in pools 0x086/0x087/0x088, which suggests a separate region with its own addend. Identification requires a search-and-validate probe per candidate pool.
+3. **BLK_0x07 (component instances) location** — needed for real refdes (currently synthesized as `<fpName>_<index>`).
+4. **LL_0x1B_Nets walking** — same key pool as LL_0x06 (verified); record layout TBD.
+5. **Outline + silkscreen** — `LL_Shapes` and `LL_0x14` LL_0x14 head 0x07fbdb50 lands in a different addend (file offset 0x47F44C, pool addend 0x07B5E704).
 
 ### Probe methodology used
 
