@@ -15,6 +15,7 @@ import (
 	"boardripper/boarddb"
 	"boardripper/databank"
 	"boardripper/handlers"
+	"boardripper/librarysync"
 	"boardripper/obd"
 	"boardripper/updater"
 )
@@ -152,6 +153,21 @@ func main() {
 	mux.HandleFunc("POST /api/update/check", updateHandler.Check)           // hits GitHub, can take 30s+
 	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)           // long-running — Docker pull + restart
 	mux.HandleFunc("GET /api/update/progress", read(updateHandler.Progress))
+
+	// Library Sync API routes — periodic mirror of an upstream HTTP/WebDAV
+	// library into LIBRARY_DIR. The engine + scheduler share one rootCtx so a
+	// graceful shutdown cancels both.
+	syncRootCtx, syncRootCancel := context.WithCancel(context.Background())
+	defer syncRootCancel()
+	syncEngine := librarysync.New(db)
+	syncHandler := handlers.NewSyncHandler(db, syncEngine)
+	mux.HandleFunc("/api/sync/config", write(syncHandler.Config))     // GET + PUT
+	mux.HandleFunc("POST /api/sync/test", write(syncHandler.Test))
+	mux.HandleFunc("POST /api/sync/start", write(syncHandler.Start))
+	mux.HandleFunc("POST /api/sync/stop", write(syncHandler.Stop))
+	mux.HandleFunc("GET /api/sync/status", read(syncHandler.Status))
+	mux.HandleFunc("GET /api/sync/check-target", read(syncHandler.CheckTarget))
+	go librarysync.Run(syncRootCtx, syncEngine, db)
 
 	// OpenBoardData (OBD) API routes — independent filesystem-backed data layer
 	// rooted at <library_root>/.boardripper/openboarddata/. The store is nil

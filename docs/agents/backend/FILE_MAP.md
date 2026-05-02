@@ -1,7 +1,7 @@
 # Backend Agent — File Map
 
-**git_hash:** a5a2f8e
-**last_updated:** 2026-04-15
+**git_hash:** 99e08c6
+**last_updated:** 2026-05-02
 
 ## Staleness Check
 
@@ -15,17 +15,26 @@ git log --oneline a7bbb79..HEAD -- src/backend/ "Board Database/"
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `main.go` | 159 | Server startup, route registration, static file serving, SPA fallback |
+| `main.go` | 283 | Server startup, route registration, static file serving, SPA fallback, librarysync engine + scheduler |
 
 ### Handlers (`handlers/`)
 
 | File | Lines | Purpose | Key Routes |
 |------|-------|---------|-----------|
 | `files.go` | 228 | File upload/list/get/delete | POST /api/upload, GET /api/files, DELETE /api/files/{name} |
-| `databank.go` | 538 | Library management, scanning, PDF text extraction | POST /api/databank/scan, GET /api/databank/files, GET /api/databank/search, GET /api/databank/tree |
+| `databank.go` | 667 | Library management, scanning, PDF text extraction | POST /api/databank/scan, GET /api/databank/files, GET /api/databank/search, GET /api/databank/tree |
 | `boards.go` | 64 | Board reference DB resolution | GET /api/boards/resolve, GET /api/boards/stats |
 | `update.go` | 96 | Self-update status/check/apply/SSE | GET /api/update/status, POST /api/update/check, POST /api/update/apply |
+| `sync.go` | 361 | Library sync (WebDAV pull) config + control | GET/PUT /api/sync/config, POST /api/sync/{test,start,stop}, GET /api/sync/status, GET /api/sync/check-target |
 | `handlers_test.go` | 73 | Path traversal, upload validation tests |
+
+### Library Sync (`librarysync/`)
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `sync.go` | 529 | `Engine` (Status struct, Start/Stop/Status, manifest→diff→download goroutine, .part atomic rename, optional strict prune, persists last_run_*) |
+| `scheduler.go` | 109 | 60s ticker, computes next-due slot for daily/weekly/monthly@03:00 local, fires Engine.Start when due |
+| `client.go` | 69 | Stdlib-only HTTP helper: Basic-auth `fetch`, `pathEncode`, `joinURL` |
 
 ### Databank (`databank/`)
 

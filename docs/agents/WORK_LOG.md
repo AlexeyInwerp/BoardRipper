@@ -39,3 +39,12 @@ Append-only. Most recent entries at the bottom.
 **Reasoning:** RenderLayer is the minimum-invasive way to override render order without refactoring the viewport/scene/butterfly layout or changing net-line coord computation (net lines span scene.root and butterflyRoot so they can't move into either). Unconditional pin-label raise simplifies renderSelection — one path instead of three with ambient-dim/effective-net gates.
 **Commit:** uncommitted
 **Files touched:** src/frontend/src/renderer/BoardRenderer.ts, src/frontend/src/store/render-settings.ts, docs/agents/renderer/FILE_MAP.md, docs/agents/renderer/MEMORY.md
+
+
+---
+
+## 2026-05-02 11:00 — backend + ui
+**Action:** Added Library Sync feature — pull schematics/PDFs from a WebDAV/CopyParty source into the library folder. Backend: new `librarysync` package (Engine + scheduler + http client, stdlib only), `handlers/sync.go` with 6 routes, extended `allowedConfigKeys` with 11 sync keys (password key `__sync_secret_pass` is gated to PUT /api/sync/config only and never returned by GET). Wired engine + scheduler in main.go. Frontend: new `LibrarySyncSection.tsx` injected at top of Settings → Library tab, plus `librarysync-store.ts` and `useLibrarySync.ts` hook. Section also surfaces (read-only) the existing scanner + self-update status so the user has one place for "background activity". RW/RO target check via /api/sync/check-target.
+**Reasoning:** Mirrors the schem-sync-portal design we built externally last week, but as a first-class BR feature instead of a sidecar. No new go.mod deps (plain net/http with Basic auth + stdlib `syscall.Statfs` for free-bytes). `strict_mirror=false` by default so cron-driven runs never delete local files; user must opt in. Smoke-tested live: GET/PUT config, password redaction, test (manifest_bytes=1024 OK), start/diff/cancel cycle clean.
+**Commit:** to be committed in next git step (frontend + backend together)
+**Files touched:** src/backend/librarysync/{client.go,scheduler.go,sync.go} (new), src/backend/handlers/sync.go (new), src/backend/handlers/databank.go, src/backend/main.go, src/frontend/src/store/librarysync-store.ts (new), src/frontend/src/hooks/useLibrarySync.ts (new), src/frontend/src/panels/LibrarySyncSection.tsx (new), src/frontend/src/panels/SettingsPanel.tsx, docs/agents/backend/FILE_MAP.md
