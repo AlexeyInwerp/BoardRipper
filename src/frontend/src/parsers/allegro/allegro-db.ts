@@ -280,6 +280,32 @@ export class AllegroDb {
       dbg.log(`v15: walked LL_0x2B → ${nFootprints} footprints`);
     }
 
+    // LL_0x1B_Nets (Net definitions) — 52-byte records, prefix `00 6c 00 00`,
+    // pool-1 addend. m_Next at +0x08, net name string-key at +0x0C.
+    const ll0x1B = this.header.LL_0x1B_Nets;
+    if (ll0x1B && ll0x1B.head !== 0) {
+      const nNets = this.walkV15LL(stream, ll0x1B, globalAddend, map, (s, offset, mKey, _prefix) => {
+        const next = s.u32();
+        const netName = s.u32();
+        // Skip remaining 9 u32s (stride 52 = 4 prefix + 13 u32 = 4 + 52)
+        // Actually: 4 prefix + m_Key(4) + next(4) + name(4) + 9*4 = 4+4+4+4+36 = 52 ✓
+        const flags = s.u32();
+        for (let i = 0; i < 8; i++) s.u32();
+        return {
+          block: {
+            blockType: 0x1B,
+            offset,
+            key: mKey,
+            next,
+            netName,
+            flags,
+          } as unknown as AllegroBlock,
+          next,
+        };
+      });
+      dbg.log(`v15: walked LL_0x1B_Nets → ${nNets} nets`);
+    }
+
     // BLK_0x07 (Component instances) — sequential 64-byte records, prefix
     // `00 1c 00 00`. Refdes is stored INLINE as a fixed 32-byte string field
     // at +0x08 (NUL-padded), not via a string-table pointer like v16+. Verified
