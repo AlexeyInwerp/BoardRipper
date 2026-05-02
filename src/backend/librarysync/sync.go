@@ -260,15 +260,33 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 	}
 
 	// Phase 2: diff
+	// Walk the manifest, stat each entry locally, build the download queue.
+	// We deliberately do NOT pre-compute bytes_total via HEAD requests — for a
+	// 100k-entry manifest that would mean 100k serial HTTPS round-trips before
+	// a single file gets downloaded. bytes_done populates progressively from
+	// Content-Length as each download completes, which is what users actually
+	// watch. (rclone behaves the same way.)
 	e.setPhase("diff", "diffing manifest against local target", "")
 
 	type queueEntry struct {
 		path string
-		size int64 // -1 if unknown
 	}
 	var queue []queueEntry
 	manifestSet := make(map[string]bool, len(manifest))
-	for _, entry := range manifest {
+	totalEntries := len(manifest)
+	const diffProgressEvery = 1000
+	for i, entry := range manifest {
+		if i%diffProgressEvery == 0 {
+			if ctx.Err() != nil {
+				e.setPhase("cancelled", "cancelled during diff", "")
+				exitCode = 130
+				exitMessage = "cancelled"
+				return
+			}
+			e.mu.Lock()
+			e.status.Description = fmt.Sprintf("diffing %d / %d (%d queued so far)", i, totalEntries, len(queue))
+			e.mu.Unlock()
+		}
 		manifestSet[entry] = true
 		local := filepath.Join(cfg.Target, filepath.FromSlash(entry))
 		info, err := os.Stat(local)
@@ -276,26 +294,13 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 			// Already present locally — skip.
 			continue
 		}
-		queue = append(queue, queueEntry{path: entry, size: -1})
-	}
-
-	// Best-effort HEAD probe to estimate total bytes. Done sequentially, but
-	// any single failure is silently ignored — bytes_total is informational.
-	var bytesTotal int64
-	for i := range queue {
-		if ctx.Err() != nil {
-			break
-		}
-		size, ok := headSize(ctx, joinURL(cfg.URL, queue[i].path), cfg.User, cfg.Password)
-		if ok {
-			queue[i].size = size
-			bytesTotal += size
-		}
+		queue = append(queue, queueEntry{path: entry})
 	}
 
 	e.mu.Lock()
 	e.status.FilesTotal = int64(len(queue))
-	e.status.BytesTotal = bytesTotal
+	e.status.BytesTotal = 0 // populated progressively by Content-Length on download
+	e.status.Description = fmt.Sprintf("queued %d / %d files for download", len(queue), totalEntries)
 	e.mu.Unlock()
 
 	if ctx.Err() != nil {
@@ -409,28 +414,6 @@ func (e *Engine) fetchManifest(ctx context.Context, cfg runConfig) ([]string, er
 	return entries, nil
 }
 
-// headSize returns the Content-Length advertised by a HEAD request, or
-// (0,false) if anything goes wrong. Failures are silently ignored — the
-// bytes_total field is informational.
-func headSize(ctx context.Context, url, user, pass string) (int64, bool) {
-	resp, err := fetch(ctx, http.MethodHead, url, user, pass)
-	if err != nil {
-		return 0, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, false
-	}
-	cl := resp.Header.Get("Content-Length")
-	if cl == "" {
-		return 0, false
-	}
-	v, err := strconv.ParseInt(cl, 10, 64)
-	if err != nil || v < 0 {
-		return 0, false
-	}
-	return v, true
-}
 
 // downloadFile fetches <cfg.URL>/<entry> and writes it atomically to
 // <cfg.Target>/<entry>. Returns the number of bytes written on success.
