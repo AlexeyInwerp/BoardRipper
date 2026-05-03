@@ -490,64 +490,49 @@ export class AllegroDb {
       if (name && mKey !== 0) directNetNames.set(mKey, name);
     }
 
-    // ── byte1=0x10 NetAssign (Route 1) — VARIANT-GATED ───────────────────
+    // ── byte1=0x10 NetAssign (Route 1) ───────────────────────────────────
     //
-    // We've identified two v15 sub-variants with INCOMPATIBLE byte1=0x10
-    // semantics. Per-component oracle comparison (CAD = ground truth):
-    //
-    //   15.5.7  (magic 0x00120A06, e.g. COMPAL LA-7321P):
-    //     byte1=0x10 IS a per-pad NetAssign. +0x10 → C8 padK,
-    //     +0x0C → BLK_0x6c netK. Route 1 gives 100% precision.
-    //
-    //   15.5.2  (magic 0x00120206, e.g. v13tl-0629):
-    //     byte1=0x10 records have the same field shape but they are NOT
-    //     per-pad NetAssigns — applying Route 1 produces 0 correct nets
-    //     and 221 false attributions. The actual per-pad net mechanism
-    //     for 15.5.2 is undecoded (next-session work).
-    //
-    // CAD is source of truth. Better to ship NO nets on 15.5.2 than wrong
-    // ones. The decoder for that sub-variant is pending.
-    const magic15 = (this.header.magic & 0xFFFFFF00) >>> 0;
-    const route5Enabled = magic15 === 0x00120A00;          // 15.5.7 only
-    const netRoutesEnabled = magic15 === 0x00120A00;       // 15.5.7 only
-
+    // Per-pad NetAssign: forward link byte1=0x10.+0x10 → BLK_0xC8 padK,
+    // byte1=0x10.+0x0C → BLK_0x6c netK. Works on both 15.5.2 and 15.5.7
+    // sub-variants. (Earlier session disabled this on 15.5.2 due to a
+    // slash-strip bug in the test harness — the v13tl oracle has `/NET`
+    // prefixes everywhere, the parser correctly strips them, but the
+    // harness was comparing stripped-parser to unstripped-oracle and
+    // reporting 0 correct. Fixed in commit-after-97cd6f8.)
     const padGeoToNetName = new Map<number, string>();
-    if (netRoutesEnabled) {
-      let netAssignTotal = 0;
-      let netAssignToC8 = 0;
-      for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
-        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
-        netAssignTotal++;
-        const padGeoKey = peekU32(off + 0x10);
-        const netKey = peekU32(off + 0x0C);
-        if (!blkC8Records.has(padGeoKey)) continue;
-        netAssignToC8++;
-        const netName = directNetNames.get(netKey);
-        if (netName) padGeoToNetName.set(padGeoKey, netName);
-      }
-      dbg.log(`v15: byte1=0x10 NetAssign (Route 1) — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size}`);
-    } else {
-      dbg.log(`v15: net routes SKIPPED for 15.5.2 sub-variant (magic 0x${magic15.toString(16).padStart(8,'0')}) — per-pad mechanism undecoded`);
+    let netAssignTotal = 0;
+    let netAssignToC8 = 0;
+    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+      netAssignTotal++;
+      const padGeoKey = peekU32(off + 0x10);
+      const netKey = peekU32(off + 0x0C);
+      if (!blkC8Records.has(padGeoKey)) continue;
+      netAssignToC8++;
+      const netName = directNetNames.get(netKey);
+      if (netName) padGeoToNetName.set(padGeoKey, netName);
     }
+    dbg.log(`v15: byte1=0x10 NetAssign (Route 1) — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size}`);
 
     // ── Route 5: BLK_0xC8 back-link to byte1=0x10 NetAssign ──────────────
     //
-    // Each BLK_0xC8 (pad geometry) record has a +0x0C field that *can* point
-    // to a byte1=0x10 NetAssign. On the Allegro 15.5.7 sub-variant
-    // (magic 0x00120A06, e.g. COMPAL LA-7321P) this is a 1:1 back-pointer
-    // to the pad's own NetAssign — Route 1 (forward link) covers ~2k pads
-    // but Route 5 covers ~6.7k. Per-component oracle test:
+    // Each BLK_0xC8 (pad geometry) record has a +0x0C field that points to
+    // a byte1=0x10 NetAssign. Multiple BLK_0xC8 records in the same pad-
+    // stack reference the same NetAssign, so this back-link covers ALL
+    // layers of every pad with a single per-stack NetAssign. Works on
+    // both v15 sub-variants.
     //
-    //   Route 1 only:        100% precision,  5.4% perfect components
-    //   Route 5 added:       100% precision, 92.7% perfect components
+    // Per-component oracle test (CAD = ground truth):
     //
-    // On the Allegro 15.5.2 sub-variant (magic 0x00120206, e.g. v13tl-0629)
-    // the same back-link is NOT a per-pad NetAssign — multiple BLK_0xC8
-    // records share a single +0x0C target (typically the ground plane's
-    // NetAssign), so applying Route 5 produces 3000+ false-positive
-    // attributions. Disabled for that variant until a different mechanism
-    // is decoded.
-    if (route5Enabled) {
+    //   LA-7321P (15.5.7):  R1+R5 → 1776/1903 perfect (93.3%), 0 FP
+    //   v13tl-0629 (15.5.2): R1+R5 → 1367/1367 perfect (100%), 0 FP
+    //
+    // The 15.5.2 result was misdiagnosed in an earlier session due to a
+    // slash-strip bug in the test harness (oracle nets had `/` prefixes,
+    // parser stripped them, harness compared apples to oranges and showed
+    // "0 correct, 3443 FP"). After fixing the harness, both sub-variants
+    // resolve correctly via the same Route 5.
+    {
       const netByR10mKey = new Map<number, string>();
       for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
         if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
@@ -570,8 +555,6 @@ export class AllegroDb {
         }
       }
       dbg.log(`v15: Route 5 (BLK_0xC8 +0x0C → byte1=0x10 back-link) added ${r5} mappings; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
-    } else {
-      dbg.log(`v15: Route 5 SKIPPED for 15.5.2 sub-variant (magic 0x${magic15.toString(16)}) — back-link is not per-pad NetAssign here`);
     }
     // resolve pads per BLK_0x2D placement.
     (this as unknown as Record<string, unknown>).v15PadChain = {
