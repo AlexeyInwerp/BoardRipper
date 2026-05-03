@@ -740,6 +740,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
       for (let cx = 0; cx < gridSize; cx++) {
         const container = new Container();
         container.cullable = true;
+        container.cullableChildren = false;
         container.cullArea = new Rectangle(
           bMinX + cx * cellW,
           bMinY + cy * cellH,
@@ -794,6 +795,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
 
     const partContainer = new Container();
     partContainer.cullable = true;
+    partContainer.cullableChildren = false;
     partContainer.label   = part.name;
 
     const isSmallPart  = part.pins.length <= 4;
@@ -1416,6 +1418,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
         if (cell.circleNums.length > 0 || cell.circleNets.length > 0) {
           const c = new Container();
           c.cullable = true;
+          c.cullableChildren = false;
           c.cullArea = new Rectangle(
             bMinX + cx * cellW - labelCullPad,
             bMinY + cy * cellH - labelCullPad,
@@ -1430,6 +1433,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
         if (cell.twoPinItems.length > 0) {
           const c = new Container();
           c.cullable = true;
+          c.cullableChildren = false;
           c.cullArea = new Rectangle(
             bMinX + cx * cellW - labelCullPad,
             bMinY + cy * cellH - labelCullPad,

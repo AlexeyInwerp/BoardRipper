@@ -11,7 +11,7 @@
  *  - Reacts to renderSettingsStore changes and rebuilds the scene as needed
  *
  */
-import { Application, Graphics, Container, BitmapText, Text, RenderLayer } from 'pixi.js';
+import { Application, Graphics, Container, BitmapText, Text, RenderLayer, extensions, CullerPlugin } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
@@ -34,6 +34,21 @@ import { obdNetLookup, extractBoardNumberFromFilename } from '../store/obd-store
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
+
+// Spatial culling: scene-build tags per-grid-cell + per-part containers with
+// `cullable + cullArea` in board-mil coords, but PixiJS v8 culling is opt-in.
+// Without CullerPlugin the culler never runs and every BitmapText is walked
+// each frame at deep zoom. Disable via `localStorage.boardripper.renderer.disableCulling = '1'` + reload.
+if (typeof window !== 'undefined' && window.localStorage?.getItem('boardripper.renderer.disableCulling') !== '1') {
+  extensions.add(CullerPlugin);
+}
+
+// WebGPU backend (opt-in). PixiJS auto-falls back to WebGL if unavailable.
+// Enable via `localStorage.boardripper.renderer.webgpu = '1'` + reload.
+const RENDERER_PREFERENCE: 'webgpu' | 'webgl' | undefined =
+  typeof window !== 'undefined' && window.localStorage?.getItem('boardripper.renderer.webgpu') === '1'
+    ? 'webgpu'
+    : undefined;
 
 /** Unique non-empty values pulled from a list via a getter. Used by the
  *  OBD tooltip formatter, which collapses readings across variants. */
@@ -692,6 +707,7 @@ export class BoardRenderer {
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
         powerPreference: 'high-performance',
+        ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
       });
       log.render.log(`reinitApp: app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
     } catch (err) {
@@ -801,6 +817,7 @@ export class BoardRenderer {
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
       powerPreference: 'high-performance',
+      ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
     });
     // React StrictMode (and fast HMR) can run mount → unmount → remount while
     // `app.init()` is mid-await. The cleanup path calls destroy() synchronously,
