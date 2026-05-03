@@ -562,34 +562,41 @@ JCRT1, JLAN1, JHDMI1, JODD1, PJP2) where the BLK_0x07 → BLK_0x48 →
 BLK_0xC8 chain doesn't reach a real C8 record at all — separate
 pin-geometry bug, see "JHDD1 pin chain" above.
 
-### Variant split: 15.5.7 vs 15.5.2 — net routes magic-gated
+### Both v15 sub-variants share the same net-route mechanism
 
-Both v15 sub-variants in our corpus have the same overall block-type
-catalog (BLK_0x07 components, BLK_0x2D placements, byte1=0x10/0x6c/0xc8
-relationships) but the **byte1=0x10 record SEMANTICS differ between
-them**:
+Earlier sessions thought 15.5.2 (v13tl-0629) needed a different net
+mechanism than 15.5.7 (LA-7321P) because Routes 1+5 appeared to give
+0 correct mappings + thousands of FP on v13tl. **That measurement was
+wrong** — caused by a slash-strip bug in the disposable test harness
+(see "slash strip" section above). v13tl's oracle has hierarchical-
+schematic `/` prefixes on every net name; the parser correctly strips
+them; the harness compared stripped-parser to unstripped-oracle and
+flagged every (correct) match as a "false positive".
 
-| Sub-variant | Magic        | Sample          | byte1=0x10 records | Per-pad NetAssign? |
-|-------------|--------------|-----------------|---------------------|---------------------|
-| 15.5.7      | `0x00120A06` | COMPAL LA-7321P | 4257                | YES — Routes 1+5 work |
-| 15.5.2      | `0x00120206` | v13tl-0629      | 1644                | NO — Routes 1+5 give 0 correct, 221+ FP |
+After fixing the harness, both sub-variants resolve correctly via the
+same Routes 1+5:
 
-On 15.5.7, byte1=0x10 records are 1:1 with pad-stack NetAssigns. On
-15.5.2, byte1=0x10 records exist with the same prefix shape and a
-similar field histogram but **the +0x10 padK / +0x0C netK pair is not
-a per-pad NetAssign**. Multiple BLK_0xC8 records share a single +0x0C
-back-pointer (typically the ground-plane's record), so applying R5
-naively attributes every pad on a power-plane layer to GND.
+| Sub-variant | Magic        | Sample          | Components | Perfect | FP | Missed |
+|-------------|--------------|-----------------|-----------:|--------:|---:|-------:|
+| 15.5.7      | `0x00120A06` | COMPAL LA-7321P | 1903       | 1776 (93.3%) | 0 | 251 |
+| 15.5.2      | `0x00120206` | v13tl-0629      | 1367       | 1285 (94.0%) | 0 |  82 |
 
-Verification on v13tl-0629 CN5 connector:
-- All 5 oracle pins should be `/+V5S, /CN_WLAN_LED#, /CN_BT_LED#, /CN_HDD_LED#, /CN_CAPS_LED#`.
-- All 5 BLK_0xC8 records' +0x0C → the same byte1=0x10 record → "DGND".
-- Naive R5 → all 5 pins reported as DGND. Wrong.
+byte1=0x10 records on v13tl have a slightly different field histogram
+(+0x18 → C8 at 96% vs LA-7321P's +0x10 → C8 at 62%) but the (+0x10 padK,
++0x0C netK) pair from Route 1 still resolves correctly when present —
+it just covers fewer pads on v13tl (Route 1 alone gets 234 mappings vs
+LA-7321P's 2025). Route 5 (BLK_0xC8 +0x0C → byte1=0x10 back-link) does
+the heavy lifting on both.
 
-Production parser disables BOTH Route 1 and Route 5 on 15.5.2 magic.
-Better to ship pure pad geometry with no net assignments than ship
-incorrect ones. The 15.5.2 per-pad mechanism is undecoded — next-session
-RE target.
+The "all 5 CN5 BLK_0xC8 records' +0x0C → same byte1=0x10 → DGND"
+finding from earlier session was also misleading — the byte1=0x10
+record at that key actually corresponds to CN5's DGND pins (oracle
+CN5 has 4 DGND pins: G2, G1, 9, 10). The other CN5 pads point to
+*different* byte1=0x10 records via their own +0x0C, which resolve
+to the correct distinct nets.
+
+Both sub-variants now ship with full Route 1 + Route 5 net resolution.
+Locked in by the Playwright oracle gate.
 
 ### Per-component oracle harness
 
@@ -627,52 +634,28 @@ source of truth.
 
 ### Highest-value next probes (in order)
 
-1. **15.5.2 per-pad net mechanism (v13tl-0629).** Routes 1+5 give 0
-   correct on v13tl, currently magic-gated OFF. Investigation in this
-   session found:
+1. **Last few missed nets per file.** LA-7321P has 251 missed nets
+   spread over ~127 imperfect components; v13tl has 82 missed across
+   ~82 imperfect ones. Inverse-search the missed (refdes, oracle-net)
+   tuples to find the records that should link them but don't. Likely
+   another byte1 prefix variant or an unread field.
 
-   - **byte1=0x10 padK is at +0x18 (not +0x10) on v13tl** (98% hit
-     rate vs 37% at +0x10). Net is at +0x0c (same as 15.5.7).
-   - Trying `r1.padK = +0x18, r1.netK = +0x0c` produces 11 correct
-     mappings against 1158 FP — most "FP" are auto-generated NC nets
-     `N$XXXXXXX` that are valid in the BRD's string table but absent
-     from the oracle's NODE statements (hence flagged as FP by the
-     harness). True FP rate likely much lower; needs filtering by
-     "is this an N$ auto-net".
-   - Many byte1=0x10 records on v13tl reference the SAME byte1=0x10
-     m_Key from many BLK_0xC8 records (e.g. all 5 CN5 first pads
-     point to one DGND record). v13tl's byte1=0x10 are likely
-     **per-net** records (one record = one net + list of constituent
-     pads), not per-pad NetAssigns like 15.5.7.
-   - Next probe: walk all byte1=0x10 records, treat +0x18 as primary
-     pad ref AND +0x24 as secondary AND +0x40 as tertiary (each at
-     82-98% C8 hit rate — these likely list multiple pads per record).
-     If padK is at +0x18 / +0x24 / +0x40 simultaneously, each record
-     defines (net, [pad1, pad2, pad3]). Validate via oracle harness.
-
-2. **JHDMI1 / JLAN1 last 2 pins (LA-7321P).** Now resolves 23/23 pins
-   with the terminal byte1=0x01 fallback (commit `ac7e5f5`), but
-   2 pins lack net resolution because byte1=0x01 records have no
+2. **JHDMI1 / JLAN1 last 2 pins** *(LA-7321P)*. Now resolves 23/23 pins
+   with the terminal byte1=0x01 fallback (commit `ac7e5f5`), but 2 pins
+   lack net resolution because terminal byte1=0x01 records have no
    Route 5 back-link path. Probe: do the byte1=0x01 records' +0x0c
-   field (which 100% lands on a non-net target) lead anywhere
-   net-relevant?
-
-3. **15.5.2 chain over-walk diagnosis** *[no longer a blocker]*.
-   U5 walking 1363 pads vs the originally-stated 408 oracle pins
-   was a **misread** — U5 is an Intel Cantiga FCBGA 1363P (1363
-   actual silk pins, 408 distinct nets). The walker is correct.
-   The pin cap was wrong and has been reverted.
+   field (which 100% lands on a non-net target) lead anywhere net-
+   relevant via 2-hop chain?
 
 4. **Multi-layer connector chain semantics.** byte1=0x01 / byte1=0x8c
    records form alternating chains for connector pin-stacks. They
    may carry per-layer pad rectangles at +0x14..+0x20 — relevant once
    we add per-layer rendering.
 
-5. **Sub-variant detection in `formatFromMagic`.** Currently both v15
-   sub-variants map to `FmtVer.V_15X` and downstream code re-derives
-   the magic mask inline at the gate sites. Fine for two gates but
-   would benefit from explicit `V_152` / `V_157` enum members if
-   more variant-specific code lands.
+5. **Sub-variant detection in `formatFromMagic`.** Both v15 sub-variants
+   map to `FmtVer.V_15X` and the parser uses the same routes for both.
+   Currently no variant-specific code remains; if any lands, consider
+   adding `V_152` / `V_157` enum members for clarity.
 
 ### Oracle precision gate (locked in)
 
