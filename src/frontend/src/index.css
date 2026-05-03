@@ -2,23 +2,24 @@
   /* First-paint fallback. Theme tokens are then overwritten via inline
    * style.setProperty(...) by themeStore.init() in App.tsx — see
    * src/store/themes.ts (THEMES.default). Keep these values in sync with
-   * THEMES.default.ui so there's no flash on initial render.
-   * Palette is amber-warm (no blue), matching the cyberpunk-ripperdoc brand. */
-  --bg-primary: #0c0a08;
-  --bg-secondary: #15110d;
-  --bg-tertiary: #1f1812;
-  --canvas-bg: #050403;
+   * THEMES.default.ui so there's no flash on initial render. */
+  --bg-primary: #08080c;
+  --bg-secondary: #0f0f18;
+  --bg-tertiary: #0c1424;
+  --canvas-bg: #050508;
   --icon-board-bg: #44cc44;
   --icon-pdf-bg: #cc4444;
-  --text-primary: #e8e0d4;
-  --text-secondary: #a89a86;
-  --accent: #ff9f3a;
-  --accent-hover: #ffb966;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0b0;
+  --accent: #4a9eff;
+  /* Derived from --accent so theme switches and accent overrides
+   * (themeStore.setAccent) flow through automatically. */
+  --accent-hover: color-mix(in srgb, var(--accent) 78%, white 22%);
   --green: #44cc44;
   --red: #cc4444;
   --orange: #ffaa00;
   --yellow: #ffff44;
-  --border: #2a221a;
+  --border: #1a1a28;
   --toolbar-height: 40px;
   --statusbar-height: 24px;
 }
