@@ -215,6 +215,25 @@ export function lightenHex(hex: string, amount: number): string {
   return `#${toHex(lr)}${toHex(lg)}${toHex(lb)}`;
 }
 
+/** WCAG relative luminance ∈ [0,1]. */
+function relativeLuminance(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const linearize = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+}
+
+/** Pick a foreground colour that reads on top of `bgHex`. Flips to dark
+ *  text only when the accent is genuinely bright (gold / lime / yellow);
+ *  ordinary saturated accents — blue, red, violet, magenta, teal — keep
+ *  the white-on-accent look the app has used since v1. The 0.5 luminance
+ *  threshold is intentionally above the WCAG-strict cutoff so picking
+ *  e.g. ATARI Red doesn't re-skin every accent button as black-text. */
+export function pickAccentFg(bgHex: string): string {
+  return relativeLuminance(bgHex) > 0.5 ? '#0a0a0a' : '#ffffff';
+}
+
 function loadHexOverride(key: string): string | null {
   try {
     const raw = localStorage.getItem(key);
@@ -267,7 +286,13 @@ export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = 
 
   root.style.setProperty('--text-primary',   theme.ui.textPrimary);
   root.style.setProperty('--text-secondary', theme.ui.textSecondary);
-  root.style.setProperty('--accent',         accent ?? theme.ui.accent);
+  const effAccent = accent ?? theme.ui.accent;
+  root.style.setProperty('--accent', effAccent);
+  // --accent-fg = the text colour that reads on top of an accent-tinted
+  // surface. Auto-flipped to dark when the accent is bright enough that
+  // white text would blend in (yellow / gold / lime / pale teal). Replaces
+  // the previously hardcoded `color: #fff` paired with accent backgrounds.
+  root.style.setProperty('--accent-fg', pickAccentFg(effAccent));
   // --accent-hover is derived from --accent in index.css via color-mix.
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
   root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);

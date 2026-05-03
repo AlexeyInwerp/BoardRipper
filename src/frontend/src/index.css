@@ -15,6 +15,12 @@
   /* Derived from --accent so theme switches and accent overrides
    * (themeStore.setAccent) flow through automatically. */
   --accent-hover: color-mix(in srgb, var(--accent) 78%, white 22%);
+  /* Foreground (text/icon) colour for surfaces that fill with --accent.
+   * Auto-flipped to dark when the accent is bright by themeStore — see
+   * pickAccentFg() in src/store/themes.ts. The :root fallback below is
+   * for the first paint before themeStore.init() runs (default accent
+   * is dark blue so white reads). */
+  --accent-fg: #ffffff;
   --green: #44cc44;
   --red: #cc4444;
   --orange: #ffaa00;
@@ -104,7 +110,7 @@ html, body, #root {
 
 .toolbar-btn:hover:not(:disabled) {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .toolbar-btn:disabled {
@@ -114,7 +120,7 @@ html, body, #root {
 
 .toolbar-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: var(--accent-hover);
 }
 
@@ -212,7 +218,7 @@ html, body, #root {
 
 .toolbar-search-option:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .toolbar-search-count {
@@ -255,7 +261,7 @@ html, body, #root {
 
 .toolbar-search-tag-library {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .toolbar-search-option:hover .toolbar-search-count {
@@ -319,7 +325,7 @@ html, body, #root {
 
 .bind-link-option:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .bind-link-option.active {
@@ -389,12 +395,12 @@ html, body, #root {
 
 .toolbar-pdf-option:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .toolbar-pdf-option.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .toolbar-spacer {
@@ -1216,7 +1222,7 @@ html, body, #root {
 }
 .settings-mode-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 .settings-mode-btn:disabled {
   opacity: 0.35;
@@ -1433,7 +1439,7 @@ html, body, #root {
 
 .settings-btn-option.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: var(--accent-hover);
 }
 
@@ -1544,7 +1550,7 @@ html, body, #root {
 
 .color-rule-add-btn:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .color-rule-hint {
@@ -1681,7 +1687,7 @@ html, body, #root {
 
 .settings-action-btn:hover:not(:disabled) {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: var(--accent-hover);
 }
 
@@ -1692,7 +1698,7 @@ html, body, #root {
 
 .settings-action-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: var(--accent-hover);
 }
 
@@ -1720,7 +1726,7 @@ html, body, #root {
 
 .settings-reset-btn:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border-color: var(--accent-hover);
 }
 
@@ -2709,7 +2715,7 @@ html, body, #root {
 
 .panel-adder-item:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 /* Context Menu */
@@ -2734,7 +2740,7 @@ html, body, #root {
 
 .context-menu-item:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .context-menu-item.disabled {
@@ -2887,12 +2893,12 @@ html, body, #root {
 
 .pdf-toolbar-btn:hover:not(:disabled) {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .pdf-toolbar-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .pdf-toolbar-btn:disabled {
@@ -3650,7 +3656,7 @@ html, body, #root {
 }
 .library-browse-pill-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-weight: 600;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
@@ -3967,7 +3973,7 @@ html, body, #root {
 
 .library-detail-open {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   border: none;
   border-radius: 3px;
   padding: 2px 8px;
@@ -4021,7 +4027,7 @@ html, body, #root {
 
 .library-detail-bind-btn:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .library-binding-row {
@@ -4092,7 +4098,7 @@ html, body, #root {
 
 .library-bind-candidate:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .library-bind-match-badge {
@@ -4103,7 +4109,7 @@ html, body, #root {
   padding: 1px 5px;
   border-radius: 8px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   flex-shrink: 0;
 }
 
@@ -4206,7 +4212,7 @@ html, body, #root {
 
 .library-search-btn:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .library-search-clear {
