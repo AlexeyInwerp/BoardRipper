@@ -213,6 +213,32 @@ Total fixed-stride: **24 bytes**.
 
 **BLK_0x06.m_PtrPinNumber → byte1=0x20 → BLK_0x48 ALSO NOT direct.** Probed the byte1=0x20 record at file offset 0x1368e48 (target of BLK_0x06 #0's m_PtrPinNumber). Its outgoing pointers (`0x0957ca70`, `0x0957cb0c`) point into pool 0x095 — NOT to any BLK_0x48 key. Across all 3711 byte1=0x20 records in the file, scanning every 4-byte aligned field 0x04..0x3C found only 3 hits matching BLK_0x48 keys. Effectively no link.
 
+### Pad coord interpretation — STILL OPEN
+
+End-to-end chain walk for PQ306 (8-pin SO8 MOSFET, .cad oracle confirmed) yielded these BLK_0xC8 coords:
+```
+pin 1 (cad: -3970.94, -1513.65, GND):  [0, -501850, -79450, -496450]
+pin 2 (cad: -3970.94, -1463.65, GND):  detail record missing
+pin 3 (cad: -3970.94, -1413.65, GND):  [0, -501850, -64450, -496450]
+pin 4 (cad: -3970.94, -1363.65, LG_5V):[0, -501850, -69450, -496450]
+pin 5 (cad: -4174.29, -1363.65, LX_5V):[0, -501850, -74450, -496450]
+```
+
+**Patterns:**
+- `coords[0]` always `0` — not a real X
+- `coords[1]` always `-501850` (= -5018.5 in /100 units) — constant across ALL PQ306 pads
+- `coords[3]` always `-496450` — also constant
+- `coords[2]` varies by 5000 between adjacent pins (= 50 mils with /100 scaling) — matches SO8 pin spacing
+
+The 50-mil delta confirms `coords[2]` carries pin-position info, but the values are NOT pin X positions in any obvious frame. PQ306 oracle pins span X = `-4174.29..-3970.94` (203 mils wide), but our `coords[2]` values are `-794.5..-644.5`. No additive or scale offset gets from one to the other.
+
+**Hypotheses (for next probe with .cad oracle):**
+1. `coords[2]` is a packed value — high bits = layer/flags, low bits = position offset in the footprint's pad table (index, not coord)
+2. The record at `+0x34..+0x40` is NOT the bbox — pad coords live elsewhere in BLK_0xC8 (perhaps earlier in the record, e.g. `+0x18..+0x24`)
+3. Each pad's actual position requires combining the BLK_0xC8 record with the parent BLK_0x2D's `coordX/coordY + rotation` plus a footprint-local offset stored elsewhere
+
+The chain (BLK_0x07 → byte1=0x40 → BLK_0x48 → BLK_0xC8) is the right traversal — verified by the consistent stride and chain termination. Only the COORD FIELD interpretation in BLK_0xC8 is open.
+
 ### THE PAD-ATTRIBUTION CHAIN (verified 2026-05-03)
 
 **byte1=0x40 records are the missing link.** 1922 records in LA-7321P (≈ 1909 placements). Each one has:
