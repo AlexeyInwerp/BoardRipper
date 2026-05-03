@@ -1722,19 +1722,136 @@ function useThemeId(): string {
   );
 }
 
-function useAccentOverride(): string | null {
+function useThemeOverrides() {
   return useSyncExternalStore(
     (cb) => themeStore.subscribe(cb),
-    () => themeStore.accentOverride,
+    () => ({
+      accent: themeStore.accentOverride,
+      background: themeStore.backgroundOverride,
+      chrome: themeStore.chromeOverride,
+    }),
+  );
+}
+
+interface TokenPickerBlockProps {
+  /** Section heading (uppercase). */
+  title: string;
+  /** Tooltip / description shown beneath the picker. */
+  hint: React.ReactNode;
+  /** Currently effective hex (override if set, else theme default). */
+  effective: string;
+  /** Override hex if user has set one, else null. */
+  override: string | null;
+  /** Called when the user picks a colour. */
+  onChange: (hex: string) => void;
+  /** Called when the user clicks "Reset". */
+  onReset: () => void;
+  /** Optional preset swatches. */
+  presets?: ReadonlyArray<{ hex: string; label: string }>;
+}
+
+/** A single row block in the ThemeTab: title (with Reset button on the
+ *  right when an override is active) → colour input + hex readout →
+ *  optional preset swatches → hint text. */
+function TokenPickerBlock({
+  title,
+  hint,
+  effective,
+  override,
+  onChange,
+  onReset,
+  presets,
+}: TokenPickerBlockProps) {
+  const eff = effective.toLowerCase();
+  return (
+    <div>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>{title}</span>
+        {override && (
+          <button
+            type="button"
+            onClick={onReset}
+            style={{
+              marginLeft: 'auto',
+              background: 'none',
+              border: '1px solid var(--border)',
+              color: 'var(--text-secondary)',
+              fontSize: 10,
+              padding: '2px 8px',
+              borderRadius: 3,
+              cursor: 'pointer',
+              textTransform: 'none',
+              letterSpacing: 0,
+            }}
+            title="Revert to the active theme's default"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px 8px' }}>
+        <input
+          type="color"
+          value={eff}
+          onChange={(e) => onChange(e.target.value.toLowerCase())}
+          title={`Pick a ${title.toLowerCase()} colour`}
+          style={{
+            width: 36,
+            height: 24,
+            padding: 0,
+            border: '1px solid var(--border)',
+            borderRadius: 3,
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        />
+        <code style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
+          {eff.toUpperCase()}
+          {override == null && <span style={{ opacity: 0.6, marginLeft: 6 }}>(theme default)</span>}
+        </code>
+      </div>
+      {presets && presets.length > 0 && (
+        <div role="listbox" aria-label={`${title} presets`} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 8px' }}>
+          {presets.map((p) => {
+            const active = p.hex.toLowerCase() === eff;
+            return (
+              <button
+                key={p.hex}
+                type="button"
+                onClick={() => onChange(p.hex)}
+                title={`${p.label} · ${p.hex.toUpperCase()}`}
+                aria-label={p.label}
+                aria-pressed={active}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 4,
+                  background: p.hex,
+                  border: active ? '2px solid var(--text-primary)' : '1px solid var(--border)',
+                  cursor: 'pointer',
+                  padding: 0,
+                  outline: 'none',
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '6px 8px 0' }}>
+        {hint}
+      </div>
+    </div>
   );
 }
 
 function ThemeTab() {
   const activeId = useThemeId();
   const themes: Theme[] = themeStore.list();
-  const accentOverride = useAccentOverride();
+  const overrides = useThemeOverrides();
   const activeTheme = themes.find((t) => t.id === activeId);
-  const effectiveAccent = accentOverride ?? activeTheme?.ui.accent ?? '#4a9eff';
+  const effectiveAccent = overrides.accent ?? activeTheme?.ui.accent ?? '#4a9eff';
+  const effectiveBackground = overrides.background ?? activeTheme?.ui.bgPrimary ?? '#08080c';
+  const effectiveChrome = overrides.chrome ?? activeTheme?.ui.bgTertiary ?? '#0c1424';
 
   // Subscribe to global render-settings so the toggle reflects external changes.
   const useMetadata = useSyncExternalStore(
@@ -1751,9 +1868,14 @@ function ThemeTab() {
     <div className="settings-section-body" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
         <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6 }}>
-          Theme
+          Board theme
         </div>
-        <div role="radiogroup" aria-label="Theme" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 8px 6px' }}>
+          Picks the canvas / board-side colour set (background, fill, outline,
+          selection accent) and any per-theme settings overlays. Interface
+          chrome is controlled separately by the colour pickers below.
+        </div>
+        <div role="radiogroup" aria-label="Board theme" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {themes.map(t => (
             <label
               key={t.id}
@@ -1792,84 +1914,59 @@ function ThemeTab() {
         </div>
       </div>
 
-      <div>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>Accent colour</span>
-          {accentOverride && (
-            <button
-              type="button"
-              onClick={() => themeStore.setAccent(null)}
-              style={{
-                marginLeft: 'auto',
-                background: 'none',
-                border: '1px solid var(--border)',
-                color: 'var(--text-secondary)',
-                fontSize: 10,
-                padding: '2px 8px',
-                borderRadius: 3,
-                cursor: 'pointer',
-                textTransform: 'none',
-                letterSpacing: 0,
-              }}
-              title="Revert to the active theme's built-in accent"
-            >
-              Reset
-            </button>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px 8px' }}>
-          <input
-            type="color"
-            value={effectiveAccent}
-            onChange={(e) => themeStore.setAccent(e.target.value.toLowerCase())}
-            title="Pick any accent colour"
-            style={{
-              width: 36,
-              height: 24,
-              padding: 0,
-              border: '1px solid var(--border)',
-              borderRadius: 3,
-              background: 'transparent',
-              cursor: 'pointer',
-            }}
-          />
-          <code style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
-            {effectiveAccent.toUpperCase()}
-            {accentOverride == null && <span style={{ opacity: 0.6, marginLeft: 6 }}>(theme default)</span>}
-          </code>
-        </div>
-        <div role="listbox" aria-label="Accent presets" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 8px' }}>
-          {ACCENT_PRESETS.map((p) => {
-            const active = p.hex === effectiveAccent.toLowerCase();
-            return (
-              <button
-                key={p.hex}
-                type="button"
-                onClick={() => themeStore.setAccent(p.hex)}
-                title={`${p.label} · ${p.hex.toUpperCase()}`}
-                aria-label={p.label}
-                aria-pressed={active}
-                style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: 4,
-                  background: p.hex,
-                  border: active ? '2px solid var(--text-primary)' : '1px solid var(--border)',
-                  cursor: 'pointer',
-                  padding: 0,
-                  outline: 'none',
-                }}
-              />
-            );
-          })}
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '6px 8px 0' }}>
-          Drives <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--accent</code>{' '}
-          and (via <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>color-mix</code>)
-          <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}> --accent-hover</code>.
-          Pill colours and selection (yellow) are independent.
-        </div>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)' }}>
+        Interface colours
       </div>
+
+      <TokenPickerBlock
+        title="Accent"
+        effective={effectiveAccent}
+        override={overrides.accent}
+        onChange={(h) => themeStore.setAccent(h)}
+        onReset={() => themeStore.setAccent(null)}
+        presets={ACCENT_PRESETS}
+        hint={
+          <>
+            Drives <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--accent</code>{' '}
+            (focus, active states, links) and{' '}
+            <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--accent-hover</code>{' '}
+            (derived in CSS via <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>color-mix</code>).
+            Pill colours and selection (yellow) are independent.
+          </>
+        }
+      />
+
+      <TokenPickerBlock
+        title="Background"
+        effective={effectiveBackground}
+        override={overrides.background}
+        onChange={(h) => themeStore.setBackground(h)}
+        onReset={() => themeStore.setBackground(null)}
+        hint={
+          <>
+            The canvas + interactive surface tier. Drives{' '}
+            <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--bg-primary</code>;{' '}
+            <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--bg-secondary</code>{' '}
+            (cards, button surfaces) cascades 6% lighter.
+          </>
+        }
+      />
+
+      <TokenPickerBlock
+        title="Chrome"
+        effective={effectiveChrome}
+        override={overrides.chrome}
+        onChange={(h) => themeStore.setChrome(h)}
+        onReset={() => themeStore.setChrome(null)}
+        hint={
+          <>
+            Toolbar, status bar, and tab strip surfaces. Drives{' '}
+            <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--bg-tertiary</code>;{' '}
+            <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--border</code>{' '}
+            (panel boundaries) cascades 12% lighter.
+          </>
+        }
+      />
 
       <div>
         <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6 }}>
