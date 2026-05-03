@@ -1,67 +1,26 @@
 :root {
-  /* Default theme fallback — also driven by id="dark" in theme/themes.ts.
-   * Listed both on bare :root (for the very first paint, before main.tsx
-   * imports the theme store) and on [data-theme="dark"] (so an explicit
-   * dark selection still resolves consistently). Adding a new theme:
-   *   1. add an entry to theme/themes.ts
-   *   2. add a `:root[data-theme="<id>"] { ... }` block below
-   *   The home theme picker refreshes from the registry — no UI change. */
-  --bg-primary: #08080c;
-  --bg-secondary: #0f0f18;
-  --bg-tertiary: #0c1424;
-  --canvas-bg: #050508;
+  /* First-paint fallback. Theme tokens are then overwritten via inline
+   * style.setProperty(...) by themeStore.init() in App.tsx — see
+   * src/store/themes.ts (THEMES.default). Keep these values in sync with
+   * THEMES.default.ui so there's no flash on initial render.
+   * Palette is amber-warm (no blue), matching the cyberpunk-ripperdoc brand. */
+  --bg-primary: #0c0a08;
+  --bg-secondary: #15110d;
+  --bg-tertiary: #1f1812;
+  --canvas-bg: #050403;
   --icon-board-bg: #44cc44;
   --icon-pdf-bg: #cc4444;
-  --text-primary: #e0e0e0;
-  --text-secondary: #a0a0b0;
-  --accent: #4a9eff;
-  --accent-hover: #6bb3ff;
+  --text-primary: #e8e0d4;
+  --text-secondary: #a89a86;
+  --accent: #ff9f3a;
+  --accent-hover: #ffb966;
   --green: #44cc44;
   --red: #cc4444;
   --orange: #ffaa00;
   --yellow: #ffff44;
-  --border: #1a1a28;
+  --border: #2a221a;
   --toolbar-height: 40px;
   --statusbar-height: 24px;
-}
-
-/* Theme: dark (explicit, identical to :root) */
-:root[data-theme='dark'] {
-  --bg-primary: #08080c;
-  --bg-secondary: #0f0f18;
-  --bg-tertiary: #0c1424;
-  --canvas-bg: #050508;
-  --text-primary: #e0e0e0;
-  --text-secondary: #a0a0b0;
-  --accent: #4a9eff;
-  --accent-hover: #6bb3ff;
-  --border: #1a1a28;
-}
-
-/* Theme: noir — pure-black background, amber accents. */
-:root[data-theme='noir'] {
-  --bg-primary: #000000;
-  --bg-secondary: #0a0a0a;
-  --bg-tertiary: #131313;
-  --canvas-bg: #000000;
-  --text-primary: #d6d6d6;
-  --text-secondary: #888888;
-  --accent: #ffaa00;
-  --accent-hover: #ffc24d;
-  --border: #1f1f1f;
-}
-
-/* Theme: dimmed — softer dark with desaturated indigo accents. */
-:root[data-theme='dimmed'] {
-  --bg-primary: #14141d;
-  --bg-secondary: #1c1c28;
-  --bg-tertiary: #21283c;
-  --canvas-bg: #0e0e16;
-  --text-primary: #b8b8c8;
-  --text-secondary: #707080;
-  --accent: #6da0d4;
-  --accent-hover: #8fb6dd;
-  --border: #2a2a3a;
 }
 
 * {
@@ -1685,7 +1644,7 @@ html, body, #root {
 
 .mockup-zoom-badge.mockup-zoom-active {
   opacity: 1;
-  color: #4a9eff;
+  color: var(--accent);
 }
 
 .mockup-hint {
