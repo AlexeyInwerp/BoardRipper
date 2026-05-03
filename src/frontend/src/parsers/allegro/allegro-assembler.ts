@@ -404,23 +404,32 @@ function extractComponentsV15(
       }
     }
 
-    // Recompute bounds from pin positions only. fpBbox is in footprint-local
-    // coords (we don't have the local→board transform); mixing it with
-    // board-absolute pins produces oversized bounds (e.g. JLVDS1 spilled
-    // way outside the component). Pin extents + a small margin work.
-    const finalBounds = pins.length > 0
-      ? (() => {
-          const xs = pins.map(p => p.position.x);
-          const ys = pins.map(p => p.position.y);
-          const margin = 20; // mils, gives the renderer something to outline
-          return {
-            minX: Math.min(...xs) - margin,
-            minY: Math.min(...ys) - margin,
-            maxX: Math.max(...xs) + margin,
-            maxY: Math.max(...ys) + margin,
-          };
-        })()
-      : bounds;
+    // Bounds: pin extents + small margin when pins are available; otherwise
+    // a placeholder bbox around origin (some connectors like JHDD1, JODD1,
+    // JLAN1, JHDMI1 have chain-walker gaps and no decoded pins yet — show
+    // them as small marks rather than the broken oversized rectangles
+    // produced by mixing footprint-local fpBbox with board-absolute origin).
+    let finalBounds: { minX: number; minY: number; maxX: number; maxY: number };
+    if (pins.length > 0) {
+      const xs = pins.map(p => p.position.x);
+      const ys = pins.map(p => p.position.y);
+      const margin = 20;
+      finalBounds = {
+        minX: Math.min(...xs) - margin,
+        minY: Math.min(...ys) - margin,
+        maxX: Math.max(...xs) + margin,
+        maxY: Math.max(...ys) + margin,
+      };
+    } else {
+      const placeholderHalf = 30;
+      finalBounds = {
+        minX: ox - placeholderHalf,
+        minY: oy - placeholderHalf,
+        maxX: ox + placeholderHalf,
+        maxY: oy + placeholderHalf,
+      };
+    }
+    void bounds;
 
     parts.push({
       name: refdes,
