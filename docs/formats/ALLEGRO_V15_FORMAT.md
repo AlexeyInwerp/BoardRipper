@@ -382,6 +382,28 @@ Total: ~68 bytes (need to confirm by walking sequential records).
 
 **Validation lead**: the head 0xC8 record has bbox center ≈ (−442468, 104256). With div=100, that's (−4424.68, 1042.56) mils. We need to map this back to a specific part instance via the back-ref pointer at +0x20 to validate.
 
+### Multi-layer connectors (JHDD1, JODD1, JLAN1, JHDMI1) — nested chain
+
+128 of 1909 parts (6.7%) have no pins decoded. These are large connector parts whose pad chain doesn't terminate at a BLK_0xC8.
+
+Trace of JHDD1's first pad (key `0x7bf77b8`):
+```
+step 0: BLK_0x48 @ 0x11e2f8  m_Key=0x7bf77b8  +0x10(detail)=0x7bf7518
+step 1: byte1=0x01 @ 0x14aaff8  m_Key=0x7bf7518  +0x10=0x98dfcec
+step 2: byte1=0x8c @ 0x14aafac  m_Key=0x98dfcec  +0x10=0x7eb6848
+step 3: byte1=0x01 @ 0x14aafb8  m_Key=0x7eb6848  +0x10=0x98dfcac
+step 4: byte1=0x8c @ 0x14aaf6c  m_Key=0x98dfcac  +0x10=0x7eb62dc
+... continues alternating byte1=0x01 ↔ byte1=0x8c
+```
+
+The chain alternates between `byte1=0x01` (prefix shape `00 01 00 01` — note the non-zero byte 3!) and `byte1=0x8c` records. Likely per-layer records: each connector pin spans multiple copper/mask layers, so the geometry is layered.
+
+The byte1=0x01 records have a 4-i32 candidate-coord set at +0x18..+0x24: `(-26771, -480776, -163550, -5310)` for JHDD1's first chain. The Y-span (-480776 to -5310 = 475466 units = 4754 mils) is way too large to be a pad bbox.
+
+The byte1=0x8c records also have 4 i32 values at +0x18..+0x24, similarly suspicious.
+
+**Hypothesis for next session**: the connector chain represents PADSTACK definitions (one layered stack per pin). Each layer has its own bbox; the FINAL board-absolute pad position needs to be computed from the per-layer bbox + the connector's BLK_0x2D origin/rotation. This is the v15 equivalent of v16+'s BLK_0x1C_PADSTACK + BLK_0x32 PLACED_PAD layered relationship.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
