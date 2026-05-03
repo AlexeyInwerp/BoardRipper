@@ -418,19 +418,20 @@ export class AllegroDb {
     // (verified board-absolute via .cad oracle: PQ306/L124/U41 pin 1
     // positions decode EXACTLY to oracle values).
     //
-    // Three prefix variants (byte 2 always 0x0C):
-    //   `00 c8 0c 00` — main pad-stack record (11082 on LA-7321P)
-    //   `00 c8 0c 80` — multi-layer connector pad ( 149 on LA-7321P,
-    //                   referenced from JHDMI1/JLAN1/JCRT1 pin chains)
-    //   `00 c8 0c 40` — smaller variant (  17 on LA-7321P)
-    // All three carry the same coord layout at +0x38..+0x44. The strict
-    // byte3=0x00 filter previously missed the 0x80 variant, leaving
-    // ~6.7% of multi-layer connector parts with no pin geometry.
+    // Multiple prefix variants (byte 2 always 0x0C):
+    //   `00 c8 0c 00` — main pad-stack record (11082 on LA-7321P, 18937 on v13tl)
+    //   `00 c8 0c 20` — variant on 15.5.2 (45 on v13tl)
+    //   `00 c8 0c 40` — small variant (17 on LA-7321P, 49 on v13tl)
+    //   `00 c8 0c 60` — variant on 15.5.2 (10 on v13tl)
+    //   `00 c8 0c 80` — multi-layer connector pad (149 on LA-7321P)
+    // All carry the same coord layout at +0x38..+0x44. byte3 is a flag/
+    // sub-type byte; values >= 0x100 are mostly random false-positive
+    // pattern matches (single-digit counts).
     const blkC8Records = new Map<number, { coords: [number, number, number, number] }>();
     for (let off = 0; off + 0x48 <= fileBytes.length; off += 4) {
       if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+2) !== 0x0C) continue;
       const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x40 && b3 !== 0x80) continue;
+      if (b3 !== 0x00 && b3 !== 0x20 && b3 !== 0x40 && b3 !== 0x60 && b3 !== 0x80) continue;
       const mKey = peekU32(off + 0x04);
       const x1 = peekI32(off + 0x38);
       const y1 = peekI32(off + 0x3C);
@@ -438,7 +439,35 @@ export class AllegroDb {
       const y2 = peekI32(off + 0x44);
       if (mKey !== 0 && !blkC8Records.has(mKey)) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
     }
-    dbg.log(`v15: scanned BLK_0xC8 (byte3 ∈ {0x00, 0x40, 0x80}) → ${blkC8Records.size} pad geometry records`);
+    dbg.log(`v15: scanned BLK_0xC8 (byte3 ∈ {0x00, 0x20, 0x40, 0x60, 0x80}) → ${blkC8Records.size} pad geometry records`);
+
+    // Some multi-layer connector pins (JHDMI1/JLAN1 on LA-7321P) terminate
+    // their pad-stack chain at a byte1=0x01 record where +0x10 = 0 (no
+    // further BLK_0xC8). These records carry the pad bbox INLINE at
+    // +0x14..+0x20. We keep them in a SEPARATE map so the chain walker
+    // can prefer real BLK_0xC8 records (which still resolve to nets via
+    // Route 5) and only fall back to terminal byte1=0x01 records when
+    // the chain truly dead-ends.
+    const terminalPadRecords = new Map<number, { coords: [number, number, number, number] }>();
+    for (let off = 0; off + 0x24 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x01) continue;
+      if (peekU32(off + 0x10) !== 0) continue; // only terminal records
+      const mKey = peekU32(off + 0x04);
+      if (!mKey || terminalPadRecords.has(mKey)) continue;
+      const x1 = peekI32(off + 0x14);
+      const y1 = peekI32(off + 0x18);
+      const x2 = peekI32(off + 0x1C);
+      const y2 = peekI32(off + 0x20);
+      // Sanity: real pad bbox has |x2-x1| < 100k coord units (~1000 mils).
+      // Reject huge rectangles which are likely chain-link false positives.
+      const w = Math.abs(x2 - x1);
+      const h = Math.abs(y2 - y1);
+      if (w === 0 || h === 0 || w > 100000 || h > 100000) continue;
+      terminalPadRecords.set(mKey, { coords: [x1, y1, x2, y2] });
+    }
+    if (terminalPadRecords.size > 0) dbg.log(`v15: indexed ${terminalPadRecords.size} terminal byte1=0x01 records as fallback pad geometry`);
 
     // First, scan ALL byte1=0x6c records directly (not just the LL chain) to
     // build a complete BLK_0x1B m_Key → net-name lookup. The LL_0x1B chain
@@ -547,6 +576,7 @@ export class AllegroDb {
     // resolve pads per BLK_0x2D placement.
     (this as unknown as Record<string, unknown>).v15PadChain = {
       blk07ToFirstPad, blk48Records, blkC8Records, padGeoToNetName,
+      terminalPadRecords,
     };
 
     // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
