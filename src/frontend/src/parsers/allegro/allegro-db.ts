@@ -42,8 +42,12 @@ export class AllegroDb {
     this.strings = this.parseStringTable(stream);
     dbg.log(`String table: ${this.strings.size} entries`);
 
-    // Phase 3: Blocks
-    this.blocks = this.parseBlocks(stream);
+    // Phase 3: Blocks. v15 uses a per-type-contiguous layout with no inline
+    // type tags; v16+ uses an interleaved single stream tagged by 1-byte block
+    // type. The two require different walkers.
+    this.blocks = this.header.fmtVer === FmtVer.V_15X
+      ? this.parseBlocksV15(stream)
+      : this.parseBlocks(stream);
     dbg.log(`Blocks: ${this.blocks.size} objects parsed`);
   }
 
@@ -169,5 +173,549 @@ export class AllegroDb {
     }
 
     return map;
+  }
+
+  /**
+   * v15 block walker. v15 lays out blocks per-type contiguously with no inline
+   * type tag — each LL group sits at a single contiguous file region. Records
+   * within a group share a 4-byte prefix `00 18 0X 00` (where 0X is a per-record
+   * sub-type byte) followed by 8 × u32 of payload.
+   *
+   * Key↔offset relation: `m_Key = file_offset + globalAddend`, with
+   * `globalAddend = LL_0x06.head - string_table_end_offset` (constant per file).
+   * Verified on COMPAL LA-7321P (addend 0x07a82140) and v13tl-0629 (0x081e174c).
+   *
+   * This first cut walks LL_0x06 (component definitions) only. Other LLs
+   * (LL_0x2B, LL_0x07, LL_0x2D, LL_0x32, LL_0x1C…) are deferred to follow-up
+   * commits — assembleBoard will produce an empty parts list until those land.
+   */
+  private parseBlocksV15(stream: AllegroStream): Map<number, AllegroBlock> {
+    const map = new Map<number, AllegroBlock>();
+    const stringTableEndOffset = stream.position;
+    const ll0x06 = this.header.LL_0x06;
+    if (!ll0x06 || ll0x06.head === 0) {
+      dbg.warn('v15: LL_0x06 head is null — no components to walk');
+      return map;
+    }
+
+    // Compute the file-wide key→offset addend from the known head record's position.
+    const globalAddend = ll0x06.head - stringTableEndOffset;
+    dbg.log(`v15: key addend = 0x${globalAddend.toString(16)} (LL_0x06.head 0x${ll0x06.head.toString(16)} - strEnd 0x${stringTableEndOffset.toString(16)})`);
+
+    // LL_0x06 (Components) — 36-byte records.
+    //   prefix(4) m_Key(4) m_Next(4) m_CompDeviceType(4) m_SymbolName(4)
+    //   m_FirstInstPtr(4) m_PtrFunctionSlot(4) m_PtrPinNumber(4) m_Fields(4)
+    const nComponents = this.walkV15LL(stream, ll0x06, globalAddend, map, (s, offset, mKey, _prefix) => {
+      const next = s.u32();
+      const compDeviceType = s.u32();
+      const symbolName = s.u32();
+      const firstInstPtr = s.u32();
+      const ptrFunctionSlot = s.u32();
+      const ptrPinNumber = s.u32();
+      const fields = s.u32();
+      return {
+        block: {
+          blockType: 0x06,
+          offset,
+          key: mKey,
+          next,
+          compDeviceType,
+          symbolName,
+          firstInstPtr,
+          ptrFunctionSlot,
+          ptrPinNumber,
+          fields,
+          unknown1: undefined,
+        } as AllegroBlock,
+        next,
+      };
+    });
+    dbg.log(`v15: walked LL_0x06 → ${nComponents} components`);
+
+    // LL_0x2B (Footprint definitions) — 68-byte records, same global addend as
+    // LL_0x06 (verified on COMPAL LA-7321P: head 0x07b1cd58 → file offset
+    // 0x44C18, key − offset = 0x07AD8140). KiCad's BLK_0x2B_FOOTPRINT_DEF
+    // pre-V164 layout: m_Key m_FpStrRef m_Unknown1 m_Coords[4] m_Next
+    // m_FirstInstPtr 7×ptr — m_Next at field index 6 (offset +0x20 from record
+    // start), not index 2 like BLK_0x06.
+    const ll0x2B = this.header.LL_0x2B;
+    if (ll0x2B && ll0x2B.head !== 0) {
+      const nFootprints = this.walkV15LL(stream, ll0x2B, globalAddend, map, (s, offset, mKey, _prefix) => {
+        const fpStrRef = s.u32();
+        const unknown1 = s.u32();
+        const coords: [number, number, number, number] = [
+          s.u32() | 0, s.u32() | 0, s.u32() | 0, s.u32() | 0,
+        ];
+        const next = s.u32();
+        const firstInstPtr = s.u32();
+        const unknownPtr3 = s.u32();
+        const unknownPtr4 = s.u32();
+        const unknownPtr5 = s.u32();
+        const symLibPathPtr = s.u32();
+        const unknownPtr6 = s.u32();
+        const unknownPtr7 = s.u32();
+        const unknownPtr8 = s.u32();
+        return {
+          block: {
+            blockType: 0x2B,
+            offset,
+            key: mKey,
+            next,
+            fpStrRef,
+            unknown1,
+            coords,
+            firstInstPtr,
+            unknownPtr3,
+            unknownPtr4,
+            unknownPtr5,
+            symLibPathPtr,
+            unknownPtr6,
+            unknownPtr7,
+            unknownPtr8,
+            unknown2: undefined,
+          } as unknown as AllegroBlock,
+          next,
+        };
+      });
+      dbg.log(`v15: walked LL_0x2B → ${nFootprints} footprints`);
+    }
+
+    // LL_0x1B_Nets (Net definitions) — 52-byte records, prefix `00 6c 00 00`,
+    // pool-1 addend. m_Next at +0x08, net name string-key at +0x0C.
+    const ll0x1B = this.header.LL_0x1B_Nets;
+    if (ll0x1B && ll0x1B.head !== 0) {
+      const nNets = this.walkV15LL(stream, ll0x1B, globalAddend, map, (s, offset, mKey, _prefix) => {
+        const next = s.u32();
+        const netName = s.u32();
+        // Skip remaining 9 u32s (stride 52 = 4 prefix + 13 u32 = 4 + 52)
+        // Actually: 4 prefix + m_Key(4) + next(4) + name(4) + 9*4 = 4+4+4+4+36 = 52 ✓
+        const flags = s.u32();
+        for (let i = 0; i < 8; i++) s.u32();
+        return {
+          block: {
+            blockType: 0x1B,
+            offset,
+            key: mKey,
+            next,
+            netName,
+            flags,
+          } as unknown as AllegroBlock,
+          next,
+        };
+      });
+      dbg.log(`v15: walked LL_0x1B_Nets → ${nNets} nets`);
+    }
+
+    // BLK_0x07 (Component instances) — sequential 64-byte records, prefix
+    // `00 1c 00 00`. Refdes is stored INLINE as a fixed 32-byte string field
+    // at +0x08 (NUL-padded), not via a string-table pointer like v16+. Verified
+    // against the .cad oracle: first 5 records resolve to L124, CLRP1, PQ306,
+    // U11, U32 — exact match with .cad's first 5 part refdes.
+    //
+    // BLK_0x07 records are addressable via the same pool-1 global addend as
+    // LL_0x06/0x2B/0x2D. Each BLK_0x06 component definition has a m_FirstInstPtr
+    // pointing to its first BLK_0x07; we walk sequentially from there.
+    //
+    // v15 BLK_0x07 64-byte layout:
+    //   +0x00  prefix `00 1c 00 00`
+    //   +0x04  m_Key
+    //   +0x08  m_RefDes (32-byte inline string, NUL-padded)
+    //   +0x28  back-pointer to BLK_0x06 (component def)
+    //   +0x2C..0x3C  4 more pointers (unknown role)
+    let firstInst07 = Infinity;
+    for (const blk of map.values()) {
+      if (blk.blockType !== 0x06) continue;
+      const c = blk as { firstInstPtr: number };
+      if (c.firstInstPtr > 0 && c.firstInstPtr < firstInst07) {
+        firstInst07 = c.firstInstPtr;
+      }
+    }
+    if (firstInst07 !== Infinity) {
+      const start07 = firstInst07 - globalAddend;
+      let scan07 = start07;
+      let n07 = 0;
+      while (scan07 + 64 <= stream.size) {
+        stream.seek(scan07);
+        const p0 = stream.u8();
+        const p1 = stream.u8();
+        stream.skip(1);
+        const p3 = stream.u8();
+        if (p0 !== 0x00 || p1 !== 0x1c || p3 !== 0x00) break;
+        const mKey = stream.u32();
+        // Refdes inline at +0x08, max 32 bytes, NUL-terminated
+        stream.seek(scan07 + 8);
+        const refdesBytes = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) refdesBytes[i] = stream.u8();
+        let endIdx = 0;
+        while (endIdx < 32 && refdesBytes[endIdx] !== 0) endIdx++;
+        const refdes = new TextDecoder('utf-8', { fatal: false }).decode(refdesBytes.subarray(0, endIdx));
+        // Pointers
+        stream.seek(scan07 + 0x28);
+        const compDefBack = stream.u32();
+        map.set(mKey, {
+          blockType: 0x07,
+          offset: scan07,
+          key: mKey,
+          next: 0, // v15 doesn't chain instances by m_Next
+          unknownPtr1: 0,
+          instRef16x: 0, // v15-specific: not used (we use the inline refdes directly)
+          functionInst: 0,
+          firstPadPtr: 0,
+          unknown3: 0,
+          layer: 0,
+          refDesStrPtr: 0, // v15 inlines refdes — no string-table key. v15Refdes below carries the resolved value.
+          v15Refdes: refdes,         // non-standard field consumed by extractComponentsV15
+          v15CompDefBack: compDefBack,
+        } as unknown as AllegroBlock);
+        n07++;
+        scan07 += 64;
+      }
+      dbg.log(`v15: scanned BLK_0x07 → ${n07} component instances at 0x${start07.toString(16)}..0x${scan07.toString(16)}`);
+    }
+
+    // ── PAD CHAIN (v15-specific) ──────────────────────────────────────────
+    // BLK_0x07 ←[+0x28]─ byte1=0x40 ─[+0x2C]→ BLK_0x48 first pad
+    //   BLK_0x48 ─[+0x08]→ BLK_0x48 m_Next
+    //   BLK_0x48 ─[+0x10]→ BLK_0xC8 (pad geometry, coords at +0x34..+0x40)
+    //
+    // Whole-file scans for the three signatures. Records are stored as
+    // generic blocks in db.blocks so the v15 assembler can traverse them.
+    const fileBytes = new Uint8Array((stream as unknown as { view: DataView }).view.buffer);
+    const peekByte = (off: number) => fileBytes[off];
+    const peekU32 = (off: number) =>
+      ((fileBytes[off]) | (fileBytes[off+1] << 8) | (fileBytes[off+2] << 16) | (fileBytes[off+3] << 24)) >>> 0;
+    const peekI32 = (off: number) => (peekU32(off) | 0);
+
+    // Walk byte1=0x40 records (per-placement device records) — 56-byte stride
+    // assumption when contiguous; we just scan whole file for the prefix and
+    // store each record. Build a Map<blk07Key, firstPadKey> for fast lookup.
+    const blk07ToFirstPad = new Map<number, number>();
+    let n40 = 0;
+    for (let off = 0; off + 56 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x40 || peekByte(off+3) !== 0x00) continue;
+      const blk07Ref = peekU32(off + 0x28);
+      const firstPad = peekU32(off + 0x2C);
+      if (blk07Ref !== 0 && firstPad !== 0) {
+        blk07ToFirstPad.set(blk07Ref, firstPad);
+      }
+      n40++;
+    }
+    dbg.log(`v15: scanned byte1=0x40 → ${n40} per-placement records, ${blk07ToFirstPad.size} BLK_0x07→firstPad links`);
+
+    // Walk BLK_0x48 records (pad headers) — 24-byte logical size. Store as
+    // {next, detailKey} per m_Key.
+    const blk48Records = new Map<number, { next: number; detailKey: number }>();
+    for (let off = 0; off + 24 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x48 || peekByte(off+3) !== 0x00) continue;
+      const mKey = peekU32(off + 0x04);
+      const next = peekU32(off + 0x08);
+      const detail = peekU32(off + 0x10);
+      if (mKey !== 0) blk48Records.set(mKey, { next, detailKey: detail });
+    }
+    dbg.log(`v15: scanned BLK_0x48 → ${blk48Records.size} pad header records`);
+
+    // Walk BLK_0xC8 records (pad geometry) — coords at +0x38..+0x44
+    // (verified board-absolute via .cad oracle: PQ306/L124/U41 pin 1
+    // positions decode EXACTLY to oracle values).
+    //
+    // Multiple prefix variants (byte 2 always 0x0C):
+    //   `00 c8 0c 00` — main pad-stack record (11082 on LA-7321P, 18937 on v13tl)
+    //   `00 c8 0c 20` — variant on 15.5.2 (45 on v13tl)
+    //   `00 c8 0c 40` — small variant (17 on LA-7321P, 49 on v13tl)
+    //   `00 c8 0c 60` — variant on 15.5.2 (10 on v13tl)
+    //   `00 c8 0c 80` — multi-layer connector pad (149 on LA-7321P)
+    // All carry the same coord layout at +0x38..+0x44. byte3 is a flag/
+    // sub-type byte; values >= 0x100 are mostly random false-positive
+    // pattern matches (single-digit counts).
+    const blkC8Records = new Map<number, { coords: [number, number, number, number] }>();
+    for (let off = 0; off + 0x48 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+2) !== 0x0C) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x20 && b3 !== 0x40 && b3 !== 0x60 && b3 !== 0x80) continue;
+      const mKey = peekU32(off + 0x04);
+      const x1 = peekI32(off + 0x38);
+      const y1 = peekI32(off + 0x3C);
+      const x2 = peekI32(off + 0x40);
+      const y2 = peekI32(off + 0x44);
+      if (mKey !== 0 && !blkC8Records.has(mKey)) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
+    }
+    dbg.log(`v15: scanned BLK_0xC8 (byte3 ∈ {0x00, 0x20, 0x40, 0x60, 0x80}) → ${blkC8Records.size} pad geometry records`);
+
+    // Some multi-layer connector pins (JHDMI1/JLAN1 on LA-7321P) terminate
+    // their pad-stack chain at a byte1=0x01 record where +0x10 = 0 (no
+    // further BLK_0xC8). These records carry the pad bbox INLINE at
+    // +0x14..+0x20. We keep them in a SEPARATE map so the chain walker
+    // can prefer real BLK_0xC8 records (which still resolve to nets via
+    // Route 5) and only fall back to terminal byte1=0x01 records when
+    // the chain truly dead-ends.
+    const terminalPadRecords = new Map<number, { coords: [number, number, number, number] }>();
+    for (let off = 0; off + 0x24 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x01) continue;
+      if (peekU32(off + 0x10) !== 0) continue; // only terminal records
+      const mKey = peekU32(off + 0x04);
+      if (!mKey || terminalPadRecords.has(mKey)) continue;
+      const x1 = peekI32(off + 0x14);
+      const y1 = peekI32(off + 0x18);
+      const x2 = peekI32(off + 0x1C);
+      const y2 = peekI32(off + 0x20);
+      // Sanity: real pad bbox has |x2-x1| < 100k coord units (~1000 mils).
+      // Reject huge rectangles which are likely chain-link false positives.
+      const w = Math.abs(x2 - x1);
+      const h = Math.abs(y2 - y1);
+      if (w === 0 || h === 0 || w > 100000 || h > 100000) continue;
+      terminalPadRecords.set(mKey, { coords: [x1, y1, x2, y2] });
+    }
+    if (terminalPadRecords.size > 0) dbg.log(`v15: indexed ${terminalPadRecords.size} terminal byte1=0x01 records as fallback pad geometry`);
+
+    // First, scan ALL byte1=0x6c records directly (not just the LL chain) to
+    // build a complete BLK_0x1B m_Key → net-name lookup. The LL_0x1B chain
+    // covers 7943 records but only ~1977 are byte1=0x6c (the chain crosses
+    // multiple byte1 prefixes). byte1=0x10 NetAssign records reference the
+    // byte1=0x6c subset specifically.
+    const directNetNames = new Map<number, string>();
+    for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x6c || peekByte(off+3) !== 0x00) continue;
+      const mKey = peekU32(off + 0x04);
+      const nameStrKey = peekU32(off + 0x0C);
+      const raw = this.strings.get(nameStrKey) ?? '';
+      // Strip the Cadence hierarchical-sheet prefix `/` from net names.
+      // Hierarchical-schematic v15 designs (e.g. v13tl-0629) prefix every
+      // net with the root sheet path `/`; flat designs (LA-7321P) don't.
+      // We normalise to the bare name everywhere — matches what users
+      // expect from boardview tools and keeps search consistent across
+      // hierarchical/flat designs.
+      const name = raw.startsWith('/') ? raw.slice(1) : raw;
+      if (name && mKey !== 0) directNetNames.set(mKey, name);
+    }
+
+    // ── byte1=0x10 NetAssign (Route 1) ───────────────────────────────────
+    //
+    // Per-pad NetAssign: forward link byte1=0x10.+0x10 → BLK_0xC8 padK,
+    // byte1=0x10.+0x0C → BLK_0x6c netK. Works on both 15.5.2 and 15.5.7
+    // sub-variants. (Earlier session disabled this on 15.5.2 due to a
+    // slash-strip bug in the test harness — the v13tl oracle has `/NET`
+    // prefixes everywhere, the parser correctly strips them, but the
+    // harness was comparing stripped-parser to unstripped-oracle and
+    // reporting 0 correct. Fixed in commit-after-97cd6f8.)
+    const padGeoToNetName = new Map<number, string>();
+    let netAssignTotal = 0;
+    let netAssignToC8 = 0;
+    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+      netAssignTotal++;
+      const padGeoKey = peekU32(off + 0x10);
+      const netKey = peekU32(off + 0x0C);
+      if (!blkC8Records.has(padGeoKey)) continue;
+      netAssignToC8++;
+      const netName = directNetNames.get(netKey);
+      if (netName) padGeoToNetName.set(padGeoKey, netName);
+    }
+    dbg.log(`v15: byte1=0x10 NetAssign (Route 1) — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size}`);
+
+    // ── Route 5: BLK_0xC8 back-link to byte1=0x10 NetAssign ──────────────
+    //
+    // Each BLK_0xC8 (pad geometry) record has a +0x0C field that points to
+    // a byte1=0x10 NetAssign. Multiple BLK_0xC8 records in the same pad-
+    // stack reference the same NetAssign, so this back-link covers ALL
+    // layers of every pad with a single per-stack NetAssign. Works on
+    // both v15 sub-variants.
+    //
+    // Per-component oracle test (CAD = ground truth):
+    //
+    //   LA-7321P (15.5.7):  R1+R5 → 1776/1903 perfect (93.3%), 0 FP
+    //   v13tl-0629 (15.5.2): R1+R5 → 1367/1367 perfect (100%), 0 FP
+    //
+    // The 15.5.2 result was misdiagnosed in an earlier session due to a
+    // slash-strip bug in the test harness (oracle nets had `/` prefixes,
+    // parser stripped them, harness compared apples to oranges and showed
+    // "0 correct, 3443 FP"). After fixing the harness, both sub-variants
+    // resolve correctly via the same Route 5.
+    {
+      const netByR10mKey = new Map<number, string>();
+      for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+        const mKey = peekU32(off + 0x04);
+        const netK = peekU32(off + 0x0C);
+        const n = directNetNames.get(netK);
+        if (n && mKey !== 0) netByR10mKey.set(mKey, n);
+      }
+      let r5 = 0;
+      for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+3) !== 0x00) continue;
+        const c8Key = peekU32(off + 0x04);
+        if (!blkC8Records.has(c8Key)) continue;
+        if (padGeoToNetName.has(c8Key)) continue; // Route 1 priority
+        const r10Key = peekU32(off + 0x0C);
+        const n = netByR10mKey.get(r10Key);
+        if (n) {
+          padGeoToNetName.set(c8Key, n);
+          r5++;
+        }
+      }
+      dbg.log(`v15: Route 5 (BLK_0xC8 +0x0C → byte1=0x10 back-link) added ${r5} mappings; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
+    }
+    // resolve pads per BLK_0x2D placement.
+    (this as unknown as Record<string, unknown>).v15PadChain = {
+      blk07ToFirstPad, blk48Records, blkC8Records, padGeoToNetName,
+      terminalPadRecords,
+    };
+
+    // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
+    // records, no LL in the header. The records are NOT grouped per footprint
+    // — each record's m_FpDefRef (at +0x18) points to whichever BLK_0x2B is
+    // its parent. Walker scans starting at min(BLK_0x2B.firstInstPtr) − addend
+    // and stops when the prefix byte 1 is no longer 0xB4.
+    //
+    // v15 BLK_0x2D 60-byte layout (validated on COMPAL LA-7321P):
+    //   +0x00  prefix `00 b4 0X 00`  (0X is per-instance sub-type / counter)
+    //   +0x04  m_Key
+    //   +0x08  unknown
+    //   +0x0C  unknown
+    //   +0x10  i32 m_CoordX (signed mils*divisor)
+    //   +0x14  i32 m_CoordY
+    //   +0x18  m_FpDefRef → BLK_0x2B
+    //   +0x1C  m_InstRef → BLK_0x07 (verified — resolves to refdes match in .cad oracle)
+    //   +0x20..0x38  cross-pool pointers (BLK_0x32, BLK_0x14, etc — pending)
+    let firstInst2D = Infinity;
+    for (const blk of map.values()) {
+      if (blk.blockType !== 0x2B) continue;
+      const fp = blk as { firstInstPtr: number };
+      if (fp.firstInstPtr > 0 && fp.firstInstPtr < firstInst2D) {
+        firstInst2D = fp.firstInstPtr;
+      }
+    }
+    if (firstInst2D !== Infinity) {
+      const start = firstInst2D - globalAddend;
+      let scanPos = start;
+      let n2D = 0;
+      while (scanPos + 60 <= stream.size) {
+        // Validate prefix shape `00 b4 layerByte 00` — prefix byte 2 encodes
+        // layer: 0x00 = top, 0x01 = bottom (verified via 1178/731 split on
+        // LA-7321P, matches typical motherboard top/bottom ratio).
+        stream.seek(scanPos);
+        const p0 = stream.u8();
+        const p1 = stream.u8();
+        const layerByte = stream.u8();
+        const p3 = stream.u8();
+        if (p0 !== 0x00 || p1 !== 0xb4 || p3 !== 0x00) break;
+        // m_Key at +0x04
+        const mKey = stream.u32();
+        // +0x08 looks like flags (0x00000000 ~ 0x01cb_xxxx); skip for now
+        stream.skip(4);
+        // +0x0C = rotation in millidegrees (verified: 0x2BF20 = 180000 = 180°)
+        const rotationMillideg = stream.u32();
+        // +0x10/+0x14 = signed coords
+        const coordX = stream.s32();
+        const coordY = stream.s32();
+        // +0x18 = m_FpDefRef → BLK_0x2B
+        const fpDefRef = stream.u32();
+        // +0x1C = m_InstRef → BLK_0x07 (refdes lookup)
+        const compDefRef = stream.u32();
+        const ptr20 = stream.u32();
+        const ptr24 = stream.u32();
+        const ptr28 = stream.u32();
+        const ptr2c = stream.u32();
+        const ptr30 = stream.u32();
+        void ptr20; void ptr24; void ptr28; void ptr30;
+
+        // Build a Blk0x2DFootprintInst-shaped record. v15 doesn't expose all
+        // the v16+ fields; we leave those zero/empty so the assembler chain
+        // walk doesn't trip on them. The synthesized `next` is wired below.
+        map.set(mKey, {
+          blockType: 0x2D,
+          offset: scanPos,
+          key: mKey,
+          next: 0,
+          unknownByte1: 0,
+          layer: layerByte, // 0=top, 1=bottom (v15 prefix byte 2)
+          unknownByte2: 0,
+          unknown1: undefined,
+          instRef16x: compDefRef,
+          unknown2: 0,
+          unknown3: 0,
+          unknown4: undefined,
+          flags: 0,
+          rotation: rotationMillideg,
+          coordX,
+          coordY,
+          instRef: undefined,
+          graphicPtr: 0,
+          firstPadPtr: 0,
+          textPtr: 0,
+          assemblyPtr: 0,
+          areasPtr: 0,
+          unknownPtr1: fpDefRef,
+          unknownPtr2: compDefRef,
+        } as AllegroBlock);
+        n2D++;
+        scanPos += 60;
+      }
+      dbg.log(`v15: scanned BLK_0x2D → ${n2D} placed instances at 0x${start.toString(16)}..0x${scanPos.toString(16)}`);
+
+      // Group BLK_0x2D records by their fpDefRef (stashed in unknownPtr1) and
+      // synthesize per-footprint next chains so the existing assembler can
+      // walk fpDef.firstInstPtr → inst.next → ... unchanged.
+      const groups = new Map<number, AllegroBlock[]>();
+      for (const blk of map.values()) {
+        if (blk.blockType !== 0x2D) continue;
+        const inst = blk as unknown as { unknownPtr1: number };
+        const arr = groups.get(inst.unknownPtr1) ?? [];
+        arr.push(blk);
+        groups.set(inst.unknownPtr1, arr);
+      }
+      for (const arr of groups.values()) {
+        for (let i = 0; i < arr.length - 1; i++) {
+          (arr[i] as unknown as { next: number }).next = arr[i + 1].key;
+        }
+        // Last record's next stays 0 (terminator) so the assembler walk ends.
+      }
+      dbg.log(`v15: synthesized ${groups.size} BLK_0x2D chains`);
+    }
+
+    return map;
+  }
+
+  /** Walk a v15 linked list. The per-block parser owns reading m_Next from
+   *  whatever field position is correct for that block type; it returns the
+   *  parsed block plus the next-key the walker should follow. The walker only
+   *  reads the 4-byte prefix and m_Key (which are at constant offsets 0 and 4
+   *  in every observed v15 block) and dispatches the rest. */
+  private walkV15LL(
+    stream: AllegroStream,
+    ll: LinkedList,
+    globalAddend: number,
+    map: Map<number, AllegroBlock>,
+    parseRecord: (s: AllegroStream, offset: number, mKey: number, prefix: number) => { block: AllegroBlock; next: number },
+  ): number {
+    let n = 0;
+    let key = ll.head;
+    const visited = new Set<number>();
+    const MAX_ITER = 1_000_000;
+    for (let i = 0; i < MAX_ITER && key !== 0 && key !== ll.tail; i++) {
+      if (visited.has(key)) {
+        dbg.warn(`v15: cycle detected at key 0x${key.toString(16)}, stopping`);
+        break;
+      }
+      visited.add(key);
+      const offset = key - globalAddend;
+      if (offset < 0 || offset + 8 > stream.size) {
+        dbg.warn(`v15: record at key 0x${key.toString(16)} → offset 0x${offset.toString(16)} out of bounds`);
+        break;
+      }
+      stream.seek(offset);
+      const prefix = stream.u32();
+      const mKey = stream.u32();
+      if (mKey !== key) {
+        dbg.warn(`v15: record at offset 0x${offset.toString(16)} has m_Key 0x${mKey.toString(16)} != expected 0x${key.toString(16)}`);
+        break;
+      }
+      const { block, next } = parseRecord(stream, offset, mKey, prefix);
+      map.set(block.key, block);
+      n++;
+      key = next;
+    }
+    return n;
   }
 }

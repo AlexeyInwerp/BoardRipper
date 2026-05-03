@@ -21,6 +21,9 @@ export function formatFromMagic(magic: number): FmtVer {
   const masked = (magic & 0xFFFFFF00) >>> 0;
 
   switch (masked) {
+    case 0x00120200:  // Allegro 15.5.2 family (e.g. v13tl-0629)
+    case 0x00120A00:  // Allegro 15.5.7 family (e.g. COMPAL LA-7321P)
+      return FmtVer.V_15X;
     case 0x00130000: return FmtVer.V_160;
     case 0x00130400: return FmtVer.V_162;
     case 0x00130C00: return FmtVer.V_164;
@@ -38,9 +41,15 @@ export function formatFromMagic(magic: number): FmtVer {
     default: break;
   }
 
-  // Pre-V16: different binary format, can't parse but can still read version string
+  // Pre-V15: truly unsupported old format
   const majorVer = (magic >>> 16) & 0xFFFF;
-  if (majorVer <= 0x0012) {
+  if (majorVer === 0x0012) {
+    // Unmapped v15 minor — treat as V_15X and let the parser try. If this
+    // file's payload diverges from the verified 15.5.2/15.5.7 layout we'll
+    // see a downstream parse error rather than a "this is old" message.
+    return FmtVer.V_15X;
+  }
+  if (majorVer < 0x0012) {
     return FmtVer.V_PRE_V16;
   }
 
@@ -86,15 +95,14 @@ export function parseHeader(stream: AllegroStream): FileHeader {
   const magic = stream.u32();
   const ver = formatFromMagic(magic);
 
-  // V_PRE_V16 (Allegro v15.x — family 0x0012) shares the outer magic shape
-  // (bytes [8..11] == 1) so it routes here, but the binary layout below differs
-  // and would parse to garbage. Surface a clear, actionable error instead of
-  // letting the caller see a misleading "BDV corrupt" downstream.
+  // V_PRE_V16 is now reserved for Allegro versions older than v15. v15 itself
+  // routes to V_15X above and shares the v16/v17 pre-V172 header + string-table
+  // layout (verified against COMPAL LA-7321P + v13tl-0629).
   if (ver === FmtVer.V_PRE_V16) {
     throw new Error(
-      `Allegro v15.x BRD files are not yet supported (magic 0x${magic.toString(16).padStart(8, '0')}). ` +
-      `The current parser supports Allegro v16.0–v18.0. ` +
-      `Workaround: re-save the board from Cadence Allegro as v16+ and reopen.`
+      `Allegro pre-v15.x BRD files are not supported (magic 0x${magic.toString(16).padStart(8, '0')}). ` +
+      `The current parser supports Allegro v15–v18. ` +
+      `Workaround: re-save the board from Cadence Allegro as v15+ and reopen.`
     );
   }
 

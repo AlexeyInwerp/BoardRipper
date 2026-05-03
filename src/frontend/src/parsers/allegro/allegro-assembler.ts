@@ -13,7 +13,7 @@
  * TypeScript implementation is original code for BoardRipper.
  */
 
-import type { BoardData, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
+import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
 import { FmtVer, LayerClass } from './allegro-types';
@@ -107,13 +107,18 @@ export function assembleBoard(db: AllegroDb): BoardData {
     `${pads.length} pads, ${layerNames.length} layers`
   );
 
+  // For v15, the per-pin connectivity isn't yet decoded so buildNets(parts)
+  // would produce an empty map. Use BLK_0x1B records directly to surface
+  // the net-name list in the Net List panel.
+  const nets = ver === FmtVer.V_15X ? buildV15Nets(db, parts) : buildNets(parts);
+
   return {
     format: 'ALLEGRO_BRD',
     formatVersion: fmtVerLabel(ver),
     outline,
     parts,
     nails: [],
-    nets: buildNets(parts),
+    nets,
     bounds,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
@@ -176,6 +181,14 @@ function extractComponents(
   div: number,
   netAssignMap: Map<number, string>,
 ): { parts: Part[]; allPinPositions: Point[] } {
+  // v15 takes a separate path: BLK_0x2D records are not chained per-footprint
+  // (single contiguous file region, mixed-fpDef order) and BLK_0x07/0x32 walks
+  // are not yet implemented. Build parts directly from BLK_0x2D coords +
+  // BLK_0x2B (footprint definition) bbox + name. Refdes is synthesized as
+  // {fpName}_{idx} until BLK_0x07 lands.
+  if (ver === FmtVer.V_15X) {
+    return extractComponentsV15(db, div);
+  }
   const parts: Part[] = [];
   const allPinPositions: Point[] = [];
 
@@ -249,6 +262,226 @@ function extractComponents(
 
       instKey = inst.next;
     }
+  }
+
+  return { parts, allPinPositions };
+}
+
+/**
+ * v15-specific component extraction. Builds parts directly from BLK_0x2D
+ * records (placed-instance coordinates) and their referenced BLK_0x2B
+ * footprint definitions (name + footprint-local bbox). No pins are produced
+ * yet — BLK_0x07/0x32 walking is the next milestone, after which pins, nets,
+ * and proper refdes-from-instance-strings will replace the synthesized values.
+ */
+/**
+ * v15-only: build a Net map directly from BLK_0x1B records (instead of from
+ * pin connectivity, which we don't have yet — BLK_0x32 is still pending).
+ * Each named net gets an empty `pinIndices` list. Once BLK_0x32 lands the
+ * pins will populate the net map.
+ */
+export function buildV15Nets(db: AllegroDb, parts: Part[]): Map<string, Net> {
+  const m = new Map<string, Net>();
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x1B) continue;
+    const netBlk = blk as unknown as { netName: number };
+    const raw = db.getString(netBlk.netName);
+    if (!raw) continue;
+    // Mirror the slash strip from allegro-db.ts so Net List matches Pin nets.
+    const name = raw.startsWith('/') ? raw.slice(1) : raw;
+    if (!m.has(name)) m.set(name, { name, pinIndices: [] });
+  }
+  // Populate pin connectivity from assembled parts (pin.net is set per
+  // BLK_0xC8 padGeoToNetName lookup in extractComponentsV15).
+  for (let pi = 0; pi < parts.length; pi++) {
+    const part = parts[pi];
+    for (let pni = 0; pni < part.pins.length; pni++) {
+      const pin = part.pins[pni];
+      if (!pin.net) continue;
+      let net = m.get(pin.net);
+      if (!net) {
+        net = { name: pin.net, pinIndices: [] };
+        m.set(pin.net, net);
+      }
+      net.pinIndices.push({ partIndex: pi, pinIndex: pni });
+    }
+  }
+  return m;
+}
+
+function extractComponentsV15(
+  db: AllegroDb,
+  div: number,
+): { parts: Part[]; allPinPositions: Point[] } {
+  const parts: Part[] = [];
+  const allPinPositions: Point[] = [];
+  // Counter for fallback refdes when BLK_0x07 lookup fails
+  const fpCounters = new Map<string, number>();
+
+  for (const blk of db.blocks.values()) {
+    if (blk.blockType !== 0x2D) continue;
+    const inst = blk as unknown as {
+      key: number;
+      coordX: number;
+      coordY: number;
+      layer: number;        // 0=top, 1=bottom (decoded from prefix byte 2)
+      rotation: number;     // millidegrees
+      unknownPtr1: number;  // fpDefRef → BLK_0x2B
+      instRef16x: number;   // → BLK_0x07 for refdes (v15-specific link via +0x1C)
+    };
+
+    // Resolve footprint definition → name + local bbox
+    const fpDef = db.blocks.get(inst.unknownPtr1) as unknown as {
+      blockType: number;
+      fpStrRef?: number;
+      coords?: [number, number, number, number];
+    } | undefined;
+
+    let fpName = '';
+    let fpBbox: [number, number, number, number] = [-100, -100, 100, 100];
+    if (fpDef && fpDef.blockType === 0x2B) {
+      if (fpDef.fpStrRef) fpName = db.getString(fpDef.fpStrRef);
+      if (fpDef.coords) fpBbox = fpDef.coords;
+    }
+    if (!fpName) fpName = 'UNK';
+
+    // Real refdes via BLK_0x07 lookup (v15 stores it inline at +0x08)
+    let refdes = '';
+    if (inst.instRef16x) {
+      const compInst = db.blocks.get(inst.instRef16x) as unknown as {
+        blockType: number;
+        v15Refdes?: string;
+      } | undefined;
+      if (compInst && compInst.blockType === 0x07 && compInst.v15Refdes) {
+        refdes = compInst.v15Refdes;
+      }
+    }
+    if (!refdes) {
+      // Fallback when BLK_0x07 link missing — synthesize from footprint name
+      const ix = (fpCounters.get(fpName) ?? 0) + 1;
+      fpCounters.set(fpName, ix);
+      refdes = ix === 1 ? fpName : `${fpName}_${ix}`;
+    }
+
+    const ox = inst.coordX / div;
+    const oy = inst.coordY / div;
+    const bounds = {
+      minX: ox + fpBbox[0] / div,
+      minY: oy + fpBbox[1] / div,
+      maxX: ox + fpBbox[2] / div,
+      maxY: oy + fpBbox[3] / div,
+    };
+
+    // Resolve pin geometry via the v15 pad chain
+    //   BLK_0x2D.instRef16x → BLK_0x07.m_Key
+    //   ← byte1=0x40.+0x28 → +0x2C → BLK_0x48 first pad
+    //     → BLK_0x48.+0x08 m_Next chain
+    //     → BLK_0x48.+0x10 → BLK_0xC8.coords (pad bbox)
+    const pins: Pin[] = [];
+    type PadChain = {
+      blk07ToFirstPad: Map<number, number>;
+      blk48Records: Map<number, { next: number; detailKey: number }>;
+      blkC8Records: Map<number, { coords: [number, number, number, number] }>;
+      padGeoToNetName: Map<number, string>;
+      terminalPadRecords?: Map<number, { coords: [number, number, number, number] }>;
+    };
+    const padChain = (db as unknown as Record<string, unknown>).v15PadChain as PadChain | undefined;
+    // Pin geometry — VERIFIED board-absolute via .cad oracle (PQ306, L124,
+    // U41, etc. all decode to exact oracle pin1 positions). U5 on v13tl-0629
+    // (1363-pin Intel Cantiga FCBGA) walks all 1363 pads cleanly, each at
+    // a distinct grid position. The earlier "U5 weird pin gap" report was
+    // misdiagnosed (we mistook 408 distinct nets for the silk pin count);
+    // the chain walker IS correct for both v15 sub-variants.
+    if (padChain && inst.instRef16x) {
+      let padKey = padChain.blk07ToFirstPad.get(inst.instRef16x) ?? 0;
+      let pinIdx = 1;
+      const visited = new Set<number>();
+      while (padKey !== 0 && !visited.has(padKey) && pinIdx < 2000) {
+        visited.add(padKey);
+        const padHdr = padChain.blk48Records.get(padKey);
+        if (!padHdr) break;
+        // For multi-layer connectors (JHDD1 etc.) the +0x10 detail key
+        // sometimes points to ANOTHER BLK_0x48 instead of a BLK_0xC8.
+        // Walk through up to 6 intermediate BLK_0x48 hops to find the
+        // BLK_0xC8 with actual coords.
+        let detailKey = padHdr.detailKey;
+        const detailVisited = new Set<number>();
+        for (let hop = 0; hop < 6; hop++) {
+          if (detailKey === 0 || detailVisited.has(detailKey)) break;
+          detailVisited.add(detailKey);
+          if (padChain.blkC8Records.has(detailKey)) break; // prefer real pad geometry (with net)
+          const intermediate = padChain.blk48Records.get(detailKey);
+          if (!intermediate) break;
+          detailKey = intermediate.detailKey;
+        }
+        // Prefer real BLK_0xC8 (Route 5 net resolution); fall back to
+        // terminal byte1=0x01 inline coords (no net) for multi-layer
+        // connector pins where the chain dead-ends without reaching C8.
+        const padDetail = padChain.blkC8Records.get(detailKey)
+          ?? padChain.terminalPadRecords?.get(detailKey);
+        if (padDetail) {
+          const cx = (padDetail.coords[0] + padDetail.coords[2]) / 2 / div;
+          const cy = (padDetail.coords[1] + padDetail.coords[3]) / 2 / div;
+          const w = Math.abs(padDetail.coords[2] - padDetail.coords[0]) / div;
+          const h = Math.abs(padDetail.coords[3] - padDetail.coords[1]) / div;
+          // Validate: skip pads with absurd sizes (false-positive C8 records)
+          if (w < 500 && h < 500 && (cx !== 0 || cy !== 0)) {
+            const radius = Math.max(2, Math.min(w, h) / 2);
+            // Net is keyed on the resolved BLK_0xC8 (pad geometry), not the
+            // BLK_0x48 header — see allegro-db.ts padGeoToNetName.
+            const netName = padChain.padGeoToNetName.get(detailKey) ?? '';
+            pins.push({
+              name: String(pinIdx),
+              number: String(pinIdx),
+              position: { x: cx, y: cy },
+              radius,
+              side: inst.layer === 1 ? 'bottom' : 'top',
+              net: netName,
+            });
+            allPinPositions.push({ x: cx, y: cy });
+          }
+        }
+        padKey = padHdr.next;
+        pinIdx++;
+      }
+    }
+
+    // Bounds: pin extents + small margin when pins are available; otherwise
+    // a placeholder bbox around origin (some connectors like JHDD1, JODD1,
+    // JLAN1, JHDMI1 have chain-walker gaps and no decoded pins yet — show
+    // them as small marks rather than the broken oversized rectangles
+    // produced by mixing footprint-local fpBbox with board-absolute origin).
+    let finalBounds: { minX: number; minY: number; maxX: number; maxY: number };
+    if (pins.length > 0) {
+      const xs = pins.map(p => p.position.x);
+      const ys = pins.map(p => p.position.y);
+      const margin = 20;
+      finalBounds = {
+        minX: Math.min(...xs) - margin,
+        minY: Math.min(...ys) - margin,
+        maxX: Math.max(...xs) + margin,
+        maxY: Math.max(...ys) + margin,
+      };
+    } else {
+      const placeholderHalf = 30;
+      finalBounds = {
+        minX: ox - placeholderHalf,
+        minY: oy - placeholderHalf,
+        maxX: ox + placeholderHalf,
+        maxY: oy + placeholderHalf,
+      };
+    }
+    void bounds;
+
+    parts.push({
+      name: refdes,
+      side: inst.layer === 1 ? 'bottom' : 'top',
+      type: 'smd',
+      origin: { x: ox, y: oy },
+      pins,
+      bounds: finalBounds,
+      meta: { package: fpName },
+    });
   }
 
   return { parts, allPinPositions };
