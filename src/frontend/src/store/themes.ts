@@ -126,7 +126,33 @@ export const THEMES: Record<string, Theme> = {
 
 const STORAGE_KEY = 'boardripper-theme';
 const ACCENT_OVERRIDE_KEY = 'boardripper-accent-override';
+const BACKGROUND_OVERRIDE_KEY = 'boardripper-background-override';
+const CHROME_OVERRIDE_KEY = 'boardripper-chrome-override';
 const DEFAULT_ID = 'default';
+
+/**
+ * Architecture note — themes vs interface knobs.
+ *
+ * The `THEMES` registry was originally a kitchen-sink theme: UI chrome
+ * + board canvas + render-settings overrides bundled per id. The user
+ * has clarified that **themes should be for boards**, not the interface.
+ * Going forward:
+ *
+ *   - Theme  — board-side concerns: canvas background, board fill,
+ *              outline / selection / butterfly / labelText, plus any
+ *              `boardOverrides` (settings overlays like Landrex super-
+ *              monochrome). Selectable via setTheme().
+ *   - Knobs  — interface-side: 3 simple colours the user picks freely.
+ *              `accent` (signal indicators), `background` (canvas + the
+ *              interactive surface tier), `chrome` (toolbar / status /
+ *              tab strips). Each cascades into the related CSS vars.
+ *
+ * Right now `theme.ui.*` still ships per theme as a *fallback default*
+ * for the knobs — when no override is set, the active theme's UI tokens
+ * paint chrome. The end-state is to retire `theme.ui.*` and have a
+ * single neutral baseline; the override knobs become the only path to
+ * change interface chrome. Tracked separately from this registry edit.
+ */
 
 /**
  * Curated accent presets used by both the SettingsPanel and the home
@@ -175,9 +201,23 @@ function saveToStorage(activeId: string) {
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
-function loadAccentOverride(): string | null {
+/** Mix a hex colour toward white by `amount` ∈ [0,1]. Used to derive a
+ *  lighter sibling token (e.g. button surface from canvas background) when
+ *  the user overrides only the parent token. */
+export function lightenHex(hex: string, amount: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const lr = Math.round(r + (255 - r) * amount);
+  const lg = Math.round(g + (255 - g) * amount);
+  const lb = Math.round(b + (255 - b) * amount);
+  const toHex = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${toHex(lr)}${toHex(lg)}${toHex(lb)}`;
+}
+
+function loadHexOverride(key: string): string | null {
   try {
-    const raw = localStorage.getItem(ACCENT_OVERRIDE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     return HEX_RE.test(raw) ? raw : null;
   } catch {
@@ -185,29 +225,53 @@ function loadAccentOverride(): string | null {
   }
 }
 
-function saveAccentOverride(hex: string | null) {
+function saveHexOverride(key: string, hex: string | null) {
   try {
-    if (hex == null) localStorage.removeItem(ACCENT_OVERRIDE_KEY);
-    else localStorage.setItem(ACCENT_OVERRIDE_KEY, hex);
+    if (hex == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, hex);
   } catch { /* quota — ignore */ }
 }
 
+interface UiOverrides {
+  accent: string | null;
+  background: string | null;
+  chrome: string | null;
+}
+
 /** Apply a theme's UI + canvas colors to CSS custom properties on <html>.
- *  When `accentOverride` is non-null it replaces the theme's `--accent`. */
-export function applyThemeToDOM(theme: Theme, accentOverride: string | null = null) {
+ *  Each override replaces the corresponding theme token and cascades into
+ *  related siblings:
+ *    - background  → --bg-primary; --bg-secondary derived (lighten 6%)
+ *    - chrome      → --bg-tertiary; --border derived (lighten 12%)
+ *    - accent      → --accent; --accent-hover derived in CSS via color-mix
+ */
+export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = {}) {
   const root = document.documentElement;
-  root.style.setProperty('--bg-primary',     theme.ui.bgPrimary);
-  root.style.setProperty('--bg-secondary',   theme.ui.bgSecondary);
-  root.style.setProperty('--bg-tertiary',    theme.ui.bgTertiary);
+  const { accent, background, chrome } = overrides;
+
+  if (background) {
+    root.style.setProperty('--bg-primary',   background);
+    root.style.setProperty('--bg-secondary', lightenHex(background, 0.06));
+  } else {
+    root.style.setProperty('--bg-primary',   theme.ui.bgPrimary);
+    root.style.setProperty('--bg-secondary', theme.ui.bgSecondary);
+  }
+
+  if (chrome) {
+    root.style.setProperty('--bg-tertiary', chrome);
+    root.style.setProperty('--border',      lightenHex(chrome, 0.12));
+  } else {
+    root.style.setProperty('--bg-tertiary', theme.ui.bgTertiary);
+    root.style.setProperty('--border',      theme.ui.border);
+  }
+
   root.style.setProperty('--text-primary',   theme.ui.textPrimary);
   root.style.setProperty('--text-secondary', theme.ui.textSecondary);
-  root.style.setProperty('--accent',         accentOverride ?? theme.ui.accent);
-  root.style.setProperty('--border',         theme.ui.border);
+  root.style.setProperty('--accent',         accent ?? theme.ui.accent);
+  // --accent-hover is derived from --accent in index.css via color-mix.
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
   root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);
   root.style.setProperty('--icon-pdf-bg',    theme.ui.iconPdfBg);
-  // Note: --accent-hover is derived from --accent via color-mix in
-  // index.css, so no JS work is needed to update it.
 }
 
 /** Convert '#rrggbb' to a 24-bit integer for PixiJS color arguments. */
@@ -218,14 +282,18 @@ export function hexToInt(hex: string): number {
 class ThemeStore extends Emitter {
   private _activeId: string = DEFAULT_ID;
   private _accentOverride: string | null = null;
+  private _backgroundOverride: string | null = null;
+  private _chromeOverride: string | null = null;
   private _initialized = false;
 
   /** Call once at app startup. Idempotent — second call no-ops. */
   init(): void {
     if (this._initialized) return;
     this._activeId = loadFromStorage();
-    this._accentOverride = loadAccentOverride();
-    applyThemeToDOM(this.activeTheme(), this._accentOverride);
+    this._accentOverride = loadHexOverride(ACCENT_OVERRIDE_KEY);
+    this._backgroundOverride = loadHexOverride(BACKGROUND_OVERRIDE_KEY);
+    this._chromeOverride = loadHexOverride(CHROME_OVERRIDE_KEY);
+    this.applyAll();
     this._initialized = true;
   }
 
@@ -237,14 +305,38 @@ class ThemeStore extends Emitter {
   get accentOverride(): string | null {
     return this._accentOverride;
   }
+  /** User's background (canvas + surface tier) override, or null. */
+  get backgroundOverride(): string | null {
+    return this._backgroundOverride;
+  }
+  /** User's chrome (toolbar / status / tabs / border tier) override, or null. */
+  get chromeOverride(): string | null {
+    return this._chromeOverride;
+  }
 
   /** The accent currently driving --accent (override if set, else theme default). */
   get effectiveAccent(): string {
     return this._accentOverride ?? this.activeTheme().ui.accent;
   }
+  /** Effective canvas background — drives --bg-primary. */
+  get effectiveBackground(): string {
+    return this._backgroundOverride ?? this.activeTheme().ui.bgPrimary;
+  }
+  /** Effective chrome colour — drives --bg-tertiary. */
+  get effectiveChrome(): string {
+    return this._chromeOverride ?? this.activeTheme().ui.bgTertiary;
+  }
 
   activeTheme(): Theme {
     return THEMES[this._activeId] ?? THEMES[DEFAULT_ID];
+  }
+
+  private applyAll(): void {
+    applyThemeToDOM(this.activeTheme(), {
+      accent: this._accentOverride,
+      background: this._backgroundOverride,
+      chrome: this._chromeOverride,
+    });
   }
 
   setTheme(id: string): void {
@@ -255,13 +347,12 @@ class ThemeStore extends Emitter {
     if (id === this._activeId) return;
     this._activeId = id;
     saveToStorage(id);
-    applyThemeToDOM(this.activeTheme(), this._accentOverride);
+    this.applyAll();
     this.notify();
   }
 
   /** Override the active theme's accent. Pass null to revert to the theme's
-   *  built-in accent. Persisted to localStorage so the override survives
-   *  across reloads independent of the active theme. */
+   *  built-in accent. Persisted independently of the active theme. */
   setAccent(hex: string | null): void {
     if (hex != null && !HEX_RE.test(hex)) {
       log.ui.warn(`themes: setAccent called with invalid hex '${hex}' — ignored`);
@@ -269,8 +360,36 @@ class ThemeStore extends Emitter {
     }
     if (hex === this._accentOverride) return;
     this._accentOverride = hex;
-    saveAccentOverride(hex);
-    applyThemeToDOM(this.activeTheme(), this._accentOverride);
+    saveHexOverride(ACCENT_OVERRIDE_KEY, hex);
+    this.applyAll();
+    this.notify();
+  }
+
+  /** Override the canvas + surface background. Drives --bg-primary directly
+   *  and --bg-secondary as a lightened sibling. Pass null to revert. */
+  setBackground(hex: string | null): void {
+    if (hex != null && !HEX_RE.test(hex)) {
+      log.ui.warn(`themes: setBackground called with invalid hex '${hex}' — ignored`);
+      return;
+    }
+    if (hex === this._backgroundOverride) return;
+    this._backgroundOverride = hex;
+    saveHexOverride(BACKGROUND_OVERRIDE_KEY, hex);
+    this.applyAll();
+    this.notify();
+  }
+
+  /** Override the chrome / passive-element tier. Drives --bg-tertiary
+   *  directly and --border as a lifted sibling. Pass null to revert. */
+  setChrome(hex: string | null): void {
+    if (hex != null && !HEX_RE.test(hex)) {
+      log.ui.warn(`themes: setChrome called with invalid hex '${hex}' — ignored`);
+      return;
+    }
+    if (hex === this._chromeOverride) return;
+    this._chromeOverride = hex;
+    saveHexOverride(CHROME_OVERRIDE_KEY, hex);
+    this.applyAll();
     this.notify();
   }
 

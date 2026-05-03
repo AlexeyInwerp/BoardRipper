@@ -689,9 +689,9 @@ function ThemeSelect() {
   return (
     <label
       className="home-toggle-row"
-      title="Switch the global colour theme. Affects UI chrome, the board canvas, and any per-theme settings overrides."
+      title="Board-side colour set: canvas background, board fill, outline / selection accent, plus any per-theme settings overrides. Interface chrome lives in the Accent / Background / Chrome pickers below."
     >
-      <span>Theme</span>
+      <span>Board theme</span>
       <select
         className="home-theme-select"
         value={activeId}
@@ -707,63 +707,126 @@ function ThemeSelect() {
   );
 }
 
-function useAccentOverride(): string | null {
-  return useSyncExternalStore(
-    (cb) => themeStore.subscribe(cb),
-    () => themeStore.accentOverride,
-  );
+/**
+ * Compact UI-token picker. Used three times in the Behaviour stack:
+ * accent, background (canvas tier), chrome (strips/border tier). Each
+ * cascades into its sibling token via the themeStore (see themes.ts).
+ */
+interface UiPickerProps {
+  label: string;
+  effective: string;
+  override: string | null;
+  onChange: (hex: string) => void;
+  onReset: () => void;
+  presets?: ReadonlyArray<{ hex: string; label: string }>;
+  resetTooltip: string;
+  rowTooltip: string;
 }
 
-/**
- * Compact accent picker — the home dashboard mirror of the Settings-panel
- * accent block. Shares the same `ACCENT_PRESETS` registry from store/themes
- * so adding a swatch surfaces it in both places.
- */
-function AccentPicker() {
-  const activeId = useThemeId();
-  const override = useAccentOverride();
-  const themeAccent =
-    themeStore.list().find((t) => t.id === activeId)?.ui.accent ?? '#4a9eff';
-  const effective = (override ?? themeAccent).toLowerCase();
-
+function UiPickerRow({
+  label,
+  effective,
+  override,
+  onChange,
+  onReset,
+  presets,
+  resetTooltip,
+  rowTooltip,
+}: UiPickerProps) {
+  const eff = effective.toLowerCase();
   return (
-    <div className="home-accent-row" title="Override the active theme's --accent. Pill colours and selection (yellow) are independent.">
-      <span className="home-accent-label">Accent</span>
+    <div className="home-accent-row" title={rowTooltip}>
+      <span className="home-accent-label">{label}</span>
       <input
         type="color"
         className="home-accent-input"
-        value={effective}
-        onChange={(e) => themeStore.setAccent(e.target.value.toLowerCase())}
-        aria-label="Accent colour"
+        value={eff}
+        onChange={(e) => onChange(e.target.value.toLowerCase())}
+        aria-label={`${label} colour`}
       />
-      <div className="home-accent-swatches" role="listbox" aria-label="Accent presets">
-        {ACCENT_PRESETS.map((p) => {
-          const active = p.hex.toLowerCase() === effective;
-          return (
-            <button
-              key={p.hex}
-              type="button"
-              className={`home-accent-swatch${active ? ' active' : ''}`}
-              style={{ background: p.hex }}
-              onClick={() => themeStore.setAccent(p.hex)}
-              title={`${p.label} · ${p.hex.toUpperCase()}`}
-              aria-label={p.label}
-              aria-pressed={active}
-            />
-          );
-        })}
-      </div>
+      {presets && (
+        <div className="home-accent-swatches" role="listbox" aria-label={`${label} presets`}>
+          {presets.map((p) => {
+            const active = p.hex.toLowerCase() === eff;
+            return (
+              <button
+                key={p.hex}
+                type="button"
+                className={`home-accent-swatch${active ? ' active' : ''}`}
+                style={{ background: p.hex }}
+                onClick={() => onChange(p.hex)}
+                title={`${p.label} · ${p.hex.toUpperCase()}`}
+                aria-label={p.label}
+                aria-pressed={active}
+              />
+            );
+          })}
+        </div>
+      )}
       {override && (
         <button
           type="button"
           className="home-accent-reset"
-          onClick={() => themeStore.setAccent(null)}
-          title="Revert to the active theme's built-in accent"
+          onClick={onReset}
+          title={resetTooltip}
         >
           ↺
         </button>
       )}
     </div>
+  );
+}
+
+function useThemeOverrides() {
+  return useSyncExternalStore(
+    (cb) => themeStore.subscribe(cb),
+    () => ({
+      accent: themeStore.accentOverride,
+      background: themeStore.backgroundOverride,
+      chrome: themeStore.chromeOverride,
+    }),
+  );
+}
+
+function InterfaceColorPickers() {
+  const activeId = useThemeId();
+  const overrides = useThemeOverrides();
+  const theme = themeStore.list().find((t) => t.id === activeId);
+  const themeAccent = theme?.ui.accent ?? '#4a9eff';
+  const themeBg = theme?.ui.bgPrimary ?? '#08080c';
+  const themeChrome = theme?.ui.bgTertiary ?? '#0c1424';
+
+  return (
+    <>
+      <UiPickerRow
+        label="Accent"
+        effective={overrides.accent ?? themeAccent}
+        override={overrides.accent}
+        onChange={(h) => themeStore.setAccent(h)}
+        onReset={() => themeStore.setAccent(null)}
+        presets={ACCENT_PRESETS}
+        resetTooltip="Revert accent to the active board theme's default"
+        rowTooltip="Signal indicators: focus, active states, links. Pill colours and selection (yellow) are independent."
+      />
+      <UiPickerRow
+        label="Background"
+        effective={overrides.background ?? themeBg}
+        override={overrides.background}
+        onChange={(h) => themeStore.setBackground(h)}
+        onReset={() => themeStore.setBackground(null)}
+        resetTooltip="Revert background to the active board theme's default"
+        rowTooltip="Canvas + interactive surface tier. Drives --bg-primary; --bg-secondary cascades 6% lighter."
+      />
+      <UiPickerRow
+        label="Chrome"
+        effective={overrides.chrome ?? themeChrome}
+        override={overrides.chrome}
+        onChange={(h) => themeStore.setChrome(h)}
+        onReset={() => themeStore.setChrome(null)}
+        resetTooltip="Revert chrome to the active board theme's default"
+        rowTooltip="Toolbar / status / tab strips. Drives --bg-tertiary; --border cascades 12% lighter."
+      />
+    </>
   );
 }
 
@@ -884,7 +947,7 @@ function QuickSettings() {
           <AutoSwitchToggle />
           <AutoOpenPdfToggle />
           <ThemeSelect />
-          <AccentPicker />
+          <InterfaceColorPickers />
         </div>
       </div>
 
