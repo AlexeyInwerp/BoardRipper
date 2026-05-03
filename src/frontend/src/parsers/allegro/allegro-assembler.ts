@@ -378,7 +378,21 @@ function extractComponentsV15(
         visited.add(padKey);
         const padHdr = padChain.blk48Records.get(padKey);
         if (!padHdr) break;
-        const padDetail = padChain.blkC8Records.get(padHdr.detailKey);
+        // For multi-layer connectors (JHDD1 etc.) the +0x10 detail key
+        // sometimes points to ANOTHER BLK_0x48 instead of a BLK_0xC8.
+        // Walk through up to 6 intermediate BLK_0x48 hops to find the
+        // BLK_0xC8 with actual coords.
+        let detailKey = padHdr.detailKey;
+        const detailVisited = new Set<number>();
+        for (let hop = 0; hop < 6; hop++) {
+          if (detailKey === 0 || detailVisited.has(detailKey)) break;
+          detailVisited.add(detailKey);
+          if (padChain.blkC8Records.has(detailKey)) break; // found geometry
+          const intermediate = padChain.blk48Records.get(detailKey);
+          if (!intermediate) break;
+          detailKey = intermediate.detailKey;
+        }
+        const padDetail = padChain.blkC8Records.get(detailKey);
         if (padDetail) {
           const cx = (padDetail.coords[0] + padDetail.coords[2]) / 2 / div;
           const cy = (padDetail.coords[1] + padDetail.coords[3]) / 2 / div;
