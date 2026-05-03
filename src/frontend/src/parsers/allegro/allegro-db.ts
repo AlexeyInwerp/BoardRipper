@@ -618,7 +618,7 @@ export class AllegroDb {
         const ptr28 = stream.u32();
         const ptr2c = stream.u32();
         const ptr30 = stream.u32();
-        void ptr20; void ptr24; void ptr28; void ptr30;
+        void ptr20; void ptr24; void ptr28; void ptr2c; void ptr30;
 
         // Build a Blk0x2DFootprintInst-shaped record. v15 doesn't expose all
         // the v16+ fields; we leave those zero/empty so the assembler chain
