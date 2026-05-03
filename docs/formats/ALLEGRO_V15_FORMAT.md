@@ -627,15 +627,56 @@ source of truth.
 
 ### Highest-value next probes (in order)
 
-1. **15.5.2 per-pad net mechanism (v13tl-0629).** No mappings ship today. Probe to find the right field offsets for the 15.5.2 byte1=0x10 layout, OR find a different per-pad NetAssign block type. Validation: `node /tmp/oracle-harness.mjs <BRD> <CAD>` must show `False positives: 0`. The v13tl byte1=0x10 +0x18 → C8 (96% hit) is interesting but didn't pan out as a clean route — might pair with a different net field. Start with: dump 5 v13tl byte1=0x10 records around pads we know the oracle net for, see which u32 field consistently lands on a byte1=0x6c whose name matches.
+1. **15.5.2 BLK_0x48 chain semantics (v13tl-0629).** **NEW BLOCKER.** The
+   per-component pin chain over-walks dramatically on 15.5.2:
 
-2. **JHDMI1 / JLAN1 last 3 pins (LA-7321P).** Their detail keys (e.g. `0x7bf8780`, the unmatched pin 1 of JHDMI1) don't land in any catalogued pool. Inverse-search the file for that exact u32 value to find what record holds it as m_Key (probably another pad-prefix variant or a different pool addend).
+   | Refdes | Oracle pins | Walked pads | Distinct coord rects |
+   |--------|-------------|-------------|---------------------|
+   | U5     |     408     |  1363       |   1355              |
+   | U13    |     257     |   569       |   567               |
+   | U4     |     182     |   956       |   956               |
+   | CN5    |      12     |    12       |    12               | ← works |
 
-3. **Multi-layer connector chain semantics.** byte1=0x01 / byte1=0x8c records form alternating chains for connector pin-stacks. Currently we treat them as transparent intermediate hops. They may also carry per-layer pad rectangles at +0x14..+0x20 — relevant once we add per-layer rendering.
+   Currently capped at 200 pads/component on 15.5.2 (commit `f5a8c99`)
+   so big chips render as part-outline only. To unblock, find the
+   correct per-component chain mechanism — possibly a different field
+   on byte1=0x40 / BLK_0x48, possibly the +0x3C "next byte1=0x40"
+   chain that 15.5.2 has but 15.5.7 doesn't. Probes already run:
+   - byte1=0x40.+0x3C → next byte1=0x40 (1366/1384 hits) — confirmed
+   - U5's chain doesn't cross any other byte1=0x40's first pad
+   - All 1355 walked pads have unique coord rectangles (no dedup)
 
-4. **Promote oracle harness to Playwright.** `/tmp/oracle-harness.mjs` is the precision gate but lives outside the repo. Move to `src/frontend/tests/allegro-v15-oracle.spec.ts`, fail the test if total FP > 0 on either sample. This locks in the no-regression invariant.
+2. **15.5.2 per-pad net mechanism.** Same sub-variant. Routes 1+5 give
+   0 correct on v13tl, currently magic-gated off. Start with: pick
+   3 pads whose oracle net we know (e.g. CN5 pin 5 = `/CN_CAPS_LED#`),
+   inverse-search the file for the BLK_0xC8 m_Key, identify which
+   neighbouring records contain a byte1=0x6c reference whose string
+   matches `/CN_CAPS_LED#`. Validation: `node /tmp/oracle-harness.mjs
+   <BRD> <CAD>` must show `False positives: 0`.
 
-5. **15.5.2 sub-variant detection in `formatFromMagic`.** Currently both v15 sub-variants map to `FmtVer.V_15X`. Adding `V_152` and `V_157` would let downstream code (assembler, debug logs) distinguish them cleanly.
+3. **JHDMI1 / JLAN1 last 3 pins (LA-7321P).** Their detail keys (e.g.
+   `0x7bf8780`, JHDMI1 pin 1) don't land in any catalogued pool.
+   Inverse-search the file for that exact u32 value to find what
+   record holds it as m_Key (probably a fourth BLK_0xC8 prefix
+   variant or a different pool addend).
+
+4. **Multi-layer connector chain semantics.** byte1=0x01 / byte1=0x8c
+   records form alternating chains for connector pin-stacks. They
+   may carry per-layer pad rectangles at +0x14..+0x20 — relevant once
+   we add per-layer rendering.
+
+5. **Promote oracle harness to Playwright.** `/tmp/oracle-harness.mjs`
+   is the precision gate but lives outside the repo. Move to
+   `src/frontend/tests/allegro-v15-oracle.spec.ts`, fail the test if
+   total FP > 0 on either sample. This locks in the no-regression
+   invariant.
+
+6. **Sub-variant detection in `formatFromMagic`.** Currently both v15
+   sub-variants map to `FmtVer.V_15X`. Adding `V_152` and `V_157`
+   would let downstream code (assembler, debug logs, the per-variant
+   gates) distinguish them cleanly. Right now we re-derive the magic
+   masking inline at the gate sites — fine for two probes, ugly at
+   scale.
 
 ### Key files / probes
 - Parser: `src/frontend/src/parsers/allegro/allegro-db.ts` (block walkers + Routes 1+5)
