@@ -414,15 +414,17 @@ export class AllegroDb {
     }
     dbg.log(`v15: scanned BLK_0x48 → ${blk48Records.size} pad header records`);
 
-    // Walk BLK_0xC8 records (pad geometry) — coords at +0x34..+0x40
+    // Walk BLK_0xC8 records (pad geometry) — coords at +0x38..+0x44
+    // (verified board-absolute via .cad oracle: PQ306/L124/U41 pin 1
+    // positions decode EXACTLY to oracle values).
     const blkC8Records = new Map<number, { coords: [number, number, number, number] }>();
-    for (let off = 0; off + 0x44 <= fileBytes.length; off += 4) {
+    for (let off = 0; off + 0x48 <= fileBytes.length; off += 4) {
       if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+3) !== 0x00) continue;
       const mKey = peekU32(off + 0x04);
-      const x1 = peekI32(off + 0x34);
-      const y1 = peekI32(off + 0x38);
-      const x2 = peekI32(off + 0x3C);
-      const y2 = peekI32(off + 0x40);
+      const x1 = peekI32(off + 0x38);
+      const y1 = peekI32(off + 0x3C);
+      const x2 = peekI32(off + 0x40);
+      const y2 = peekI32(off + 0x44);
       if (mKey !== 0) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
     }
     dbg.log(`v15: scanned BLK_0xC8 → ${blkC8Records.size} pad geometry records`);
