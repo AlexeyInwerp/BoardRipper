@@ -158,18 +158,35 @@ const DEFAULT_ID = 'default';
  * Curated accent presets used by both the SettingsPanel and the home
  * dashboard picker. Adding a preset = one append; both surfaces pick it up.
  *
- * The ATARI grouping anchors on the corporate Fuji red (Pantone 185 ≈
- * #E2231A) — the only colour that's strictly the classical ATARI brand.
- * The orange + gold come from the arcade-marquee gradient art inside
- * the Fuji shape on Asteroids / Centipede / Tempest cabinets — culturally
- * "ATARI colours" but not part of the logo proper. Labelled "(Atari
- * marquee)" so the attribution stays honest.
+ * Deep-research notes on the ATARI palette
+ * (after a request to verify rather than guess):
+ *
+ *   - The classical Atari Fuji logo (designed by George Opperman, first
+ *     used 1972–73) was MONOCHROME — black on white — for ~30 years.
+ *     There is no "classical ATARI red".
+ *   - The official red was introduced in 2002 in a corporate refresh.
+ *     The documented spec is Pantone Bright Red C, #E5141E, RGB 229/20/30,
+ *     CMYK 0/91/87/10. (Some secondary sources cite #E01E2B as a slightly
+ *     different web rendering of the same Pantone.)
+ *   - The famous "Atari rainbow" lives on the 1983 Atari 2600 silver-label
+ *     cartridges and "long/short rainbow" 2600 console variants — a
+ *     packaging stripe, NOT the Fuji logo itself.
+ *   - The red/orange/gold gradient inside the Fuji shape on Asteroids /
+ *     Centipede / Tempest arcade marquees is also marketing art, not the
+ *     logo. Worth keeping as a usable preset trio because it's evocative
+ *     of the era, but I labelled them just "Arcade orange/gold" without
+ *     claiming Atari trademark authority.
+ *
+ * Sources cross-checked: fabrikbrands.com (with the explicit hex/Pantone),
+ * 1000logos.net, logodesignlove.com, AtariAge forums, Wikipedia.
  */
 export const ACCENT_PRESETS: ReadonlyArray<{ hex: string; label: string }> = [
   { hex: '#4a9eff', label: 'BoardRipper default' },
-  { hex: '#e2231a', label: 'ATARI Red' },
-  { hex: '#f77f00', label: 'Arcade orange (Atari marquee)' },
-  { hex: '#fcbf49', label: 'Arcade gold (Atari marquee)' },
+  // Pantone Bright Red C — the canonical post-2002 Atari Fuji red.
+  { hex: '#e5141e', label: 'ATARI Red (Pantone Bright Red C)' },
+  // Arcade marquee gradient tones. Heritage-adjacent, not the logo proper.
+  { hex: '#f77f00', label: 'Arcade orange' },
+  { hex: '#fcbf49', label: 'Arcade gold' },
   { hex: '#ff3aa1', label: 'Hot magenta' },
   { hex: '#b8ff2b', label: 'Acid lime' },
   { hex: '#9c6bff', label: 'Deep violet' },
