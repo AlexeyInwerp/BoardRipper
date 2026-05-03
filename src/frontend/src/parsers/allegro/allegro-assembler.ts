@@ -367,13 +367,40 @@ function extractComponentsV15(
       blkC8Records: Map<number, { coords: [number, number, number, number] }>;
     };
     const padChain = (db as unknown as Record<string, unknown>).v15PadChain as PadChain | undefined;
-    // Pin geometry temporarily disabled — BLK_0xC8 coord interpretation is
-    // wrong (pads land far from their parent part, and bbox sizes blow out
-    // to "huge rectangles" in the renderer). The pad chain decoding is
-    // verified (see docs/formats/ALLEGRO_V15_FORMAT.md) but the coordinate
-    // transform from pad bbox → board-absolute pin position needs more
-    // investigation. Tracked in pending Phase 3d.
-    void padChain;
+    // Pin geometry — VERIFIED board-absolute via .cad oracle (PQ306, L124,
+    // U41, etc. all decode to exact oracle pin1 positions).
+    if (padChain && inst.instRef16x) {
+      let padKey = padChain.blk07ToFirstPad.get(inst.instRef16x) ?? 0;
+      let pinIdx = 1;
+      const visited = new Set<number>();
+      while (padKey !== 0 && !visited.has(padKey) && pinIdx < 1000) {
+        visited.add(padKey);
+        const padHdr = padChain.blk48Records.get(padKey);
+        if (!padHdr) break;
+        const padDetail = padChain.blkC8Records.get(padHdr.detailKey);
+        if (padDetail) {
+          const cx = (padDetail.coords[0] + padDetail.coords[2]) / 2 / div;
+          const cy = (padDetail.coords[1] + padDetail.coords[3]) / 2 / div;
+          const w = Math.abs(padDetail.coords[2] - padDetail.coords[0]) / div;
+          const h = Math.abs(padDetail.coords[3] - padDetail.coords[1]) / div;
+          // Validate: skip pads with absurd sizes (false-positive C8 records)
+          if (w < 500 && h < 500 && (cx !== 0 || cy !== 0)) {
+            const radius = Math.max(2, Math.min(w, h) / 2);
+            pins.push({
+              name: String(pinIdx),
+              number: String(pinIdx),
+              position: { x: cx, y: cy },
+              radius,
+              side: inst.layer === 1 ? 'bottom' : 'top',
+              net: '',
+            });
+            allPinPositions.push({ x: cx, y: cy });
+          }
+        }
+        padKey = padHdr.next;
+        pinIdx++;
+      }
+    }
 
     // Recompute bounds from pins if available, else use file bbox
     const finalBounds = pins.length > 0
