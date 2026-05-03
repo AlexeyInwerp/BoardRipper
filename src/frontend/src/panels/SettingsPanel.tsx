@@ -1733,16 +1733,28 @@ function useAccentOverride(): string | null {
 
 /**
  * Curated accent presets shown alongside the freeform color input.
- * Anchors include classical ATARI brand colors (red / orange / gold from
- * the Fuji-era arcade posters) plus a handful of non-AI-cliché options.
  * Adding a preset = append to this list; the swatch row picks up the change.
+ *
+ * The ATARI grouping anchors on the corporate Fuji red (Pantone 185 ≈
+ * #E2231A) — that's the only colour that's *strictly* the classical ATARI
+ * brand. The orange + gold come from the arcade-marquee gradient art
+ * inside the Fuji shape on Asteroids / Centipede / Tempest cabinets,
+ * which is what most people picture when they hear "ATARI colours" but
+ * isn't part of the logo proper. Both are surfaced; only the red is
+ * labelled "ATARI Red". The marquee tones get explicit "(arcade)" tags
+ * so the attribution stays honest.
  */
 const ACCENT_PRESETS: Array<{ hex: string; label: string }> = [
-  // ATARI — the canonical Fuji palette.
+  // BoardRipper's built-in default — first slot so a one-click revert is
+  // always available without going through the Reset button.
+  { hex: '#4a9eff', label: 'BoardRipper default' },
+  // ATARI Fuji — the canonical brand red (Pantone 185 approximation).
   { hex: '#e2231a', label: 'ATARI Red' },
-  { hex: '#f47a1f', label: 'ATARI Orange' },
-  { hex: '#f5b11c', label: 'ATARI Gold' },
-  // Non-cliché alternates.
+  // Arcade-marquee gradient that lives *inside* the Fuji shape on early
+  // ATARI cabinet art. Not the logo, but culturally read as "ATARI colours".
+  { hex: '#f77f00', label: 'Arcade orange (Atari marquee)' },
+  { hex: '#fcbf49', label: 'Arcade gold (Atari marquee)' },
+  // Non-AI-cliché alternates — magenta, acid lime, deep violet, teal.
   { hex: '#ff3aa1', label: 'Hot magenta' },
   { hex: '#b8ff2b', label: 'Acid lime' },
   { hex: '#9c6bff', label: 'Deep violet' },
