@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
-import { themeStore, THEMES } from '../store/themes';
+import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import type { RenderSettings, LabelSize, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
@@ -1637,8 +1637,6 @@ export function SettingsPanel() {
           title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
         <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateDraft}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
-        <Toggle label="Cache Static Layers (experimental)" value={draft.cacheStaticLayers} field="cacheStaticLayers" onUpdate={updateDraft}
-          title="Bake board outlines, traces, pads, fills and pin Graphics into RenderTextures once per scene. Trades texture memory for per-frame GPU work — big win when GPU dominates. Static layers may go slightly blurry at very deep zoom; toggle off to revert" />
         <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateDraft}
           title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 12. Triggers a scene rebuild." />
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft}
@@ -1730,36 +1728,6 @@ function useAccentOverride(): string | null {
     () => themeStore.accentOverride,
   );
 }
-
-/**
- * Curated accent presets shown alongside the freeform color input.
- * Adding a preset = append to this list; the swatch row picks up the change.
- *
- * The ATARI grouping anchors on the corporate Fuji red (Pantone 185 ≈
- * #E2231A) — that's the only colour that's *strictly* the classical ATARI
- * brand. The orange + gold come from the arcade-marquee gradient art
- * inside the Fuji shape on Asteroids / Centipede / Tempest cabinets,
- * which is what most people picture when they hear "ATARI colours" but
- * isn't part of the logo proper. Both are surfaced; only the red is
- * labelled "ATARI Red". The marquee tones get explicit "(arcade)" tags
- * so the attribution stays honest.
- */
-const ACCENT_PRESETS: Array<{ hex: string; label: string }> = [
-  // BoardRipper's built-in default — first slot so a one-click revert is
-  // always available without going through the Reset button.
-  { hex: '#4a9eff', label: 'BoardRipper default' },
-  // ATARI Fuji — the canonical brand red (Pantone 185 approximation).
-  { hex: '#e2231a', label: 'ATARI Red' },
-  // Arcade-marquee gradient that lives *inside* the Fuji shape on early
-  // ATARI cabinet art. Not the logo, but culturally read as "ATARI colours".
-  { hex: '#f77f00', label: 'Arcade orange (Atari marquee)' },
-  { hex: '#fcbf49', label: 'Arcade gold (Atari marquee)' },
-  // Non-AI-cliché alternates — magenta, acid lime, deep violet, teal.
-  { hex: '#ff3aa1', label: 'Hot magenta' },
-  { hex: '#b8ff2b', label: 'Acid lime' },
-  { hex: '#9c6bff', label: 'Deep violet' },
-  { hex: '#00c7b7', label: 'Teal' },
-];
 
 function ThemeTab() {
   const activeId = useThemeId();

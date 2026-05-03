@@ -128,6 +128,28 @@ const STORAGE_KEY = 'boardripper-theme';
 const ACCENT_OVERRIDE_KEY = 'boardripper-accent-override';
 const DEFAULT_ID = 'default';
 
+/**
+ * Curated accent presets used by both the SettingsPanel and the home
+ * dashboard picker. Adding a preset = one append; both surfaces pick it up.
+ *
+ * The ATARI grouping anchors on the corporate Fuji red (Pantone 185 ≈
+ * #E2231A) — the only colour that's strictly the classical ATARI brand.
+ * The orange + gold come from the arcade-marquee gradient art inside
+ * the Fuji shape on Asteroids / Centipede / Tempest cabinets — culturally
+ * "ATARI colours" but not part of the logo proper. Labelled "(Atari
+ * marquee)" so the attribution stays honest.
+ */
+export const ACCENT_PRESETS: ReadonlyArray<{ hex: string; label: string }> = [
+  { hex: '#4a9eff', label: 'BoardRipper default' },
+  { hex: '#e2231a', label: 'ATARI Red' },
+  { hex: '#f77f00', label: 'Arcade orange (Atari marquee)' },
+  { hex: '#fcbf49', label: 'Arcade gold (Atari marquee)' },
+  { hex: '#ff3aa1', label: 'Hot magenta' },
+  { hex: '#b8ff2b', label: 'Acid lime' },
+  { hex: '#9c6bff', label: 'Deep violet' },
+  { hex: '#00c7b7', label: 'Teal' },
+];
+
 interface PersistedTheme {
   activeId: string;
 }
