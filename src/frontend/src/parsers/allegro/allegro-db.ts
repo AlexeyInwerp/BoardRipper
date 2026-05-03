@@ -373,6 +373,66 @@ export class AllegroDb {
       dbg.log(`v15: scanned BLK_0x07 → ${n07} component instances at 0x${start07.toString(16)}..0x${scan07.toString(16)}`);
     }
 
+    // ── PAD CHAIN (v15-specific) ──────────────────────────────────────────
+    // BLK_0x07 ←[+0x28]─ byte1=0x40 ─[+0x2C]→ BLK_0x48 first pad
+    //   BLK_0x48 ─[+0x08]→ BLK_0x48 m_Next
+    //   BLK_0x48 ─[+0x10]→ BLK_0xC8 (pad geometry, coords at +0x34..+0x40)
+    //
+    // Whole-file scans for the three signatures. Records are stored as
+    // generic blocks in db.blocks so the v15 assembler can traverse them.
+    const fileBytes = new Uint8Array((stream as unknown as { view: DataView }).view.buffer);
+    const peekByte = (off: number) => fileBytes[off];
+    const peekU32 = (off: number) =>
+      ((fileBytes[off]) | (fileBytes[off+1] << 8) | (fileBytes[off+2] << 16) | (fileBytes[off+3] << 24)) >>> 0;
+    const peekI32 = (off: number) => (peekU32(off) | 0);
+
+    // Walk byte1=0x40 records (per-placement device records) — 56-byte stride
+    // assumption when contiguous; we just scan whole file for the prefix and
+    // store each record. Build a Map<blk07Key, firstPadKey> for fast lookup.
+    const blk07ToFirstPad = new Map<number, number>();
+    let n40 = 0;
+    for (let off = 0; off + 56 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x40 || peekByte(off+3) !== 0x00) continue;
+      const blk07Ref = peekU32(off + 0x28);
+      const firstPad = peekU32(off + 0x2C);
+      if (blk07Ref !== 0 && firstPad !== 0) {
+        blk07ToFirstPad.set(blk07Ref, firstPad);
+      }
+      n40++;
+    }
+    dbg.log(`v15: scanned byte1=0x40 → ${n40} per-placement records, ${blk07ToFirstPad.size} BLK_0x07→firstPad links`);
+
+    // Walk BLK_0x48 records (pad headers) — 24-byte logical size. Store as
+    // {next, detailKey} per m_Key.
+    const blk48Records = new Map<number, { next: number; detailKey: number }>();
+    for (let off = 0; off + 24 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x48 || peekByte(off+3) !== 0x00) continue;
+      const mKey = peekU32(off + 0x04);
+      const next = peekU32(off + 0x08);
+      const detail = peekU32(off + 0x10);
+      if (mKey !== 0) blk48Records.set(mKey, { next, detailKey: detail });
+    }
+    dbg.log(`v15: scanned BLK_0x48 → ${blk48Records.size} pad header records`);
+
+    // Walk BLK_0xC8 records (pad geometry) — coords at +0x34..+0x40
+    const blkC8Records = new Map<number, { coords: [number, number, number, number] }>();
+    for (let off = 0; off + 0x44 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+3) !== 0x00) continue;
+      const mKey = peekU32(off + 0x04);
+      const x1 = peekI32(off + 0x34);
+      const y1 = peekI32(off + 0x38);
+      const x2 = peekI32(off + 0x3C);
+      const y2 = peekI32(off + 0x40);
+      if (mKey !== 0) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
+    }
+    dbg.log(`v15: scanned BLK_0xC8 → ${blkC8Records.size} pad geometry records`);
+
+    // Stash the pad chain on the AllegroDb instance so the v15 assembler can
+    // resolve pads per BLK_0x2D placement.
+    (this as unknown as Record<string, unknown>).v15PadChain = {
+      blk07ToFirstPad, blk48Records, blkC8Records,
+    };
+
     // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
     // records, no LL in the header. The records are NOT grouped per footprint
     // — each record's m_FpDefRef (at +0x18) points to whichever BLK_0x2B is
