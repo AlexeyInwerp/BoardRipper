@@ -213,6 +213,44 @@ Total fixed-stride: **24 bytes**.
 
 **BLK_0x06.m_PtrPinNumber → byte1=0x20 → BLK_0x48 ALSO NOT direct.** Probed the byte1=0x20 record at file offset 0x1368e48 (target of BLK_0x06 #0's m_PtrPinNumber). Its outgoing pointers (`0x0957ca70`, `0x0957cb0c`) point into pool 0x095 — NOT to any BLK_0x48 key. Across all 3711 byte1=0x20 records in the file, scanning every 4-byte aligned field 0x04..0x3C found only 3 hits matching BLK_0x48 keys. Effectively no link.
 
+### BLK_0xC8 record layout corrected (2026-05-03 push 4)
+
+Field-by-field probe of PQ306's pin 1 BLK_0xC8 record at file offset `0x1368f84` shows:
+```
++0x00  prefix `00 c8 0c 00`
++0x04  m_Key
++0x08..+0x18  6 cross-pool pointers (BLK_0x07/2D/etc)
++0x18  pointer
++0x1C  pointer
++0x20  back-ref to BLK_0x48
++0x24  zero
++0x28  pointer (pool 0x095)
++0x2C  pointer (pool 0x095)
++0x30  pointer (pool 0x095)
++0x34  zero
++0x38  i32 — pad bbox X1 (= -501850 in our PQ306 example)
++0x3C  i32 — pad bbox Y1 (= -79450)
++0x40  i32 — pad bbox X2 (= -496450)
++0x44  i32 — pad bbox Y2 (= -76650)
++0x48  next record's prefix (= record size is 72 bytes)
+```
+
+So my earlier code read `+0x34..+0x40` which gave one zero plus 3 of the 4 coords. **Correct offsets are `+0x38..+0x44`.**
+
+With corrected offsets, PQ306 pin 1's bbox is:
+- bbox: `(-501850, -79450) to (-496450, -76650)` → with /100: `(-5018.5, -794.5)..(-4964.5, -766.5)`
+- size: **54 × 28 mils** — exactly correct for an SO8 pad! ✓
+- center: `(-4991.5, -780.5)`
+
+**But the absolute position is still wrong**: PQ306's oracle pin 1 is at `(-3970.94, -1513.65)`. The bbox center `(-4991.5, -780.5)` is ~1500 mils away. Not a simple offset to apply.
+
+PQ306 origin (CAD): `(-4072.61, -1438.65)`.
+Bbox center distance from CAD origin: `dx=-918.89, dy=+658.15`. Not zero, not a simple multiple.
+
+**This means the BLK_0xC8 bbox is in a different coordinate frame** (footprint-local with rotation/mirror, OR a different scale, OR coords are deltas from an unknown anchor). Solving requires:
+- Find the transform anchor (likely BLK_0x2D or BLK_0x2B carries it; possibly a field we currently treat as zero/unknown)
+- OR identify a different field in BLK_0xC8 that holds true board-absolute coords
+
 ### Pad coord interpretation — STILL OPEN
 
 End-to-end chain walk for PQ306 (8-pin SO8 MOSFET, .cad oracle confirmed) yielded these BLK_0xC8 coords:
