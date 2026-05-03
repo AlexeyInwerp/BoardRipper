@@ -474,149 +474,27 @@ export class AllegroDb {
     }
     dbg.log(`v15: byte1=0x10 NetAssign — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size} (from ${directNetNames.size} named nets)`);
 
-    // Route 2: byte1=0x01 (pad-pad connection / multi-layer record). Probe
-    // shows the prefix appears in BOTH `00 01 ?? 00` (3206) AND `00 01 ?? 01`
-    // (1111) shapes — the byte3=0x01 variant is the alternating-chain case
-    // documented in JHDD1 (see ALLEGRO_V15_FORMAT.md). With the relaxed
-    // byte3∈{0,1} filter, 4317 byte1=0x01 records produce ~1143 named-net
-    // hits at +0x3c.
+    // ── Routes 2, 3, 4 disabled (2026-05-03) ─────────────────────────────
     //
-    // Field layout (verified by ratio histogram):
-    //   +0x04  → BLK_0xC8 (95% of records)   — pad geometry A
-    //   +0x0c  → BLK_0xC8 (97%)              — pad geometry B
-    //   +0x3c  → BLK_0x6c (26%)              — net pointer (when present)
+    // Earlier iterations added "Route 2" (byte1=0x01 +0x3c → net), "Route 3"
+    // (byte1=0x8c +0x08 → net), and "Route 4" (connectivity-graph propagation
+    // through byte1=0x01/0x8c edges). On naive coverage metrics they looked
+    // great (LA-7321P 63% → 75% pin coverage), but per-component oracle
+    // comparison on U2 (962-pin BGA) showed catastrophic precision loss:
     //
-    // The 26% net hit rate means most byte1=0x01 records are *internal* chain
-    // links whose net is implicit from neighbours. We only assign nets from
-    // the 26% that DO carry a +0x3c net pointer. byte1=0x10 (Route 1) takes
-    // priority — we never overwrite its assignments.
-    const r2C8Fields = [0x04, 0x0c];
-    let r2 = 0;
-    for (let off = 0; off + 0x40 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
-      const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x01) continue;
-      const netKey = peekU32(off + 0x3c);
-      const netName = directNetNames.get(netKey);
-      if (!netName) continue;
-      for (const fo of r2C8Fields) {
-        const v = peekU32(off + fo);
-        if (!blkC8Records.has(v)) continue;
-        if (!padGeoToNetName.has(v)) {
-          padGeoToNetName.set(v, netName);
-          r2++;
-        }
-      }
-    }
-    // Route 3: byte1=0x8c (alternating partner of byte1=0x01 in connector
-    // chains). Mirror layout: nets at +0x08, C8 refs at +0x10 / +0x18.
-    // Same byte3∈{0,1} relaxation.
-    const r3C8Fields = [0x10, 0x18];
-    let r3 = 0;
-    for (let off = 0; off + 0x2c <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x8c) continue;
-      const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x01) continue;
-      const netKey = peekU32(off + 0x08);
-      const netName = directNetNames.get(netKey);
-      if (!netName) continue;
-      for (const fo of r3C8Fields) {
-        const v = peekU32(off + fo);
-        if (!blkC8Records.has(v)) continue;
-        if (!padGeoToNetName.has(v)) {
-          padGeoToNetName.set(v, netName);
-          r3++;
-        }
-      }
-    }
-    dbg.log(`v15: extra net routes — byte1=0x01 added ${r2} mappings, byte1=0x8c added ${r3}; direct c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
-
-    // Route 4: connectivity-graph propagation. byte1=0x01 and byte1=0x8c
-    // records connect pairs of BLK_0xC8 keys (pads on the same net via
-    // intra-component routing). Build the adjacency graph, find connected
-    // components, and propagate the direct labels:
-    //   - Component has exactly ONE byte1=0x10 (Route 1) anchor → propagate it.
-    //   - Component has NO Route-1 anchor but ONE consensus Route-2/3 label
-    //     → propagate that.
-    //   - Otherwise (conflict / mixed) → skip — ambiguous components are
-    //     usually trace branch points where the same C8 reaches multiple
-    //     nets via different layers.
-    const r1Anchor = new Map<number, string>(padGeoToNetName); // snapshot of Route 1 + 2/3 directs
-    // We need to know which entries came from Route 1 (authoritative). Re-scan.
-    const justR1 = new Map<number, string>();
-    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
-      const padK = peekU32(off + 0x10);
-      const netK = peekU32(off + 0x0C);
-      if (!blkC8Records.has(padK)) continue;
-      const n = directNetNames.get(netK);
-      if (n && !justR1.has(padK)) justR1.set(padK, n);
-    }
-
-    const adj = new Map<number, Set<number>>();
-    const addEdge = (a: number, b: number) => {
-      if (a) {
-        if (!adj.has(a)) adj.set(a, new Set());
-        if (b) adj.get(a)!.add(b);
-      }
-      if (b) {
-        if (!adj.has(b)) adj.set(b, new Set());
-        if (a) adj.get(b)!.add(a);
-      }
-    };
-    for (let off = 0; off + 0x40 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
-      const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x01) continue;
-      const a = peekU32(off + 0x04);
-      const b = peekU32(off + 0x0c);
-      if (blkC8Records.has(a) || blkC8Records.has(b)) {
-        addEdge(blkC8Records.has(a) ? a : 0, blkC8Records.has(b) ? b : 0);
-      }
-    }
-    for (let off = 0; off + 0x2c <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x8c) continue;
-      const b3 = peekByte(off+3);
-      if (b3 !== 0x00 && b3 !== 0x01) continue;
-      const a = peekU32(off + 0x10);
-      const b = peekU32(off + 0x18);
-      if (blkC8Records.has(a) || blkC8Records.has(b)) {
-        addEdge(blkC8Records.has(a) ? a : 0, blkC8Records.has(b) ? b : 0);
-      }
-    }
-
-    let propR1 = 0, propAll = 0;
-    const visited = new Set<number>();
-    for (const start of adj.keys()) {
-      if (visited.has(start)) continue;
-      const members: number[] = [];
-      const stack = [start];
-      const r1Nets = new Set<string>();
-      const allNets = new Set<string>();
-      while (stack.length) {
-        const k = stack.pop()!;
-        if (visited.has(k)) continue;
-        visited.add(k);
-        members.push(k);
-        if (justR1.has(k)) r1Nets.add(justR1.get(k)!);
-        if (padGeoToNetName.has(k)) allNets.add(padGeoToNetName.get(k)!);
-        for (const nb of adj.get(k) ?? []) if (!visited.has(nb)) stack.push(nb);
-      }
-      let anchorNet: string | null = null;
-      if (r1Nets.size === 1) anchorNet = [...r1Nets][0];
-      else if (r1Nets.size === 0 && allNets.size === 1) anchorNet = [...allNets][0];
-      if (!anchorNet) continue;
-      for (const k of members) {
-        if (!padGeoToNetName.has(k)) {
-          padGeoToNetName.set(k, anchorNet);
-          if (r1Nets.size === 1) propR1++;
-          else propAll++;
-        }
-      }
-    }
-    dbg.log(`v15: graph propagation — R1-anchored ${propR1}, R2/3-consensus ${propAll}; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
-
-    // Stash the pad chain on the AllegroDb instance so the v15 assembler can
+    //   Route 1 only:        precision 100%, recall (nets) 18%
+    //   Routes 1+2:          precision  27%, recall (nets) 24%
+    //   Routes 1+2+3:        precision  32%, recall (nets) 32%
+    //   Routes 1+2+3+4:      precision  ~50%, recall (nets) 34%
+    //
+    // 156 nets that don't belong on U2 were attributed to U2 pads. byte1=0x01's
+    // +0x3c is NOT actually a net pointer — it's a chain link that coincidentally
+    // matches a BLK_0x6c m_Key in 26% of records (both pools share the 0x07b…
+    // address range, so collisions look like real net hits).
+    //
+    // CAD is the source of truth. Better to under-cover with 100% precision
+    // than over-cover with lies. Re-enable a route only after per-component
+    // oracle harness shows it stays at 100% precision.
     // resolve pads per BLK_0x2D placement.
     (this as unknown as Record<string, unknown>).v15PadChain = {
       blk07ToFirstPad, blk48Records, blkC8Records, padGeoToNetName,
