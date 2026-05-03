@@ -54,23 +54,35 @@ export const THEMES: Record<string, Theme> = {
   default: {
     id: 'default',
     label: 'BoardRipper Default',
+    // Cyberpunk-ripperdoc palette — warm dark grays with hot-amber accents.
+    // Avoids the generic AI-blue / cyan UI cliché. Pair with the existing
+    // pill colors (zoom=cyan, pan=amber, page=pink) which stay 1-to-1 with
+    // the SettingsPanel pill-swap editors.
+    // Keep ui.* values mirrored to :root in src/frontend/src/index.css so
+    // the first paint (before themeStore.init()) doesn't flash.
     ui: {
-      bgPrimary:     '#08080c',
-      bgSecondary:   '#0f0f18',
-      bgTertiary:    '#0c1424',
-      textPrimary:   '#e0e0e0',
-      textSecondary: '#a0a0b0',
-      accent:        '#4a9eff',
-      border:        '#1a1a28',
+      bgPrimary:     '#0c0a08',
+      bgSecondary:   '#15110d',
+      bgTertiary:    '#1f1812',
+      textPrimary:   '#e8e0d4',
+      textSecondary: '#a89a86',
+      accent:        '#ff9f3a',
+      border:        '#2a221a',
       iconBoardBg:   '#44cc44',
       iconPdfBg:     '#cc4444',
     },
     board: {
-      canvasBackground:   '#050508',
+      canvasBackground:   '#050403',
       boardFill:          '#ffffff',
-      outline:            '#4a9eff',
+      // Outline keeps the theme accent so it reads as "this app's color".
+      outline:            '#ff9f3a',
+      // Selection stays bright yellow — it's a separate signal from accent
+      // and yellow is the most universally legible "you-are-here" hue.
       selection:          '#ffff44',
-      butterflySelection: '#44aaff',
+      // Butterfly mode shows the back side beside the front — a deeper
+      // red-orange keeps the warm temperature without being mistaken for
+      // the front-side outline.
+      butterflySelection: '#ff5e2c',
       labelText:          '#ffffff',
     },
     // Default theme = no overrides. Whatever the user has configured wins.

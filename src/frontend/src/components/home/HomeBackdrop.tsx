@@ -6,8 +6,7 @@ import { databankStore } from '../../store/databank-store';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
-import { themeStore } from '../../theme/theme-store';
-import { themes as registeredThemes } from '../../theme/themes';
+import { themeStore } from '../../store/themes';
 import {
   isAutoSwitchLinked,
   setAutoSwitchLinked,
@@ -671,34 +670,35 @@ function AutoOpenPdfToggle() {
   );
 }
 
-function useTheme(): string {
+function useThemeId(): string {
   return useSyncExternalStore(
     (cb) => themeStore.subscribe(cb),
-    () => themeStore.id,
+    () => themeStore.activeId,
   );
 }
 
 /**
- * Theme switcher. Driven entirely by `theme/themes.ts` — adding a new theme
- * to that registry (and a matching `:root[data-theme="..."]` CSS block in
- * index.css) makes it appear here automatically with no edits to this file.
+ * Theme switcher. Reads the canonical theme registry from store/themes.ts
+ * (THEMES + themeStore.list()). Adding a theme there — UI, board canvas,
+ * and any boardOverrides — makes it appear here automatically; this file
+ * needs no edits.
  */
 function ThemeSelect() {
-  const id = useTheme();
-  const active = registeredThemes.find((t) => t.id === id);
+  const activeId = useThemeId();
+  const list = themeStore.list();
   return (
     <label
       className="home-toggle-row"
-      title={active?.description ?? 'Switch the global colour theme.'}
+      title="Switch the global colour theme. Affects UI chrome, the board canvas, and any per-theme settings overrides."
     >
       <span>Theme</span>
       <select
         className="home-theme-select"
-        value={id}
-        onChange={(e) => themeStore.setId(e.target.value)}
+        value={activeId}
+        onChange={(e) => themeStore.setTheme(e.target.value)}
       >
-        {registeredThemes.map((t) => (
-          <option key={t.id} value={t.id} title={t.description}>
+        {list.map((t) => (
+          <option key={t.id} value={t.id}>
             {t.label}
           </option>
         ))}
