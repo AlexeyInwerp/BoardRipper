@@ -1633,6 +1633,14 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.performance && (
       <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
+        <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateDraft}
+          title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
+        <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateDraft}
+          title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
+        <Toggle label="Cache Static Layers (experimental)" value={draft.cacheStaticLayers} field="cacheStaticLayers" onUpdate={updateDraft}
+          title="Bake board outlines, traces, pads, fills and pin Graphics into RenderTextures once per scene. Trades texture memory for per-frame GPU work — big win when GPU dominates. Static layers may go slightly blurry at very deep zoom; toggle off to revert" />
+        <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateDraft}
+          title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 12. Triggers a scene rebuild." />
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft}
           title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
         <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft}
@@ -1716,9 +1724,37 @@ function useThemeId(): string {
   );
 }
 
+function useAccentOverride(): string | null {
+  return useSyncExternalStore(
+    (cb) => themeStore.subscribe(cb),
+    () => themeStore.accentOverride,
+  );
+}
+
+/**
+ * Curated accent presets shown alongside the freeform color input.
+ * Anchors include classical ATARI brand colors (red / orange / gold from
+ * the Fuji-era arcade posters) plus a handful of non-AI-cliché options.
+ * Adding a preset = append to this list; the swatch row picks up the change.
+ */
+const ACCENT_PRESETS: Array<{ hex: string; label: string }> = [
+  // ATARI — the canonical Fuji palette.
+  { hex: '#e2231a', label: 'ATARI Red' },
+  { hex: '#f47a1f', label: 'ATARI Orange' },
+  { hex: '#f5b11c', label: 'ATARI Gold' },
+  // Non-cliché alternates.
+  { hex: '#ff3aa1', label: 'Hot magenta' },
+  { hex: '#b8ff2b', label: 'Acid lime' },
+  { hex: '#9c6bff', label: 'Deep violet' },
+  { hex: '#00c7b7', label: 'Teal' },
+];
+
 function ThemeTab() {
   const activeId = useThemeId();
   const themes: Theme[] = themeStore.list();
+  const accentOverride = useAccentOverride();
+  const activeTheme = themes.find((t) => t.id === activeId);
+  const effectiveAccent = accentOverride ?? activeTheme?.ui.accent ?? '#4a9eff';
 
   // Subscribe to global render-settings so the toggle reflects external changes.
   const useMetadata = useSyncExternalStore(
@@ -1773,6 +1809,85 @@ function ThemeTab() {
               />
             </label>
           ))}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Accent colour</span>
+          {accentOverride && (
+            <button
+              type="button"
+              onClick={() => themeStore.setAccent(null)}
+              style={{
+                marginLeft: 'auto',
+                background: 'none',
+                border: '1px solid var(--border)',
+                color: 'var(--text-secondary)',
+                fontSize: 10,
+                padding: '2px 8px',
+                borderRadius: 3,
+                cursor: 'pointer',
+                textTransform: 'none',
+                letterSpacing: 0,
+              }}
+              title="Revert to the active theme's built-in accent"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px 8px' }}>
+          <input
+            type="color"
+            value={effectiveAccent}
+            onChange={(e) => themeStore.setAccent(e.target.value.toLowerCase())}
+            title="Pick any accent colour"
+            style={{
+              width: 36,
+              height: 24,
+              padding: 0,
+              border: '1px solid var(--border)',
+              borderRadius: 3,
+              background: 'transparent',
+              cursor: 'pointer',
+            }}
+          />
+          <code style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
+            {effectiveAccent.toUpperCase()}
+            {accentOverride == null && <span style={{ opacity: 0.6, marginLeft: 6 }}>(theme default)</span>}
+          </code>
+        </div>
+        <div role="listbox" aria-label="Accent presets" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 8px' }}>
+          {ACCENT_PRESETS.map((p) => {
+            const active = p.hex === effectiveAccent.toLowerCase();
+            return (
+              <button
+                key={p.hex}
+                type="button"
+                onClick={() => themeStore.setAccent(p.hex)}
+                title={`${p.label} · ${p.hex.toUpperCase()}`}
+                aria-label={p.label}
+                aria-pressed={active}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 4,
+                  background: p.hex,
+                  border: active ? '2px solid var(--text-primary)' : '1px solid var(--border)',
+                  cursor: 'pointer',
+                  padding: 0,
+                  outline: 'none',
+                }}
+              />
+            );
+          })}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '6px 8px 0' }}>
+          Drives <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>--accent</code>{' '}
+          and (via <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>color-mix</code>)
+          <code style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}> --accent-hover</code>.
+          Pill colours and selection (yellow) are independent.
         </div>
       </div>
 

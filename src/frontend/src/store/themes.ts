@@ -54,35 +54,30 @@ export const THEMES: Record<string, Theme> = {
   default: {
     id: 'default',
     label: 'BoardRipper Default',
-    // Cyberpunk-ripperdoc palette — warm dark grays with hot-amber accents.
-    // Avoids the generic AI-blue / cyan UI cliché. Pair with the existing
-    // pill colors (zoom=cyan, pan=amber, page=pink) which stay 1-to-1 with
-    // the SettingsPanel pill-swap editors.
-    // Keep ui.* values mirrored to :root in src/frontend/src/index.css so
-    // the first paint (before themeStore.init()) doesn't flash.
+    // Note for future palette work: avoid AI-cliché colour schemes —
+    // saturated cyan-blue dashboards and warm amber/orange "cyberpunk"
+    // accents are both visually generic now. When picking a new default
+    // accent, explore: magenta/hot-pink, acid lime, deep violet,
+    // teal-not-cyan, classic ATARI red/orange/gold, or muted neutrals.
+    // Keep ui.* values mirrored to :root in src/frontend/src/index.css
+    // so the first paint (before themeStore.init()) doesn't flash.
     ui: {
-      bgPrimary:     '#0c0a08',
-      bgSecondary:   '#15110d',
-      bgTertiary:    '#1f1812',
-      textPrimary:   '#e8e0d4',
-      textSecondary: '#a89a86',
-      accent:        '#ff9f3a',
-      border:        '#2a221a',
+      bgPrimary:     '#08080c',
+      bgSecondary:   '#0f0f18',
+      bgTertiary:    '#0c1424',
+      textPrimary:   '#e0e0e0',
+      textSecondary: '#a0a0b0',
+      accent:        '#4a9eff',
+      border:        '#1a1a28',
       iconBoardBg:   '#44cc44',
       iconPdfBg:     '#cc4444',
     },
     board: {
-      canvasBackground:   '#050403',
+      canvasBackground:   '#050508',
       boardFill:          '#ffffff',
-      // Outline keeps the theme accent so it reads as "this app's color".
-      outline:            '#ff9f3a',
-      // Selection stays bright yellow — it's a separate signal from accent
-      // and yellow is the most universally legible "you-are-here" hue.
+      outline:            '#4a9eff',
       selection:          '#ffff44',
-      // Butterfly mode shows the back side beside the front — a deeper
-      // red-orange keeps the warm temperature without being mistaken for
-      // the front-side outline.
-      butterflySelection: '#ff5e2c',
+      butterflySelection: '#44aaff',
       labelText:          '#ffffff',
     },
     // Default theme = no overrides. Whatever the user has configured wins.
@@ -130,6 +125,7 @@ export const THEMES: Record<string, Theme> = {
 };
 
 const STORAGE_KEY = 'boardripper-theme';
+const ACCENT_OVERRIDE_KEY = 'boardripper-accent-override';
 const DEFAULT_ID = 'default';
 
 interface PersistedTheme {
@@ -155,19 +151,41 @@ function saveToStorage(activeId: string) {
   } catch { /* quota — ignore */ }
 }
 
-/** Apply a theme's UI + canvas colors to CSS custom properties on <html>. */
-export function applyThemeToDOM(theme: Theme) {
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+function loadAccentOverride(): string | null {
+  try {
+    const raw = localStorage.getItem(ACCENT_OVERRIDE_KEY);
+    if (!raw) return null;
+    return HEX_RE.test(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAccentOverride(hex: string | null) {
+  try {
+    if (hex == null) localStorage.removeItem(ACCENT_OVERRIDE_KEY);
+    else localStorage.setItem(ACCENT_OVERRIDE_KEY, hex);
+  } catch { /* quota — ignore */ }
+}
+
+/** Apply a theme's UI + canvas colors to CSS custom properties on <html>.
+ *  When `accentOverride` is non-null it replaces the theme's `--accent`. */
+export function applyThemeToDOM(theme: Theme, accentOverride: string | null = null) {
   const root = document.documentElement;
   root.style.setProperty('--bg-primary',     theme.ui.bgPrimary);
   root.style.setProperty('--bg-secondary',   theme.ui.bgSecondary);
   root.style.setProperty('--bg-tertiary',    theme.ui.bgTertiary);
   root.style.setProperty('--text-primary',   theme.ui.textPrimary);
   root.style.setProperty('--text-secondary', theme.ui.textSecondary);
-  root.style.setProperty('--accent',         theme.ui.accent);
+  root.style.setProperty('--accent',         accentOverride ?? theme.ui.accent);
   root.style.setProperty('--border',         theme.ui.border);
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
   root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);
   root.style.setProperty('--icon-pdf-bg',    theme.ui.iconPdfBg);
+  // Note: --accent-hover is derived from --accent via color-mix in
+  // index.css, so no JS work is needed to update it.
 }
 
 /** Convert '#rrggbb' to a 24-bit integer for PixiJS color arguments. */
@@ -177,18 +195,30 @@ export function hexToInt(hex: string): number {
 
 class ThemeStore extends Emitter {
   private _activeId: string = DEFAULT_ID;
+  private _accentOverride: string | null = null;
   private _initialized = false;
 
   /** Call once at app startup. Idempotent — second call no-ops. */
   init(): void {
     if (this._initialized) return;
     this._activeId = loadFromStorage();
-    applyThemeToDOM(this.activeTheme());
+    this._accentOverride = loadAccentOverride();
+    applyThemeToDOM(this.activeTheme(), this._accentOverride);
     this._initialized = true;
   }
 
   get activeId(): string {
     return this._activeId;
+  }
+
+  /** User's accent override, or null if the theme's default is in use. */
+  get accentOverride(): string | null {
+    return this._accentOverride;
+  }
+
+  /** The accent currently driving --accent (override if set, else theme default). */
+  get effectiveAccent(): string {
+    return this._accentOverride ?? this.activeTheme().ui.accent;
   }
 
   activeTheme(): Theme {
@@ -203,7 +233,22 @@ class ThemeStore extends Emitter {
     if (id === this._activeId) return;
     this._activeId = id;
     saveToStorage(id);
-    applyThemeToDOM(this.activeTheme());
+    applyThemeToDOM(this.activeTheme(), this._accentOverride);
+    this.notify();
+  }
+
+  /** Override the active theme's accent. Pass null to revert to the theme's
+   *  built-in accent. Persisted to localStorage so the override survives
+   *  across reloads independent of the active theme. */
+  setAccent(hex: string | null): void {
+    if (hex != null && !HEX_RE.test(hex)) {
+      log.ui.warn(`themes: setAccent called with invalid hex '${hex}' — ignored`);
+      return;
+    }
+    if (hex === this._accentOverride) return;
+    this._accentOverride = hex;
+    saveAccentOverride(hex);
+    applyThemeToDOM(this.activeTheme(), this._accentOverride);
     this.notify();
   }
 
