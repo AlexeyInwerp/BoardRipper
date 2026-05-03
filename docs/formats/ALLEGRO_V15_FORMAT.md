@@ -190,6 +190,51 @@ These records do NOT form contiguous runs (search found only this single occurre
 
 BLK_0x06 #0's `m_PtrPinNumber = 0x0957cad8` resolves at file offset `0x1368e48` to a record with prefix `00 20 00 00`. Bytes after m_Key contain `0x32 = 50` — possibly pin count (though SI7840DP_SO8 is an 8-pin part, so 50 doesn't fit as count for that specific component). Could be a "pin number list" header pointing to BLK_0x08 records elsewhere. Pool 0x095 — different addend from pool 1.
 
+### byte1=0x48 = candidate BLK_0x32 (placed pad header)
+
+**Strong signal**: counting all `00 48 ?? 00` prefix occurrences in the file yields **7715 records**, almost exactly matching the .cad oracle's 7714 total pin count for LA-7321P. This is the placed-pad block group.
+
+First record at file offset `0xd416c`:
+```
++0x00  prefix `00 48 00 00`
++0x04  m_Key       = 0x07bac448
++0x08  pointer     = 0x07b07428  (m_Next in pad chain? or back-ref?)
++0x0c  pointer     = 0x07c099bc
++0x10  pointer     = 0x07bac460  (= the m_Key of an immediately-following BLK_0xC8 record)
++0x14  zero
+```
+Total fixed-stride: **24 bytes**.
+
+**Layout pattern**: each 0x48 record is followed by one or more BLK_0xC8 detail records (count 11091 ≈ 1.4× pin count) that contain the actual pad geometry. Distances between consecutive 0x48 records vary (24, 56, 64, 84, 116, 120, 132, 160, 208 bytes) because the intermediate space is occupied by these detail records. The 0x48 record's `+0x10` field points to its first 0xC8 detail.
+
+**Open**: identify the BLK_0xC8 record layout and where coordinates live within it. The 0xC8 record at `0xd4184` (immediately after the head 0x48 record) shows ~16 u32 fields followed by 4 i32 values that look like coords (`-442744, 102800, -442192, 105712` — a pad bbox in the same coordinate scale as BLK_0x2D's CoordX/CoordY).
+
+### byte1=0xC8 record (pad detail / geometry)
+
+11091 records in LA-7321P. Layout starts at file offset `0xd4184`:
+```
++0x00  prefix `00 c8 0c 00`
++0x04  m_Key (= preceding 0x48 record's +0x10 pointer)
++0x08  pointer
++0x0c  pointer
++0x10  pointer
++0x14  pointer (== +0x10 — duplicated in head record)
++0x18  pointer
++0x1c  pointer
++0x20  pointer (back-ref to parent 0x48 record)
++0x24  pointer (cross-pool)
++0x28  pointer (cross-pool)
++0x2c  pointer (cross-pool)
++0x30  zero
++0x34  i32 x_min  (-442744 in head record)
++0x38  i32 y_min  (102800)
++0x3c  i32 x_max  (-442192)
++0x40  i32 y_max  (105712)
+```
+Total: ~68 bytes (need to confirm by walking sequential records).
+
+**Validation lead**: the head 0xC8 record has bbox center ≈ (−442468, 104256). With div=100, that's (−4424.68, 1042.56) mils. We need to map this back to a specific part instance via the back-ref pointer at +0x20 to validate.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
