@@ -417,6 +417,41 @@ export function computeDiagonalOBB(
 ): [number, number][] | null {
   if (pins.length < 3) return null;
 
+  // Axis-aligned chip-layout guard: when a substantial fraction of pins
+  // sit exactly on the AABB perimeter and at least one horizontal and one
+  // vertical edge are populated, the part is a normal QFN/QFP/DFN-style
+  // chip and the AABB is correct. PCA on partial-perimeter pinouts (e.g.
+  // Quanta DrMOS exports that label pins only on left+bottom edges)
+  // otherwise returns a 45° principal axis, the area gate accepts it
+  // because the L-shaped point cloud fits a rotated rectangle far smaller
+  // than the AABB, and the part renders as a diamond. This guard runs
+  // first so PCA never gets the chance.
+  {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const pin of pins) {
+      const x = pin.position.x, y = pin.position.y;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    const span = Math.max(maxX - minX, maxY - minY);
+    const eps = Math.min(2, span * 0.01);
+    let onL = 0, onR = 0, onT = 0, onB = 0, onAny = 0;
+    for (const pin of pins) {
+      const isL = Math.abs(pin.position.x - minX) <= eps;
+      const isR = Math.abs(pin.position.x - maxX) <= eps;
+      const isB = Math.abs(pin.position.y - minY) <= eps;
+      const isT = Math.abs(pin.position.y - maxY) <= eps;
+      if (isL) onL++;
+      if (isR) onR++;
+      if (isB) onB++;
+      if (isT) onT++;
+      if (isL || isR || isB || isT) onAny++;
+    }
+    const hasH = onT >= 2 || onB >= 2;
+    const hasV = onL >= 2 || onR >= 2;
+    if (hasH && hasV && onAny >= pins.length * 0.4) return null;
+  }
+
   // Centroid
   let cx = 0, cy = 0;
   for (const pin of pins) { cx += pin.position.x; cy += pin.position.y; }

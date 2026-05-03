@@ -36,6 +36,7 @@ interface CachedBoard {
 // BoardData uses Map which can't be stored in IndexedDB directly
 interface SerializedBoardData {
   format: string;
+  formatVersion?: string;
   outline: BoardData['outline'];
   parts: BoardData['parts'];
   nails: BoardData['nails'];
@@ -59,6 +60,9 @@ interface SerializedBoardData {
   activeRevision?: number;
   ghosts?: GhostComponent[];
   parserNotes?: string[];
+  flipY?: boolean;
+  flipAxis?: 'x' | 'y';
+  primarySide?: 'top' | 'bottom';
 }
 
 interface SerializedRevision {
@@ -80,6 +84,7 @@ function makeCacheKey(name: string, size: number, modified: number): string {
 function serialize(board: BoardData): SerializedBoardData {
   return {
     format: board.format,
+    formatVersion: board.formatVersion,
     outline: board.outline,
     parts: board.parts,
     nails: board.nails,
@@ -108,6 +113,9 @@ function serialize(board: BoardData): SerializedBoardData {
     activeRevision: board.activeRevision,
     ghosts: board.ghosts,
     parserNotes: board.parserNotes,
+    flipY: board.flipY,
+    flipAxis: board.flipAxis,
+    primarySide: board.primarySide,
   };
 }
 
@@ -118,6 +126,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
   try {
     return {
       format: data.format,
+      formatVersion: data.formatVersion,
       outline: data.outline,
       parts: data.parts,
       nails: data.nails,
@@ -146,6 +155,9 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       activeRevision: data.activeRevision,
       ghosts: data.ghosts,
       parserNotes: data.parserNotes,
+      flipY: data.flipY,
+      flipAxis: data.flipAxis,
+      primarySide: data.primarySide,
     };
   } catch {
     return null;
