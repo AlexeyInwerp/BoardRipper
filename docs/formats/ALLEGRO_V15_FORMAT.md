@@ -615,6 +615,38 @@ source of truth.
 4. **LL_0x1B_Nets walking** — same key pool as LL_0x06 (verified); record layout TBD.
 5. **Outline + silkscreen** — `LL_Shapes` and `LL_0x14` LL_0x14 head 0x07fbdb50 lands in a different addend (file offset 0x47F44C, pool addend 0x07B5E704).
 
+---
+
+## Next-session brief (handoff for 2026-05-04+)
+
+**Status as of commit `a213477`** — feat/allegro-v15-support branch, worktree `/Users/besitzer/Desktop/Boardviewer/.worktrees/allegro-v15/`.
+
+### What ships now
+- LA-7321P (Allegro 15.5.7, magic `0x00120A06`): **99.4% perfect components**, 5435 correct nets, 0 FP, 14 missed across 1827 walked components. Pin geometry + nets all 1-to-1 with .cad oracle.
+- v13tl-0629 (Allegro 15.5.2, magic `0x00120206`): Pin geometry only — net routes magic-gated OFF because R1/R5 produce false positives on this sub-variant. Better to ship no nets than wrong ones.
+
+### Highest-value next probes (in order)
+
+1. **15.5.2 per-pad net mechanism (v13tl-0629).** No mappings ship today. Probe to find the right field offsets for the 15.5.2 byte1=0x10 layout, OR find a different per-pad NetAssign block type. Validation: `node /tmp/oracle-harness.mjs <BRD> <CAD>` must show `False positives: 0`. The v13tl byte1=0x10 +0x18 → C8 (96% hit) is interesting but didn't pan out as a clean route — might pair with a different net field. Start with: dump 5 v13tl byte1=0x10 records around pads we know the oracle net for, see which u32 field consistently lands on a byte1=0x6c whose name matches.
+
+2. **JHDMI1 / JLAN1 last 3 pins (LA-7321P).** Their detail keys (e.g. `0x7bf8780`, the unmatched pin 1 of JHDMI1) don't land in any catalogued pool. Inverse-search the file for that exact u32 value to find what record holds it as m_Key (probably another pad-prefix variant or a different pool addend).
+
+3. **Multi-layer connector chain semantics.** byte1=0x01 / byte1=0x8c records form alternating chains for connector pin-stacks. Currently we treat them as transparent intermediate hops. They may also carry per-layer pad rectangles at +0x14..+0x20 — relevant once we add per-layer rendering.
+
+4. **Promote oracle harness to Playwright.** `/tmp/oracle-harness.mjs` is the precision gate but lives outside the repo. Move to `src/frontend/tests/allegro-v15-oracle.spec.ts`, fail the test if total FP > 0 on either sample. This locks in the no-regression invariant.
+
+5. **15.5.2 sub-variant detection in `formatFromMagic`.** Currently both v15 sub-variants map to `FmtVer.V_15X`. Adding `V_152` and `V_157` would let downstream code (assembler, debug logs) distinguish them cleanly.
+
+### Key files / probes
+- Parser: `src/frontend/src/parsers/allegro/allegro-db.ts` (block walkers + Routes 1+5)
+- Assembler: `src/frontend/src/parsers/allegro/allegro-assembler.ts` (`extractComponentsV15`, `buildV15Nets`)
+- Spec: `docs/formats/ALLEGRO_V15_FORMAT.md` (this file)
+- Oracle harness (disposable): `/tmp/oracle-harness.mjs` — re-create from spec section above if missing
+- Samples: `/Users/besitzer/Desktop/Boardviewer/samples/BROKEN/brd new set/{COMPAL LA-7321P,v13tl-0629}.{brd,cad}`
+
+### Hard rule going forward
+Any new net-resolution route MUST be validated against the per-component oracle harness on **both** samples before shipping. `False positives = 0` is the gate. Naive "coverage went up" metrics deceived us into shipping 32%-precision routes that contaminated U2 with 156 wrong nets. Do not trust aggregate numbers; trust per-component oracle agreement.
+
 ### Probe methodology used
 
 To validate the header/string table claim:
