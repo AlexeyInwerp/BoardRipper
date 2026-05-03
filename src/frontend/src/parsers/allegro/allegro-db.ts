@@ -467,15 +467,28 @@ export class AllegroDb {
     }
     dbg.log(`v15: byte1=0x10 NetAssign — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size} (from ${directNetNames.size} named nets)`);
 
-    // Route 2: byte1=0x01 (multi-layer connector pad records). These records
-    // hold up to 7 BLK_0xC8 references (one per layer) and a single net
-    // pointer at +0x3c. Probe shows 1127/3206 records carry both a C8 ref
-    // AND a 0x6c net ref — they cover most pads on connectors / through-hole
-    // parts that the byte1=0x10 chain misses.
-    const r2C8Fields = [0x04, 0x0c, 0x14, 0x18, 0x20, 0x2c, 0x38];
+    // Route 2: byte1=0x01 (pad-pad connection / multi-layer record). Probe
+    // shows the prefix appears in BOTH `00 01 ?? 00` (3206) AND `00 01 ?? 01`
+    // (1111) shapes — the byte3=0x01 variant is the alternating-chain case
+    // documented in JHDD1 (see ALLEGRO_V15_FORMAT.md). With the relaxed
+    // byte3∈{0,1} filter, 4317 byte1=0x01 records produce ~1143 named-net
+    // hits at +0x3c.
+    //
+    // Field layout (verified by ratio histogram):
+    //   +0x04  → BLK_0xC8 (95% of records)   — pad geometry A
+    //   +0x0c  → BLK_0xC8 (97%)              — pad geometry B
+    //   +0x3c  → BLK_0x6c (26%)              — net pointer (when present)
+    //
+    // The 26% net hit rate means most byte1=0x01 records are *internal* chain
+    // links whose net is implicit from neighbours. We only assign nets from
+    // the 26% that DO carry a +0x3c net pointer. byte1=0x10 (Route 1) takes
+    // priority — we never overwrite its assignments.
+    const r2C8Fields = [0x04, 0x0c];
     let r2 = 0;
     for (let off = 0; off + 0x40 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01 || peekByte(off+3) !== 0x00) continue;
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x01) continue;
       const netKey = peekU32(off + 0x3c);
       const netName = directNetNames.get(netKey);
       if (!netName) continue;
@@ -488,12 +501,15 @@ export class AllegroDb {
         }
       }
     }
-    // Route 3: byte1=0x8c (alt connector layer record — alternates with 0x01
-    // in the per-layer chain). C8 fields at +0x10..+0x28; net at +0x08.
-    const r3C8Fields = [0x10, 0x18, 0x20, 0x24, 0x28];
+    // Route 3: byte1=0x8c (alternating partner of byte1=0x01 in connector
+    // chains). Mirror layout: nets at +0x08, C8 refs at +0x10 / +0x18.
+    // Same byte3∈{0,1} relaxation.
+    const r3C8Fields = [0x10, 0x18];
     let r3 = 0;
     for (let off = 0; off + 0x2c <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x8c || peekByte(off+3) !== 0x00) continue;
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x8c) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x01) continue;
       const netKey = peekU32(off + 0x08);
       const netName = directNetNames.get(netKey);
       if (!netName) continue;
