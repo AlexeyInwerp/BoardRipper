@@ -355,13 +355,66 @@ function extractComponentsV15(
       maxY: oy + fpBbox[3] / div,
     };
 
+    // Resolve pin geometry via the v15 pad chain
+    //   BLK_0x2D.instRef16x → BLK_0x07.m_Key
+    //   ← byte1=0x40.+0x28 → +0x2C → BLK_0x48 first pad
+    //     → BLK_0x48.+0x08 m_Next chain
+    //     → BLK_0x48.+0x10 → BLK_0xC8.coords (pad bbox)
+    const pins: Pin[] = [];
+    type PadChain = {
+      blk07ToFirstPad: Map<number, number>;
+      blk48Records: Map<number, { next: number; detailKey: number }>;
+      blkC8Records: Map<number, { coords: [number, number, number, number] }>;
+    };
+    const padChain = (db as unknown as Record<string, unknown>).v15PadChain as PadChain | undefined;
+    if (padChain && inst.instRef16x) {
+      let padKey = padChain.blk07ToFirstPad.get(inst.instRef16x) ?? 0;
+      let pinIdx = 1;
+      const visited = new Set<number>();
+      while (padKey !== 0 && !visited.has(padKey) && pinIdx < 1000) {
+        visited.add(padKey);
+        const padHdr = padChain.blk48Records.get(padKey);
+        if (!padHdr) break;
+        const padDetail = padChain.blkC8Records.get(padHdr.detailKey);
+        if (padDetail) {
+          // Pad bbox center, in same coordinate space as BLK_0x2D coords (mils*divisor)
+          const cx = (padDetail.coords[0] + padDetail.coords[2]) / 2 / div;
+          const cy = (padDetail.coords[1] + padDetail.coords[3]) / 2 / div;
+          const w = Math.abs(padDetail.coords[2] - padDetail.coords[0]) / div;
+          const h = Math.abs(padDetail.coords[3] - padDetail.coords[1]) / div;
+          const radius = Math.max(4, Math.min(w, h) / 2);
+          pins.push({
+            name: String(pinIdx),
+            number: String(pinIdx),
+            position: { x: cx, y: cy },
+            radius,
+            side: inst.layer === 1 ? 'bottom' : 'top',
+            net: '',
+          });
+          allPinPositions.push({ x: cx, y: cy });
+        }
+        padKey = padHdr.next;
+        pinIdx++;
+      }
+    }
+
+    // Recompute bounds from pins if available, else use file bbox
+    const finalBounds = pins.length > 0
+      ? {
+          minX: Math.min(ox + fpBbox[0] / div, ...pins.map(p => p.position.x)),
+          minY: Math.min(oy + fpBbox[1] / div, ...pins.map(p => p.position.y)),
+          maxX: Math.max(ox + fpBbox[2] / div, ...pins.map(p => p.position.x)),
+          maxY: Math.max(oy + fpBbox[3] / div, ...pins.map(p => p.position.y)),
+        }
+      : bounds;
+
     parts.push({
       name: refdes,
       side: inst.layer === 1 ? 'bottom' : 'top',
       type: 'smd',
       origin: { x: ox, y: oy },
-      pins: [],
-      bounds,
+      pins,
+      bounds: finalBounds,
       meta: { package: fpName },
     });
   }
