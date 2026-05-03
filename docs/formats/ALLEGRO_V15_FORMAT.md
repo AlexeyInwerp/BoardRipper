@@ -256,7 +256,34 @@ BLK_0xC8 pad geometry detail (~68 bytes, with 4 i32 coords at +0x34..+0x40)
 3. Walk byte1=0xC8 records — store as Map<m_Key, {coords: [i32×4 at +0x34..+0x40]}>.
 4. For each BLK_0x2D, look up its BLK_0x07.m_Key in the byte1=0x40 map → get firstPadKey → walk BLK_0x48 chain → for each, look up BLK_0xC8 → emit a Pin with center = (coords[0]+coords[2])/2, (coords[1]+coords[3])/2 in BLK_0x2D's local frame, then transform by part's CoordX/Y + rotation.
 
-**Open question for next session:** identify BLK_0x48's m_Next field. The 24-byte BLK_0x48 record has u32 fields at +0x04 (m_Key), +0x08 (?), +0x0c (?), +0x10 (BLK_0xC8 ref), +0x14 (zero). m_Next is most likely +0x08 or +0x0c (need to test by comparing to next BLK_0x48's m_Key).
+**BLK_0x48 m_Next is at +0x08 (CONFIRMED).** Verified by following PQ306's chain from its byte1=0x40 record's +0x2C pointer to the first pad, then checking if +0x08 holds another BLK_0x48 key — it does (0x957cca8 is a valid BLK_0x48 m_Key, while +0x0C's 0x957c96c is not).
+
+Final BLK_0x48 layout (24 bytes):
+```
++0x00  prefix `00 48 00 00`
++0x04  m_Key
++0x08  m_Next  → next BLK_0x48 in this part's pad chain (0 = end)
++0x0C  unknown pointer (possibly previous-pad or net ref)
++0x10  → BLK_0xC8 m_Key (pad geometry detail)
++0x14  zero
+```
+
+**The chain is fully decoded.** Next session can directly implement:
+```ts
+// Pseudocode for v15 pin extraction
+const blk40Map = new Map<blk07Key, firstPadKey>();  // walk byte1=0x40 records
+for (const part of blk2dParts) {
+  const blk07Key = part.instRef16x;        // already in BLK_0x2D
+  let padKey = blk40Map.get(blk07Key);
+  while (padKey !== 0) {
+    const pad48 = blk48Map.get(padKey);    // walk to find this
+    const padC8 = blkC8Map.get(pad48.detailKey);
+    const padCenter = bbox_center(padC8.coords);
+    part.pins.push({position: padCenter, ...});
+    padKey = pad48.next;
+  }
+}
+```
 
 
 - Possibly via BLK_0x07 (component instance) → BLK_0x48 chain
