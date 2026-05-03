@@ -404,6 +404,70 @@ The byte1=0x8c records also have 4 i32 values at +0x18..+0x24, similarly suspici
 
 **Hypothesis for next session**: the connector chain represents PADSTACK definitions (one layered stack per pin). Each layer has its own bbox; the FINAL board-absolute pad position needs to be computed from the per-layer bbox + the connector's BLK_0x2D origin/rotation. This is the v15 equivalent of v16+'s BLK_0x1C_PADSTACK + BLK_0x32 PLACED_PAD layered relationship.
 
+### byte1=0x10 NetAssign — DECODED (2026-05-03)
+
+Field-pool histogram across all 4257 byte1=0x10 records on COMPAL LA-7321P:
+
+| Offset | Pool that field's u32 most often resolves to | Coverage |
+|--------|-----------------------------------------------|----------|
+| `+0x04` | byte1=0x10 (own m_Key)                       | 100%     |
+| `+0x0C` | byte1=0x6c (BLK_0x1B net record)             | 97.2%    |
+| `+0x10` | byte1=0xc8 (BLK_0xC8 pad geometry)           | 62.3%    |
+| `+0x10` | byte1=0x01 (multi-layer connector pad)       | 20.7%    |
+| `+0x10` | byte1=0x14 (alt placement pool)              | 10.9%    |
+| `+0x18`/`+0x1C` | byte1=0x10 (next/prev NetAssign chain)| ~65%     |
+
+So a NetAssign record asserts `(padGeometry, net)`; the previous walker
+read `peekU32(off)` (the prefix `0x00001000`, not a key), which gave 0%
+end-to-end resolution.
+
+Coverage on COMPAL LA-7321P:
+- 2025 / 2652 NetAssigns whose `+0x10` lands in BLK_0xC8 resolve to a named net (76%).
+- That covers 2025 / 11088 BLK_0xC8 records — only 18% — because each
+  BLK_0xC8 typically represents one *layer* of a pad-stack; many layers
+  share a single NetAssign.
+
+### Routes 2 + 3 — multi-layer connector pad nets
+
+byte1=0x10 alone leaves ~74% of pads unnamed. Two more byte1 prefixes
+also link C8 → net (probe: scan every byte1 pool for records that hold
+a u32 in BLK_0xC8 *and* a u32 in byte1=0x6c):
+
+| byte1   | hits | C8 fields                                  | net field |
+|---------|------|--------------------------------------------|-----------|
+| `0x01`  | 1127 / 3206 | `+0x04, +0x0c, +0x14, +0x18, +0x20, +0x2c, +0x38` | `+0x3c` |
+| `0x8c`  | 529 / 2143  | `+0x10, +0x18, +0x20, +0x24, +0x28`          | `+0x08` |
+| `0x10`  | (decoded above) | `+0x10`                                | `+0x0c` |
+
+byte1=0x01 is the multi-layer connector pad record (the chain that
+alternates with byte1=0x8c — see "JHDD1 pin chain" above). Each holds
+up to 7 layered C8 references and a single shared net pointer at +0x3c.
+
+Combined coverage (LA-7321P):
+- byte1=0x10:  2025 mappings
+- byte1=0x01:  1874 new mappings
+- byte1=0x8c:    66 new mappings
+- **Total: 3965 / 11088 BLK_0xC8 (35.8%)**, **3960 / 7350 pins (53.9%)**
+
+Spot-checks against `.cad` oracle:
+- PQ306 pin1 → GND (oracle: GND) ✓
+- U41 pin1 → +3VS (oracle: +3VS) ✓
+- L124 pin1 → DMIC_CLK (oracle: DMIC_CLK) ✓
+
+**Pin-numbering caveat**: chain order ≠ physical pin index. The
+BLK_0x48 chain visits pads in placement order. The mapping from
+chain position N to silkscreen pin number requires decoding BLK_0x32
+(per-pad pin-name string) — still pending.
+
+**Remaining ~46% gap (next):**
+- Many simple two-pin pads (R/C/L) reach BLK_0xC8 but have no NetAssign
+  record at all — likely a fourth route via byte1=0x04 (9113 records;
+  4 layered i32 coord fields suggest pad-data, but no clean C8↔net link
+  in current probe). Probe needs to scan u32 fields beyond +0x40.
+- Pin-numbering mismatch means even pads we *do* net are mis-ordered
+  in `ComponentInfo`. Resolving via BLK_0x32 will fix both: correct
+  pin numbers AND likely point to the missing pad/net link records.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
