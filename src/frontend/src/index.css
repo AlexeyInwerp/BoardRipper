@@ -1,6 +1,11 @@
 :root {
-  /* Default theme fallback — must match THEMES.default in store/themes.ts
-   * so the first paint (before themeStore.init()) doesn't flash. */
+  /* Default theme fallback — also driven by id="dark" in theme/themes.ts.
+   * Listed both on bare :root (for the very first paint, before main.tsx
+   * imports the theme store) and on [data-theme="dark"] (so an explicit
+   * dark selection still resolves consistently). Adding a new theme:
+   *   1. add an entry to theme/themes.ts
+   *   2. add a `:root[data-theme="<id>"] { ... }` block below
+   *   The home theme picker refreshes from the registry — no UI change. */
   --bg-primary: #08080c;
   --bg-secondary: #0f0f18;
   --bg-tertiary: #0c1424;
@@ -18,6 +23,45 @@
   --border: #1a1a28;
   --toolbar-height: 40px;
   --statusbar-height: 24px;
+}
+
+/* Theme: dark (explicit, identical to :root) */
+:root[data-theme='dark'] {
+  --bg-primary: #08080c;
+  --bg-secondary: #0f0f18;
+  --bg-tertiary: #0c1424;
+  --canvas-bg: #050508;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0b0;
+  --accent: #4a9eff;
+  --accent-hover: #6bb3ff;
+  --border: #1a1a28;
+}
+
+/* Theme: noir — pure-black background, amber accents. */
+:root[data-theme='noir'] {
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #131313;
+  --canvas-bg: #000000;
+  --text-primary: #d6d6d6;
+  --text-secondary: #888888;
+  --accent: #ffaa00;
+  --accent-hover: #ffc24d;
+  --border: #1f1f1f;
+}
+
+/* Theme: dimmed — softer dark with desaturated indigo accents. */
+:root[data-theme='dimmed'] {
+  --bg-primary: #14141d;
+  --bg-secondary: #1c1c28;
+  --bg-tertiary: #21283c;
+  --canvas-bg: #0e0e16;
+  --text-primary: #b8b8c8;
+  --text-secondary: #707080;
+  --accent: #6da0d4;
+  --accent-hover: #8fb6dd;
+  --border: #2a2a3a;
 }
 
 * {
@@ -5233,42 +5277,191 @@ html, body, #root {
   border-top: none;
 }
 .home-quick-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   letter-spacing: 0.01em;
 }
-.home-quick-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 16px;
+.home-quick-section-hint {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  letter-spacing: 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
-.home-quick-group {
+
+/* --- Pan/zoom bindings matrix (console / patch-bay aesthetic) --- */
+/* Single bordered container holding three editor rows + a footer band.
+ * Each editor (DragBindings / ScrollBindings / PdfScrollBindings) renders
+ * exactly one .home-bindings-row inside this container — no per-editor
+ * wrapper, no per-row title chrome. The whole block is roughly 145 px tall
+ * at 1280 px viewport (the previous card-stack was ~350 px). */
+.home-bindings-matrix {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.78rem;
 }
-.home-quick-label {
-  font-size: 0.74rem;
+.home-bindings-row {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 12px;
+  min-height: 30px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.home-bindings-row:last-of-type {
+  border-bottom: none;
+}
+.home-bindings-row-label {
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0 0 2px;
+  letter-spacing: 0.07em;
+  opacity: 0.62;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.home-quick-group-wide {
-  grid-column: 1 / -1;
+.home-bindings-row-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
-.home-quick-hint {
-  margin-top: 12px;
-  font-size: 0.78rem;
+
+/* Slot cell: split into a muted modifier and a colored action half.
+ * The action half is the draggable element; the whole cell is the drop
+ * target (border-color flips to --accent when something hovers). */
+.home-bindings-cell {
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  transition: border-color 0.12s, background 0.12s, transform 0.08s;
+}
+.home-bindings-cell.over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+}
+.home-bindings-cell-mod {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
   color: var(--text-secondary);
-  line-height: 1.55;
-  opacity: 0.85;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  opacity: 0.78;
+  font-size: 0.72rem;
 }
-.home-quick-hint strong {
+.home-bindings-cell-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px 4px;
+  color: var(--pill-color);
+  background: color-mix(in srgb, var(--pill-color) 14%, var(--bg-secondary));
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.7rem;
+  cursor: grab;
+  user-select: none;
+  border-left: 1px solid color-mix(in srgb, var(--pill-color) 30%, var(--border));
+  position: relative;
+  transition: opacity 0.12s, background 0.12s, box-shadow 0.18s;
+}
+/* Bottom-stripe LED indicator in the action color — the only place the pill
+ * color asserts itself fully, so the whole cell stays calm but each pill is
+ * still instantly recognisable at a glance. */
+.home-bindings-cell-action::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--pill-color);
+}
+.home-bindings-cell-action:hover {
+  background: color-mix(in srgb, var(--pill-color) 22%, var(--bg-secondary));
+  box-shadow: 0 0 14px -4px color-mix(in srgb, var(--pill-color) 70%, transparent);
+}
+.home-bindings-cell-action.dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+  box-shadow: none;
+}
+
+.home-bindings-reset {
+  margin-left: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.home-bindings-reset:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.home-bindings-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-tertiary) 60%, var(--bg-secondary));
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  letter-spacing: 0.01em;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.home-bindings-foot-glyph {
+  color: var(--accent);
+  opacity: 0.5;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+.home-bindings-foot strong {
   color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Narrow viewport: collapse row label width so chips don't overflow */
+@media (max-width: 640px) {
+  .home-bindings-row {
+    grid-template-columns: 96px 1fr;
+    gap: 8px;
+    padding: 6px 10px;
+  }
+  .home-bindings-row-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+  }
 }
 .home-toggle-row {
   display: flex;
@@ -5284,6 +5477,29 @@ html, body, #root {
 }
 .home-toggle-row input[type='checkbox'] {
   flex-shrink: 0;
+}
+.home-toggle-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.home-theme-select {
+  padding: 3px 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.home-theme-select:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.home-theme-select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .home-settings-link {
   margin-top: 14px;
