@@ -450,51 +450,89 @@ export class AllegroDb {
       if (name && mKey !== 0) directNetNames.set(mKey, name);
     }
 
-    // byte1=0x10 = NetAssign records. Field-pool probe (4257 records):
-    //   +0x04 → byte1=0x10  (own m_Key — 100%)
-    //   +0x0C → byte1=0x6c  (97.2% — BLK_0x1B net record)
-    //   +0x10 → byte1=0xc8  (62.3% — BLK_0xC8 pad geometry)
-    //   +0x10 → byte1=0x01  (20.7% — multi-layer connector pad)
-    // The mapping is therefore (padGeometryKey → netName), keyed on the
-    // BLK_0xC8 m_Key, not the BLK_0x48 header. The previous version read
-    // peekU32(off) which is the prefix `0x00001000`, not a key — so 0%
-    // of the lookups resolved end-to-end.
-    const padGeoToNetName = new Map<number, string>();
-    let netAssignTotal = 0;
-    let netAssignToC8 = 0;
-    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
-      netAssignTotal++;
-      const padGeoKey = peekU32(off + 0x10);
-      const netKey = peekU32(off + 0x0C);
-      if (!blkC8Records.has(padGeoKey)) continue;
-      netAssignToC8++;
-      const netName = directNetNames.get(netKey);
-      if (netName) padGeoToNetName.set(padGeoKey, netName);
-    }
-    dbg.log(`v15: byte1=0x10 NetAssign — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size} (from ${directNetNames.size} named nets)`);
+    // ── byte1=0x10 NetAssign (Route 1) — VARIANT-GATED ───────────────────
+    //
+    // We've identified two v15 sub-variants with INCOMPATIBLE byte1=0x10
+    // semantics. Per-component oracle comparison (CAD = ground truth):
+    //
+    //   15.5.7  (magic 0x00120A06, e.g. COMPAL LA-7321P):
+    //     byte1=0x10 IS a per-pad NetAssign. +0x10 → C8 padK,
+    //     +0x0C → BLK_0x6c netK. Route 1 gives 100% precision.
+    //
+    //   15.5.2  (magic 0x00120206, e.g. v13tl-0629):
+    //     byte1=0x10 records have the same field shape but they are NOT
+    //     per-pad NetAssigns — applying Route 1 produces 0 correct nets
+    //     and 221 false attributions. The actual per-pad net mechanism
+    //     for 15.5.2 is undecoded (next-session work).
+    //
+    // CAD is source of truth. Better to ship NO nets on 15.5.2 than wrong
+    // ones. The decoder for that sub-variant is pending.
+    const magic15 = (this.header.magic & 0xFFFFFF00) >>> 0;
+    const route5Enabled = magic15 === 0x00120A00;          // 15.5.7 only
+    const netRoutesEnabled = magic15 === 0x00120A00;       // 15.5.7 only
 
-    // ── Routes 2, 3, 4 disabled (2026-05-03) ─────────────────────────────
+    const padGeoToNetName = new Map<number, string>();
+    if (netRoutesEnabled) {
+      let netAssignTotal = 0;
+      let netAssignToC8 = 0;
+      for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
+        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+        netAssignTotal++;
+        const padGeoKey = peekU32(off + 0x10);
+        const netKey = peekU32(off + 0x0C);
+        if (!blkC8Records.has(padGeoKey)) continue;
+        netAssignToC8++;
+        const netName = directNetNames.get(netKey);
+        if (netName) padGeoToNetName.set(padGeoKey, netName);
+      }
+      dbg.log(`v15: byte1=0x10 NetAssign (Route 1) — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size}`);
+    } else {
+      dbg.log(`v15: net routes SKIPPED for 15.5.2 sub-variant (magic 0x${magic15.toString(16).padStart(8,'0')}) — per-pad mechanism undecoded`);
+    }
+
+    // ── Route 5: BLK_0xC8 back-link to byte1=0x10 NetAssign ──────────────
     //
-    // Earlier iterations added "Route 2" (byte1=0x01 +0x3c → net), "Route 3"
-    // (byte1=0x8c +0x08 → net), and "Route 4" (connectivity-graph propagation
-    // through byte1=0x01/0x8c edges). On naive coverage metrics they looked
-    // great (LA-7321P 63% → 75% pin coverage), but per-component oracle
-    // comparison on U2 (962-pin BGA) showed catastrophic precision loss:
+    // Each BLK_0xC8 (pad geometry) record has a +0x0C field that *can* point
+    // to a byte1=0x10 NetAssign. On the Allegro 15.5.7 sub-variant
+    // (magic 0x00120A06, e.g. COMPAL LA-7321P) this is a 1:1 back-pointer
+    // to the pad's own NetAssign — Route 1 (forward link) covers ~2k pads
+    // but Route 5 covers ~6.7k. Per-component oracle test:
     //
-    //   Route 1 only:        precision 100%, recall (nets) 18%
-    //   Routes 1+2:          precision  27%, recall (nets) 24%
-    //   Routes 1+2+3:        precision  32%, recall (nets) 32%
-    //   Routes 1+2+3+4:      precision  ~50%, recall (nets) 34%
+    //   Route 1 only:        100% precision,  5.4% perfect components
+    //   Route 5 added:       100% precision, 92.7% perfect components
     //
-    // 156 nets that don't belong on U2 were attributed to U2 pads. byte1=0x01's
-    // +0x3c is NOT actually a net pointer — it's a chain link that coincidentally
-    // matches a BLK_0x6c m_Key in 26% of records (both pools share the 0x07b…
-    // address range, so collisions look like real net hits).
-    //
-    // CAD is the source of truth. Better to under-cover with 100% precision
-    // than over-cover with lies. Re-enable a route only after per-component
-    // oracle harness shows it stays at 100% precision.
+    // On the Allegro 15.5.2 sub-variant (magic 0x00120206, e.g. v13tl-0629)
+    // the same back-link is NOT a per-pad NetAssign — multiple BLK_0xC8
+    // records share a single +0x0C target (typically the ground plane's
+    // NetAssign), so applying Route 5 produces 3000+ false-positive
+    // attributions. Disabled for that variant until a different mechanism
+    // is decoded.
+    if (route5Enabled) {
+      const netByR10mKey = new Map<number, string>();
+      for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+        const mKey = peekU32(off + 0x04);
+        const netK = peekU32(off + 0x0C);
+        const n = directNetNames.get(netK);
+        if (n && mKey !== 0) netByR10mKey.set(mKey, n);
+      }
+      let r5 = 0;
+      for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+        if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+3) !== 0x00) continue;
+        const c8Key = peekU32(off + 0x04);
+        if (!blkC8Records.has(c8Key)) continue;
+        if (padGeoToNetName.has(c8Key)) continue; // Route 1 priority
+        const r10Key = peekU32(off + 0x0C);
+        const n = netByR10mKey.get(r10Key);
+        if (n) {
+          padGeoToNetName.set(c8Key, n);
+          r5++;
+        }
+      }
+      dbg.log(`v15: Route 5 (BLK_0xC8 +0x0C → byte1=0x10 back-link) added ${r5} mappings; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
+    } else {
+      dbg.log(`v15: Route 5 SKIPPED for 15.5.2 sub-variant (magic 0x${magic15.toString(16)}) — back-link is not per-pad NetAssign here`);
+    }
     // resolve pads per BLK_0x2D placement.
     (this as unknown as Record<string, unknown>).v15PadChain = {
       blk07ToFirstPad, blk48Records, blkC8Records, padGeoToNetName,
