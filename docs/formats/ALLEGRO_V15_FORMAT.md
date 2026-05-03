@@ -627,56 +627,68 @@ source of truth.
 
 ### Highest-value next probes (in order)
 
-1. **15.5.2 BLK_0x48 chain semantics (v13tl-0629).** **NEW BLOCKER.** The
-   per-component pin chain over-walks dramatically on 15.5.2:
+1. **15.5.2 per-pad net mechanism (v13tl-0629).** Routes 1+5 give 0
+   correct on v13tl, currently magic-gated OFF. Investigation in this
+   session found:
 
-   | Refdes | Oracle pins | Walked pads | Distinct coord rects |
-   |--------|-------------|-------------|---------------------|
-   | U5     |     408     |  1363       |   1355              |
-   | U13    |     257     |   569       |   567               |
-   | U4     |     182     |   956       |   956               |
-   | CN5    |      12     |    12       |    12               | ← works |
+   - **byte1=0x10 padK is at +0x18 (not +0x10) on v13tl** (98% hit
+     rate vs 37% at +0x10). Net is at +0x0c (same as 15.5.7).
+   - Trying `r1.padK = +0x18, r1.netK = +0x0c` produces 11 correct
+     mappings against 1158 FP — most "FP" are auto-generated NC nets
+     `N$XXXXXXX` that are valid in the BRD's string table but absent
+     from the oracle's NODE statements (hence flagged as FP by the
+     harness). True FP rate likely much lower; needs filtering by
+     "is this an N$ auto-net".
+   - Many byte1=0x10 records on v13tl reference the SAME byte1=0x10
+     m_Key from many BLK_0xC8 records (e.g. all 5 CN5 first pads
+     point to one DGND record). v13tl's byte1=0x10 are likely
+     **per-net** records (one record = one net + list of constituent
+     pads), not per-pad NetAssigns like 15.5.7.
+   - Next probe: walk all byte1=0x10 records, treat +0x18 as primary
+     pad ref AND +0x24 as secondary AND +0x40 as tertiary (each at
+     82-98% C8 hit rate — these likely list multiple pads per record).
+     If padK is at +0x18 / +0x24 / +0x40 simultaneously, each record
+     defines (net, [pad1, pad2, pad3]). Validate via oracle harness.
 
-   Currently capped at 200 pads/component on 15.5.2 (commit `f5a8c99`)
-   so big chips render as part-outline only. To unblock, find the
-   correct per-component chain mechanism — possibly a different field
-   on byte1=0x40 / BLK_0x48, possibly the +0x3C "next byte1=0x40"
-   chain that 15.5.2 has but 15.5.7 doesn't. Probes already run:
-   - byte1=0x40.+0x3C → next byte1=0x40 (1366/1384 hits) — confirmed
-   - U5's chain doesn't cross any other byte1=0x40's first pad
-   - All 1355 walked pads have unique coord rectangles (no dedup)
+2. **JHDMI1 / JLAN1 last 2 pins (LA-7321P).** Now resolves 23/23 pins
+   with the terminal byte1=0x01 fallback (commit `ac7e5f5`), but
+   2 pins lack net resolution because byte1=0x01 records have no
+   Route 5 back-link path. Probe: do the byte1=0x01 records' +0x0c
+   field (which 100% lands on a non-net target) lead anywhere
+   net-relevant?
 
-2. **15.5.2 per-pad net mechanism.** Same sub-variant. Routes 1+5 give
-   0 correct on v13tl, currently magic-gated off. Start with: pick
-   3 pads whose oracle net we know (e.g. CN5 pin 5 = `/CN_CAPS_LED#`),
-   inverse-search the file for the BLK_0xC8 m_Key, identify which
-   neighbouring records contain a byte1=0x6c reference whose string
-   matches `/CN_CAPS_LED#`. Validation: `node /tmp/oracle-harness.mjs
-   <BRD> <CAD>` must show `False positives: 0`.
-
-3. **JHDMI1 / JLAN1 last 3 pins (LA-7321P).** Their detail keys (e.g.
-   `0x7bf8780`, JHDMI1 pin 1) don't land in any catalogued pool.
-   Inverse-search the file for that exact u32 value to find what
-   record holds it as m_Key (probably a fourth BLK_0xC8 prefix
-   variant or a different pool addend).
+3. **15.5.2 chain over-walk diagnosis** *[no longer a blocker]*.
+   U5 walking 1363 pads vs the originally-stated 408 oracle pins
+   was a **misread** — U5 is an Intel Cantiga FCBGA 1363P (1363
+   actual silk pins, 408 distinct nets). The walker is correct.
+   The pin cap was wrong and has been reverted.
 
 4. **Multi-layer connector chain semantics.** byte1=0x01 / byte1=0x8c
    records form alternating chains for connector pin-stacks. They
    may carry per-layer pad rectangles at +0x14..+0x20 — relevant once
    we add per-layer rendering.
 
-5. **Promote oracle harness to Playwright.** `/tmp/oracle-harness.mjs`
-   is the precision gate but lives outside the repo. Move to
-   `src/frontend/tests/allegro-v15-oracle.spec.ts`, fail the test if
-   total FP > 0 on either sample. This locks in the no-regression
-   invariant.
+5. **Sub-variant detection in `formatFromMagic`.** Currently both v15
+   sub-variants map to `FmtVer.V_15X` and downstream code re-derives
+   the magic mask inline at the gate sites. Fine for two gates but
+   would benefit from explicit `V_152` / `V_157` enum members if
+   more variant-specific code lands.
 
-6. **Sub-variant detection in `formatFromMagic`.** Currently both v15
-   sub-variants map to `FmtVer.V_15X`. Adding `V_152` and `V_157`
-   would let downstream code (assembler, debug logs, the per-variant
-   gates) distinguish them cleanly. Right now we re-derive the magic
-   masking inline at the gate sites — fine for two probes, ugly at
-   scale.
+### Oracle precision gate (locked in)
+
+`src/frontend/tests/allegro-v15-oracle.spec.ts` is the permanent
+no-regression test. Fails the build if either sample shows any FP.
+At commit `97cd6f8`:
+
+| Sample          | Components walked | Perfect | FP | Missed |
+|-----------------|-------------------|---------|----|--------|
+| COMPAL LA-7321P | 1903              | 1776 (93.3%) | 0  |   251  |
+| v13tl-0629      | 1367              |    8         | 0  |  4242  |
+
+v13tl perfect=8 is expected — its net routes are magic-gated OFF
+because no precise per-pad mechanism is decoded yet. The 8 perfect
+components are tiny parts where oracle has no NODE assignments at
+all (so empty-set vs empty-set matches trivially).
 
 ### Key files / probes
 - Parser: `src/frontend/src/parsers/allegro/allegro-db.ts` (block walkers + Routes 1+5)
