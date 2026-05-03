@@ -209,6 +209,13 @@ Total fixed-stride: **24 bytes**.
 
 **Open**: identify the BLK_0xC8 record layout and where coordinates live within it. The 0xC8 record at `0xd4184` (immediately after the head 0x48 record) shows ~16 u32 fields followed by 4 i32 values that look like coords (`-442744, 102800, -442192, 105712` — a pad bbox in the same coordinate scale as BLK_0x2D's CoordX/CoordY).
 
+**BLK_0x2D → BLK_0x48 link is NOT direct.** Searched all 1909 BLK_0x2D records for any field containing a BLK_0x48 m_Key — found ZERO real matches across all 12 candidate field offsets (0x08–0x38). The link must traverse an intermediate record:
+- Possibly via BLK_0x07 (component instance) → BLK_0x48 chain
+- Or via BLK_0x2B (footprint def) → BLK_0x48 chain (each footprint type has a pad list, then placements share that geometry)
+- Or via the m_PtrPinNumber field in BLK_0x06 → byte1=0x20 record (the "pin number list head" at file offset 0x1368e48) → ... → BLK_0x48
+
+The BLK_0x06 → m_PtrPinNumber → byte1=0x20 record path is the most plausible: BLK_0x06 (component definition) carries the pin/pad layout for that part type, then BLK_0x2D placements reference both BLK_0x06 (via +0x1C) and the placement-specific pad locations (BLK_0x48). Walking BLK_0x06.m_PtrPinNumber → byte1=0x20 record → its outgoing pointers should reach the BLK_0x48 chain. Future RE: probe what the byte1=0x20 record at 0x1368e48 points to.
+
 ### byte1=0xC8 record (pad detail / geometry)
 
 11091 records in LA-7321P. Layout starts at file offset `0xd4184`:
