@@ -209,7 +209,56 @@ Total fixed-stride: **24 bytes**.
 
 **Open**: identify the BLK_0xC8 record layout and where coordinates live within it. The 0xC8 record at `0xd4184` (immediately after the head 0x48 record) shows ~16 u32 fields followed by 4 i32 values that look like coords (`-442744, 102800, -442192, 105712` — a pad bbox in the same coordinate scale as BLK_0x2D's CoordX/CoordY).
 
-**BLK_0x2D → BLK_0x48 link is NOT direct.** Searched all 1909 BLK_0x2D records for any field containing a BLK_0x48 m_Key — found ZERO real matches across all 12 candidate field offsets (0x08–0x38). The link must traverse an intermediate record:
+**BLK_0x2D → BLK_0x48 link is NOT direct.** Searched all 1909 BLK_0x2D records for any field containing a BLK_0x48 m_Key — found ZERO real matches across all 12 candidate field offsets (0x08–0x38).
+
+**BLK_0x06.m_PtrPinNumber → byte1=0x20 → BLK_0x48 ALSO NOT direct.** Probed the byte1=0x20 record at file offset 0x1368e48 (target of BLK_0x06 #0's m_PtrPinNumber). Its outgoing pointers (`0x0957ca70`, `0x0957cb0c`) point into pool 0x095 — NOT to any BLK_0x48 key. Across all 3711 byte1=0x20 records in the file, scanning every 4-byte aligned field 0x04..0x3C found only 3 hits matching BLK_0x48 keys. Effectively no link.
+
+### THE PAD-ATTRIBUTION CHAIN (verified 2026-05-03)
+
+**byte1=0x40 records are the missing link.** 1922 records in LA-7321P (≈ 1909 placements). Each one has:
+
+```
++0x00  prefix `00 40 00 00`
++0x04  m_Key (own key, pool 0x07B)
++0x08  inline 8-byte string  (manufacturer part number, e.g. "TF-89682")
++0x10  zero
++0x14..0x24  zeros / unused
++0x28  → BLK_0x07.m_Key  (links this record to a placed component instance)
++0x2C  → BLK_0x48.m_Key  (FIRST PAD pointer — VERIFIED 1921/1922 hits!)
++0x30  → another pointer (BLK_0x07-related, possibly m_PtrFunctionSlot mirror)
++0x34  zero
++0x38  prefix of NEXT record `00 40 00 00`  (records are 56 bytes contiguous)
+```
+
+**Stride: 56 bytes.** Records are sequential (verified by `+0x38` showing the next prefix). 
+
+**Complete chain to attribute pads to placements:**
+
+```
+BLK_0x2D placement (the part's position + rotation)
+  ↓ via +0x1C
+BLK_0x07 component instance (carries the inline refdes)
+  ↑ via +0x28
+byte1=0x40 record (per-placement MPN + pad-list head)
+  ↓ via +0x2C
+BLK_0x48 first pad header (24 bytes)
+  ↓ via m_Next field (still TBD — some +0x?? in BLK_0x48)
+BLK_0x48 next pad header
+  ...
+For each BLK_0x48:
+  ↓ via +0x10
+BLK_0xC8 pad geometry detail (~68 bytes, with 4 i32 coords at +0x34..+0x40)
+```
+
+**Implementation recipe (next session):**
+1. Walk byte1=0x40 records sequentially (stride 56 from first occurrence ~0x2A818) — store a Map<BLK_0x07.m_Key, firstPadKey> from `+0x28 → +0x2C`.
+2. Walk byte1=0x48 records sequentially (variable stride — start at 0xd416c) — store as Map<m_Key, {detailKey: +0x10}>.
+3. Walk byte1=0xC8 records — store as Map<m_Key, {coords: [i32×4 at +0x34..+0x40]}>.
+4. For each BLK_0x2D, look up its BLK_0x07.m_Key in the byte1=0x40 map → get firstPadKey → walk BLK_0x48 chain → for each, look up BLK_0xC8 → emit a Pin with center = (coords[0]+coords[2])/2, (coords[1]+coords[3])/2 in BLK_0x2D's local frame, then transform by part's CoordX/Y + rotation.
+
+**Open question for next session:** identify BLK_0x48's m_Next field. The 24-byte BLK_0x48 record has u32 fields at +0x04 (m_Key), +0x08 (?), +0x0c (?), +0x10 (BLK_0xC8 ref), +0x14 (zero). m_Next is most likely +0x08 or +0x0c (need to test by comparing to next BLK_0x48's m_Key).
+
+
 - Possibly via BLK_0x07 (component instance) → BLK_0x48 chain
 - Or via BLK_0x2B (footprint def) → BLK_0x48 chain (each footprint type has a pad list, then placements share that geometry)
 - Or via the m_PtrPinNumber field in BLK_0x06 → byte1=0x20 record (the "pin number list head" at file offset 0x1368e48) → ... → BLK_0x48
