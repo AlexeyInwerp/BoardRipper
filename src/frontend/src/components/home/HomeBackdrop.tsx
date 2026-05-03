@@ -6,7 +6,7 @@ import { databankStore } from '../../store/databank-store';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
-import { themeStore } from '../../store/themes';
+import { themeStore, ACCENT_PRESETS } from '../../store/themes';
 import {
   isAutoSwitchLinked,
   setAutoSwitchLinked,
@@ -707,6 +707,66 @@ function ThemeSelect() {
   );
 }
 
+function useAccentOverride(): string | null {
+  return useSyncExternalStore(
+    (cb) => themeStore.subscribe(cb),
+    () => themeStore.accentOverride,
+  );
+}
+
+/**
+ * Compact accent picker — the home dashboard mirror of the Settings-panel
+ * accent block. Shares the same `ACCENT_PRESETS` registry from store/themes
+ * so adding a swatch surfaces it in both places.
+ */
+function AccentPicker() {
+  const activeId = useThemeId();
+  const override = useAccentOverride();
+  const themeAccent =
+    themeStore.list().find((t) => t.id === activeId)?.ui.accent ?? '#4a9eff';
+  const effective = (override ?? themeAccent).toLowerCase();
+
+  return (
+    <div className="home-accent-row" title="Override the active theme's --accent. Pill colours and selection (yellow) are independent.">
+      <span className="home-accent-label">Accent</span>
+      <input
+        type="color"
+        className="home-accent-input"
+        value={effective}
+        onChange={(e) => themeStore.setAccent(e.target.value.toLowerCase())}
+        aria-label="Accent colour"
+      />
+      <div className="home-accent-swatches" role="listbox" aria-label="Accent presets">
+        {ACCENT_PRESETS.map((p) => {
+          const active = p.hex.toLowerCase() === effective;
+          return (
+            <button
+              key={p.hex}
+              type="button"
+              className={`home-accent-swatch${active ? ' active' : ''}`}
+              style={{ background: p.hex }}
+              onClick={() => themeStore.setAccent(p.hex)}
+              title={`${p.label} · ${p.hex.toUpperCase()}`}
+              aria-label={p.label}
+              aria-pressed={active}
+            />
+          );
+        })}
+      </div>
+      {override && (
+        <button
+          type="button"
+          className="home-accent-reset"
+          onClick={() => themeStore.setAccent(null)}
+          title="Revert to the active theme's built-in accent"
+        >
+          ↺
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // Library stats — read from databankStore.stats (populated by /api/databank/stats)
 // ─────────────────────────────────────────────────────────────
@@ -824,6 +884,7 @@ function QuickSettings() {
           <AutoSwitchToggle />
           <AutoOpenPdfToggle />
           <ThemeSelect />
+          <AccentPicker />
         </div>
       </div>
 

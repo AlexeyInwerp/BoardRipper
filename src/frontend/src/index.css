@@ -5461,6 +5461,79 @@ html, body, #root {
   outline: none;
   border-color: var(--accent);
 }
+
+/* --- Compact accent picker (home dashboard) ---
+ * Mirrors the SettingsPanel accent block but in one tight row that fits
+ * the toggle-stack rhythm: [label] [color input] [preset swatches] [reset]. */
+.home-accent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+.home-accent-label {
+  flex: 0 0 auto;
+}
+.home-accent-input {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+.home-accent-input:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.home-accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.home-accent-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: transform 0.08s, border-color 0.12s;
+}
+.home-accent-swatch:hover {
+  transform: scale(1.1);
+}
+.home-accent-swatch.active {
+  border: 2px solid var(--text-primary);
+}
+.home-accent-reset {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.home-accent-reset:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .home-settings-link {
   margin-top: 14px;
   background: none;
