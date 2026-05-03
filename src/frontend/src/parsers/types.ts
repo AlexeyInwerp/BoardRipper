@@ -322,6 +322,139 @@ export function computePartGeometry(pins: Pin[]): { origin: Point; bounds: BBox 
 }
 
 /**
+ * Compute a tight 4-corner polygon hugging the pins of a part. Returns the
+ * AABB corners for axis-aligned chips (most parts) and a rotated rectangle
+ * along the pins' principal axis for diagonally-placed parts (45°-rotated
+ * BGAs, slanted connectors). Used by overlap-aware ghost detection so two
+ * diagonal chips whose AABBs intersect but whose actual bodies don't are
+ * not flagged as a stale-refdes pair.
+ *
+ * Self-contained PCA: no settings, no padding. Mirrors the chip-layout
+ * guard + principal-axis logic in `store/render-settings.ts:computeDiagonalOBB`
+ * but stripped to the geometry-only core for use during parse.
+ */
+export function computePartHullPolygon(part: Part): [number, number][] {
+  const pins = part.pins;
+  const aabbCorners = (): [number, number][] => [
+    [part.bounds.minX, part.bounds.minY],
+    [part.bounds.maxX, part.bounds.minY],
+    [part.bounds.maxX, part.bounds.maxY],
+    [part.bounds.minX, part.bounds.maxY],
+  ];
+  if (pins.length < 3) return aabbCorners();
+
+  // Axis-aligned chip-layout guard — see render-settings for rationale.
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const pin of pins) {
+    if (pin.position.x < minX) minX = pin.position.x;
+    if (pin.position.x > maxX) maxX = pin.position.x;
+    if (pin.position.y < minY) minY = pin.position.y;
+    if (pin.position.y > maxY) maxY = pin.position.y;
+  }
+  {
+    const span = Math.max(maxX - minX, maxY - minY);
+    const eps = Math.min(2, span * 0.01);
+    let onL = 0, onR = 0, onT = 0, onB = 0, onAny = 0;
+    for (const pin of pins) {
+      const isL = Math.abs(pin.position.x - minX) <= eps;
+      const isR = Math.abs(pin.position.x - maxX) <= eps;
+      const isB = Math.abs(pin.position.y - minY) <= eps;
+      const isT = Math.abs(pin.position.y - maxY) <= eps;
+      if (isL) onL++;
+      if (isR) onR++;
+      if (isB) onB++;
+      if (isT) onT++;
+      if (isL || isR || isB || isT) onAny++;
+    }
+    const hasH = onT >= 2 || onB >= 2;
+    const hasV = onL >= 2 || onR >= 2;
+    if (hasH && hasV && onAny >= pins.length * 0.4) return aabbCorners();
+  }
+
+  // PCA on pin cloud
+  let cx = 0, cy = 0;
+  for (const pin of pins) { cx += pin.position.x; cy += pin.position.y; }
+  cx /= pins.length; cy /= pins.length;
+  let cxx = 0, cxy = 0, cyy = 0;
+  for (const pin of pins) {
+    const dx = pin.position.x - cx;
+    const dy = pin.position.y - cy;
+    cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
+  }
+  const trace = cxx + cyy;
+  const det = cxx * cyy - cxy * cxy;
+  const disc = Math.sqrt(Math.max(0, trace * trace / 4 - det));
+  const lambda1 = trace / 2 + disc;
+  const varAvg = (cxx + cyy) / 2;
+  const isNearSquare = Math.abs(cxx - cyy) < varAvg * 0.01;
+  const isDecorrelated = Math.abs(cxy) < varAvg * 0.01;
+  let ux: number, uy: number;
+  if (isNearSquare && isDecorrelated) {
+    ux = Math.SQRT1_2; uy = Math.SQRT1_2;
+  } else if (Math.abs(cxy) > 1e-6) {
+    ux = lambda1 - cyy; uy = cxy;
+  } else {
+    return aabbCorners();
+  }
+  const len = Math.hypot(ux, uy);
+  if (len < 1e-6) return aabbCorners();
+  ux /= len; uy /= len;
+  if (Math.abs(ux * uy) < 0.15) return aabbCorners();
+  const vx = -uy, vy = ux;
+
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  for (const pin of pins) {
+    const dx = pin.position.x - cx;
+    const dy = pin.position.y - cy;
+    const u = dx * ux + dy * uy;
+    const v = dx * vx + dy * vy;
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
+  const obbW = maxU - minU, obbH = maxV - minV;
+  const aabbArea = (maxX - minX) * (maxY - minY);
+  if (aabbArea < 1 || (obbW * obbH) / aabbArea > 0.7) return aabbCorners();
+
+  return [
+    [cx + minU * ux + minV * vx, cy + minU * uy + minV * vy],
+    [cx + maxU * ux + minV * vx, cy + maxU * uy + minV * vy],
+    [cx + maxU * ux + maxV * vx, cy + maxU * uy + maxV * vy],
+    [cx + minU * ux + maxV * vx, cy + minU * uy + maxV * vy],
+  ];
+}
+
+/**
+ * Convex polygon overlap via Separating Axis Theorem. Returns true when the
+ * two polygons intersect (touching counts). Both inputs must be convex and
+ * supplied with consistent winding order.
+ */
+export function polygonsOverlap(a: [number, number][], b: [number, number][]): boolean {
+  const polys = [a, b];
+  for (const poly of polys) {
+    for (let i = 0; i < poly.length; i++) {
+      const [x1, y1] = poly[i];
+      const [x2, y2] = poly[(i + 1) % poly.length];
+      const nx = y2 - y1, ny = -(x2 - x1);
+      let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+      for (const [px, py] of a) {
+        const d = px * nx + py * ny;
+        if (d < aMin) aMin = d;
+        if (d > aMax) aMax = d;
+      }
+      for (const [px, py] of b) {
+        const d = px * nx + py * ny;
+        if (d < bMin) bMin = d;
+        if (d > bMax) bMax = d;
+      }
+      if (aMax < bMin || bMax < aMin) return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Common power/ground rail-name patterns. Components that overlap with only
  * power-rail nets in common are usually heatsinks, EMI shields, or thermal
  * pads — physically valid stacks, not ghosts.
@@ -387,6 +520,10 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
   function bboxOverlap(a: BBox, b: BBox): boolean {
     return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
   }
+  // Pre-compute per-part hull polygons (OBB for diagonal parts, AABB
+  // otherwise). The AABB pre-check stays as a cheap reject; the SAT step
+  // then catches the diagonal-AABB-overlap-but-actually-separate case.
+  const partPolys: [number, number][][] = parts.map(p => computePartHullPolygon(p));
   function isSubset(small: Set<string>, large: Set<string>): boolean {
     if (small.size === 0 || small.size > large.size) return false;
     for (const n of small) if (!large.has(n)) return false;
@@ -406,6 +543,7 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
         const bi = side[j];
         const b = parts[bi];
         if (!bboxOverlap(aBB, b.bounds)) continue;
+        if (!polygonsOverlap(partPolys[ai], partPolys[bi])) continue;
         const bNets = netSets[bi];
 
         // Determine dominator: the part with strictly more pins. If both have
