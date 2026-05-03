@@ -429,10 +429,36 @@ export class AllegroDb {
     }
     dbg.log(`v15: scanned BLK_0xC8 → ${blkC8Records.size} pad geometry records`);
 
+    // First, scan ALL byte1=0x6c records directly (not just the LL chain) to
+    // build a complete BLK_0x1B m_Key → net-name lookup. The LL_0x1B chain
+    // covers 7943 records but only ~1977 are byte1=0x6c (the chain crosses
+    // multiple byte1 prefixes). byte1=0x10 NetAssign records reference the
+    // byte1=0x6c subset specifically.
+    const directNetNames = new Map<number, string>();
+    for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x6c || peekByte(off+3) !== 0x00) continue;
+      const mKey = peekU32(off + 0x04);
+      const nameStrKey = peekU32(off + 0x0C);
+      const name = this.strings.get(nameStrKey) ?? '';
+      if (name && mKey !== 0) directNetNames.set(mKey, name);
+    }
+
+    // byte1=0x10 = NetAssign records. +0x00 → BLK_0x48 (pad), +0x0C → BLK_0x1B (net).
+    // 4139/4257 records (97%) follow this pattern.
+    const padToNetName = new Map<number, string>();
+    for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+      const padKey = peekU32(off);
+      const netKey = peekU32(off + 0x0C);
+      const netName = directNetNames.get(netKey);
+      if (netName && padKey !== 0) padToNetName.set(padKey, netName);
+    }
+    dbg.log(`v15: scanned byte1=0x10 NetAssign → ${padToNetName.size} pad→net mappings (from ${directNetNames.size} direct net records)`);
+
     // Stash the pad chain on the AllegroDb instance so the v15 assembler can
     // resolve pads per BLK_0x2D placement.
     (this as unknown as Record<string, unknown>).v15PadChain = {
-      blk07ToFirstPad, blk48Records, blkC8Records,
+      blk07ToFirstPad, blk48Records, blkC8Records, padToNetName,
     };
 
     // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte

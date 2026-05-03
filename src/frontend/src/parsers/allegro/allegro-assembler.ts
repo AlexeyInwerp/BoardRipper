@@ -365,6 +365,7 @@ function extractComponentsV15(
       blk07ToFirstPad: Map<number, number>;
       blk48Records: Map<number, { next: number; detailKey: number }>;
       blkC8Records: Map<number, { coords: [number, number, number, number] }>;
+      padToNetName: Map<number, string>;
     };
     const padChain = (db as unknown as Record<string, unknown>).v15PadChain as PadChain | undefined;
     // Pin geometry — VERIFIED board-absolute via .cad oracle (PQ306, L124,
@@ -386,13 +387,14 @@ function extractComponentsV15(
           // Validate: skip pads with absurd sizes (false-positive C8 records)
           if (w < 500 && h < 500 && (cx !== 0 || cy !== 0)) {
             const radius = Math.max(2, Math.min(w, h) / 2);
+            const netName = padChain.padToNetName.get(padKey) ?? '';
             pins.push({
               name: String(pinIdx),
               number: String(pinIdx),
               position: { x: cx, y: cy },
               radius,
               side: inst.layer === 1 ? 'bottom' : 'top',
-              net: '',
+              net: netName,
             });
             allPinPositions.push({ x: cx, y: cy });
           }
@@ -402,14 +404,22 @@ function extractComponentsV15(
       }
     }
 
-    // Recompute bounds from pins if available, else use file bbox
+    // Recompute bounds from pin positions only. fpBbox is in footprint-local
+    // coords (we don't have the local→board transform); mixing it with
+    // board-absolute pins produces oversized bounds (e.g. JLVDS1 spilled
+    // way outside the component). Pin extents + a small margin work.
     const finalBounds = pins.length > 0
-      ? {
-          minX: Math.min(ox + fpBbox[0] / div, ...pins.map(p => p.position.x)),
-          minY: Math.min(oy + fpBbox[1] / div, ...pins.map(p => p.position.y)),
-          maxX: Math.max(ox + fpBbox[2] / div, ...pins.map(p => p.position.x)),
-          maxY: Math.max(oy + fpBbox[3] / div, ...pins.map(p => p.position.y)),
-        }
+      ? (() => {
+          const xs = pins.map(p => p.position.x);
+          const ys = pins.map(p => p.position.y);
+          const margin = 20; // mils, gives the renderer something to outline
+          return {
+            minX: Math.min(...xs) - margin,
+            minY: Math.min(...ys) - margin,
+            maxX: Math.max(...xs) + margin,
+            maxY: Math.max(...ys) + margin,
+          };
+        })()
       : bounds;
 
     parts.push({
