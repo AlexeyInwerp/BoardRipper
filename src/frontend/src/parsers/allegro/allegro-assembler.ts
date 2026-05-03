@@ -285,8 +285,10 @@ export function buildV15Nets(db: AllegroDb, parts: Part[]): Map<string, Net> {
   for (const blk of db.blocks.values()) {
     if (blk.blockType !== 0x1B) continue;
     const netBlk = blk as unknown as { netName: number };
-    const name = db.getString(netBlk.netName);
-    if (!name) continue;
+    const raw = db.getString(netBlk.netName);
+    if (!raw) continue;
+    // Mirror the slash strip from allegro-db.ts so Net List matches Pin nets.
+    const name = raw.startsWith('/') ? raw.slice(1) : raw;
     if (!m.has(name)) m.set(name, { name, pinIndices: [] });
   }
   // Populate pin connectivity from assembled parts (pin.net is set per

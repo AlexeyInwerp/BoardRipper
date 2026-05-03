@@ -439,7 +439,14 @@ export class AllegroDb {
       if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x6c || peekByte(off+3) !== 0x00) continue;
       const mKey = peekU32(off + 0x04);
       const nameStrKey = peekU32(off + 0x0C);
-      const name = this.strings.get(nameStrKey) ?? '';
+      const raw = this.strings.get(nameStrKey) ?? '';
+      // Strip the Cadence hierarchical-sheet prefix `/` from net names.
+      // Hierarchical-schematic v15 designs (e.g. v13tl-0629) prefix every
+      // net with the root sheet path `/`; flat designs (LA-7321P) don't.
+      // We normalise to the bare name everywhere — matches what users
+      // expect from boardview tools and keeps search consistent across
+      // hierarchical/flat designs.
+      const name = raw.startsWith('/') ? raw.slice(1) : raw;
       if (name && mKey !== 0) directNetNames.set(mKey, name);
     }
 
@@ -522,7 +529,92 @@ export class AllegroDb {
         }
       }
     }
-    dbg.log(`v15: extra net routes — byte1=0x01 added ${r2} mappings, byte1=0x8c added ${r3}; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
+    dbg.log(`v15: extra net routes — byte1=0x01 added ${r2} mappings, byte1=0x8c added ${r3}; direct c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
+
+    // Route 4: connectivity-graph propagation. byte1=0x01 and byte1=0x8c
+    // records connect pairs of BLK_0xC8 keys (pads on the same net via
+    // intra-component routing). Build the adjacency graph, find connected
+    // components, and propagate the direct labels:
+    //   - Component has exactly ONE byte1=0x10 (Route 1) anchor → propagate it.
+    //   - Component has NO Route-1 anchor but ONE consensus Route-2/3 label
+    //     → propagate that.
+    //   - Otherwise (conflict / mixed) → skip — ambiguous components are
+    //     usually trace branch points where the same C8 reaches multiple
+    //     nets via different layers.
+    const r1Anchor = new Map<number, string>(padGeoToNetName); // snapshot of Route 1 + 2/3 directs
+    // We need to know which entries came from Route 1 (authoritative). Re-scan.
+    const justR1 = new Map<number, string>();
+    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
+      const padK = peekU32(off + 0x10);
+      const netK = peekU32(off + 0x0C);
+      if (!blkC8Records.has(padK)) continue;
+      const n = directNetNames.get(netK);
+      if (n && !justR1.has(padK)) justR1.set(padK, n);
+    }
+
+    const adj = new Map<number, Set<number>>();
+    const addEdge = (a: number, b: number) => {
+      if (a) {
+        if (!adj.has(a)) adj.set(a, new Set());
+        if (b) adj.get(a)!.add(b);
+      }
+      if (b) {
+        if (!adj.has(b)) adj.set(b, new Set());
+        if (a) adj.get(b)!.add(a);
+      }
+    };
+    for (let off = 0; off + 0x40 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x01) continue;
+      const a = peekU32(off + 0x04);
+      const b = peekU32(off + 0x0c);
+      if (blkC8Records.has(a) || blkC8Records.has(b)) {
+        addEdge(blkC8Records.has(a) ? a : 0, blkC8Records.has(b) ? b : 0);
+      }
+    }
+    for (let off = 0; off + 0x2c <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x8c) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x01) continue;
+      const a = peekU32(off + 0x10);
+      const b = peekU32(off + 0x18);
+      if (blkC8Records.has(a) || blkC8Records.has(b)) {
+        addEdge(blkC8Records.has(a) ? a : 0, blkC8Records.has(b) ? b : 0);
+      }
+    }
+
+    let propR1 = 0, propAll = 0;
+    const visited = new Set<number>();
+    for (const start of adj.keys()) {
+      if (visited.has(start)) continue;
+      const members: number[] = [];
+      const stack = [start];
+      const r1Nets = new Set<string>();
+      const allNets = new Set<string>();
+      while (stack.length) {
+        const k = stack.pop()!;
+        if (visited.has(k)) continue;
+        visited.add(k);
+        members.push(k);
+        if (justR1.has(k)) r1Nets.add(justR1.get(k)!);
+        if (padGeoToNetName.has(k)) allNets.add(padGeoToNetName.get(k)!);
+        for (const nb of adj.get(k) ?? []) if (!visited.has(nb)) stack.push(nb);
+      }
+      let anchorNet: string | null = null;
+      if (r1Nets.size === 1) anchorNet = [...r1Nets][0];
+      else if (r1Nets.size === 0 && allNets.size === 1) anchorNet = [...allNets][0];
+      if (!anchorNet) continue;
+      for (const k of members) {
+        if (!padGeoToNetName.has(k)) {
+          padGeoToNetName.set(k, anchorNet);
+          if (r1Nets.size === 1) propR1++;
+          else propAll++;
+        }
+      }
+    }
+    dbg.log(`v15: graph propagation — R1-anchored ${propR1}, R2/3-consensus ${propAll}; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
 
     // Stash the pad chain on the AllegroDb instance so the v15 assembler can
     // resolve pads per BLK_0x2D placement.
