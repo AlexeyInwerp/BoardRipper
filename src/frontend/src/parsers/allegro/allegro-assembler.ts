@@ -110,7 +110,7 @@ export function assembleBoard(db: AllegroDb): BoardData {
   // For v15, the per-pin connectivity isn't yet decoded so buildNets(parts)
   // would produce an empty map. Use BLK_0x1B records directly to surface
   // the net-name list in the Net List panel.
-  const nets = ver === FmtVer.V_15X ? buildV15Nets(db) : buildNets(parts);
+  const nets = ver === FmtVer.V_15X ? buildV15Nets(db, parts) : buildNets(parts);
 
   return {
     format: 'ALLEGRO_BRD',
@@ -280,7 +280,7 @@ function extractComponents(
  * Each named net gets an empty `pinIndices` list. Once BLK_0x32 lands the
  * pins will populate the net map.
  */
-export function buildV15Nets(db: AllegroDb): Map<string, Net> {
+export function buildV15Nets(db: AllegroDb, parts: Part[]): Map<string, Net> {
   const m = new Map<string, Net>();
   for (const blk of db.blocks.values()) {
     if (blk.blockType !== 0x1B) continue;
@@ -288,6 +288,21 @@ export function buildV15Nets(db: AllegroDb): Map<string, Net> {
     const name = db.getString(netBlk.netName);
     if (!name) continue;
     if (!m.has(name)) m.set(name, { name, pinIndices: [] });
+  }
+  // Populate pin connectivity from assembled parts (pin.net is set per
+  // BLK_0xC8 padGeoToNetName lookup in extractComponentsV15).
+  for (let pi = 0; pi < parts.length; pi++) {
+    const part = parts[pi];
+    for (let pni = 0; pni < part.pins.length; pni++) {
+      const pin = part.pins[pni];
+      if (!pin.net) continue;
+      let net = m.get(pin.net);
+      if (!net) {
+        net = { name: pin.net, pinIndices: [] };
+        m.set(pin.net, net);
+      }
+      net.pinIndices.push({ partIndex: pi, pinIndex: pni });
+    }
   }
   return m;
 }
@@ -365,7 +380,7 @@ function extractComponentsV15(
       blk07ToFirstPad: Map<number, number>;
       blk48Records: Map<number, { next: number; detailKey: number }>;
       blkC8Records: Map<number, { coords: [number, number, number, number] }>;
-      padToNetName: Map<number, string>;
+      padGeoToNetName: Map<number, string>;
     };
     const padChain = (db as unknown as Record<string, unknown>).v15PadChain as PadChain | undefined;
     // Pin geometry — VERIFIED board-absolute via .cad oracle (PQ306, L124,
@@ -401,7 +416,9 @@ function extractComponentsV15(
           // Validate: skip pads with absurd sizes (false-positive C8 records)
           if (w < 500 && h < 500 && (cx !== 0 || cy !== 0)) {
             const radius = Math.max(2, Math.min(w, h) / 2);
-            const netName = padChain.padToNetName.get(padKey) ?? '';
+            // Net is keyed on the resolved BLK_0xC8 (pad geometry), not the
+            // BLK_0x48 header — see allegro-db.ts padGeoToNetName.
+            const netName = padChain.padGeoToNetName.get(detailKey) ?? '';
             pins.push({
               name: String(pinIdx),
               number: String(pinIdx),
