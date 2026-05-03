@@ -468,6 +468,67 @@ chain position N to silkscreen pin number requires decoding BLK_0x32
   in `ComponentInfo`. Resolving via BLK_0x32 will fix both: correct
   pin numbers AND likely point to the missing pad/net link records.
 
+### byte3 ∈ {0x00, 0x01} relaxation — DECODED (2026-05-03 push 4)
+
+The strict prefix shape `00 [byte1] ?? 00` (byte 3 = 0x00) MISSES a
+second prefix variant that byte1=0x01 and byte1=0x8c records use:
+
+| byte1 | byte3=0x00 | byte3=0x01 | Total |
+|-------|------------|------------|-------|
+| 0x01  | 3206       | 1111       | 4317  |
+| 0x8c  | 2143       | 2730       | 4873  |
+
+The byte3=0x01 records are the alternating-chain variant from the JHDD1
+trace (chain step 0: `00 01 00 01`, step 1: `00 8c 00 01`, …). Both
+shapes carry the same field semantics — relaxing the catalog filter
+to `byte3 ∈ {0, 1}` finds them. Other byte1 prefixes (0x10 NetAssign,
+0x6c net record, 0xc8 pad geometry, 0x48 pad header, 0x40 component
+head) do NOT have byte3=0x01 variants — keep the strict filter for
+those.
+
+### Route priority — byte1=0x10 is authoritative
+
+byte1=0x10 NetAssign records have a clean (padGeometry, net) shape
+(one pad ↔ one net). The +0x3c "net" pointer in byte1=0x01 records is
+**dual-purpose**: in 26% of records it points to a real BLK_0x6c
+(named net); in 74% it's a chain link to the next byte1=0x01 record's
+pool-0x096 m_Key. Treating Route 2 as authoritative caused a regression
+where L124 pin1 was mis-assigned APU_HDMI_TX1P instead of the correct
+DMIC_CLK. Fix: parse Route 1 first, mark assigned C8s; Routes 2/3 fill
+un-netted C8s only.
+
+### v13tl-0629 has different NetAssign density
+
+The two v15 samples diverge in byte1=0x10 prevalence:
+
+| File             | byte1=0x10 records | Route 1 mappings | E2E coverage |
+|------------------|--------------------|------------------|--------------|
+| COMPAL LA-7321P  | 4257               | 2025             | 4629 / 7350 = **63.0%** |
+| v13tl-0629       | (smaller)          | 221              | 2759 / 6673 = **41.3%** |
+
+v13tl-0629 is a slightly older v15 sub-variant that uses the byte1=0x01
+pad-pad chain almost exclusively for net assignment. Routes 2/3 are
+load-bearing for it — without them, coverage would drop below 5%.
+Cross-validated CN5 connector pins 5–8 against `.cad` oracle:
+`/CL_VREF0_ICH`, `/CN_HDD_LED#`, `/CN_NUM_LED#`, `/CN_BT_LED#`. ✓
+
+### Connectivity-graph propagation — feasible but deferred
+
+byte1=0x01 and byte1=0x8c records can also be read as **edges** between
+two BLK_0xC8 keys (`+0x04↔+0x0c` and `+0x10↔+0x18` respectively). On
+LA-7321P this graph has 1345 connected components. Of those:
+- 535 have exactly one direct net (clean — propagation safe)
+- 800 have multiple direct nets (conflict — graph over-connects)
+- 10 have no direct net at all
+
+Propagating "one direct net" components to their unnetted members adds
+~235 new mappings (+3% pin coverage). The 800 conflict components
+suggest some fraction of byte1=0x01/0x8c edges connect pads on
+*different* nets (perhaps trace branch points or layer transitions
+counted as edges). Cleaning this up requires distinguishing "intra-net"
+edges from "topology" edges — non-trivial. Deferred until a clearer
+edge-type signal is found.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
