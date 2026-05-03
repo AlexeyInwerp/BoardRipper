@@ -417,17 +417,28 @@ export class AllegroDb {
     // Walk BLK_0xC8 records (pad geometry) — coords at +0x38..+0x44
     // (verified board-absolute via .cad oracle: PQ306/L124/U41 pin 1
     // positions decode EXACTLY to oracle values).
+    //
+    // Three prefix variants (byte 2 always 0x0C):
+    //   `00 c8 0c 00` — main pad-stack record (11082 on LA-7321P)
+    //   `00 c8 0c 80` — multi-layer connector pad ( 149 on LA-7321P,
+    //                   referenced from JHDMI1/JLAN1/JCRT1 pin chains)
+    //   `00 c8 0c 40` — smaller variant (  17 on LA-7321P)
+    // All three carry the same coord layout at +0x38..+0x44. The strict
+    // byte3=0x00 filter previously missed the 0x80 variant, leaving
+    // ~6.7% of multi-layer connector parts with no pin geometry.
     const blkC8Records = new Map<number, { coords: [number, number, number, number] }>();
     for (let off = 0; off + 0x48 <= fileBytes.length; off += 4) {
-      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+3) !== 0x00) continue;
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0xC8 || peekByte(off+2) !== 0x0C) continue;
+      const b3 = peekByte(off+3);
+      if (b3 !== 0x00 && b3 !== 0x40 && b3 !== 0x80) continue;
       const mKey = peekU32(off + 0x04);
       const x1 = peekI32(off + 0x38);
       const y1 = peekI32(off + 0x3C);
       const x2 = peekI32(off + 0x40);
       const y2 = peekI32(off + 0x44);
-      if (mKey !== 0) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
+      if (mKey !== 0 && !blkC8Records.has(mKey)) blkC8Records.set(mKey, { coords: [x1, y1, x2, y2] });
     }
-    dbg.log(`v15: scanned BLK_0xC8 → ${blkC8Records.size} pad geometry records`);
+    dbg.log(`v15: scanned BLK_0xC8 (byte3 ∈ {0x00, 0x40, 0x80}) → ${blkC8Records.size} pad geometry records`);
 
     // First, scan ALL byte1=0x6c records directly (not just the LL chain) to
     // build a complete BLK_0x1B m_Key → net-name lookup. The LL_0x1B chain
