@@ -529,6 +529,84 @@ counted as edges). Cleaning this up requires distinguishing "intra-net"
 edges from "topology" edges — non-trivial. Deferred until a clearer
 edge-type signal is found.
 
+### Route 5 — BLK_0xC8 back-link (2026-05-03 push 5)
+
+The breakthrough that flipped LA-7321P from 5.4% to 92.7% perfect
+components: **each BLK_0xC8 record's `+0x0C` field points back to its
+owning byte1=0x10 NetAssign.** Route 1 (forward link byte1=0x10 +0x10
+→ C8) catches one C8 per NetAssign — typically the "primary" copper
+layer — but every BLK_0xC8 in the same pad-stack stores the same
+back-link to the NetAssign. So the back-link covers ALL layers of every
+pad with a single per-stack NetAssign.
+
+```
+                        ┌─ BLK_0xC8 (top-copper)  +0x0C ──┐
+byte1=0x10 NetAssign ◀──┼─ BLK_0xC8 (mid-copper)  +0x0C ──┤
+   m_Key, +0x0C → net   ├─ BLK_0xC8 (bot-copper)  +0x0C ──┤
+                        └─ BLK_0xC8 (anti-pad)    +0x0C ──┘
+
+Route 1 catches one of these per stack via the FORWARD +0x10 → C8 link.
+Route 5 catches all of them via the BACKWARD +0x0C → byte1=0x10 link.
+```
+
+Per-component oracle results on COMPAL LA-7321P (1914 components,
+CAD = ground truth):
+
+| Routes        | Maps | Perfect comps | Correct nets | False positives |
+|---------------|------|---------------|--------------|-----------------|
+| R1 only       | 2025 |   104 (5.4%)  |       1625   |        0        |
+| R1 + R5       | 6708 |  1775 (92.7%) |       5343   |        0        |
+
+The 280 still-missed nets concentrate on 6 connector parts (JHDD1,
+JCRT1, JLAN1, JHDMI1, JODD1, PJP2) where the BLK_0x07 → BLK_0x48 →
+BLK_0xC8 chain doesn't reach a real C8 record at all — separate
+pin-geometry bug, see "JHDD1 pin chain" above.
+
+### Variant split: 15.5.7 vs 15.5.2 — net routes magic-gated
+
+Both v15 sub-variants in our corpus have the same overall block-type
+catalog (BLK_0x07 components, BLK_0x2D placements, byte1=0x10/0x6c/0xc8
+relationships) but the **byte1=0x10 record SEMANTICS differ between
+them**:
+
+| Sub-variant | Magic        | Sample          | byte1=0x10 records | Per-pad NetAssign? |
+|-------------|--------------|-----------------|---------------------|---------------------|
+| 15.5.7      | `0x00120A06` | COMPAL LA-7321P | 4257                | YES — Routes 1+5 work |
+| 15.5.2      | `0x00120206` | v13tl-0629      | 1644                | NO — Routes 1+5 give 0 correct, 221+ FP |
+
+On 15.5.7, byte1=0x10 records are 1:1 with pad-stack NetAssigns. On
+15.5.2, byte1=0x10 records exist with the same prefix shape and a
+similar field histogram but **the +0x10 padK / +0x0C netK pair is not
+a per-pad NetAssign**. Multiple BLK_0xC8 records share a single +0x0C
+back-pointer (typically the ground-plane's record), so applying R5
+naively attributes every pad on a power-plane layer to GND.
+
+Verification on v13tl-0629 CN5 connector:
+- All 5 oracle pins should be `/+V5S, /CN_WLAN_LED#, /CN_BT_LED#, /CN_HDD_LED#, /CN_CAPS_LED#`.
+- All 5 BLK_0xC8 records' +0x0C → the same byte1=0x10 record → "DGND".
+- Naive R5 → all 5 pins reported as DGND. Wrong.
+
+Production parser disables BOTH Route 1 and Route 5 on 15.5.2 magic.
+Better to ship pure pad geometry with no net assignments than ship
+incorrect ones. The 15.5.2 per-pad mechanism is undecoded — next-session
+RE target.
+
+### Per-component oracle harness
+
+A `/tmp/oracle-harness.mjs` probe (not shipped) parses the .cad sibling,
+walks parser pins per component, and reports precision / recall / FP
+samples per refdes. Use it to validate any new route candidate before
+shipping:
+
+```
+node oracle-harness.mjs <BRD> <CAD>
+→ reports: total comps, perfect components, correct nets, FP, missed
+→ top-15 worst components with FP samples
+```
+
+Any new route MUST keep `False positives = 0` on the harness. CAD is
+source of truth.
+
 ### Open questions (deferred RE)
 
 1. **m_Layer** — none of the BLK_0x2D fields decoded so far carry a `top/bottom` byte. KiCad's pre-V172 BLK_0x2D has `m_Layer` as the second byte of the record header; v15's prefix bytes are all `0x00 0xb4 ?? 0x00`. May be encoded in the sub-type byte (varies per record), or in one of the `?` fields, or in a parallel record.
