@@ -383,26 +383,20 @@ function extractComponentsV15(
       blk48Records: Map<number, { next: number; detailKey: number }>;
       blkC8Records: Map<number, { coords: [number, number, number, number] }>;
       padGeoToNetName: Map<number, string>;
+      terminalPadRecords?: Map<number, { coords: [number, number, number, number] }>;
     };
     const padChain = (db as unknown as Record<string, unknown>).v15PadChain as PadChain | undefined;
     // Pin geometry — VERIFIED board-absolute via .cad oracle (PQ306, L124,
-    // U41, etc. all decode to exact oracle pin1 positions).
-    //
-    // 15.5.2 sub-variant note: the BLK_0x48 +0x08 chain on v13tl-0629 over-
-    // walks for big chips (U5: 1363 walked vs 408 oracle silk pins). Each
-    // visited pad has a unique coord rectangle so it isn't a multi-layer
-    // dedup problem; the chain mechanism is genuinely different on 15.5.2
-    // and isn't yet decoded. Cap chain length to suppress the scattered-pin
-    // visual artefact reported on U5 — small chips (CN5, U11, etc.) walk
-    // under the cap and render correctly; big BGAs render as part-outline
-    // only until the 15.5.2 chain semantics are decoded.
-    const magic15 = (db.header.magic & 0xFFFFFF00) >>> 0;
-    const PIN_CAP = magic15 === 0x00120A00 ? 1000 : 200; // 15.5.7 vs 15.5.2
+    // U41, etc. all decode to exact oracle pin1 positions). U5 on v13tl-0629
+    // (1363-pin Intel Cantiga FCBGA) walks all 1363 pads cleanly, each at
+    // a distinct grid position. The earlier "U5 weird pin gap" report was
+    // misdiagnosed (we mistook 408 distinct nets for the silk pin count);
+    // the chain walker IS correct for both v15 sub-variants.
     if (padChain && inst.instRef16x) {
       let padKey = padChain.blk07ToFirstPad.get(inst.instRef16x) ?? 0;
       let pinIdx = 1;
       const visited = new Set<number>();
-      while (padKey !== 0 && !visited.has(padKey) && pinIdx < PIN_CAP) {
+      while (padKey !== 0 && !visited.has(padKey) && pinIdx < 2000) {
         visited.add(padKey);
         const padHdr = padChain.blk48Records.get(padKey);
         if (!padHdr) break;
@@ -415,12 +409,16 @@ function extractComponentsV15(
         for (let hop = 0; hop < 6; hop++) {
           if (detailKey === 0 || detailVisited.has(detailKey)) break;
           detailVisited.add(detailKey);
-          if (padChain.blkC8Records.has(detailKey)) break; // found geometry
+          if (padChain.blkC8Records.has(detailKey)) break; // prefer real pad geometry (with net)
           const intermediate = padChain.blk48Records.get(detailKey);
           if (!intermediate) break;
           detailKey = intermediate.detailKey;
         }
-        const padDetail = padChain.blkC8Records.get(detailKey);
+        // Prefer real BLK_0xC8 (Route 5 net resolution); fall back to
+        // terminal byte1=0x01 inline coords (no net) for multi-layer
+        // connector pins where the chain dead-ends without reaching C8.
+        const padDetail = padChain.blkC8Records.get(detailKey)
+          ?? padChain.terminalPadRecords?.get(detailKey);
         if (padDetail) {
           const cx = (padDetail.coords[0] + padDetail.coords[2]) / 2 / div;
           const cy = (padDetail.coords[1] + padDetail.coords[3]) / 2 / div;
