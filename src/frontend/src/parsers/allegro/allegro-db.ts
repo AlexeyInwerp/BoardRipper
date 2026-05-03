@@ -443,22 +443,75 @@ export class AllegroDb {
       if (name && mKey !== 0) directNetNames.set(mKey, name);
     }
 
-    // byte1=0x10 = NetAssign records. +0x00 → BLK_0x48 (pad), +0x0C → BLK_0x1B (net).
-    // 4139/4257 records (97%) follow this pattern.
-    const padToNetName = new Map<number, string>();
-    for (let off = 0; off + 0x10 <= fileBytes.length; off += 4) {
+    // byte1=0x10 = NetAssign records. Field-pool probe (4257 records):
+    //   +0x04 → byte1=0x10  (own m_Key — 100%)
+    //   +0x0C → byte1=0x6c  (97.2% — BLK_0x1B net record)
+    //   +0x10 → byte1=0xc8  (62.3% — BLK_0xC8 pad geometry)
+    //   +0x10 → byte1=0x01  (20.7% — multi-layer connector pad)
+    // The mapping is therefore (padGeometryKey → netName), keyed on the
+    // BLK_0xC8 m_Key, not the BLK_0x48 header. The previous version read
+    // peekU32(off) which is the prefix `0x00001000`, not a key — so 0%
+    // of the lookups resolved end-to-end.
+    const padGeoToNetName = new Map<number, string>();
+    let netAssignTotal = 0;
+    let netAssignToC8 = 0;
+    for (let off = 0; off + 0x14 <= fileBytes.length; off += 4) {
       if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x10 || peekByte(off+3) !== 0x00) continue;
-      const padKey = peekU32(off);
+      netAssignTotal++;
+      const padGeoKey = peekU32(off + 0x10);
       const netKey = peekU32(off + 0x0C);
+      if (!blkC8Records.has(padGeoKey)) continue;
+      netAssignToC8++;
       const netName = directNetNames.get(netKey);
-      if (netName && padKey !== 0) padToNetName.set(padKey, netName);
+      if (netName) padGeoToNetName.set(padGeoKey, netName);
     }
-    dbg.log(`v15: scanned byte1=0x10 NetAssign → ${padToNetName.size} pad→net mappings (from ${directNetNames.size} direct net records)`);
+    dbg.log(`v15: byte1=0x10 NetAssign — total=${netAssignTotal} +0x10→BLK_0xC8=${netAssignToC8} resolved=${padGeoToNetName.size} (from ${directNetNames.size} named nets)`);
+
+    // Route 2: byte1=0x01 (multi-layer connector pad records). These records
+    // hold up to 7 BLK_0xC8 references (one per layer) and a single net
+    // pointer at +0x3c. Probe shows 1127/3206 records carry both a C8 ref
+    // AND a 0x6c net ref — they cover most pads on connectors / through-hole
+    // parts that the byte1=0x10 chain misses.
+    const r2C8Fields = [0x04, 0x0c, 0x14, 0x18, 0x20, 0x2c, 0x38];
+    let r2 = 0;
+    for (let off = 0; off + 0x40 <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x01 || peekByte(off+3) !== 0x00) continue;
+      const netKey = peekU32(off + 0x3c);
+      const netName = directNetNames.get(netKey);
+      if (!netName) continue;
+      for (const fo of r2C8Fields) {
+        const v = peekU32(off + fo);
+        if (!blkC8Records.has(v)) continue;
+        if (!padGeoToNetName.has(v)) {
+          padGeoToNetName.set(v, netName);
+          r2++;
+        }
+      }
+    }
+    // Route 3: byte1=0x8c (alt connector layer record — alternates with 0x01
+    // in the per-layer chain). C8 fields at +0x10..+0x28; net at +0x08.
+    const r3C8Fields = [0x10, 0x18, 0x20, 0x24, 0x28];
+    let r3 = 0;
+    for (let off = 0; off + 0x2c <= fileBytes.length; off += 4) {
+      if (peekByte(off) !== 0x00 || peekByte(off+1) !== 0x8c || peekByte(off+3) !== 0x00) continue;
+      const netKey = peekU32(off + 0x08);
+      const netName = directNetNames.get(netKey);
+      if (!netName) continue;
+      for (const fo of r3C8Fields) {
+        const v = peekU32(off + fo);
+        if (!blkC8Records.has(v)) continue;
+        if (!padGeoToNetName.has(v)) {
+          padGeoToNetName.set(v, netName);
+          r3++;
+        }
+      }
+    }
+    dbg.log(`v15: extra net routes — byte1=0x01 added ${r2} mappings, byte1=0x8c added ${r3}; final c8→net = ${padGeoToNetName.size} of ${blkC8Records.size}`);
 
     // Stash the pad chain on the AllegroDb instance so the v15 assembler can
     // resolve pads per BLK_0x2D placement.
     (this as unknown as Record<string, unknown>).v15PadChain = {
-      blk07ToFirstPad, blk48Records, blkC8Records, padToNetName,
+      blk07ToFirstPad, blk48Records, blkC8Records, padGeoToNetName,
     };
 
     // BLK_0x2D (Footprint instances / placed parts) — sequential 60-byte
