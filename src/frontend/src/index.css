@@ -5224,13 +5224,33 @@ html, body, #root {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 18px;
 }
+.home-quick-section {
+  padding: 14px 0 10px;
+  border-top: 1px solid var(--border);
+}
+.home-quick-section:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+.home-quick-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+  letter-spacing: 0.01em;
+}
+.home-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
 .home-quick-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 .home-quick-label {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -5280,6 +5300,68 @@ html, body, #root {
 .home-settings-link:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+/* --- Library stats --- */
+.home-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.home-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.home-stats-row strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.home-stats-path {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+.home-stats-path code {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.95em;
+  color: var(--accent);
+}
+.home-stats-scanning {
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+
+/* --- Cache action buttons --- */
+.home-cache-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.home-cache-btn {
+  padding: 6px 14px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.home-cache-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-tertiary));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent);
+}
+.home-cache-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* --- Keyboard shortcuts --- */

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useBoardStore } from '../../hooks/useBoardStore';
+import { useDatabank } from '../../hooks/useDatabank';
+import { boardStore } from '../../store/board-store';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
@@ -593,33 +595,137 @@ function AutoSwitchToggle() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Library stats — read from databankStore.stats (populated by /api/databank/stats)
+// ─────────────────────────────────────────────────────────────
+
+function compactNumber(n: number): string {
+  return n.toLocaleString();
+}
+
+function LibraryStats() {
+  const { stats, scanStatus, libraryPath, backendAvailable } = useDatabank();
+  if (!backendAvailable) {
+    return (
+      <p className="home-card-empty">
+        Backend unreachable — start the Docker container (or local Go server) to see library stats.
+      </p>
+    );
+  }
+  if (!stats) {
+    return (
+      <p className="home-card-empty">
+        Library not scanned yet. Mount your boards under <code>/library</code> to populate.
+      </p>
+    );
+  }
+  const scanning = scanStatus?.running || scanStatus?.pdf_running;
+  return (
+    <div className="home-stats">
+      <div className="home-stats-row">
+        <span><strong>{compactNumber(stats.boards)}</strong> boards</span>
+        <span><strong>{compactNumber(stats.pdfs)}</strong> PDFs</span>
+        <span><strong>{compactNumber(stats.bindings)}</strong> bindings</span>
+        <span><strong>{compactNumber(stats.pdf_pages)}</strong> PDF pages indexed</span>
+      </div>
+      {libraryPath && (
+        <div className="home-stats-path" title={libraryPath}>
+          mounted at <code>{libraryPath}</code>
+        </div>
+      )}
+      {scanning && <div className="home-stats-scanning">Scan in progress…</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Cache action buttons (mirrors CacheControlBar in SettingsPanel)
+// ─────────────────────────────────────────────────────────────
+
+function CacheButtons() {
+  const { fileName: activeFileName } = useBoardStore();
+  const hasBoard = !!activeFileName;
+  const [busy, setBusy] = useState<null | 'reparse' | 'all'>(null);
+
+  const reparseCurrent = useCallback(async () => {
+    if (busy) return;
+    setBusy('reparse');
+    try { await boardStore.reparseActiveBoard(); } finally { setBusy(null); }
+  }, [busy]);
+
+  const clearAll = useCallback(async () => {
+    if (busy) return;
+    if (!confirm('Wipe the parsed-board cache for every file? Open boards will re-parse on next view. PDF caches are left alone.')) return;
+    setBusy('all');
+    try { await boardStore.resetBoardCaches(); } finally { setBusy(null); }
+  }, [busy]);
+
+  return (
+    <div className="home-cache-actions">
+      <button
+        type="button"
+        className="home-cache-btn"
+        onClick={reparseCurrent}
+        disabled={!hasBoard || busy !== null}
+        title={hasBoard ? 'Delete the cache entry for the currently active board and re-parse it.' : 'No active board.'}
+      >
+        {busy === 'reparse' ? 'Re-parsing…' : 'Re-parse current'}
+      </button>
+      <button
+        type="button"
+        className="home-cache-btn"
+        onClick={clearAll}
+        disabled={busy !== null}
+        title="Wipe the parsed-board cache for every file. Doesn't touch PDFs."
+      >
+        {busy === 'all' ? 'Clearing…' : 'Clear board cache'}
+      </button>
+    </div>
+  );
+}
+
 function QuickSettings() {
   const openSettings = useCallback(() => showSidebarTab('settings'), []);
   return (
     <CollapsibleCard id="quick-settings" title="Quick settings">
-      <div className="home-quick-settings">
-        <div className="home-quick-group">
-          <h3 className="home-quick-label">Board — mouse drag</h3>
-          <DragBindings />
+      <div className="home-quick-section">
+        <h3 className="home-quick-section-title">Pan / zoom bindings</h3>
+        <div className="home-quick-grid">
+          <div className="home-quick-group">
+            <h4 className="home-quick-label">Board — mouse drag</h4>
+            <DragBindings />
+          </div>
+          <div className="home-quick-group">
+            <h4 className="home-quick-label">Board — scroll / two-finger scroll</h4>
+            <ScrollBindings />
+          </div>
+          <div className="home-quick-group home-quick-group-wide">
+            <h4 className="home-quick-label">PDF — scroll / two-finger scroll</h4>
+            <PdfScrollBindings />
+          </div>
         </div>
-        <div className="home-quick-group">
-          <h3 className="home-quick-label">Board — scroll / two-finger scroll</h3>
-          <ScrollBindings />
-        </div>
-        <div className="home-quick-group home-quick-group-wide">
-          <h3 className="home-quick-label">PDF — scroll / two-finger scroll</h3>
-          <PdfScrollBindings />
-        </div>
-        <div className="home-quick-group">
-          <h3 className="home-quick-label">Behaviour</h3>
-          <AutoSwitchToggle />
-        </div>
+        <p className="home-quick-hint">
+          On a trackpad, <strong>two-finger scroll</strong> fires the same event as a mouse wheel —
+          the bindings above cover both. <strong>Pinch-to-zoom</strong> always zooms directly,
+          regardless of these settings.
+        </p>
       </div>
-      <p className="home-quick-hint">
-        On a trackpad, <strong>two-finger scroll</strong> fires the same event as a mouse wheel — the
-        bindings above cover both. <strong>Pinch-to-zoom</strong> always zooms directly, regardless
-        of these settings.
-      </p>
+
+      <div className="home-quick-section">
+        <h3 className="home-quick-section-title">Behaviour</h3>
+        <AutoSwitchToggle />
+      </div>
+
+      <div className="home-quick-section">
+        <h3 className="home-quick-section-title">Library</h3>
+        <LibraryStats />
+      </div>
+
+      <div className="home-quick-section">
+        <h3 className="home-quick-section-title">Cache</h3>
+        <CacheButtons />
+      </div>
+
       <button type="button" className="home-settings-link" onClick={openSettings}>
         Open full Settings →
       </button>
@@ -702,9 +808,9 @@ export function HomeBackdrop() {
       <div className="home-backdrop-scroll">
         <div className="home-backdrop-inner">
           <Banner />
+          <QuickSettings />
           <Instructions />
           <LatestUpdate />
-          <QuickSettings />
           <ShortcutList />
           <Footer />
         </div>
