@@ -121,7 +121,8 @@ export interface RenderSettings {
   hideTextDuringZoom: boolean;
 
   /** BitmapFont atlas pixel multiplier for pin/net/part labels.
-   *  Higher = sharper at deep zoom, larger atlas (memory ~ mult²). Default 8. */
+   *  Higher = sharper at deep zoom, larger atlas (memory ~ mult²). Default 8
+   *  matches the v0.17.1 baseline; bump via Settings → Performance & Debug. */
   labelAtlasResolution: number;
 
   /** Cap renderer ticker to 60 FPS. Disable to let the ticker run at the

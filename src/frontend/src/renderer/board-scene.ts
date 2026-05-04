@@ -253,9 +253,11 @@ export interface BoardSceneGraph {
 const PCB_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-./+#()[]{}:;,<>!@$%^&*=~|\\?\'"ÄÖÜäöüß';
 
 /** Resolution for pre-installed BitmapFonts (higher = sharper at deep zoom, larger atlas).
- *  Small font sizes use lower resolution since the extra pixels aren't visible. */
-function bitmapFontResolution(fontSize: number): number {
-  return fontSize < 8 ? 4 : 8;
+ *  Small font sizes get half the multiplier — extra pixels aren't visible past the
+ *  magnification ceiling. The `mult` argument comes from
+ *  `RenderSettings.labelAtlasResolution`, exposed in Settings → Performance & Debug. */
+function bitmapFontResolution(fontSize: number, mult: number): number {
+  return fontSize < 8 ? Math.max(2, Math.round(mult / 2)) : mult;
 }
 
 // BitmapFont atlases are globally registered in PixiJS and shared across every
@@ -268,15 +270,15 @@ const installedShadowFonts = new Set<string>();
 const installedPinFonts = new Set<string>();
 
 /** Install (once) a plain BitmapFont atlas for pin number labels at a specific quantized size */
-function ensurePinFont(fontSize: number): string {
-  const name = `board-pin-${fontSize}`;
+function ensurePinFont(fontSize: number, mult: number): string {
+  const name = `board-pin-${fontSize}-r${mult}`;
   if (!installedPinFonts.has(name)) {
     try {
       BitmapFont.install({
         name,
         style: { fontFamily: LABEL_FONT_FAMILY, fontSize, fill: 0xffffff },
         chars: PCB_CHARS,
-        resolution: bitmapFontResolution(fontSize),
+        resolution: bitmapFontResolution(fontSize, mult),
       });
       installedPinFonts.add(name);
     } catch {
@@ -317,8 +319,8 @@ export function accumulateLabelBg(
 }
 
 /** Install a BitmapFont for part labels with baked drop shadow at a specific quantized size */
-function ensureShadowFont(fontSize: number): string {
-  const name = `board-shadow-${fontSize}-v3`;
+function ensureShadowFont(fontSize: number, mult: number): string {
+  const name = `board-shadow-${fontSize}-v3-r${mult}`;
   if (!installedShadowFonts.has(name)) {
     try {
       BitmapFont.install({
@@ -332,7 +334,7 @@ function ensureShadowFont(fontSize: number): string {
           dropShadow: { color: 0x000000, alpha: 0.85, blur: fontSize * 0.35, distance: 0 },
         },
         chars: PCB_CHARS,
-        resolution: bitmapFontResolution(fontSize),
+        resolution: bitmapFontResolution(fontSize, mult),
       });
       installedShadowFonts.add(name);
     } catch (err) {
@@ -1034,7 +1036,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
         if (pinFontSize >= s.labelHideThreshold) {
           const pinLabel = new BitmapText({
             text: numStr,
-            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: ensurePinFont(pinFontSize) },
+            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: ensurePinFont(pinFontSize, s.labelAtlasResolution) },
           });
           pinLabel.anchor.set(0.5, numAnchorY);
           pinLabel.x = pinX;
@@ -1105,7 +1107,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
         if (netFontSize >= s.labelHideThreshold) {
           const netLabel = new BitmapText({
             text: pin.net,
-            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: ensureShadowFont(netFontSize) },
+            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: ensureShadowFont(netFontSize, s.labelAtlasResolution) },
           });
           netLabel.anchor.set(anchorX, anchorY);
           netLabel.x = nx;
@@ -1291,7 +1293,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
                      : fontSize <= qm ? 0xffcc00   // yellow = medium tier
                      :                  0x44ff88;  // green  = large tier
         } else if (s.partLabelShadow) {
-          fontFamily = ensureShadowFont(fontSize);
+          fontFamily = ensureShadowFont(fontSize, s.labelAtlasResolution);
         }
         const label = new BitmapText({
           text:  part.name,
@@ -1612,7 +1614,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
 
         const label = new BitmapText({
           text: labelStr,
-          style: { fontSize: viaFontSize, fill: 0xffcc44, fontFamily: ensurePinFont(viaFontSize) },
+          style: { fontSize: viaFontSize, fill: 0xffcc44, fontFamily: ensurePinFont(viaFontSize, s.labelAtlasResolution) },
         });
         label.anchor.set(0.5, 0);
         label.x = x;
