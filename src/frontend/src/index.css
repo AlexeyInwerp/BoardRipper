@@ -2613,29 +2613,25 @@ html, body, #root {
   margin-top: 1px;
 }
 
-/* Selection overlay (big centered component/net name) — pinned to top edge by default */
+/* Selection overlay (big centered component/net name) — sits just below
+   the .board-status-indicators pill. Centered horizontally so it stays
+   visible regardless of where the pill is positioned (left or center). */
 .board-selection-overlay {
   position: absolute;
-  top: 0;
+  top: calc(var(--overlay-row-height, 36px) + 12px);
   left: 50%;
   transform: translateX(-50%);
   font-family: monospace;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
-  padding: 3px 14px;
-  border-radius: 0 0 8px 8px;
+  padding: 3px 12px;
+  border-radius: 8px;
   pointer-events: none;
   z-index: 10;
   white-space: nowrap;
-}
-
-/* When overlayPosition='center', push overlay below the centered row */
-.board-selection-overlay.below-row {
-  top: calc(var(--overlay-row-height, 36px) + 12px);
-  border-radius: 8px;
 }
 
 .board-perf-overlay {
@@ -5911,11 +5907,10 @@ html, body, #root {
 }
 
 /* ── Overlay suggestion list (anchored below the filter input) ───────────────── */
+/* The popover is portal-rendered into <body> with `position: fixed` and
+   inline top/left/width set from the input's getBoundingClientRect. The
+   declarations here cover only visual chrome — layout is JS-driven. */
 .overlay-dropdown-popover {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  width: 280px;
   max-height: 300px;
   display: flex;
   flex-direction: column;
@@ -5923,7 +5918,7 @@ html, body, #root {
   border: 1px solid var(--border-primary, #333);
   border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  z-index: 100;
+  z-index: 1000;
 }
 /* Legacy: .overlay-dropdown-input used inside old DropdownPopover — kept for safety */
 .overlay-dropdown-input {

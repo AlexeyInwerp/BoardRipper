@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import type { OverlayIndexRow } from './get-overlay-index';
 
 const MAX_RENDERED_ROWS = 500;
@@ -27,19 +28,41 @@ export interface SuggestionListProps {
   onSelect: (name: string) => void;
   /** Closes the suggestion list. */
   onClose: () => void;
+  /** Element the suggestion list anchors under (the filter input). */
+  anchorRef: RefObject<HTMLInputElement | null>;
 }
 
 /**
  * Suggestion list shown below the filter input. Handles its own scroll-into-view.
  * The parent component owns the `<input>`, the query state, and keyboard events.
  */
-export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClose }: SuggestionListProps) {
+export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClose, anchorRef }: SuggestionListProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const flatRows: DropdownPopoverRow[] = groups.flatMap(g => g.rows);
   const overflow = flatRows.length > MAX_RENDERED_ROWS;
   const cappedFlat = overflow ? flatRows.slice(0, MAX_RENDERED_ROWS) : flatRows;
   const safeHighlight = cappedFlat.length === 0 ? 0 : Math.min(highlight, cappedFlat.length - 1);
+
+  // Anchor the portalled list under the input, refreshed on scroll/resize so
+  // the list follows if the layout moves while it's open.
+  useLayoutEffect(() => {
+    const updatePos = () => {
+      const r = anchorRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const minWidth = 200;
+      const width = Math.max(r.width, minWidth);
+      setPos({ top: r.bottom + 4, left: r.left, width });
+    };
+    updatePos();
+    window.addEventListener('scroll', updatePos, true);
+    window.addEventListener('resize', updatePos);
+    return () => {
+      window.removeEventListener('scroll', updatePos, true);
+      window.removeEventListener('resize', updatePos);
+    };
+  }, [anchorRef]);
 
   // Scroll highlighted row into view
   useEffect(() => {
@@ -47,16 +70,19 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
     el?.scrollIntoView({ block: 'nearest' });
   }, [safeHighlight]);
 
-  // Close on outside click
+  // Close on outside click — accept clicks inside the anchor (input) too so
+  // typing/clicking the input itself doesn't dismiss the list.
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
-      if (listRef.current && !listRef.current.closest('.overlay-dropdown-wrap')?.contains(e.target as Node)) {
-        onClose();
-      }
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (listRef.current?.contains(target)) return;
+      if (anchorRef.current?.contains(target)) return;
+      onClose();
     };
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [onClose]);
+  }, [onClose, anchorRef]);
 
   // Build the rendered list with group headers + flat indices for highlight tracking
   const rendered: ReactNode[] = [];
@@ -93,8 +119,14 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
     if (flatIdx >= MAX_RENDERED_ROWS) break;
   }
 
-  return (
-    <div ref={listRef} className="overlay-dropdown-popover">
+  if (!pos) return null;
+
+  return createPortal(
+    <div
+      ref={listRef}
+      className="overlay-dropdown-popover"
+      style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+    >
       <div className="overlay-dropdown-list">
         {rendered.length === 0
           ? <div className="overlay-dropdown-empty">No matches</div>
@@ -105,7 +137,8 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

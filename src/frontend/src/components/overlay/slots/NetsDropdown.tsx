@@ -111,6 +111,7 @@ export function NetsDropdown({ ctx }: { ctx: SlotCtx }) {
       />
       {open && (
         <SuggestionList
+          anchorRef={inputRef}
           groups={groups}
           highlight={highlight}
           onHighlight={setHighlight}

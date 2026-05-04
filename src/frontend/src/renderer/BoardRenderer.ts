@@ -3151,13 +3151,6 @@ export class BoardRenderer {
     s: import('../store/render-settings').RenderSettings,
   ) {
     if (!this.selectionOverlayEl) return;
-
-    // Sync .below-row modifier with overlayPosition setting
-    const cls = s.overlayPosition === 'center'
-      ? 'board-selection-overlay below-row'
-      : 'board-selection-overlay';
-    if (this.selectionOverlayEl.className !== cls) this.selectionOverlayEl.className = cls;
-
     if (!s.showSelectionOverlay || !this.board || sel.partIndex === null) {
       this.selectionOverlayEl.style.display = 'none';
       return;
