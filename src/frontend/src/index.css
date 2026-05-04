@@ -5929,3 +5929,7 @@ html, body, #root {
   color: var(--text-muted, #888);
   font-style: italic;
 }
+.overlay-dropdown-wrap {
+  position: relative;
+  display: inline-block;
+}
