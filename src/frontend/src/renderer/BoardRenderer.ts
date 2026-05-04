@@ -3971,6 +3971,96 @@ export class BoardRenderer {
     if (!this.app.ticker.started) this.app.ticker.start();
   }
 
+  /**
+   * Returns true if the entire bbox is comfortably visible in the viewport.
+   * Uses a small inset margin so the bbox never sits flush against the edge.
+   */
+  private bboxOnScreen(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container): boolean {
+    const sw = this.containerEl.clientWidth;
+    const sh = this.containerEl.clientHeight;
+    if (sw === 0 || sh === 0) return false;
+    const insetPx = 24;
+    const tl = this.sceneToWorld({ x: bounds.minX, y: bounds.minY }, root);
+    const br = this.sceneToWorld({ x: bounds.maxX, y: bounds.maxY }, root);
+    const screenTL = this.viewport.toScreen(tl.x, tl.y);
+    const screenBR = this.viewport.toScreen(br.x, br.y);
+    const minSX = Math.min(screenTL.x, screenBR.x);
+    const maxSX = Math.max(screenTL.x, screenBR.x);
+    const minSY = Math.min(screenTL.y, screenBR.y);
+    const maxSY = Math.max(screenTL.y, screenBR.y);
+    return minSX >= insetPx && maxSX <= sw - insetPx
+        && minSY >= insetPx && maxSY <= sh - insetPx;
+  }
+
+  /**
+   * Pan-only: translate the viewport so the bbox center lands at the screen
+   * center. Scale is unchanged. Animated via the existing zoomAnim slot.
+   */
+  private panToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container) {
+    const sw = this.containerEl.clientWidth;
+    const sh = this.containerEl.clientHeight;
+    if (sw === 0 || sh === 0) return;
+    const center = this.sceneToWorld({
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+    }, root);
+    const toScaleX = this.viewport.scale.x;
+    const toScaleY = this.viewport.scale.y;
+    const toPosX = -center.x * toScaleX + sw / 2;
+    const toPosY = -center.y * toScaleY + sh / 2;
+
+    this.zoomAnim = {
+      fromX: this.viewport.position.x,
+      fromY: this.viewport.position.y,
+      fromScaleX: toScaleX,
+      fromScaleY: toScaleY,
+      toX: toPosX,
+      toY: toPosY,
+      toScaleX,
+      toScaleY,
+      elapsed: 0,
+      duration: 300,
+    };
+    if (!this.app.ticker.started) this.app.ticker.start();
+  }
+
+  /**
+   * Pan to a part if any part of its bbox is outside the viewport. Otherwise
+   * no-op. Used by the Parts dropdown when on-select = panIfOffscreen.
+   */
+  panToPartIfOffscreen(partIndex: number) {
+    const part = this.board?.parts[partIndex];
+    if (!part) return;
+    const root = this.rootForPart(part);
+    if (this.bboxOnScreen(part.bounds, root)) return;
+    this.panToBounds(part.bounds, root);
+  }
+
+  /**
+   * Pan to a net if its pin bbox is fully off-screen. Otherwise no-op.
+   * Used by the Nets dropdown when on-select = panIfOffscreen.
+   */
+  panToNetIfOffscreen(netName: string) {
+    if (!this.board) return;
+    const net = this.board.nets.get(netName);
+    if (!net || net.pinIndices.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const { partIndex, pinIndex } of net.pinIndices) {
+      const pin = this.board.parts[partIndex]?.pins[pinIndex];
+      if (!pin) continue;
+      if (pin.position.x < minX) minX = pin.position.x;
+      if (pin.position.y < minY) minY = pin.position.y;
+      if (pin.position.x > maxX) maxX = pin.position.x;
+      if (pin.position.y > maxY) maxY = pin.position.y;
+    }
+    if (!isFinite(minX)) return;
+
+    const bounds = { minX, minY, maxX, maxY };
+    if (this.bboxOnScreen(bounds)) return;
+    this.panToBounds(bounds);
+  }
+
   private panView(direction: PanDirection) {
     if (!this.viewport) return;
     const step = this.viewport.screenWidth * 0.15;
