@@ -2384,9 +2384,20 @@ export class BoardRenderer {
     this.onSettingsUpdate();
   }
 
-  // --- Selection halo ---
+  // --- Selection spotlight (radial darkening around selected part) ---
 
-  /** Build (once, lazily) the radial-gradient texture used for the selection halo. */
+  /**
+   * Build (once, lazily) the radial-gradient texture for the selection
+   * spotlight: a soft transparent hole centered on the part fading to a
+   * dark periphery. Drawn on top of board contents so surrounding parts
+   * are darkened — keeps the eye on the picked part without forcing the
+   * full selection-dim mode.
+   *
+   * Texture layout (r is normalized 0..1 from center to edge):
+   *   r ∈ [0,    0.20] : fully transparent (the visible "hole")
+   *   r ∈ [0.20, 0.50] : alpha ramps 0 → SPOTLIGHT_ALPHA (soft falloff)
+   *   r ∈ [0.50, 1.00] : alpha = SPOTLIGHT_ALPHA (solid dark band)
+   */
   private buildHaloTexture(): Texture {
     if (this._haloTexture) return this._haloTexture;
     const size = 256;
@@ -2394,24 +2405,25 @@ export class BoardRenderer {
     canvas.width = canvas.height = size;
     const ctx = canvas.getContext('2d')!;
     const r = size / 2;
-    const grad = ctx.createRadialGradient(r, r, r * 0.45, r, r, r);
-    grad.addColorStop(0,    'rgba(255, 230, 100, 0.55)');
-    grad.addColorStop(0.55, 'rgba(255, 230, 100, 0.20)');
-    grad.addColorStop(1,    'rgba(255, 230, 100, 0)');
+    const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0.00, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.20, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.50, 'rgba(0, 0, 0, 0.55)');
+    grad.addColorStop(1.00, 'rgba(0, 0, 0, 0.55)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
     this._haloTexture = Texture.from(canvas);
     return this._haloTexture;
   }
 
-  /** Update the halo sprite position/visibility to match the current selection.
-   *  Called from renderSelection() after the selection state has been applied. */
+  /** Update the spotlight sprite position/visibility to match the current
+   *  selection. Called from renderSelection() after the selection state
+   *  has been applied. */
   private updateHalo() {
     const s = renderSettingsStore.settings;
     const sel = boardStore.selection;
     const board = this.board;
 
-    // Hide when no part selected or setting disabled
     if (!s.selectionHalo || sel.partIndex === null || !board) {
       if (this._haloSprite) this._haloSprite.visible = false;
       return;
@@ -2423,12 +2435,10 @@ export class BoardRenderer {
       return;
     }
 
-    // Lazily create the sprite
     if (!this._haloSprite) {
       const tex = this.buildHaloTexture();
       const spr = new Sprite(tex);
       spr.anchor.set(0.5, 0.5);
-      spr.zIndex = -1; // beneath all part content
       this._haloSprite = spr;
     }
 
@@ -2438,18 +2448,32 @@ export class BoardRenderer {
       return;
     }
 
-    // Attach to the correct root (butterfly-aware) if not already there
-    if (this._haloSprite.parent !== root) {
-      if (this._haloSprite.parent) this._haloSprite.parent.removeChild(this._haloSprite);
-      root.addChild(this._haloSprite);
-    }
+    // Re-add every update so the sprite stays at the END of the children
+    // list — last-drawn = on top, which is what we need to actually darken
+    // the parts underneath. (Pixi's addChild on an already-attached child
+    // is a no-op except for moving it to the end.)
+    root.addChild(this._haloSprite);
 
-    // Size: 2.2× the larger of bounding-box width/height
+    // Size: the transparent "hole" of the texture occupies r ∈ [0, 0.20],
+    // i.e. 20% of half-width = 10% of the sprite's full size. So setting
+    // spriteSize = holeDiameter / 0.20 makes the hole equal the desired
+    // diameter, with the dark gradient + dark band extending out to 5×
+    // the hole — wide enough to cover surrounding components on dense
+    // boards while still keeping the falloff visible.
+    //
+    // MIN_HOLE_DIAMETER guards small components (0402 etc.): without it
+    // the spotlight collapses smaller than the part itself and looks
+    // pointless. 200 mils ≈ 5 mm — comfortable on screen at any zoom.
+    const MIN_HOLE_DIAMETER = 200;
+    const HOLE_TO_PART_RATIO = 1.4; // hole is slightly larger than the part
+    const HOLE_FRAC_OF_TEXTURE = 0.20;
+
     const b = part.bounds;
     const bw = b.maxX - b.minX;
     const bh = b.maxY - b.minY;
-    const maxDim = Math.max(bw, bh, 1);
-    const spriteSize = maxDim * 2.2;
+    const partMaxDim = Math.max(bw, bh, 1);
+    const holeDiameter = Math.max(partMaxDim * HOLE_TO_PART_RATIO, MIN_HOLE_DIAMETER);
+    const spriteSize = holeDiameter / HOLE_FRAC_OF_TEXTURE;
 
     this._haloSprite.width  = spriteSize;
     this._haloSprite.height = spriteSize;
