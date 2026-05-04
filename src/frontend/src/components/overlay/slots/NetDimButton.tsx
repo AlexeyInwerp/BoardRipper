@@ -1,11 +1,11 @@
-import { IconCircle, IconCircleHalf2, IconBulbFilled } from '@tabler/icons-react';
+import { IconLamp, IconLamp2, IconLampOff } from '@tabler/icons-react';
 import { boardStore } from '../../../store/board-store';
 import type { SlotCtx } from '../slot-ctx';
 
 const MODE_INFO = {
-  off:       { icon: IconCircle,      title: 'Selection dimming: OFF (click for dim)' },
-  dim:       { icon: IconCircleHalf2, title: 'Selection dimming: ON (click for darklight)' },
-  darklight: { icon: IconBulbFilled,  title: 'Darklight: spotlight around selected (click to turn off)' },
+  off:       { icon: IconLampOff, title: 'Selection dimming: OFF (click for dim)' },
+  dim:       { icon: IconLamp,    title: 'Selection dimming: ON (click for darklight)' },
+  darklight: { icon: IconLamp2,   title: 'Darklight: spotlight around selected (click to turn off)' },
 } as const;
 
 export function NetDimButton({ ctx }: { ctx: SlotCtx }) {
