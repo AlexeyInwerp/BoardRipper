@@ -17,7 +17,7 @@
  */
 
 import type { BoardData, BoardRevision, Part, Pin, Nail, Point, Trace, Via } from './types';
-import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents } from './types';
+import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline, detectGhostComponents, detectBomAlternateClusters } from './types';
 import { detectXMirrorByPinDirection, applyXMirrorInPlace } from './mirror-detect';
 import { log } from '../store/log-store';
 
@@ -814,6 +814,14 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       origin,
       pins,
       bounds,
+      // Surface DEVICE/SHAPE for ComponentInfo and BOM-alternate detection.
+      // The BOM-cluster heuristic depends on `meta.value` to distinguish
+      // shape-suffixed primary devices (e.g. `0.22uh_IND_NONRKO_TH_100X072_B`)
+      // from bare-named alternates (e.g. `0.22uh`).
+      meta: {
+        value:   comp.deviceName || undefined,
+        package: comp.shapeName  || undefined,
+      },
     });
   }
 
@@ -902,6 +910,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     const bounds = computeBBox([...outline, ...allPoints]);
     const nets = buildNets(parts);
     const ghosts = detectGhostComponents(parts);
+    const bomClusters = detectBomAlternateClusters(parts);
     const total = partsByPass.length;
     const isCurrent = idx === total - 1;
     let label: string;
@@ -922,6 +931,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       nets,
       ghosts,
     };
+    if (bomClusters.length > 0) rev.bomClusters = bomClusters;
     if (perRevTraces) rev.traces = perRevTraces[idx];
     if (perRevVias) {
       const revVias = perRevVias[idx];
@@ -963,6 +973,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   };
   if (formatVersion) board.formatVersion = formatVersion;
   if (active.ghosts.length > 0) board.ghosts = active.ghosts;
+  if (active.bomClusters && active.bomClusters.length > 0) board.bomClusters = active.bomClusters;
   if (mirrorVerdict.mirrored) {
     const pct = (mirrorVerdict.wrongRatio * 100).toFixed(0);
     board.parserNotes = [

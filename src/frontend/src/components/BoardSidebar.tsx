@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
-import { boardStore, ghostPairSig } from '../store/board-store';
+import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
@@ -10,6 +10,7 @@ import type { BoardData } from '../parsers';
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
 
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set();
+const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map();
 
 interface BoardSidebarProps {
   visible: boolean;
@@ -30,7 +31,8 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
   const hasLayers = layerStates.length > 0;
   const hasRevisions = (board?.revisions?.length ?? 0) > 1;
   const hasGhosts = (board?.ghosts?.length ?? 0) > 0;
-  const showRevisionsTab = hasRevisions || hasGhosts;
+  const hasBomClusters = (board?.bomClusters?.length ?? 0) > 0;
+  const showRevisionsTab = hasRevisions || hasGhosts || hasBomClusters;
   const [activeTab, setActiveTab] = useState<SidebarTab>(hasLayers ? 'layers' : 'info');
 
   // Apply external tab request (one-shot, rAF defers setState to satisfy lint rule)
@@ -89,10 +91,12 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
               title={
                 hasRevisions
                   ? 'Multiple board revisions detected in this file'
-                  : 'Suspicious overlapping components detected'
+                  : hasBomClusters
+                    ? 'BOM alternates / suspicious overlaps detected'
+                    : 'Suspicious overlapping components detected'
               }
             >
-              Revisions{hasGhosts && <span className="tab-badge">!</span>}
+              Revisions{(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
             </button>
           )}
         </div>
@@ -542,9 +546,13 @@ function RevisionsTab({ tabId }: { tabId: number }) {
     [activeRev],
   );
 
+  const bomClusters = board?.bomClusters;
+  const showBomAlternates = tab?.showBomAlternates ?? false;
+  const bomClusterSelections: ReadonlyMap<string, string> = tab?.bomClusterSelections ?? EMPTY_BOM_SELECTIONS;
   const hasRevisions = (revisions?.length ?? 0) > 1;
   const hasGhosts = (ghosts?.length ?? 0) > 0;
-  if (!hasRevisions && !hasGhosts) {
+  const hasBomClusters = (bomClusters?.length ?? 0) > 0;
+  if (!hasRevisions && !hasGhosts && !hasBomClusters) {
     return <div className="panel-empty">Nothing to report</div>;
   }
 
@@ -666,6 +674,75 @@ function RevisionsTab({ tabId }: { tabId: number }) {
             stale one (strikethrough). Click ⇄ on a row to flip that choice
             when you know which is really absent. The toggle above hides the
             strikethrough side of every pair from the rendered scene.
+          </div>
+        </div>
+      )}
+
+      {hasBomClusters && bomClusters && (
+        <div className="bom-clusters-section">
+          <div className="ghosts-header">
+            <div className="ghosts-title">⇄ BOM alternates</div>
+            <div className="ghosts-subtitle">
+              {bomClusters.length} site{bomClusters.length === 1 ? '' : 's'} where same-role parts overlap
+              and share connectivity — only one member of each cluster is
+              fitted per BOM variant. The toggle below shows every member
+              (X-ray) instead of just the chosen primary.
+            </div>
+            <button
+              className={`ghost-hide-toggle ${showBomAlternates ? 'on' : ''}`}
+              onClick={() => boardStore.toggleShowBomAlternates()}
+              title={showBomAlternates
+                ? 'Show only the chosen primary per cluster (currently showing all members)'
+                : 'Show every cluster member overlapping (X-ray view)'}
+            >
+              {showBomAlternates ? '◉ Showing all alternates' : '○ Hide alternates (default)'}
+            </button>
+          </div>
+          <div className="ghosts-list">
+            {bomClusters.map((c) => {
+              const sig = bomClusterSig(c.memberRefdes);
+              const chosen = bomClusterSelections.get(sig) ?? c.defaultPrimaryRefdes;
+              const reasonLabel = c.reason === 'shape-named-device'
+                ? 'named device'
+                : c.reason === 'lowest-refdes'
+                  ? 'lowest refdes'
+                  : 'largest footprint';
+              return (
+                <div key={sig} className="ghost-item bom-cluster-item" style={{ flexWrap: 'wrap', gap: 4 }}>
+                  <span style={{ fontSize: 11, color: '#888', minWidth: 60 }} title={`Auto-pick reason: ${reasonLabel}`}>
+                    {c.memberRefdes.length}× ({reasonLabel})
+                  </span>
+                  {c.memberRefdes.map(refdes => {
+                    const isChosen = refdes === chosen;
+                    return (
+                      <button
+                        key={refdes}
+                        className={`ghost-name ${isChosen ? 'ghost-keep' : 'ghost-stale'}`}
+                        onClick={() => {
+                          if (isChosen) {
+                            boardStore.focusPart(refdes);
+                          } else {
+                            boardStore.selectBomClusterPrimary(sig, refdes);
+                            boardStore.focusPart(refdes);
+                          }
+                        }}
+                        title={isChosen
+                          ? `${refdes} is the active primary — click to focus`
+                          : `Click to make ${refdes} the active primary`}
+                      >
+                        {isChosen ? '●' : '○'} {refdes}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          <div className="revisions-help">
+            BoardRipper auto-picks one member per cluster as the primary using
+            shape-suffixed device names → lowest refdes → largest footprint
+            (≈88% accurate across observed CAD files). Click any non-primary
+            refdes to override the pick for that cluster.
           </div>
         </div>
       )}

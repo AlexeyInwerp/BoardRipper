@@ -76,6 +76,14 @@ export interface BoardTab {
    *  Revisions tab swap button so the user can override the detector when
    *  the heuristic picks the wrong side. */
   swappedGhostPairs: Set<string>;
+  /** When true, every member of every BOM-alternate cluster is rendered
+   *  (overlapping). When false (default), only the cluster's selected primary
+   *  is shown — secondaries are filtered from the rendered parts list. */
+  showBomAlternates: boolean;
+  /** Per-cluster primary overrides. Key is a stable cluster signature (sorted
+   *  member refdes joined by `,`); value is the chosen member's refdes. Empty
+   *  for clusters where the auto-picked default is fine. */
+  bomClusterSelections: Map<string, string>;
   /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
    *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
   foldMode: FoldMode;
@@ -216,12 +224,25 @@ export function ghostPairSig(a: number, b: number): string {
 
 /** Stable empty-set fallback so the snapshot getter doesn't churn identity. */
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set<string>();
+/** Stable empty-map fallback for the bomClusterSelections snapshot getter. */
+const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map<string, string>();
+
+/**
+ * Stable signature for a BOM-alternate cluster: sorted member refdes joined
+ * by `,`. Survives parser re-runs as long as the cluster's membership is
+ * unchanged (parts at the same overlap site with the same ref-des set).
+ */
+export function bomClusterSig(memberRefdes: readonly string[]): string {
+  return [...memberRefdes].sort().join(',');
+}
 
 function buildRenderedBoard(
   base: BoardData,
   rev: BoardRevision,
   hideGhosts: boolean,
   swappedPairs: Set<string>,
+  showBomAlternates: boolean,
+  bomSelections: ReadonlyMap<string, string>,
 ): BoardData {
   // Per-revision traces/vias/layerNames override global ones when present
   const traceOverrides: Partial<BoardData> = {};
@@ -229,7 +250,35 @@ function buildRenderedBoard(
   if (rev.vias)       traceOverrides.vias = rev.vias;
   if (rev.layerNames) traceOverrides.layerNames = rev.layerNames;
 
-  if (!hideGhosts || rev.ghosts.length === 0) {
+  // Build the set of part indices to drop from the rendered list.
+  const drop = new Set<number>();
+
+  // Ghost filtering — hide whichever side of each pair the user has currently
+  // chosen as the ghost (auto-detected `partIndex` by default, `dominatorIndex`
+  // when the pair's role has been swapped via the Revisions tab).
+  if (hideGhosts) {
+    for (const g of rev.ghosts) {
+      const sig = ghostPairSig(g.partIndex, g.dominatorIndex);
+      drop.add(swappedPairs.has(sig) ? g.dominatorIndex : g.partIndex);
+    }
+  }
+
+  // BOM-alternate filtering — when `showBomAlternates` is off (default), each
+  // cluster contributes only its selected primary; the rest are dropped. The
+  // selected primary is the user's per-cluster override (when present) or
+  // the auto-picked default from the parser.
+  const clusters = rev.bomClusters;
+  if (!showBomAlternates && clusters && clusters.length > 0) {
+    for (const c of clusters) {
+      const sig = bomClusterSig(c.memberRefdes);
+      const chosenRefdes = bomSelections.get(sig) ?? c.defaultPrimaryRefdes;
+      for (let k = 0; k < c.memberIndices.length; k++) {
+        if (c.memberRefdes[k] !== chosenRefdes) drop.add(c.memberIndices[k]);
+      }
+    }
+  }
+
+  if (drop.size === 0) {
     return {
       ...base,
       ...traceOverrides,
@@ -238,17 +287,11 @@ function buildRenderedBoard(
       outline: rev.outline,
       nets: rev.nets,
       ghosts: rev.ghosts.length > 0 ? rev.ghosts : undefined,
+      bomClusters: clusters && clusters.length > 0 ? clusters : undefined,
       activeRevision: rev.index,
     };
   }
-  // Hide whichever side of each pair the user has currently chosen as the
-  // ghost — auto-detected `partIndex` by default, `dominatorIndex` when the
-  // pair's role has been swapped via the Revisions tab.
-  const drop = new Set<number>();
-  for (const g of rev.ghosts) {
-    const sig = ghostPairSig(g.partIndex, g.dominatorIndex);
-    drop.add(swappedPairs.has(sig) ? g.dominatorIndex : g.partIndex);
-  }
+
   const filteredParts: Part[] = [];
   for (let i = 0; i < rev.parts.length; i++) {
     if (!drop.has(i)) filteredParts.push(rev.parts[i]);
@@ -263,9 +306,28 @@ function buildRenderedBoard(
     bounds,
     outline,
     nets: rev.nets,
-    ghosts: rev.ghosts,
+    ghosts: rev.ghosts.length > 0 ? rev.ghosts : undefined,
+    bomClusters: clusters && clusters.length > 0 ? clusters : undefined,
     activeRevision: rev.index,
   };
+}
+
+/** Apply the current tab's filters (hideGhosts + BOM-alternate hiding) to the
+ *  raw `tab.board` set by loadFile. No-op when neither filter would drop any
+ *  parts (avoids the bounds/outline rebuild on clean files). */
+function applyBoardFilters(tab: BoardTab): void {
+  if (!tab.board) return;
+  const hasBomClusters = !!tab.board.bomClusters && tab.board.bomClusters.length > 0;
+  const hasGhostsToFilter = tab.hideGhosts && !!tab.board.ghosts && tab.board.ghosts.length > 0;
+  const hasBomFilter = !tab.showBomAlternates && hasBomClusters;
+  if (!hasGhostsToFilter && !hasBomFilter) return;
+  const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
+    ?? syntheticRevisionFromBoard(tab.board);
+  tab.board = buildRenderedBoard(
+    tab.board, rev, tab.hideGhosts, tab.swappedGhostPairs,
+    tab.showBomAlternates, tab.bomClusterSelections,
+  );
+  invalidateDerivedBoard(tab);
 }
 
 /** Synthesize a BoardRevision from a single-revision board so that
@@ -280,6 +342,7 @@ function syntheticRevisionFromBoard(b: BoardData): BoardRevision {
     outline: b.outline,
     nets: b.nets,
     ghosts: b.ghosts ?? detectGhostComponents(b.parts),
+    bomClusters: b.bomClusters,
   };
 }
 
@@ -396,6 +459,8 @@ class BoardStore extends Emitter {
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
   get swappedGhostPairs(): ReadonlySet<string> { return this.activeTab?.swappedGhostPairs ?? EMPTY_GHOST_SWAPS; }
+  get showBomAlternates(): boolean { return this.activeTab?.showBomAlternates ?? false; }
+  get bomClusterSelections(): ReadonlyMap<string, string> { return this.activeTab?.bomClusterSelections ?? EMPTY_BOM_SELECTIONS; }
   get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
@@ -594,6 +659,8 @@ class BoardStore extends Emitter {
         cacheKey: '',
         hideGhosts: false,
         swappedGhostPairs: new Set<string>(),
+        showBomAlternates: false,
+        bomClusterSelections: new Map<string, string>(),
         foldMode: 'suggested',
         selectedBoardIndex: null,
       };
@@ -609,6 +676,7 @@ class BoardStore extends Emitter {
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
           tab.board = cached;
           invalidateDerivedBoard(tab);
+          applyBoardFilters(tab);
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
           tab.flipAxis = flipAxisForRotation(tab.rotation);
@@ -663,6 +731,7 @@ class BoardStore extends Emitter {
 
         tab.board = board;
         invalidateDerivedBoard(tab);
+        applyBoardFilters(tab);
         tab.rotation = this.autoRotation(board);
         tab.flipAxis = flipAxisForRotation(tab.rotation);
         if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
@@ -868,7 +937,7 @@ class BoardStore extends Emitter {
     const target = tab.board.revisions.find(r => r.index === index);
     if (!target) return;
     if (tab.board.activeRevision === index && !tab.hideGhosts) return;
-    tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts, tab.swappedGhostPairs);
+    tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts, tab.swappedGhostPairs, tab.showBomAlternates, tab.bomClusterSelections);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     tab.searchQuery = '';
@@ -890,7 +959,7 @@ class BoardStore extends Emitter {
     // for single-revision .cad files where revisions is unset).
     const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
       ?? syntheticRevisionFromBoard(tab.board);
-    tab.board = buildRenderedBoard(tab.board, rev, next, tab.swappedGhostPairs);
+    tab.board = buildRenderedBoard(tab.board, rev, next, tab.swappedGhostPairs, tab.showBomAlternates, tab.bomClusterSelections);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
     this.notify();
@@ -913,7 +982,50 @@ class BoardStore extends Emitter {
     if (tab.hideGhosts) {
       const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
         ?? syntheticRevisionFromBoard(tab.board);
-      tab.board = buildRenderedBoard(tab.board, rev, true, next);
+      tab.board = buildRenderedBoard(tab.board, rev, true, next, tab.showBomAlternates, tab.bomClusterSelections);
+      invalidateDerivedBoard(tab);
+      tab.selection = emptySelection;
+    }
+    this.notify();
+  }
+
+  /**
+   * Toggle whether every BOM-alternate cluster member is rendered (overlapping
+   * X-ray view) or only the chosen primary per cluster (default). Selection
+   * resets to avoid dangling indices into the filtered array.
+   */
+  toggleShowBomAlternates() {
+    const tab = this.activeTab;
+    if (!tab || !tab.board) return;
+    const next = !tab.showBomAlternates;
+    tab.showBomAlternates = next;
+    const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
+      ?? syntheticRevisionFromBoard(tab.board);
+    tab.board = buildRenderedBoard(tab.board, rev, tab.hideGhosts, tab.swappedGhostPairs, next, tab.bomClusterSelections);
+    invalidateDerivedBoard(tab);
+    tab.selection = emptySelection;
+    this.notify();
+  }
+
+  /**
+   * Override which member of a BOM-alternate cluster is treated as the primary
+   * (i.e. the one rendered when `showBomAlternates` is off). Pass the cluster
+   * signature (`bomClusterSig` over the full member refdes list) and the
+   * chosen member's refdes. Calling with `chosenRefdes === ''` clears the
+   * override and falls back to the parser's auto-pick.
+   */
+  selectBomClusterPrimary(clusterSig: string, chosenRefdes: string) {
+    const tab = this.activeTab;
+    if (!tab || !tab.board) return;
+    // Replace the Map so identity changes (snapshot consumers rerender).
+    const next = new Map(tab.bomClusterSelections);
+    if (chosenRefdes) next.set(clusterSig, chosenRefdes);
+    else next.delete(clusterSig);
+    tab.bomClusterSelections = next;
+    if (!tab.showBomAlternates) {
+      const rev = tab.board.revisions?.find(r => r.index === tab.board?.activeRevision)
+        ?? syntheticRevisionFromBoard(tab.board);
+      tab.board = buildRenderedBoard(tab.board, rev, tab.hideGhosts, tab.swappedGhostPairs, false, next);
       invalidateDerivedBoard(tab);
       tab.selection = emptySelection;
     }
@@ -999,6 +1111,7 @@ class BoardStore extends Emitter {
       log.parser.log(`Re-parsed in ${(performance.now() - t0).toFixed(0)}ms`);
       tab.board = board;
       invalidateDerivedBoard(tab);
+      applyBoardFilters(tab);
       tab.selection = emptySelection;
       tab.searchQuery = '';
       await boardCache.put(file.name, file.size, file.lastModified, board);
@@ -1027,6 +1140,7 @@ class BoardStore extends Emitter {
         const board = await parseBoardFile(buffer, file.name);
         tab.board = board;
         invalidateDerivedBoard(tab);
+        applyBoardFilters(tab);
         tab.selection = emptySelection;
         tab.searchQuery = '';
         await boardCache.put(file.name, file.size, file.lastModified, board);

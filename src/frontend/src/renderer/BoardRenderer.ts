@@ -241,7 +241,10 @@ export class BoardRenderer {
   private perfOverlayEl: HTMLDivElement | null = null;
   private perfToggleBtn: HTMLButtonElement | null = null;
   private perfToggleBtnHandler: (() => void) | null = null;
-  private perfVisible = false;
+  // Synced from RenderSettings.showPerfOverlay via onSettingsUpdate. Initial
+  // value comes from the persisted setting so an overlay enabled in a prior
+  // session shows up immediately on next launch.
+  private perfVisible = renderSettingsStore.settings.showPerfOverlay;
 
   // Perf overlay accumulators (reset every ~500ms)
   private perfSamples = 0;
@@ -717,7 +720,7 @@ export class BoardRenderer {
     }
 
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
-    this.app.ticker.maxFPS = 60;
+    this.app.ticker.maxFPS = renderSettingsStore.settings.cap60Fps ? 60 : 0;
     this.app.ticker.remove(this.app.render, this.app);
 
     // --- Recreate Viewport ---
@@ -832,7 +835,7 @@ export class BoardRenderer {
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
 
-    this.app.ticker.maxFPS = 60;
+    this.app.ticker.maxFPS = renderSettingsStore.settings.cap60Fps ? 60 : 0;
 
     // Remove the TickerPlugin's auto-render so we control when GPU work happens.
     // The ticker still fires our callbacks; we call app.render() only when needsRender is set.
@@ -1012,13 +1015,11 @@ export class BoardRenderer {
     this.perfToggleBtn.textContent = 'i';
     this.perfToggleBtn.title = 'Toggle performance overlay';
     this.perfToggleBtnHandler = () => {
-      this.perfVisible = !this.perfVisible;
-      if (!this.perfVisible) {
-        this.perfOverlayEl!.style.display = 'none';
-        this.perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
-        this.perfSamples = 0;
-        this.perfThrottle = 0;
-      }
+      // Write to the shared setting — settings subscriber syncs perfVisible on
+      // every BoardRenderer so the canvas "i" button and the
+      // Performance & Debug → Show Perf Overlay checkbox stay in lockstep.
+      const cur = renderSettingsStore.globalSnapshot();
+      renderSettingsStore.applyGlobal({ ...cur, showPerfOverlay: !cur.showPerfOverlay });
     };
     this.perfToggleBtn.addEventListener('click', this.perfToggleBtnHandler);
     this.containerEl.appendChild(this.perfToggleBtn);
@@ -2308,13 +2309,33 @@ export class BoardRenderer {
       const cur = renderSettingsStore.settings;
       const prev = this.lastSettingsSnapshot;
 
-      // Fast path: if only interaction-only fields differ, skip the expensive
-      // scene rebuild and just reconfigure viewport plugins. Interaction-only
-      // fields (twoFingerPan etc.) affect input handling but never the scene.
+      // Live-sync FPS cap — toggling Performance & Debug → Cap to 60 FPS takes
+      // effect without a scene rebuild. PixiJS treats maxFPS = 0 as uncapped.
+      const targetMax = cur.cap60Fps ? 60 : 0;
+      if (this.app?.ticker && this.app.ticker.maxFPS !== targetMax) {
+        this.app.ticker.maxFPS = targetMax;
+      }
+
+      // Live-sync perf overlay — single source of truth lives in the setting,
+      // both the canvas "i" button and the Settings checkbox flow through here.
+      if (this.perfVisible !== cur.showPerfOverlay) {
+        this.perfVisible = cur.showPerfOverlay;
+        if (!this.perfVisible && this.perfOverlayEl) {
+          this.perfOverlayEl.style.display = 'none';
+          this.perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
+          this.perfSamples = 0;
+          this.perfThrottle = 0;
+        }
+      }
+
+      // Fast path: if only no-rebuild fields differ, skip the expensive scene
+      // rebuild and just reconfigure viewport plugins. cap60Fps + showPerfOverlay
+      // were live-synced above; the others are interaction-only.
       // applyGlobal structuredClones the settings, so object/array fields get
       // fresh references each call — use JSON equality for deep comparison.
       const INTERACTION_ONLY = new Set<string>([
         'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
+        'cap60Fps', 'showPerfOverlay',
       ]);
       if (prev) {
         let visualChanged = false;
