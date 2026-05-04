@@ -284,7 +284,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsKey: '' as string, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -1907,6 +1907,7 @@ export class BoardRenderer {
       if (sel.partIndex !== lrs.partIndex
         || sel.pinIndex !== lrs.pinIndex
         || sel.highlightedNet !== lrs.highlightedNet
+        || [...sel.adjacentNets].sort().join(',') !== lrs.adjacentNetsKey
         || searchLen !== lrs.searchLen
         || this.board !== lrs.board
         || boardStore.dimMode !== lrs.dimMode
@@ -1916,7 +1917,7 @@ export class BoardRenderer {
         || boardStore.showGhosts !== lrs.showGhosts
         || boardStore.searchSelectionActive !== lrs.searchSelectionActive) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsKey: [...sel.adjacentNets].sort().join(','), searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
       }
 
       // PDF follow mode: search for selected component
@@ -3143,7 +3144,7 @@ export class BoardRenderer {
    *   - Pin label placement: tries above pin first, flips below if overlapping part label
    */
   private updateElevatedLabels(
-    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
+    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null; adjacentNets: Set<string> },
     s: import('../store/render-settings').RenderSettings,
   ) {
     const partBg = this.elevatedPartBg!;
@@ -3304,7 +3305,7 @@ export class BoardRenderer {
 
   /** Update the DOM selection overlay at top-center of the board view */
   private updateSelectionOverlay(
-    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
+    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null; adjacentNets: Set<string> },
     s: import('../store/render-settings').RenderSettings,
   ) {
     if (!this.selectionOverlayEl) return;
