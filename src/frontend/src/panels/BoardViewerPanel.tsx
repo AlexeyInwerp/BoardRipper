@@ -33,7 +33,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const { tabs } = useBoardStore();
   const thisTab = tabId != null ? tabs.find(t => t.id === tabId) : undefined;
   const netLineMode = thisTab?.netLineMode ?? 'off';
-  const showNetDim = thisTab?.showNetDim ?? true;
+  const dimMode = thisTab?.dimMode ?? 'dim';
   const showHoverInfo = thisTab?.showHoverInfo ?? true;
   const showGhosts = thisTab?.showGhosts ?? true;
   const followPdf = thisTab?.followPdf ?? false;
@@ -180,7 +180,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     tabId: tabId!,
     thisTab: {
       netLineMode,
-      showNetDim,
+      dimMode,
       showHoverInfo,
       showGhosts,
       followPdf,

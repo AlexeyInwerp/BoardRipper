@@ -44,7 +44,7 @@ export interface BoardTab {
   mirrorY: boolean;
   flipAxis: 'x' | 'y';
   netLineMode: NetLineMode;
-  showNetDim: boolean;
+  dimMode: 'off' | 'dim' | 'darklight';
   showHoverInfo: boolean;
   followPdf: boolean;
   showTraces: boolean;
@@ -86,7 +86,7 @@ export interface BoardTab {
    *  focusNet() (search-style paths). Cleared by canvas clicks (selectPart,
    *  selectPin), by highlightNet, and by any method that resets to
    *  emptySelection. Used by the renderer to OR-in auto-dim even when the
-   *  user's showNetDim toggle is off. */
+   *  user's dimMode is 'off'. */
   searchSelectionActive: boolean;
   /** Cached presented view of `board` — computed from (board, foldMode,
    *  selectedBoardIndex) via `deriveBoardView`. Invalidated whenever any of
@@ -201,12 +201,12 @@ const VIEW_PREFS_KEY = 'boardripper-view-prefs';
 
 interface ViewPrefs {
   netLineMode: NetLineMode;
-  showNetDim: boolean;
+  dimMode: 'off' | 'dim' | 'darklight';
   showHoverInfo: boolean;
   followPdf: boolean;
 }
 
-const DEFAULT_VIEW_PREFS: ViewPrefs = { netLineMode: 'off', showNetDim: true, showHoverInfo: true, followPdf: false };
+const DEFAULT_VIEW_PREFS: ViewPrefs = { netLineMode: 'off', dimMode: 'dim', showHoverInfo: true, followPdf: false };
 
 /**
  * Build a renderable BoardData from a base board + a chosen revision +
@@ -293,7 +293,7 @@ function loadViewPrefs(): ViewPrefs {
   try {
     const raw = localStorage.getItem(VIEW_PREFS_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<ViewPrefs> & { showNetLines?: boolean };
+      const parsed = JSON.parse(raw) as Partial<ViewPrefs> & { showNetLines?: boolean; showNetDim?: boolean };
       // Migrate legacy boolean: false → 'off', true → 'star' (the most common
       // previous behavior, since users typically had a part selected when
       // net lines were on; PDF lookups still get chain regardless).
@@ -304,6 +304,14 @@ function loadViewPrefs(): ViewPrefs {
       // Sanitize against invalid persisted values
       if (merged.netLineMode !== 'off' && merged.netLineMode !== 'star' && merged.netLineMode !== 'chain') {
         merged.netLineMode = 'off';
+      }
+      // Migrate legacy showNetDim boolean → dimMode tri-state
+      if (merged.dimMode === undefined || (merged.dimMode !== 'off' && merged.dimMode !== 'dim' && merged.dimMode !== 'darklight')) {
+        if (typeof parsed.showNetDim === 'boolean') {
+          merged.dimMode = parsed.showNetDim ? 'dim' : 'off';
+        } else {
+          merged.dimMode = 'dim';
+        }
       }
       return merged;
     }
@@ -405,7 +413,9 @@ class BoardStore extends Emitter {
   get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
-  get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
+  get dimMode(): 'off' | 'dim' | 'darklight' { return this.activeTab?.dimMode ?? 'dim'; }
+  /** @deprecated alias kept for backward compat — callers should migrate to dimMode */
+  get showNetDim(): boolean { return this.dimMode === 'dim'; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
   get followPdf(): boolean { return this.activeTab?.followPdf ?? false; }
   get searchSelectionActive(): boolean { return this.activeTab?.searchSelectionActive ?? false; }
@@ -583,7 +593,7 @@ class BoardStore extends Emitter {
         mirrorY: false,
         flipAxis: 'x',
         netLineMode: vp.netLineMode,
-        showNetDim: vp.showNetDim,
+        dimMode: vp.dimMode,
         showHoverInfo: vp.showHoverInfo,
         followPdf: vp.followPdf,
         showTraces: true,
@@ -1110,7 +1120,7 @@ class BoardStore extends Emitter {
   private _saveCurrentViewPrefs() {
     const tab = this.activeTab;
     if (!tab) return;
-    saveViewPrefs({ netLineMode: tab.netLineMode, showNetDim: tab.showNetDim, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
+    saveViewPrefs({ netLineMode: tab.netLineMode, dimMode: tab.dimMode, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
   /** Cycle the net-line visualization: off → star → chain → off. */
@@ -1223,12 +1233,21 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  toggleNetDim() {
+  cycleDimMode() {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ showNetDim: !tab.showNetDim });
+    const next: BoardTab['dimMode'] =
+      tab.dimMode === 'off'       ? 'dim'
+      : tab.dimMode === 'dim'     ? 'darklight'
+      :                             'off';
+    this.updateActiveTab({ dimMode: next });
     this._saveCurrentViewPrefs();
     this.notify();
+  }
+
+  /** @deprecated — use cycleDimMode() */
+  toggleNetDim() {
+    this.cycleDimMode();
   }
 
   toggleHoverInfo() {
