@@ -14,6 +14,11 @@ export interface SelectionState {
   partIndex: number | null;
   pinIndex: number | null;
   highlightedNet: string | null;
+  /** Nets reachable from `highlightedNet` through 2-pin components, populated
+   *  only when `netLineMode === 'chain-adjacent'`. Empty otherwise. Derived
+   *  state — recomputed in `highlightNet()` and `cycleNetLineMode()`,
+   *  not persisted. */
+  adjacentNets: Set<string>;
 }
 
 /**
@@ -117,7 +122,12 @@ export interface FocusRequest {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
-const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
+const emptySelection: SelectionState = {
+  partIndex: null,
+  pinIndex: null,
+  highlightedNet: null,
+  adjacentNets: new Set<string>(),
+};
 
 /** Compute (or return the cached) derived BoardData for a tab. Re-derives
  *  only when the inputs change so `useSyncExternalStore` gets a stable
@@ -658,7 +668,7 @@ class BoardStore extends Emitter {
         id,
         fileName: file.name,
         board: null,
-        selection: { ...emptySelection },
+        selection: { ...emptySelection, adjacentNets: new Set<string>() },
         showTop: true,
         showBottom: false,
         butterfly: false,
@@ -863,7 +873,7 @@ class BoardStore extends Emitter {
 
   selectPart(partIndex: number | null) {
     this.updateActiveTab({
-      selection: { partIndex, pinIndex: null, highlightedNet: null },
+      selection: { partIndex, pinIndex: null, highlightedNet: null, adjacentNets: new Set<string>() },
       searchSelectionActive: false,
     });
     this.notify();
@@ -874,7 +884,7 @@ class BoardStore extends Emitter {
     const part = tab?.board?.parts[partIndex];
     const pin = part?.pins[pinIndex];
     this.updateActiveTab({
-      selection: { partIndex, pinIndex, highlightedNet: pin?.net || null },
+      selection: { partIndex, pinIndex, highlightedNet: pin?.net || null, adjacentNets: new Set<string>() },
       searchSelectionActive: false,
     });
     this.notify();
@@ -884,7 +894,7 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({
-      selection: { ...tab.selection, highlightedNet: netName },
+      selection: { ...tab.selection, highlightedNet: netName, adjacentNets: new Set<string>() },
       searchSelectionActive: false,
     });
     this.notify();
@@ -1484,7 +1494,7 @@ class BoardStore extends Emitter {
     const keepNet = prevNet != null && part.pins.some(p => p.net === prevNet);
 
     this.updateActiveTab({
-      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null },
+      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null, adjacentNets: new Set<string>() },
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
@@ -1521,7 +1531,7 @@ class BoardStore extends Emitter {
     minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 
     this.updateActiveTab({
-      selection: { partIndex: null, pinIndex: null, highlightedNet: name },
+      selection: { partIndex: null, pinIndex: null, highlightedNet: name, adjacentNets: new Set<string>() },
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
