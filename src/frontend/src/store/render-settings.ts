@@ -1,5 +1,10 @@
 import { log } from './log-store';
 import { Emitter } from './emitter';
+import {
+  type OverlaySlot,
+  DEFAULT_OVERLAY_LAYOUT,
+  reconcileOverlayLayout,
+} from './overlay-layout';
 
 export type LabelSize = 'small' | 'medium' | 'large';
 
@@ -195,6 +200,15 @@ export interface RenderSettings {
 
   /** Part Types — ordered list of component categories with prefix rules. */
   partTypes: PartType[];
+
+  /** BoardViewer overlay row — ordered slot list, persisted globally. */
+  overlayLayout: OverlaySlot[];
+  /** Whether the "selected component name" label below the overlay is visible. */
+  overlaySelectedNameVisible: boolean;
+  /** Action when picking a part from the Parts dropdown. */
+  overlayPartsOnSelect: 'highlight' | 'panIfOffscreen' | 'panZoomFit';
+  /** Action when picking a net from the Nets dropdown. */
+  overlayNetsOnSelect: 'highlight' | 'panIfOffscreen' | 'panZoomFit';
 }
 
 /** Check if a net name matches any NC (no-connect) pattern in settings.
@@ -315,6 +329,11 @@ export const DEFAULTS: RenderSettings = {
     { id: 'testpoint', label: 'Test Point', prefixes: ['TP'],                  color: '#4a9060', padShape: 'round',   bodyShape: 'natural', hidden: false },
     { id: 'shield',    label: 'Shield',     prefixes: ['SH'],                  color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false },
   ],
+
+  overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
+  overlaySelectedNameVisible: true,
+  overlayPartsOnSelect: 'panZoomFit',
+  overlayNetsOnSelect: 'panZoomFit',
 };
 
 /** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */
@@ -825,6 +844,22 @@ function loadFromStorage(): RenderSettings {
       // previous default get the new cap so testpoints and other large-radius
       // pins stop dominating the view. Explicit customisations are preserved.
       if (result.pinMaxRadius === 30) result.pinMaxRadius = 15;
+      // Reconcile saved overlay layout (drop unknown slots, append new defaults)
+      result.overlayLayout = reconcileOverlayLayout((parsed as { overlayLayout?: unknown }).overlayLayout);
+
+      if (typeof (parsed as { overlaySelectedNameVisible?: unknown }).overlaySelectedNameVisible === 'boolean') {
+        result.overlaySelectedNameVisible = (parsed as { overlaySelectedNameVisible: boolean }).overlaySelectedNameVisible;
+      }
+
+      const partsMode = (parsed as { overlayPartsOnSelect?: unknown }).overlayPartsOnSelect;
+      if (partsMode === 'highlight' || partsMode === 'panIfOffscreen' || partsMode === 'panZoomFit') {
+        result.overlayPartsOnSelect = partsMode;
+      }
+
+      const netsMode = (parsed as { overlayNetsOnSelect?: unknown }).overlayNetsOnSelect;
+      if (netsMode === 'highlight' || netsMode === 'panIfOffscreen' || netsMode === 'panZoomFit') {
+        result.overlayNetsOnSelect = netsMode;
+      }
       return result;
     }
   } catch { /* ignore corrupt data */ }
@@ -1062,4 +1097,11 @@ export function exportSettingsAsDefaults(): string {
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).exportSettingsAsDefaults = exportSettingsAsDefaults;
+  (window as Window & {
+    __renderSettings?: typeof renderSettingsStore;
+    __overlayTest?: { reconcileOverlayLayout: typeof reconcileOverlayLayout };
+  }).__renderSettings = renderSettingsStore;
+  (window as Window & {
+    __overlayTest?: { reconcileOverlayLayout: typeof reconcileOverlayLayout };
+  }).__overlayTest = { reconcileOverlayLayout };
 }
