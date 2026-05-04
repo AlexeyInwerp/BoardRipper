@@ -34,7 +34,7 @@ export const KNOWN_SLOT_IDS: ReadonlySet<OverlaySlotId> = new Set([
  * carry the visual gap between the existing button groups; without them
  * the overlay collapses to a single uninterrupted row.
  */
-export const DEFAULT_OVERLAY_LAYOUT: OverlaySlot[] = [
+export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'pdfFollow',     visible: true },
   { id: 'scrollMode',    visible: true },
   { id: 'fitBoard',      visible: true },
@@ -78,7 +78,7 @@ export function reconcileOverlayLayout(saved: unknown): OverlaySlot[] {
   }
 
   for (const def of DEFAULT_OVERLAY_LAYOUT) {
-    if (!seen.has(def.id)) out.push({ id: def.id, visible: true });
+    if (!seen.has(def.id)) out.push({ id: def.id, visible: def.visible });
   }
 
   return out;
