@@ -28,7 +28,7 @@ export function PartsDropdown({ ctx }: { ctx: SlotCtx }) {
         <input
           className="overlay-filter-input board-netlines-toggle"
           type="text"
-          placeholder="parts"
+          placeholder="Parts"
           disabled
           title="No board loaded"
         />
@@ -95,7 +95,7 @@ export function PartsDropdown({ ctx }: { ctx: SlotCtx }) {
         ref={inputRef}
         type="text"
         className="overlay-filter-input board-netlines-toggle"
-        placeholder="parts"
+        placeholder="Parts"
         value={query}
         data-testid="parts-filter-input"
         title="Find part by name"
