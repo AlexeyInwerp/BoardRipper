@@ -239,10 +239,31 @@ export interface BoardData {
    *  (e.g. J8 left in place after being upgraded to J4008). Surfaced in the
    *  UI so the user can verify against the physical board, never auto-pruned. */
   ghosts?: GhostComponent[];
+  /** Mutually-exclusive BOM-alternate clusters: groups of overlapping
+   *  same-role parts (R↔R, C↔C, L↔L) that share net connectivity. Only one
+   *  member per cluster is actually fitted in any given BOM variant. */
+  bomClusters?: BomAlternateCluster[];
   /** Human-readable notes about transformations the parser applied to the
    *  raw file data — e.g. "Un-mirrored X coords (v1 SERG_UKRAINE converter)".
    *  Surfaced to the user as an info toast on load so the fixup is not silent. */
   parserNotes?: string[];
+}
+
+export interface BomAlternateCluster {
+  /** Indices into parts[] of all members at detection time. Stale after any
+   *  step that filters the parts array (e.g. `buildRenderedBoard` hiding all
+   *  but the selected primary); use `memberRefdes` for stable UI lookups. */
+  memberIndices: number[];
+  /** Member refdes parallel to `memberIndices`. Stable across filtering steps;
+   *  use this to identify cluster members in the UI. */
+  memberRefdes: string[];
+  /** Index into parts[] of the auto-picked default primary (one of memberIndices).
+   *  Same staleness caveat as `memberIndices`. */
+  defaultPrimaryIndex: number;
+  /** Refdes of the auto-picked default primary (one of `memberRefdes`). */
+  defaultPrimaryRefdes: string;
+  /** Why the primary was picked — surfaced in the UI. */
+  reason: 'shape-named-device' | 'lowest-refdes' | 'largest-footprint';
 }
 
 export interface GhostComponent {
@@ -275,6 +296,8 @@ export interface BoardRevision {
   nets: Map<string, Net>;
   /** Suspected stale components for this revision (see BoardData.ghosts). */
   ghosts: GhostComponent[];
+  /** Per-revision BOM-alternate clusters (see BoardData.bomClusters). */
+  bomClusters?: BomAlternateCluster[];
   /** Per-revision traces (when traces differ between revisions). */
   traces?: Trace[];
   /** Per-revision vias. */
@@ -579,6 +602,221 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
     }
   }
   return ghosts;
+}
+
+/**
+ * Detect mutually-exclusive BOM-alternate clusters: groups of overlapping
+ * same-role components that all serve the same circuit position and are
+ * therefore alternative fitments (only one member is actually populated per
+ * BOM variant). Common pattern in CAD/CAMCAD exports of boards with
+ * multi-source vendor support or value-fit alternates ("0.22µH OR 0.33µH",
+ * "1× tantalum OR 4× 0805 in parallel").
+ *
+ * Distinct from `detectGhostComponents`, which handles unequal-pin-count
+ * leftover-refdes pairs. This pass targets equal-pin-count alternates that
+ * the ghost detector skips as "ambiguous".
+ *
+ * Pair criteria (must all hold):
+ *   1. Same side (top vs bottom).
+ *   2. Equal pin count (unequal-count overlaps are handled by ghost detection).
+ *   3. Same refdes prefix family (R↔R, C↔C, L↔L; differing prefixes are
+ *      different roles, never alternates).
+ *   4. AABB AND polygon-hull overlap — so the "1 large + N small" pattern is
+ *      caught via overlap of the large with each small (the small parts need
+ *      not pairwise overlap each other).
+ *   5. Net subset/equality (when both have nets) — alternates serve the same
+ *      circuit role so connectivity must agree. Skipped if either side has
+ *      no nets at all.
+ *   6. DEVICE value or footprint differs between members — proves a real
+ *      alternate (different package/value/vendor). Pure-duplicate refdes
+ *      with identical DEVICE+SHAPE is not a BOM alternate; it's parser
+ *      duplication and should be filtered earlier.
+ *
+ * Pairs are merged transitively (union-find). Default primary per cluster
+ * is picked using a tiered heuristic (~88% empirical accuracy across CAD
+ * samples — see project_bom_clusters memory):
+ *   T1. Member with a shape-suffixed device value (e.g.
+ *       `0.22uh_IND_NONRKO_TH_100X072_B`) — these survive from the original
+ *       CAD-tool-generated names; bare values like `0.22uh` typically mark
+ *       later-added alternates.
+ *   T2. Member with the lowest numeric refdes — the schematic "COMMON"
+ *       mark in observed boards lands on the lowest refdes in 88% of clusters.
+ *   T3. Member with the largest footprint area — handles "1 tantalum + N
+ *       small 0805s" where the design-intent primary is the larger part.
+ *
+ * Pure detection; the caller decides whether to hide secondaries by default.
+ */
+export function detectBomAlternateClusters(parts: Part[]): BomAlternateCluster[] {
+  if (parts.length < 2) return [];
+
+  const netSets: Set<string>[] = parts.map(p => {
+    const s = new Set<string>();
+    for (const pin of p.pins) if (pin.net) s.add(pin.net);
+    return s;
+  });
+  const polys: [number, number][][] = parts.map(p => computePartHullPolygon(p));
+
+  const refdesPrefix = (name: string): string => {
+    const m = name.match(/^([A-Za-z]+)/);
+    return m ? m[1].toUpperCase() : '';
+  };
+  const refdesNum = (name: string): number => {
+    const m = name.match(/^[A-Za-z]+(\d+)/);
+    return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+  };
+  // "Shape-suffixed" = device value carries the original CAD-tool footprint
+  // name appended after the bare value (e.g. `0.22uh_IND_NONRKO_TH_100X072_B`).
+  // Bare values like `0.22uh` are the alternate-added-later signal.
+  const isShapeNamed = (val: string): boolean => {
+    if (!val) return false;
+    if (val.length < 8) return false;
+    if (!val.includes('_')) return false;
+    return /[A-Z]/.test(val);
+  };
+  const footprintArea = (p: Part): number => {
+    const w = p.bounds.maxX - p.bounds.minX;
+    const h = p.bounds.maxY - p.bounds.minY;
+    return Math.max(0, w) * Math.max(0, h);
+  };
+  // True iff the small set is a subset of the large set, allowing equality.
+  const isSubsetOrEqual = (small: Set<string>, large: Set<string>): boolean => {
+    if (small.size > large.size) return false;
+    for (const n of small) if (!large.has(n)) return false;
+    return true;
+  };
+
+  function bboxOverlap(a: BBox, b: BBox): boolean {
+    return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+  }
+
+  // Bucket parts by side so we don't compare top-vs-bottom (no physical conflict).
+  // "both"-side parts (through-hole connectors etc.) are checked against parts
+  // on either side because they physically occupy both layers.
+  const topIdx: number[] = [];
+  const botIdx: number[] = [];
+  parts.forEach((p, i) => {
+    if (p.side === 'bottom') botIdx.push(i);
+    else if (p.side === 'top') topIdx.push(i);
+    else { topIdx.push(i); botIdx.push(i); }
+  });
+
+  // Union-find for transitive merging — handles "1 large + N small" where the
+  // small parts pairwise overlap the large but not each other.
+  const parent: number[] = parts.map((_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+  const union = (a: number, b: number) => {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+
+  // Track which (i,j) pairs were unioned across both side passes so a
+  // "both"-side part doesn't trigger duplicate work.
+  const seenPair = new Set<string>();
+
+  for (const side of [topIdx, botIdx]) {
+    for (let i = 0; i < side.length; i++) {
+      const ai = side[i];
+      const a = parts[ai];
+      const aPrefix = refdesPrefix(a.name);
+      if (!aPrefix) continue;
+      const aPinCount = a.pins.length;
+      const aValue = a.meta?.value ?? '';
+      const aPackage = a.meta?.package ?? '';
+      for (let j = i + 1; j < side.length; j++) {
+        const bi = side[j];
+        const pairKey = ai < bi ? `${ai}-${bi}` : `${bi}-${ai}`;
+        if (seenPair.has(pairKey)) continue;
+
+        const b = parts[bi];
+        if (b.pins.length !== aPinCount) continue;
+        if (refdesPrefix(b.name) !== aPrefix) continue;
+        if (!bboxOverlap(a.bounds, b.bounds)) continue;
+        if (!polygonsOverlap(polys[ai], polys[bi])) continue;
+
+        // Net check: when either side has nets, require subset/equality.
+        const aNets = netSets[ai];
+        const bNets = netSets[bi];
+        if (aNets.size > 0 && bNets.size > 0) {
+          const ok = aNets.size <= bNets.size
+            ? isSubsetOrEqual(aNets, bNets)
+            : isSubsetOrEqual(bNets, aNets);
+          if (!ok) continue;
+        }
+
+        // Differ in DEVICE value or footprint package — proves alternate, not
+        // pure duplicate. If neither metadata is present we can't tell, so
+        // skip rather than over-flag.
+        const bValue = b.meta?.value ?? '';
+        const bPackage = b.meta?.package ?? '';
+        const valueDiffers = aValue !== bValue;
+        const packageDiffers = aPackage !== bPackage;
+        if (!valueDiffers && !packageDiffers) {
+          if (!aValue && !bValue && !aPackage && !bPackage) continue; // no metadata to compare
+          if (aValue === bValue && aPackage === bPackage) continue;   // genuine duplicate
+        }
+
+        seenPair.add(pairKey);
+        union(ai, bi);
+      }
+    }
+  }
+
+  // Group merged indices into clusters by union-find root.
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < parts.length; i++) {
+    const root = find(i);
+    let arr = groups.get(root);
+    if (!arr) { arr = []; groups.set(root, arr); }
+    arr.push(i);
+  }
+
+  const clusters: BomAlternateCluster[] = [];
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    members.sort((a, b) => a - b);
+
+    // Pick the default primary using the tiered heuristic.
+    let primaryIndex = members[0];
+    let reason: BomAlternateCluster['reason'] = 'lowest-refdes';
+
+    // T1: shape-suffixed device value — strongest signal.
+    const shapeNamed = members.filter(idx => isShapeNamed(parts[idx].meta?.value ?? ''));
+    if (shapeNamed.length > 0) {
+      // If multiple are shape-named, pick the lowest-refdes one for stability.
+      shapeNamed.sort((a, b) => refdesNum(parts[a].name) - refdesNum(parts[b].name));
+      primaryIndex = shapeNamed[0];
+      reason = 'shape-named-device';
+    } else {
+      // T2: lowest refdes.
+      let minNum = Infinity;
+      for (const idx of members) {
+        const n = refdesNum(parts[idx].name);
+        if (n < minNum) { minNum = n; primaryIndex = idx; }
+      }
+      // T3: if every member has the same refdes number (rare — all have no
+      // numeric suffix), fall through to largest footprint as final tiebreak.
+      if (!isFinite(minNum)) {
+        let maxArea = -1;
+        for (const idx of members) {
+          const a = footprintArea(parts[idx]);
+          if (a > maxArea) { maxArea = a; primaryIndex = idx; }
+        }
+        reason = 'largest-footprint';
+      }
+    }
+
+    clusters.push({
+      memberIndices: members,
+      memberRefdes: members.map(i => parts[i].name),
+      defaultPrimaryIndex: primaryIndex,
+      defaultPrimaryRefdes: parts[primaryIndex].name,
+      reason,
+    });
+  }
+  return clusters;
 }
 
 /**
