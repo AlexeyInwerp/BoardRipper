@@ -119,6 +119,18 @@ export interface RenderSettings {
   /** Hide text labels during zoom for better performance on slower machines */
   hideTextDuringZoom: boolean;
 
+  /** BitmapFont atlas pixel multiplier for pin/net/part labels.
+   *  Higher = sharper at deep zoom, larger atlas (memory ~ mult²). Default 8. */
+  labelAtlasResolution: number;
+
+  /** Cap renderer ticker to 60 FPS. Disable to let the ticker run at the
+   *  display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work. */
+  cap60Fps: boolean;
+
+  /** Show the per-phase frame-time overlay on the board canvas. Same toggle
+   *  as the small "i" button at the bottom-left of each board panel. */
+  showPerfOverlay: boolean;
+
   /**
    * Min screen pixels (pinMinRadius * scale) for Group A labels to appear
    * (pin numbers + net names on circle/1-pin parts). Higher = needs more zoom.
@@ -287,6 +299,9 @@ export const DEFAULTS: RenderSettings = {
   showSelectionOverlay: true,
 
   hideTextDuringZoom: true,
+  labelAtlasResolution: 8,
+  cap60Fps: true,
+  showPerfOverlay: false,
 
   circleLabelMinScreenPx: 3,
   twoPinLabelMinScreenPx: 6,
