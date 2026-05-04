@@ -845,18 +845,18 @@ function loadFromStorage(): RenderSettings {
       // pins stop dominating the view. Explicit customisations are preserved.
       if (result.pinMaxRadius === 30) result.pinMaxRadius = 15;
       // Reconcile saved overlay layout (drop unknown slots, append new defaults)
-      result.overlayLayout = reconcileOverlayLayout((parsed as { overlayLayout?: unknown }).overlayLayout);
+      result.overlayLayout = reconcileOverlayLayout(parsed.overlayLayout);
 
-      if (typeof (parsed as { overlaySelectedNameVisible?: unknown }).overlaySelectedNameVisible === 'boolean') {
-        result.overlaySelectedNameVisible = (parsed as { overlaySelectedNameVisible: boolean }).overlaySelectedNameVisible;
+      if (typeof parsed.overlaySelectedNameVisible === 'boolean') {
+        result.overlaySelectedNameVisible = parsed.overlaySelectedNameVisible;
       }
 
-      const partsMode = (parsed as { overlayPartsOnSelect?: unknown }).overlayPartsOnSelect;
+      const partsMode = parsed.overlayPartsOnSelect;
       if (partsMode === 'highlight' || partsMode === 'panIfOffscreen' || partsMode === 'panZoomFit') {
         result.overlayPartsOnSelect = partsMode;
       }
 
-      const netsMode = (parsed as { overlayNetsOnSelect?: unknown }).overlayNetsOnSelect;
+      const netsMode = parsed.overlayNetsOnSelect;
       if (netsMode === 'highlight' || netsMode === 'panIfOffscreen' || netsMode === 'panZoomFit') {
         result.overlayNetsOnSelect = netsMode;
       }
@@ -1097,11 +1097,8 @@ export function exportSettingsAsDefaults(): string {
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).exportSettingsAsDefaults = exportSettingsAsDefaults;
-  (window as Window & {
-    __renderSettings?: typeof renderSettingsStore;
-    __overlayTest?: { reconcileOverlayLayout: typeof reconcileOverlayLayout };
-  }).__renderSettings = renderSettingsStore;
-  (window as Window & {
-    __overlayTest?: { reconcileOverlayLayout: typeof reconcileOverlayLayout };
-  }).__overlayTest = { reconcileOverlayLayout };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).__renderSettings = renderSettingsStore;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).__overlayTest = { reconcileOverlayLayout };
 }
