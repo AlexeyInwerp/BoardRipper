@@ -99,6 +99,44 @@ test.describe('Parts dropdown', () => {
   });
 });
 
+test.describe('Nets dropdown', () => {
+  test('NC nets render at end with reduced opacity', async ({ page }) => {
+    await loadBoard(page);
+    await page.waitForSelector('[data-testid="nets-dropdown-button"]');
+
+    await page.click('[data-testid="nets-dropdown-button"]');
+    await page.waitForSelector('.overlay-dropdown-popover');
+
+    // The NC group header should appear after at least one normal row
+    const headerExists = await page.locator('.overlay-dropdown-group-header').count();
+    if (headerExists > 0) {
+      const dimmedCount = await page.locator('.overlay-dropdown-row.dimmed').count();
+      expect(dimmedCount).toBeGreaterThan(0);
+
+      // Confirm dimmed rows appear AFTER non-dimmed rows in DOM order
+      const order = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('.overlay-dropdown-row')) as HTMLElement[];
+        return rows.map(r => r.classList.contains('dimmed'));
+      });
+      const lastNormal = order.lastIndexOf(false);
+      const firstDimmed = order.indexOf(true);
+      expect(firstDimmed).toBeGreaterThan(lastNormal);
+    }
+  });
+
+  test('selecting a net highlights it', async ({ page }) => {
+    await loadBoard(page);
+    await page.waitForSelector('[data-testid="nets-dropdown-button"]');
+
+    await page.click('[data-testid="nets-dropdown-button"]');
+    await page.fill('.overlay-dropdown-input', 'GND');
+    await page.keyboard.press('Enter');
+
+    const status = await page.locator('.statusbar').textContent();
+    expect(status).toMatch(/Net:\s*GND\b/i);
+  });
+});
+
 test.describe('Natural sort comparator', () => {
   test('sorts refdes-style names numerically', async ({ page }) => {
     await page.goto('/');
