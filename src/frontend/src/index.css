@@ -5933,3 +5933,19 @@ html, body, #root {
   position: relative;
   display: inline-block;
 }
+
+.overlay-selected-name {
+  position: absolute;
+  /* Sits flush below the .board-status-indicators row.
+     If the row position changes, adjust this top value. */
+  top: calc(var(--overlay-row-height, 36px) + 6px);
+  left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-primary, #ddd);
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 5;
+  white-space: nowrap;
+}

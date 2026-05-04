@@ -137,6 +137,21 @@ test.describe('Nets dropdown', () => {
   });
 });
 
+test.describe('Selected-name label', () => {
+  test('label appears when a part is selected and hides when cleared', async ({ page }) => {
+    await loadBoard(page);
+    await page.waitForSelector('[data-testid="parts-dropdown-button"]');
+
+    await expect(page.locator('[data-testid="overlay-selected-name"]')).toHaveCount(0);
+
+    await page.click('[data-testid="parts-dropdown-button"]');
+    await page.fill('.overlay-dropdown-input', 'U0500');
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('[data-testid="overlay-selected-name"]')).toContainText(/U0500\b/);
+  });
+});
+
 test.describe('Natural sort comparator', () => {
   test('sorts refdes-style names numerically', async ({ page }) => {
     await page.goto('/');
