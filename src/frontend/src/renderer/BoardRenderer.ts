@@ -2435,34 +2435,46 @@ export class BoardRenderer {
       this._haloSprite = spr;
     }
 
-    const root = this.rootForPart(part);
-    if (!root) {
+    const scene = this.activeScene;
+    if (!scene) {
       this._haloSprite.visible = false;
       return;
     }
 
-    // The selected part lives in a per-side label layer (see board-scene.ts —
-    // partContainer.label = part.name). Place the spotlight INTO that same
-    // layer just before the part, then re-add the part. The layer's children
-    // end up as: [...other parts, spotlight, selected part], so the spotlight
-    // darkens everything around it while the selected part draws on top and
-    // keeps its full brightness automatically.
-    const partContainer = root.getChildByLabel(part.name, true);
-    const layer = partContainer?.parent;
-    if (!partContainer || !layer) {
-      this._haloSprite.visible = false;
-      return;
-    }
-    // addChild on an already-attached child is a move-to-end. Doing this
-    // every update keeps the order stable across selection changes.
-    layer.addChild(this._haloSprite);
-    layer.addChild(partContainer);
+    // Mount the spotlight at the same scene-graph level as netDimGfx — the
+    // existing dim overlay — and just before the corresponding selectionGfx.
+    // This is exactly the pattern dim mode uses to keep the selected part
+    // bright: parts render first, the dim/spotlight darkens them, then
+    // selectionGfx re-draws the selected part's outline + bright pins on
+    // top. So the spotlight darkens neighbors and the selected part stays
+    // visible courtesy of the existing renderSelection machinery — no
+    // extra work needed for the part itself.
+    const onBottomButterfly = boardStore.butterfly && part.side === 'bottom' && !!scene.butterflyRoot;
+    const targetContainer = onBottomButterfly ? scene.butterflyRoot! : scene.root;
+    const selSibling = onBottomButterfly ? this.butterflySelectionGfx : this.selectionGfx;
 
-    // Sprite size: a fixed multiple of the part's larger bbox dimension.
-    // MIN_SPOTLIGHT_DIAMETER guards small components (0402 etc.) so the
-    // gradient is always at least ~10 mm wide — visible at any zoom.
-    const MIN_SPOTLIGHT_DIAMETER = 400; // mils — ~10 mm
-    const SPOTLIGHT_TO_PART_RATIO = 3;
+    if (this._haloSprite.parent && this._haloSprite.parent !== targetContainer) {
+      this._haloSprite.parent.removeChild(this._haloSprite);
+    }
+    const selIdx = targetContainer.getChildIndex(selSibling);
+    if (this._haloSprite.parent !== targetContainer) {
+      if (selIdx >= 0) targetContainer.addChildAt(this._haloSprite, selIdx);
+      else targetContainer.addChild(this._haloSprite);
+    } else {
+      // Already attached — keep it just before the selection sibling.
+      const myIdx = targetContainer.getChildIndex(this._haloSprite);
+      if (selIdx >= 0 && myIdx !== selIdx - 1 && myIdx !== selIdx) {
+        targetContainer.removeChild(this._haloSprite);
+        const fresh = targetContainer.getChildIndex(selSibling);
+        targetContainer.addChildAt(this._haloSprite, fresh >= 0 ? fresh : targetContainer.children.length);
+      }
+    }
+
+    // Sprite size — generous so the dark circle reads at any zoom.
+    // The 1000-mil floor (~25 mm) guards tiny passives where 5× partMaxDim
+    // would collapse to a stamp.
+    const MIN_SPOTLIGHT_DIAMETER = 1000; // mils — ~25 mm
+    const SPOTLIGHT_TO_PART_RATIO = 5;
     const b = part.bounds;
     const bw = b.maxX - b.minX;
     const bh = b.maxY - b.minY;
