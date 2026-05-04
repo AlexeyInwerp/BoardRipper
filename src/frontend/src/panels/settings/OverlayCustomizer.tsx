@@ -101,7 +101,7 @@ export function OverlayCustomizer() {
             checked={selectionHalo}
             onChange={e => { try { renderSettingsStore.setSelectionHalo(e.target.checked); } catch { /* tolerate stale store */ } }}
           />
-          {' '}Show halo around selected component
+          {' '}Darken surroundings of selected component
         </label>
       </div>
 
