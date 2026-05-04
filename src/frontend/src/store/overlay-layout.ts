@@ -14,20 +14,47 @@
  * automatically on next load.
  */
 
-export type OverlaySlotId =
+/** The fixed-name slots (one button each). Separator slots use the
+ *  open-ended `sep${number}` ids — see `isSeparatorId` below. */
+export type NamedSlotId =
   | 'pdfFollow' | 'scrollMode' | 'fitBoard'
   | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts'
-  | 'partsDropdown' | 'netsDropdown'
-  | 'sep1' | 'sep2';
+  | 'partsDropdown' | 'netsDropdown';
+
+export type SeparatorSlotId = `sep${number}`;
+export type OverlaySlotId = NamedSlotId | SeparatorSlotId;
 
 export interface OverlaySlot { id: OverlaySlotId; visible: boolean }
 
-export const KNOWN_SLOT_IDS: ReadonlySet<OverlaySlotId> = new Set([
+const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'pdfFollow', 'scrollMode', 'fitBoard',
   'hoverInfo', 'netDim', 'netLines', 'ghosts',
   'partsDropdown', 'netsDropdown',
-  'sep1', 'sep2',
 ]);
+
+/** True for `sep1`, `sep2`, … — any `sep` followed by a positive integer. */
+export function isSeparatorId(id: string): id is SeparatorSlotId {
+  return /^sep\d+$/.test(id);
+}
+
+/** Recognises both named slots and any separator id. */
+export function isKnownSlotId(id: string): id is OverlaySlotId {
+  return NAMED_SLOT_IDS.has(id as NamedSlotId) || isSeparatorId(id);
+}
+
+/** Pick the next free `sep${N}` id given the slots currently in `layout`.
+ *  Used by Settings to add a new separator without colliding. */
+export function nextSeparatorId(layout: ReadonlyArray<OverlaySlot>): SeparatorSlotId {
+  let max = 0;
+  for (const s of layout) {
+    const m = /^sep(\d+)$/.exec(s.id);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+  }
+  return `sep${max + 1}`;
+}
 
 /**
  * Default order — reproduces today's UI byte-for-byte. The two `sep` slots
@@ -69,14 +96,17 @@ export function reconcileOverlayLayout(saved: unknown): OverlaySlot[] {
       const id = (raw as { id?: unknown }).id;
       const visible = (raw as { visible?: unknown }).visible;
       if (typeof id !== 'string') continue;
-      if (!KNOWN_SLOT_IDS.has(id as OverlaySlotId)) continue;
-      const slotId = id as OverlaySlotId;
-      if (seen.has(slotId)) continue;
-      out.push({ id: slotId, visible: visible !== false });
-      seen.add(slotId);
+      if (!isKnownSlotId(id)) continue;
+      if (seen.has(id)) continue;
+      out.push({ id, visible: visible !== false });
+      seen.add(id);
     }
   }
 
+  // Append any DEFAULT_OVERLAY_LAYOUT entries the user hasn't seen yet
+  // (handles upgrade paths after new built-in slots are added). Extra
+  // separators the user has created beyond sep1/sep2 are preserved as-is
+  // by the loop above.
   for (const def of DEFAULT_OVERLAY_LAYOUT) {
     if (!seen.has(def.id)) out.push({ id: def.id, visible: def.visible });
   }

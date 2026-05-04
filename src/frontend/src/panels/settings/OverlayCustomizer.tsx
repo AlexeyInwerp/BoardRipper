@@ -169,6 +169,18 @@ export function OverlayCustomizer() {
       {renderZone(hiddenSlots, false)}
 
       <div className="settings-row">
+        <button
+          type="button"
+          className="settings-reset-btn"
+          onClick={() => { try { renderSettingsStore.addOverlaySeparator(); } catch { /* ignore */ } }}
+          title="Add a new separator slot to the overlay"
+          data-testid="overlay-add-separator-btn"
+        >
+          + Add separator
+        </button>
+      </div>
+
+      <div className="settings-row">
         <label>
           <input
             type="checkbox"
