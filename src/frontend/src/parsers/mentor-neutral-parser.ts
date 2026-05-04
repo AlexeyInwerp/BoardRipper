@@ -8,6 +8,13 @@
  *
  * Format spec: docs/formats/MENTOR_NEUTRAL_FORMAT.md
  *
+ * **Provenance & licence:** Original reverse-engineering work from
+ * real-world samples; no third-party parser code is incorporated.
+ * Mentor publishes no public spec — only generic mentions in PTC's
+ * BoardStation EIF docs and Altair Pollex (see THIRD_PARTY.md →
+ * "Format Specifications"). Part of BoardRipper and inherits the
+ * project's AGPL-3.0-or-later licence (see ../../../../LICENSE).
+ *
  * Records this parser cares about:
  *
  *   BOARD <name> OFFSET x:<X> y:<Y> ORIENTATION <rot>
@@ -17,13 +24,19 @@
  *                           C_PROP, C_PIN
  *   NET <name>              N_PIN, N_VIA   (N_PIN duplicates C_PIN; only
  *                           N_VIA is consumed for via geometry)
- *   HOLE <NPTH|PTH> ...     ignored (mounting/tooling features)
+ *   HOLE <NPTH|PTH> ...     consumed only for the synthetic outline bbox
+ *                           (mounting holes can extend the board edge
+ *                           beyond pin extents — e.g. cutouts, slots)
  *   PAD VIA / P_SHAPE       ignored for MVP
  *   B_ADDP                  ignored (artwork / fiducials / silk labels)
  *
  * Coordinates: declared in `B_UNITS`; everything is converted to mils
  * (the engine's internal unit) on parse. C_PIN positions are absolute
  * world space, so no rotation/translation step is needed for pins.
+ *
+ * Outline: the format carries no explicit board-outline section. The
+ * synthetic outline is the bbox of (pin + via + hole) coords, which
+ * frames the board to within a few mils of the real edge.
  */
 
 import type { BoardData, Part, Pin, Nail, Point, Via } from './types';
@@ -71,6 +84,11 @@ interface ViaRaw {
   x: number;
   y: number;
   net: string;
+}
+
+interface HoleRaw {
+  x: number;
+  y: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +213,7 @@ export function parseMentorNeutral(buffer: ArrayBuffer): BoardData {
   const geoms = new Map<string, GeomRaw>();
   const comps: CompRaw[] = [];
   const viasRaw: ViaRaw[] = [];
+  const holesRaw: HoleRaw[] = [];
 
   let curGeom: GeomRaw | null = null;
   let curComp: CompRaw | null = null;
@@ -318,10 +337,21 @@ export function parseMentorNeutral(buffer: ArrayBuffer): BoardData {
         break;
       }
 
+      case 'HOLE': {
+        // HOLE <NPTH|PTH> <X> <Y> <diameter> [<plating-extra>]
+        // No pin/net role, but mounting holes & milled cutouts can sit
+        // outside pin extents — feed positions into the outline bbox so
+        // the synthetic edge frames the real board, not just placed parts.
+        const tok = line.split(/\s+/);
+        const x = Number(tok[2]);
+        const y = Number(tok[3]);
+        if (!isNaN(x) && !isNaN(y)) holesRaw.push({ x, y });
+        break;
+      }
+
       // Records we deliberately drop:
       case 'N_PROP':
       case 'N_PIN':       // duplicated by C_PIN
-      case 'HOLE':        // mounting/tooling, no pin/net role
       case 'PAD':
       case 'P_SHAPE':
       case 'B_ADDP':
@@ -398,9 +428,19 @@ export function parseMentorNeutral(buffer: ArrayBuffer): BoardData {
     layers: [],
   }));
 
+  // Holes: drilled/milled features. Not surfaced as nails (they have
+  // no electrical role), but their positions seed the outline bbox so
+  // mounting holes / edge slots / connector cutouts that sit outside
+  // the pin envelope still frame the real board edge.
+  const holePoints: Point[] = holesRaw.map(h => ({
+    x: (h.x - offsetX) * scale,
+    y: (h.y - offsetY) * scale,
+  }));
+
   const allPoints: Point[] = [
     ...pinPoints,
     ...vias.map(v => v.position),
+    ...holePoints,
   ];
   const bounds = computeBBox(allPoints);
   const outline = generateSyntheticOutline(allPoints);
@@ -409,7 +449,7 @@ export function parseMentorNeutral(buffer: ArrayBuffer): BoardData {
   const ghosts = detectGhostComponents(parts);
 
   log.parser.log(
-    `Mentor neutral: ${parts.length} parts, ${nets.size} nets, ${vias.length} vias` +
+    `Mentor neutral: ${parts.length} parts, ${nets.size} nets, ${vias.length} vias, ${holePoints.length} holes` +
     (droppedNoPin > 0 ? `, ${droppedNoPin} BOM-only entries skipped` : ''),
   );
 

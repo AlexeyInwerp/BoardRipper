@@ -33,6 +33,12 @@ in BoardRipper.
 - **Nature of use:** The gist identifies the `dd:1.3?,r?-=bb` signature and the line-key cipher shape (count-minus-byte, CRLF-advanced). BoardRipper's TypeScript decoder was written against OpenBoardView's canonical `decode_bdv` in `BDVFile.cpp` — the same algorithm, but the gist was how the format was first attributed to the Honhan / Tebo-ICT family.
 - **Spec:** [docs/formats/BDV_ASC_FORMAT.md](docs/formats/BDV_ASC_FORMAT.md)
 
+### Mentor Boardstation Neutral — original RE
+- **License:** N/A (no third-party code or text incorporated)
+- **Used in:** `src/frontend/src/parsers/mentor-neutral-parser.ts`, `src/frontend/src/parsers/mentor-neutral-format.ts`
+- **Nature of use:** Mentor Graphics publishes no public spec for the Boardstation neutral file. The parser and accompanying format document ([docs/formats/MENTOR_NEUTRAL_FORMAT.md](docs/formats/MENTOR_NEUTRAL_FORMAT.md)) are original reverse-engineering work derived solely from inspecting real-world sample exports (Samsung RV415 / Quanta Brazos / Quanta Jinmao14-L). Generic format mentions consulted for context only — none contained record-level layout: PTC's [BoardStation EIF docs](https://support.ptc.com/help/creo/ced_modeling/r20.6.0.0/en/ced_modeling/OSDM_Modules/PCB_BoardStationCreate.html), Altair Pollex's [Mentor Graphics Interface](https://help.altair.com/Pollex/topics/pollex/modeler/pcb_mentor_graphics_interface_r.htm), and the [Internet Archive's Boardstation manuals](https://archive.org/details/1999-mentor-boardstation-da-qsim-accusim-win) (none consulted at code-level — kept as a future verification source).
+- **Spec:** [docs/formats/MENTOR_NEUTRAL_FORMAT.md](docs/formats/MENTOR_NEUTRAL_FORMAT.md)
+
 ### eagleview — Pavel Kovalenko
 - **License:** MIT
 - **Upstream:** https://github.com/nitrocaster/eagleview
