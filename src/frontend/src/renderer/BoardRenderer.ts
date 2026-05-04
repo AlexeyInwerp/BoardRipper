@@ -2388,17 +2388,17 @@ export class BoardRenderer {
 
   /**
    * Build (once, lazily) the radial-gradient texture for the selection
-   * spotlight. Shape: a dark shadow ring hugging the selected component,
-   * fading out to fully transparent at the texture edge. Far-away parts
-   * of the board remain unaffected; only the immediate surroundings of
-   * the picked component dim — making the part pop without blacking
-   * out the rest of the canvas.
+   * spotlight. Shape: the component sits in a fully transparent core
+   * (maximum brightness, no overlay over it). Just outside the core,
+   * the alpha rises smoothly to a soft dark peak and then fades all
+   * the way back to transparent at the texture edge. There's no visible
+   * ring shape — just a smooth dark "smudge" around the component that
+   * decays into the unaffected far surroundings.
    *
    * Texture layout (r is normalized 0..1 from center to edge):
-   *   r ∈ [0,    0.20] : fully transparent — the component shows through
-   *   r ∈ [0.20, 0.30] : alpha 0 → 0.60 (sharp inner edge of the ring)
-   *   r ∈ [0.30, 0.55] : alpha 0.60 (peak darkening — the shadow ring)
-   *   r ∈ [0.55, 1.00] : alpha 0.60 → 0 (gentle fade back to clear)
+   *   r ∈ [0,    0.18] : fully transparent — the component shows through
+   *   r ∈ [0.18, 0.28] : alpha 0 → 0.65 (smooth ramp into peak)
+   *   r ∈ [0.28, 1.00] : alpha 0.65 → 0 (long fade back to clear)
    */
   private buildHaloTexture(): Texture {
     if (this._haloTexture) return this._haloTexture;
@@ -2409,9 +2409,8 @@ export class BoardRenderer {
     const r = size / 2;
     const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
     grad.addColorStop(0.00, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.20, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.30, 'rgba(0, 0, 0, 0.60)');
-    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.60)');
+    grad.addColorStop(0.18, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.28, 'rgba(0, 0, 0, 0.65)');
     grad.addColorStop(1.00, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
