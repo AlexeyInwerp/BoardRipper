@@ -2053,8 +2053,13 @@ html, body, #root {
   left: 8px;
   z-index: 10;
   display: flex;
-  gap: 8px;
+  gap: 3px;
   align-items: center;
+  padding: 3px;
+  background: rgba(15, 15, 26, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
 }
 
 .overlay-sep {
@@ -5862,13 +5867,44 @@ html, body, #root {
   margin-bottom: 4px;
 }
 
-/* ── Overlay dropdown popover (Parts + Nets dropdowns) ─────────────────────── */
+/* ── Overlay inline filter inputs (Parts + Nets dropdowns) ─────────────────── */
+
+/* Always-visible filter input in the overlay row — styled to match the toggle
+   buttons in height and visual weight. Width fixed so the pill stays compact. */
+.overlay-filter-input {
+  width: 80px;
+  height: 28px;
+  padding: 0 7px;
+  box-sizing: border-box;
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: text;
+  outline: none;
+  /* Match board-netlines-toggle height from its explicit 28px/28px rule */
+}
+.overlay-filter-input::placeholder {
+  color: var(--text-muted, #666);
+  font-size: 11px;
+}
+.overlay-filter-input:focus {
+  border-color: var(--accent, rgba(255,255,255,0.25));
+  color: var(--text-primary, #ddd);
+}
+.overlay-filter-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Overlay suggestion list (anchored below the filter input) ───────────────── */
 .overlay-dropdown-popover {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
   width: 280px;
-  max-height: 400px;
+  max-height: 300px;
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary, #1a1a2e);
@@ -5877,6 +5913,7 @@ html, body, #root {
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   z-index: 100;
 }
+/* Legacy: .overlay-dropdown-input used inside old DropdownPopover — kept for safety */
 .overlay-dropdown-input {
   flex: 0 0 auto;
   margin: 6px;

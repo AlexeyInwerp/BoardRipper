@@ -84,12 +84,12 @@ test.describe('Overlay layout reconciliation', () => {
 test.describe('Parts dropdown', () => {
   test('opens, filters, and focuses a part on selection', async ({ page }) => {
     await loadBoard(page);
-    await page.waitForSelector('[data-testid="parts-dropdown-button"]');
+    await page.waitForSelector('[data-testid="parts-filter-input"]');
 
-    await page.click('[data-testid="parts-dropdown-button"]');
+    await page.locator('[data-testid="parts-filter-input"]').focus();
+    await page.fill('[data-testid="parts-filter-input"]', 'U0500');
     await page.waitForSelector('.overlay-dropdown-popover');
 
-    await page.fill('.overlay-dropdown-input', 'U0500');
     // U0500 is the only part matching this filter in the sample board.
     await page.keyboard.press('Enter');
 
@@ -102,9 +102,10 @@ test.describe('Parts dropdown', () => {
 test.describe('Nets dropdown', () => {
   test('NC nets render at end with reduced opacity', async ({ page }) => {
     await loadBoard(page);
-    await page.waitForSelector('[data-testid="nets-dropdown-button"]');
+    await page.waitForSelector('[data-testid="nets-filter-input"]');
 
-    await page.click('[data-testid="nets-dropdown-button"]');
+    await page.locator('[data-testid="nets-filter-input"]').focus();
+    await page.fill('[data-testid="nets-filter-input"]', ' ');
     await page.waitForSelector('.overlay-dropdown-popover');
 
     // The NC group header should appear after at least one normal row
@@ -126,10 +127,10 @@ test.describe('Nets dropdown', () => {
 
   test('selecting a net highlights it', async ({ page }) => {
     await loadBoard(page);
-    await page.waitForSelector('[data-testid="nets-dropdown-button"]');
+    await page.waitForSelector('[data-testid="nets-filter-input"]');
 
-    await page.click('[data-testid="nets-dropdown-button"]');
-    await page.fill('.overlay-dropdown-input', 'GND');
+    await page.locator('[data-testid="nets-filter-input"]').focus();
+    await page.fill('[data-testid="nets-filter-input"]', 'GND');
     await page.keyboard.press('Enter');
 
     const status = await page.locator('.statusbar').textContent();
@@ -140,12 +141,12 @@ test.describe('Nets dropdown', () => {
 test.describe('Selected-name label', () => {
   test('label appears when a part is selected and hides when cleared', async ({ page }) => {
     await loadBoard(page);
-    await page.waitForSelector('[data-testid="parts-dropdown-button"]');
+    await page.waitForSelector('[data-testid="parts-filter-input"]');
 
     await expect(page.locator('[data-testid="overlay-selected-name"]')).toHaveCount(0);
 
-    await page.click('[data-testid="parts-dropdown-button"]');
-    await page.fill('.overlay-dropdown-input', 'U0500');
+    await page.locator('[data-testid="parts-filter-input"]').focus();
+    await page.fill('[data-testid="parts-filter-input"]', 'U0500');
     await page.keyboard.press('Enter');
 
     await expect(page.locator('[data-testid="overlay-selected-name"]')).toContainText(/U0500\b/);

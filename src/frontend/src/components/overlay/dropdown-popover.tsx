@@ -16,32 +16,117 @@ export interface DropdownPopoverGroup {
   rows: DropdownPopoverRow[];
 }
 
-export interface DropdownPopoverProps {
-  /** Builds the list groups from the current filter (already lower-cased). Pure. */
-  buildGroups: (queryLower: string) => DropdownPopoverGroup[];
+export interface SuggestionListProps {
+  /** Pre-built groups (already filtered by caller). */
+  groups: DropdownPopoverGroup[];
+  /** Currently highlighted flat index. */
+  highlight: number;
+  /** Called when highlight changes (e.g. on mouse enter). */
+  onHighlight: (i: number) => void;
   /** Called with the picked row's name (original case). */
   onSelect: (name: string) => void;
-  /** Closes the popover. Called on Esc, outside click, or after selection. */
+  /** Closes the suggestion list. */
   onClose: () => void;
-  /** Placeholder text in the filter input. */
-  placeholder?: string;
 }
 
 /**
- * Filter input + grouped list with keyboard navigation. Used by Parts and
- * Nets dropdowns. Caps rendered rows at MAX_RENDERED_ROWS — anything past
- * shows a "… and N more — refine your search" footer.
+ * Suggestion list shown below the filter input. Handles its own scroll-into-view.
+ * The parent component owns the `<input>`, the query state, and keyboard events.
  */
+export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClose }: SuggestionListProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const flatRows: DropdownPopoverRow[] = groups.flatMap(g => g.rows);
+  const overflow = flatRows.length > MAX_RENDERED_ROWS;
+  const cappedFlat = overflow ? flatRows.slice(0, MAX_RENDERED_ROWS) : flatRows;
+  const safeHighlight = cappedFlat.length === 0 ? 0 : Math.min(highlight, cappedFlat.length - 1);
+
+  // Scroll highlighted row into view
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-row-idx="${safeHighlight}"]`);
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [safeHighlight]);
+
+  // Close on outside click
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (listRef.current && !listRef.current.closest('.overlay-dropdown-wrap')?.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [onClose]);
+
+  // Build the rendered list with group headers + flat indices for highlight tracking
+  const rendered: ReactNode[] = [];
+  let flatIdx = 0;
+  for (let g = 0; g < groups.length; g++) {
+    const group = groups[g];
+    if (group.rows.length === 0) continue;
+    if (group.header && g > 0) {
+      rendered.push(
+        <div key={`hdr-${g}`} className="overlay-dropdown-group-header">{group.header}</div>
+      );
+    }
+    for (const r of group.rows) {
+      if (flatIdx >= MAX_RENDERED_ROWS) break;
+      const i = flatIdx;
+      rendered.push(
+        <button
+          key={`${group.header ?? ''}-${r.row.name}`}
+          data-row-idx={i}
+          className={`overlay-dropdown-row${r.dimmed ? ' dimmed' : ''}${i === safeHighlight ? ' highlighted' : ''}`}
+          onMouseEnter={() => onHighlight(i)}
+          onMouseDown={e => {
+            // Prevent the input from losing focus before we handle the click
+            e.preventDefault();
+            onSelect(r.row.name);
+            onClose();
+          }}
+        >
+          {r.row.name}
+        </button>
+      );
+      flatIdx++;
+    }
+    if (flatIdx >= MAX_RENDERED_ROWS) break;
+  }
+
+  return (
+    <div ref={listRef} className="overlay-dropdown-popover">
+      <div className="overlay-dropdown-list">
+        {rendered.length === 0
+          ? <div className="overlay-dropdown-empty">No matches</div>
+          : rendered}
+        {overflow && (
+          <div className="overlay-dropdown-overflow">
+            … and {flatRows.length - MAX_RENDERED_ROWS} more — refine your search
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Legacy full-popover (input + list in one component) ─────────────────────
+// Kept for reference only — no longer rendered by PartsDropdown / NetsDropdown.
+
+export interface DropdownPopoverProps {
+  buildGroups: (queryLower: string) => DropdownPopoverGroup[];
+  onSelect: (name: string) => void;
+  onClose: () => void;
+  placeholder?: string;
+}
+
+/** @deprecated Use the inline filter-input pattern in PartsDropdown / NetsDropdown. */
 export function DropdownPopover({ buildGroups, onSelect, onClose, placeholder }: DropdownPopoverProps) {
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  useEffect(() => { inputRef.current?.focus(); }, []);
 
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
@@ -55,8 +140,6 @@ export function DropdownPopover({ buildGroups, onSelect, onClose, placeholder }:
   const flatRows: DropdownPopoverRow[] = groups.flatMap(g => g.rows);
   const overflow = flatRows.length > MAX_RENDERED_ROWS;
   const cappedFlat = overflow ? flatRows.slice(0, MAX_RENDERED_ROWS) : flatRows;
-
-  // Clamp highlight to valid range — derived during render, no effect needed.
   const safeHighlight = cappedFlat.length === 0 ? 0 : Math.min(highlight, cappedFlat.length - 1);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -67,33 +150,17 @@ export function DropdownPopover({ buildGroups, onSelect, onClose, placeholder }:
       if (r) { onSelect(r.row.name); onClose(); }
       return;
     }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlight(h => Math.min(h + 1, cappedFlat.length - 1));
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlight(h => Math.max(h - 1, 0));
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(h + 1, cappedFlat.length - 1)); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(h => Math.max(h - 1, 0)); }
   };
 
-  // Scroll highlight into view
-  useEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-row-idx="${safeHighlight}"]`);
-    el?.scrollIntoView({ block: 'nearest' });
-  }, [safeHighlight]);
-
-  // Build the rendered list with group headers + flat indices for highlight tracking
   const rendered: ReactNode[] = [];
   let flatIdx = 0;
   for (let g = 0; g < groups.length; g++) {
     const group = groups[g];
     if (group.rows.length === 0) continue;
     if (group.header && g > 0) {
-      rendered.push(
-        <div key={`hdr-${g}`} className="overlay-dropdown-group-header">{group.header}</div>
-      );
+      rendered.push(<div key={`hdr-${g}`} className="overlay-dropdown-group-header">{group.header}</div>);
     }
     for (const r of group.rows) {
       if (flatIdx >= MAX_RENDERED_ROWS) break;
@@ -124,15 +191,9 @@ export function DropdownPopover({ buildGroups, onSelect, onClose, placeholder }:
         onChange={e => setQuery(e.target.value)}
         placeholder={placeholder ?? 'Filter…'}
       />
-      <div ref={listRef} className="overlay-dropdown-list">
-        {rendered.length === 0
-          ? <div className="overlay-dropdown-empty">No matches</div>
-          : rendered}
-        {overflow && (
-          <div className="overlay-dropdown-overflow">
-            … and {flatRows.length - MAX_RENDERED_ROWS} more — refine your search
-          </div>
-        )}
+      <div className="overlay-dropdown-list">
+        {rendered.length === 0 ? <div className="overlay-dropdown-empty">No matches</div> : rendered}
+        {overflow && <div className="overlay-dropdown-overflow">… and {flatRows.length - MAX_RENDERED_ROWS} more — refine your search</div>}
       </div>
     </div>
   );
