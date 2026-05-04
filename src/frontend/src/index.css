@@ -5861,3 +5861,71 @@ html, body, #root {
 .settings-tabs-row {
   margin-bottom: 4px;
 }
+
+/* ── Overlay dropdown popover (Parts + Nets dropdowns) ─────────────────────── */
+.overlay-dropdown-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 280px;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary, #1a1a2e);
+  border: 1px solid var(--border-primary, #333);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  z-index: 100;
+}
+.overlay-dropdown-input {
+  flex: 0 0 auto;
+  margin: 6px;
+  padding: 6px 8px;
+  background: var(--bg-primary, #0f0f1a);
+  color: var(--text-primary, #ddd);
+  border: 1px solid var(--border-primary, #333);
+  border-radius: 3px;
+  font-size: 12px;
+  outline: none;
+}
+.overlay-dropdown-input:focus {
+  border-color: var(--accent, #88f);
+}
+.overlay-dropdown-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 0 4px;
+}
+.overlay-dropdown-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 12px;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary, #ddd);
+  font-size: 12px;
+  cursor: pointer;
+}
+.overlay-dropdown-row.highlighted {
+  background: var(--bg-hover, rgba(255,255,255,0.06));
+}
+.overlay-dropdown-row.dimmed {
+  opacity: 0.45;
+}
+.overlay-dropdown-group-header {
+  padding: 6px 12px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #888);
+  border-top: 1px solid var(--border-primary, #333);
+  margin-top: 4px;
+}
+.overlay-dropdown-empty,
+.overlay-dropdown-overflow {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  font-style: italic;
+}
