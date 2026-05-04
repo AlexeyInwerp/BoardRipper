@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
-import { IconHierarchy, IconHierarchyOff, IconChartDots3, IconTooltip, IconObjectScan, IconGhost2, IconHandMove, IconZoomIn } from '@tabler/icons-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -9,8 +8,11 @@ import { pdfPanelId, isLinkActivating, activateLinkedPanel, isAutoSwitchLinked }
 import { pdfStore } from '../store/pdf-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { log } from '../store/log-store';
-import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
+import { useBareScrollAction } from '../store/scroll-mode';
 import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
+import { renderOverlayLayout } from '../components/overlay/slot-renderers';
+import { useRenderSettings } from '../hooks/useRenderSettings';
+import type { SlotCtx } from '../components/overlay/slot-ctx';
 
 // Per-tab handlers for toolbar search → board sidebar integration
 const _boardSearchHandlers = new Map<number, (query: string) => void>();
@@ -37,6 +39,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const followPdf = thisTab?.followPdf ?? false;
   const layerStates = thisTab?.layerStates ?? [];
   const bareAction = useBareScrollAction();
+  const renderSettings = useRenderSettings();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
@@ -173,6 +176,21 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     return () => document.removeEventListener('mousedown', handler);
   }, [sliderVisible]);
 
+  const slotCtx: SlotCtx = {
+    tabId: tabId!,
+    thisTab: {
+      netLineMode,
+      showNetDim,
+      showHoverInfo,
+      showGhosts,
+      followPdf,
+      pdfFileNames: linkedPdfs,
+      fileName: tabFileName,
+    },
+    rendererRef,
+    bareAction,
+  };
+
   if (tabId == null) {
     return (
       <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -227,74 +245,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         )}
       </div>
       <div className="board-status-indicators">
-        <div className="board-button-group">
-          <button
-            className={`board-netlines-toggle ${followPdf ? 'active' : ''}`}
-            onClick={() => boardStore.toggleFollowPdf()}
-            disabled={linkedPdfs.length === 0}
-            title={followPdf ? 'PDF follow: ON' : 'PDF follow: OFF'}
-          >
-            ⇶
-          </button>
-          <button
-            className="board-netlines-toggle"
-            onClick={invertScrollBindings}
-            title={bareAction === 'pan'
-              ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
-              : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
-          >
-            {bareAction === 'pan' ? <IconHandMove size={16} /> : <IconZoomIn size={16} />}
-          </button>
-          <button
-            className="board-netlines-toggle"
-            onClick={() => rendererRef.current?.fitToBoard()}
-            title="Zoom to fit board"
-          >
-            <IconObjectScan size={16} />
-          </button>
-        </div>
-        <div className="board-button-group">
-          <button
-            className={`board-netlines-toggle ${showHoverInfo ? 'active' : ''}`}
-            onClick={() => boardStore.toggleHoverInfo()}
-            title={showHoverInfo ? 'Hover info: ON' : 'Hover info: OFF'}
-          >
-            <IconTooltip size={16} />
-          </button>
-          <button
-            className={`board-netlines-toggle ${showNetDim ? 'active' : ''}`}
-            onClick={() => boardStore.toggleNetDim()}
-            title={showNetDim ? 'Selection dimming: ON' : 'Selection dimming: OFF'}
-          >
-            ◐
-          </button>
-          <button
-            className={`board-netlines-toggle ${netLineMode !== 'off' ? 'active' : ''}`}
-            onClick={() => boardStore.cycleNetLineMode()}
-            title={
-              netLineMode === 'off'
-                ? 'Net lines: off (click for star)'
-                : netLineMode === 'star'
-                ? 'Net lines: star — radiate from selected part (click for chain)'
-                : 'Net lines: chain — nearest-neighbor MST (click to turn off)'
-            }
-          >
-            {netLineMode === 'off' ? (
-              <IconHierarchyOff size={16} />
-            ) : netLineMode === 'star' ? (
-              <IconHierarchy size={16} />
-            ) : (
-              <IconChartDots3 size={16} />
-            )}
-          </button>
-          <button
-            className={`board-netlines-toggle ${showGhosts ? 'active' : ''}`}
-            onClick={() => boardStore.toggleGhosts()}
-            title={showGhosts ? 'Hidden-side ghosts: ON' : 'Hidden-side ghosts: OFF'}
-          >
-            <IconGhost2 size={16} />
-          </button>
-        </div>
+        {renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
       </div>
       <BoardSidebar
         visible={sidebarOpen}
