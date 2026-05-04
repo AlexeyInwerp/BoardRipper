@@ -18,7 +18,7 @@ var boardExtensions = map[string]bool{
 	".brd": true, // BRD (Apple/Mac), BDV, Allegro
 	".bdv": true, // BDV, BDV ASC
 	".fz":  true, // FZ (ASUS)
-	".cad": true, // GenCAD 1.4
+	".cad": true, // GenCAD 1.4, Mentor Boardstation Neutral
 	".pcb": true, // XZZ
 	".tvw": true, // Teboview
 }
