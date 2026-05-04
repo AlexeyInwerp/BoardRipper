@@ -12,7 +12,7 @@ async function loadBoard(page: Page, filePath: string = REAL_BVR3) {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await page.getByTestId('file-input').setInputFiles(filePath);
-  await expect(page.getByTestId('statusbar')).toContainText('parts', { timeout: 15000 });
+  await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 15000 });
 }
 
 test.describe('Overlay layout reconciliation', () => {
@@ -78,6 +78,24 @@ test.describe('Overlay layout reconciliation', () => {
     expect(ids).toContain('partsDropdown');
     expect(ids).toContain('netsDropdown');
     expect(ids).toContain('sep1');
+  });
+});
+
+test.describe('Parts dropdown', () => {
+  test('opens, filters, and focuses a part on selection', async ({ page }) => {
+    await loadBoard(page);
+    await page.waitForSelector('[data-testid="parts-dropdown-button"]');
+
+    await page.click('[data-testid="parts-dropdown-button"]');
+    await page.waitForSelector('.overlay-dropdown-popover');
+
+    await page.fill('.overlay-dropdown-input', 'U0500');
+    // U0500 is the only part matching this filter in the sample board.
+    await page.keyboard.press('Enter');
+
+    // Selected name should be reflected in the StatusBar
+    const status = await page.locator('.statusbar').textContent();
+    expect(status).toMatch(/Selected:\s*U0500\b/);
   });
 });
 

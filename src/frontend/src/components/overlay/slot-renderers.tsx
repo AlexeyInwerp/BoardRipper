@@ -10,6 +10,7 @@ import { NetDimButton }     from './slots/NetDimButton';
 import { NetLinesButton }   from './slots/NetLinesButton';
 import { GhostsButton }     from './slots/GhostsButton';
 import { Separator }        from './slots/Separator';
+import { PartsDropdown }    from './slots/PartsDropdown';
 
 /**
  * Returns the rendered ReactNode for a given slot id. Returns null for
@@ -28,8 +29,8 @@ export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
     case 'ghosts':        return <GhostsButton     ctx={ctx} />;
     case 'sep1':          return <Separator />;
     case 'sep2':          return <Separator />;
-    case 'partsDropdown': return null;  // implemented in Phase 3
-    case 'netsDropdown':  return null;  // implemented in Phase 3
+    case 'partsDropdown': return <PartsDropdown ctx={ctx} />;
+    case 'netsDropdown':  return null;  // implemented in Task 12
   }
 }
 
