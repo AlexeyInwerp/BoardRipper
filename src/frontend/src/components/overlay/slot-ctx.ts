@@ -10,7 +10,7 @@ export interface SlotCtx {
   tabId: number;
   thisTab: {
     netLineMode: 'off' | 'star' | 'chain';
-    showNetDim: boolean;
+    dimMode: 'off' | 'dim' | 'darklight';
     showHoverInfo: boolean;
     showGhosts: boolean;
     followPdf: boolean;

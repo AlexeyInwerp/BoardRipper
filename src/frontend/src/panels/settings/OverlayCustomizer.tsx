@@ -16,7 +16,6 @@ export function OverlayCustomizer() {
   const overlayNetsOnSelect  = s.overlayNetsOnSelect  ?? DEFAULTS.overlayNetsOnSelect;
   const overlayPosition      = s.overlayPosition      ?? DEFAULTS.overlayPosition;
   const searchAutoDim        = s.searchAutoDim        ?? DEFAULTS.searchAutoDim;
-  const selectionHalo        = s.selectionHalo        ?? DEFAULTS.selectionHalo;
 
   return (
     <div className="overlay-customizer">
@@ -91,17 +90,6 @@ export function OverlayCustomizer() {
             onChange={e => { try { renderSettingsStore.setSearchAutoDim(e.target.checked); } catch { /* tolerate stale store */ } }}
           />
           {' '}Auto-dim while a searched part/net is selected
-        </label>
-      </div>
-
-      <div className="settings-row">
-        <label>
-          <input
-            type="checkbox"
-            checked={selectionHalo}
-            onChange={e => { try { renderSettingsStore.setSelectionHalo(e.target.checked); } catch { /* tolerate stale store */ } }}
-          />
-          {' '}Darken surroundings of selected component
         </label>
       </div>
 

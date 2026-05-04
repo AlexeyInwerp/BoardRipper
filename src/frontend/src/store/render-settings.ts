@@ -226,8 +226,9 @@ export interface RenderSettings {
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
-  /** Show a soft halo (radial-gradient sprite) around the currently-selected
-   *  part to keep it visible on dense boards. */
+  /** @deprecated — spotlight is now the 'darklight' dimMode on the dim button.
+   *  Field kept so saved localStorage settings don't error on load; no longer
+   *  surfaced in the Settings UI. */
   selectionHalo: boolean;
 }
 

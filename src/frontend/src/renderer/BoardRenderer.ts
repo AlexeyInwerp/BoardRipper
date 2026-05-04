@@ -281,7 +281,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -1908,14 +1908,14 @@ export class BoardRenderer {
         || sel.highlightedNet !== lrs.highlightedNet
         || searchLen !== lrs.searchLen
         || this.board !== lrs.board
-        || boardStore.showNetDim !== lrs.showNetDim
+        || boardStore.dimMode !== lrs.dimMode
         || boardStore.butterfly !== lrs.butterfly
         || boardStore.showTop !== lrs.showTop
         || boardStore.showBottom !== lrs.showBottom
         || boardStore.showGhosts !== lrs.showGhosts
         || boardStore.searchSelectionActive !== lrs.searchSelectionActive) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, showNetDim: boardStore.showNetDim, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
       }
 
       // PDF follow mode: search for selected component
@@ -2413,11 +2413,10 @@ export class BoardRenderer {
    *  selection. Called from renderSelection() after the selection state
    *  has been applied. */
   private updateHalo() {
-    const s = renderSettingsStore.settings;
     const sel = boardStore.selection;
     const board = this.board;
 
-    if (!s.selectionHalo || sel.partIndex === null || !board) {
+    if (boardStore.dimMode !== 'darklight' || sel.partIndex === null || !board) {
       if (this._haloSprite) this._haloSprite.visible = false;
       return;
     }
@@ -2736,21 +2735,23 @@ export class BoardRenderer {
     }
 
     // ── Determine the effective net to highlight (selection or hover in ambient dim) ──
+    const dimMode = boardStore.dimMode;
+    const searchForcesDim = (s.searchAutoDim ?? true) && boardStore.searchSelectionActive;
+    // 'dim' mode (or search-forced dim) draws the full dark overlay.
+    // 'darklight' mode skips the overlay rect and only shows the spotlight sprite.
+    const showDim = dimMode === 'dim' || searchForcesDim;
+    const showSpotlight = dimMode === 'darklight';
     const effectiveNet = sel.highlightedNet
-      || (s.ambientDim && boardStore.showNetDim && boardStore.showHoverInfo ? this.hoverNet : null);
+      || (s.ambientDim && showDim && boardStore.showHoverInfo ? this.hoverNet : null);
     // Ambient dim: draw overlay even when nothing is selected/hovered.
-    // searchAutoDim: automatically apply dim when a search-driven selection is
-    // active (focusPart / focusNet path), even if the user's toggle is off.
-    const showDim = boardStore.showNetDim
-      || ((s.searchAutoDim ?? true) && boardStore.searchSelectionActive);
     const needsAmbientDim = s.ambientDim && showDim && !effectiveNet;
 
     // Either ambient dim or the spotlight is in play — both darken the
     // selected part's pins, so we re-draw them above the overlay below.
     // Spotlight-only mode skips the dim rect (that would dim the whole
     // board); only the per-part pin redraw runs.
-    const haloActive = s.selectionHalo && sel.partIndex !== null && !effectiveNet;
-    if (needsAmbientDim || haloActive) {
+    const spotlightActive = showSpotlight && sel.partIndex !== null && !effectiveNet;
+    if (needsAmbientDim || spotlightActive) {
       if (needsAmbientDim) {
         const b = this.board.bounds;
         const bw = b.maxX - b.minX;
@@ -3922,7 +3923,7 @@ export class BoardRenderer {
     this.hoverNet = net;
     // In ambient dim mode, hover changes which pins are punched through the overlay
     const s2 = renderSettingsStore.settings;
-    if (s2.ambientDim && (boardStore.showNetDim || ((s2.searchAutoDim ?? true) && boardStore.searchSelectionActive))) {
+    if (s2.ambientDim && (boardStore.dimMode === 'dim' || ((s2.searchAutoDim ?? true) && boardStore.searchSelectionActive))) {
       this.renderSelection();
     }
   }
