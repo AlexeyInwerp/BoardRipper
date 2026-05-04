@@ -16,6 +16,7 @@ import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
+import type { SelectionState, NetLineMode } from '../store/board-store';
 import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
@@ -303,7 +304,7 @@ export class BoardRenderer {
 
   // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
   // Only recomputed when selection, viewport, or visibility changes.
-  private netLineSegments: { start: Point; end: Point }[] = [];
+  private netLineSegments: Array<{ start: Point; end: Point; color: number }> = [];
   private netLinesDirty = true;
   /** Extra state tracked for fade logic */
   private netLineFadeDist = 0;
@@ -3336,7 +3337,7 @@ export class BoardRenderer {
 
   // --- Net lines rendering ---
 
-  /** Recompute cached net line segments (start/end points) when selection or viewport changes */
+  /** Recompute cached net line segments (start/end points + color) when selection or viewport changes */
   private recomputeNetLineSegments() {
     this.netLineSegments = [];
     this.netLineFadeDist = 0;
@@ -3348,19 +3349,46 @@ export class BoardRenderer {
     const sel = boardStore.selection;
     if (!sel.highlightedNet) return;
 
-    const net = this.board.nets.get(sel.highlightedNet);
-    if (!net) return;
-
     const s = renderSettingsStore.settings;
 
+    type NetEntry = { name: string; color: number };
+    const activeNets: NetEntry[] = [{ name: sel.highlightedNet, color: s.netLineColor }];
+    if (mode === 'chain-adjacent') {
+      for (const adj of sel.adjacentNets) {
+        activeNets.push({ name: adj, color: s.adjacentNetLineColor });
+      }
+    }
+
+    for (const entry of activeNets) {
+      this.appendNetLineSegmentsFor(entry.name, entry.color, mode, sel, s);
+    }
+  }
+
+  /** Build segments for a single net and append them to `netLineSegments`,
+   *  tagging each with `color`. Extracted from the original
+   *  recomputeNetLineSegments body. */
+  private appendNetLineSegmentsFor(
+    netName: string,
+    color: number,
+    mode: NetLineMode,
+    sel: SelectionState,
+    s: import('../store/render-settings').RenderSettings,
+  ) {
+    if (!this.board) return;
+    const net = this.board.nets.get(netName);
+    if (!net) return;
+
     // Skip GND/NC nets — GND connects too many components, NC is not a real net.
-    const netUpper = sel.highlightedNet.toUpperCase();
+    const netUpper = netName.toUpperCase();
     if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
 
-    // Star needs an anchor (selected part). When the highlight came from a PDF
-    // net lookup or trace click, partIndex is null — fall through to chain so
-    // the user still sees the connectivity.
-    if (mode === 'star' && sel.partIndex !== null) {
+    // For chain-adjacent, force chain topology on adjacent nets even if the
+    // primary selection prefers star — star requires a part anchor that the
+    // adjacent net does not have. The selected net keeps its mode.
+    const isPrimary = netName === sel.highlightedNet;
+    const effectiveMode: NetLineMode = isPrimary ? mode : 'chain';
+
+    if (effectiveMode === 'star' && sel.partIndex !== null && isPrimary) {
       // ── Star topology from selected part to all others on the net ──
       const selectedPartIdx = sel.partIndex;
       const selectedPart = this.board.parts[selectedPartIdx];
@@ -3373,7 +3401,6 @@ export class BoardRenderer {
         ? this.sceneToWorld(selectedPin.position, selectedRoot)
         : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
 
-      // Group net pin indices by target part
       const partNetPins = new Map<number, number[]>();
       for (const ref of net.pinIndices) {
         if (ref.partIndex === sel.partIndex) continue;
@@ -3391,7 +3418,6 @@ export class BoardRenderer {
 
         const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
 
-        // Find the net pin closest to the selection origin
         let bestPin: Point | null = null;
         let bestDist = Infinity;
         for (const pi of pinIndices) {
@@ -3406,16 +3432,15 @@ export class BoardRenderer {
 
         if (bestPin) {
           const start = this.clipToRectEdge(selCenterW, bestPin, selEB, selectedRoot);
-          this.netLineSegments.push({ start, end: bestPin });
+          this.netLineSegments.push({ start, end: bestPin, color });
         }
         targetCount++;
       }
 
       const vpScale = Math.abs(this.viewport.scale.x);
-      this.netLineFadeDist = targetCount > 8 ? 60 / vpScale : 0;
+      this.netLineFadeDist = Math.max(this.netLineFadeDist, targetCount > 8 ? 60 / vpScale : 0);
     } else {
-      // ── Chain mode: greedy MST connecting every part on the net ──
-      // Collect visible parts with world-space centers (only computed for this mode).
+      // ── Chain mode: greedy MST connecting every part on this net ──
       type NetPartInfo = { partIndex: number; center: Point; eb: ReturnType<typeof computePartRenderBounds>; root: Container | undefined };
       const netParts: NetPartInfo[] = [];
       const seenParts = new Set<number>();
@@ -3433,7 +3458,6 @@ export class BoardRenderer {
       }
       if (netParts.length < 2) return;
 
-      // Build a greedy minimum spanning tree so each part connects to its closest neighbor.
       const connected = new Set<number>([0]);
       const remaining = new Set<number>();
       for (let i = 1; i < netParts.length; i++) remaining.add(i);
@@ -3456,7 +3480,7 @@ export class BoardRenderer {
         const a = netParts[bestI], b = netParts[bestJ];
         const start = this.clipToRectEdge(a.center, b.center, a.eb, a.root);
         const end = this.clipToRectEdge(b.center, a.center, b.eb, b.root);
-        this.netLineSegments.push({ start, end });
+        this.netLineSegments.push({ start, end, color });
       }
     }
   }
@@ -3466,7 +3490,6 @@ export class BoardRenderer {
     this.needsRender = true;
     this.netLinesGfx.clear();
 
-    // Recompute geometry only when dirty (selection/viewport changed)
     if (this.netLinesDirty) this.recomputeNetLineSegments();
     if (this.netLineSegments.length === 0) return;
 
@@ -3474,32 +3497,39 @@ export class BoardRenderer {
     const vpScale = Math.abs(this.viewport.scale.x);
     const lineW = s.netLineWidth / vpScale;
 
-    // Pulse color: oscillate between net line color and red
     const pulseT = s.netLinePulse ? (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2 : 0;
-    const baseColor = s.netLineColor;
     const pulseColor = 0xcc2222;
-    const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
 
-    // Dash offset animation (screen pixels converted to world)
     const dashLen = s.netLineDashLength / vpScale;
     const dashOffset = s.netLineDashed ? (this.netLinePulsePhase * dashLen * 2) : 0;
 
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    if (!useFade && !s.netLineDashed) {
-      // Fast path: batch all segments into a single stroke() call
-      for (const { start, end } of this.netLineSegments) {
-        this.netLinesGfx.moveTo(start.x, start.y);
-        this.netLinesGfx.lineTo(end.x, end.y);
-      }
-      this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
-    } else {
-      for (const { start, end } of this.netLineSegments) {
-        if (useFade) {
-          this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-        } else {
-          this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+    // Group segments by base color so we can keep the fast batched-stroke path
+    // when fade/dash are off. The grouping cost is O(N) and tiny for typical N.
+    const byColor = new Map<number, Array<{ start: Point; end: Point }>>();
+    for (const seg of this.netLineSegments) {
+      let arr = byColor.get(seg.color);
+      if (!arr) { arr = []; byColor.set(seg.color, arr); }
+      arr.push({ start: seg.start, end: seg.end });
+    }
+
+    for (const [baseColor, segs] of byColor) {
+      const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
+      if (!useFade && !s.netLineDashed) {
+        for (const { start, end } of segs) {
+          this.netLinesGfx.moveTo(start.x, start.y);
+          this.netLinesGfx.lineTo(end.x, end.y);
+        }
+        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+      } else {
+        for (const { start, end } of segs) {
+          if (useFade) {
+            this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+          } else {
+            this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+          }
         }
       }
     }
