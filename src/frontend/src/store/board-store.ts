@@ -18,15 +18,17 @@ export interface SelectionState {
 
 /**
  * Net-line visualization mode. Cycles via the toolbar button:
- *   off   → no connecting lines drawn
- *   star  → lines radiate from the selected pin/part to nearest pin on every
- *           other part on the net (anchor required — nothing drawn if no part
- *           is selected, e.g. when the net came from a PDF lookup)
- *   chain → greedy minimum-spanning tree across all parts on the net; works
- *           with or without a selected part (this is what PDF lookups always
- *           used before the toggle existed)
+ *   off            → no connecting lines drawn
+ *   star           → lines radiate from the selected pin/part to nearest
+ *                    pin on every other part on the net (anchor required)
+ *   chain          → greedy minimum-spanning tree across all parts on the
+ *                    selected net
+ *   chain-adjacent → chain mode + propagate the highlight one hop through
+ *                    2-pin components to adjacent nets (drawn in
+ *                    `adjacentNetLineColor`); ground nets are skipped,
+ *                    power rails terminate (no further recursion)
  */
-export type NetLineMode = 'off' | 'star' | 'chain';
+export type NetLineMode = 'off' | 'star' | 'chain' | 'chain-adjacent';
 
 export interface BoardTab {
   id: number;
@@ -368,7 +370,12 @@ function loadViewPrefs(): ViewPrefs {
         merged.netLineMode = parsed.showNetLines ? 'star' : 'off';
       }
       // Sanitize against invalid persisted values
-      if (merged.netLineMode !== 'off' && merged.netLineMode !== 'star' && merged.netLineMode !== 'chain') {
+      if (
+        merged.netLineMode !== 'off' &&
+        merged.netLineMode !== 'star' &&
+        merged.netLineMode !== 'chain' &&
+        merged.netLineMode !== 'chain-adjacent'
+      ) {
         merged.netLineMode = 'off';
       }
       // Migrate legacy showNetDim boolean → dimMode tri-state
@@ -1240,13 +1247,14 @@ class BoardStore extends Emitter {
     saveViewPrefs({ netLineMode: tab.netLineMode, dimMode: tab.dimMode, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
-  /** Cycle the net-line visualization: off → star → chain → off. */
+  /** Cycle the net-line visualization: off → star → chain → chain-adjacent → off. */
   cycleNetLineMode() {
     const tab = this.activeTab;
     if (!tab) return;
     const next: NetLineMode =
       tab.netLineMode === 'off' ? 'star' :
-      tab.netLineMode === 'star' ? 'chain' : 'off';
+      tab.netLineMode === 'star' ? 'chain' :
+      tab.netLineMode === 'chain' ? 'chain-adjacent' : 'off';
     this.updateActiveTab({ netLineMode: next });
     this._saveCurrentViewPrefs();
     this.notify();

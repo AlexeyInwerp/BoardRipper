@@ -1,6 +1,7 @@
 // src/frontend/src/components/overlay/slot-ctx.ts
 import type React from 'react';
 import type { BoardRenderer } from '../../renderer/BoardRenderer';
+import type { NetLineMode } from '../../store/board-store';
 
 /**
  * Context handed to every overlay slot renderer. Keep this minimal — slots
@@ -9,7 +10,7 @@ import type { BoardRenderer } from '../../renderer/BoardRenderer';
 export interface SlotCtx {
   tabId: number;
   thisTab: {
-    netLineMode: 'off' | 'star' | 'chain';
+    netLineMode: NetLineMode;
     dimMode: 'off' | 'dim' | 'darklight';
     showHoverInfo: boolean;
     showGhosts: boolean;
