@@ -82,6 +82,12 @@ export interface BoardTab {
   /** XZZ multi-board selection. null = show all boards. An index selects the
    *  group at that position in `board.boardGroups`. */
   selectedBoardIndex: number | null;
+  /** True while the current selection was established via focusPart() or
+   *  focusNet() (search-style paths). Cleared by canvas clicks (selectPart,
+   *  selectPin), by highlightNet, and by any method that resets to
+   *  emptySelection. Used by the renderer to OR-in auto-dim even when the
+   *  user's showNetDim toggle is off. */
+  searchSelectionActive: boolean;
   /** Cached presented view of `board` — computed from (board, foldMode,
    *  selectedBoardIndex) via `deriveBoardView`. Invalidated whenever any of
    *  those inputs change. Consumers should read `boardStore.board` (which
@@ -402,6 +408,7 @@ class BoardStore extends Emitter {
   get showNetDim(): boolean { return this.activeTab?.showNetDim ?? true; }
   get showHoverInfo(): boolean { return this.activeTab?.showHoverInfo ?? true; }
   get followPdf(): boolean { return this.activeTab?.followPdf ?? false; }
+  get searchSelectionActive(): boolean { return this.activeTab?.searchSelectionActive ?? false; }
 
   /** All PDF Files bound to the active board tab */
   get boundPdfFiles(): File[] {
@@ -596,6 +603,7 @@ class BoardStore extends Emitter {
         swappedGhostPairs: new Set<string>(),
         foldMode: 'suggested',
         selectedBoardIndex: null,
+        searchSelectionActive: false,
       };
 
       this._tabs.push(tab);
@@ -767,6 +775,7 @@ class BoardStore extends Emitter {
   selectPart(partIndex: number | null) {
     this.updateActiveTab({
       selection: { partIndex, pinIndex: null, highlightedNet: null },
+      searchSelectionActive: false,
     });
     this.notify();
   }
@@ -777,6 +786,7 @@ class BoardStore extends Emitter {
     const pin = part?.pins[pinIndex];
     this.updateActiveTab({
       selection: { partIndex, pinIndex, highlightedNet: pin?.net || null },
+      searchSelectionActive: false,
     });
     this.notify();
   }
@@ -786,6 +796,7 @@ class BoardStore extends Emitter {
     if (!tab) return;
     this.updateActiveTab({
       selection: { ...tab.selection, highlightedNet: netName },
+      searchSelectionActive: false,
     });
     this.notify();
   }
@@ -871,6 +882,7 @@ class BoardStore extends Emitter {
     tab.board = buildRenderedBoard(tab.board, target, tab.hideGhosts, tab.swappedGhostPairs);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
+    tab.searchSelectionActive = false;
     tab.searchQuery = '';
     this.notify();
   }
@@ -893,6 +905,7 @@ class BoardStore extends Emitter {
     tab.board = buildRenderedBoard(tab.board, rev, next, tab.swappedGhostPairs);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
+    tab.searchSelectionActive = false;
     this.notify();
   }
 
@@ -916,6 +929,7 @@ class BoardStore extends Emitter {
       tab.board = buildRenderedBoard(tab.board, rev, true, next);
       invalidateDerivedBoard(tab);
       tab.selection = emptySelection;
+      tab.searchSelectionActive = false;
     }
     this.notify();
   }
@@ -927,6 +941,7 @@ class BoardStore extends Emitter {
     invalidateDerivedBoard(tab);
     // Clear any stale selection so it doesn't point at a now-hidden part.
     tab.selection = { ...emptySelection };
+    tab.searchSelectionActive = false;
     // NOTE: we deliberately do NOT call `syncMirrorsToDerivedFold` here.
     // For butterfly files (1 detected board) toggling fold mode flips
     // between the parser's pre-folded view and the raw side-by-side view,
@@ -943,6 +958,7 @@ class BoardStore extends Emitter {
     this.updateActiveTab({ selectedBoardIndex: idx });
     invalidateDerivedBoard(tab);
     tab.selection = { ...emptySelection };
+    tab.searchSelectionActive = false;
     syncMirrorsToDerivedFold(tab);
     this.requestFitDerivedBoard(tab);
     this.notify();
@@ -1000,6 +1016,7 @@ class BoardStore extends Emitter {
       tab.board = board;
       invalidateDerivedBoard(tab);
       tab.selection = emptySelection;
+      tab.searchSelectionActive = false;
       tab.searchQuery = '';
       await boardCache.put(file.name, file.size, file.lastModified, board);
       this.notify();
@@ -1028,6 +1045,7 @@ class BoardStore extends Emitter {
         tab.board = board;
         invalidateDerivedBoard(tab);
         tab.selection = emptySelection;
+        tab.searchSelectionActive = false;
         tab.searchQuery = '';
         await boardCache.put(file.name, file.size, file.lastModified, board);
         reparsed++;
@@ -1323,6 +1341,7 @@ class BoardStore extends Emitter {
 
     this.updateActiveTab({
       selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null },
+      searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
     this.notify();
@@ -1359,6 +1378,7 @@ class BoardStore extends Emitter {
 
     this.updateActiveTab({
       selection: { partIndex: null, pinIndex: null, highlightedNet: name },
+      searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
     this.notify();

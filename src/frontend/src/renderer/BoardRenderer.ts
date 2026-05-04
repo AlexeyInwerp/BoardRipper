@@ -11,7 +11,7 @@
  *  - Reacts to renderSettingsStore changes and rebuilds the scene as needed
  *
  */
-import { Application, Graphics, Container, BitmapText, Text, RenderLayer, extensions, CullerPlugin } from 'pixi.js';
+import { Application, Graphics, Container, BitmapText, Text, RenderLayer, extensions, CullerPlugin, Sprite, Texture } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
@@ -277,8 +277,11 @@ export class BoardRenderer {
   // Selection blink state (triggered by focusPart / PDF reverse search)
   private selectionBlinkPhase = 0;
   private selectionBlinkTimer: ReturnType<typeof setTimeout> | null = null;
+  // Halo sprite — soft glow drawn under the selected part
+  private _haloTexture: Texture | null = null;
+  private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true, showGhosts: true };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, showNetDim: false, butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -1638,6 +1641,7 @@ export class BoardRenderer {
 
     // Detach old scene (netDimGfx + selectionGfx + elevated labels live inside root)
     if (this.activeScene) {
+      this.teardownHalo(); // detach halo from old scene's root before switching
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
@@ -1908,9 +1912,10 @@ export class BoardRenderer {
         || boardStore.butterfly !== lrs.butterfly
         || boardStore.showTop !== lrs.showTop
         || boardStore.showBottom !== lrs.showBottom
-        || boardStore.showGhosts !== lrs.showGhosts) {
+        || boardStore.showGhosts !== lrs.showGhosts
+        || boardStore.searchSelectionActive !== lrs.searchSelectionActive) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, showNetDim: boardStore.showNetDim, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, showNetDim: boardStore.showNetDim, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
       }
 
       // PDF follow mode: search for selected component
@@ -2379,6 +2384,89 @@ export class BoardRenderer {
     this.onSettingsUpdate();
   }
 
+  // --- Selection halo ---
+
+  /** Build (once, lazily) the radial-gradient texture used for the selection halo. */
+  private buildHaloTexture(): Texture {
+    if (this._haloTexture) return this._haloTexture;
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const r = size / 2;
+    const grad = ctx.createRadialGradient(r, r, r * 0.45, r, r, r);
+    grad.addColorStop(0,    'rgba(255, 230, 100, 0.55)');
+    grad.addColorStop(0.55, 'rgba(255, 230, 100, 0.20)');
+    grad.addColorStop(1,    'rgba(255, 230, 100, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    this._haloTexture = Texture.from(canvas);
+    return this._haloTexture;
+  }
+
+  /** Update the halo sprite position/visibility to match the current selection.
+   *  Called from renderSelection() after the selection state has been applied. */
+  private updateHalo() {
+    const s = renderSettingsStore.settings;
+    const sel = boardStore.selection;
+    const board = this.board;
+
+    // Hide when no part selected or setting disabled
+    if (!s.selectionHalo || sel.partIndex === null || !board) {
+      if (this._haloSprite) this._haloSprite.visible = false;
+      return;
+    }
+
+    const part = board.parts[sel.partIndex];
+    if (!part || !this.isPartVisible(part)) {
+      if (this._haloSprite) this._haloSprite.visible = false;
+      return;
+    }
+
+    // Lazily create the sprite
+    if (!this._haloSprite) {
+      const tex = this.buildHaloTexture();
+      const spr = new Sprite(tex);
+      spr.anchor.set(0.5, 0.5);
+      spr.zIndex = -1; // beneath all part content
+      this._haloSprite = spr;
+    }
+
+    const root = this.rootForPart(part);
+    if (!root) {
+      this._haloSprite.visible = false;
+      return;
+    }
+
+    // Attach to the correct root (butterfly-aware) if not already there
+    if (this._haloSprite.parent !== root) {
+      if (this._haloSprite.parent) this._haloSprite.parent.removeChild(this._haloSprite);
+      root.addChild(this._haloSprite);
+    }
+
+    // Size: 2.2× the larger of bounding-box width/height
+    const b = part.bounds;
+    const bw = b.maxX - b.minX;
+    const bh = b.maxY - b.minY;
+    const maxDim = Math.max(bw, bh, 1);
+    const spriteSize = maxDim * 2.2;
+
+    this._haloSprite.width  = spriteSize;
+    this._haloSprite.height = spriteSize;
+    this._haloSprite.x = (b.minX + b.maxX) / 2;
+    this._haloSprite.y = (b.minY + b.maxY) / 2;
+    this._haloSprite.visible = true;
+  }
+
+  /** Remove the halo sprite from its parent and hide it (called on scene switch
+   *  and destroy so we never leave a dangling reference). */
+  private teardownHalo() {
+    if (this._haloSprite) {
+      if (this._haloSprite.parent) this._haloSprite.parent.removeChild(this._haloSprite);
+      this._haloSprite.visible = false;
+    }
+  }
+
   // --- Selection blink ---
 
   private startSelectionBlink() {
@@ -2617,8 +2705,11 @@ export class BoardRenderer {
     // ── Determine the effective net to highlight (selection or hover in ambient dim) ──
     const effectiveNet = sel.highlightedNet
       || (s.ambientDim && boardStore.showNetDim && boardStore.showHoverInfo ? this.hoverNet : null);
-    // Ambient dim: draw overlay even when nothing is selected/hovered
-    const showDim = boardStore.showNetDim;
+    // Ambient dim: draw overlay even when nothing is selected/hovered.
+    // searchAutoDim: automatically apply dim when a search-driven selection is
+    // active (focusPart / focusNet path), even if the user's toggle is off.
+    const showDim = boardStore.showNetDim
+      || ((s.searchAutoDim ?? true) && boardStore.searchSelectionActive);
     const needsAmbientDim = s.ambientDim && showDim && !effectiveNet;
 
     if (needsAmbientDim) {
@@ -2957,6 +3048,9 @@ export class BoardRenderer {
 
     // ── Selection overlay (big centered text) ─────────────────────────────
     this.updateSelectionOverlay(sel, s);
+
+    // ── Selection halo ────────────────────────────────────────────────────
+    this.updateHalo();
 
     if (perf) this.perfAccum.selection += performance.now() - selStart;
 
@@ -3786,7 +3880,8 @@ export class BoardRenderer {
     if (net === this.hoverNet) return;
     this.hoverNet = net;
     // In ambient dim mode, hover changes which pins are punched through the overlay
-    if (renderSettingsStore.settings.ambientDim && boardStore.showNetDim) {
+    const s2 = renderSettingsStore.settings;
+    if (s2.ambientDim && (boardStore.showNetDim || ((s2.searchAutoDim ?? true) && boardStore.searchSelectionActive))) {
       this.renderSelection();
     }
   }
@@ -4077,6 +4172,7 @@ export class BoardRenderer {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;
     }
+    this.teardownHalo();
     if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }

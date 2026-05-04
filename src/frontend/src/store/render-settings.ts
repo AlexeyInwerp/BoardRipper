@@ -223,6 +223,12 @@ export interface RenderSettings {
   /** Overlay row position. 'left' (default) keeps the row in its
    *  historical position. 'center' centers it horizontally. */
   overlayPosition: 'left' | 'center';
+  /** Auto-enable selection-dim while a search-driven selection (focusPart /
+   *  focusNet) is active, even if the user's showNetDim toggle is off. */
+  searchAutoDim: boolean;
+  /** Show a soft halo (radial-gradient sprite) around the currently-selected
+   *  part to keep it visible on dense boards. */
+  selectionHalo: boolean;
 }
 
 /** Check if a net name matches any NC (no-connect) pattern in settings.
@@ -351,6 +357,8 @@ export const DEFAULTS: RenderSettings = {
   overlayPartsOnSelect: 'panZoomFit',
   overlayNetsOnSelect: 'panZoomFit',
   overlayPosition: 'left',
+  searchAutoDim: true,
+  selectionHalo: true,
 };
 
 /** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */
@@ -1035,6 +1043,20 @@ class RenderSettingsStore extends Emitter {
       overlayNetsOnSelect: 'panZoomFit',
       overlayPosition: 'left',
     };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setSearchAutoDim(v: boolean) {
+    this._global = { ...this._global, searchAutoDim: v };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setSelectionHalo(v: boolean) {
+    this._global = { ...this._global, selectionHalo: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();
