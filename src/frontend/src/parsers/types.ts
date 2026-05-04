@@ -524,6 +524,63 @@ export function isPowerRail(net: string): boolean {
 }
 
 /**
+ * BFS over the connectivity graph induced by 2-pin components, starting from
+ * `anchorNet`. Returns the set of adjacent net names reachable within
+ * `depth` hops. The anchor itself is never included.
+ *
+ * Pruning rules per hop into a candidate net `N`:
+ *   - If `isGroundRail(N)`: skip entirely (not added, not recursed).
+ *   - If `isPowerRail(N)` (and not ground): add to result, but do not
+ *     recurse from `N` (terminator).
+ *   - Otherwise: add to result and recurse from `N` (subject to depth).
+ *
+ * If the anchor itself is a power rail (incl. ground), returns an empty
+ * set — clicking GND or VCC must not produce a whole-board explosion.
+ */
+export function computeAdjacentNets(
+  board: BoardData,
+  anchorNet: string,
+  depth: number,
+): Set<string> {
+  const result = new Set<string>();
+  if (depth <= 0) return result;
+  if (!anchorNet) return result;
+  if (isPowerRail(anchorNet)) return result;
+  if (!board.nets.has(anchorNet)) return result;
+
+  // BFS frontier: nets to expand at the current depth level.
+  let frontier: string[] = [anchorNet];
+  const visited = new Set<string>([anchorNet]);
+
+  for (let d = 0; d < depth && frontier.length > 0; d++) {
+    const next: string[] = [];
+    for (const netName of frontier) {
+      const net = board.nets.get(netName);
+      if (!net) continue;
+      // Walk every 2-pin part on this net; cross over to the other pin's net.
+      const seenParts = new Set<number>();
+      for (const ref of net.pinIndices) {
+        if (seenParts.has(ref.partIndex)) continue;
+        seenParts.add(ref.partIndex);
+        const part = board.parts[ref.partIndex];
+        if (!part || part.pins.length !== 2) continue;
+        const otherPin = part.pins[1 - ref.pinIndex];
+        if (!otherPin) continue;
+        const otherNet = otherPin.net;
+        if (!otherNet || otherNet === netName || visited.has(otherNet)) continue;
+        if (isGroundRail(otherNet)) continue;          // skip entirely
+        visited.add(otherNet);
+        result.add(otherNet);
+        if (!isPowerRail(otherNet)) next.push(otherNet); // recurse only signals
+      }
+    }
+    frontier = next;
+  }
+
+  return result;
+}
+
+/**
  * Detect "ghost" components — overlapping pairs on the same side where one
  * part's net set is a subset of the other's AND the shared connectivity goes
  * beyond power/ground rails (so heatsinks and EMI shields don't trip the
