@@ -1,4 +1,4 @@
-import { renderSettingsStore } from '../../store/render-settings';
+import { renderSettingsStore, DEFAULTS } from '../../store/render-settings';
 import { useRenderSettings } from '../../hooks/useRenderSettings';
 
 const ON_SELECT_MODES = [
@@ -9,6 +9,12 @@ const ON_SELECT_MODES = [
 
 export function OverlayCustomizer() {
   const s = useRenderSettings();
+
+  // Defensive defaults — guard against missing fields from stale localStorage
+  const showSelectionOverlay = s.showSelectionOverlay ?? DEFAULTS.showSelectionOverlay;
+  const overlayPartsOnSelect = s.overlayPartsOnSelect ?? DEFAULTS.overlayPartsOnSelect;
+  const overlayNetsOnSelect  = s.overlayNetsOnSelect  ?? DEFAULTS.overlayNetsOnSelect;
+  const overlayPosition      = s.overlayPosition      ?? DEFAULTS.overlayPosition;
 
   return (
     <div className="overlay-customizer">
@@ -21,11 +27,26 @@ export function OverlayCustomizer() {
         <label>
           <input
             type="checkbox"
-            checked={s.showSelectionOverlay}
-            onChange={e => renderSettingsStore.setShowSelectionOverlay(e.target.checked)}
+            checked={showSelectionOverlay}
+            onChange={e => { try { renderSettingsStore.setShowSelectionOverlay(e.target.checked); } catch { /* ignore */ } }}
           />
           {' '}Show selected component name below overlay
         </label>
+      </div>
+
+      <div className="settings-subsection-label">Overlay row position</div>
+      <div className="settings-row" role="radiogroup" aria-label="Overlay row position">
+        {(['left', 'center'] as const).map(pos => (
+          <label key={pos} style={{ marginRight: 12 }}>
+            <input
+              type="radio"
+              name="overlay-position"
+              checked={overlayPosition === pos}
+              onChange={() => { try { renderSettingsStore.setOverlayPosition(pos); } catch { /* ignore */ } }}
+            />
+            {' '}{pos === 'left' ? 'Left' : 'Centered'}
+          </label>
+        ))}
       </div>
 
       <div className="settings-subsection-label">When you pick a part</div>
@@ -35,8 +56,8 @@ export function OverlayCustomizer() {
             <input
               type="radio"
               name="overlay-parts-on-select"
-              checked={s.overlayPartsOnSelect === m.v}
-              onChange={() => renderSettingsStore.setOverlayPartsOnSelect(m.v)}
+              checked={overlayPartsOnSelect === m.v}
+              onChange={() => { try { renderSettingsStore.setOverlayPartsOnSelect(m.v); } catch { /* ignore */ } }}
             />
             {' '}{m.label}
           </label>
@@ -50,8 +71,8 @@ export function OverlayCustomizer() {
             <input
               type="radio"
               name="overlay-nets-on-select"
-              checked={s.overlayNetsOnSelect === m.v}
-              onChange={() => renderSettingsStore.setOverlayNetsOnSelect(m.v)}
+              checked={overlayNetsOnSelect === m.v}
+              onChange={() => { try { renderSettingsStore.setOverlayNetsOnSelect(m.v); } catch { /* ignore */ } }}
             />
             {' '}{m.label}
           </label>
@@ -60,7 +81,7 @@ export function OverlayCustomizer() {
 
       <button
         className="settings-reset-btn"
-        onClick={() => renderSettingsStore.resetOverlayDefaults()}
+        onClick={() => { try { renderSettingsStore.resetOverlayDefaults(); } catch { /* ignore */ } }}
         data-testid="overlay-reset-btn"
       >
         &#x21BA; Reset to defaults
