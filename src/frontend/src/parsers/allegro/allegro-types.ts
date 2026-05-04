@@ -364,7 +364,9 @@ export interface Blk0x0DPad extends BlockBase {
   unknown2: number;   // u32
   unknown3?: number;  // u32; >= V172
   flags: number;      // u32
-  rotation: number;   // u32; millidegrees, board-absolute
+  rotation: number;   // u32; millidegrees, in the parent footprint's local frame.
+                      // Compose with Blk0x2DFootprintInst.rotation for the
+                      // board-absolute pad orientation.
 }
 
 // --- 0x0E RECT ---
