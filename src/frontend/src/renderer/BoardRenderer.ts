@@ -2388,17 +2388,20 @@ export class BoardRenderer {
 
   /**
    * Build (once, lazily) the radial-gradient texture for the selection
-   * spotlight. Shape: the component sits in a fully transparent core
-   * (maximum brightness, no overlay over it). Just outside the core,
-   * the alpha rises smoothly to a soft dark peak and then fades all
-   * the way back to transparent at the texture edge. There's no visible
-   * ring shape — just a smooth dark "smudge" around the component that
-   * decays into the unaffected far surroundings.
+   * spotlight. The clear core extends to r=0.30 — exactly the same
+   * fraction used to size the sprite around the part (HOLE_FRAC_OF_TEXTURE
+   * in updateHalo). That alignment guarantees no part of the component
+   * ever sits inside a non-zero alpha pixel, so the component renders at
+   * full brightness with its existing selection highlight untouched.
+   *
+   * Outside the core, alpha rises smoothly to a single peak at r=0.50
+   * and then fades all the way back to transparent at the edge — no flat
+   * plateau, so no visible inner-ring shape.
    *
    * Texture layout (r is normalized 0..1 from center to edge):
-   *   r ∈ [0,    0.18] : fully transparent — the component shows through
-   *   r ∈ [0.18, 0.28] : alpha 0 → 0.65 (smooth ramp into peak)
-   *   r ∈ [0.28, 1.00] : alpha 0.65 → 0 (long fade back to clear)
+   *   r ∈ [0,    0.30] : fully transparent — covers the component exactly
+   *   r ∈ [0.30, 0.50] : alpha 0 → 0.65 (gentle ramp into peak)
+   *   r ∈ [0.50, 1.00] : alpha 0.65 → 0 (long fade back to clear)
    */
   private buildHaloTexture(): Texture {
     if (this._haloTexture) return this._haloTexture;
@@ -2409,8 +2412,8 @@ export class BoardRenderer {
     const r = size / 2;
     const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
     grad.addColorStop(0.00, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.18, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.28, 'rgba(0, 0, 0, 0.65)');
+    grad.addColorStop(0.30, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.50, 'rgba(0, 0, 0, 0.65)');
     grad.addColorStop(1.00, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -2456,19 +2459,19 @@ export class BoardRenderer {
     // is a no-op except for moving it to the end.)
     root.addChild(this._haloSprite);
 
-    // Size: the transparent "hole" of the texture occupies r ∈ [0, 0.20],
-    // i.e. 20% of half-width = 10% of the sprite's full size. So setting
-    // spriteSize = holeDiameter / 0.20 makes the hole equal the desired
-    // diameter, with the dark gradient + dark band extending out to 5×
-    // the hole — wide enough to cover surrounding components on dense
-    // boards while still keeping the falloff visible.
+    // Size the sprite so the texture's clear core (r ≤ HOLE_FRAC_OF_TEXTURE
+    // = 0.30) exactly covers the desired hole diameter. With the texture
+    // and this constant aligned, no pixel of the part ever falls inside a
+    // non-zero alpha region — the component stays at full brightness with
+    // its normal selection highlight, and the dark smudge starts strictly
+    // outside the part edge.
     //
     // MIN_HOLE_DIAMETER guards small components (0402 etc.): without it
     // the spotlight collapses smaller than the part itself and looks
     // pointless. 200 mils ≈ 5 mm — comfortable on screen at any zoom.
     const MIN_HOLE_DIAMETER = 200;
-    const HOLE_TO_PART_RATIO = 1.4; // hole is slightly larger than the part
-    const HOLE_FRAC_OF_TEXTURE = 0.20;
+    const HOLE_TO_PART_RATIO = 1.2; // hole is slightly larger than the part
+    const HOLE_FRAC_OF_TEXTURE = 0.30;
 
     const b = part.bounds;
     const bw = b.maxX - b.minX;
