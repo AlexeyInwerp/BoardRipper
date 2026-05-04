@@ -244,7 +244,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
           </div>
         )}
       </div>
-      <div className="board-status-indicators">
+      <div className={`board-status-indicators${renderSettings.overlayPosition === 'center' ? ' center' : ''}`}>
         {renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
       </div>
       <BoardSidebar

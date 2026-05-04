@@ -2046,12 +2046,11 @@ html, body, #root {
   opacity: 1;
 }
 
-/* Board status indicators (centered at top of board panel) */
+/* Board status indicators — left edge by default */
 .board-status-indicators {
   position: absolute;
   top: 6px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 8px;
   z-index: 10;
   display: flex;
   gap: 3px;
@@ -2061,6 +2060,12 @@ html, body, #root {
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   backdrop-filter: blur(4px);
+}
+
+/* Centered variant — toggled by overlayPosition: 'center' setting */
+.board-status-indicators.center {
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .overlay-sep {
@@ -2608,23 +2613,29 @@ html, body, #root {
   margin-top: 1px;
 }
 
-/* Selection overlay (big centered component/net name) — sits below the overlay row */
+/* Selection overlay (big centered component/net name) — pinned to top edge by default */
 .board-selection-overlay {
   position: absolute;
-  top: calc(var(--overlay-row-height, 36px) + 12px);
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   font-family: monospace;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   padding: 3px 14px;
-  border-radius: 8px;
+  border-radius: 0 0 8px 8px;
   pointer-events: none;
   z-index: 10;
   white-space: nowrap;
+}
+
+/* When overlayPosition='center', push overlay below the centered row */
+.board-selection-overlay.below-row {
+  top: calc(var(--overlay-row-height, 36px) + 12px);
+  border-radius: 8px;
 }
 
 .board-perf-overlay {

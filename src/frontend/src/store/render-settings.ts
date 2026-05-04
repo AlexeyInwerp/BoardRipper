@@ -220,6 +220,9 @@ export interface RenderSettings {
   overlayPartsOnSelect: 'highlight' | 'panIfOffscreen' | 'panZoomFit';
   /** Action when picking a net from the Nets dropdown. */
   overlayNetsOnSelect: 'highlight' | 'panIfOffscreen' | 'panZoomFit';
+  /** Overlay row position. 'left' (default) keeps the row in its
+   *  historical position. 'center' centers it horizontally. */
+  overlayPosition: 'left' | 'center';
 }
 
 /** Check if a net name matches any NC (no-connect) pattern in settings.
@@ -347,6 +350,7 @@ export const DEFAULTS: RenderSettings = {
   overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
   overlayPartsOnSelect: 'panZoomFit',
   overlayNetsOnSelect: 'panZoomFit',
+  overlayPosition: 'left',
 };
 
 /** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */
@@ -869,6 +873,10 @@ function loadFromStorage(): RenderSettings {
       if (netsMode === 'highlight' || netsMode === 'panIfOffscreen' || netsMode === 'panZoomFit') {
         result.overlayNetsOnSelect = netsMode;
       }
+
+      if (parsed.overlayPosition === 'left' || parsed.overlayPosition === 'center') {
+        result.overlayPosition = parsed.overlayPosition;
+      }
       return result;
     }
   } catch { /* ignore corrupt data */ }
@@ -1012,12 +1020,20 @@ class RenderSettingsStore extends Emitter {
     this.notify();
   }
 
+  setOverlayPosition(pos: 'left' | 'center') {
+    this._global = { ...this._global, overlayPosition: pos };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
   resetOverlayDefaults() {
     this._global = {
       ...this._global,
       overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
       overlayPartsOnSelect: 'panZoomFit',
       overlayNetsOnSelect: 'panZoomFit',
+      overlayPosition: 'left',
     };
     saveToStorage(this._global);
     this.recomputeEffective();
