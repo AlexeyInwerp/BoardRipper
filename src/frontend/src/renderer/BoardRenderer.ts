@@ -2388,15 +2388,17 @@ export class BoardRenderer {
 
   /**
    * Build (once, lazily) the radial-gradient texture for the selection
-   * spotlight: a soft transparent hole centered on the part fading to a
-   * dark periphery. Drawn on top of board contents so surrounding parts
-   * are darkened — keeps the eye on the picked part without forcing the
-   * full selection-dim mode.
+   * spotlight. Shape: a dark shadow ring hugging the selected component,
+   * fading out to fully transparent at the texture edge. Far-away parts
+   * of the board remain unaffected; only the immediate surroundings of
+   * the picked component dim — making the part pop without blacking
+   * out the rest of the canvas.
    *
    * Texture layout (r is normalized 0..1 from center to edge):
-   *   r ∈ [0,    0.20] : fully transparent (the visible "hole")
-   *   r ∈ [0.20, 0.50] : alpha ramps 0 → SPOTLIGHT_ALPHA (soft falloff)
-   *   r ∈ [0.50, 1.00] : alpha = SPOTLIGHT_ALPHA (solid dark band)
+   *   r ∈ [0,    0.20] : fully transparent — the component shows through
+   *   r ∈ [0.20, 0.30] : alpha 0 → 0.60 (sharp inner edge of the ring)
+   *   r ∈ [0.30, 0.55] : alpha 0.60 (peak darkening — the shadow ring)
+   *   r ∈ [0.55, 1.00] : alpha 0.60 → 0 (gentle fade back to clear)
    */
   private buildHaloTexture(): Texture {
     if (this._haloTexture) return this._haloTexture;
@@ -2408,8 +2410,9 @@ export class BoardRenderer {
     const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
     grad.addColorStop(0.00, 'rgba(0, 0, 0, 0)');
     grad.addColorStop(0.20, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.50, 'rgba(0, 0, 0, 0.55)');
-    grad.addColorStop(1.00, 'rgba(0, 0, 0, 0.55)');
+    grad.addColorStop(0.30, 'rgba(0, 0, 0, 0.60)');
+    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.60)');
+    grad.addColorStop(1.00, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
     this._haloTexture = Texture.from(canvas);
