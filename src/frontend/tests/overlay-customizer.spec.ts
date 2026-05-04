@@ -143,13 +143,13 @@ test.describe('Selected-name label', () => {
     await loadBoard(page);
     await page.waitForSelector('[data-testid="parts-filter-input"]');
 
-    await expect(page.locator('[data-testid="overlay-selected-name"]')).toHaveCount(0);
+    await expect(page.locator('.board-selection-overlay')).toBeHidden();
 
     await page.locator('[data-testid="parts-filter-input"]').focus();
     await page.fill('[data-testid="parts-filter-input"]', 'U0500');
     await page.keyboard.press('Enter');
 
-    await expect(page.locator('[data-testid="overlay-selected-name"]')).toContainText(/U0500\b/);
+    await expect(page.locator('.board-selection-overlay')).toContainText(/U0500\b/);
   });
 });
 

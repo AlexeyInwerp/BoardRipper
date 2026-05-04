@@ -216,8 +216,6 @@ export interface RenderSettings {
 
   /** BoardViewer overlay row — ordered slot list, persisted globally. */
   overlayLayout: OverlaySlot[];
-  /** Whether the "selected component name" label below the overlay is visible. */
-  overlaySelectedNameVisible: boolean;
   /** Action when picking a part from the Parts dropdown. */
   overlayPartsOnSelect: 'highlight' | 'panIfOffscreen' | 'panZoomFit';
   /** Action when picking a net from the Nets dropdown. */
@@ -347,7 +345,6 @@ export const DEFAULTS: RenderSettings = {
   ],
 
   overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
-  overlaySelectedNameVisible: true,
   overlayPartsOnSelect: 'panZoomFit',
   overlayNetsOnSelect: 'panZoomFit',
 };
@@ -863,10 +860,6 @@ function loadFromStorage(): RenderSettings {
       // Reconcile saved overlay layout (drop unknown slots, append new defaults)
       result.overlayLayout = reconcileOverlayLayout(parsed.overlayLayout);
 
-      if (typeof parsed.overlaySelectedNameVisible === 'boolean') {
-        result.overlaySelectedNameVisible = parsed.overlaySelectedNameVisible;
-      }
-
       const partsMode = parsed.overlayPartsOnSelect;
       if (partsMode === 'highlight' || partsMode === 'panIfOffscreen' || partsMode === 'panZoomFit') {
         result.overlayPartsOnSelect = partsMode;
@@ -998,8 +991,8 @@ class RenderSettingsStore extends Emitter {
     this.notify();
   }
 
-  setOverlaySelectedNameVisible(v: boolean) {
-    this._global = { ...this._global, overlaySelectedNameVisible: v };
+  setShowSelectionOverlay(v: boolean) {
+    this._global = { ...this._global, showSelectionOverlay: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();
@@ -1023,7 +1016,6 @@ class RenderSettingsStore extends Emitter {
     this._global = {
       ...this._global,
       overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
-      overlaySelectedNameVisible: true,
       overlayPartsOnSelect: 'panZoomFit',
       overlayNetsOnSelect: 'panZoomFit',
     };

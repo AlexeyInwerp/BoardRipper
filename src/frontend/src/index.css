@@ -2046,11 +2046,12 @@ html, body, #root {
   opacity: 1;
 }
 
-/* Board status indicators (top-left of board panel) */
+/* Board status indicators (centered at top of board panel) */
 .board-status-indicators {
   position: absolute;
   top: 6px;
-  left: 8px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 10;
   display: flex;
   gap: 3px;
@@ -2607,20 +2608,20 @@ html, body, #root {
   margin-top: 1px;
 }
 
-/* Selection overlay (big centered component/net name) — pinned to top edge */
+/* Selection overlay (big centered component/net name) — sits below the overlay row */
 .board-selection-overlay {
   position: absolute;
-  top: 0;
+  top: calc(var(--overlay-row-height, 36px) + 12px);
   left: 50%;
   transform: translateX(-50%);
   font-family: monospace;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: #ffffff;
   background: rgba(0, 0, 0, 0.6);
   padding: 3px 14px;
-  border-radius: 0 0 8px 8px;
+  border-radius: 8px;
   pointer-events: none;
   z-index: 10;
   white-space: nowrap;
@@ -5969,20 +5970,4 @@ html, body, #root {
 .overlay-dropdown-wrap {
   position: relative;
   display: inline-block;
-}
-
-.overlay-selected-name {
-  position: absolute;
-  /* Sits flush below the .board-status-indicators row.
-     If the row position changes, adjust this top value. */
-  top: calc(var(--overlay-row-height, 36px) + 6px);
-  left: 8px;
-  padding: 2px 8px;
-  font-size: 11px;
-  color: var(--text-primary, #ddd);
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 3px;
-  pointer-events: none;
-  z-index: 5;
-  white-space: nowrap;
 }
