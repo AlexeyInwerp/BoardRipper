@@ -777,14 +777,25 @@ function UiPickerRow({
   );
 }
 
-function useThemeOverrides() {
-  return useSyncExternalStore(
-    (cb) => themeStore.subscribe(cb),
-    () => ({
+// Module-level cache so the snapshot reference is stable across calls within
+// the same render pass (useSyncExternalStore requires this).
+let _themeOverridesCache: { accent: string | null; background: string | null; chrome: string | null } | null = null;
+themeStore.subscribe(() => { _themeOverridesCache = null; });
+function _getThemeOverridesSnapshot() {
+  if (!_themeOverridesCache) {
+    _themeOverridesCache = {
       accent: themeStore.accentOverride,
       background: themeStore.backgroundOverride,
       chrome: themeStore.chromeOverride,
-    }),
+    };
+  }
+  return _themeOverridesCache;
+}
+
+function useThemeOverrides() {
+  return useSyncExternalStore(
+    (cb) => themeStore.subscribe(cb),
+    _getThemeOverridesSnapshot,
   );
 }
 
