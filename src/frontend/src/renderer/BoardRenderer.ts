@@ -2742,19 +2742,27 @@ export class BoardRenderer {
       || ((s.searchAutoDim ?? true) && boardStore.searchSelectionActive);
     const needsAmbientDim = s.ambientDim && showDim && !effectiveNet;
 
-    if (needsAmbientDim) {
-      const b = this.board.bounds;
-      const bw = b.maxX - b.minX;
-      const bh = b.maxY - b.minY;
-      const pad = Math.max(bw, bh) * 5;
-      const cx = (b.minX + b.maxX) / 2;
-      const cy = (b.minY + b.maxY) / 2;
-      this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-      this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+    // Either ambient dim or the spotlight is in play — both darken the
+    // selected part's pins, so we re-draw them above the overlay below.
+    // Spotlight-only mode skips the dim rect (that would dim the whole
+    // board); only the per-part pin redraw runs.
+    const haloActive = s.selectionHalo && sel.partIndex !== null && !effectiveNet;
+    if (needsAmbientDim || haloActive) {
+      if (needsAmbientDim) {
+        const b = this.board.bounds;
+        const bw = b.maxX - b.minX;
+        const bh = b.maxY - b.minY;
+        const pad = Math.max(bw, bh) * 5;
+        const cx = (b.minX + b.maxX) / 2;
+        const cy = (b.minY + b.maxY) / 2;
+        this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
+        this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+      }
 
-      // Part-only selection under ambient dim: the whole board is dimmed but
-      // the `effectiveNet` branch below won't run, so the selected part's pins
-      // and label would stay faded. Re-draw them above the dim here.
+      // Part-only selection under dim/spotlight: the part's pins are
+      // rendered into the original pin layer beneath the overlay, so they
+      // get darkened. Re-draw them via selectionGfx (which renders above
+      // the overlay) at full alpha so the selected part stays bright.
       if (sel.partIndex !== null) {
         const selPart = this.board.parts[sel.partIndex];
         if (selPart && this.isPartVisible(selPart)) {
