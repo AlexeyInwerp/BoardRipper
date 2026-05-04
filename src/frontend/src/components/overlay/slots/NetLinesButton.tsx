@@ -1,0 +1,28 @@
+import { IconHierarchy, IconHierarchyOff, IconChartDots3 } from '@tabler/icons-react';
+import { boardStore } from '../../../store/board-store';
+import type { SlotCtx } from '../slot-ctx';
+
+export function NetLinesButton({ ctx }: { ctx: SlotCtx }) {
+  const { netLineMode } = ctx.thisTab;
+  return (
+    <button
+      className={`board-netlines-toggle ${netLineMode !== 'off' ? 'active' : ''}`}
+      onClick={() => boardStore.cycleNetLineMode()}
+      title={
+        netLineMode === 'off'
+          ? 'Net lines: off (click for star)'
+          : netLineMode === 'star'
+          ? 'Net lines: star — radiate from selected part (click for chain)'
+          : 'Net lines: chain — nearest-neighbor MST (click to turn off)'
+      }
+    >
+      {netLineMode === 'off' ? (
+        <IconHierarchyOff size={16} />
+      ) : netLineMode === 'star' ? (
+        <IconHierarchy size={16} />
+      ) : (
+        <IconChartDots3 size={16} />
+      )}
+    </button>
+  );
+}
