@@ -4,6 +4,7 @@ import {
   type OverlaySlot,
   DEFAULT_OVERLAY_LAYOUT,
   reconcileOverlayLayout,
+  nextSeparatorId,
 } from './overlay-layout';
 import { naturalCompare } from '../components/overlay/natural-sort';
 
@@ -1003,6 +1004,28 @@ class RenderSettingsStore extends Emitter {
 
   setOverlayLayout(layout: OverlaySlot[]) {
     this._global = { ...this._global, overlayLayout: layout.map(s => ({ ...s })) };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  /** Append a fresh separator slot to the end of the visible overlay row.
+   *  The id is auto-generated as the next free `sep${N}`. */
+  addOverlaySeparator() {
+    const cur = this._global.overlayLayout ?? [];
+    const id = nextSeparatorId(cur);
+    // Insert after the last currently-visible slot so it lands at the end
+    // of the visible row. If everything is hidden, append at the end.
+    let lastVisIdx = -1;
+    for (let i = 0; i < cur.length; i++) if (cur[i].visible) lastVisIdx = i;
+    const next: OverlaySlot[] = [];
+    let placed = false;
+    for (let i = 0; i < cur.length; i++) {
+      next.push({ ...cur[i] });
+      if (i === lastVisIdx) { next.push({ id, visible: true }); placed = true; }
+    }
+    if (!placed) next.push({ id, visible: true });
+    this._global = { ...this._global, overlayLayout: next };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();
