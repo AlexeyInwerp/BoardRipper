@@ -5978,3 +5978,50 @@ html, body, #root {
   position: relative;
   display: inline-block;
 }
+.overlay-customizer-zone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 8px;
+  margin: 4px 0 12px;
+  background: var(--bg-primary, #0f0f1a);
+  border: 1px dashed var(--border-primary, #333);
+  border-radius: 4px;
+  flex-wrap: wrap;
+}
+.overlay-customizer-zone.hidden-zone {
+  opacity: 0.85;
+}
+.overlay-customizer-chip-wrap {
+  position: relative;
+  cursor: grab;
+}
+.overlay-customizer-chip-wrap:active {
+  cursor: grabbing;
+}
+.overlay-customizer-chip-wrap.dragging {
+  opacity: 0.4;
+}
+.overlay-customizer-chip {
+  position: relative;
+  display: inline-block;
+}
+.overlay-customizer-chip-inner {
+  pointer-events: none;
+}
+.overlay-customizer-chip-mask {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+}
+.overlay-customizer-chip-wrap.dragging .overlay-customizer-chip-mask {
+  cursor: grabbing;
+}
+.overlay-customizer-empty {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  font-style: italic;
+}

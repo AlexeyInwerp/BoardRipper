@@ -187,3 +187,46 @@ test.describe('Natural sort comparator', () => {
     expect(result[2]).toBe(0);
   });
 });
+
+test.describe('Overlay customizer DnD', () => {
+  test('reset link restores defaults', async ({ page }) => {
+    await loadBoard(page);
+
+    await page.evaluate(() => {
+      const win = window as Window & { __renderSettings?: { setOverlayLayout: (l: unknown) => void } };
+      win.__renderSettings!.setOverlayLayout([{ id: 'pdfFollow', visible: false }]);
+    });
+
+    const settingsBtn = page.locator('.sidebar-tab', { hasText: 'Settings' }).first();
+    await settingsBtn.click();
+    await page.click('button.settings-section-header:has-text("Board overlay")');
+    await page.click('[data-testid="overlay-reset-btn"]');
+
+    const layout = await page.evaluate(() => {
+      const win = window as Window & { __renderSettings?: { settings: { overlayLayout: Array<{ id: string; visible: boolean }> } } };
+      return win.__renderSettings!.settings.overlayLayout;
+    });
+    expect(layout.length).toBe(11);
+    expect(layout.every(s => s.visible)).toBe(true);
+    expect(layout.map(s => s.id)).toEqual([
+      'pdfFollow', 'scrollMode', 'fitBoard', 'sep1',
+      'hoverInfo', 'netDim', 'netLines', 'ghosts', 'sep2',
+      'partsDropdown', 'netsDropdown',
+    ]);
+  });
+
+  test('hiding a slot via store removes it from the live overlay', async ({ page }) => {
+    await loadBoard(page);
+    await page.waitForSelector('[data-testid="parts-filter-input"]');
+
+    await page.evaluate(() => {
+      const win = window as Window & { __renderSettings?: { setOverlayLayout: (l: unknown) => void; settings: { overlayLayout: unknown } } };
+      const cur = win.__renderSettings!.settings.overlayLayout as Array<{ id: string; visible: boolean }>;
+      win.__renderSettings!.setOverlayLayout(cur.map(s =>
+        s.id === 'partsDropdown' ? { ...s, visible: false } : s
+      ));
+    });
+
+    await expect(page.locator('[data-testid="parts-filter-input"]')).toHaveCount(0);
+  });
+});
