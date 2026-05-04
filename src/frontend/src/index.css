@@ -5985,13 +5985,27 @@ html, body, #root {
   min-height: 44px;
   padding: 6px 8px;
   margin: 4px 0 12px;
-  background: var(--bg-primary, #0f0f1a);
-  border: 1px dashed var(--border-primary, #333);
+  background: var(--bg-secondary, #1a1a2e);
+  border: 1px dashed var(--border-primary, #555);
   border-radius: 4px;
   flex-wrap: wrap;
 }
+/* Hidden zone keeps chips at full opacity (otherwise the dim slot icons
+   are too hard to read) — the dashed border + label already mark it as
+   the off-stage area. */
 .overlay-customizer-zone.hidden-zone {
-  opacity: 0.85;
+  background: var(--bg-tertiary, #14142a);
+  border-style: dotted;
+}
+/* Make the cosmetic separator slot legible inside the customizer.
+   In the live overlay it's a 12px transparent spacer; here we draw a
+   visible vertical bar so users can grab it. */
+.overlay-customizer-chip-wrap .overlay-sep {
+  width: 6px;
+  height: 24px;
+  background: var(--text-muted, #888);
+  opacity: 0.6;
+  border-radius: 2px;
 }
 .overlay-customizer-chip-wrap {
   position: relative;
