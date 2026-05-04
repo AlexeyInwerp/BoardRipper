@@ -43,6 +43,7 @@ interface StoreSnapshot {
   boundPdfFiles: File[];
   pdfFileNames: string[];
   toasts: Toast[];
+  searchSelectionActive: boolean;
 }
 
 export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
@@ -84,4 +85,5 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   boundPdfFiles: boardStore.boundPdfFiles,
   pdfFileNames: boardStore.pdfFileNames,
   toasts: boardStore.toasts,
+  searchSelectionActive: boardStore.searchSelectionActive,
 }));
