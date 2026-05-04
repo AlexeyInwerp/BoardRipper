@@ -1,13 +1,22 @@
 import { useEffect } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
-import { boardStore } from '../store/board-store';
+import { boardStore, bomClusterSig } from '../store/board-store';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
 import { DiagnosisNotes } from '../components/DiagnosisNotes';
+import type { BomAlternateCluster } from '../parsers';
 
 export function ComponentInfoPanel() {
-  const { selectedPart, selection, board, fileName } = useBoardStore();
+  const { selectedPart, selection, board, fileName, showBomAlternates, bomClusterSelections } = useBoardStore();
   const boardNumber = extractBoardNumberFromFilename(fileName) ?? undefined;
   const obd = useObdNetLookup(boardNumber);
+
+  // Look up the BOM-alternate cluster the selected part belongs to (if any).
+  // Matched by refdes so it survives the parts-array filtering done by
+  // `buildRenderedBoard` when alternates are hidden.
+  const cluster: BomAlternateCluster | null = (() => {
+    if (!board?.bomClusters || !selectedPart) return null;
+    return board.bomClusters.find(c => c.memberRefdes.includes(selectedPart.name)) ?? null;
+  })();
 
   // Auto-load matches + cached data when the active board changes. Cheap:
   // hits the backend's match endpoint once per board, and the per-bpath
@@ -65,6 +74,15 @@ export function ComponentInfoPanel() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {cluster && (
+        <BomClusterSection
+          cluster={cluster}
+          selectedRefdes={selectedPart.name}
+          showAll={showBomAlternates}
+          selections={bomClusterSelections}
+        />
       )}
 
       <div className="pin-table-container">
@@ -128,6 +146,74 @@ export function ComponentInfoPanel() {
             board={board}
           />
         ))}
+    </div>
+  );
+}
+
+function BomClusterSection({
+  cluster,
+  selectedRefdes,
+  showAll,
+  selections,
+}: {
+  cluster: BomAlternateCluster;
+  selectedRefdes: string;
+  showAll: boolean;
+  selections: ReadonlyMap<string, string>;
+}) {
+  const sig = bomClusterSig(cluster.memberRefdes);
+  const chosenRefdes = selections.get(sig) ?? cluster.defaultPrimaryRefdes;
+  const reasonLabel = cluster.reason === 'shape-named-device'
+    ? 'named device'
+    : cluster.reason === 'lowest-refdes'
+      ? 'lowest refdes'
+      : 'largest footprint';
+
+  return (
+    <div className="bom-cluster-section" data-testid="bom-cluster-section">
+      <div className="bom-cluster-header" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 8, padding: '4px 6px', background: 'rgba(120,80,200,0.12)', borderRadius: 4 }}>
+        <strong style={{ fontSize: 12 }}>BOM alternates ({cluster.memberRefdes.length})</strong>
+        <span style={{ fontSize: 11, color: '#888' }} title={`Auto-pick reason: ${reasonLabel}`}>auto: {reasonLabel}</span>
+      </div>
+      <div style={{ fontSize: 11, color: '#888', padding: '2px 6px' }}>
+        Only one is fitted per BOM. {showAll ? 'All shown (X-ray).' : 'Click a row to switch which member is rendered.'}
+      </div>
+      <table className="bom-cluster-table" data-testid="bom-cluster-table" style={{ width: '100%', fontSize: 11, marginTop: 4 }}>
+        <tbody>
+          {cluster.memberRefdes.map((refdes, i) => {
+            const isChosen = refdes === chosenRefdes;
+            const isSelected = refdes === selectedRefdes;
+            const memberIdx = cluster.memberIndices[i];
+            return (
+              <tr
+                key={refdes}
+                style={{
+                  cursor: showAll ? 'default' : 'pointer',
+                  background: isSelected ? 'rgba(120,80,200,0.22)' : isChosen ? 'rgba(120,80,200,0.10)' : undefined,
+                }}
+                onClick={() => {
+                  if (showAll) {
+                    // Show-all mode: clicking a row jumps the selection to that member.
+                    boardStore.selectPart(memberIdx);
+                  } else {
+                    // Hidden mode: clicking sets the active primary.
+                    boardStore.selectBomClusterPrimary(sig, refdes);
+                  }
+                }}
+                title={showAll ? `Select ${refdes}` : `Render ${refdes} as the primary`}
+              >
+                <td style={{ padding: '2px 6px', width: 18 }}>
+                  {isChosen ? '●' : <span style={{ color: '#666' }}>○</span>}
+                </td>
+                <td style={{ padding: '2px 6px', fontWeight: isSelected ? 700 : 400 }}>{refdes}</td>
+                <td style={{ padding: '2px 6px', color: '#888' }}>
+                  {isChosen && !isSelected ? '(primary)' : isSelected && isChosen ? '(primary, selected)' : isSelected ? '(selected)' : ''}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

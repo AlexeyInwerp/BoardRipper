@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
 import { boardStore } from '../../store/board-store';
@@ -778,14 +778,13 @@ function UiPickerRow({
 }
 
 function useThemeOverrides() {
-  return useSyncExternalStore(
-    (cb) => themeStore.subscribe(cb),
-    () => ({
-      accent: themeStore.accentOverride,
-      background: themeStore.backgroundOverride,
-      chrome: themeStore.chromeOverride,
-    }),
-  );
+  // Subscribe per primitive so getSnapshot returns a stable reference.
+  // Returning a fresh object literal here causes useSyncExternalStore to
+  // treat every render as "store changed" → infinite re-render loop.
+  const accent = useSyncExternalStore((cb) => themeStore.subscribe(cb), () => themeStore.accentOverride);
+  const background = useSyncExternalStore((cb) => themeStore.subscribe(cb), () => themeStore.backgroundOverride);
+  const chrome = useSyncExternalStore((cb) => themeStore.subscribe(cb), () => themeStore.chromeOverride);
+  return useMemo(() => ({ accent, background, chrome }), [accent, background, chrome]);
 }
 
 function InterfaceColorPickers() {

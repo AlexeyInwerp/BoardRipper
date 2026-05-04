@@ -1723,14 +1723,14 @@ function useThemeId(): string {
 }
 
 function useThemeOverrides() {
-  return useSyncExternalStore(
-    (cb) => themeStore.subscribe(cb),
-    () => ({
-      accent: themeStore.accentOverride,
-      background: themeStore.backgroundOverride,
-      chrome: themeStore.chromeOverride,
-    }),
-  );
+  // Subscribe to each primitive separately so getSnapshot returns a stable
+  // reference (string-or-null, not a fresh object literal). useSyncExternalStore
+  // treats every fresh object as "store changed" → infinite re-render. Wrap the
+  // primitives back into an object via useMemo so consumers get the same shape.
+  const accent = useSyncExternalStore((cb) => themeStore.subscribe(cb), () => themeStore.accentOverride);
+  const background = useSyncExternalStore((cb) => themeStore.subscribe(cb), () => themeStore.backgroundOverride);
+  const chrome = useSyncExternalStore((cb) => themeStore.subscribe(cb), () => themeStore.chromeOverride);
+  return useMemo(() => ({ accent, background, chrome }), [accent, background, chrome]);
 }
 
 interface TokenPickerBlockProps {

@@ -1,4 +1,4 @@
-import type { BoardData, BoardRevision, GhostComponent, Net, Pad, Point, SilkscreenPath, Trace, Via } from '../parsers';
+import type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Net, Pad, Point, SilkscreenPath, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
 // DB_VERSION is ONLY bumped for schema changes (new/removed object stores,
@@ -20,7 +20,7 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * separation from DB_VERSION means parser fixes don't nuke the
  * pdf-text cache or require any data migration.
  */
-const PARSER_VERSION = 47;
+const PARSER_VERSION = 48;
 
 interface CachedBoard {
   key: string;
@@ -59,6 +59,7 @@ interface SerializedBoardData {
   revisions?: SerializedRevision[];
   activeRevision?: number;
   ghosts?: GhostComponent[];
+  bomClusters?: BomAlternateCluster[];
   parserNotes?: string[];
   flipY?: boolean;
   flipAxis?: 'x' | 'y';
@@ -74,6 +75,7 @@ interface SerializedRevision {
   outline: BoardRevision['outline'];
   nets: Array<[string, Net]>;
   ghosts: GhostComponent[];
+  bomClusters?: BomAlternateCluster[];
 }
 
 function makeCacheKey(name: string, size: number, modified: number): string {
@@ -109,9 +111,11 @@ function serialize(board: BoardData): SerializedBoardData {
       outline: r.outline,
       nets: Array.from(r.nets.entries()),
       ghosts: r.ghosts,
+      bomClusters: r.bomClusters,
     })),
     activeRevision: board.activeRevision,
     ghosts: board.ghosts,
+    bomClusters: board.bomClusters,
     parserNotes: board.parserNotes,
     flipY: board.flipY,
     flipAxis: board.flipAxis,
@@ -151,9 +155,11 @@ function deserialize(data: SerializedBoardData): BoardData | null {
         outline: r.outline,
         nets: new Map(r.nets),
         ghosts: r.ghosts ?? [],
+        bomClusters: r.bomClusters,
       })),
       activeRevision: data.activeRevision,
       ghosts: data.ghosts,
+      bomClusters: data.bomClusters,
       parserNotes: data.parserNotes,
       flipY: data.flipY,
       flipAxis: data.flipAxis,
