@@ -329,13 +329,49 @@ when fixing exporter-specific quirks.
 
 ---
 
+## Outline (no explicit data, synthesised)
+
+Mentor neutral has **no board-outline section**. The `BOARD … OFFSET …
+ORIENTATION` line declares only the file's coordinate transform; the
+actual edge polygon is not transmitted. (One Quanta-family quirk — the
+file we reversed has 316 tiny `HOLE NPTH` dots at 0.01" diameter
+clustered along a 0.16" × 0.7" notch, which look like a milled cutout
+toolpath rather than the board edge.)
+
+BoardRipper builds a synthetic outline from the bbox of every parsed
+pin, via, and hole point. Mounting/PTH holes are explicitly included
+even though they're discarded for everything else, because they often
+sit outside pin extents (mounting ears, edge cutouts, card-edge slots)
+and dropping them produces an outline that crops the real board.
+
+Recovering true outline geometry would require either a different
+Mentor export (the `*.fab` companion file in some Boardstation jobs
+carries the milled outline) or a tool-path reconstruction pass over
+the small-diameter NPTH cluster.
+
+---
+
+## Provenance
+
+This document and the matching parser
+([src/frontend/src/parsers/mentor-neutral-parser.ts](../../src/frontend/src/parsers/mentor-neutral-parser.ts))
+are original reverse-engineering work — there is no public Mentor
+spec, and no third-party parser was consulted at code level. Provenance
+is recorded in [THIRD_PARTY.md](../../THIRD_PARTY.md) under "Mentor
+Boardstation Neutral — original RE". The parser inherits BoardRipper's
+**AGPL-3.0-or-later** licence; see [LICENSE](../../LICENSE).
+
+---
+
 ## Open items
 
 - Apply `BOARD … ORIENTATION` and non-zero `OFFSET` (untested — no sample).
 - Build per-pin `padBounds` from `PAD VIA` + `P_SHAPE` (currently the
   renderer falls back to a fixed pin radius).
-- Surface `HOLE PTH/NPTH` as visible mounting-hole annotations (today
-  they're dropped).
+- Surface mounting holes as visible annotations (today only their
+  positions seed the outline bbox).
 - Detect SMT vs through-hole inserttype from the `GEOM` shape table and
   surface in `Part.type`. Today every Mentor-parsed `Part` is tagged
   `smd`.
+- Reconstruct true board outline from the small-diameter `HOLE NPTH`
+  toolpath cluster (Quanta family) when `BOARD ORIENTATION` is `0`.

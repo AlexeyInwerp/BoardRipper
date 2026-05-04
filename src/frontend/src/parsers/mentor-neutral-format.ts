@@ -11,6 +11,9 @@ const decoder = new TextDecoder('utf-8');
  * Detection: first 512 bytes contain a `BOARD ... OFFSET x:` header AND a
  * `B_UNITS` declaration. GenCAD has neither, so the two formats can't both
  * match the same file.
+ *
+ * Original RE work; see THIRD_PARTY.md and the parser file's header for
+ * provenance. Part of BoardRipper (AGPL-3.0-or-later, see ../../../../LICENSE).
  */
 export const MentorNeutralFormat: FormatDescriptor = {
   id: 'MENTOR',
