@@ -80,3 +80,38 @@ test.describe('Overlay layout reconciliation', () => {
     expect(ids).toContain('sep1');
   });
 });
+
+test.describe('Natural sort comparator', () => {
+  test('sorts refdes-style names numerically', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const sorted = await page.evaluate(() => {
+      const win = window as Window & { __overlayTest?: { naturalCompare: (a: string, b: string) => number } };
+      return ['R10', 'R1', 'R2', 'R100'].sort(win.__overlayTest!.naturalCompare);
+    });
+    expect(sorted).toEqual(['R1', 'R2', 'R10', 'R100']);
+  });
+
+  test('mixes alpha prefixes correctly', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const sorted = await page.evaluate(() => {
+      const win = window as Window & { __overlayTest?: { naturalCompare: (a: string, b: string) => number } };
+      return ['U21', 'C1', 'R10', 'C2', 'U1'].sort(win.__overlayTest!.naturalCompare);
+    });
+    expect(sorted).toEqual(['C1', 'C2', 'R10', 'U1', 'U21']);
+  });
+
+  test('handles all-numeric and all-alpha inputs', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const result = await page.evaluate(() => {
+      const win = window as Window & { __overlayTest?: { naturalCompare: (a: string, b: string) => number } };
+      const cmp = win.__overlayTest!.naturalCompare;
+      return [cmp('100', '20'), cmp('GND', 'VCC'), cmp('R1', 'R1')];
+    });
+    expect(result[0]).toBeGreaterThan(0);
+    expect(result[1]).toBeLessThan(0);
+    expect(result[2]).toBe(0);
+  });
+});

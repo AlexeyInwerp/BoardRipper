@@ -5,6 +5,7 @@ import {
   DEFAULT_OVERLAY_LAYOUT,
   reconcileOverlayLayout,
 } from './overlay-layout';
+import { naturalCompare } from '../components/overlay/natural-sort';
 
 export type LabelSize = 'small' | 'medium' | 'large';
 
@@ -1100,5 +1101,5 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).__renderSettings = renderSettingsStore;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (window as any).__overlayTest = { reconcileOverlayLayout };
+  (window as any).__overlayTest = { reconcileOverlayLayout, naturalCompare };
 }
