@@ -1943,11 +1943,17 @@ export class BoardRenderer {
     if (sw === 0 || sh === 0) return;
 
     // Target scale magnitude — part should fill ~viewFraction of the smaller
-    // screen dimension. Cap at 6 (= 600%) so tiny components (0402, 0201) don't
-    // zoom past the practical pin-pick limit, where sub-pixel pan jitter makes
-    // it hard to click an already-selected pin.
+    // screen dimension. Two caps:
+    //   • absolute 6× (= 600%): hard ceiling — sub-pixel pan jitter past this
+    //     makes pin-picking unreliable on tiny components.
+    //   • relative 3× fit-to-board: keeps surrounding context visible when
+    //     zooming to a 0402-sized passive. If fit-to-board scale is unknown
+    //     (board not loaded yet), the relative cap is skipped.
     const maxDim = Math.max(bw, bh, 1);
-    const targetMag = Math.min((Math.min(sw, sh) * viewFraction) / maxDim, 6);
+    const naturalMag = (Math.min(sw, sh) * viewFraction) / maxDim;
+    const fitScale = this.computeFitToBoardScale();
+    const relCap = fitScale > 0 ? 3 * fitScale : Infinity;
+    const targetMag = Math.min(naturalMag, relCap, 6);
 
     // Preserve sign of current scale (negative = flipped)
     const signX = this.viewport.scale.x < 0 ? -1 : 1;
@@ -3903,6 +3909,27 @@ export class BoardRenderer {
         contextMenuStore.showBoard(e.clientX, e.clientY, part.name, pinId, netName);
       }
     }
+  }
+
+  /**
+   * Returns the viewport scale magnitude that `fitToBoard()` would set right
+   * now, without actually changing the viewport. Used by the focus-zoom cap
+   * so we never zoom in more than 3× the whole-board view.
+   * Returns 0 if the board or container size is unknown — caller must guard.
+   */
+  private computeFitToBoardScale(): number {
+    const b = this.board?.bounds;
+    if (!b) return 0;
+    const cw = this.containerEl.clientWidth;
+    const ch = this.containerEl.clientHeight;
+    if (cw === 0 || ch === 0) return 0;
+    const pad = renderSettingsStore.settings.fitPadding;
+    const bw = b.maxX - b.minX;
+    const bh = b.maxY - b.minY;
+    if (bw <= 0 || bh <= 0) return 0;
+    const fitW = bw + pad * 2;
+    const fitH = bh + pad * 2;
+    return Math.min(cw / fitW, ch / fitH);
   }
 
   fitToBoard(board?: BoardData) {
