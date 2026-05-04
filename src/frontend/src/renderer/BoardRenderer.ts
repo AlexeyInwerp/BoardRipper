@@ -2388,20 +2388,10 @@ export class BoardRenderer {
 
   /**
    * Build (once, lazily) the radial-gradient texture for the selection
-   * spotlight. The clear core extends to r=0.30 — exactly the same
-   * fraction used to size the sprite around the part (HOLE_FRAC_OF_TEXTURE
-   * in updateHalo). That alignment guarantees no part of the component
-   * ever sits inside a non-zero alpha pixel, so the component renders at
-   * full brightness with its existing selection highlight untouched.
-   *
-   * Outside the core, alpha rises smoothly to a single peak at r=0.50
-   * and then fades all the way back to transparent at the edge — no flat
-   * plateau, so no visible inner-ring shape.
-   *
-   * Texture layout (r is normalized 0..1 from center to edge):
-   *   r ∈ [0,    0.30] : fully transparent — covers the component exactly
-   *   r ∈ [0.30, 0.50] : alpha 0 → 0.65 (gentle ramp into peak)
-   *   r ∈ [0.50, 1.00] : alpha 0.65 → 0 (long fade back to clear)
+   * spotlight. Solid black at the center, fading smoothly to fully
+   * transparent at the edge. No clear core — the brightness of the
+   * selected component is preserved by drawing the part's Container
+   * ABOVE the spotlight in z-order (see updateHalo).
    */
   private buildHaloTexture(): Texture {
     if (this._haloTexture) return this._haloTexture;
@@ -2411,9 +2401,7 @@ export class BoardRenderer {
     const ctx = canvas.getContext('2d')!;
     const r = size / 2;
     const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
-    grad.addColorStop(0.00, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.30, 'rgba(0, 0, 0, 0)');
-    grad.addColorStop(0.50, 'rgba(0, 0, 0, 0.65)');
+    grad.addColorStop(0.00, 'rgba(0, 0, 0, 0.75)');
     grad.addColorStop(1.00, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -2453,32 +2441,33 @@ export class BoardRenderer {
       return;
     }
 
-    // Re-add every update so the sprite stays at the END of the children
-    // list — last-drawn = on top, which is what we need to actually darken
-    // the parts underneath. (Pixi's addChild on an already-attached child
-    // is a no-op except for moving it to the end.)
-    root.addChild(this._haloSprite);
+    // The selected part lives in a per-side label layer (see board-scene.ts —
+    // partContainer.label = part.name). Place the spotlight INTO that same
+    // layer just before the part, then re-add the part. The layer's children
+    // end up as: [...other parts, spotlight, selected part], so the spotlight
+    // darkens everything around it while the selected part draws on top and
+    // keeps its full brightness automatically.
+    const partContainer = root.getChildByLabel(part.name, true);
+    const layer = partContainer?.parent;
+    if (!partContainer || !layer) {
+      this._haloSprite.visible = false;
+      return;
+    }
+    // addChild on an already-attached child is a move-to-end. Doing this
+    // every update keeps the order stable across selection changes.
+    layer.addChild(this._haloSprite);
+    layer.addChild(partContainer);
 
-    // Size the sprite so the texture's clear core (r ≤ HOLE_FRAC_OF_TEXTURE
-    // = 0.30) exactly covers the desired hole diameter. With the texture
-    // and this constant aligned, no pixel of the part ever falls inside a
-    // non-zero alpha region — the component stays at full brightness with
-    // its normal selection highlight, and the dark smudge starts strictly
-    // outside the part edge.
-    //
-    // MIN_HOLE_DIAMETER guards small components (0402 etc.): without it
-    // the spotlight collapses smaller than the part itself and looks
-    // pointless. 200 mils ≈ 5 mm — comfortable on screen at any zoom.
-    const MIN_HOLE_DIAMETER = 200;
-    const HOLE_TO_PART_RATIO = 1.2; // hole is slightly larger than the part
-    const HOLE_FRAC_OF_TEXTURE = 0.30;
-
+    // Sprite size: a fixed multiple of the part's larger bbox dimension.
+    // MIN_SPOTLIGHT_DIAMETER guards small components (0402 etc.) so the
+    // gradient is always at least ~10 mm wide — visible at any zoom.
+    const MIN_SPOTLIGHT_DIAMETER = 400; // mils — ~10 mm
+    const SPOTLIGHT_TO_PART_RATIO = 3;
     const b = part.bounds;
     const bw = b.maxX - b.minX;
     const bh = b.maxY - b.minY;
     const partMaxDim = Math.max(bw, bh, 1);
-    const holeDiameter = Math.max(partMaxDim * HOLE_TO_PART_RATIO, MIN_HOLE_DIAMETER);
-    const spriteSize = holeDiameter / HOLE_FRAC_OF_TEXTURE;
+    const spriteSize = Math.max(partMaxDim * SPOTLIGHT_TO_PART_RATIO, MIN_SPOTLIGHT_DIAMETER);
 
     this._haloSprite.width  = spriteSize;
     this._haloSprite.height = spriteSize;
