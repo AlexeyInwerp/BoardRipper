@@ -976,6 +976,47 @@ class RenderSettingsStore extends Emitter {
     this.notify();
   }
 
+  setOverlayLayout(layout: OverlaySlot[]) {
+    this._global = { ...this._global, overlayLayout: layout.map(s => ({ ...s })) };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setOverlaySelectedNameVisible(v: boolean) {
+    this._global = { ...this._global, overlaySelectedNameVisible: v };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setOverlayPartsOnSelect(mode: 'highlight' | 'panIfOffscreen' | 'panZoomFit') {
+    this._global = { ...this._global, overlayPartsOnSelect: mode };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setOverlayNetsOnSelect(mode: 'highlight' | 'panIfOffscreen' | 'panZoomFit') {
+    this._global = { ...this._global, overlayNetsOnSelect: mode };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  resetOverlayDefaults() {
+    this._global = {
+      ...this._global,
+      overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
+      overlaySelectedNameVisible: true,
+      overlayPartsOnSelect: 'panZoomFit',
+      overlayNetsOnSelect: 'panZoomFit',
+    };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
   // ── Per-board override mutations ───────────────────────────────────────
 
   /** Get the sparse overrides for a board (empty object if none) */
