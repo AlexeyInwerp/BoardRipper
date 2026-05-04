@@ -819,6 +819,58 @@ class BoardStore extends Emitter {
     }
   }
 
+  /**
+   * Open a tab from an already-parsed BoardData (test/dev helper — skips parsing
+   * and cache). Exposed on `window.__boardStore` in DEV builds for Playwright tests.
+   */
+  openBoardFromData(fileName: string, board: BoardData) {
+    const id = nextTabId++;
+    const vp = loadViewPrefs();
+    const rotation = computeAutoRotation(board);
+    const tab: BoardTab = {
+      id,
+      fileName,
+      board,
+      cacheKey: '',
+      selection: { ...emptySelection, adjacentNets: new Set<string>() },
+      showTop: true,
+      showBottom: false,
+      butterfly: false,
+      searchQuery: '',
+      rotation,
+      mirrorX: false,
+      mirrorY: false,
+      flipAxis: flipAxisForRotation(rotation),
+      netLineMode: vp.netLineMode,
+      dimMode: vp.dimMode,
+      showHoverInfo: vp.showHoverInfo,
+      followPdf: vp.followPdf,
+      showTraces: true,
+      showComponents: true,
+      showVias: false,
+      showSilkscreen: true,
+      showPads: true,
+      showCopperDrops: false,
+      showPins: true,
+      showOutlines: true,
+      showLabels: true,
+      showGhosts: true,
+      layerStates: [],
+      pdfFileNames: [],
+      hideGhosts: false,
+      swappedGhostPairs: new Set<string>(),
+      showBomAlternates: false,
+      bomClusterSelections: new Map<string, string>(),
+      foldMode: 'suggested',
+      selectedBoardIndex: null,
+      searchSelectionActive: false,
+    };
+    applyBoardFilters(tab);
+    this._tabs.push(tab);
+    this._activeTabId = id;
+    this.notify();
+  }
+
   /** Evict the cache entry for the given board data (call after a scene build failure). */
   evictCacheForBoard(board: BoardData): void {
     const tab = this._tabs.find(t => t.board === board);
