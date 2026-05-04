@@ -13,7 +13,6 @@ import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
-import { SelectedNameLabel } from '../components/overlay/SelectedNameLabel';
 
 // Per-tab handlers for toolbar search → board sidebar integration
 const _boardSearchHandlers = new Map<number, (query: string) => void>();
@@ -248,7 +247,6 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       <div className="board-status-indicators">
         {renderOverlayLayout(renderSettings.overlayLayout, slotCtx)}
       </div>
-      {renderSettings.overlaySelectedNameVisible && <SelectedNameLabel />}
       <BoardSidebar
         visible={sidebarOpen}
         onClose={() => setSidebarOpen(false)}

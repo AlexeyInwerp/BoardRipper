@@ -21,8 +21,8 @@ export function OverlayCustomizer() {
         <label>
           <input
             type="checkbox"
-            checked={s.overlaySelectedNameVisible}
-            onChange={e => renderSettingsStore.setOverlaySelectedNameVisible(e.target.checked)}
+            checked={s.showSelectionOverlay}
+            onChange={e => renderSettingsStore.setShowSelectionOverlay(e.target.checked)}
           />
           {' '}Show selected component name below overlay
         </label>

@@ -1576,8 +1576,6 @@ export function SettingsPanel() {
           title="Show a large background-backed label above the selected component with its reference designator (e.g. U1)" />
         <Toggle label="Floating Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft}
           title="Show a background-backed label above the selected pin with its pin number and net name" />
-        <Toggle label="Top Bar Overlay" value={draft.showSelectionOverlay} field="showSelectionOverlay" onUpdate={updateDraft}
-          title="Show selected component and pin info in a text overlay bar at the top of the board viewport" />
       </CollapsibleSection>
       )}
 
