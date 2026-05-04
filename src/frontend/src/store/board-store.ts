@@ -2,7 +2,7 @@ import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
-import { computeBBox, generateSyntheticOutline, detectGhostComponents } from '../parsers/types';
+import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets } from '../parsers/types';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
@@ -890,11 +890,22 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
+  /** Returns `computeAdjacentNets(board, netName, 1)` when the current
+   *  `netLineMode` is `'chain-adjacent'` and the board is loaded; otherwise
+   *  returns an empty Set.  Centralises the "should we populate adjacency?"
+   *  decision so every call-site stays a one-liner. */
+  private _resolveAdjacentNets(netName: string | null): Set<string> {
+    const tab = this.activeTab;
+    if (!tab?.board || !netName) return new Set<string>();
+    if (tab.netLineMode !== 'chain-adjacent') return new Set<string>();
+    return computeAdjacentNets(tab.board, netName, 1);
+  }
+
   highlightNet(netName: string | null) {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({
-      selection: { ...tab.selection, highlightedNet: netName, adjacentNets: new Set<string>() },
+      selection: { ...tab.selection, highlightedNet: netName, adjacentNets: this._resolveAdjacentNets(netName) },
       searchSelectionActive: false,
     });
     this.notify();
@@ -1265,7 +1276,18 @@ class BoardStore extends Emitter {
       tab.netLineMode === 'off' ? 'star' :
       tab.netLineMode === 'star' ? 'chain' :
       tab.netLineMode === 'chain' ? 'chain-adjacent' : 'off';
-    this.updateActiveTab({ netLineMode: next });
+
+    // When entering chain-adjacent: populate adjacentNets from the current
+    // highlighted net.  When leaving chain-adjacent: clear the set.
+    const net = tab.selection.highlightedNet;
+    const adjacentNets = (next === 'chain-adjacent' && tab.board && net)
+      ? computeAdjacentNets(tab.board, net, 1)
+      : new Set<string>();
+
+    this.updateActiveTab({
+      netLineMode: next,
+      selection: { ...tab.selection, adjacentNets },
+    });
     this._saveCurrentViewPrefs();
     this.notify();
   }
@@ -1531,7 +1553,7 @@ class BoardStore extends Emitter {
     minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 
     this.updateActiveTab({
-      selection: { partIndex: null, pinIndex: null, highlightedNet: name, adjacentNets: new Set<string>() },
+      selection: { partIndex: null, pinIndex: null, highlightedNet: name, adjacentNets: this._resolveAdjacentNets(name) },
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
