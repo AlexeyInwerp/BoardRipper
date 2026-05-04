@@ -2057,6 +2057,11 @@ html, body, #root {
   align-items: center;
 }
 
+.overlay-sep {
+  width: 12px;
+  flex-shrink: 0;
+}
+
 .board-button-group {
   display: inline-flex;
   align-items: center;
