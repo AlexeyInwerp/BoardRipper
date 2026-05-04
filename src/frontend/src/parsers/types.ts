@@ -478,11 +478,30 @@ export function polygonsOverlap(a: [number, number][], b: [number, number][]): b
 }
 
 /**
+ * Ground-rail nets only — GND and its aliases. Used by chain-adjacent net
+ * highlighting to decide which nets to skip entirely (no propagation, no
+ * highlight).
+ */
+export function isGroundRail(net: string): boolean {
+  if (!net) return false;
+  const upper = net.toUpperCase();
+  return (
+    upper === 'GND' ||
+    upper === 'AGND' ||
+    upper === 'DGND' ||
+    upper === 'PGND' ||
+    upper === 'EARTH' ||
+    upper === 'CHASSIS' ||
+    upper.startsWith('GND_')
+  );
+}
+
+/**
  * Common power/ground rail-name patterns. Components that overlap with only
  * power-rail nets in common are usually heatsinks, EMI shields, or thermal
  * pads — physically valid stacks, not ghosts.
  */
-function isPowerRail(net: string): boolean {
+export function isPowerRail(net: string): boolean {
   if (!net) return true;
   const upper = net.toUpperCase();
   return (
