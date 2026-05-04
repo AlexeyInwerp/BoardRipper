@@ -16,6 +16,7 @@ import { getDockviewApi } from '../store/dockview-api';
 import { log } from '../store/log-store';
 import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection } from './LibrarySyncSection';
+import { OverlayCustomizer } from './settings/OverlayCustomizer';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -40,7 +41,7 @@ function useOverride(field: keyof RenderSettings) {
   return { isOverride, resetValue: gv as number & boolean };
 }
 
-type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'pdf';
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'pdf' | 'boardOverlay';
 
 export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system';
 
@@ -64,6 +65,7 @@ export const SECTION_TO_TAB: Record<SectionId, SettingsTabId> = {
   netColors:         'board',
   selection:         'board',
   netLines:          'board',
+  boardOverlay:      'board',
   // Input tab
   zoomLod:    'input',
   navigation: 'input',
@@ -1243,12 +1245,14 @@ export function SettingsPanel() {
   const zoomLodRef = useRef<HTMLDivElement>(null);
   const serverRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
+  const boardOverlayRef = useRef<HTMLDivElement>(null);
 
   const sectionRefsMapRef = useRef<Record<SectionId, React.RefObject<HTMLDivElement | null>>>({
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, navigation: navigationRef,
     performance: performanceRef, shortcuts: shortcutsRef,
     partTypeOverrides: partTypeOverridesRef, server: serverRef, pdf: pdfRef,
+    boardOverlay: boardOverlayRef,
   });
 
   const toggleSection = useCallback((id: SectionId) => {
@@ -1574,6 +1578,13 @@ export function SettingsPanel() {
           title="Show a background-backed label above the selected pin with its pin number and net name" />
         <Toggle label="Top Bar Overlay" value={draft.showSelectionOverlay} field="showSelectionOverlay" onUpdate={updateDraft}
           title="Show selected component and pin info in a text overlay bar at the top of the board viewport" />
+      </CollapsibleSection>
+      )}
+
+      {activeTab === SECTION_TO_TAB.boardOverlay && (
+      <CollapsibleSection id="boardOverlay" title="Board overlay" isOpen={openSections.has('boardOverlay')}
+        onToggle={toggleSection} sectionRef={boardOverlayRef} isFocused={focusedSection === 'boardOverlay'}>
+        <OverlayCustomizer />
       </CollapsibleSection>
       )}
 
