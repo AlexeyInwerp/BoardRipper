@@ -5894,8 +5894,9 @@ html, body, #root {
   /* Match board-netlines-toggle height from its explicit 28px/28px rule */
 }
 .overlay-filter-input::placeholder {
-  color: var(--text-muted, #666);
-  font-size: 11px;
+  color: var(--text-secondary, #bbb);
+  font-size: 12px;
+  opacity: 0.85;
 }
 .overlay-filter-input:focus {
   border-color: var(--accent, rgba(255,255,255,0.25));

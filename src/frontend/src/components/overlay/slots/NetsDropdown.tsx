@@ -28,7 +28,7 @@ export function NetsDropdown({ ctx }: { ctx: SlotCtx }) {
         <input
           className="overlay-filter-input board-netlines-toggle"
           type="text"
-          placeholder="nets"
+          placeholder="Nets"
           disabled
           title="No board loaded"
         />
@@ -97,7 +97,7 @@ export function NetsDropdown({ ctx }: { ctx: SlotCtx }) {
         ref={inputRef}
         type="text"
         className="overlay-filter-input board-netlines-toggle"
-        placeholder="nets"
+        placeholder="Nets"
         value={query}
         data-testid="nets-filter-input"
         title="Find net by name"
