@@ -3167,7 +3167,7 @@ export class BoardRenderer {
       const pinName = pin?.name ?? `${sel.pinIndex}`;
       const net = sel.highlightedNet && sel.highlightedNet !== '(null)' && sel.highlightedNet !== ''
         ? sel.highlightedNet : null;
-      text = net ? `${part.name} → ${pinName} → ${net}` : `${part.name} → ${pinName}`;
+      text = net ? `${part.name}→${pinName}→${net}` : `${part.name}→${pinName}`;
     } else {
       text = part.name;
     }
