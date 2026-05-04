@@ -549,6 +549,13 @@ function extractPins(
     let padShape: PadShape | undefined;
     let padW = fallbackW;
     let padH = fallbackH;
+    // Pad rotation in degrees. Composed of the footprint instance rotation
+    // (board-frame placement) and the pad's own rotation in the footprint's
+    // local frame (e.g. the 90° rotation between adjacent QFN sides).
+    // Only meaningful when padstack resolution succeeds — otherwise padW/padH
+    // fall back to the already-rotated AABB extents and applying rotation
+    // would double-count.
+    let padAngleDeg = 0;
     const padBlock = db.getBlockAs<Blk0x0DPad>(pad.padPtr, 0x0D);
     if (padBlock) {
       const ps = db.getBlockAs<Blk0x1CPadstack>(padBlock.padStack, 0x1C);
@@ -558,13 +565,22 @@ function extractPins(
           padShape = resolved.shape;
           padW = resolved.w / div;
           padH = resolved.h / div;
+          padAngleDeg = (fpInst.rotation + padBlock.rotation) / 1000;
         }
       }
     }
-    const padMinX = px - padW / 2;
-    const padMaxX = px + padW / 2;
-    const padMinY = py - padH / 2;
-    const padMaxY = py + padH / 2;
+    // Compute AABB of the (possibly rotated) padW × padH rectangle for
+    // hit-test bounds. For 0/90/180/270 this matches the un-rotated rect
+    // (with W/H swap at 90/270). For 45° it's the diamond's bounding box.
+    const rad = padAngleDeg * Math.PI / 180;
+    const aCo = Math.abs(Math.cos(rad));
+    const aSi = Math.abs(Math.sin(rad));
+    const aabbW = padW * aCo + padH * aSi;
+    const aabbH = padW * aSi + padH * aCo;
+    const padMinX = px - aabbW / 2;
+    const padMaxX = px + aabbW / 2;
+    const padMinY = py - aabbH / 2;
+    const padMaxY = py + aabbH / 2;
     const padCornerRadius = padShape === 'roundrect' ? Math.min(padW, padH) / 2 : undefined;
 
     pins.push({
@@ -576,6 +592,7 @@ function extractPins(
       net,
       padBounds: { minX: padMinX, minY: padMinY, maxX: padMaxX, maxY: padMaxY },
       ...(padShape ? { padShape, padWidth: padW, padHeight: padH } : {}),
+      ...(padAngleDeg !== 0 ? { padAngleDeg } : {}),
       ...(padCornerRadius != null ? { padCornerRadius } : {}),
     });
 
@@ -879,6 +896,10 @@ function extractPads(
       let shape: PadShape | undefined;
       let padW = fallbackW;
       let padH = fallbackH;
+      // Pad rotation in degrees. Composed of footprint instance rotation +
+      // pad-local rotation in the footprint frame — see extractPins.
+      // Only meaningful when padstack resolution succeeds.
+      let angleDeg = 0;
       const padBlock = db.getBlock(pp.padPtr);
       if (padBlock && padBlock.blockType === 0x0D) {
         const ps = db.getBlock((padBlock as Blk0x0DPad).padStack);
@@ -893,6 +914,7 @@ function extractPads(
             shape = resolved.shape;
             padW = resolved.w / div;
             padH = resolved.h / div;
+            angleDeg = (fpInst.rotation + (padBlock as Blk0x0DPad).rotation) / 1000;
           }
         }
       }
@@ -900,13 +922,17 @@ function extractPads(
       // Drop degenerate pads — both fallback bbox and resolved dims unusable.
       if (padW <= 0 || padH <= 0) { key = pp.nextInFp; continue; }
 
-      // Re-centre the bounds around the pad position using the real
-      // copper dims. For SMD this matches the placedPad bbox by
-      // construction; for THT it shrinks the rect to the actual pad copper.
-      const minX = ccx - padW / 2;
-      const maxX = ccx + padW / 2;
-      const minY = ccy - padH / 2;
-      const maxY = ccy + padH / 2;
+      // Bounds = AABB of the (possibly rotated) padW × padH rectangle, so
+      // hit-test stays accurate at non-orthogonal angles.
+      const rad = angleDeg * Math.PI / 180;
+      const aCo = Math.abs(Math.cos(rad));
+      const aSi = Math.abs(Math.sin(rad));
+      const aabbW = padW * aCo + padH * aSi;
+      const aabbH = padW * aSi + padH * aCo;
+      const minX = ccx - aabbW / 2;
+      const maxX = ccx + aabbW / 2;
+      const minY = ccy - aabbH / 2;
+      const maxY = ccy + aabbH / 2;
 
       const cornerRadius = shape === 'roundrect' ? Math.min(padW, padH) / 2 : undefined;
       const net = netAssignMap.get(pp.netPtr);
@@ -916,6 +942,7 @@ function extractPads(
         net: net && net.length > 0 ? net : undefined,
         drill,
         ...(shape ? { shape, width: padW, height: padH } : {}),
+        ...(angleDeg !== 0 ? { angleDeg } : {}),
         ...(cornerRadius != null ? { cornerRadius } : {}),
       });
 
