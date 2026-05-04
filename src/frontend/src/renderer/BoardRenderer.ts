@@ -2470,16 +2470,19 @@ export class BoardRenderer {
       }
     }
 
-    // Sprite size — generous so the dark circle reads at any zoom.
-    // The 1000-mil floor (~25 mm) guards tiny passives where 5× partMaxDim
-    // would collapse to a stamp.
-    const MIN_SPOTLIGHT_DIAMETER = 1000; // mils — ~25 mm
-    const SPOTLIGHT_TO_PART_RATIO = 5;
+    // Sprite size — additive growth (not multiplicative), so the dark
+    // circle stays generous on tiny passives and doesn't blow up on big
+    // BGAs. Floor of 1500 mils (~38 mm) keeps the spotlight imposing on
+    // 0402-class parts; for larger parts we add a fixed padding so the
+    // gradient extends beyond the part edges without scaling 5× a giant
+    // BGA out into the next county.
+    const MIN_SPOTLIGHT_DIAMETER = 1500; // mils — ~38 mm
+    const PART_PADDING = 800;            // mils added to part_max_dim
     const b = part.bounds;
     const bw = b.maxX - b.minX;
     const bh = b.maxY - b.minY;
     const partMaxDim = Math.max(bw, bh, 1);
-    const spriteSize = Math.max(partMaxDim * SPOTLIGHT_TO_PART_RATIO, MIN_SPOTLIGHT_DIAMETER);
+    const spriteSize = Math.max(MIN_SPOTLIGHT_DIAMETER, partMaxDim + PART_PADDING);
 
     this._haloSprite.width  = spriteSize;
     this._haloSprite.height = spriteSize;
