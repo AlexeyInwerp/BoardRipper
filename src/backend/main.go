@@ -99,6 +99,13 @@ func main() {
 	read := withTimeout(30 * time.Second)
 	write := withTimeout(10 * time.Second)
 
+	// Health endpoint — returns 200 {"status":"ok"} once the process is
+	// serving. Reached only after all setup above completes, so by
+	// definition the server is ready when this handler can be hit.
+	ready := func() bool { return true }
+	healthHandler := handlers.NewHealthHandler(ready)
+	mux.HandleFunc("GET /api/health", healthHandler.Serve)
+
 	// File API routes (existing)
 	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot)
 	mux.HandleFunc("POST /api/upload", fileHandler.Upload)                  // streaming upload — no wrap
