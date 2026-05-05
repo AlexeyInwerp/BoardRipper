@@ -5,6 +5,8 @@ package updater
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -269,4 +271,19 @@ func humanSize(bytes int64) string {
 	}
 	mb := kb / 1024
 	return fmt.Sprintf("%.1f MB", mb)
+}
+
+func (u *Updater) installedCounterPath() string {
+	return filepath.Join(u.dataDir, ".update-counter")
+}
+
+func (u *Updater) readInstalledCounter() int64 {
+	b, err := os.ReadFile(u.installedCounterPath())
+	if err != nil { return 0 }
+	n, _ := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return n
+}
+
+func (u *Updater) writeInstalledCounter(n int64) error {
+	return os.WriteFile(u.installedCounterPath(), []byte(strconv.FormatInt(n, 10)), 0o644)
 }
