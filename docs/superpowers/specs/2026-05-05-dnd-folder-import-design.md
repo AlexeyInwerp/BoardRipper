@@ -15,7 +15,7 @@
 
 Today, dropping a board or PDF file onto BoardRipper parses it client-side and caches the result in IndexedDB only — the backend never sees the file, it does not appear in the Library, and it disappears when browser cache is cleared.
 
-Add an optional **Drop folder** — a writable subfolder **inside `/library/`**, configured by the user in Settings. When set, a dropped file is:
+Add a **Drop folder** — a writable subfolder **inside `/library/`** (default `/library/incoming`, overridable by power users). When the folder exists and is writable, a dropped file is:
 
 1. Checked for duplicates against the existing `/library/` tree (which now includes the Drop folder, since it lives under the same root).
 2. Identified (brand + board number) via parser metadata + boarddb lookup.
@@ -23,7 +23,9 @@ Add an optional **Drop folder** — a writable subfolder **inside `/library/`**,
 4. Picked up by the existing scanner and shown in the Library — no scanner changes needed.
 5. Opened from disk so there is one source of truth.
 
-The Drop folder is constrained to live under `/library/` so BoardRipper writes nothing outside the user's existing mount tree. When the Drop folder is **not** set, today's in-memory behavior is preserved and the drop overlay surfaces a tooltip explaining files are temporary.
+**Auto-enable behavior:** the default path `/library/incoming` is used silently if it exists and is writable — no Settings interaction required. The user enables the feature simply by adding a writable Docker volume mount at `/library/incoming`. If the path is missing or unwritable, the drop flow falls back to today's in-memory behavior and a one-time **Docker-only** popup explains how to enable persistence by adding the share. The popup does not appear in the Electron build (it has its own filesystem persistence).
+
+The Drop folder is constrained to live under `/library/` so BoardRipper writes nothing outside the user's existing mount tree.
 
 ## Non-goals
 
@@ -45,16 +47,25 @@ The Drop folder is constrained to live under `/library/` so BoardRipper writes n
 
 ## Storage Layout
 
-The Drop folder is a writable subfolder **inside `/library/`** — never a sibling. The user mounts it as a writable bind-mount inside the existing `/library/` tree (e.g. host `~/boards/inbox` → container `/library/Inbox`); BoardRipper writes there. Container path is stored in `databank.db` config row `dnd_dir`, mirrored from env `DND_DIR` on first run; default unset.
+The Drop folder is a writable subfolder **inside `/library/`** — never a sibling. The default container path is `/library/incoming`; the user enables it by adding a writable Docker volume mount at that path (e.g. host `~/boards/incoming` → container `/library/incoming`). Power users may override the path via Settings (stored in `databank.db` config row `dnd_dir`, mirrored from env `DND_DIR` on first run).
 
 The path must satisfy `filepath.Rel("/library", dnd_dir)` cleanly with no `..` segments — anything outside `/library/` is rejected at config-save time. This keeps everything BoardRipper writes inside the same scan root, so no scanner changes are needed.
+
+**Effective state** is computed by the backend on every config read:
+
+| Conditions | `dndStatus` | Behavior |
+|---|---|---|
+| `dnd_dir` resolves under `/library/`, exists, writable | `active` | Drop flow imports; no popup. |
+| Path missing OR unwritable, Docker mode | `unmounted` | In-memory drop; Docker popup on first drop (suppressible). |
+| Path missing OR unwritable, Electron mode | `unmounted` | In-memory drop; **no popup** (Electron uses native persistence). |
+| Path outside `/library/` (manual override gone wrong) | `invalid` | In-memory drop; Settings shows red error; no Docker popup. |
 
 ```
 /library/                           ← single scan root (existing)
 ├── Schematics-RO/                  ← user's existing curated tree (often RO NAS share)
 │   └── Apple/820-02016/...
-└── <Inbox>/                        ← user's writable mount (e.g. /library/Inbox)
-    │                                  configured as Drop folder in Settings
+└── incoming/                       ← default Drop folder; user mounts a writable volume here
+    │                                  (or overrides path in Settings → power users only)
     ├── <brand>/<board#>/           ← high-confidence import
     │   ├── 820-02016.bvr
     │   └── 820-02016.pdf           ← bundled-drop or filename-matched PDF
@@ -85,21 +96,51 @@ Original filenames inside the folders are preserved verbatim; this is load-beari
 
 New section "Drop & Import" inside `SettingsPanel` → `library` tab ([src/frontend/src/panels/SettingsPanel.tsx](../../../src/frontend/src/panels/SettingsPanel.tsx)).
 
-Fields:
+Surface the **status first**, since for most users the only knob they need is "is it active or not":
+
+> **Drop folder:** `/library/incoming` &nbsp;&nbsp; ✅ Active &nbsp;&nbsp; *(87 GB free)*
+
+or
+
+> **Drop folder:** `/library/incoming` &nbsp;&nbsp; ⚠ Not mounted &nbsp;&nbsp; *(Mount a writable Docker volume to this path to enable.)*
+
+Behind a "Customize…" disclosure (collapsed by default — the default path covers the 95% case):
 
 | Field | Type | Persisted as | Behavior |
 |---|---|---|---|
-| Drop folder | text input + folder-picker | `dnd_dir` row in `databank.db` config table, mirrored from env `DND_DIR` on first run | Container path; **must be under `/library/`**. Empty → in-memory drop mode. Path-outside-library is rejected at save time with a clear error. |
-| Test write | button | — | Hits `POST /api/import/test-write`. Server attempts `os.WriteFile(<dnd>/.boardripper-write-test, …)` then removes it. UI shows ✓ + free space (e.g. "ok — 87 GB free") or ✗ with error message. |
-| Status indicator | derived | — | Continuously reflects: not-set / not-under-library / not-writable / writable. Red badge when configured but unreachable. |
+| Drop folder path | text input | `dnd_dir` row in `databank.db` config table, mirrored from env `DND_DIR` on first run | Container path; **must be under `/library/`**. Empty/unset → falls back to default `/library/incoming`. Path-outside-library is rejected with a clear error and the previous value is kept. |
+| Test write | button | — | Hits `POST /api/import/test-write`. Server attempts `os.WriteFile(<dnd>/.boardripper-write-test, …)` then removes it. UI shows ✓ + free space or ✗ with error message. |
+| Reset to default | button | — | Clears `dnd_dir`; status reverts to whatever `/library/incoming` evaluates to. |
 
-The Test Write check runs automatically after the user changes the path and on backend startup. If it fails, the drop flow falls back to the not-set behavior with a Library-panel banner: *"Drop folder configured but not writable: `<error>`. Files will only be cached in browser."*
+The Test Write check runs automatically on every config change and on backend startup. The result is exposed alongside `dnd_dir` in the config-snapshot endpoint as `dnd_status: "active" | "unmounted" | "invalid"`.
 
-The drop overlay copy adapts:
+The drop overlay copy adapts based on `dnd_status`:
 
-- Unset: `Drop board or PDF files here` / sub-line `(temporary — set a Drop folder in Settings to import)`
-- Set + writable: `Drop to import to library` / sub-line `<dnd-path>`
-- Set + unwritable: `Drop folder unwritable — files cached only` (red sub-line)
+- `unmounted` (Docker, popup not yet dismissed): `Drop board or PDF files here` / sub-line `(temporary — see how to enable saving)`
+- `unmounted` (Docker, popup dismissed) or Electron: `Drop board or PDF files here` (no sub-line — keeps today's clean look)
+- `active`: `Drop to import to library` / sub-line `<dnd-path>`
+- `invalid`: `Drop folder misconfigured — see Settings` (red sub-line)
+
+### Docker-only "add a share" popup
+
+When `!isElectron()` ([databank-store.ts:7](../../../src/frontend/src/store/databank-store.ts#L7)) AND `dnd_status === "unmounted"` AND the user actually drops a file, a one-time short modal appears:
+
+> **Saving dropped files is disabled**
+>
+> BoardRipper can save dropped boards into your library so they show up next time. To enable, mount a writable folder to `/library/incoming` in your Docker config (e.g. add `-v ~/boards/incoming:/library/incoming` or a volume entry in `docker-compose.yml`).
+>
+> Until then, dropped files only stay in this browser's cache.
+>
+> [ ] Don't show again &nbsp;&nbsp;&nbsp; **[ Got it ]**
+
+Dismissal flag persists in `databank.db` config row `dnd_unmounted_popup_dismissed: 1`. The popup is **suppressed** in:
+
+- Electron build (uses native filesystem persistence, has its own UX).
+- After dismissal (until reset by user via a "Show getting-started tips again" toggle in Settings — out of scope for v1).
+- When `dnd_status === "active"` (no popup needed; drop just works).
+- When `dnd_status === "invalid"` (the in-Settings red error replaces the popup; pointing the user to a misconfigured custom path).
+
+The popup never blocks the drop — the file still loads in-memory while the modal is shown, so the user can use the file immediately. The modal is informational, not a confirmation.
 
 ---
 
@@ -207,13 +248,23 @@ Filename-match is intentionally strict (exact base, case-insensitive). Heuristic
 
 ## Backend Changes
 
+### Config defaulting
+
+`dnd_dir` defaults to `filepath.Join(libraryRoot, "incoming")` (typically `/library/incoming`) when neither the `databank.db` config row nor the `DND_DIR` env var is set. The default is computed at request time, so changing `LIBRARY_DIR` propagates without DB migration.
+
+The config-snapshot endpoint (`GET /api/config` — already exposed to the frontend) gains:
+- `dnd_dir`: the resolved effective path (default or override).
+- `dnd_status`: `"active" | "unmounted" | "invalid"` per the table in § Settings.
+- `dnd_unmounted_popup_dismissed`: bool, mirrors the config row of the same name.
+
 ### New file: `src/backend/handlers/import.go`
 
 Endpoints:
-- `POST /api/config` (extend existing) — when setting `dnd_dir`, validate `filepath.Rel(libraryRoot, dnd_dir)` succeeds and the result has no `..` segments. Reject otherwise with `400 {error: "Drop folder must be under /library/"}`.
+- `POST /api/config` (extend existing) — when setting `dnd_dir`, validate `filepath.Rel(libraryRoot, dnd_dir)` succeeds and the result has no `..` segments. Reject otherwise with `400 {error: "Drop folder must be under /library/"}`. When clearing `dnd_dir` (empty string), the default takes over.
 - `POST /api/import/check-duplicate` — body `{filename, size}`, returns `{match: <path|null>}`. Single SQL query against the `files` table.
-- `POST /api/import/test-write` — attempts the write+remove cycle in `dnd_dir` plus a `disk.Usage()` for free bytes, returns `{ok, free_bytes, error?}`.
-- `POST /api/import` — multipart: file bytes + form fields `target` (relative path inside `dnd_dir`). Performs temp-file + fsync + atomic rename + folder-scan trigger. Returns `{path, file_id}`. Re-validates `target` is a clean relative path with no `..`.
+- `POST /api/import/test-write` — attempts the write+remove cycle in resolved `dnd_dir` plus a `disk.Usage()` for free bytes, returns `{ok, free_bytes, error?}`.
+- `POST /api/import` — multipart: file bytes + form fields `target` (relative path inside resolved `dnd_dir`). Performs temp-file + fsync + atomic rename + folder-scan trigger. Returns `{path, file_id}`. Re-validates `target` is a clean relative path with no `..`. Re-checks `dnd_status === "active"` on entry; refuses with 409 if not.
+- `POST /api/import/dismiss-popup` — sets `dnd_unmounted_popup_dismissed = 1` in config. No body.
 
 ### New file: `src/backend/databank/dnd_writer.go`
 
@@ -242,22 +293,25 @@ Add:
 
 ### `src/frontend/src/App.tsx handleDrop()`
 
-- Read `dndDirSet` from config snapshot at top of the handler.
-- If unset → existing in-memory path (no change in behavior; tooltip text comes from the overlay copy logic in `SettingsPanel` consuming the same flag).
-- If set → orchestrate the drop pipeline: parse → check-duplicate → resolve → classify → import → open from disk.
-- Surface progress via the existing toast/status system. Multi-file drops show a single "Importing 5 files…" toast that resolves to "Imported 4, 1 in unstructured" when done.
+- Read `dndStatus`, `dndUnmountedPopupDismissed` from config snapshot at top of the handler.
+- If `dndStatus === "active"` → orchestrate the drop pipeline: parse → check-duplicate → resolve → classify → import → open from disk. Surface progress via the existing toast/status system. Multi-file drops show a single "Importing 5 files…" toast that resolves to "Imported 4, 1 in unstructured" when done.
+- If `dndStatus !== "active"` → existing in-memory path (no change in behavior). Then, if `!isElectron() && dndStatus === "unmounted" && !dndUnmountedPopupDismissed`, show the `<UnmountedDropPopup>` modal (see below). The drop itself is **not** blocked by the popup — the file already loaded in-memory before the modal mounted.
 
 ### `src/frontend/src/components/ImportModal.tsx`
 
 New file. Props: `{ filename, parserHints: {board_number?, manufacturer?}, candidates: BoardMatch[], onImport, onSkip, onCancel }`. ~120 lines.
 
+### `src/frontend/src/components/UnmountedDropPopup.tsx`
+
+New file. The Docker-only "add a share" modal described in § Settings. Props: `{ onDismiss }`. Posts to `POST /api/import/dismiss-popup` when "Don't show again" is checked + closed. ~60 lines, including the example `docker-compose.yml` snippet shown to the user.
+
 ### `src/frontend/src/panels/SettingsPanel.tsx`
 
-New `LibrarySyncSection` sub-section "Drop & Import" with the fields enumerated in § Settings. Hits the new `/api/import/test-write` endpoint and the existing `PUT /api/config` for persistence.
+New `LibrarySyncSection` sub-section "Drop & Import" with the status-first layout enumerated in § Settings. Hits the new `/api/import/test-write` endpoint and the existing `PUT /api/config` for persistence.
 
 ### Drop overlay copy
 
-The overlay JSX lives inline in [App.tsx:205-210](../../../src/frontend/src/App.tsx#L205-L210), not in a separate component. Update in place to be a three-state adapter (unset / set+writable / set+unwritable) reading the `dnd_dir` and writability flags from the `useDatabank()` config snapshot. No extraction needed unless the JSX grows past ~30 lines.
+The overlay JSX lives inline in [App.tsx:205-210](../../../src/frontend/src/App.tsx#L205-L210), not in a separate component. Update in place to be a four-state adapter (active / unmounted-with-popup-pending / unmounted-dismissed-or-electron / invalid) per the table in § Settings, reading `dndStatus` and `dndUnmountedPopupDismissed` from the `useDatabank()` config snapshot. No extraction needed unless the JSX grows past ~30 lines.
 
 ---
 
@@ -272,6 +326,8 @@ The overlay JSX lives inline in [App.tsx:205-210](../../../src/frontend/src/App.
 - One spec that drives the full happy path against a mocked backend: drop board + PDF together → both land in `<brand>/<board#>/` → opened from disk → reload page → both still present in Library.
 - One spec for the duplicate path: drop a file that's already on disk → toast appears → existing file opens → no new write.
 - One spec for the modal path: drop a board with no parser metadata → modal appears → user fills in → submitted → file lands in correct folder.
+- One spec for the unmounted-popup path: backend reports `dnd_status: "unmounted"` + `dnd_unmounted_popup_dismissed: false` → drop file → file loads in-memory + popup appears → check "Don't show again" + close → POST to dismiss-popup fires → reload page → drop again → no popup.
+- One spec confirming popup suppression in Electron: same backend state but mock `window.electronAPI = {scanLibrary: …}` → drop → no popup.
 
 The "Needs Review" UX (§ v2) is **not** tested in v1 — it does not exist yet.
 
@@ -313,7 +369,9 @@ None as of approval. The bulk-drop threshold (`>3 files = silent unstructured`) 
 | Risk | Mitigation |
 |---|---|
 | User configures a Drop folder outside `/library/` | Validated at config-save (`filepath.Rel` + `..` check) and re-validated at every `/api/import` call. Rejected with a clear error before write. |
-| User picks a path under `/library/` that's actually a RO mount | Test Write on save + on startup catches it; status indicator + banner; drop flow falls back to unset behavior. |
+| Docker user finds the "add a share" popup annoying | Modal is one-time per user. "Don't show again" checkbox sets `dnd_unmounted_popup_dismissed`; never re-appears unless user resets it from a future "show tips again" toggle (out of v1 scope). Suppressed entirely in Electron. |
+| User mounts the share *after* dismissing the popup | Backend re-evaluates `dnd_status` on every config read; once it flips to `active` the drop flow just starts working. The dismissal flag never blocks the drop itself. |
+| User picks a path under `/library/` that's actually a RO mount | Test Write on save + on startup catches it; `dnd_status` flips to `unmounted`; drop flow falls back to in-memory + (Docker) popup. |
 | Same filename concurrently dropped from two browsers | Atomic rename + post-rename existence check; second writer gets a "duplicate (race)" error and falls into the existing dedup path. |
 | Boarddb resolver returns wrong brand for ambiguous codes | Single-file ambiguous drops always show the modal; bulk drops go to `unstructured/` where v2 review can fix them. No silent miscategorization in the single-drop path. |
 | `unstructured/` accumulates without v2 review UI | Documented limitation. Files are still in `databank.db` and findable via search; the user can move them on disk and rescan. v2 ships the proper UI. |
@@ -324,14 +382,17 @@ None as of approval. The bulk-drop threshold (`>3 files = silent unstructured`) 
 ## Summary of v1 Scope
 
 Ship:
-1. Settings field + under-`/library/` validation + Test Write + adaptive overlay copy
-2. Dedup check (filename + size, single `/library/` scan root)
-3. `/api/import` with atomic temp+rename + localized rescan trigger
-4. Resolver `Resolve(boardNumber, manufacturer)` returning confidence + candidates
-5. Hybrid classify policy (Q2d): silent for high/placeholder, modal for single-file ambiguous/none, silent unstructured for bulk
-6. PDF pairing (bundled + filename-match) with auto-binding creation via existing `db.InsertBinding`
-7. Removal of dead `POST /api/upload`
-8. Tests as enumerated above
+1. Default `dnd_dir = /library/incoming` with `dnd_status` auto-detection on every config read
+2. Settings UI: status-first display, "Customize…" disclosure for power-user override, under-`/library/` validation, Test Write
+3. Docker-only `<UnmountedDropPopup>` on first drop while `dnd_status === "unmounted"`, with persistent dismissal
+4. Adaptive drop overlay copy (4 states: active / unmounted+popup-pending / dismissed-or-Electron / invalid)
+5. Dedup check (filename + size, single `/library/` scan root)
+6. `/api/import` with atomic temp+rename + localized rescan trigger
+7. Resolver `Resolve(boardNumber, manufacturer)` returning confidence + candidates
+8. Hybrid classify policy (Q2d): silent for high/placeholder, modal for single-file ambiguous/none, silent unstructured for bulk
+9. PDF pairing (bundled + filename-match) with auto-binding creation via existing `db.InsertBinding`
+10. Removal of dead `POST /api/upload`
+11. Tests as enumerated above
 
 Notably **not** in scope (because the folder lives under `/library/`):
 - No new scan root, no new env var beyond optional `DND_DIR`, no scanner changes.
