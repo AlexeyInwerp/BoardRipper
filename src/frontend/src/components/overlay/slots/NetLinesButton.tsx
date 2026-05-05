@@ -1,4 +1,4 @@
-import { IconHierarchy, IconHierarchyOff, IconChartDots3, IconAffiliate } from '@tabler/icons-react';
+import { IconHierarchy, IconHierarchyOff, IconChartDots3, IconHierarchy3 } from '@tabler/icons-react';
 import { boardStore } from '../../../store/board-store';
 import type { SlotCtx } from '../slot-ctx';
 
@@ -25,7 +25,7 @@ export function NetLinesButton({ ctx }: { ctx: SlotCtx }) {
       ) : netLineMode === 'chain' ? (
         <IconChartDots3 size={16} />
       ) : (
-        <IconAffiliate size={16} />
+        <IconHierarchy3 size={16} />
       )}
     </button>
   );
