@@ -2,8 +2,11 @@
 package updater
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"aead.dev/minisign"
@@ -80,6 +83,17 @@ func VerifyManifest(manifestBytes, sig []byte, pubKeyStr string) error {
 	}
 	if !minisign.Verify(pub, manifestBytes, sig) {
 		return errors.New("minisign verification failed")
+	}
+	return nil
+}
+
+// VerifyTarballSHA256 checks that the SHA256 hash of data matches expectedHex.
+func VerifyTarballSHA256(data []byte, expectedHex string) error {
+	h := sha256.Sum256(data)
+	got := hex.EncodeToString(h[:])
+	want := strings.ToLower(strings.TrimSpace(expectedHex))
+	if got != want {
+		return fmt.Errorf("sha256 mismatch: got %s, want %s", got, want)
 	}
 	return nil
 }
