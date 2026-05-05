@@ -266,13 +266,6 @@ func (u *Updater) applyTarball(m *Manifest) error {
 	return nil
 }
 
-// tagPrevious tags the running image as boardripper:previous before the swap.
-// Real implementation added in E2.
-func (u *Updater) tagPrevious() error {
-	// E2 will tag the running image as boardripper:previous before swap.
-	return nil
-}
-
 // downloadAsset fetches url via plain HTTPS GET and writes the body to dest.
 func downloadAsset(url, dest string) error {
 	resp, err := http.Get(url) //nolint:gosec // URL comes from a signed manifest
