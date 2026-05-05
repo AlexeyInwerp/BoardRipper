@@ -48,6 +48,9 @@ func TestBootstrapHandler_SetsCookie(t *testing.T) {
 	found := false
 	for _, c := range cookies {
 		if c.Name == "br_update_token" && c.Value == "topsecret" && c.HttpOnly && c.SameSite == http.SameSiteStrictMode {
+			if c.Secure {
+				t.Errorf("Secure should be false for non-TLS request, got true")
+			}
 			found = true
 		}
 	}

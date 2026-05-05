@@ -25,11 +25,13 @@ type BootstrapHandler struct{ secret string }
 func NewBootstrapHandler(secret string) *BootstrapHandler { return &BootstrapHandler{secret: secret} }
 
 func (h *BootstrapHandler) Serve(w http.ResponseWriter, r *http.Request) {
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     updateCookieName,
 		Value:    h.secret,
 		Path:     "/api/update/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
 	w.WriteHeader(204)
