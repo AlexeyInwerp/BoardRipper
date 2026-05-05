@@ -8,6 +8,16 @@ import { log } from './log-store';
 import { renderSettingsStore, isPdfWatermarkText } from './render-settings';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
+// TS lib doesn't ship the Stage-3 prototype additions yet; declare them for the typechecker.
+declare global {
+  interface Uint8Array {
+    toHex(): string;
+  }
+  interface Map<K, V> {
+    getOrInsertComputed(key: K, cb: (key: K) => V): V;
+  }
+}
+
 if (typeof Uint8Array.prototype.toHex !== 'function') {
   Uint8Array.prototype.toHex = function () {
     let hex = '';
@@ -16,7 +26,7 @@ if (typeof Uint8Array.prototype.toHex !== 'function') {
   };
 }
 if (typeof Map.prototype.getOrInsertComputed !== 'function') {
-  Map.prototype.getOrInsertComputed = function <K, V>(key: K, cb: (key: K) => V): V {
+  Map.prototype.getOrInsertComputed = function <K, V>(this: Map<K, V>, key: K, cb: (key: K) => V): V {
     if (this.has(key)) return this.get(key)!;
     const val = cb(key);
     this.set(key, val);
