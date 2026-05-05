@@ -15,6 +15,7 @@
  * Reference: OpenBoardView FZFile.cpp
  */
 
+import { inflate } from 'pako';
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
 
@@ -121,38 +122,6 @@ function rc6Decrypt(data: Uint8Array, key: Uint32Array): void {
     C = readU32LE(ibuf, 8);
     D = readU32LE(ibuf, 12);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Zlib decompression (browser DecompressionStream API)
-// ---------------------------------------------------------------------------
-
-async function zlibInflate(data: Uint8Array): Promise<Uint8Array> {
-  const ds = new DecompressionStream('deflate');
-  const writer = ds.writable.getWriter();
-  const reader = ds.readable.getReader();
-
-  // Write data and close
-  writer.write(data as Uint8Array<ArrayBuffer>).then(() => writer.close());
-
-  // Read all output chunks
-  const chunks: Uint8Array[] = [];
-  let totalLen = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    totalLen += value.length;
-  }
-
-  // Concatenate
-  const result = new Uint8Array(totalLen);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,10 +366,21 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
 
   const descrSize = readU32LE(data, data.length - 4);
   const contentStart = 4; // skip 4-byte header
-  const contentEnd = data.length - descrSize;
+  let contentEnd = data.length - descrSize;
 
   if (contentEnd <= contentStart || contentEnd > data.length) {
     throw new Error('FZ file structure invalid: description size points outside file bounds');
+  }
+
+  // Older ASUS/MSI/ASRock FZ files (the dominant variant in real-world samples)
+  // embed an undocumented 4-byte uint32 LE forward-pointer to the description
+  // section start, sitting between the deflate end-of-stream marker and
+  // contentEnd. If those four bytes spell out contentEnd itself, trim them off
+  // so strict zlib decoders don't reject the slice as having "junk after end of
+  // compressed data". OBV's reference C++ inflate is lenient enough to ignore
+  // them, but pako (and DecompressionStream) are not.
+  if (contentEnd - 4 > contentStart && readU32LE(data, contentEnd - 4) === contentEnd) {
+    contentEnd -= 4;
   }
 
   const contentCompressed = data.subarray(contentStart, contentEnd);
@@ -409,7 +389,7 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
   let contentText: string;
 
   try {
-    contentText = decoder.decode(await zlibInflate(contentCompressed));
+    contentText = decoder.decode(inflate(contentCompressed));
   } catch (e) {
     throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
   }
