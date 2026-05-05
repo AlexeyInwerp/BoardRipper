@@ -16,6 +16,7 @@ import { Viewport } from 'pixi-viewport';
 import type { BoardData, Point, Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
+import type { SelectionState, NetLineMode } from '../store/board-store';
 import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
@@ -284,7 +285,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsKey: '' as string, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -303,7 +304,7 @@ export class BoardRenderer {
 
   // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
   // Only recomputed when selection, viewport, or visibility changes.
-  private netLineSegments: { start: Point; end: Point }[] = [];
+  private netLineSegments: Array<{ start: Point; end: Point; color: number }> = [];
   private netLinesDirty = true;
   /** Extra state tracked for fade logic */
   private netLineFadeDist = 0;
@@ -1907,6 +1908,7 @@ export class BoardRenderer {
       if (sel.partIndex !== lrs.partIndex
         || sel.pinIndex !== lrs.pinIndex
         || sel.highlightedNet !== lrs.highlightedNet
+        || [...sel.adjacentNets].sort().join(',') !== lrs.adjacentNetsKey
         || searchLen !== lrs.searchLen
         || this.board !== lrs.board
         || boardStore.dimMode !== lrs.dimMode
@@ -1916,7 +1918,7 @@ export class BoardRenderer {
         || boardStore.showGhosts !== lrs.showGhosts
         || boardStore.searchSelectionActive !== lrs.searchSelectionActive) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsKey: [...sel.adjacentNets].sort().join(','), searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
       }
 
       // PDF follow mode: search for selected component
@@ -2762,8 +2764,22 @@ export class BoardRenderer {
     // 'darklight' mode skips the overlay rect and only shows the spotlight sprite.
     const showDim = dimMode === 'dim' || searchForcesDim;
     const showSpotlight = dimMode === 'darklight';
-    const effectiveNet = sel.highlightedNet
+    const primaryNet = sel.highlightedNet
       || (s.ambientDim && showDim && boardStore.showHoverInfo ? this.hoverNet : null);
+    // Set of nets that count as "highlighted" for this frame. For
+    // chain-adjacent, includes both the primary and all adjacents; for
+    // other modes only the primary. Empty when nothing is selected.
+    const activeNets: Array<{ name: string; glowColor: number }> = [];
+    if (primaryNet) {
+      activeNets.push({ name: primaryNet, glowColor: COLORS.netHighlight });
+      if (boardStore.netLineMode === 'chain-adjacent' && sel.highlightedNet) {
+        for (const adj of sel.adjacentNets) {
+          activeNets.push({ name: adj, glowColor: renderSettingsStore.settings.adjacentNetLineColor });
+        }
+      }
+    }
+    // Kept for the dim/spotlight gating which only cares about "any net active".
+    const effectiveNet = primaryNet;
     // Ambient dim: draw overlay even when nothing is selected/hovered.
     const needsAmbientDim = s.ambientDim && showDim && !effectiveNet;
 
@@ -2834,44 +2850,58 @@ export class BoardRenderer {
       }
     }
 
-    if (effectiveNet) {
-      const net = this.board.nets.get(effectiveNet);
-      if (net) {
-        // ── Dim the entire board (if enabled) ────────────────────────────────
-        if (showDim) {
-          const b = this.board.bounds;
-          const bw = b.maxX - b.minX;
-          const bh = b.maxY - b.minY;
-          const pad = Math.max(bw, bh) * 5;
-          const cx = (b.minX + b.maxX) / 2;
-          const cy = (b.minY + b.maxY) / 2;
-          this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
-          this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
-        }
+    // Hoisted accumulators — populated per-net inside the loop, drained once.
+    const seenParts = new Set<number>();
+    const ghostPartIndices: number[] = [];
+    const seenGhosts = new Set<number>();
+    const topPartOutlines: (() => void)[] = [];
+    const botPartOutlines: (() => void)[] = [];
+    const topByColor = new Map<number, (() => void)[]>();
+    const botByColor = new Map<number, (() => void)[]>();
+    // Highlight glow draw fns, grouped by glow color so adjacent nets render
+    // their pads in adjacentNetLineColor while the primary net stays yellow.
+    const topHighlightsByColor = new Map<number, (() => void)[]>();
+    const botHighlightsByColor = new Map<number, (() => void)[]>();
+    const affectedTopNames = new Set<string>();
+    const affectedBotNames = new Set<string>();
 
-        // ── Highlight parts containing net pins (selection-style outlines) ──
-        const seenParts = new Set<number>();
-        const topPartOutlines: (() => void)[] = [];
-        const botPartOutlines: (() => void)[] = [];
-        const ghostPartIndices: number[] = []; // hidden-side parts for cross-side ghost
-        // GND/NC nets connect too many components or aren't real — skip cross-side ghosts
-        const netUpper = effectiveNet!.toUpperCase();
+    if (primaryNet) {
+      // ── Dim overlay (once per frame, not per-net) ─────────────────────
+      if (showDim) {
+        const b = this.board.bounds;
+        const bw = b.maxX - b.minX;
+        const bh = b.maxY - b.minY;
+        const pad = Math.max(bw, bh) * 5;
+        const cx = (b.minX + b.maxX) / 2;
+        const cy = (b.minY + b.maxY) / 2;
+        this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
+        this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+      }
+
+      // ── Per-net highlight loop ───────────────────────────────────────
+      for (const { name: netName, glowColor } of activeNets) {
+        const net = this.board.nets.get(netName);
+        if (!net) continue;
+
+        const netUpper = netName.toUpperCase();
         const skipGhosts = netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns);
 
+        // Part outlines + ghost gathering for this net.
         for (const ref of net.pinIndices) {
           if (seenParts.has(ref.partIndex)) continue;
           seenParts.add(ref.partIndex);
           const part = this.board.parts[ref.partIndex];
           if (!part) continue;
-          // Collect hidden-side parts as ghosts (skip butterfly mode, GND/NC nets, and when ghosts disabled)
           if (!this.isPartVisible(part)) {
-            if (!butterfly && !skipGhosts && boardStore.showGhosts) ghostPartIndices.push(ref.partIndex);
+            if (!butterfly && !skipGhosts && boardStore.showGhosts && !seenGhosts.has(ref.partIndex)) {
+              seenGhosts.add(ref.partIndex);
+              ghostPartIndices.push(ref.partIndex);
+            }
             continue;
           }
 
           const gfx = gfxFor(part);
           const outlines = gfx === this.butterflySelectionGfx ? botPartOutlines : topPartOutlines;
-
           if (part.pins.length === 1) {
             const pin = part.pins[0];
             const r = computePinRadius(s, pin.radius) + s.selectionPadding;
@@ -2881,61 +2911,7 @@ export class BoardRenderer {
           }
         }
 
-        for (const fn of topPartOutlines) fn();
-        if (topPartOutlines.length > 0) {
-          this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-          this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
-        }
-        for (const fn of botPartOutlines) fn();
-        if (botPartOutlines.length > 0) {
-          this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-          this.butterflySelectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
-        }
-
-        // ── Re-draw affected part name labels above the dim overlay ─────────
-        // Skip the selected part — its label was already cloned at the top of
-        // renderSelection; cloning it again here stacks two identical labels
-        // on top of each other (visible as a slight doubling once the
-        // fontFamily mismatch was fixed).
-        if (showDim && this.activeScene) {
-          // In butterfly mode, track which sides have affected parts to avoid
-          // cloning labels from the wrong side (which would appear mirrored).
-          const selectedPartName = sel.partIndex !== null ? this.board.parts[sel.partIndex]?.name : null;
-          const affectedTopNames = new Set<string>();
-          const affectedBotNames = new Set<string>();
-          for (const pi of seenParts) {
-            if (pi === sel.partIndex) continue;
-            const p = this.board.parts[pi];
-            if (!p) continue;
-            if (p.side === 'bottom') affectedBotNames.add(p.name);
-            else affectedTopNames.add(p.name);
-          }
-
-          if (this.isTopVisible) {
-            for (const srcLabel of this.activeScene.topLabels) {
-              if (!srcLabel.visible || !affectedTopNames.has(srcLabel.text)) continue;
-              if (selectedPartName && srcLabel.text === selectedPartName) continue;
-              this.acquireNetLabel(srcLabel);
-            }
-          }
-          if (this.isBottomVisible && !butterfly) {
-            // Non-butterfly: bottom labels live in scene.root, safe to clone into netLabelLayer.
-            // In butterfly mode, bottom labels are in butterflyRoot — cloning into scene.root
-            // would render them mirrored at wrong positions, so skip.
-            for (const srcLabel of this.activeScene.bottomLabels) {
-              if (!srcLabel.visible || !affectedBotNames.has(srcLabel.text)) continue;
-              if (selectedPartName && srcLabel.text === selectedPartName) continue;
-              this.acquireNetLabel(srcLabel);
-            }
-          }
-        }
-
-        // ── Re-draw highlighted pins on top of dim with full brightness ────
-        const topByColor = new Map<number, (() => void)[]>();
-        const botByColor = new Map<number, (() => void)[]>();
-        const topHighlights: (() => void)[] = [];
-        const botHighlights: (() => void)[] = [];
-
+        // Pin glow + dim-redraw collectors for this net.
         for (const ref of net.pinIndices) {
           const part = this.board.parts[ref.partIndex];
           const pin = part?.pins[ref.pinIndex];
@@ -2943,27 +2919,36 @@ export class BoardRenderer {
 
           const gfx = gfxFor(part);
           const isBotGfx = gfx === this.butterflySelectionGfx;
-          const highlights = isBotGfx ? botHighlights : topHighlights;
 
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
 
+          // Affected names for label re-clone.
+          if (part.side === 'bottom') affectedBotNames.add(part.name);
+          else affectedTopNames.add(part.name);
+
+          // Resolve pad geometry once.
           const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
           const pb = pin.padBounds;
+          const pushDim = (fn: () => void) => {
+            if (!showDim) return;
+            const map = isBotGfx ? botByColor : topByColor;
+            let arr = map.get(pinColor);
+            if (!arr) { arr = []; map.set(pinColor, arr); }
+            arr.push(fn);
+          };
+          const pushGlow = (fn: () => void) => {
+            const map = isBotGfx ? botHighlightsByColor : topHighlightsByColor;
+            let arr = map.get(glowColor);
+            if (!arr) { arr = []; map.set(glowColor, arr); }
+            arr.push(fn);
+          };
+
           if (storedPads && storedPads[ref.pinIndex]) {
-            // 2-pin: reuse exact pad polygon from scene build — same size as rendered pin
             const padPoly = storedPads[ref.pinIndex];
-            if (showDim) {
-              const colorMap = isBotGfx ? botByColor : topByColor;
-              let arr = colorMap.get(pinColor);
-              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
-              arr.push(() => drawPoly(gfx, padPoly));
-            }
-            highlights.push(() => drawPoly(gfx, padPoly));
+            pushDim(() => drawPoly(gfx, padPoly));
+            pushGlow(() => drawPoly(gfx, padPoly));
           } else if (pb) {
-            // Parser exposed a copper pad — draw highlight using the actual
-            // pad shape (round → circle, roundrect → rounded rect, etc.) so
-            // a selected pin reads as the real geometry, not a square halo.
             const grow = s.netHighlightGrow;
             const padGeom: PadGeometry = {
               bounds: pb,
@@ -2973,134 +2958,138 @@ export class BoardRenderer {
               angleDeg: pin.padAngleDeg,
               cornerRadius: pin.padCornerRadius,
             };
-            if (showDim) {
-              const colorMap = isBotGfx ? botByColor : topByColor;
-              let arr = colorMap.get(pinColor);
-              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
-              arr.push(() => drawPadShape(gfx, padGeom));
-            }
-            highlights.push(() => drawPadShape(gfx, padGeom, grow));
+            pushDim(() => drawPadShape(gfx, padGeom));
+            pushGlow(() => drawPadShape(gfx, padGeom, grow));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            if (showDim) {
-              const colorMap = isBotGfx ? botByColor : topByColor;
-              let arr = colorMap.get(pinColor);
-              if (!arr) { arr = []; colorMap.set(pinColor, arr); }
-              arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
-            }
-            highlights.push(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
+            pushDim(() => gfx.circle(pin.position.x, pin.position.y, r));
+            pushGlow(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
           }
         }
-
-        // Draw bright pins per color (full alpha, above the dim overlay)
-        for (const [color, fns] of topByColor) {
-          for (const fn of fns) fn();
-          this.selectionGfx.fill({ color, alpha: 1.0 });
-        }
-        for (const [color, fns] of botByColor) {
-          for (const fn of fns) fn();
-          this.butterflySelectionGfx.fill({ color, alpha: 1.0 });
-        }
-
-        // Yellow highlight glow on top
-        for (const fn of topHighlights) fn();
-        if (topHighlights.length > 0) {
-          this.selectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
-        }
-        for (const fn of botHighlights) fn();
-        if (botHighlights.length > 0) {
-          this.butterflySelectionGfx.fill({ color: COLORS.netHighlight, alpha: s.netHighlightAlpha });
-        }
-
-        // Pin labels for the selected part are already raised into netLabelLayer
-        // (unconditional raise in the part-outline branch above).
-
-        // ── Highlight PCB traces belonging to the selected net ──────────
-        // Traces are colored by their layer's palette color to show which layer each segment is on.
-        if (this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
-          const netName = effectiveNet!;
-          const { layerStates } = boardStore;
-
-          // Group trace segments by layer color for batched strokes
-          const traceByColor = new Map<number, { sx: number; sy: number; ex: number; ey: number }[]>();
-          for (const t of this.board.traces) {
-            if (t.net !== netName) continue;
-            let color: number = COLORS.netHighlight;
-            if (t.layer != null && t.layer < layerStates.length) {
-              color = layerStates[t.layer].color;
-            }
-            let arr = traceByColor.get(color);
-            if (!arr) { arr = []; traceByColor.set(color, arr); }
-            arr.push({ sx: t.start.x, sy: t.start.y, ex: t.end.x, ey: t.end.y });
-          }
-          for (const [c, segs] of traceByColor) {
-            for (const s2 of segs) {
-              this.selectionGfx.moveTo(s2.sx, s2.sy);
-              this.selectionGfx.lineTo(s2.ex, s2.ey);
-            }
-            this.selectionGfx.stroke({ width: 3, color: c as number & 0xffffff, alpha: 0.9, join: 'round', cap: 'round' });
-          }
-        }
-
-        // ── Highlight vias belonging to the selected net ─────────────
-        // Via color = the "other" layer relative to where the signal is coming from.
-        // We determine source layer from the selected part's layer, then for each via
-        // pick the connected layer that is NOT the source → that's the destination color.
-        if (this.board.vias && this.board.vias.length > 0 && boardStore.showVias && this.activeScene) {
-          const netName = effectiveNet!;
-          const { layerStates } = boardStore;
-          const connMap = this.activeScene.viaConnectedLayers;
-
-          // Determine the source layer from the selected part
-          const selectedPart = sel.partIndex !== null ? this.board.parts[sel.partIndex] : null;
-          const sourceLayer = selectedPart?.layer ?? -1;
-
-          // Group vias by their target layer color for batched strokes
-          const byColor = new Map<number, { x: number; y: number }[]>();
-
-          for (let vi = 0; vi < this.board.vias.length; vi++) {
-            const via = this.board.vias[vi];
-            if (via.net !== netName) continue;
-            const connected = connMap[vi] ?? [];
-
-            let color: number = COLORS.netHighlight; // fallback yellow
-            if (connected.length >= 2 && layerStates.length > 0) {
-              // Pick the layer that is NOT the source layer (= destination)
-              // If source is connected[0], destination is connected[last] and vice versa
-              let targetIdx: number;
-              if (connected[0] === sourceLayer) {
-                targetIdx = connected[connected.length - 1];
-              } else if (connected[connected.length - 1] === sourceLayer) {
-                targetIdx = connected[0];
-              } else {
-                // Source layer not directly in this via — pick the farther end from source
-                targetIdx = Math.abs(connected[0] - sourceLayer) > Math.abs(connected[connected.length - 1] - sourceLayer)
-                  ? connected[0]
-                  : connected[connected.length - 1];
-              }
-              if (targetIdx < layerStates.length) color = layerStates[targetIdx].color;
-            } else if (connected.length === 1 && layerStates.length > 0) {
-              const idx = connected[0];
-              if (idx < layerStates.length) color = layerStates[idx].color;
-            }
-
-            let arr = byColor.get(color);
-            if (!arr) { arr = []; byColor.set(color, arr); }
-            arr.push(via.position);
-          }
-
-          for (const [c, positions] of byColor) {
-            for (const { x, y } of positions) {
-              this.selectionGfx.moveTo(x - 12, y).lineTo(x + 12, y);
-              this.selectionGfx.moveTo(x, y - 12).lineTo(x, y + 12);
-              this.selectionGfx.circle(x, y, 10);
-            }
-            this.selectionGfx.stroke({ width: 2.5, color: c as number & 0xffffff, alpha: 0.95 });
-          }
-        }
-        this.crossSideGhostParts = ghostPartIndices;
       }
+
+      // ── Drain accumulated outlines + glow (once per frame) ───────────
+      for (const fn of topPartOutlines) fn();
+      if (topPartOutlines.length > 0) {
+        this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
+        this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
+      }
+      for (const fn of botPartOutlines) fn();
+      if (botPartOutlines.length > 0) {
+        this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
+        this.butterflySelectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
+      }
+
+      // Re-clone affected labels above the dim overlay.
+      if (showDim && this.activeScene) {
+        const selectedPartName = sel.partIndex !== null ? this.board.parts[sel.partIndex]?.name : null;
+        if (this.isTopVisible) {
+          for (const srcLabel of this.activeScene.topLabels) {
+            if (!srcLabel.visible || !affectedTopNames.has(srcLabel.text)) continue;
+            if (selectedPartName && srcLabel.text === selectedPartName) continue;
+            this.acquireNetLabel(srcLabel);
+          }
+        }
+        if (this.isBottomVisible && !butterfly) {
+          for (const srcLabel of this.activeScene.bottomLabels) {
+            if (!srcLabel.visible || !affectedBotNames.has(srcLabel.text)) continue;
+            if (selectedPartName && srcLabel.text === selectedPartName) continue;
+            this.acquireNetLabel(srcLabel);
+          }
+        }
+      }
+
+      // Pin redraws above dim, grouped by pin color (full alpha).
+      for (const [color, fns] of topByColor) {
+        for (const fn of fns) fn();
+        this.selectionGfx.fill({ color, alpha: 1.0 });
+      }
+      for (const [color, fns] of botByColor) {
+        for (const fn of fns) fn();
+        this.butterflySelectionGfx.fill({ color, alpha: 1.0 });
+      }
+
+      // Highlight glow on top, per glow color (yellow for primary, bluish
+      // for adjacents). Each color group flushes its own fill.
+      for (const [glowColor, fns] of topHighlightsByColor) {
+        for (const fn of fns) fn();
+        this.selectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+      }
+      for (const [glowColor, fns] of botHighlightsByColor) {
+        for (const fn of fns) fn();
+        this.butterflySelectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+      }
+
+      // ── Trace highlight (PRIMARY net only) ───────────────────────────
+      if (this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
+        const netName = primaryNet;
+        const { layerStates } = boardStore;
+        const traceByColor = new Map<number, { sx: number; sy: number; ex: number; ey: number }[]>();
+        for (const t of this.board.traces) {
+          if (t.net !== netName) continue;
+          let color: number = COLORS.netHighlight;
+          if (t.layer != null && t.layer < layerStates.length) {
+            color = layerStates[t.layer].color;
+          }
+          let arr = traceByColor.get(color);
+          if (!arr) { arr = []; traceByColor.set(color, arr); }
+          arr.push({ sx: t.start.x, sy: t.start.y, ex: t.end.x, ey: t.end.y });
+        }
+        for (const [c, segs] of traceByColor) {
+          for (const s2 of segs) {
+            this.selectionGfx.moveTo(s2.sx, s2.sy);
+            this.selectionGfx.lineTo(s2.ex, s2.ey);
+          }
+          this.selectionGfx.stroke({ width: 3, color: c as number & 0xffffff, alpha: 0.9, join: 'round', cap: 'round' });
+        }
+      }
+
+      // ── Via highlight (PRIMARY net only) ─────────────────────────────
+      if (this.board.vias && this.board.vias.length > 0 && boardStore.showVias && this.activeScene) {
+        const netName = primaryNet;
+        const { layerStates } = boardStore;
+        const connMap = this.activeScene.viaConnectedLayers;
+        const selectedPart = sel.partIndex !== null ? this.board.parts[sel.partIndex] : null;
+        const sourceLayer = selectedPart?.layer ?? -1;
+        const byColor = new Map<number, { x: number; y: number }[]>();
+
+        for (let vi = 0; vi < this.board.vias.length; vi++) {
+          const via = this.board.vias[vi];
+          if (via.net !== netName) continue;
+          const connected = connMap[vi] ?? [];
+          let color: number = COLORS.netHighlight;
+          if (connected.length >= 2 && layerStates.length > 0) {
+            let targetIdx: number;
+            if (connected[0] === sourceLayer) {
+              targetIdx = connected[connected.length - 1];
+            } else if (connected[connected.length - 1] === sourceLayer) {
+              targetIdx = connected[0];
+            } else {
+              targetIdx = Math.abs(connected[0] - sourceLayer) > Math.abs(connected[connected.length - 1] - sourceLayer)
+                ? connected[0]
+                : connected[connected.length - 1];
+            }
+            if (targetIdx < layerStates.length) color = layerStates[targetIdx].color;
+          } else if (connected.length === 1 && layerStates.length > 0) {
+            const idx = connected[0];
+            if (idx < layerStates.length) color = layerStates[idx].color;
+          }
+          let arr = byColor.get(color);
+          if (!arr) { arr = []; byColor.set(color, arr); }
+          arr.push(via.position);
+        }
+        for (const [c, positions] of byColor) {
+          for (const { x, y } of positions) {
+            this.selectionGfx.moveTo(x - 12, y).lineTo(x + 12, y);
+            this.selectionGfx.moveTo(x, y - 12).lineTo(x, y + 12);
+            this.selectionGfx.circle(x, y, 10);
+          }
+          this.selectionGfx.stroke({ width: 2.5, color: c as number & 0xffffff, alpha: 0.95 });
+        }
+      }
+
+      this.crossSideGhostParts = ghostPartIndices;
     }
 
     // ── Cross-side ghost components (hidden side, pulsing semi-transparent) ──
@@ -3143,7 +3132,7 @@ export class BoardRenderer {
    *   - Pin label placement: tries above pin first, flips below if overlapping part label
    */
   private updateElevatedLabels(
-    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
+    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null; adjacentNets: Set<string> },
     s: import('../store/render-settings').RenderSettings,
   ) {
     const partBg = this.elevatedPartBg!;
@@ -3304,7 +3293,7 @@ export class BoardRenderer {
 
   /** Update the DOM selection overlay at top-center of the board view */
   private updateSelectionOverlay(
-    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null },
+    sel: { partIndex: number | null; pinIndex: number | null; highlightedNet: string | null; adjacentNets: Set<string> },
     s: import('../store/render-settings').RenderSettings,
   ) {
     if (!this.selectionOverlayEl) return;
@@ -3335,7 +3324,7 @@ export class BoardRenderer {
 
   // --- Net lines rendering ---
 
-  /** Recompute cached net line segments (start/end points) when selection or viewport changes */
+  /** Recompute cached net line segments (start/end points + color) when selection or viewport changes */
   private recomputeNetLineSegments() {
     this.netLineSegments = [];
     this.netLineFadeDist = 0;
@@ -3347,19 +3336,46 @@ export class BoardRenderer {
     const sel = boardStore.selection;
     if (!sel.highlightedNet) return;
 
-    const net = this.board.nets.get(sel.highlightedNet);
-    if (!net) return;
-
     const s = renderSettingsStore.settings;
 
+    type NetEntry = { name: string; color: number };
+    const activeNets: NetEntry[] = [{ name: sel.highlightedNet, color: s.netLineColor }];
+    if (mode === 'chain-adjacent') {
+      for (const adj of sel.adjacentNets) {
+        activeNets.push({ name: adj, color: s.adjacentNetLineColor });
+      }
+    }
+
+    for (const entry of activeNets) {
+      this.appendNetLineSegmentsFor(entry.name, entry.color, mode, sel, s);
+    }
+  }
+
+  /** Build segments for a single net and append them to `netLineSegments`,
+   *  tagging each with `color`. Extracted from the original
+   *  recomputeNetLineSegments body. */
+  private appendNetLineSegmentsFor(
+    netName: string,
+    color: number,
+    mode: NetLineMode,
+    sel: SelectionState,
+    s: import('../store/render-settings').RenderSettings,
+  ) {
+    if (!this.board) return;
+    const net = this.board.nets.get(netName);
+    if (!net) return;
+
     // Skip GND/NC nets — GND connects too many components, NC is not a real net.
-    const netUpper = sel.highlightedNet.toUpperCase();
+    const netUpper = netName.toUpperCase();
     if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
 
-    // Star needs an anchor (selected part). When the highlight came from a PDF
-    // net lookup or trace click, partIndex is null — fall through to chain so
-    // the user still sees the connectivity.
-    if (mode === 'star' && sel.partIndex !== null) {
+    // For chain-adjacent, force chain topology on adjacent nets even if the
+    // primary selection prefers star — star requires a part anchor that the
+    // adjacent net does not have. The selected net keeps its mode.
+    const isPrimary = netName === sel.highlightedNet;
+    const effectiveMode: NetLineMode = isPrimary ? mode : 'chain';
+
+    if (effectiveMode === 'star' && sel.partIndex !== null && isPrimary) {
       // ── Star topology from selected part to all others on the net ──
       const selectedPartIdx = sel.partIndex;
       const selectedPart = this.board.parts[selectedPartIdx];
@@ -3372,7 +3388,6 @@ export class BoardRenderer {
         ? this.sceneToWorld(selectedPin.position, selectedRoot)
         : this.sceneToWorld({ x: selEB.px + selEB.pw / 2, y: selEB.py + selEB.ph / 2 }, selectedRoot);
 
-      // Group net pin indices by target part
       const partNetPins = new Map<number, number[]>();
       for (const ref of net.pinIndices) {
         if (ref.partIndex === sel.partIndex) continue;
@@ -3390,7 +3405,6 @@ export class BoardRenderer {
 
         const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
 
-        // Find the net pin closest to the selection origin
         let bestPin: Point | null = null;
         let bestDist = Infinity;
         for (const pi of pinIndices) {
@@ -3405,16 +3419,15 @@ export class BoardRenderer {
 
         if (bestPin) {
           const start = this.clipToRectEdge(selCenterW, bestPin, selEB, selectedRoot);
-          this.netLineSegments.push({ start, end: bestPin });
+          this.netLineSegments.push({ start, end: bestPin, color });
         }
         targetCount++;
       }
 
       const vpScale = Math.abs(this.viewport.scale.x);
-      this.netLineFadeDist = targetCount > 8 ? 60 / vpScale : 0;
+      this.netLineFadeDist = Math.max(this.netLineFadeDist, targetCount > 8 ? 60 / vpScale : 0);
     } else {
-      // ── Chain mode: greedy MST connecting every part on the net ──
-      // Collect visible parts with world-space centers (only computed for this mode).
+      // ── Chain mode: greedy MST connecting every part on this net ──
       type NetPartInfo = { partIndex: number; center: Point; eb: ReturnType<typeof computePartRenderBounds>; root: Container | undefined };
       const netParts: NetPartInfo[] = [];
       const seenParts = new Set<number>();
@@ -3432,7 +3445,6 @@ export class BoardRenderer {
       }
       if (netParts.length < 2) return;
 
-      // Build a greedy minimum spanning tree so each part connects to its closest neighbor.
       const connected = new Set<number>([0]);
       const remaining = new Set<number>();
       for (let i = 1; i < netParts.length; i++) remaining.add(i);
@@ -3455,7 +3467,7 @@ export class BoardRenderer {
         const a = netParts[bestI], b = netParts[bestJ];
         const start = this.clipToRectEdge(a.center, b.center, a.eb, a.root);
         const end = this.clipToRectEdge(b.center, a.center, b.eb, b.root);
-        this.netLineSegments.push({ start, end });
+        this.netLineSegments.push({ start, end, color });
       }
     }
   }
@@ -3465,7 +3477,6 @@ export class BoardRenderer {
     this.needsRender = true;
     this.netLinesGfx.clear();
 
-    // Recompute geometry only when dirty (selection/viewport changed)
     if (this.netLinesDirty) this.recomputeNetLineSegments();
     if (this.netLineSegments.length === 0) return;
 
@@ -3473,32 +3484,39 @@ export class BoardRenderer {
     const vpScale = Math.abs(this.viewport.scale.x);
     const lineW = s.netLineWidth / vpScale;
 
-    // Pulse color: oscillate between net line color and red
     const pulseT = s.netLinePulse ? (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2 : 0;
-    const baseColor = s.netLineColor;
     const pulseColor = 0xcc2222;
-    const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
 
-    // Dash offset animation (screen pixels converted to world)
     const dashLen = s.netLineDashLength / vpScale;
     const dashOffset = s.netLineDashed ? (this.netLinePulsePhase * dashLen * 2) : 0;
 
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    if (!useFade && !s.netLineDashed) {
-      // Fast path: batch all segments into a single stroke() call
-      for (const { start, end } of this.netLineSegments) {
-        this.netLinesGfx.moveTo(start.x, start.y);
-        this.netLinesGfx.lineTo(end.x, end.y);
-      }
-      this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
-    } else {
-      for (const { start, end } of this.netLineSegments) {
-        if (useFade) {
-          this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-        } else {
-          this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+    // Group segments by base color so we can keep the fast batched-stroke path
+    // when fade/dash are off. The grouping cost is O(N) and tiny for typical N.
+    const byColor = new Map<number, Array<{ start: Point; end: Point }>>();
+    for (const seg of this.netLineSegments) {
+      let arr = byColor.get(seg.color);
+      if (!arr) { arr = []; byColor.set(seg.color, arr); }
+      arr.push({ start: seg.start, end: seg.end });
+    }
+
+    for (const [baseColor, segs] of byColor) {
+      const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
+      if (!useFade && !s.netLineDashed) {
+        for (const { start, end } of segs) {
+          this.netLinesGfx.moveTo(start.x, start.y);
+          this.netLinesGfx.lineTo(end.x, end.y);
+        }
+        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+      } else {
+        for (const { start, end } of segs) {
+          if (useFade) {
+            this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+          } else {
+            this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+          }
         }
       }
     }
