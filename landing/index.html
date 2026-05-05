@@ -64,6 +64,9 @@
 <header>
   <h1>BoardRipper</h1>
   <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <!-- BR_VERSION:START -->
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.7.0</b> &mdash; released 2026-05-05</span></p>
+  <!-- BR_VERSION:END -->
   <nav>
     [<a href="#what">What is this?</a>] |
     [<a href="#runson">Runs on</a>] |
@@ -73,8 +76,7 @@
     [<a href="#download">Download</a>] |
     [<a href="#feedback">Feedback</a>] |
     [<a href="#credits">Credits</a>] |
-    [<a href="https://github.com/AlexeyInwerp/BoardRipper/releases">Changelog</a>] |
-    [<a href="https://github.com/AlexeyInwerp/BoardRipper">GitHub</a>] |
+    [<a href="https://www.ripperdoc.de/boardripper/changelog.html">Changelog</a>] |
     [<a href="https://buymeacoffee.com/inwerp">Donate</a>]
   </nav>
 </header>
@@ -133,7 +135,7 @@ C12*</pre>
   <li>Board database with heuristics &mdash; a bundled reference DB maps board numbers to manufacturer / ODM / laptop or phone model and groups boards by device.</li>
   <li>PDF auto-link &mdash; boards and their schematics get matched up automatically when both are present in the same library.</li>
   <li>IndexedDB cache &mdash; re-open without re-parsing.</li>
-  <li>Self-update &mdash; one-click container update from the toolbar (Docker socket required).</li>
+  <li>Self-update &mdash; one-click signed update from the toolbar. No GitHub token required; updates are signed with an offline key and verified by the running container before install.</li>
 </ul>
 </section>
 
@@ -160,7 +162,7 @@ C12*</pre>
 <p>Typical deployment on a NAS or small home server:</p>
 <pre>services:
   boardripper:
-    image: boardripper:latest
+    image: ghcr.io/alexeyinwerp/boardripper:latest
     ports:
       - "8081:8080"
     volumes:
@@ -177,17 +179,19 @@ C12*</pre>
 <p>Then: <code>docker compose up -d</code> &rarr; open <code>http://your-nas:8081</code></p>
 <p>Mount your board folders as subdirectories of <code>/library</code> &mdash; each one shows up as a top-level folder in the Library panel.</p>
 <p>Keep every other mount <code>:ro</code>. <code>/library/incoming</code> is the only path BoardRipper should be able to write to &mdash; that&rsquo;s where dropped files land. The container does not need write access to your existing board folders, your schematics, or anything else.</p>
-<p class="small">More detail (Synology DSM&nbsp;7.2+, self-update, GitHub PAT for private repos) in the <a href="https://github.com/AlexeyInwerp/BoardRipper">repo README</a>.</p>
+<p class="small">Self-update needs the <code>/var/run/docker.sock</code> mount &mdash; that's what lets the container pull the new image and restart itself when you click "update" in the toolbar. Remove it if you'd rather update manually with <code>docker compose pull &amp;&amp; docker compose up -d</code>.</p>
 </section>
 
 <section id="download">
 <h2>Download</h2>
+<p>Two sources, same signed bytes. Pick whichever your network prefers:</p>
 <ul>
-  <li>Docker image: <a href="https://github.com/AlexeyInwerp/BoardRipper/releases/latest">latest release on GitHub</a> (~5&nbsp;MB)</li>
-  <li>Standalone binary (Linux, macOS, Windows): <a href="https://github.com/AlexeyInwerp/BoardRipper/releases">GitHub releases</a></li>
-  <li>Electron desktop wrapper (early beta, unsigned): <a href="https://github.com/AlexeyInwerp/BoardRipper/releases">macOS universal, Windows x64</a></li>
-  <li>Release notes and version history: <a href="https://github.com/AlexeyInwerp/BoardRipper/releases">changelog</a></li>
+  <li><b>Container registry</b> (recommended) &mdash; <code>docker pull ghcr.io/alexeyinwerp/boardripper:latest</code>. Public, no login. Fast incremental updates via layer dedup.</li>
+  <li><b>Tarball mirror</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/latest.tar.gz">latest.tar.gz</a> (OCI image archive, ~5&nbsp;MB), shipped alongside a signed <a href="https://www.ripperdoc.de/boardripper/manifest.json">manifest.json</a>. Use this if your network blocks container registries; load with <code>docker load &lt; latest.tar.gz</code>.</li>
+  <li><b>Older versions</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/">browse the release archive</a>.</li>
+  <li><b>Release notes and version history</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/changelog.html">changelog</a>.</li>
 </ul>
+<p class="small">Both downloads ship the same image. The running container verifies an Ed25519 signature against a key compiled into its own binary before installing any update &mdash; a hijacked mirror cannot deliver a forged update.</p>
 </section>
 
 <section id="feedback">
@@ -195,13 +199,13 @@ C12*</pre>
 <ul>
   <li>Discord: <b>@inwerp</b> on the <a href="https://discord.gg/Yv9Ecshy">All Things Repair</a> server</li>
   <li>Email: <a href="mailto:mail@ripperdoc.de">mail@ripperdoc.de</a></li>
-  <li>Bugs and feature requests: <a href="https://github.com/AlexeyInwerp/BoardRipper/issues">GitHub issues</a></li>
+  <li>Bugs and feature requests: by Discord or email; a public issue tracker will appear once the repository is open-sourced.</li>
 </ul>
 </section>
 
 <section id="credits">
 <h2>Credits &amp; references</h2>
-<p>BoardRipper exists because of the work the boardview community has already done. Each entry below was consulted during development; full attribution and license details live in <a href="https://github.com/AlexeyInwerp/BoardRipper/blob/main/THIRD_PARTY.md">THIRD_PARTY.md</a>.</p>
+<p>BoardRipper exists because of the work the boardview community has already done. Each entry below was consulted during development; full attribution and license details live in <a href="https://www.ripperdoc.de/boardripper/third_party.html">THIRD_PARTY.md</a>.</p>
 
 <h3>Parser references</h3>
 <ul>
@@ -248,7 +252,7 @@ C12*</pre>
   <li><a href="https://github.com/electron/universal">@electron/universal</a> &mdash; <span class="small">MIT</span> &mdash; macOS universal binary.</li>
 </ul>
 
-<p class="small">Corrections and missing attributions welcome &mdash; open an <a href="https://github.com/AlexeyInwerp/BoardRipper/issues">issue on GitHub</a>.</p>
+<p class="small">Corrections and missing attributions welcome &mdash; <a href="mailto:mail@ripperdoc.de">email me</a>.</p>
 </section>
 
 <section id="about">
