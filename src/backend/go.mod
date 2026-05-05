@@ -3,12 +3,12 @@ module boardripper
 go 1.22
 
 require (
+	aead.dev/minisign v0.3.0
 	modernc.org/sqlite v1.34.5
 	rsc.io/pdf v0.1.1
 )
 
 require (
-	aead.dev/minisign v0.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

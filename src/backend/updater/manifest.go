@@ -2,9 +2,11 @@
 package updater
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
-	_ "aead.dev/minisign" // used in A2 VerifyManifest
+	"aead.dev/minisign"
 )
 
 // Manifest is the signed JSON document fetched from each mirror.
@@ -34,4 +36,17 @@ type ManifestImage struct {
 	Registry string `json:"registry"`
 	Tag      string `json:"tag"`
 	Digest   string `json:"digest"`
+}
+
+// VerifyManifest checks that sig is a valid minisign signature of manifestBytes
+// under pubKeyStr (the base64 key string as produced by PublicKey.String()).
+func VerifyManifest(manifestBytes, sig []byte, pubKeyStr string) error {
+	var pub minisign.PublicKey
+	if err := pub.UnmarshalText([]byte(pubKeyStr)); err != nil {
+		return fmt.Errorf("parse pubkey: %w", err)
+	}
+	if !minisign.Verify(pub, manifestBytes, sig) {
+		return errors.New("minisign verification failed")
+	}
+	return nil
 }
