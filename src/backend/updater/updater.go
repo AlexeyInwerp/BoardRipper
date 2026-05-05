@@ -1,5 +1,5 @@
-// Package updater checks GitHub Releases for new BoardRipper versions
-// and orchestrates self-update via Docker socket.
+// Package updater fetches and verifies signed manifests from the configured
+// source list and orchestrates self-update via Docker socket.
 package updater
 
 import (
@@ -285,23 +285,6 @@ func downloadAsset(url, dest string) error {
 	return err
 }
 
-// isNewer returns true if release > current, comparing semver-like tags.
-func isNewer(release, current string) bool {
-	rp := parseVersion(release)
-	cp := parseVersion(current)
-
-	for i := 0; i < len(rp) && i < len(cp); i++ {
-		if rp[i] > cp[i] {
-			return true
-		}
-		if rp[i] < cp[i] {
-			return false
-		}
-	}
-	// If all numeric parts equal, more parts = newer (0.2.5.1 > 0.2.5)
-	return len(rp) > len(cp)
-}
-
 // parseVersion extracts numeric parts from a version string.
 // Pre-release sorts below release via -1 marker:
 //   "v0.3.0"        → [0, 3, 0]
@@ -357,18 +340,6 @@ func parseVersion(v string) []int {
 	}
 
 	return nums
-}
-
-func humanSize(bytes int64) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	kb := float64(bytes) / 1024
-	if kb < 1024 {
-		return fmt.Sprintf("%.1f KB", kb)
-	}
-	mb := kb / 1024
-	return fmt.Sprintf("%.1f MB", mb)
 }
 
 func (u *Updater) installedCounterPath() string {
