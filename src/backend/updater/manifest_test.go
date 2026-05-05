@@ -103,3 +103,28 @@ func TestValidateManifest_AcceptsAnyCounterOnFirstInstall(t *testing.T) {
 		t.Errorf("first install should accept any counter, got: %v", err)
 	}
 }
+
+func TestVerifyTarballSHA256_AcceptsMatch(t *testing.T) {
+	data := []byte("hello world")
+	// echo -n "hello world" | sha256sum
+	sum := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	if err := VerifyTarballSHA256(data, sum); err != nil {
+		t.Errorf("expected match, got: %v", err)
+	}
+}
+
+func TestVerifyTarballSHA256_RejectsMismatch(t *testing.T) {
+	data := []byte("hello world")
+	wrong := "0000000000000000000000000000000000000000000000000000000000000000"
+	if err := VerifyTarballSHA256(data, wrong); err == nil {
+		t.Errorf("expected error for mismatched sha256")
+	}
+}
+
+func TestVerifyTarballSHA256_AcceptsUppercaseExpected(t *testing.T) {
+	data := []byte("hello world")
+	sum := "B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9"
+	if err := VerifyTarballSHA256(data, sum); err != nil {
+		t.Errorf("expected uppercase to be normalized, got: %v", err)
+	}
+}
