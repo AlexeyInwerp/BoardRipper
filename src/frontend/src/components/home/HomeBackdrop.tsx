@@ -247,7 +247,7 @@ function formatRelativeTime(iso: string): string {
 
 function LatestUpdate() {
   const state = useUpdateState();
-  const info = state.release_info;
+  const info = state.manifest;
 
   return (
     <CollapsibleCard
@@ -260,14 +260,17 @@ function LatestUpdate() {
       {info ? (
         <div className="home-update-body">
           <div className="home-update-meta">
-            <a href={info.html_url} target="_blank" rel="noreferrer" className="home-update-tag">
-              {info.tag_name}
-            </a>
-            {info.published_at && (
-              <span className="home-update-date">· {formatRelativeTime(info.published_at)}</span>
+            {info.notes_url ? (
+              <a href={info.notes_url} target="_blank" rel="noreferrer" className="home-update-tag">
+                {info.version}
+              </a>
+            ) : (
+              <span className="home-update-tag">{info.version}</span>
+            )}
+            {info.released_at && (
+              <span className="home-update-date">· {formatRelativeTime(info.released_at)}</span>
             )}
           </div>
-          <pre className="home-update-notes">{info.body || '(no release notes)'}</pre>
         </div>
       ) : (
         <p className="home-card-empty">No release info — check your connection.</p>

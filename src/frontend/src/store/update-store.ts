@@ -2,18 +2,24 @@
 import { Emitter } from './emitter';
 import { log } from './log-store';
 
+export interface Manifest {
+  version: string;
+  counter: number;
+  released_at: string;
+  not_after: string;
+  important: boolean;
+  important_reason?: string;
+  notes_url?: string;
+  tarball: { url_primary: string; sha256: string; size_bytes: number };
+  image: { registry: string; tag: string; digest: string };
+}
+
 type UpdateState = {
   current_version: string;
   latest_version?: string;
   has_update: boolean;
   checked_at?: string;
-  release_info?: {
-    tag_name: string;
-    name: string;
-    body: string;
-    html_url: string;
-    published_at: string;
-  };
+  manifest?: Manifest | null;
   docker_available: boolean;
   error?: string;
 };
@@ -23,6 +29,22 @@ type ProgressEntry = {
   message: string;
   status: 'info' | 'error' | 'done';
 };
+
+let bootstrapped = false;
+async function ensureBootstrap(): Promise<void> {
+  if (bootstrapped) return;
+  try {
+    await fetch('/api/update/bootstrap', { credentials: 'same-origin' });
+    bootstrapped = true;
+  } catch {
+    // Will be retried on next call.
+  }
+}
+
+async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+  await ensureBootstrap();
+  return fetch(input, { ...init, credentials: 'same-origin' });
+}
 
 class UpdateStore extends Emitter {
   private _state: UpdateState = {
@@ -39,7 +61,7 @@ class UpdateStore extends Emitter {
 
   async fetchStatus() {
     try {
-      const res = await fetch('/api/update/status');
+      const res = await apiFetch('/api/update/status');
       if (!res.ok) return;
       this._state = await res.json();
       if (this._state.has_update) {
@@ -54,7 +76,7 @@ class UpdateStore extends Emitter {
   async check() {
     log.update.log('Checking for updates...');
     try {
-      const res = await fetch('/api/update/check', { method: 'POST' });
+      const res = await apiFetch('/api/update/check', { method: 'POST' });
       if (!res.ok) {
         log.update.error(`Check failed: HTTP ${res.status}`);
         return;
@@ -79,7 +101,7 @@ class UpdateStore extends Emitter {
     this.notify();
 
     try {
-      const res = await fetch('/api/update/apply', { method: 'POST' });
+      const res = await apiFetch('/api/update/apply', { method: 'POST' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'unknown' }));
         log.update.error(`Apply failed: ${err.error}`);

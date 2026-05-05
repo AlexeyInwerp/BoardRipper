@@ -31,20 +31,8 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const rel = state.release_info;
-  const body = rel?.body ?? '';
-
-  /** Clean release body for display: strip Co-Authored-By, fix: prefixes, empty lines */
-  const formatBody = (raw: string): string[] => {
-    return raw.split('\n')
-      .filter(l => !l.startsWith('Co-Authored-By:') && l.trim() !== '')
-      .map(l => l
-        .replace(/^- (fix|feat|refactor|chore|perf|docs|style|test):\s*/i, '- ')
-        .replace(/^(fix|feat|refactor|chore|perf|docs|style|test):\s*/i, '')
-      );
-  };
-
-  const bodyLines = formatBody(body);
+  const manifest = state.manifest;
+  const bodyLines: string[] = [];
 
   return (
     <div className="update-badge-wrap" ref={ref}>
@@ -66,7 +54,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
       {open && (
         <div className="update-dropdown">
           <div className="update-dropdown-header">
-            <span>{state.has_update ? (rel?.name || state.latest_version) : `v${state.current_version}`}</span>
+            <span>{state.has_update ? (manifest?.version || state.latest_version) : `v${state.current_version}`}</span>
             <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
           </div>
 
@@ -119,7 +107,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
               ) : (
                 <a
                   className="update-dropdown-btn"
-                  href={rel?.html_url ?? '#'}
+                  href={manifest?.notes_url ?? '#'}
                   target="_blank"
                   rel="noopener"
                 >
