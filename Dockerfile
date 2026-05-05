@@ -13,8 +13,13 @@ COPY src/backend/go.* ./
 RUN go mod download
 COPY src/backend/ ./
 ARG APP_VERSION=dev
+ARG PUBKEY=""
+ARG SOURCES="https://ghcr.io/alexeyinwerp/boardripper,https://www.ripperdoc.de/boardripper"
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION}" \
+    -ldflags="-s -w \
+        -X boardripper/updater.Version=${APP_VERSION} \
+        -X boardripper/updater.PubKey=${PUBKEY} \
+        -X boardripper/updater.SourceList=${SOURCES}" \
     -o server .
 
 # Stage 3: Final minimal image
