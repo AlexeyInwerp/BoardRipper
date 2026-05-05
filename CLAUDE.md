@@ -101,6 +101,9 @@ Boardviewer/
 - File format parsers are pure functions: `(buffer: ArrayBuffer) => BoardData | Promise<BoardData>` (see `FormatDescriptor.parse` in `parsers/registry.ts`)
 - **Logging:** Use scoped loggers from `store/log-store.ts` — never raw `console.log`. Import `{ log }` and use `log.parser.*`, `log.render.*`, `log.pdf.*`, `log.scan.*`, `log.ui.*`, `log.cache.*`, `log.perf.*`, `log.update.*`. The Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move).
 
+## Public landing page (`landing/`)
+The `landing/` folder owns the static page served at <https://www.ripperdoc.de/boardripper/>. It is plain HTML5 with embedded CSS — no JS, no build step, not part of any application build. To update the page (new feature, new screenshot, format-table change): edit `landing/index.html` directly and replace screenshots in `landing/screenshots/`. The RipperDocWeb deploy script rsyncs this folder; nothing in this repo's build pipeline is involved. See `landing/README.md` for the full update workflow.
+
 ## Reference
 - OpenBoardView source: https://github.com/OpenBoardView/OpenBoardView
 - PixiJS v8 docs: https://pixijs.com/8.x/guides
