@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BoardRipper — boardview viewer for board-level repair</title>
+<meta name="description" content="Web-based PCB boardview viewer. Eleven formats, PDF schematics, GPU-accelerated rendering. Self-hosted via Docker. Free, AGPL-3.0.">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    margin: 0;
+    background: #fff;
+    color: #000;
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 28px clamp(14px, 4vw, 32px) 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; font-weight: bold; }
+  h3 { font-size: 14px; margin: 14px 0 4px; font-weight: bold; }
+  a { color: #0000ee; }
+  a:visited { color: #551a8b; }
+  nav { margin: 8px 0 22px; font-size: 13px; line-height: 1.9; }
+  nav a { margin: 0 2px; }
+  hr.stars { border: none; text-align: center; color: #888; margin: 24px 0; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  pre {
+    background: #f4f4f4;
+    border: 1px solid #ccc;
+    padding: 10px 12px;
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 13px;
+    overflow-x: auto;
+  }
+  code { font-family: 'Courier New', ui-monospace, monospace; font-size: 13px; }
+  table { border-collapse: collapse; margin: 8px 0; max-width: 100%; }
+  table td { padding: 2px 18px 2px 0; vertical-align: top; font-size: 13px; }
+  .thumbs { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+  .thumbs a { display: block; line-height: 0; }
+  .thumbs img { display: block; width: 220px; height: auto; max-width: 100%; border: 1px solid #888; }
+  .small { color: #666; font-size: 12px; }
+  img { max-width: 100%; height: auto; }
+  ul { padding-left: 22px; margin: 6px 0 10px; }
+  li { margin: 2px 0; }
+  .tagline { color: #555; font-size: 12px; margin: 0 0 0; }
+  @media (max-width: 480px) {
+    main { padding: 20px 14px 50px; }
+    table td { padding: 2px 10px 2px 0; font-size: 12px; }
+    nav { font-size: 12px; }
+    .thumbs img { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>BoardRipper</h1>
+  <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
+  <nav>
+    [<a href="#what">What is this?</a>] |
+    [<a href="#runson">Runs on</a>] |
+    [<a href="#features">Features</a>] |
+    [<a href="#formats">Formats</a>] |
+    [<a href="#docker">Docker setup</a>] |
+    [<a href="#download">Download</a>] |
+    [<a href="#feedback">Feedback</a>] |
+    [<a href="#credits">Credits</a>] |
+    [<a href="https://github.com/AlexeyInwerp/BoardRipper/releases">Changelog</a>] |
+    [<a href="https://github.com/AlexeyInwerp/BoardRipper">GitHub</a>] |
+    [<a href="https://buymeacoffee.com/inwerp">Donate</a>]
+  </nav>
+</header>
+
+<p>BoardRipper opens eleven boardview formats and the matching PDF schematic, side by side, in a browser. Designed to be self-hosted on a NAS via Docker. Works on desktop and on touch screens.</p>
+
+<p>It is the viewer only. BoardRipper does not ship with any boardview files, schematics, or PDFs &mdash; you bring your own. The bundled board database is reference metadata (board numbers and device models), no copyrighted content.</p>
+
+<div class="thumbs">
+  <a href="screenshots/board.png"><img src="screenshots/board.png" alt="Single board open in BoardRipper"></a>
+  <a href="screenshots/multi-layer.png"><img src="screenshots/multi-layer.png" alt="Multi-layer board with layer sidebar visible"></a>
+  <a href="screenshots/revisions.png"><img src="screenshots/revisions.png" alt="Board with multiple revisions, Revisions tab open"></a>
+  <a href="screenshots/library.png"><img src="screenshots/library.png" alt="Library panel sorting boards by metadata and filename"></a>
+</div>
+<p class="small">Click for full size. Left to right: a single board view, a multi-layer board with the layer sidebar, a board with multiple revisions grouped under the Revisions tab, and the Library panel sorting boards by parsed metadata and filenames.</p>
+
+<hr class="stars">
+
+<section id="what">
+<h2>What is this, and why self-host it?</h2>
+<p>Docker is a way to ship an application as a single image that runs the same on any machine: no installer, no per-OS binary, no dependency hell. You give Docker the image, point a port at it, and it runs. BoardRipper ships as a ~5&nbsp;MB Docker image; <code>docker compose up -d</code> and it's online.</p>
+<p>Why run it on a NAS or shop server:</p>
+<ul>
+  <li>One library, every workstation. Boards and schematics live in one place &mdash; open them from the bench laptop, the office desktop, or a tablet next to the microscope.</li>
+  <li>No per-machine install. It's a web page. Send a coworker the URL and they're up.</li>
+  <li>You own the data. Boards stay on your hardware, nothing leaves the network.</li>
+  <li>Touch-friendly. Pinch-zoom on a shop tablet works the same as the mouse on a workstation.</li>
+  <li>One-click container update from the toolbar.</li>
+</ul>
+</section>
+
+<section id="runson">
+<h2>Runs on</h2>
+<p><b>Server side</b> &mdash; Docker on Linux, macOS, or Windows; or the standalone Go binary (Linux x86_64, macOS Intel/ARM, Windows x64). Runs happily on a Synology or QNAP NAS, a Raspberry Pi 5, an old laptop in a closet, or anything else that can run a container.</p>
+<p><b>Client side</b> &mdash; any modern browser (Chrome, Firefox, Safari, Edge) on any OS, including iPad and Android tablets. There&rsquo;s no per-client install &mdash; you open the URL.</p>
+<p><b>Old hardware</b> &mdash; the rendering pipeline is GPU-accelerated WebGL, which leans on the integrated GPU rather than the CPU. Bench-tested on 3rd- and 4th-generation Intel laptops (HD 4000 / HD 4400 / HD 4600 era), frame rate sits in the 10&ndash;30&nbsp;fps range depending on the board &mdash; usable but visibly slower than a modern GPU. On those machines you may want to lower the browser zoom or window size and turn off a few of the visual extras (label tier, glyph overlay) in the Settings panel; the Debug panel surfaces frame-time so you can see what&rsquo;s slow.</p>
+</section>
+
+<section id="features">
+<h2>Features</h2>
+<ul>
+  <li>GPU-accelerated rendering &mdash; 10,000+ components at 60&nbsp;fps on a modern GPU (PixiJS / WebGL).</li>
+  <li>Multi-board tabs &mdash; open several boards at once, switch between them.</li>
+  <li>Multi-layer support &mdash; show / hide top, bottom, and inner layers independently. Butterfly mode shows top and bottom side by side.</li>
+  <li>Net highlight &mdash; click a pin and the whole net lights up across the board. A chain-adjacent mode walks through neighbouring nets too.</li>
+  <li>PDF schematic, in sync &mdash; pan, zoom, search, night mode. Right-click a net to search it in the schematic.</li>
+  <li>Touch input &mdash; pinch-zoom, drag-pan, tap to select. Usable on a tablet at the bench.</li>
+  <li>Customizable colors &mdash; per-net rules by name pattern (e.g. <code>GND</code>, <code>VCC</code>, <code>PP*</code>), per-component-type fills (R / C / L / U / Q / D / J), per-layer colors, label / pin / outline tuning. Live preview before applying.</li>
+  <li>Multi-line search &mdash; each line is an extra AND-filter, useful when a component carries value and voltage on separate label lines:
+<pre>20uF
+10V
+C12*</pre>
+  finds capacitors that match all of: 20&micro;F, 10&nbsp;V, designator starting with C12.</li>
+  <li>Drag-and-drop import &mdash; drop a board file or a folder onto the window and it loads. To make dropped files <em>persistent</em> across container restarts, mount one writable folder at <code>/library/incoming</code> (see Docker setup). Without it, drops live only in the browser&rsquo;s IndexedDB cache.</li>
+  <li>Board library &mdash; scan folders, browse by board number or model. Filenames are auto-sorted: board numbers, manufacturers, and revisions are parsed automatically.</li>
+  <li>Board database with heuristics &mdash; a bundled reference DB maps board numbers to manufacturer / ODM / laptop or phone model and groups boards by device.</li>
+  <li>PDF auto-link &mdash; boards and their schematics get matched up automatically when both are present in the same library.</li>
+  <li>IndexedDB cache &mdash; re-open without re-parsing.</li>
+  <li>Self-update &mdash; one-click container update from the toolbar (Docker socket required).</li>
+</ul>
+</section>
+
+<section id="formats">
+<h2>Supported formats</h2>
+<table>
+  <tr><td>BVR1</td><td><span class="small">.bvr / .bv</span></td><td>Tab-delimited boardview export, coords &times;1000 &rarr; mils</td></tr>
+  <tr><td>BVR3</td><td><span class="small">.bvr / .bv</span></td><td>Keyword-value boardview export, relative pin coords</td></tr>
+  <tr><td>BRD</td><td><span class="small">.brd</span></td><td>Apple / Mac repair, bit-rotation obfuscated binary</td></tr>
+  <tr><td>BDV</td><td><span class="small">.brd / .bdv</span></td><td>Plain-text boardview (BRDOUT / NETS / PARTS / PINS / NAILS)</td></tr>
+  <tr><td>BDV ASC</td><td><span class="small">.bdv</span></td><td>Honhan / Tebo-ICT, line-key cipher</td></tr>
+  <tr><td>FZ</td><td><span class="small">.fz</span></td><td>ASUS, RC6-encrypted, zlib-compressed</td></tr>
+  <tr><td>GenCAD</td><td><span class="small">.cad</span></td><td>GenCAD 1.4 PCB interchange (text)</td></tr>
+  <tr><td>Mentor Neutral</td><td><span class="small">.cad</span></td><td>Mentor Boardstation neutral file (Samsung / Quanta / Compal exports)</td></tr>
+  <tr><td>XZZ</td><td><span class="small">.pcb</span></td><td>XZZ PCB, DES-encrypted boardview</td></tr>
+  <tr><td>TVW</td><td><span class="small">.tvw</span></td><td>Teboview binary, multi-layer + traces + drill data</td></tr>
+  <tr><td>Cadence Allegro BRD</td><td><span class="small">.brd</span></td><td>Cadence Allegro PCB binary, v16.x / v17.x / v18.x. v15 partial, still in beta.</td></tr>
+</table>
+<p class="small">Both <code>.cad</code> and <code>.brd</code> are shared extensions &mdash; BoardRipper sniffs file content to pick the right parser.</p>
+</section>
+
+<section id="docker">
+<h2>Docker setup</h2>
+<p>Typical deployment on a NAS or small home server:</p>
+<pre>services:
+  boardripper:
+    image: boardripper:latest
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data:/data
+      # Your library: mount EVERYTHING read-only (:ro) by default.
+      - /path/to/MacBooks:/library/MacBooks:ro
+      - /path/to/iPhones:/library/iPhones:ro
+      # The ONLY writable mount the container should ever see:
+      - /path/to/incoming:/library/incoming:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=8080
+    restart: unless-stopped</pre>
+<p>Then: <code>docker compose up -d</code> &rarr; open <code>http://your-nas:8081</code></p>
+<p>Mount your board folders as subdirectories of <code>/library</code> &mdash; each one shows up as a top-level folder in the Library panel.</p>
+<p>Keep every other mount <code>:ro</code>. <code>/library/incoming</code> is the only path BoardRipper should be able to write to &mdash; that&rsquo;s where dropped files land. The container does not need write access to your existing board folders, your schematics, or anything else.</p>
+<p class="small">More detail (Synology DSM&nbsp;7.2+, self-update, GitHub PAT for private repos) in the <a href="https://github.com/AlexeyInwerp/BoardRipper">repo README</a>.</p>
+</section>
+
+<section id="download">
+<h2>Download</h2>
+<ul>
+  <li>Docker image: <a href="https://github.com/AlexeyInwerp/BoardRipper/releases/latest">latest release on GitHub</a> (~5&nbsp;MB)</li>
+  <li>Standalone binary (Linux, macOS, Windows): <a href="https://github.com/AlexeyInwerp/BoardRipper/releases">GitHub releases</a></li>
+  <li>Electron desktop wrapper (early beta, unsigned): <a href="https://github.com/AlexeyInwerp/BoardRipper/releases">macOS universal, Windows x64</a></li>
+  <li>Release notes and version history: <a href="https://github.com/AlexeyInwerp/BoardRipper/releases">changelog</a></li>
+</ul>
+</section>
+
+<section id="feedback">
+<h2>Feedback</h2>
+<ul>
+  <li>Discord: <b>@inwerp</b> on the <a href="https://discord.gg/Yv9Ecshy">All Things Repair</a> server</li>
+  <li>Email: <a href="mailto:mail@ripperdoc.de">mail@ripperdoc.de</a></li>
+  <li>Bugs and feature requests: <a href="https://github.com/AlexeyInwerp/BoardRipper/issues">GitHub issues</a></li>
+</ul>
+</section>
+
+<section id="credits">
+<h2>Credits &amp; references</h2>
+<p>BoardRipper exists because of the work the boardview community has already done. Each entry below was consulted during development; full attribution and license details live in <a href="https://github.com/AlexeyInwerp/BoardRipper/blob/main/THIRD_PARTY.md">THIRD_PARTY.md</a>.</p>
+
+<h3>Parser references</h3>
+<ul>
+  <li><a href="https://gitlab.com/kicad/code/kicad">KiCad</a> &mdash; <span class="small">GPL-3.0</span> &mdash; Cadence Allegro BRD reader (<code>pcbnew/pcb_io/allegro/</code>), transliterated to TypeScript. The reason BoardRipper as a whole is AGPL-3.0.</li>
+  <li><a href="https://github.com/OpenBoardView/OpenBoardView">OpenBoardView</a> &mdash; <span class="small">MIT</span> &mdash; reference implementations for BVR1 / BVR3, BRD (Apple), BDV plain-text, BDV ASC (Honhan / Tebo-ICT), FZ (ASUS), GenCAD, XZZ.</li>
+  <li><a href="https://github.com/nitrocaster/eagleview">eagleview</a> by Pavel Kovalenko &mdash; <span class="small">MIT</span> &mdash; TVW / Teboview parser source.</li>
+  <li><a href="https://github.com/bernayigit/brd_parser">brd_parser</a> by Jeff Wheeler &mdash; <span class="small">MIT</span> &mdash; cross-validation reference for Allegro block layout.</li>
+  <li><a href="https://gist.github.com/piernov/37849a3b92375e18515160b8a1efde18">piernov&rsquo;s Honhan BDV gist</a> and <a href="https://github.com/OpenBoardView/OpenBoardView/issues/2">OpenBoardView issue #2</a> &mdash; identified the BDV ASC signature and line-key cipher.</li>
+  <li>Mentor Boardstation Neutral &mdash; original reverse engineering, no third-party code or text incorporated.</li>
+</ul>
+
+<h3>Cryptographic standards</h3>
+<ul>
+  <li><a href="https://people.csail.mit.edu/rivest/pubs/RRSY98.pdf">RC6</a> by Rivest, Robshaw, Sidney, Yin &mdash; FZ format.</li>
+  <li><a href="https://csrc.nist.gov/pubs/fips/46-3/final">DES (FIPS&nbsp;PUB&nbsp;46-3)</a> &mdash; XZZ format.</li>
+  <li><a href="https://en.wikipedia.org/wiki/GenCAD">GenCAD 1.4 specification</a> &mdash; CAD format.</li>
+</ul>
+
+<h3>Rendering &amp; runtime</h3>
+<ul>
+  <li><a href="https://pixijs.com/">PixiJS</a> &mdash; <span class="small">MIT</span> &mdash; WebGL renderer.</li>
+  <li><a href="https://github.com/davidfig/pixi-viewport">pixi-viewport</a> &mdash; <span class="small">MIT</span> &mdash; pan / zoom / culling.</li>
+  <li><a href="https://react.dev/">React</a> &mdash; <span class="small">MIT</span> &mdash; UI framework.</li>
+  <li><a href="https://vitejs.dev/">Vite</a> &mdash; <span class="small">MIT</span> &mdash; build pipeline and dev server.</li>
+  <li><a href="https://www.typescriptlang.org/">TypeScript</a> &mdash; <span class="small">Apache-2.0</span> &mdash; type system.</li>
+  <li><a href="https://dockview.dev/">Dockview</a> &mdash; <span class="small">MIT</span> &mdash; dockable / floating / popout panels.</li>
+  <li><a href="https://mozilla.github.io/pdf.js/">pdf.js</a> &mdash; <span class="small">Apache-2.0</span> &mdash; PDF rendering and text extraction.</li>
+  <li><a href="https://pdf-lib.js.org/">pdf-lib</a> &mdash; <span class="small">MIT</span> &mdash; PDF manipulation.</li>
+  <li><a href="https://opentype.js.org/">opentype.js</a> &mdash; <span class="small">MIT</span> &mdash; font glyph extraction.</li>
+  <li><a href="https://tabler.io/icons">Tabler Icons</a> &mdash; <span class="small">MIT</span> &mdash; icon set.</li>
+</ul>
+
+<h3>Backend</h3>
+<ul>
+  <li><a href="https://pkg.go.dev/std">Go standard library</a> &mdash; <span class="small">BSD-3-Clause</span> &mdash; HTTP server, crypto, encoding.</li>
+  <li><a href="https://gitlab.com/cznic/sqlite">modernc.org/sqlite</a> &mdash; <span class="small">BSD-3-Clause</span> &mdash; pure-Go SQLite driver, used by the board reference database.</li>
+  <li><a href="https://pkg.go.dev/rsc.io/pdf">rsc.io/pdf</a> &mdash; <span class="small">BSD-3-Clause</span> &mdash; PDF text extraction for the databank indexer.</li>
+</ul>
+
+<h3>Desktop wrapper</h3>
+<ul>
+  <li><a href="https://www.electronjs.org/">Electron</a> &mdash; <span class="small">MIT</span></li>
+  <li><a href="https://github.com/electron/packager">@electron/packager</a> &mdash; <span class="small">MIT</span></li>
+  <li><a href="https://github.com/electron/universal">@electron/universal</a> &mdash; <span class="small">MIT</span> &mdash; macOS universal binary.</li>
+</ul>
+
+<p class="small">Corrections and missing attributions welcome &mdash; open an <a href="https://github.com/AlexeyInwerp/BoardRipper/issues">issue on GitHub</a>.</p>
+</section>
+
+<section id="about">
+<h2>About this software</h2>
+<p>I have a programming background, but BoardRipper is not hand-written. The whole codebase &mdash; parsers, renderer, panels, backend &mdash; was generated with <a href="https://www.anthropic.com/claude-code">Claude Code</a>, working from format specs and reference implementations from the boardview community. I review, test, and direct it; the lines of code came out of an LLM.</p>
+<p>For context: I&rsquo;m a father of two and I work 50&ndash;60 hours a week. Hand-writing a project of this scope was never going to happen &mdash; this was the only way it was ever going to exist. Sceptics will dismiss anything in this category as &ldquo;AI slop&rdquo;; I think BoardRipper is a fair counterexample. Eleven boardview parsers, ten thousand components rendered at 60&nbsp;fps, and not one line of code written by hand. It works on real boards in real shops. That&rsquo;s the answer I have for the slop critique &mdash; not arguing about it, just shipping something useful.</p>
+<p>Treat that as you would any AI-assisted software: it works on the boards I&rsquo;ve tested, it has bugs I haven&rsquo;t found yet, and the right level of trust is &ldquo;a useful viewer, not a forensic tool.&rdquo; Bug reports welcome.</p>
+<p>Thanks to <b>Maksim Shevelev</b> and <b>Joseph Hughes</b> for testing and bug reports.</p>
+</section>
+
+<hr class="stars">
+
+<footer>
+<p class="small">BoardRipper is free software, AGPL-3.0. Built by <a href="https://www.ripperdoc.de">RipperDoc Munich</a>. If it saves you time, <a href="https://buymeacoffee.com/inwerp">buy me a coffee</a>.</p>
+</footer>
+
+</main>
+</body>
+</html>
