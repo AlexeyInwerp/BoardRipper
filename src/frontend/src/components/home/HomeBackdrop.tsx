@@ -248,17 +248,25 @@ function formatRelativeTime(iso: string): string {
 function LatestUpdate() {
   const state = useUpdateState();
   const info = state.manifest;
+  const isImportant = state.has_update && info?.important === true;
 
   return (
     <CollapsibleCard
       id="latest-update"
       title="Latest update"
       headerExtra={
-        state.has_update ? <span className="home-update-badge">Update available</span> : undefined
+        state.has_update ? (
+          <span className={`home-update-badge${isImportant ? ' home-update-badge-important' : ''}`}>
+            {isImportant ? 'Important update' : 'Update available'}
+          </span>
+        ) : undefined
       }
     >
       {info ? (
         <div className="home-update-body">
+          {isImportant && info.important_reason && (
+            <p className="home-update-important-reason">{info.important_reason}</p>
+          )}
           <div className="home-update-meta">
             {info.notes_url ? (
               <a href={info.notes_url} target="_blank" rel="noreferrer" className="home-update-tag">
@@ -269,6 +277,11 @@ function LatestUpdate() {
             )}
             {info.released_at && (
               <span className="home-update-date">· {formatRelativeTime(info.released_at)}</span>
+            )}
+            {info.notes_url && !isImportant && (
+              <a href={info.notes_url} target="_blank" rel="noreferrer" className="home-update-date">
+                · Release notes ↗
+              </a>
             )}
           </div>
         </div>
