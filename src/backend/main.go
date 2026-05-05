@@ -156,10 +156,20 @@ func main() {
 	upd.StartBackgroundChecker(6 * time.Hour)
 	defer upd.Stop()
 	updateHandler := handlers.NewUpdateHandler(upd)
-	mux.HandleFunc("GET /api/update/status", read(updateHandler.Status))
-	mux.HandleFunc("POST /api/update/check", updateHandler.Check)           // hits GitHub, can take 30s+
-	mux.HandleFunc("POST /api/update/apply", updateHandler.Apply)           // long-running — Docker pull + restart
-	mux.HandleFunc("GET /api/update/progress", read(updateHandler.Progress))
+
+	secret, err := updater.EnsureSecret(dataDir)
+	if err != nil {
+		log.Fatal("update secret:", err)
+	}
+	log.Printf("update auth: per-install secret loaded from %s", filepath.Join(dataDir, ".update-secret"))
+
+	bootstrap := handlers.NewBootstrapHandler(secret)
+	mux.HandleFunc("GET /api/update/bootstrap", bootstrap.Serve)
+
+	mux.Handle("GET /api/update/status",   handlers.WithUpdateAuth(secret, read(updateHandler.Status)))
+	mux.Handle("POST /api/update/check",   handlers.WithUpdateAuth(secret, http.HandlerFunc(updateHandler.Check)))   // hits GitHub, can take 30s+
+	mux.Handle("POST /api/update/apply",   handlers.WithUpdateAuth(secret, http.HandlerFunc(updateHandler.Apply)))   // long-running — Docker pull + restart
+	mux.Handle("GET /api/update/progress", handlers.WithUpdateAuth(secret, read(updateHandler.Progress)))
 
 	// Library Sync API routes — periodic mirror of an upstream HTTP/WebDAV
 	// library into LIBRARY_DIR. The engine + scheduler share one rootCtx so a
