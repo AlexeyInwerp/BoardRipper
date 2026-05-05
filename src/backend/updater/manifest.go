@@ -38,6 +38,39 @@ type ManifestImage struct {
 	Digest   string `json:"digest"`
 }
 
+// ValidateManifest checks counter monotonicity, expiry, and min_supported_version.
+// installedCounter==0 means "first install" — counter check is skipped.
+func ValidateManifest(m *Manifest, installedCounter int64, installedVersion string) error {
+	if time.Now().After(m.NotAfter) {
+		return fmt.Errorf("manifest expired: not_after=%s", m.NotAfter.Format(time.RFC3339))
+	}
+	if installedCounter > 0 && m.Counter <= installedCounter {
+		return fmt.Errorf("manifest counter not greater than installed (got %d, have %d)", m.Counter, installedCounter)
+	}
+	if !versionGTE(installedVersion, m.MinSupportedVersion) {
+		return fmt.Errorf("installed version %s below min_supported_version %s — manual update required", installedVersion, m.MinSupportedVersion)
+	}
+	return nil
+}
+
+// versionGTE returns true if a >= b. Reuses parseVersion from updater.go.
+func versionGTE(a, b string) bool {
+	pa, pb := parseVersion(a), parseVersion(b)
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var ai, bi int
+		if i < len(pa) {
+			ai = pa[i]
+		}
+		if i < len(pb) {
+			bi = pb[i]
+		}
+		if ai != bi {
+			return ai > bi
+		}
+	}
+	return true
+}
+
 // VerifyManifest checks that sig is a valid minisign signature of manifestBytes
 // under pubKeyStr (the base64 key string as produced by PublicKey.String()).
 func VerifyManifest(manifestBytes, sig []byte, pubKeyStr string) error {
