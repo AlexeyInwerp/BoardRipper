@@ -936,7 +936,7 @@ class BoardStore extends Emitter {
     const part = tab?.board?.parts[partIndex];
     const pin = part?.pins[pinIndex];
     this.updateActiveTab({
-      selection: { partIndex, pinIndex, highlightedNet: pin?.net || null, adjacentNets: new Set<string>() },
+      selection: { partIndex, pinIndex, highlightedNet: pin?.net || null, adjacentNets: this._resolveAdjacentNets(pin?.net || null) },
       searchSelectionActive: false,
     });
     this.notify();
@@ -1568,7 +1568,7 @@ class BoardStore extends Emitter {
     const keepNet = prevNet != null && part.pins.some(p => p.net === prevNet);
 
     this.updateActiveTab({
-      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null, adjacentNets: new Set<string>() },
+      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null, adjacentNets: keepNet ? this._resolveAdjacentNets(prevNet) : new Set<string>() },
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
