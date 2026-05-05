@@ -3,6 +3,7 @@
 package updater
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -48,30 +49,15 @@ func splitCSV(s string) []string {
 	return out
 }
 
-// ReleaseInfo holds data from a GitHub release.
-type ReleaseInfo struct {
-	TagName     string `json:"tag_name"`
-	Name        string `json:"name"`
-	Body        string `json:"body"`
-	PublishedAt string `json:"published_at"`
-	HTMLURL     string `json:"html_url"`
-	Assets      []struct {
-		ID                 int64  `json:"id"`
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-		Size               int64  `json:"size"`
-	} `json:"assets"`
-}
-
 // UpdateState is the cached result of the last update check.
 type UpdateState struct {
-	CurrentVersion string       `json:"current_version"`
-	LatestVersion  string       `json:"latest_version,omitempty"`
-	HasUpdate      bool         `json:"has_update"`
-	CheckedAt      *time.Time   `json:"checked_at,omitempty"`
-	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
-	Error          string       `json:"error,omitempty"`
-	DockerAvail    bool         `json:"docker_available"`
+	CurrentVersion string     `json:"current_version"`
+	LatestVersion  string     `json:"latest_version,omitempty"`
+	HasUpdate      bool       `json:"has_update"`
+	CheckedAt      *time.Time `json:"checked_at,omitempty"`
+	Manifest       *Manifest  `json:"manifest,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	DockerAvail    bool       `json:"docker_available"`
 }
 
 // ProgressEntry is one line of update progress.
@@ -141,7 +127,44 @@ func (u *Updater) logProgress(msg, status string) {
 
 // Check queries the configured sources for the latest release and updates cached state.
 func (u *Updater) Check() (*UpdateState, error) {
-	panic("phase D: Check rewritten in D2")
+	if PubKey == "" {
+		u.mu.Lock()
+		u.state.Error = "updater not configured: PubKey is empty (built without -ldflags)"
+		u.mu.Unlock()
+		return &u.state, errors.New(u.state.Error)
+	}
+	srcs := Sources()
+	if len(srcs) == 0 {
+		u.mu.Lock()
+		u.state.Error = "updater not configured: SourceList is empty"
+		u.mu.Unlock()
+		return &u.state, errors.New(u.state.Error)
+	}
+	m, err := FetchFromSources(srcs, PubKey)
+	now := time.Now()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.state.CheckedAt = &now
+	if err != nil {
+		u.state.Error = err.Error()
+		u.state.HasUpdate = false
+		return &u.state, err
+	}
+	installedCtr := u.readInstalledCounter()
+	if err := ValidateManifest(m, installedCtr, Version); err != nil {
+		u.state.Error = err.Error()
+		u.state.HasUpdate = false
+		return &u.state, err
+	}
+	u.state.Error = ""
+	u.state.LatestVersion = m.Version
+	// HasUpdate requires both a higher counter AND a different version. This
+	// surfaces a re-signed-but-same-version manifest (e.g., post-expiry re-sign
+	// pointing at the existing release) as "no update" — counter advances are
+	// freshness, not new code.
+	u.state.HasUpdate = m.Counter > installedCtr && m.Version != Version
+	u.state.Manifest = m
+	return &u.state, nil
 }
 
 // StartBackgroundChecker runs a periodic check every interval.
@@ -176,15 +199,6 @@ func (u *Updater) Stop() {
 // Apply downloads a release image and orchestrates the container update.
 func (u *Updater) Apply() error {
 	panic("phase D: Apply rewritten in D3")
-}
-
-func fetchLatestRelease() (*ReleaseInfo, error) {
-	panic("phase D: fetchLatestRelease replaced by FetchFromSources")
-}
-
-// downloadAsset is kept for signature compatibility; rewritten in D3.
-func downloadAsset(url, dest string) error {
-	panic("phase D: downloadAsset rewritten in D3")
 }
 
 // isNewer returns true if release > current, comparing semver-like tags.
