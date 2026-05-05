@@ -3,13 +3,8 @@
 package updater
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,14 +13,37 @@ import (
 
 // Build-time variables injected via -ldflags.
 var (
-	Version   = "dev"            // e.g. "v0.2.5-beta.1"
-	RepoOwner = "AlexeyInwerp"
-	RepoName  = "BoardRipper"
+	Version    = "dev"
+	PubKey     = "" // base64-encoded minisign public key
+	SourceList = "" // comma-separated mirror base URLs
 )
 
-// gitHubToken returns the token from the GITHUB_TOKEN env var (runtime).
-func gitHubToken() string {
-	return os.Getenv("GITHUB_TOKEN")
+// Sources returns the parsed source list.
+func Sources() []string {
+	if SourceList == "" {
+		return nil
+	}
+	parts := []string{}
+	for _, s := range splitCSV(SourceList) {
+		s = strings.TrimSpace(s)
+		if s != "" { parts = append(parts, s) }
+	}
+	return parts
+}
+
+func splitCSV(s string) []string {
+	out := []string{}
+	cur := ""
+	for _, r := range s {
+		if r == ',' {
+			out = append(out, cur)
+			cur = ""
+		} else {
+			cur += string(r)
+		}
+	}
+	if cur != "" { out = append(out, cur) }
+	return out
 }
 
 // ReleaseInfo holds data from a GitHub release.
@@ -119,32 +137,9 @@ func (u *Updater) logProgress(msg, status string) {
 	log.Printf("[updater] %s", msg)
 }
 
-// Check queries GitHub for the latest release and updates cached state.
+// Check queries the configured sources for the latest release and updates cached state.
 func (u *Updater) Check() (*UpdateState, error) {
-	rel, err := fetchLatestRelease()
-	if err != nil {
-		u.mu.Lock()
-		u.state.Error = err.Error()
-		u.mu.Unlock()
-		return nil, err
-	}
-
-	now := time.Now()
-	u.mu.Lock()
-	u.state.LatestVersion = rel.TagName
-	u.state.HasUpdate = isNewer(rel.TagName, Version)
-	u.state.CheckedAt = &now
-	u.state.ReleaseInfo = rel
-	u.state.Error = ""
-	snap := u.state
-	u.mu.Unlock()
-
-	if snap.HasUpdate {
-		log.Printf("[updater] Update available: %s → %s", Version, rel.TagName)
-	} else {
-		log.Printf("[updater] Up to date (%s)", Version)
-	}
-	return &snap, nil
+	panic("phase D: Check rewritten in D2")
 }
 
 // StartBackgroundChecker runs a periodic check every interval.
@@ -176,168 +171,18 @@ func (u *Updater) Stop() {
 	close(u.stopCh)
 }
 
-// Apply downloads the Docker image asset and orchestrates the container update.
+// Apply downloads a release image and orchestrates the container update.
 func (u *Updater) Apply() error {
-	u.mu.Lock()
-	if u.updating {
-		u.mu.Unlock()
-		return fmt.Errorf("update already in progress")
-	}
-	u.updating = true
-	u.progress = nil
-	u.mu.Unlock()
-
-	defer func() {
-		u.mu.Lock()
-		u.updating = false
-		u.mu.Unlock()
-	}()
-
-	u.logProgress(fmt.Sprintf("Update starting (current: %s)", Version), "info")
-	if !isDockerAvailable() {
-		u.logProgress("Docker socket not available at "+dockerSocket+" — cannot self-update", "error")
-		return fmt.Errorf("docker not available")
-	}
-	u.logProgress("Docker socket reachable: "+dockerSocket, "info")
-
-	// Ensure we have the latest release info
-	u.logProgress("Checking GitHub for latest release...", "info")
-	state, err := u.Check()
-	if err != nil {
-		u.logProgress(fmt.Sprintf("Failed to check for updates: %v", err), "error")
-		return err
-	}
-	if !state.HasUpdate {
-		u.logProgress("Already running latest version", "info")
-		return fmt.Errorf("no update available")
-	}
-
-	rel := state.ReleaseInfo
-	version := rel.TagName
-	u.logProgress(fmt.Sprintf("Target release: %s (published %s, %d assets)", version, rel.PublishedAt, len(rel.Assets)), "info")
-
-	// Find the Docker image asset
-	var assetID int64
-	var assetSize int64
-	var assetName string
-	for _, a := range rel.Assets {
-		if strings.Contains(a.Name, "docker") && strings.HasSuffix(a.Name, ".tar.gz") {
-			assetID = a.ID
-			assetSize = a.Size
-			assetName = a.Name
-			break
-		}
-	}
-	if assetID == 0 {
-		u.logProgress("No Docker image asset found in release", "error")
-		return fmt.Errorf("no docker asset in release %s", version)
-	}
-	u.logProgress(fmt.Sprintf("Selected asset: %s (id=%d, %s)", assetName, assetID, humanSize(assetSize)), "info")
-
-	// Use GitHub API endpoint for asset download (works with private repos)
-	assetURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/assets/%d",
-		RepoOwner, RepoName, assetID)
-
-	// Download the image
-	destPath := filepath.Join(u.dataDir, fmt.Sprintf("boardripper-docker-%s.tar.gz", version))
-	u.logProgress(fmt.Sprintf("Downloading %s → %s", version, destPath), "info")
-	if err := downloadAsset(assetURL, destPath); err != nil {
-		u.logProgress(fmt.Sprintf("Download failed: %v", err), "error")
-		return err
-	}
-	if info, err := os.Stat(destPath); err == nil {
-		u.logProgress(fmt.Sprintf("Download complete (%s on disk)", humanSize(info.Size())), "info")
-	} else {
-		u.logProgress("Download complete", "info")
-	}
-	defer os.Remove(destPath)
-
-	// Load image into Docker
-	u.logProgress("Loading Docker image (POST /images/load)...", "info")
-	if err := dockerLoad(destPath); err != nil {
-		u.logProgress(fmt.Sprintf("Docker load failed: %v", err), "error")
-		return err
-	}
-	u.logProgress(fmt.Sprintf("Image loaded as boardripper:%s", version), "info")
-
-	// Orchestrate container restart
-	u.logProgress("Beginning container restart sequence...", "info")
-	if err := orchestrateRestart(version, u.logProgress); err != nil {
-		u.logProgress(fmt.Sprintf("Restart failed: %v", err), "error")
-		return err
-	}
-
-	u.logProgress(fmt.Sprintf("Update to %s complete — container restart imminent", version), "done")
-	return nil
+	panic("phase D: Apply rewritten in D3")
 }
 
-// fetchLatestRelease calls the GitHub API.
-// Uses /releases?per_page=1 instead of /releases/latest to include pre-releases.
 func fetchLatestRelease() (*ReleaseInfo, error) {
-	token := gitHubToken()
-	if token == "" {
-		return nil, fmt.Errorf("no GitHub token configured — set GITHUB_TOKEN env var")
-	}
-
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=1", RepoOwner, RepoName)
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "BoardRipper/"+Version)
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GitHub API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var releases []ReleaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return nil, fmt.Errorf("failed to parse releases JSON: %w", err)
-	}
-	if len(releases) == 0 {
-		return nil, fmt.Errorf("no releases found")
-	}
-	return &releases[0], nil
+	panic("phase D: fetchLatestRelease replaced by FetchFromSources")
 }
 
-// downloadAsset fetches a release asset to disk via the GitHub API.
-// Uses Accept: application/octet-stream which works for private repos.
+// downloadAsset is kept for signature compatibility; rewritten in D3.
 func downloadAsset(url, dest string) error {
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "BoardRipper/"+Version)
-	req.Header.Set("Accept", "application/octet-stream")
-	if token := gitHubToken(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	// Follow redirects (GitHub redirects to S3)
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("download returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	f, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = io.Copy(f, resp.Body)
-	return err
+	panic("phase D: downloadAsset rewritten in D3")
 }
 
 // isNewer returns true if release > current, comparing semver-like tags.
