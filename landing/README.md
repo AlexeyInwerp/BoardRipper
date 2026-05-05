@@ -25,7 +25,9 @@ To bump the version, add a feature, or replace a screenshot:
 
 The next time the **RipperDocWeb** repo runs `./deploy.sh`, it pulls a fresh copy of this directory from your local clone and rsyncs it into `public/boardripper/` before the FTP mirror. There is nothing to do on the RipperDocWeb side for a content change.
 
-There's no version string in the page itself — the Changelog and Download links point at the GitHub Releases page, so most release-time edits are content-only (new features, new screenshots, format-table updates) and don't need a per-release ritual.
+The page carries a templated version block — the lines between `<!-- BR_VERSION:START -->` and `<!-- BR_VERSION:END -->` are rewritten by the BoardRipper release script on every release (current version + release date). Don't hand-edit that block; the next release will overwrite it. Other release-time edits (new features, new screenshots, format-table updates) are content-only and stay manual.
+
+Changelog and Download links point at `https://www.ripperdoc.de/boardripper/` — release artifacts and the changelog page are uploaded to FTP by the same release script. There is no GitHub-Releases dependency.
 
 ## Common edits
 
@@ -33,6 +35,7 @@ There's no version string in the page itself — the Changelog and Download link
 - **New feature:** add a bullet to the Features `<ul>`, in the same em-dash style as existing entries.
 - **New screenshot:** add another `<a><img></a>` to the `.thumbs` div and a one-line caption.
 - **Allegro version coverage:** the Allegro row in the formats table lists which Allegro generations are fully supported and which are still in beta.
+- **New version (automated):** the release script rewrites the `BR_VERSION` block — don't edit it by hand.
 
 ## Why a static HTML file
 
