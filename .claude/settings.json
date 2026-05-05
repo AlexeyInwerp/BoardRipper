@@ -20,7 +20,8 @@
       "Edit(~/.claude/skills/boardripper-devops/**)",
       "Edit(~/.claude/skills/boardripper-qa/**)",
       "Edit(~/.claude/skills/boardripper-renderer/**)",
-      "Edit(~/.claude/skills/boardripper-backend/**)"
+      "Edit(~/.claude/skills/boardripper-backend/**)",
+      "Bash([ -e \"$LOG\" ])"
     ]
   },
   "defaultMode": "bypassPermissions"
