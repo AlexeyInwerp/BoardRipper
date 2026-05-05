@@ -5,7 +5,9 @@ package updater
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -198,7 +200,96 @@ func (u *Updater) Stop() {
 
 // Apply downloads a release image and orchestrates the container update.
 func (u *Updater) Apply() error {
-	panic("phase D: Apply rewritten in D3")
+	u.mu.Lock()
+	if u.updating {
+		u.mu.Unlock()
+		return errors.New("update already in progress")
+	}
+	u.updating = true
+	u.progress = nil
+	m := u.state.Manifest
+	u.mu.Unlock()
+	defer func() { u.mu.Lock(); u.updating = false; u.mu.Unlock() }()
+
+	if m == nil {
+		return errors.New("no manifest available — call Check() first")
+	}
+	if !isDockerAvailable() {
+		return errors.New("Docker socket not available")
+	}
+
+	// Tag the previous image for rollback (best-effort).
+	if err := u.tagPrevious(); err != nil {
+		u.logProgress("warn: tagPrevious failed: "+err.Error()+" (rollback unavailable)", "info")
+	}
+
+	// 1. Try pull-by-digest from registry; fall back to tarball.
+	pulledOK := false
+	if m.Image.Registry != "" && m.Image.Digest != "" {
+		if err := u.dockerPullByDigest(m.Image.Registry, m.Image.Digest); err != nil {
+			u.logProgress("Registry pull failed, falling back to tarball: "+err.Error(), "info")
+		} else {
+			pulledOK = true
+		}
+	}
+	if !pulledOK {
+		if err := u.applyTarball(m); err != nil {
+			return fmt.Errorf("tarball apply: %w", err)
+		}
+	}
+
+	// 2. Persist new counter BEFORE restart so a failed restart doesn't lose progress.
+	if err := u.writeInstalledCounter(m.Counter); err != nil {
+		u.logProgress("warn: counter persist: "+err.Error(), "info")
+	}
+
+	// 3. Restart via orchestrator.
+	return u.orchestrateRestart(m)
+}
+
+// applyTarball downloads, verifies, and docker-loads the release tarball.
+func (u *Updater) applyTarball(m *Manifest) error {
+	dest := filepath.Join(u.dataDir, "boardripper-"+m.Version+".tar.gz")
+	if err := downloadAsset(m.Tarball.URLPrimary, dest); err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	body, err := os.ReadFile(dest)
+	if err != nil {
+		return err
+	}
+	if err := VerifyTarballSHA256(body, m.Tarball.SHA256); err != nil {
+		return err
+	}
+	if err := u.dockerLoad(dest); err != nil {
+		return fmt.Errorf("docker load: %w", err)
+	}
+	return nil
+}
+
+// tagPrevious tags the running image as boardripper:previous before the swap.
+// Real implementation added in E2.
+func (u *Updater) tagPrevious() error {
+	// E2 will tag the running image as boardripper:previous before swap.
+	return nil
+}
+
+// downloadAsset fetches url via plain HTTPS GET and writes the body to dest.
+func downloadAsset(url, dest string) error {
+	resp, err := http.Get(url) //nolint:gosec // URL comes from a signed manifest
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("HTTP %d downloading %s", resp.StatusCode, url)
+	}
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
 // isNewer returns true if release > current, comparing semver-like tags.

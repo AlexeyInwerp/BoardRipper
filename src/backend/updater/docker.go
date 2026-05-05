@@ -41,7 +41,7 @@ func dockerClient() *http.Client {
 }
 
 // dockerLoad loads a tar.gz image into Docker via the Engine API (no CLI needed).
-func dockerLoad(tarPath string) error {
+func (u *Updater) dockerLoad(tarPath string) error {
 	f, err := os.Open(tarPath)
 	if err != nil {
 		return err
@@ -246,6 +246,72 @@ func pullDockerImage(image, tag string, logFn func(string, string)) error {
 	return nil
 }
 
+// dockerPullByDigest pulls registry@digest via the Docker Engine API.
+// The Engine API's POST /images/create with a digest tag does a content-addressed
+// pull that is immune to tag-mutable attacks.
+func (u *Updater) dockerPullByDigest(registry, digest string) error {
+	ref := registry + "@" + digest
+	u.logProgress("Pulling "+ref, "info")
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", dockerSocket)
+			},
+		},
+		Timeout: 5 * time.Minute,
+	}
+
+	q := url.Values{}
+	q.Set("fromImage", registry)
+	q.Set("tag", digest)
+	endpoint := "http://docker/v1.41/images/create?" + q.Encode()
+
+	req, _ := http.NewRequest("POST", endpoint, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("pull request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("pull returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Stream is newline-delimited JSON. Drain until EOF; surface any error field.
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var lastStatus, pullErr string
+	for scanner.Scan() {
+		var msg struct {
+			Status      string `json:"status"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+		if msg.ErrorDetail.Message != "" {
+			pullErr = msg.ErrorDetail.Message
+		} else if msg.Error != "" {
+			pullErr = msg.Error
+		}
+		if msg.Status != "" {
+			lastStatus = msg.Status
+		}
+	}
+	if pullErr != "" {
+		return fmt.Errorf("pull stream error: %s", pullErr)
+	}
+	if lastStatus != "" {
+		u.logProgress(lastStatus, "info")
+	}
+	return nil
+}
+
 // orchestrateRestart launches a lightweight Alpine container that:
 // 1. Stops the current container
 // 2. Renames it to -old
@@ -255,7 +321,8 @@ func pullDockerImage(image, tag string, logFn func(string, string)) error {
 //
 // This is necessary because the current container cannot stop itself
 // and continue executing — the Go process dies when Docker stops it.
-func orchestrateRestart(newVersion string, logFn func(string, string)) error {
+func (u *Updater) orchestrateRestart(m *Manifest) error {
+	logFn := u.logProgress
 	logFn("Locating self container via Docker socket...", "info")
 	self, err := findSelfContainer()
 	if err != nil {
@@ -265,14 +332,35 @@ func orchestrateRestart(newVersion string, logFn func(string, string)) error {
 	logFn(fmt.Sprintf("Self container: name=%s id=%s image=%s restart=%s", self.Name, shortID(self.ID), self.Image, self.Restart), "info")
 	logFn(fmt.Sprintf("Mounts: %d, env vars: %d, port bindings: %d", len(self.Mounts), len(self.Env), len(self.Ports)), "info")
 
-	// Ensure the orchestrator base image is present locally — Engine API
-	// won't auto-pull on container create. Fix for "no such image:
-	// alpine:latest" reported by users with a fresh Docker install.
-	if err := pullDockerImage("alpine", "latest", logFn); err != nil {
-		return fmt.Errorf("alpine:latest unavailable: %w", err)
+	// Determine the orchestrator image. The manifest pins a content-addressed
+	// digest for reproducibility; fall back to alpine:latest for dev builds
+	// where OrchestratorImage may be empty.
+	orchImage := m.OrchestratorImage
+	if orchImage == "" {
+		orchImage = "alpine:latest"
 	}
 
-	newImage := fmt.Sprintf("boardripper:%s", newVersion)
+	// Ensure the orchestrator base image is present locally — Engine API
+	// won't auto-pull on container create.
+	// orchImage may be: "alpine@sha256:abc..." (digest ref, production),
+	// "alpine:3.19" (tag ref), or just "alpine" (no tag — falls back to latest).
+	var orchName, orchTag string
+	if at := strings.Index(orchImage, "@"); at >= 0 {
+		// digest reference — Docker Engine API accepts the digest as the "tag" param.
+		orchName = orchImage[:at]
+		orchTag = orchImage[at+1:] // includes the "sha256:" prefix
+	} else if colon := strings.LastIndex(orchImage, ":"); colon >= 0 {
+		orchName = orchImage[:colon]
+		orchTag = orchImage[colon+1:]
+	} else {
+		orchName = orchImage
+		orchTag = "latest"
+	}
+	if err := pullDockerImage(orchName, orchTag, logFn); err != nil {
+		return fmt.Errorf("orchestrator image %s unavailable: %w", orchImage, err)
+	}
+
+	newImage := fmt.Sprintf("boardripper:%s", m.Version)
 
 	// Build the create body for the new container
 	createBody := map[string]interface{}{
@@ -350,9 +438,9 @@ echo "[orchestrator] Done."
 
 	client := dockerClient()
 
-	// Create the orchestrator container using Alpine with curl
+	// Create the orchestrator container using the pinned orchestrator image (with curl).
 	orchBody := map[string]interface{}{
-		"Image": "alpine:latest",
+		"Image": orchImage,
 		"Cmd":   []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1 && " + script},
 		"HostConfig": map[string]interface{}{
 			"Binds":     []string{"/var/run/docker.sock:/var/run/docker.sock"},
