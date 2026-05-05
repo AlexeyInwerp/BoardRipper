@@ -17,7 +17,6 @@
 #   STATIC_DIR     — frontend files location (default: /static, set by image)
 #   DATA_DIR       — upload storage (default: /data, mapped via volume)
 #   LIBRARY_DIR    — library root for file browser (default: /library)
-#   GITHUB_TOKEN   — GitHub PAT for update checking (private repo)
 
 services:
   boardripper:
@@ -40,4 +39,5 @@ services:
           memory: 512M
     environment:
       - PORT=8080
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # GITHUB_TOKEN is no longer needed — updates use offline-signed manifests
+      # from ripperdoc.de and ghcr.io (see docs/RELEASE_RUNBOOK.md).
