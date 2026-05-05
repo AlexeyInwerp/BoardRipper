@@ -30,7 +30,7 @@ These were made explicitly during brainstorming and are load-bearing for the res
 |---|---|---|
 | 1 | Two-source from day one (GHCR + ripperdoc.de tarball), public-GH-Releases addable later | Layer dedup + free CDN via GHCR; tarball as ungameable fallback; multi-source via signature-verified bytes is source-agnostic |
 | 2 | Offline Ed25519 signing key on maintainer's Mac | Compromise of CI / website / GitHub all simultaneously cannot forge an update; `release.sh` prompts for passphrase per release |
-| 3 | One signing identity, two key files (one minisign for manifest, one cosign for image) | Each tool needs its native key format; treating them as one logical "release identity" for backup keeps ops simple. Compartmentalisation across multiple identities is a v2 concern. |
+| 3 | Manifest-only signing (minisign). No cosign on the image. | The manifest contains the GHCR image digest; Docker pulls by digest are content-addressed, so an authenticated digest fully authenticates the image bytes. Cosign would be redundant in our threat model and adds a ~70 MB binary to the runtime image. v2 may add cosign for ecosystem interop (admission controllers, etc.) but it's not load-bearing for security. |
 | 4 | Single bridge release (option A migration) | One last token-flow release `vN` that immediately puts existing users on the new system; retire GH releases pipeline after that |
 | 5 | Notify-only UI, no auto-apply | User control; `important` flag exists as visual emphasis only, never as auto-trigger |
 | 6 | Source list baked at build time, not configurable at runtime | Runtime-configurable source = self-extending trust hole; new sources added by shipping a new release |
@@ -67,8 +67,7 @@ The updater walks an ordered, build-time-baked **source list** until one returns
 ## Trust model
 
 - **One Ed25519 keypair**, generated once on the maintainer's Mac, stored encrypted (passphrase + 1Password backup, ideally YubiKey-touched). Public half compiled into every BoardRipper binary via `-ldflags -X`.
-- **Manifest signing only.** The manifest contains the SHA256 of the image tarball and the digest of the GHCR image, so signing the manifest transitively authenticates the bytes via either delivery path.
-- **Cosign image signature** uses the same key, applied to the GHCR image by digest. The registry-pull path verifies via cosign; the tarball-fallback path verifies via the manifest signature. One trust root.
+- **Manifest signing only.** The manifest contains the SHA256 of the image tarball and the digest of the GHCR image, so signing the manifest transitively authenticates the bytes via either delivery path. Docker `pull <registry>@<digest>` is content-addressed — any byte tampering changes the digest, which would break the manifest signature.
 - **Replay/freeze protection** via a monotonic `counter` field, signed into the manifest. Client refuses any manifest whose counter is `≤` the currently installed counter.
 - **Expiry.** Manifest carries `not_after`. Client refuses expired manifests; forces re-sign at least every 90 days, which closes any unbounded freeze window.
 - **Fork containment.** A forked image rebuilt without our key cannot consume our updates. Forks must ship their own key for their own user base. This is the correct behaviour, not a bug.
@@ -128,20 +127,18 @@ Signature lives next to it as `manifest.json.minisig` (minisign format, Ed25519)
   1. Walk `SourceList` in order. For each mirror: GET `<base>/manifest.json` and `<base>/manifest.json.minisig`.
   2. Verify Ed25519 signature against compiled-in `PubKey`. First valid manifest wins.
   3. Validate: `counter > installed_counter`, `not_after > now`, `min_supported_version <= Version`.
-  4. If `image.registry` is set and Docker can reach it → `docker pull <registry>@<digest>`. Verify cosign signature on the pulled image against the same public key.
+  4. If `image.registry` is set and Docker can reach it → `docker pull <registry>@<digest>`. The pull is content-addressed; no further signature check is needed (the digest came from a signature-verified manifest).
   5. Otherwise → download `tarball.url_primary`, sha256-check against manifest, `docker load`.
 - Replace `orchestrateRestart()` ([src/backend/updater/docker.go:258](../../../src/backend/updater/docker.go#L258))'s use of `alpine:latest` with the manifest's `orchestrator_image_digest`.
 - Drop `gitHubToken()` ([src/backend/updater/updater.go:26-29](../../../src/backend/updater/updater.go#L26-L29)) entirely.
 - Drop `GITHUB_TOKEN` from [docker-compose.yml:43](../../../docker-compose.yml#L43).
 
 **Library choices:**
-- `aead.dev/minisign` — Go-native minisign verification, single small package.
-- For cosign verification, shell out to `cosign verify` rather than embedding the cosign Go SDK (smaller binary, simpler). Requires `cosign` binary in the runtime image — added to the final Dockerfile stage.
+- `aead.dev/minisign` — Go-native minisign verification, single small package. No external binaries needed at runtime; the existing scratch-based image stays ~25 MB.
 
 **Dockerfile build args (new):**
 - `ARG PUBKEY` — minisign public key (base64), passed as `-X boardripper/updater.PubKey=$PUBKEY`
 - `ARG SOURCES` — comma-separated source list, passed as `-X boardripper/updater.SourceList=$SOURCES`
-- `ARG COSIGN_PUBKEY` — cosign public key (PEM), embedded into image at `/etc/boardripper/cosign.pub` for `cosign verify --key` to consume.
 - `APP_VERSION` already exists ([Dockerfile:17](../../../Dockerfile#L17)).
 
 ## Auth on `/api/update/*`
@@ -193,10 +190,6 @@ release.sh v0.8.0 [--important "reason"]
         -t ghcr.io/alexeyinwerp/boardripper:latest \
         --push .
     - capture image digest from buildx imagetools
-
-  cosign-sign image:
-    - cosign sign --key ~/.config/boardripper/cosign.key \
-        ghcr.io/alexeyinwerp/boardripper@<digest>
 
   build tarball:
     - docker save ghcr.io/.../boardripper:v0.8.0 | gzip > out/boardripper-v0.8.0.tar.gz
@@ -285,12 +278,11 @@ Live at <https://www.ripperdoc.de/boardripper/>. All internal links currently 40
 
 ## One-time local setup (Mac)
 
-12. `brew install minisign cosign lftp jq pandoc`
+12. `brew install minisign lftp jq pandoc`
 13. Generate signing key: `minisign -G -p ~/.config/boardripper/release.pub -s ~/.config/boardripper/release.minisign`. Strong passphrase. Save to 1Password.
 14. Encrypted backup of `release.minisign` (cloud password manager attachment + USB drive). **If you lose this key, you cannot ship updates to existing installs ever again** — they reject anything signed by a new key. Plan key rotation (out of scope for v1, see Risks).
-15. Generate cosign keypair: `cosign generate-key-pair` → `cosign.key` + `cosign.pub`. Use the same passphrase as the minisign key for ops convenience; back up alongside `release.minisign`.
-16. Create `~/.config/boardripper/release.env` (mode 0600) with `FTP_USER`, `FTP_PASSWORD`, `GHCR_TOKEN`. Source it at top of `release.sh`.
-17. Move FTP creds out of `Website/RipperDocWeb/deploy.sh` ([deploy.sh:39-41](../../../../Website/RipperDocWeb/deploy.sh#L39)) to a similar config file.
+15. Create `~/.config/boardripper/release.env` (mode 0600) with `FTP_USER`, `FTP_PASSWORD`, `GHCR_TOKEN`. Source it at top of `release.sh`.
+16. Move FTP creds out of `Website/RipperDocWeb/deploy.sh` ([deploy.sh:39-41](../../../../Website/RipperDocWeb/deploy.sh#L39)) to a similar config file.
 
 ## What end-users do
 
