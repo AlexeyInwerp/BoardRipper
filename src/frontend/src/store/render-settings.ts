@@ -100,6 +100,9 @@ export interface RenderSettings {
   netLineWidth: number;
   netLineAlpha: number;
   netLineColor: number;
+  /** Color used for chain-adjacent net lines (the propagated nets reached
+   *  from the selected net through 2-pin components). Default bluish. */
+  adjacentNetLineColor: number;
   netLineDashed: boolean;
   netLineDashLength: number;
   netLinePulse: boolean;
@@ -297,6 +300,7 @@ export const DEFAULTS: RenderSettings = {
   netLineWidth: 3.5,
   netLineAlpha: 0.6,
   netLineColor: 0xffff44,
+  adjacentNetLineColor: 0x4488ff,
   netLineDashed: false,
   netLineDashLength: 8,
   netLinePulse: false,

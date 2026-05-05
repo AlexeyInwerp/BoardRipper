@@ -2,7 +2,7 @@ import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
-import { computeBBox, generateSyntheticOutline, detectGhostComponents } from '../parsers/types';
+import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets } from '../parsers/types';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
@@ -14,19 +14,26 @@ export interface SelectionState {
   partIndex: number | null;
   pinIndex: number | null;
   highlightedNet: string | null;
+  /** Nets reachable from `highlightedNet` through 2-pin components, populated
+   *  only when `netLineMode === 'chain-adjacent'`. Empty otherwise. Derived
+   *  state — recomputed in `highlightNet()` and `cycleNetLineMode()`,
+   *  not persisted. */
+  adjacentNets: Set<string>;
 }
 
 /**
  * Net-line visualization mode. Cycles via the toolbar button:
- *   off   → no connecting lines drawn
- *   star  → lines radiate from the selected pin/part to nearest pin on every
- *           other part on the net (anchor required — nothing drawn if no part
- *           is selected, e.g. when the net came from a PDF lookup)
- *   chain → greedy minimum-spanning tree across all parts on the net; works
- *           with or without a selected part (this is what PDF lookups always
- *           used before the toggle existed)
+ *   off            → no connecting lines drawn
+ *   star           → lines radiate from the selected pin/part to nearest
+ *                    pin on every other part on the net (anchor required)
+ *   chain          → greedy minimum-spanning tree across all parts on the
+ *                    selected net
+ *   chain-adjacent → chain mode + propagate the highlight one hop through
+ *                    2-pin components to adjacent nets (drawn in
+ *                    `adjacentNetLineColor`); ground nets are skipped,
+ *                    power rails terminate (no further recursion)
  */
-export type NetLineMode = 'off' | 'star' | 'chain';
+export type NetLineMode = 'off' | 'star' | 'chain' | 'chain-adjacent';
 
 export interface BoardTab {
   id: number;
@@ -115,7 +122,12 @@ export interface FocusRequest {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
-const emptySelection: SelectionState = { partIndex: null, pinIndex: null, highlightedNet: null };
+const emptySelection: SelectionState = {
+  partIndex: null,
+  pinIndex: null,
+  highlightedNet: null,
+  adjacentNets: new Set<string>(),
+};
 
 /** Compute (or return the cached) derived BoardData for a tab. Re-derives
  *  only when the inputs change so `useSyncExternalStore` gets a stable
@@ -368,7 +380,12 @@ function loadViewPrefs(): ViewPrefs {
         merged.netLineMode = parsed.showNetLines ? 'star' : 'off';
       }
       // Sanitize against invalid persisted values
-      if (merged.netLineMode !== 'off' && merged.netLineMode !== 'star' && merged.netLineMode !== 'chain') {
+      if (
+        merged.netLineMode !== 'off' &&
+        merged.netLineMode !== 'star' &&
+        merged.netLineMode !== 'chain' &&
+        merged.netLineMode !== 'chain-adjacent'
+      ) {
         merged.netLineMode = 'off';
       }
       // Migrate legacy showNetDim boolean → dimMode tri-state
@@ -651,7 +668,7 @@ class BoardStore extends Emitter {
         id,
         fileName: file.name,
         board: null,
-        selection: { ...emptySelection },
+        selection: { ...emptySelection, adjacentNets: new Set<string>() },
         showTop: true,
         showBottom: false,
         butterfly: false,
@@ -802,6 +819,58 @@ class BoardStore extends Emitter {
     }
   }
 
+  /**
+   * Open a tab from an already-parsed BoardData (test/dev helper — skips parsing
+   * and cache). Exposed on `window.__boardStore` in DEV builds for Playwright tests.
+   */
+  openBoardFromData(fileName: string, board: BoardData) {
+    const id = nextTabId++;
+    const vp = loadViewPrefs();
+    const rotation = computeAutoRotation(board);
+    const tab: BoardTab = {
+      id,
+      fileName,
+      board,
+      cacheKey: '',
+      selection: { ...emptySelection, adjacentNets: new Set<string>() },
+      showTop: true,
+      showBottom: false,
+      butterfly: false,
+      searchQuery: '',
+      rotation,
+      mirrorX: false,
+      mirrorY: false,
+      flipAxis: flipAxisForRotation(rotation),
+      netLineMode: vp.netLineMode,
+      dimMode: vp.dimMode,
+      showHoverInfo: vp.showHoverInfo,
+      followPdf: vp.followPdf,
+      showTraces: true,
+      showComponents: true,
+      showVias: false,
+      showSilkscreen: true,
+      showPads: true,
+      showCopperDrops: false,
+      showPins: true,
+      showOutlines: true,
+      showLabels: true,
+      showGhosts: true,
+      layerStates: [],
+      pdfFileNames: [],
+      hideGhosts: false,
+      swappedGhostPairs: new Set<string>(),
+      showBomAlternates: false,
+      bomClusterSelections: new Map<string, string>(),
+      foldMode: 'suggested',
+      selectedBoardIndex: null,
+      searchSelectionActive: false,
+    };
+    applyBoardFilters(tab);
+    this._tabs.push(tab);
+    this._activeTabId = id;
+    this.notify();
+  }
+
   /** Evict the cache entry for the given board data (call after a scene build failure). */
   evictCacheForBoard(board: BoardData): void {
     const tab = this._tabs.find(t => t.board === board);
@@ -856,7 +925,7 @@ class BoardStore extends Emitter {
 
   selectPart(partIndex: number | null) {
     this.updateActiveTab({
-      selection: { partIndex, pinIndex: null, highlightedNet: null },
+      selection: { partIndex, pinIndex: null, highlightedNet: null, adjacentNets: new Set<string>() },
       searchSelectionActive: false,
     });
     this.notify();
@@ -867,17 +936,28 @@ class BoardStore extends Emitter {
     const part = tab?.board?.parts[partIndex];
     const pin = part?.pins[pinIndex];
     this.updateActiveTab({
-      selection: { partIndex, pinIndex, highlightedNet: pin?.net || null },
+      selection: { partIndex, pinIndex, highlightedNet: pin?.net || null, adjacentNets: this._resolveAdjacentNets(pin?.net || null) },
       searchSelectionActive: false,
     });
     this.notify();
+  }
+
+  /** Returns `computeAdjacentNets(board, netName, 1)` when the current
+   *  `netLineMode` is `'chain-adjacent'` and the board is loaded; otherwise
+   *  returns an empty Set.  Centralises the "should we populate adjacency?"
+   *  decision so every call-site stays a one-liner. */
+  private _resolveAdjacentNets(netName: string | null): Set<string> {
+    const tab = this.activeTab;
+    if (!tab?.board || !netName) return new Set<string>();
+    if (tab.netLineMode !== 'chain-adjacent') return new Set<string>();
+    return computeAdjacentNets(tab.board, netName, 1);
   }
 
   highlightNet(netName: string | null) {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({
-      selection: { ...tab.selection, highlightedNet: netName },
+      selection: { ...tab.selection, highlightedNet: netName, adjacentNets: this._resolveAdjacentNets(netName) },
       searchSelectionActive: false,
     });
     this.notify();
@@ -1240,14 +1320,26 @@ class BoardStore extends Emitter {
     saveViewPrefs({ netLineMode: tab.netLineMode, dimMode: tab.dimMode, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
-  /** Cycle the net-line visualization: off → star → chain → off. */
+  /** Cycle the net-line visualization: off → star → chain → chain-adjacent → off. */
   cycleNetLineMode() {
     const tab = this.activeTab;
     if (!tab) return;
     const next: NetLineMode =
       tab.netLineMode === 'off' ? 'star' :
-      tab.netLineMode === 'star' ? 'chain' : 'off';
-    this.updateActiveTab({ netLineMode: next });
+      tab.netLineMode === 'star' ? 'chain' :
+      tab.netLineMode === 'chain' ? 'chain-adjacent' : 'off';
+
+    // When entering chain-adjacent: populate adjacentNets from the current
+    // highlighted net.  When leaving chain-adjacent: clear the set.
+    const net = tab.selection.highlightedNet;
+    const adjacentNets = (next === 'chain-adjacent' && tab.board && net)
+      ? computeAdjacentNets(tab.board, net, 1)
+      : new Set<string>();
+
+    this.updateActiveTab({
+      netLineMode: next,
+      selection: { ...tab.selection, adjacentNets },
+    });
     this._saveCurrentViewPrefs();
     this.notify();
   }
@@ -1476,7 +1568,7 @@ class BoardStore extends Emitter {
     const keepNet = prevNet != null && part.pins.some(p => p.net === prevNet);
 
     this.updateActiveTab({
-      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null },
+      selection: { partIndex: idx, pinIndex: null, highlightedNet: keepNet ? prevNet : null, adjacentNets: keepNet ? this._resolveAdjacentNets(prevNet) : new Set<string>() },
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
@@ -1513,7 +1605,7 @@ class BoardStore extends Emitter {
     minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 
     this.updateActiveTab({
-      selection: { partIndex: null, pinIndex: null, highlightedNet: name },
+      selection: { partIndex: null, pinIndex: null, highlightedNet: name, adjacentNets: this._resolveAdjacentNets(name) },
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: null, bounds: { minX, minY, maxX, maxY } };
