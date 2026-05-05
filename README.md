@@ -122,7 +122,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - PORT=8080
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}   # GitHub PAT for update checking (private repo)
+      # No token required — updates use offline-signed manifests from ghcr.io and ripperdoc.de
     restart: unless-stopped
     deploy:
       resources:
@@ -144,7 +144,7 @@ These will appear as top-level folders (`MacBooks/`, `iPhones/`, `Schematics/`) 
 
 ### Synology NAS (DSM 7.2+)
 
-1. Download `boardripper-docker-<version>.tar.gz` from [GitHub Releases](https://github.com/AlexeyInwerp/BoardRipper/releases)
+1. Download `boardripper-docker-<version>.tar.gz` from [ripperdoc.de](https://www.ripperdoc.de/boardripper/)
 2. SSH into your NAS and load the image:
    ```bash
    docker load < boardripper-docker-<version>.tar.gz
@@ -159,7 +159,6 @@ These will appear as top-level folders (`MacBooks/`, `iPhones/`, `Schematics/`) 
      -v /volume1/your-boards/iPhones:/library/iPhones:ro \
      -v /var/run/docker.sock:/var/run/docker.sock \
      -e PORT=8080 \
-     -e GITHUB_TOKEN=your_github_pat_here \
      --restart unless-stopped \
      boardripper:latest
    ```
@@ -174,7 +173,10 @@ BoardRipper can update itself when running in Docker:
 
 Requires:
 - Docker socket mounted (`-v /var/run/docker.sock:/var/run/docker.sock`)
-- `GITHUB_TOKEN` environment variable set (for private repo access)
+
+Updates use offline-signed manifests pulled from `ghcr.io/alexeyinwerp/boardripper` and
+`https://www.ripperdoc.de/boardripper/`. The container verifies an Ed25519 signature on each
+manifest before applying. No GitHub token required.
 
 ### Updating Manually
 

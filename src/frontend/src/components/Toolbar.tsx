@@ -114,11 +114,11 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
               ) : (
                 <a
                   className="update-dropdown-btn"
-                  href={manifest?.notes_url ?? '#'}
+                  href="https://www.ripperdoc.de/boardripper/"
                   target="_blank"
                   rel="noopener"
                 >
-                  Download from GitHub
+                  Download from ripperdoc.de
                 </a>
               )}
               <div className="update-dropdown-actions-right">
