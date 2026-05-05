@@ -438,6 +438,12 @@ html, body, #root {
 .toolbar-update-badge.is-updating:hover {
   background: #d97706 !important;
 }
+.toolbar-update-badge.is-important {
+  background: #b91c1c !important; /* red for important updates */
+}
+.toolbar-update-badge.is-important:hover {
+  background: #dc2626 !important;
+}
 @keyframes update-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.75; }
@@ -466,14 +472,44 @@ html, body, #root {
   flex-direction: column;
   overflow: hidden;
 }
+.update-dropdown-important .update-dropdown-header {
+  background: #7f1d1d;
+  color: #fef2f2;
+  border-bottom-color: #991b1b;
+}
 .update-dropdown-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   font-weight: 600;
   font-size: 0.9em;
+}
+.update-dropdown-header-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.update-dropdown-version-tag {
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.update-dropdown-important .update-dropdown-version-tag {
+  color: #fca5a5;
+}
+.update-dropdown-important-reason {
+  font-size: 0.78em;
+  font-weight: 400;
+  color: #fca5a5;
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 0 0 4px;
+  line-height: 1.3;
 }
 .update-dropdown-close {
   background: none;
@@ -526,6 +562,21 @@ html, body, #root {
   text-decoration: none;
 }
 .update-dropdown-btn:hover { background: #38a055; }
+.update-dropdown-actions-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.update-dropdown-notes-link {
+  color: var(--text-secondary);
+  font-size: 0.75em;
+  text-decoration: none;
+}
+.update-dropdown-notes-link:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
 .update-dropdown-version {
   color: var(--text-secondary);
   font-size: 0.78em;
@@ -5211,6 +5262,17 @@ html, body, #root {
   padding: 2px 8px;
   border-radius: 10px;
   font-weight: 600;
+}
+.home-update-badge-important {
+  background: #7f1d1d;
+  color: #fef2f2;
+  border-color: #991b1b;
+}
+.home-update-important-reason {
+  font-size: 0.8rem;
+  color: #ef4444;
+  margin: 0 0 8px;
+  font-weight: 500;
 }
 .home-update-meta {
   display: flex;

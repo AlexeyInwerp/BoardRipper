@@ -32,12 +32,13 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
   }, [open]);
 
   const manifest = state.manifest;
+  const isImportant = manifest?.important === true;
   const bodyLines: string[] = [];
 
   return (
     <div className="update-badge-wrap" ref={ref}>
       <button
-        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}${updating ? ' is-updating' : ''}`}
+        className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}${isImportant ? ' is-important' : ''}${updating ? ' is-updating' : ''}`}
         onClick={() => {
           // Mid-update the badge becomes a shortcut to the live progress
           // view: jump straight to the Debug tab instead of opening the
@@ -46,15 +47,21 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
           if (!open) updateStore.check();
           setOpen(v => !v);
         }}
-        title={updating ? 'Updating — see Debug tab' : state.has_update ? `Update available: ${state.latest_version}` : `v${state.current_version} — click to check`}
+        title={updating ? 'Updating — see Debug tab' : state.has_update ? (isImportant ? `Important update: ${state.latest_version}` : `Update available: ${state.latest_version}`) : `v${state.current_version} — click to check`}
       >
         {updating ? 'Updating…' : state.has_update ? `${state.latest_version}` : `v${state.current_version}`}
       </button>
 
       {open && (
-        <div className="update-dropdown">
+        <div className={`update-dropdown${isImportant && state.has_update ? ' update-dropdown-important' : ''}`}>
           <div className="update-dropdown-header">
-            <span>{state.has_update ? (manifest?.version || state.latest_version) : `v${state.current_version}`}</span>
+            <div className="update-dropdown-header-main">
+              <span>{state.has_update ? (isImportant ? 'Important update' : 'Update available') : `v${state.current_version}`}</span>
+              {state.has_update && <span className="update-dropdown-version-tag">{manifest?.version || state.latest_version}</span>}
+            </div>
+            {isImportant && manifest?.important_reason && (
+              <span className="update-dropdown-important-reason">{manifest.important_reason}</span>
+            )}
             <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
           </div>
 
@@ -114,9 +121,21 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
                   Download from GitHub
                 </a>
               )}
-              <span className="update-dropdown-version">
-                {state.current_version} &#8594; {state.latest_version}
-              </span>
+              <div className="update-dropdown-actions-right">
+                {state.docker_available && manifest?.notes_url && (
+                  <a
+                    className="update-dropdown-notes-link"
+                    href={manifest.notes_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Release notes ↗
+                  </a>
+                )}
+                <span className="update-dropdown-version">
+                  {state.current_version} &#8594; {state.latest_version}
+                </span>
+              </div>
             </div>
           )}
         </div>
