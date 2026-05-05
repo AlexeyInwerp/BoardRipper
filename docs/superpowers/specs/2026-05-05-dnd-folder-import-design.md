@@ -15,21 +15,21 @@
 
 Today, dropping a board or PDF file onto BoardRipper parses it client-side and caches the result in IndexedDB only — the backend never sees the file, it does not appear in the Library, and it disappears when browser cache is cleared.
 
-Add an optional **Drop folder** mount. When configured, a dropped file is:
+Add an optional **Drop folder** — a writable subfolder **inside `/library/`**, configured by the user in Settings. When set, a dropped file is:
 
-1. Checked for duplicates against the existing library + drop folder.
+1. Checked for duplicates against the existing `/library/` tree (which now includes the Drop folder, since it lives under the same root).
 2. Identified (brand + board number) via parser metadata + boarddb lookup.
-3. Imported atomically into `<dnd>/<brand>/<board#>/<original-filename>` (or `unstructured/` / `pdfs/unsorted/` when uncertain).
-4. Picked up by the existing scanner and shown in the Library.
+3. Imported atomically into `<drop>/<brand>/<board#>/<original-filename>` (or `unstructured/` / `pdfs/unsorted/` when uncertain).
+4. Picked up by the existing scanner and shown in the Library — no scanner changes needed.
 5. Opened from disk so there is one source of truth.
 
-When the Drop folder is **not** set, today's in-memory behavior is preserved and the drop overlay surfaces a tooltip explaining files are temporary.
+The Drop folder is constrained to live under `/library/` so BoardRipper writes nothing outside the user's existing mount tree. When the Drop folder is **not** set, today's in-memory behavior is preserved and the drop overlay surfaces a tooltip explaining files are temporary.
 
 ## Non-goals
 
 - **Content-hash dedup at drop time.** Filename + size is sufficient; opportunistic SHA256 backfill is a future concern.
 - **ML / heuristic brand inference from filename.** The boarddb resolver and parser metadata are the only identification sources in v1.
-- **Editing existing library files.** The drop flow only writes into the configurable Drop folder; the user-mounted `/library/` stays read-only as today.
+- **Editing existing library files.** The drop flow only writes into the configured Drop folder (a writable subfolder under `/library/`); the rest of the user's `/library/` tree (RO subfolders, NAS shares, etc.) is never touched.
 - **Bulk-import of pre-existing files.** Filename-scan importer handles that ([2026-04-29 spec](2026-04-29-filename-scan-importer-design.md)).
 - **Settings UX for Docker volume mounting.** The user mounts the host folder via Docker as today; we only consume the mount path inside the container.
 
@@ -45,19 +45,25 @@ When the Drop folder is **not** set, today's in-memory behavior is preserved and
 
 ## Storage Layout
 
-A new optional bind-mount, sibling to `/library`. The container side path is configurable via `DND_DIR` env or `databank.db` config row `dnd_dir`; default unset.
+The Drop folder is a writable subfolder **inside `/library/`** — never a sibling. The user mounts it as a writable bind-mount inside the existing `/library/` tree (e.g. host `~/boards/inbox` → container `/library/Inbox`); BoardRipper writes there. Container path is stored in `databank.db` config row `dnd_dir`, mirrored from env `DND_DIR` on first run; default unset.
+
+The path must satisfy `filepath.Rel("/library", dnd_dir)` cleanly with no `..` segments — anything outside `/library/` is rejected at config-save time. This keeps everything BoardRipper writes inside the same scan root, so no scanner changes are needed.
 
 ```
-/dnd/                              ← user-mounted, must be writable
-├── <brand>/<board#>/              ← high-confidence import
-│   ├── 820-02016.bvr
-│   └── 820-02016.pdf              ← bundled-drop or filename-matched PDF
-├── Unsorted/<board#>/             ← ODM-only resolution (uses boards.db placeholder hierarchy)
-│   └── DAG3BEMBCD0.brd
-├── unstructured/                  ← parser silent + boarddb miss + user skipped or bulk drop
-│   └── mystery-dump.brd
-└── pdfs/unsorted/                 ← lone PDF, no filename match against existing library
-    └── random-schematic.pdf
+/library/                           ← single scan root (existing)
+├── Schematics-RO/                  ← user's existing curated tree (often RO NAS share)
+│   └── Apple/820-02016/...
+└── <Inbox>/                        ← user's writable mount (e.g. /library/Inbox)
+    │                                  configured as Drop folder in Settings
+    ├── <brand>/<board#>/           ← high-confidence import
+    │   ├── 820-02016.bvr
+    │   └── 820-02016.pdf           ← bundled-drop or filename-matched PDF
+    ├── Unsorted/<board#>/          ← ODM-only resolution (uses boards.db placeholder hierarchy)
+    │   └── DAG3BEMBCD0.brd
+    ├── unstructured/               ← parser silent + boarddb miss + user skipped or bulk drop
+    │   └── mystery-dump.brd
+    └── pdfs/unsorted/              ← lone PDF, no filename match against existing library
+        └── random-schematic.pdf
 ```
 
 ### Slugification rules
@@ -66,11 +72,12 @@ A new optional bind-mount, sibling to `/library`. The container side path is con
 
 Original filenames inside the folders are preserved verbatim; this is load-bearing for the dedup pass and for matching against `Apple/820-02016/820-02016.bvr` patterns external scrapers produce.
 
-### Why a sibling mount, not a subfolder of `/library/`
+### Why a subfolder of `/library/`, not a sibling mount
 
-- `/library/` is often mounted **read-only** (RO NAS share). The drop flow needs a writable target.
-- Keeping the mounts separate lets the user back up the curated library and the inbox on different schedules.
-- Both roots are scanned, so files in either show up in Library — the user does not perceive the split unless they look at on-disk paths.
+- One scan root means **no scanner changes** — the existing walk picks up dropped files automatically.
+- The user already mounts everything they care about under `/library/`; adding another sibling mount would just be an extra Docker volume to remember.
+- Backups, permissions, and the Library panel tree continue to treat the inbox as "just another folder under /library/" — no new abstraction.
+- The user keeps full control over which subfolder is RW: their curated tree can stay on a RO NAS share, and a separate writable host folder is mounted in as `/library/<whatever>`.
 
 ---
 
@@ -82,9 +89,9 @@ Fields:
 
 | Field | Type | Persisted as | Behavior |
 |---|---|---|---|
-| Drop folder | text input + folder-picker | `dnd_dir` row in `databank.db` config table, mirrored from env `DND_DIR` on first run | Container path. Empty → in-memory drop mode. |
+| Drop folder | text input + folder-picker | `dnd_dir` row in `databank.db` config table, mirrored from env `DND_DIR` on first run | Container path; **must be under `/library/`**. Empty → in-memory drop mode. Path-outside-library is rejected at save time with a clear error. |
 | Test write | button | — | Hits `POST /api/import/test-write`. Server attempts `os.WriteFile(<dnd>/.boardripper-write-test, …)` then removes it. UI shows ✓ + free space (e.g. "ok — 87 GB free") or ✗ with error message. |
-| Status indicator | derived | — | Continuously reflects: not-set / not-writable / writable. Red badge when configured but unreachable. |
+| Status indicator | derived | — | Continuously reflects: not-set / not-under-library / not-writable / writable. Red badge when configured but unreachable. |
 
 The Test Write check runs automatically after the user changes the path and on backend startup. If it fails, the drop flow falls back to the not-set behavior with a Library-panel banner: *"Drop folder configured but not writable: `<error>`. Files will only be cached in browser."*
 
@@ -105,7 +112,7 @@ drop event
   │     extracts board_number, manufacturer, model when the format provides them
   │
   ├─ POST /api/import/check-duplicate { filename, size }
-  │     SELECT path FROM files WHERE filename=? AND size=?  (across both scan roots)
+  │     SELECT path FROM files WHERE filename=? AND size=?  (the single /library scan root)
   │     200 {match: "<path>"}  → toast "Already in library: <path>"
   │                              → open existing → ABORT upload
   │     200 {match: null}      → continue
@@ -134,8 +141,9 @@ drop event
   │       1. write to <dnd>/.tmp/<uuid>-<filename>
   │       2. fsync
   │       3. mkdir -p <dnd>/<target>/
-  │       4. os.Rename(<tmp>, <dnd>/<target>/<filename>)   ← atomic within mount
-  │       5. trigger incremental scan of <dnd>/<target>/   (cheap, single-folder walk)
+  │       4. os.Rename(<tmp>, <dnd>/<target>/<filename>)   ← atomic within the same mount
+  │       5. trigger incremental scan of <dnd>/<target>/   (cheap, single-folder walk —
+  │            same scanner, same /library root, just a localized re-scan)
   │       6. return 200 { path: "<dnd>/<target>/<filename>", file_id: <new id> }
   │
   └─ frontend: open the on-disk path via the existing library-open code path,
@@ -189,7 +197,7 @@ If the drop event contains both `.bvr/.brd/...` and `.pdf` files:
 If the drop event has only PDF(s):
 
 1. For each PDF, find candidate board rows by base-filename match. The `files` table has no `base_filename` column, so the existing pattern from [databank/metadata.go:310-314](../../../src/backend/databank/metadata.go#L310-L314) — `strings.ToLower(strings.TrimSuffix(filename, filepath.Ext(filename)))` — is reused. Implementation: `SELECT id, manufacturer, board_number FROM files WHERE file_type='board'` then filter the base in Go. (Acceptable cost: this list is small; no need to add a new index in v1.)
-2. **Exactly one** match → import the PDF to `<dnd>/<slug(brand)>/<slug(board#)>/<filename>` (the matched board's brand/board#, slugified; **always under `/dnd/`** regardless of where the matched board file lives — `/library/` is RO and we never write there). Then `db.InsertBinding(matchedBoardID, newPdfID, autoMatched=true, "schematic", true)`. Bindings are by `file_id` so the cross-mount association is fine.
+2. **Exactly one** match → import the PDF to `<dnd>/<slug(brand)>/<slug(board#)>/<filename>` (the matched board's brand/board#, slugified; **always inside the configured Drop folder** regardless of where the matched board file lives — the matched board may be in a sibling-RO subfolder under `/library/` and we never write there). Then `db.InsertBinding(matchedBoardID, newPdfID, autoMatched=true, "schematic", true)`. Bindings are by `file_id` so the within-`/library/`-but-different-subfolder association is fine.
 3. **Zero** matches or **>1** matches → import to `pdfs/unsorted/<filename>`. No binding created.
 4. If the single matched board has no brand/board# in its row (it's still in `unstructured/` or `Unsorted/`), the PDF lands in `pdfs/unsorted/` rather than guessing — no binding either, since the user hasn't classified the board yet.
 
@@ -202,14 +210,16 @@ Filename-match is intentionally strict (exact base, case-insensitive). Heuristic
 ### New file: `src/backend/handlers/import.go`
 
 Endpoints:
-- `POST /api/import/check-duplicate` — body `{filename, size}`, returns `{match: <path|null>}`. Single SQL query.
-- `POST /api/import/test-write` — attempts the write+remove cycle in `dnd_dir`, returns `{ok, free_bytes, error?}`.
-- `POST /api/import` — multipart: file bytes + form fields `target` (relative path inside dnd_dir). Performs temp-file + fsync + atomic rename + folder-scan trigger. Returns `{path, file_id}`.
+- `POST /api/config` (extend existing) — when setting `dnd_dir`, validate `filepath.Rel(libraryRoot, dnd_dir)` succeeds and the result has no `..` segments. Reject otherwise with `400 {error: "Drop folder must be under /library/"}`.
+- `POST /api/import/check-duplicate` — body `{filename, size}`, returns `{match: <path|null>}`. Single SQL query against the `files` table.
+- `POST /api/import/test-write` — attempts the write+remove cycle in `dnd_dir` plus a `disk.Usage()` for free bytes, returns `{ok, free_bytes, error?}`.
+- `POST /api/import` — multipart: file bytes + form fields `target` (relative path inside `dnd_dir`). Performs temp-file + fsync + atomic rename + folder-scan trigger. Returns `{path, file_id}`. Re-validates `target` is a clean relative path with no `..`.
 
 ### New file: `src/backend/databank/dnd_writer.go`
 
 Helpers:
 - `Slugify(s string) string` — per § Slugification rules.
+- `ValidateUnderLibrary(libraryRoot, dndDir string) error` — `filepath.Rel` + `..`-segment check. Used by both config-save and import handlers (defense in depth).
 - `AtomicWrite(dndDir, target, filename string, r io.Reader) (string, error)` — temp + fsync + rename, mkdir-p target, returns final path.
 
 ### `src/backend/boarddb/boarddb.go`
@@ -218,10 +228,9 @@ Add:
 - `Resolve(boardNumber, manufacturer string) (ResolveResult, error)` returning `{Confidence: "high"|"placeholder"|"ambiguous"|"none", Candidates: []BoardMatch}`.
 - Reuses existing `boards` table indexes; the placeholder rows from [2026-04-29 spec](2026-04-29-filename-scan-importer-design.md) are queried via the standard `code` lookup (no new schema).
 
-### `src/backend/databank/scanner.go`
+### Scanner
 
-- Read `dnd_dir` from config + env; if set, add it as a second scan root alongside `library_dir`.
-- Existing `folders` table + cascade ([2026-04-03 spec](2026-04-03-databank-folder-registry-design.md)) handles the new tree without changes.
+**No changes.** The Drop folder lives under `/library/`, which the scanner already walks. After `/api/import` writes a file, it calls the existing localized-rescan helper for the target subfolder so the new row appears in `databank.db` without waiting for the next full scan.
 
 ### Removed
 
@@ -303,7 +312,8 @@ None as of approval. The bulk-drop threshold (`>3 files = silent unstructured`) 
 
 | Risk | Mitigation |
 |---|---|
-| User mounts a non-writable folder | Test Write on save + on startup; status indicator + banner; falls back to unset behavior. |
+| User configures a Drop folder outside `/library/` | Validated at config-save (`filepath.Rel` + `..` check) and re-validated at every `/api/import` call. Rejected with a clear error before write. |
+| User picks a path under `/library/` that's actually a RO mount | Test Write on save + on startup catches it; status indicator + banner; drop flow falls back to unset behavior. |
 | Same filename concurrently dropped from two browsers | Atomic rename + post-rename existence check; second writer gets a "duplicate (race)" error and falls into the existing dedup path. |
 | Boarddb resolver returns wrong brand for ambiguous codes | Single-file ambiguous drops always show the modal; bulk drops go to `unstructured/` where v2 review can fix them. No silent miscategorization in the single-drop path. |
 | `unstructured/` accumulates without v2 review UI | Documented limitation. Files are still in `databank.db` and findable via search; the user can move them on disk and rescan. v2 ships the proper UI. |
@@ -314,15 +324,17 @@ None as of approval. The bulk-drop threshold (`>3 files = silent unstructured`) 
 ## Summary of v1 Scope
 
 Ship:
-1. Settings field + Test Write + adaptive overlay copy
-2. Dedup check (filename + size, both roots)
-3. `/api/import` with atomic temp+rename
+1. Settings field + under-`/library/` validation + Test Write + adaptive overlay copy
+2. Dedup check (filename + size, single `/library/` scan root)
+3. `/api/import` with atomic temp+rename + localized rescan trigger
 4. Resolver `Resolve(boardNumber, manufacturer)` returning confidence + candidates
 5. Hybrid classify policy (Q2d): silent for high/placeholder, modal for single-file ambiguous/none, silent unstructured for bulk
-6. PDF pairing (bundled + filename-match) with auto-binding creation
-7. Scanner extension to walk `dnd_dir`
-8. Removal of dead `POST /api/upload`
-9. Tests as enumerated above
+6. PDF pairing (bundled + filename-match) with auto-binding creation via existing `db.InsertBinding`
+7. Removal of dead `POST /api/upload`
+8. Tests as enumerated above
+
+Notably **not** in scope (because the folder lives under `/library/`):
+- No new scan root, no new env var beyond optional `DND_DIR`, no scanner changes.
 
 Defer to v2 (specced, not built):
 - Needs Review badge + tray in Library panel
