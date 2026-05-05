@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -312,6 +313,59 @@ func (u *Updater) dockerPullByDigest(registry, digest string) error {
 	return nil
 }
 
+// dockerSockPOST sends a POST to the Docker Engine API via the Unix socket.
+// body may be nil for requests with no payload. The response body is drained
+// and discarded; only the status code is returned.
+func dockerSockPOST(endpoint string, body []byte) (int, error) {
+	client := dockerClient()
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest("POST", "http://docker/v1.41"+endpoint, bodyReader)
+	if err != nil {
+		return 0, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
+// tagPrevious tags the currently-running container's image as
+// boardripper:previous so a failed update can be reverted manually.
+// This is best-effort — the caller logs and continues on error.
+func (u *Updater) tagPrevious() error {
+	ci, err := findSelfContainer()
+	if err != nil {
+		return fmt.Errorf("findSelfContainer: %w", err)
+	}
+	if ci.Image == "" {
+		return errors.New("self image unknown")
+	}
+	// POST /images/{name}/tag?repo=boardripper&tag=previous
+	// The image name may contain slashes so we use url.PathEscape on the
+	// reference but keep the query params unescaped (they're plain identifiers).
+	imgRef := url.PathEscape(ci.Image)
+	endpoint := fmt.Sprintf("/images/%s/tag?repo=boardripper&tag=previous", imgRef)
+	code, err := dockerSockPOST(endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("tag API call failed: %w", err)
+	}
+	// 201 = created, 200 = already existed; both are success.
+	if code != 201 && code != 200 {
+		return fmt.Errorf("tag API returned HTTP %d", code)
+	}
+	u.logProgress(fmt.Sprintf("Tagged %s as boardripper:previous", ci.Image), "info")
+	return nil
+}
+
 // orchestrateRestart launches a lightweight Alpine container that:
 // 1. Stops the current container
 // 2. Renames it to -old
@@ -417,11 +471,34 @@ if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
   exit 1
 fi
 
-echo "[orchestrator] Success! New container running."
-sleep 5
-echo "[orchestrator] Cleaning up old container..."
-dapi -X DELETE "$API/containers/%s-old?force=true" >/dev/null 2>&1 || true
-echo "[orchestrator] Done."
+echo "[orchestrator] New container started — polling /api/health (60s timeout)..."
+i=0
+ok=0
+while [ $i -lt 30 ]; do
+  # Use wget (available in busybox/alpine). Fall back via host port if wget
+  # cannot reach the container directly by name on the shared network.
+  if wget -q -O - --timeout=2 "http://%s:8080/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    ok=1
+    break
+  fi
+  sleep 2
+  i=$((i + 1))
+done
+
+if [ "$ok" = "1" ]; then
+  echo "[orchestrator] Health check passed — removing old container."
+  dapi -X DELETE "$API/containers/%s-old?force=true" >/dev/null 2>&1 || true
+  echo "[orchestrator] Done."
+  exit 0
+fi
+
+echo "[orchestrator] WARN: health check failed after 60s — rolling back to previous container."
+dapi -X POST "$API/containers/$NEW_ID/stop?t=5" >/dev/null 2>&1 || true
+dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
+dapi -X POST "$API/containers/%s/rename?name=%s" >/dev/null 2>&1 || true
+dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
+echo "[orchestrator] Rollback complete — previous container restarted."
+exit 1
 `,
 		self.Name, self.ID,                    // stop
 		self.Name,                              // delete -old
@@ -433,7 +510,10 @@ echo "[orchestrator] Done."
 		self.ID,                                // rollback start
 		self.ID, self.Name,                     // rollback rename (start fail)
 		self.ID,                                // rollback start (start fail)
-		self.Name,                              // cleanup
+		self.Name,                              // health-check poll target
+		self.Name,                              // cleanup old on success
+		self.ID, self.Name,                     // rollback rename old→original
+		self.ID,                                // rollback start old
 	)
 
 	client := dockerClient()
