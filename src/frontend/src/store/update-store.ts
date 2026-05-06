@@ -286,11 +286,11 @@ class UpdateStore extends Emitter {
     log.update.warn(`Restart timeout (${HEALTH_POLL_TIMEOUT_MS / 1000}s) — backend did not return`);
   }
 
-  // Called from constructor / init: if there is a recent restart flag in
-  // localStorage, restore the restarting state so the modal is visible
-  // immediately on page load. Polls health and reloads once the backend
-  // is up. Used when the user refreshed the page mid-update.
-  private resumeIfRestarting() {
+  // Called from init code at module bottom: if there is a recent restart
+  // flag in localStorage, fetch status and log whether the orchestration
+  // succeeded. Public because we call it via the exported singleton from
+  // outside the class.
+  resumeIfRestarting() {
     const flag = loadRestartFlag();
     if (!flag) return;
 
@@ -318,8 +318,7 @@ export const updateStore = new UpdateStore();
 // re-appear before the first status fetch completes — the modal disappears
 // once the post-restart status comes back and we know the new version.
 if (typeof window !== 'undefined' && !import.meta.env.SSR) {
-  // Cast through unknown to access the private resume hook from outside the class.
-  (updateStore as unknown as { resumeIfRestarting(): void }).resumeIfRestarting();
+  updateStore.resumeIfRestarting();
   updateStore.fetchStatus();
   setInterval(() => updateStore.fetchStatus(), 30 * 60 * 1000);
 }
