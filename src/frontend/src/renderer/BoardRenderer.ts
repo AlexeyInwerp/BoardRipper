@@ -277,6 +277,10 @@ export class BoardRenderer {
   private textHiddenForZoom = false;
   private netLinesHiddenForZoom = false;
   private prevTickScale = -1;
+  // Pulse animations (net lines + cross-side ghosts) freeze for a short window
+  // after viewport motion so pan/zoom don't pay the per-frame Graphics rebuild.
+  // Bumped on every viewport 'moved' event; pulse resumes once it expires.
+  private viewportMovingUntil = 0;
 
   // Selection blink state (triggered by focusPart / PDF reverse search)
   private selectionBlinkPhase = 0;
@@ -426,13 +430,17 @@ export class BoardRenderer {
 
     // Net line pulse animation — only when there's an active selection with net lines.
     // Skip during active zoom (net lines are hidden, no point redrawing).
+    // Skip while the viewport is being panned/zoomed: the per-frame Graphics
+    // rebuild for net lines + ghosts is expensive and competes with viewport
+    // updates. Phase doesn't advance during the pause, so resume is jump-free.
     // Also skip when the page is hidden or the window has lost focus: nobody can
     // see the pulse, so advancing the phase + forcing a GPU render is pure waste.
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.length > 0;
     const pageVisible = !document.hidden && document.hasFocus();
-    if (pageVisible && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
+    const viewportIdle = performance.now() >= this.viewportMovingUntil;
+    if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
       const s = renderSettingsStore.settings;
       const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts;
       if (needsPulse) {
@@ -736,7 +744,7 @@ export class BoardRenderer {
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
     this.installDragZoomHandler();
-    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
+    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.viewportMovingUntil = performance.now() + 100; this.scheduleFollowDebounce(); });
     this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
     this.app.stage.addChild(this.viewport);
 
@@ -856,7 +864,7 @@ export class BoardRenderer {
     this.installDragZoomHandler();
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
-    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.scheduleFollowDebounce(); });
+    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.viewportMovingUntil = performance.now() + 100; this.scheduleFollowDebounce(); });
     this.app.stage.addChild(this.viewport);
 
     // Overlay objects live inside scene.root (sortableChildren=true).
@@ -1112,8 +1120,12 @@ export class BoardRenderer {
     // so deferring to the settle timer avoids expensive per-frame Graphics redraws.
     if (!this.netLinesHiddenForZoom && this.netLineSegments.length > 0) {
       this.netLinesHiddenForZoom = true;
+      // Net line geometry depends on viewport scale (line widths are 1/scale),
+      // so it must be cleared and redrawn at the new scale on settle.
+      // Ghost geometry uses world-space stroke widths and stays visually correct
+      // at any zoom — leave it drawn so the user sees a frozen ghost during zoom
+      // instead of a vanish/reappear flash.
       this.netLinesGfx.clear();
-      this.crossSideGhostGfx.clear();
       this.needsRender = true;
     }
     // Rescale elevated selection labels to maintain constant screen-pixel size
