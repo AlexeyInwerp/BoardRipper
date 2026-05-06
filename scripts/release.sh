@@ -75,6 +75,18 @@ NEW_COUNTER=$((PREV_COUNTER + 1))
 
 echo ">>> Releasing $VERSION (counter $NEW_COUNTER)$([ "$DRY_RUN" = "true" ] && echo ' [DRY RUN]')"
 
+# --- Sync src/frontend/package.json version with $VERSION ---
+# Vite injects __APP_VERSION__ at build time from package.json. Without this
+# sync, the frontend status bar shows whatever package.json said when last
+# committed (e.g. 0.19.0), while the backend reports the real APP_VERSION
+# from -ldflags (e.g. 0.19.4). Source of truth = the $VERSION arg here.
+PKG_VERSION="${VERSION#v}"
+PKG_FILE="$REPO_ROOT/src/frontend/package.json"
+TMP_PKG="$(mktemp)"
+jq --arg v "$PKG_VERSION" '.version = $v' "$PKG_FILE" > "$TMP_PKG"
+mv "$TMP_PKG" "$PKG_FILE"
+echo "    package.json -> $PKG_VERSION"
+
 # --- Build & push multi-arch image ---
 PUBKEY_B64="$(grep -v '^untrusted' "$MINISIGN_PUB" | tr -d '\n')"
 SOURCES_CSV="https://ghcr.io/alexeyinwerp/boardripper,https://www.ripperdoc.de/boardripper"
@@ -219,7 +231,7 @@ fi
 # --- Final local commit & tag ---
 if [ "$DRY_RUN" != "true" ]; then
   echo "$NEW_COUNTER" > "$COUNTER_FILE"
-  git add "$COUNTER_FILE"
+  git add "$COUNTER_FILE" "$PKG_FILE"
   git commit -m "release: $VERSION (counter $NEW_COUNTER)"
   git tag "$VERSION"
   echo ">>> Local tag $VERSION created. Run 'git push origin main $VERSION' when ready."

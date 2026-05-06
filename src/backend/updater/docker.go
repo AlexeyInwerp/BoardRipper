@@ -485,13 +485,30 @@ if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
   exit 1
 fi
 
-echo "[orchestrator] New container started — polling /api/health (60s timeout)..."
+echo "[orchestrator] Resolving new container IP for healthcheck..."
+NEW_IP=""
+ipattempts=0
+while [ -z "$NEW_IP" ] && [ $ipattempts -lt 10 ]; do
+  # Pick the first non-empty IPAddress field — covers both the default bridge
+  # (.NetworkSettings.IPAddress) and user-defined networks
+  # (.NetworkSettings.Networks.<name>.IPAddress).
+  NEW_IP=$(dapi "$API/containers/$NEW_ID/json" 2>/dev/null \
+    | sed -n 's/.*"IPAddress":"\([^"]*\)".*/\1/p' | grep -v '^$' | head -1)
+  [ -z "$NEW_IP" ] && sleep 1
+  ipattempts=$((ipattempts + 1))
+done
+if [ -z "$NEW_IP" ]; then
+  echo "[orchestrator] WARN: could not resolve new container IP after 10s — falling back to name lookup (only works on user-defined networks)"
+  NEW_IP="%s"
+fi
+echo "[orchestrator] Polling http://$NEW_IP:8080/api/health (60s timeout)..."
 i=0
 ok=0
 while [ $i -lt 30 ]; do
-  # Use wget (available in busybox/alpine). Fall back via host port if wget
-  # cannot reach the container directly by name on the shared network.
-  if wget -q -O - --timeout=2 "http://%s:8080/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
+  # wget is available in busybox/alpine; using IP avoids needing the container
+  # name to resolve on the default bridge network (DNS by name is only
+  # automatic on user-defined networks).
+  if wget -q -O - --timeout=2 "http://$NEW_IP:8080/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
     ok=1
     break
   fi
@@ -524,7 +541,7 @@ exit 1
 		self.ID,                                // rollback start
 		self.ID, self.Name,                     // rollback rename (start fail)
 		self.ID,                                // rollback start (start fail)
-		self.Name,                              // health-check poll target
+		self.Name,                              // healthcheck name fallback (line: NEW_IP="%s")
 		self.Name,                              // cleanup old on success
 		self.ID, self.Name,                     // rollback rename old→original
 		self.ID,                                // rollback start old
