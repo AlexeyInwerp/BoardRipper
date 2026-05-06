@@ -1616,7 +1616,7 @@ export function SettingsPanel() {
           title="When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
         />
 
-        <div className="settings-subsection-label">Mouse drag behavior</div>
+        <div className="settings-subsection-label">Trackpad/Mouse drag behavior</div>
         <p className="settings-hint">Drag pills between slots to swap left-drag and Shift+left-drag actions.</p>
         <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateDraft} />
 
