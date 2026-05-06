@@ -480,12 +480,12 @@ function setGlobalSetting<K extends 'dragToZoom' | 'twoFingerPan'>(key: K, next:
 // still 1-to-1 with SettingsPanel — only the modifier display differs.
 const DRAG_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
   bare: 'Drag',
-  shift: '⇧+Drag',
+  shift: 'Shift+Drag',
 };
 
 const SCROLL_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
   bare: 'Scroll',
-  shift: '⇧/⌃+Scroll',
+  shift: 'Shift/Ctrl+Scroll',
 };
 
 const SCROLL_HINT = 'Shift + Scroll = slow zoom · Ctrl + Scroll = fast zoom';
@@ -546,11 +546,13 @@ const isMacPlatform =
 // Compact home labels — the Settings panel keeps the verbose form.
 const PDF_SLOT_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
   bare: 'Scroll',
-  shift: '⇧/⌃+Scroll',
-  meta: isMacPlatform ? '⌘+Scroll' : '⊞+Scroll',
+  shift: 'Shift/Ctrl+Scroll',
+  meta: isMacPlatform ? 'Cmd+Scroll' : 'Win+Scroll',
 };
 const PDF_HINT =
-  'Drag a pill onto another slot to swap. Defaults: Scroll = Pan, ⇧/⌃ = Zoom (fast), ⌘ = Page.';
+  'Drag a pill onto another slot to swap. Defaults: Scroll = Pan, Shift/Ctrl = Zoom (fast), ' +
+  (isMacPlatform ? 'Cmd' : 'Win') +
+  ' = Page.';
 
 function savePdfBindings(next: ScrollBindings) {
   try {
@@ -624,7 +626,7 @@ function PdfScrollBindings() {
   }, []);
 
   return (
-    <MatrixRow label="PDF: Scroll" hint={PDF_HINT}>
+    <MatrixRow label="PDF: 2Finger/Scroll" hint={PDF_HINT}>
       {PDF_SLOT_KEYS.map((slot) => {
         const action = bindings[slot];
         return (
