@@ -2,15 +2,24 @@
 
 ## v0.19.5 — 2026-05-06
 
-### New
+### New: update-in-progress modal
 
-- **Drop-to-update fallback.** When the in-app update button can't reach GHCR or ripperdoc.de — or when a future broken-orchestrator bug strands an install — users can now download a single bundle file and drag it onto the BoardRipper window to apply the update. Each release publishes `boardripper-update-vX.Y.Z.tar` (and a stable `latest-update.tar` alias) at <https://www.ripperdoc.de/boardripper/releases/>. The bundle contains the signed manifest, its signature, and the OCI image tarball; the running container verifies the signature against its compiled-in public key, validates counter/expiry/min-version, checks the tarball sha256, then runs the same orchestrator restart as the network path. Same trust envelope: only the manifest signature grants trust; the file itself is untrusted bytes until verification passes. Recovery escape-hatch for any future broken-self-update situation, but only available once the running container is on v0.19.5+.
+When the user clicks **Update Now**, BoardRipper now shows a centered modal: *"Update in progress — the page will reload automatically in 30–60 seconds."* The modal stays up across the SSE-disconnect window (the orchestrator deliberately stops the running container, killing the progress stream — that is the **expected** success path, not a failure). Once the new container's `/api/health` responds, the page reloads automatically; the modal vanishes.
+
+A `boardripper-update-in-flight` flag in localStorage persists across page refreshes mid-update — refreshing the tab while the update is in flight no longer presents a fresh dashboard with an "Update" button that could be clicked again. The flag is cleared on completion or after 5 minutes (whichever comes first). Backend health-poll runs every 2 seconds for up to 120 seconds while waiting for the new container.
+
+### New: drop-to-update fallback
+
+When the in-app update button can't reach GHCR or ripperdoc.de — or when a future broken-orchestrator bug strands an install — users can now download a single bundle file and drag it onto the BoardRipper window to apply the update. Each release publishes `boardripper-update-vX.Y.Z.tar` (and a stable `latest-update.tar` alias) at <https://www.ripperdoc.de/boardripper/releases/>. The bundle contains the signed manifest, its signature, and the OCI image tarball; the running container verifies the signature against its compiled-in public key, validates counter/expiry/min-version, checks the tarball sha256, then runs the same orchestrator restart as the network path. Same trust envelope: only the manifest signature grants trust; the file itself is untrusted bytes until verification passes. Recovery escape-hatch for any future broken-self-update situation, but only available once the running container is on v0.19.5+.
 
 ### Internal
 
+- `update-store.ts` gains `restarting` / `restartingFromVersion` getters and an internal `streamProgress()` + `waitForRestart()` flow shared between `apply()` and `applyBundle()`.
+- New `UpdateProgressOverlay` React component, mounted at the App root, gated on `updateStore.restarting`.
 - New backend endpoint `POST /api/update/apply-bundle` (multipart upload, same auth-cookie middleware as the other `/api/update/*` routes).
 - New helper `updater.ApplyBundle([]byte)` reuses every existing piece (`VerifyManifest`, `ValidateManifest`, `VerifyTarballSHA256`, `dockerLoad`, `orchestrateRestart`).
 - `release.sh` now produces `out/boardripper-update-$VERSION.tar` alongside the regular tarball and uploads it to FTP atomically.
+- `scripts/release/site-artifacts.sh` no longer requires `pandoc` — built-in renderer (perl + sed + awk) handles the BoardRipper CHANGELOG.md format. Without this, missing pandoc on the maintainer's machine silently uploaded a 141-byte stub instead of the rendered changelog.
 
 ## v0.19.4 — 2026-05-06
 
