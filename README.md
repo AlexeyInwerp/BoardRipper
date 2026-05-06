@@ -82,7 +82,7 @@ panel — see the Docker Setup section below.
 ### Standalone binary
 
 ```bash
-# Download boardripper-<platform>-<version>.tar.gz from GitHub Releases, then:
+# Download boardripper-<platform>-<version>.tar.gz from ripperdoc.de/boardripper/, then:
 tar -xzf boardripper-<platform>-<version>.tar.gz
 STATIC_DIR=./static DATA_DIR=./data ./boardripper
 # → http://localhost:8080
