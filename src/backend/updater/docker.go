@@ -414,7 +414,21 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 		return fmt.Errorf("orchestrator image %s unavailable: %w", orchImage, err)
 	}
 
-	newImage := fmt.Sprintf("boardripper:%s", m.Version)
+	// Image reference for `containers/create`. Use the canonical
+	// <registry>@<digest> form because pull-by-digest never creates a
+	// named tag in the local image store. Tarball-load preserves whatever
+	// docker save captured (the registry tag + digest), so the digest
+	// reference resolves there too. Fall back to <registry>:<tag>, then to
+	// the legacy local tag, only if the manifest is malformed.
+	var newImage string
+	switch {
+	case m.Image.Registry != "" && m.Image.Digest != "":
+		newImage = m.Image.Registry + "@" + m.Image.Digest
+	case m.Image.Registry != "" && m.Image.Tag != "":
+		newImage = m.Image.Registry + ":" + m.Image.Tag
+	default:
+		newImage = fmt.Sprintf("boardripper:%s", m.Version)
+	}
 
 	// Build the create body for the new container
 	createBody := map[string]interface{}{
