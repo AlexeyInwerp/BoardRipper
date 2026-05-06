@@ -130,6 +130,7 @@ The bridge is complete. From v0.19.1 onward, only the new pipeline is used:
 - **GHCR down:** clients fall through to ripperdoc.de tarball automatically. No action needed.
 - **ripperdoc.de down:** clients use GHCR. Restore the FTP host at leisure.
 - **Manifest counter regression:** if a release.sh failure leaves `.release-counter` ahead of the published manifest, the next run will skip a counter value (no harm; counter just needs to be monotonic, not gap-free).
+- **In-binary updater is broken** (e.g. orchestrator bug, network fully blocked, GHCR + ripperdoc.de both unreachable): tell affected users to drop the bundle file. Each release also publishes `boardripper-update-vX.Y.Z.tar` (alias `latest-update.tar`) on FTP. Users download it, drag it onto the BoardRipper window, confirm — the running container verifies the signature, applies the update, restarts. Same trust envelope as the network path; only the manifest signature grants trust. This is the recovery escape-hatch for any future broken-self-update situation, but only works if the running container's binary already speaks the bundle protocol (v0.19.5+).
 
 ## Files written by the pipeline
 
@@ -142,6 +143,8 @@ After a successful release, the following are uploaded to `ftp.ripperdoc.de:/pub
 - `third_party.html` (rendered from THIRD_PARTY.md, if present)
 - `releases/boardripper-vX.Y.Z.tar.gz` (the OCI image archive)
 - `releases/latest.tar.gz` (copy of the same, atomic-renamed)
+- `releases/boardripper-update-vX.Y.Z.tar` (drop-to-update bundle: manifest + signature + tarball, single file)
+- `releases/latest-update.tar` (copy of the same, atomic-renamed)
 - `releases/index.html` (release index page)
 - `screenshots/*.png` (landing-page assets)
 
