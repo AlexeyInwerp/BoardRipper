@@ -46,9 +46,9 @@ chmod 600 ~/.config/boardripper/release.env
 cd ~/Desktop/Boardviewer
 git pull
 # (edit CHANGELOG.md with new entry)
-./scripts/release.sh v0.8.1
+./scripts/release.sh v0.19.1
 # (or with important flag:)
-./scripts/release.sh v0.8.1 --important "Security fix: unauthenticated update endpoint"
+./scripts/release.sh v0.19.1 --important "Security fix: unauthenticated update endpoint"
 ```
 
 The script will:
@@ -66,7 +66,7 @@ The script will:
 After the script finishes:
 
 ```bash
-git push origin main v0.8.1
+git push origin main v0.19.1
 curl -I https://www.ripperdoc.de/boardripper/manifest.json
 curl https://www.ripperdoc.de/boardripper/manifest.json | jq .
 ```
@@ -81,14 +81,14 @@ minisign -V -p ~/.config/boardripper/release.pub -m /tmp/m.json
 
 ### Version string conventions
 
-- `v0.8.0` — release
-- `v0.8.0.beta1`, `v0.8.0.rc1` — pre-release with **dot-delimited** suffix (NOT hyphens)
-- The script's regex enforces this; `v0.8.0-beta1` will be rejected.
+- `v0.19.0` — release
+- `v0.19.0.beta1`, `v0.19.0.rc1` — pre-release with **dot-delimited** suffix (NOT hyphens)
+- The script's regex enforces this; `v0.19.0-beta1` will be rejected.
 
 ### Dry run
 
 ```bash
-./scripts/release.sh v0.8.1 --dry-run
+./scripts/release.sh v0.19.1 --dry-run
 ```
 
 Builds the image locally (single-arch), generates and signs the manifest, renders site artifacts, but skips:
@@ -99,17 +99,27 @@ Builds the image locally (single-arch), generates and signs the manifest, render
 
 Useful for validating the pipeline after schema or script changes.
 
-## Bridge release (vN, one-time only)
+## Bridge release (v0.19.0 — completed 2026-05-06)
 
-The first release using the new pipeline must also be uploaded to the existing private GitHub releases page so existing token-using clients pick it up via the old code path. After they update once, they're on the new system.
+The bridge release (v0.19.0) was shipped to BOTH the old GitHub Releases page
+(via the legacy CI, which triggered on tag push) AND the new GHCR + ripperdoc.de
+pipeline. Existing v0.18.x clients picked it up via their old token-based path.
 
-1. Run `./scripts/release.sh v0.8.0` as normal.
-2. Take `out/boardripper-v0.8.0.tar.gz` and upload to github.com → Releases → Draft new release for tag `v0.8.0` (existing flow).
-3. Release notes: *"This release moves updates to ripperdoc.de + GHCR. You can remove `GITHUB_TOKEN` from your `docker-compose.yml` after this update."*
+**Lesson learned:** the legacy `release.yml` workflow was not disabled before the
+bridge tag was pushed. The CI rebuilt the image without the new `PUBKEY`/`SOURCES`
+build args, producing a tarball with an empty PubKey that broke `Check()` for
+any client that pulled the GH-Releases asset instead of GHCR. Fix was to
+`docker pull ghcr.io/alexeyinwerp/boardripper:v0.19.0` manually on affected
+installs. **Disable the legacy workflow BEFORE pushing any bridge tag.** See
+`feedback_disable_legacy_workflow_before_bridge_tag.md` in agent memory.
 
-## Cleanup after vN ships
+The bridge is complete. From v0.19.1 onward, only the new pipeline is used:
+- `.github/workflows/release.yml` renamed to `.disabled` (commit `7200694`)
+- Existing installs no longer need `GITHUB_TOKEN`
 
-1. Delete or rename `.github/workflows/release.yml` so accidental tag pushes don't re-trigger old CI.
+## Cleanup after bridge release (v0.19.0 — pending)
+
+1. ~~Delete or rename `.github/workflows/release.yml`~~ — done (commit `7200694`).
 2. github.com → repo Settings → Secrets and variables → Actions → remove old `GH_TOKEN`/`GITHUB_PAT` secrets.
 3. **Rotate the leaked PAT in `deploy.conf`.** github.com → revoke `github_pat_11ADU6R5I0…`. Move what's left of `deploy.conf` to `~/.config/boardripper-deploy/`.
 
