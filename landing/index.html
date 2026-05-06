@@ -192,6 +192,13 @@ C12*</pre>
   <li><b>Release notes and version history</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/changelog.html">changelog</a>.</li>
 </ul>
 <p class="small">Both downloads ship the same image. The running container verifies an Ed25519 signature against a key compiled into its own binary before installing any update &mdash; a hijacked mirror cannot deliver a forged update.</p>
+
+<h3>Drop-to-update fallback</h3>
+<p>For installs that can&rsquo;t reach the registry or the mirror (firewalled networks, air-gapped shops, or recovering from a broken self-update), download the bundle and drop it onto the BoardRipper window:</p>
+<ul>
+  <li><a href="https://www.ripperdoc.de/boardripper/releases/latest-update.tar">latest-update.tar</a> &mdash; signed bundle (manifest + signature + image), ~30&nbsp;MB</li>
+</ul>
+<p class="small">Drag the file anywhere on the BoardRipper UI. A confirmation prompt appears; click OK and the running container verifies the signature, applies the update, and restarts. The browser reloads after ~30&nbsp;s. Same trust envelope as the in-app updater &mdash; the manifest signature is what grants trust, the file itself is treated as untrusted bytes until verification passes.</p>
 </section>
 
 <section id="feedback">

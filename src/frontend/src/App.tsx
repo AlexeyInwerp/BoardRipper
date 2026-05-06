@@ -24,6 +24,7 @@ import { openPdfFiles } from './store/file-actions';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
+import { updateStore } from './store/update-store';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
@@ -48,6 +49,16 @@ function isSupportedFile(name: string): 'board' | 'pdf' | null {
   if (ext === PDF_EXT) return 'pdf';
   if (BOARD_EXTS.has(ext)) return 'board';
   return null;
+}
+
+/** Match update bundles created by scripts/release.sh:
+ *    boardripper-update-vX.Y.Z.tar       (canonical)
+ *    boardripper-update-vX.Y.Z.brupdate  (alias for clarity)
+ *  The signature inside is what grants trust — the filename is just a
+ *  routing hint for the drop dispatcher. */
+function isUpdateBundle(name: string): boolean {
+  const lower = name.toLowerCase();
+  return /^boardripper-update-v[0-9]/.test(lower) && (lower.endsWith('.tar') || lower.endsWith('.brupdate'));
 }
 
 function App() {
@@ -92,6 +103,25 @@ function App() {
 
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
+
+    // Update-bundle drop takes priority over board/PDF dispatch. If the user
+    // drops an update bundle (with or without other files alongside), we
+    // confirm and apply it; the other files are ignored — restarting mid-load
+    // would be confusing.
+    for (const file of files) {
+      if (isUpdateBundle(file.name)) {
+        const sizeMiB = (file.size / (1024 * 1024)).toFixed(1);
+        const ok = window.confirm(
+          `Install update bundle?\n\n` +
+          `File: ${file.name}\n` +
+          `Size: ${sizeMiB} MiB\n\n` +
+          `The container will verify the bundle's signature, ` +
+          `apply the update, and restart. The browser will reload after ~30 s.`
+        );
+        if (ok) await updateStore.applyBundle(file);
+        return;
+      }
+    }
 
     const boardFiles: File[] = [];
     const pdfFiles: File[] = [];

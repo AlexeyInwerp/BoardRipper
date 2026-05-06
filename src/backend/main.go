@@ -169,6 +169,7 @@ func main() {
 	mux.Handle("GET /api/update/status",   handlers.WithUpdateAuth(secret, read(updateHandler.Status)))
 	mux.Handle("POST /api/update/check",   handlers.WithUpdateAuth(secret, http.HandlerFunc(updateHandler.Check)))   // hits GitHub, can take 30s+
 	mux.Handle("POST /api/update/apply",   handlers.WithUpdateAuth(secret, http.HandlerFunc(updateHandler.Apply)))   // long-running — Docker pull + restart
+	mux.Handle("POST /api/update/apply-bundle", handlers.WithUpdateAuth(secret, http.HandlerFunc(updateHandler.ApplyBundle))) // multipart upload of .brupdate
 	mux.Handle("GET /api/update/progress", handlers.WithUpdateAuth(secret, read(updateHandler.Progress)))
 
 	// Library Sync API routes — periodic mirror of an upstream HTTP/WebDAV

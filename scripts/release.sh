@@ -187,6 +187,19 @@ echo ">>> Signing manifest (will prompt for passphrase)"
 minisign -S -s "$MINISIGN_KEY" -m out/manifest.json
 # Produces out/manifest.json.minisig
 
+# --- Build update bundle (drop-to-update fallback) ---
+# A single-file archive containing manifest + signature + image tarball.
+# Users drop it onto the BoardRipper UI as a recovery path when the
+# in-binary updater can't reach GHCR / ripperdoc.de or has a bug.
+BUNDLE="out/boardripper-update-$VERSION.tar"
+tar -cf "$BUNDLE" \
+  -C out \
+  manifest.json \
+  manifest.json.minisig \
+  "boardripper-$VERSION.tar.gz"
+BUNDLE_SIZE="$(stat -f %z "$BUNDLE" 2>/dev/null || stat -c %s "$BUNDLE")"
+echo "    bundle: $BUNDLE ($BUNDLE_SIZE bytes)"
+
 # --- Generate site artifacts ---
 export VERSION RELEASED_AT
 OUT_DIR="$REPO_ROOT/out" "$REPO_ROOT/scripts/release/site-artifacts.sh"
@@ -206,6 +219,8 @@ if [ "$DRY_RUN" != "true" ]; then
   cp out/manifest.json.minisig  "$STAGE/boardripper/manifest.json.minisig.new"
   cp "$TARBALL"                 "$STAGE/boardripper/releases/boardripper-$VERSION.tar.gz"
   cp "$TARBALL"                 "$STAGE/boardripper/releases/latest.tar.gz.new"
+  cp "$BUNDLE"                  "$STAGE/boardripper/releases/boardripper-update-$VERSION.tar"
+  cp "$BUNDLE"                  "$STAGE/boardripper/releases/latest-update.tar.new"
 
   lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
 set ftp:ssl-allow no
@@ -220,6 +235,8 @@ mv manifest.json.minisig.new manifest.json.minisig
 cd /public_html/boardripper/releases
 rm -f latest.tar.gz
 mv latest.tar.gz.new latest.tar.gz
+rm -f latest-update.tar
+mv latest-update.tar.new latest-update.tar
 bye
 LFTP_EOF
 

@@ -152,6 +152,68 @@ class UpdateStore extends Emitter {
       this.notify();
     };
   }
+
+  /**
+   * Apply an update bundle the user dropped onto the UI. Same wire shape as
+   * apply() — multipart POST instead of empty POST, then the same SSE stream
+   * for progress. Recovery path when the network-fetched update can't reach
+   * GHCR / ripperdoc.de or when the in-binary updater is broken.
+   */
+  async applyBundle(file: File) {
+    if (this._updating) return;
+    this._updating = true;
+    this._progress = [];
+    log.update.log(`Uploading bundle ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MiB)...`);
+    this.notify();
+
+    const form = new FormData();
+    form.append('bundle', file);
+
+    try {
+      const res = await apiFetch('/api/update/apply-bundle', { method: 'POST', body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'unknown' }));
+        log.update.error(`Bundle apply failed: ${err.error}`);
+        this._progress.push({ time: new Date().toISOString(), message: err.error, status: 'error' });
+        this._updating = false;
+        this.notify();
+        return;
+      }
+    } catch {
+      log.update.error('Bundle upload failed');
+      this._progress.push({ time: new Date().toISOString(), message: 'Upload failed', status: 'error' });
+      this._updating = false;
+      this.notify();
+      return;
+    }
+
+    // Same SSE consumption as apply() — refactor candidate but kept inline
+    // for now to avoid drift between the two paths.
+    log.update.log('Streaming update progress...');
+    const es = new EventSource('/api/update/progress');
+    es.onmessage = (e) => {
+      const entry: ProgressEntry = JSON.parse(e.data);
+      this._progress.push(entry);
+      if (entry.status === 'error') log.update.error(entry.message);
+      else log.update.log(entry.message);
+      this.notify();
+      if (entry.status === 'done' || entry.status === 'error') {
+        es.close();
+        this._updating = false;
+        this.notify();
+        if (entry.status === 'done') {
+          log.update.log('Update complete — reloading in 30s...');
+          setTimeout(() => window.location.reload(), 30_000);
+        }
+      }
+    };
+    es.onerror = () => {
+      log.update.warn('SSE connection lost');
+      es.close();
+      this._updating = false;
+      this.notify();
+    };
+  }
 }
 
 export const updateStore = new UpdateStore();

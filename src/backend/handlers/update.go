@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -53,6 +54,56 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Update started",
+	})
+}
+
+// ApplyBundle accepts a multipart upload of an update bundle (.brupdate / .tar
+// containing manifest.json + manifest.json.minisig + boardripper-vX.Y.Z.tar.gz)
+// and applies it. Same trust envelope as the network path — the manifest
+// signature is the only thing that grants trust. Recovery path for installs
+// where the in-binary updater can't reach GHCR / ripperdoc.de.
+func (h *UpdateHandler) ApplyBundle(w http.ResponseWriter, r *http.Request) {
+	if h.upd.IsUpdating() {
+		http.Error(w, `{"error":"update already in progress"}`, http.StatusConflict)
+		return
+	}
+
+	// 64 MiB ceiling on the multipart body — bundle should be <40 MiB for any
+	// realistic OCI archive. Reject larger uploads at the parse stage rather
+	// than after extracting.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		http.Error(w, `{"error":"parse multipart: `+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+
+	file, _, err := r.FormFile("bundle")
+	if err != nil {
+		http.Error(w, `{"error":"missing 'bundle' form field"}`, http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	body, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, `{"error":"read upload: `+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	go func() {
+		if err := h.upd.ApplyBundle(body); err != nil {
+			// Error is already pushed to the progress log via logProgress;
+			// nothing else to do here. The frontend reads the SSE stream.
+			_ = err
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Bundle update started",
 	})
 }
 
