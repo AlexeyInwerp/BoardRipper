@@ -117,11 +117,18 @@ echo ">>> Capturing image digest"
 if [ "$DRY_RUN" = "true" ]; then
   IMAGE_DIGEST="sha256:$(docker inspect ghcr.io/alexeyinwerp/boardripper:$VERSION --format '{{.Id}}' | sed 's|^sha256:||')"
 else
+  # Capture the multi-arch INDEX digest, not a per-platform manifest digest.
+  # Earlier this used `--raw | jq '.manifests[0].digest'` which picked the
+  # first platform manifest (amd64) — that signed an amd64-only digest into
+  # manifest.json, which makes pull-by-digest fail on arm64 hosts because
+  # the digest is platform-specific. The non-raw `imagetools inspect` output
+  # has a top-level `Digest:` line that IS the index digest (resolves to
+  # any platform via Docker's content negotiation).
   IMAGE_DIGEST="$(docker buildx imagetools inspect ghcr.io/alexeyinwerp/boardripper:$VERSION \
-    --raw 2>/dev/null | jq -r '.manifests[0].digest // .config.digest // ""')"
-  if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
-    IMAGE_DIGEST="$(docker buildx imagetools inspect ghcr.io/alexeyinwerp/boardripper:$VERSION \
-      | grep -E '^Digest:' | head -1 | awk '{print $2}')"
+    | grep -E '^Digest:' | head -1 | awk '{print $2}')"
+  if [ -z "$IMAGE_DIGEST" ]; then
+    echo "ERROR: could not capture image digest from imagetools inspect" >&2
+    exit 1
   fi
 fi
 echo "    digest: $IMAGE_DIGEST"
