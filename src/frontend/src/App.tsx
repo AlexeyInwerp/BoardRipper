@@ -16,6 +16,7 @@ import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel';
 import { BoardTab } from './components/BoardTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
+import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
 import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
@@ -239,6 +240,7 @@ function App() {
           </div>
         </div>
       )}
+      <UpdateProgressOverlay />
     </div>
   );
 }
