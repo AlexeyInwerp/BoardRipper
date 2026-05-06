@@ -20,7 +20,18 @@ export function installBrowserZoomBlock(): void {
   window.addEventListener('keydown', onKey, { capture: true });
 
   // Safari / iOS pinch gestures fire as 'gesture*' events, not wheel.
-  const onGesture = (e: Event) => e.preventDefault();
+  // Panel handlers (PDF, board) attach gesture* listeners on their containers
+  // and call stopPropagation — so this window-level block only fires for
+  // gestures over non-panel chrome (toolbar, sidebar). If you see this log
+  // when pinching over the PDF or board, the panel handler isn't running.
+  const onGesture = (e: Event) => {
+    if (import.meta.env.DEV) {
+      const target = e.target as Element | null;
+      // eslint-disable-next-line no-console
+      console.debug('[browser-zoom-block] gesture suppressed at window', e.type, target?.tagName);
+    }
+    e.preventDefault();
+  };
   window.addEventListener('gesturestart', onGesture, { passive: false });
   window.addEventListener('gesturechange', onGesture, { passive: false });
   window.addEventListener('gestureend', onGesture, { passive: false });

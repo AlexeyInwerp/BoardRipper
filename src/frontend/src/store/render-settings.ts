@@ -190,9 +190,11 @@ export interface RenderSettings {
   twoFingerPan: boolean;
   /**
    * When scroll is configured to pan, override classic mouse-wheel events
-   * (large integer deltaY, no deltaX, no ctrl) to zoom instead — avoids
-   * jerky one-notch-equals-100px pan behavior. Trackpads and fine-grained
-   * wheels are unaffected by the heuristic. Default: true.
+   * (sustained-burst timing) to zoom instead — avoids jerky
+   * one-notch-equals-100px pan behavior. Trackpads and fine-grained wheels
+   * are unaffected by the heuristic. Default: false — the per-event override
+   * could split a single Mac/Safari smooth-scrolled click into mixed pan+zoom
+   * frames; users who want the safety net can re-enable it in Settings.
    */
   wheelDetection: boolean;
   /**
@@ -337,7 +339,7 @@ export const DEFAULTS: RenderSettings = {
   disableInertia: true,
   wheelSmooth: 5,
   twoFingerPan: true,
-  wheelDetection: true,
+  wheelDetection: false,
   dragToZoom: false,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
@@ -797,6 +799,7 @@ export function setThemeOverridesProvider(provider: ThemeOverridesProvider) {
 
 const STORAGE_KEY = 'boardripper-render-settings';
 const BOARD_OVERRIDES_KEY = 'boardripper-board-overrides';
+const WHEEL_DETECTION_MIGRATED_KEY = 'boardripper-wheel-detection-migrated-v1';
 
 // ── Per-board overrides persistence ──────────────────────────────────────
 
@@ -876,6 +879,15 @@ function loadFromStorage(): RenderSettings {
       // previous default get the new cap so testpoints and other large-radius
       // pins stop dominating the view. Explicit customisations are preserved.
       if (result.pinMaxRadius === 30) result.pinMaxRadius = 15;
+      // Migration: wheelDetection default flipped true → false. The per-event
+      // safety net could split a Mac/Safari smooth-scrolled wheel click into
+      // mixed pan+zoom frames. Force-flip ONCE for users carrying the legacy
+      // value; the guard flag prevents re-flipping if the user later turns
+      // wheelDetection back on.
+      if (parsed.wheelDetection === true && !localStorage.getItem(WHEEL_DETECTION_MIGRATED_KEY)) {
+        result.wheelDetection = false;
+      }
+      try { localStorage.setItem(WHEEL_DETECTION_MIGRATED_KEY, '1'); } catch { /* ignore */ }
       // Reconcile saved overlay layout (drop unknown slots, append new defaults)
       result.overlayLayout = reconcileOverlayLayout(parsed.overlayLayout);
 
