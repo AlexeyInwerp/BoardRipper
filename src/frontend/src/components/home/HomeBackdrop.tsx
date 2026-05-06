@@ -478,18 +478,20 @@ function setGlobalSetting<K extends 'dragToZoom' | 'twoFingerPan'>(key: K, next:
 // the home dashboard collapses them to single-line glyph form so all three
 // editors fit in one console-style table. Pill colors and actions are
 // still 1-to-1 with SettingsPanel — only the modifier display differs.
+// Labels mirror SettingsPanel's BOARD_DRAG_MODIFIER_LABELS / BOARD_MODIFIER_LABELS
+// / MODIFIER_LABELS so the home dashboard reads identically to the Settings page.
 const DRAG_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
-  bare: 'Drag',
-  shift: 'Shift+Drag',
+  bare: 'Left-drag',
+  shift: 'Shift + Left-drag',
 };
 
 const SCROLL_SLOT_LABELS: Record<SlotKey, React.ReactNode> = {
   bare: 'Scroll',
-  shift: 'Shift/Ctrl+Scroll',
+  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
 };
 
-const SCROLL_HINT = 'Shift + Scroll = slow zoom · Ctrl + Scroll = fast zoom';
-const DRAG_HINT = 'Hold Shift while left-dragging to flip to the alternate action';
+const SCROLL_HINT = 'Drag pills between slots to reassign scroll actions.';
+const DRAG_HINT = 'Drag pills between slots to swap left-drag and Shift+left-drag actions.';
 
 function DragBindings() {
   const dragToZoom = useDragToZoom();
@@ -497,7 +499,7 @@ function DragBindings() {
   // dragToZoom=false →  bare left-drag pans
   return (
     <PillSwap
-      rowLabel="Board: CLICK+DRAG"
+      rowLabel="Board: Drag"
       rowHint={DRAG_HINT}
       bareAction={dragToZoom ? 'zoom' : 'pan'}
       slotLabels={DRAG_SLOT_LABELS}
@@ -512,7 +514,7 @@ function ScrollBindings() {
   // twoFingerPan=false →  bare scroll zooms (shift/ctrl pan)
   return (
     <PillSwap
-      rowLabel="Board: 2Finger/Scroll"
+      rowLabel="Board: Scroll"
       rowHint={SCROLL_HINT}
       bareAction={twoFingerPan ? 'pan' : 'zoom'}
       slotLabels={SCROLL_SLOT_LABELS}
@@ -543,16 +545,13 @@ const PDF_ACTION_COLOR: Record<ScrollAction, string> = {
 const PDF_SLOT_KEYS: (keyof ScrollBindings)[] = ['bare', 'shift', 'meta'];
 const isMacPlatform =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform ?? '');
-// Compact home labels — the Settings panel keeps the verbose form.
+// Mirror SettingsPanel.MODIFIER_LABELS so both surfaces read identically.
 const PDF_SLOT_LABELS: Record<keyof ScrollBindings, React.ReactNode> = {
   bare: 'Scroll',
-  shift: 'Shift/Ctrl+Scroll',
-  meta: isMacPlatform ? 'Cmd+Scroll' : 'Win+Scroll',
+  shift: <>Shift + Scroll<br/>Ctrl + Scroll (fast)</>,
+  meta: isMacPlatform ? '⌘ + Scroll' : 'Ctrl + Scroll',
 };
-const PDF_HINT =
-  'Drag a pill onto another slot to swap. Defaults: Scroll = Pan, Shift/Ctrl = Zoom (fast), ' +
-  (isMacPlatform ? 'Cmd' : 'Win') +
-  ' = Page.';
+const PDF_HINT = 'Drag pills between slots to reassign scroll actions.';
 
 function savePdfBindings(next: ScrollBindings) {
   try {
@@ -626,7 +625,7 @@ function PdfScrollBindings() {
   }, []);
 
   return (
-    <MatrixRow label="PDF: 2Finger/Scroll" hint={PDF_HINT}>
+    <MatrixRow label="PDF: Scroll" hint={PDF_HINT}>
       {PDF_SLOT_KEYS.map((slot) => {
         const action = bindings[slot];
         return (

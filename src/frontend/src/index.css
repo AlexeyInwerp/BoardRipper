@@ -5406,10 +5406,11 @@ html, body, #root {
 .home-bindings-cell-mod {
   display: inline-flex;
   align-items: center;
+  text-align: right;
   padding: 2px 8px;
   color: var(--text-secondary);
   letter-spacing: 0.03em;
-  white-space: nowrap;
+  line-height: 1.15;
   opacity: 0.78;
   font-size: 0.72rem;
 }
