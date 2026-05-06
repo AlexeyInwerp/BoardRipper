@@ -157,7 +157,62 @@ function applyDeviceMemoryScaling(cfg: PdfQualityConfig): PdfQualityConfig {
   };
 }
 
+/** Detect WebKit/Safari (including iOS Safari, iPad Safari, and macOS Safari).
+ *  Used as a belt-and-suspenders cap in case the canvas-area probe doesn't
+ *  catch every Safari silent-clamp variant. WebKit-only `GestureEvent` is
+ *  the most reliable feature-detect — Chromium and Firefox don't ship it. */
+function isWebKit(): boolean {
+  if (typeof window === 'undefined') return false;
+  return typeof (window as { GestureEvent?: unknown }).GestureEvent !== 'undefined';
+}
+
+/** Probe the browser's actual maximum canvas dimension. WebKit/Safari
+ *  silently caps the backing store while still reporting the requested
+ *  width/height — so width-readback alone doesn't catch the truth.
+ *  We draw a sentinel pixel at the far corner and read it back; if the
+ *  backing store was clamped, the pixel write/read fails or returns 0.
+ *  In addition, WebKit gets a hard ceiling at 4096 because some macOS
+ *  Safari builds report a successful draw at 8192² but produce blurry
+ *  output downstream — likely an internal `createImageBitmap` cap. */
+function probeMaxCanvasDim(): number {
+  if (typeof document === 'undefined') return 4096; // SSR / test
+  const ceiling = isWebKit() ? 4096 : 16384;
+  const c = document.createElement('canvas');
+  for (const dim of [16384, 8192, 4096, 2048]) {
+    if (dim > ceiling) continue;
+    try {
+      c.width = dim;
+      c.height = dim;
+      const ctx = c.getContext('2d');
+      if (!ctx) continue;
+      // Draw a sentinel at the bottom-right corner. Safari's silent clamp
+      // means the corner pixel either won't be written (write succeeds
+      // silently but no backing) or readback returns 0/throws.
+      ctx.fillStyle = '#ff00ff';
+      ctx.fillRect(dim - 2, dim - 2, 2, 2);
+      const px = ctx.getImageData(dim - 1, dim - 1, 1, 1).data;
+      if (px[0] === 0xff && px[2] === 0xff) return dim;
+    } catch { /* taint / out-of-bounds / OOM — try next smaller */ }
+  }
+  return 2048;
+}
+const PROBED_MAX_CANVAS_DIM = probeMaxCanvasDim();
+log.pdf.log(`probed canvas-dim = ${PROBED_MAX_CANVAS_DIM}px (WebKit:${isWebKit()}; full-page path only)`);
+
+/** Clamp scale for the full-page render path (one giant canvas). Uses the
+ *  smaller of the preset's nominal maxCanvasDim and the browser's actually-
+ *  achievable canvas dim. Safari silently shrinks oversize canvases, so
+ *  trusting the preset alone produces blurry output above the real limit. */
+function clampFullPageScale(pageW: number, pageH: number, scale: number, presetMaxDim: number): number {
+  return clampCanvasScale(pageW, pageH, scale, Math.min(presetMaxDim, PROBED_MAX_CANVAS_DIM));
+}
+
 export function getPdfQualityConfig(q: PdfRenderQuality): PdfQualityConfig {
+  // No probe-clamp here. The preset's `maxCanvasDim` is used as a memory
+  // budget for the tile path (where each tile renders into its own 1024px
+  // canvas, well under any browser limit). The single full-page canvas
+  // path applies the probe-clamp via `clampFullPageScale` at its call
+  // sites so Safari's stricter limit doesn't shrink the tile-path budget.
   return applyDeviceMemoryScaling(QUALITY_CONFIGS[q]);
 }
 
@@ -431,7 +486,19 @@ function zoomToItemGroup(
   return { zoom, pan: { x: cw / 2 - mcx * zoom, y: ch / 2 - mcy * zoom } };
 }
 
-/** Apply CSS transform directly to a DOM element — bypasses React for smooth 60fps pan/zoom */
+/** Apply CSS transform directly to a DOM element — bypasses React for smooth 60fps pan/zoom.
+ *
+ *  Safari rasterizes a `transform: scale(z)` element to a Core Animation
+ *  layer at the wrapper's *intrinsic* CSS size, then GPU-upscales the
+ *  cached layer — at high zoom the user sees a blurry low-res copy on
+ *  idle. The PDF panel works around this by sizing every wrapper child
+ *  at *committed-zoom CSS pixels* (see committedZoomRef + the
+ *  zCommit multipliers in renderTiledPage / blitToCanvas), then calling
+ *  applyTransform with `s = currentZoom / committedZoom` — equal to 1 on
+ *  idle. With s = 1 the wrapper has no scale, its intrinsic CSS size
+ *  matches displayed size, and Safari rasterizes the GPU layer at full
+ *  resolution. During gestures s briefly diverges; a 60ms-debounced
+ *  render commits the new sizes and resets s to 1. */
 function applyTransform(el: HTMLElement | null, x: number, y: number, s: number) {
   if (el) el.style.transform = `translate(${x}px,${y}px) scale(${s})`;
 }
@@ -569,6 +636,44 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const scaleRef = useRef(1);
   /** Actual canvas render scale (after clamping) — used for highlight positioning */
   const hiresScaleRef = useRef(1);
+  /** Forward-ref to scheduleTierRender — populated below after scheduleTierRender is created.
+   *  Lets syncTransform (defined earlier) trigger a debounced tile re-render on pan
+   *  without circular-dependency gymnastics in the useCallback chain. */
+  const scheduleTierRenderRef = useRef<() => void>(() => {});
+
+  /** Zoom level at which every in-DOM wrapper child's CSS dimensions are
+   *  currently committed. See applyTransform docstring for rationale. */
+  const committedZoomRef = useRef(1);
+
+  /** Multiply every in-DOM wrapper child's CSS left/top/width/height by
+   *  `ratio`. Called when committedZoom changes so old tiles outside the
+   *  current viewport-cull range stay positioned correctly relative to
+   *  the new committed coords (without this, old tiles end up at stale
+   *  positions and appear in the wrong place — the "random tiles"
+   *  regression). The same scalar `ratio` works for tiles at every
+   *  rendered scale because each tile's CSS = (col × cssTileW) ×
+   *  committedZoom: when committedZoom ratios up/down, every tile's
+   *  CSS scales by the same factor.
+   *
+   *  Idempotent for elements that are then overwritten with explicit
+   *  zCommit-scaled values later in the same render. */
+  const rescaleWrapperChildren = useCallback((ratio: number) => {
+    if (ratio === 1 || !Number.isFinite(ratio) || ratio <= 0) return;
+    const apply = (s: CSSStyleDeclaration) => {
+      const left = parseFloat(s.left);
+      const top = parseFloat(s.top);
+      const w = parseFloat(s.width);
+      const h = parseFloat(s.height);
+      if (Number.isFinite(left)) s.left = `${left * ratio}px`;
+      if (Number.isFinite(top)) s.top = `${top * ratio}px`;
+      if (Number.isFinite(w)) s.width = `${w * ratio}px`;
+      if (Number.isFinite(h)) s.height = `${h * ratio}px`;
+    };
+    for (const tileCanvas of tileContainerRef.current.values()) apply(tileCanvas.style);
+    for (const entry of adjCanvasMapRef.current.values()) apply(entry.canvas.style);
+    if (canvasRef.current) apply(canvasRef.current.style);
+    if (highlightRef.current) apply(highlightRef.current.style);
+  }, []);
   const viewportHeightRef = useRef(0);
   const renderTierRef = useRef(1);
   const viewportTransformRef = useRef<number[]>([1, 0, 0, -1, 0, 0]);
@@ -794,16 +899,24 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     panRef.current = { x, y };
   }, [pdfFileName]);
 
-  /** Push zoom/pan refs to DOM + throttled React state for toolbar */
+  /** Push zoom/pan refs to DOM + throttled React state for toolbar.
+   *  Wrapper scale = `currentZoom / committedZoom`. On idle this is 1
+   *  (transform: translate-only) — the wrapper layer is at its intrinsic
+   *  CSS size which equals displayed size, so Safari rasterizes the GPU
+   *  layer at full resolution = sharp. During gestures this briefly
+   *  diverges; the next 60ms-debounced render commits the new zoom and
+   *  resets it to 1. Also triggers tile re-render on pan in tiled mode. */
   const syncTransform = useCallback(() => {
     clampPan();
-    applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current);
+    const transientScale = zoomRef.current / committedZoomRef.current;
+    applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, transientScale);
     if (!zoomDisplayRafRef.current) {
       zoomDisplayRafRef.current = requestAnimationFrame(() => {
         zoomDisplayRafRef.current = 0;
         setZoomDisplay(zoomRef.current);
       });
     }
+    if (zoomRef.current > 1.05) scheduleTierRenderRef.current();
   }, [clampPan]);
 
   /** Schedule a re-render at exact zoom resolution.
@@ -856,6 +969,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
     }, CRISP_SETTLE_MS);
   }, []);
+  // Forward-ref hookup: syncTransform calls scheduleTierRenderRef.current()
+  // to trigger debounced re-renders on pan without depending on the
+  // scheduleTierRender callback (which is defined after syncTransform).
+  scheduleTierRenderRef.current = scheduleTierRender;
 
   // Reset scale refs when document is unloaded so framing re-runs on next load
   useEffect(() => {
@@ -910,7 +1027,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     const dpr = window.devicePixelRatio || 1;
     let hiresScale = baseScale * tier * dpr;
-    hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
+    hiresScale = clampFullPageScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
     const viewport = page.getViewport({ scale: hiresScale });
     const cssW = containerWidth;
     const cssH = unscaledViewport.height * baseScale;
@@ -963,19 +1080,27 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return { bitmap, width: viewport.width, height: viewport.height, cssW, cssH, baseScale, hiresScale, vpHeight: unscaledViewport.height, vpTransform: unscaledViewport.transform };
   }, [pdfFileName]);
 
-  /** Blit a cached or freshly rendered bitmap to the visible canvas */
+  /** Blit a cached or freshly rendered bitmap to the visible canvas.
+   *  CSS sizes are scaled by current zoom so the wrapper layer rasterizes
+   *  at displayed size on Safari. Old in-DOM elements are rescaled by the
+   *  committed-zoom delta so they keep correct positions when zoom changes. */
   const blitToCanvas = useCallback((entry: CachedRender) => {
     const canvas = canvasRef.current;
     const highlight = highlightRef.current;
     if (!canvas || !highlight) return;
+
+    const zCommit = zoomRef.current;
+    const ratio = zCommit / committedZoomRef.current;
+    rescaleWrapperChildren(ratio);
+    committedZoomRef.current = zCommit;
 
     // Only resize if dimensions changed — avoids clearing existing content
     if (canvas.width !== entry.width || canvas.height !== entry.height) {
       canvas.width = entry.width;
       canvas.height = entry.height;
     }
-    canvas.style.width = `${entry.cssW}px`;
-    canvas.style.height = `${entry.cssH}px`;
+    canvas.style.width = `${entry.cssW * zCommit}px`;
+    canvas.style.height = `${entry.cssH * zCommit}px`;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(entry.bitmap, 0, 0);
@@ -984,8 +1109,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       highlight.width = entry.width;
       highlight.height = entry.height;
     }
-    highlight.style.width = `${entry.cssW}px`;
-    highlight.style.height = `${entry.cssH}px`;
+    highlight.style.width = `${entry.cssW * zCommit}px`;
+    highlight.style.height = `${entry.cssH * zCommit}px`;
+
+    if (wrapperRef.current) {
+      // Reset wrapper transient scale so the layer rasterizes at full size.
+      applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommit);
+    }
 
     scaleRef.current = entry.baseScale;
     hiresScaleRef.current = entry.hiresScale;
@@ -1056,7 +1186,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       const dpr = window.devicePixelRatio || 1;
       let hiresScale = baseScale * resTier * dpr;
-      hiresScale = clampCanvasScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
+      hiresScale = clampFullPageScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
       const viewport = page.getViewport({ scale: hiresScale });
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
@@ -1110,10 +1240,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const highlight = highlightRef.current;
       if (!canvas || !highlight) { releaseCanvas(sourceCanvas); return; }
 
+      // Capture committed zoom for this render. Same zCommit used for main
+      // canvas, highlight canvas, and the wrapper transform reset below.
+      const zCommitFP = zoomRef.current;
+      const ratioFP = zCommitFP / committedZoomRef.current;
+      rescaleWrapperChildren(ratioFP);
+      committedZoomRef.current = zCommitFP;
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      canvas.style.width = `${cssW}px`;
-      canvas.style.height = `${cssH}px`;
+      canvas.style.width = `${cssW * zCommitFP}px`;
+      canvas.style.height = `${cssH * zCommitFP}px`;
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(sourceCanvas, 0, 0);
 
@@ -1135,8 +1271,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       highlight.width = viewport.width;
       highlight.height = viewport.height;
-      highlight.style.width = `${cssW}px`;
-      highlight.style.height = `${cssH}px`;
+      highlight.style.width = `${cssW * zCommitFP}px`;
+      highlight.style.height = `${cssH * zCommitFP}px`;
+      if (wrapperRef.current) {
+        applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommitFP);
+      }
 
       drawHighlightsRef.current();
       setRenderEpoch(e => e + 1);
@@ -1258,11 +1397,25 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const unscaledVp = page.getViewport({ scale: 1 });
       const baseScale = containerWidth / unscaledVp.width;
       const dpr = window.devicePixelRatio || 1;
-      let renderScale = baseScale * resTier * dpr;
-      renderScale = clampCanvasScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+      // Tile path: each tile renders into its own TILE_SIZE canvas (1024px),
+      // so the per-canvas browser dim cap doesn't apply. The previous clamp
+      // by `maxCanvasDim` was a memory-budget proxy for the "render all
+      // tiles" decision below; with viewport culling we render only ~9
+      // visible tiles regardless of zoom, so memory is bounded by viewport
+      // size, not by total page-pixel area. Keep renderScale at the
+      // tier-requested value so Safari users get full Retina sharpness on
+      // oversize schematic PDFs.
+      const renderScale = baseScale * resTier * dpr;
 
       const cssW = containerWidth;
       const cssH = unscaledVp.height * baseScale;
+      // Capture zoom for this render, rescale all old in-DOM children to
+      // match (so tiles outside the viewport-cull range stay aligned), and
+      // commit the new value before placing any new tiles.
+      const zCommit = zoomRef.current;
+      const ratio = zCommit / committedZoomRef.current;
+      rescaleWrapperChildren(ratio);
+      committedZoomRef.current = zCommit;
       scaleRef.current = baseScale;
       hiresScaleRef.current = renderScale;
       viewportHeightRef.current = unscaledVp.height;
@@ -1276,32 +1429,66 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Keep main canvas visible as blurry backdrop while tiles load on top
       // (tiles have z-index: 1, main canvas has no z-index — tiles cover it)
 
-      // Size highlight canvas for tiled mode
+      // Size highlight canvas for tiled mode. Cap to the probed max canvas
+      // dim so Safari can actually back the highlight overlay — at extreme
+      // zoom on oversize pages the requested hlScale would otherwise blow
+      // past Safari's silent canvas limit.
       const highlight = highlightRef.current;
       if (highlight) {
-        // Use hiresScaleRef for highlight canvas so drawHighlights coords match
-        const hlScale = hiresScaleRef.current;
+        const hlScale = clampFullPageScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
         highlight.width = Math.ceil(unscaledVp.width * hlScale);
         highlight.height = Math.ceil(unscaledVp.height * hlScale);
-        highlight.style.width = `${cssW}px`;
-        highlight.style.height = `${cssH}px`;
+        highlight.style.width = `${cssW * zCommit}px`;
+        highlight.style.height = `${cssH * zCommit}px`;
         highlight.style.display = '';
-      }
-
-      // Render ALL tiles for the page — no viewport culling.
-      // A typical page has 4-12 tiles. The overhead of a few extra tiles is
-      // negligible vs the visual glitches from stale viewport calculations
-      // (zoom/pan refs change during async rendering).
-      const tiles: { col: number; row: number }[] = [];
-      for (let row = 0; row < grid.rows; row++) {
-        for (let col = 0; col < grid.cols; col++) {
-          tiles.push({ col, row });
-        }
+        // Tiles use renderScale for coords; highlight may be at lower
+        // (clamped) scale on Safari. Store for drawHighlights to use.
+        hiresScaleRef.current = hlScale;
       }
 
       const pxPerCss = renderScale / baseScale;
       const cssTileW = TILE_SIZE / pxPerCss;
       const cssTileH = TILE_SIZE / pxPerCss;
+
+      // Tile selection strategy:
+      //   - Small grids (≤ TILE_RENDER_ALL_THRESHOLD tiles): render the whole
+      //     page eagerly. Behavior matches the previous "render all tiles"
+      //     decision — fast-pan stays smooth because every tile is already
+      //     in DOM. This covers typical 100-400% zoom on Letter-size PDFs.
+      //   - Large grids (> threshold): viewport-cull with 2-tile padding.
+      //     Avoids the 1.5GB blow-up on 1000% zoom of oversize schematics
+      //     and lifts the previous tile-path scale clamp, so Safari users
+      //     get full Retina sharpness on huge pages.
+      const totalTiles = grid.cols * grid.rows;
+      const TILE_RENDER_ALL_THRESHOLD = 30;
+      const tiles: { col: number; row: number }[] = [];
+      if (totalTiles <= TILE_RENDER_ALL_THRESHOLD) {
+        for (let row = 0; row < grid.rows; row++) {
+          for (let col = 0; col < grid.cols; col++) {
+            tiles.push({ col, row });
+          }
+        }
+      } else {
+        const containerH = container.clientHeight;
+        const zoomNow = zoomRef.current;
+        const panNow = panRef.current;
+        const visLeftCss = -panNow.x / zoomNow;
+        const visTopCss = -panNow.y / zoomNow;
+        const visRightCss = visLeftCss + containerWidth / zoomNow;
+        const visBottomCss = visTopCss + containerH / zoomNow;
+        // 2-tile padding (in each direction) gives breathing room for fast
+        // pan bursts before the debounced re-render catches up.
+        const PAD = 2;
+        const colMin = Math.max(0, Math.floor(visLeftCss / cssTileW) - PAD);
+        const colMax = Math.min(grid.cols - 1, Math.ceil(visRightCss / cssTileW) + PAD);
+        const rowMin = Math.max(0, Math.floor(visTopCss / cssTileH) - PAD);
+        const rowMax = Math.min(grid.rows - 1, Math.ceil(visBottomCss / cssTileH) + PAD);
+        for (let row = rowMin; row <= rowMax; row++) {
+          for (let col = colMin; col <= colMax; col++) {
+            tiles.push({ col, row });
+          }
+        }
+      }
 
       const visibleKeys = new Set<string>();
       const toRender: { col: number; row: number }[] = [];
@@ -1327,23 +1514,30 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           }
           tileCanvas.width = cached.bitmap.width;
           tileCanvas.height = cached.bitmap.height;
-          tileCanvas.style.width = `${tileCssW}px`;
-          tileCanvas.style.height = `${tileCssH}px`;
-          tileCanvas.style.left = `${t.col * cssTileW}px`;
-          tileCanvas.style.top = `${t.row * cssTileH}px`;
+          tileCanvas.style.width = `${tileCssW * zCommit}px`;
+          tileCanvas.style.height = `${tileCssH * zCommit}px`;
+          tileCanvas.style.left = `${t.col * cssTileW * zCommit}px`;
+          tileCanvas.style.top = `${t.row * cssTileH * zCommit}px`;
           const ctx = tileCanvas.getContext('2d');
           if (ctx) ctx.drawImage(cached.bitmap, 0, 0);
           tileCanvas.style.display = '';
         } else {
           if (tileCanvas) {
-            tileCanvas.style.width = `${tileCssW}px`;
-            tileCanvas.style.height = `${tileCssH}px`;
-            tileCanvas.style.left = `${t.col * cssTileW}px`;
-            tileCanvas.style.top = `${t.row * cssTileH}px`;
+            tileCanvas.style.width = `${tileCssW * zCommit}px`;
+            tileCanvas.style.height = `${tileCssH * zCommit}px`;
+            tileCanvas.style.left = `${t.col * cssTileW * zCommit}px`;
+            tileCanvas.style.top = `${t.row * cssTileH * zCommit}px`;
             tileCanvas.style.display = '';
           }
           toRender.push(t);
         }
+      }
+
+      // Now that all currently-cached tiles + highlight are at zCommit-scaled
+      // CSS, reset the wrapper's transient scale so Safari rasterizes the
+      // GPU layer at the (new larger) intrinsic CSS size = displayed size.
+      if (wrapperRef.current) {
+        applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommit);
       }
 
       // Don't hide old tiles here — they stay visible as backdrop.
@@ -1439,10 +1633,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             }
             tileCanvas.width = r.pixelW;
             tileCanvas.height = r.pixelH;
-            tileCanvas.style.width = `${r.pixelW / pxPerCss}px`;
-            tileCanvas.style.height = `${r.pixelH / pxPerCss}px`;
-            tileCanvas.style.left = `${r.col * cssTileW}px`;
-            tileCanvas.style.top = `${r.row * cssTileH}px`;
+            // Use zCommit captured at function entry — if zoom changed since,
+            // syncTransform's transient scale handles the visual delta until
+            // the next render commits with the newer zoom.
+            tileCanvas.style.width = `${(r.pixelW / pxPerCss) * zCommit}px`;
+            tileCanvas.style.height = `${(r.pixelH / pxPerCss) * zCommit}px`;
+            tileCanvas.style.left = `${r.col * cssTileW * zCommit}px`;
+            tileCanvas.style.top = `${r.row * cssTileH * zCommit}px`;
             const ctx = tileCanvas.getContext('2d');
             if (ctx) ctx.drawImage(r.bitmap, 0, 0);
             tileCanvas.style.display = '';
@@ -1644,15 +1841,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       if (ac.signal.aborted || !entry) return;
 
+      // CSS sizes use committedZoom so adjacent pages stay in lockstep with
+      // the main page's wrapper-children sizing — see applyTransform docstring.
+      const zCommit = committedZoomRef.current;
       // Always reset canvas dimensions to clear stale content and ensure
       // getContext returns a fresh context with correct alpha setting.
       canvas.width = entry.width;
       canvas.height = entry.height;
-      canvas.style.width = `${entry.cssW}px`;
-      canvas.style.height = `${entry.cssH}px`;
+      canvas.style.width = `${entry.cssW * zCommit}px`;
+      canvas.style.height = `${entry.cssH * zCommit}px`;
       canvas.style.position = 'absolute';
       canvas.style.left = '0';
-      canvas.style.top = `${yOffset}px`;
+      canvas.style.top = `${yOffset * zCommit}px`;
       canvas.style.pointerEvents = 'none';
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(entry.bitmap, 0, 0);
@@ -1674,8 +1874,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         let existing = adjMap.get(pageNum);
 
         if (existing && existing.tier === tier) {
-          // Already rendered at correct tier — just reposition
-          existing.canvas.style.top = `${yOffset}px`;
+          // Already rendered at correct tier — just reposition (committed-zoom-scaled)
+          existing.canvas.style.top = `${yOffset * committedZoomRef.current}px`;
           continue;
         }
 
@@ -2076,6 +2276,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Always treat those as zoom — pinch is a fundamental gesture that should
       // never be remapped by scroll binding settings.
       const isTrackpadPinch = e.ctrlKey && !e.metaKey && !e.shiftKey;
+      if (isTrackpadPinch) log.ui.log('pdf wheel pinch (ctrlKey)', { deltaY: e.deltaY });
 
       // Resolve effective action: trackpad pinch → always zoom, otherwise use bindings.
       const bindings = scrollBindingsRef.current;
@@ -2239,8 +2440,65 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
-   
+
   }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber]);
+
+  // --- Safari trackpad pinch via gesture* events ---
+  // Mac Safari emits gesture* events for trackpad pinch. The global handler in
+  // browser-zoom-block.ts preventDefaults gesture events at window level to
+  // block browser page-zoom; that means the PDF never receives a zoom signal
+  // via the wheel+ctrlKey path either, since Safari's pinch path is gesture-only.
+  // Bubble-phase panel handlers fire before the window block and consume the
+  // event with stopPropagation, so the global net stays a fallback for
+  // gestures outside the panel (toolbar, sidebar).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let startZoom = 1;
+    let mid = { x: 0, y: 0 };
+
+    const onGestureStart = (e: GestureEvent) => {
+      pdfStore.switchTo(pdfFileName);
+      startZoom = zoomRef.current;
+      const rect = container.getBoundingClientRect();
+      mid = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      log.ui.log('pdf gesturestart (Safari pinch)', { scale: e.scale });
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onGestureChange = (e: GestureEvent) => {
+      const cssH = pageCssHRef.current;
+      const containerH = container.clientHeight;
+      const minZoom = cssH > 0 && containerH > 0 ? Math.max(0.1, containerH / (3 * cssH)) : 0.1;
+      const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, 10));
+      const ratio = newZoom / zoomRef.current;
+      panRef.current = {
+        x: mid.x - ratio * (mid.x - panRef.current.x),
+        y: mid.y - ratio * (mid.y - panRef.current.y),
+      };
+      zoomRef.current = newZoom;
+      syncTransform();
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onGestureEnd = (e: GestureEvent) => {
+      scheduleTierRender();
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    container.addEventListener('gesturestart', onGestureStart as EventListener, { passive: false });
+    container.addEventListener('gesturechange', onGestureChange as EventListener, { passive: false });
+    container.addEventListener('gestureend', onGestureEnd as EventListener, { passive: false });
+    return () => {
+      container.removeEventListener('gesturestart', onGestureStart as EventListener);
+      container.removeEventListener('gesturechange', onGestureChange as EventListener);
+      container.removeEventListener('gestureend', onGestureEnd as EventListener);
+    };
+  }, [pdfFileName, syncTransform, scheduleTierRender]);
 
   // --- Touch pinch-to-zoom state ---
   const activeTouchesRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -2935,22 +3193,25 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
           <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
           {clickHighlight && (() => {
+            // Wrapper children are sized at committed-zoom CSS pixels; use
+            // clickHighlight.zoom (captured at click time, matches committedZoom
+            // at that moment) as the multiplier. Auto-dismisses in 4s, so any
+            // staleness from later zoom changes is bounded.
             const z = clickHighlight.zoom || 1;
             const pad = 2 / z;
-            const bw = 1.5 / z;
             return (
               <div
                 key={clickHighlight.key}
                 className="pdf-click-highlight"
                 style={{
-                  left: clickHighlight.rect.x - pad,
-                  top: clickHighlight.rect.y - pad,
-                  width: clickHighlight.rect.w + pad * 2,
-                  height: clickHighlight.rect.h + pad * 2,
-                  borderWidth: bw,
+                  left: (clickHighlight.rect.x - pad) * z,
+                  top: (clickHighlight.rect.y - pad) * z,
+                  width: (clickHighlight.rect.w + pad * 2) * z,
+                  height: (clickHighlight.rect.h + pad * 2) * z,
+                  borderWidth: 1.5,
                 }}
               >
-                <span className="pdf-click-tooltip" style={{ transform: `translateX(-50%) scale(${1 / z})` }}>
+                <span className="pdf-click-tooltip" style={{ transform: 'translateX(-50%)' }}>
                   {clickHighlight.word || 'Double-click to search'}
                 </span>
               </div>

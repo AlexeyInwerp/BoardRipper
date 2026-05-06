@@ -958,10 +958,35 @@ export class BoardRenderer {
     // WebGL context loss recovery — browser may reclaim context when canvas is hidden
     this.installContextLossHandlers(this.app.renderer.canvas as HTMLCanvasElement);
 
-    // Rotation gestures disabled — they conflict with pinch-to-zoom on touch devices.
-    // Suppress gesturestart/gesturechange to prevent accidental board rotation.
-    this.boundGestureStart = (e: Event) => { e.preventDefault(); };
-    this.boundGestureChange = (e: Event) => { e.preventDefault(); };
+    // Safari trackpad pinch — fires gesture* events instead of (or in addition
+    // to) wheel+ctrlKey. Read event.scale to drive zoom; preventDefault stops
+    // browser page-zoom AND board rotation in one shot. stopPropagation keeps
+    // the global gesture-block in browser-zoom-block.ts as a fallback for
+    // gestures over non-canvas UI (toolbar, sidebar) without it stomping ours.
+    let gestureStartScale = 1;
+    let gestureAnchor = { x: 0, y: 0 };
+    this.boundGestureStart = (ev: Event) => {
+      const e = ev as GestureEvent;
+      ev.preventDefault();
+      ev.stopPropagation();
+      gestureStartScale = this.viewport.scale.x;
+      const rect = this.containerEl.getBoundingClientRect();
+      gestureAnchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    };
+    this.boundGestureChange = (ev: Event) => {
+      const e = ev as GestureEvent;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const target = Math.max(0.001, Math.min(10, gestureStartScale * e.scale));
+      const before = this.viewport.toWorld(gestureAnchor.x, gestureAnchor.y);
+      this.viewport.scale.set(target, target);
+      const after = this.viewport.toWorld(gestureAnchor.x, gestureAnchor.y);
+      this.viewport.x += (after.x - before.x) * this.viewport.scale.x;
+      this.viewport.y += (after.y - before.y) * this.viewport.scale.y;
+      this.viewport.emit('moved', { viewport: this.viewport, type: 'pinch' });
+      this.needsRender = true;
+      this.netLinesDirty = true;
+    };
     this.containerEl.addEventListener('gesturestart', this.boundGestureStart, { passive: false });
     this.containerEl.addEventListener('gesturechange', this.boundGestureChange, { passive: false });
 

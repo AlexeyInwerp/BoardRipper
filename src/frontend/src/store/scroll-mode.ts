@@ -36,42 +36,91 @@ export function invertScrollBindings(): void {
  * Used by the safety net to avoid jerky pan when the configured mode is
  * pan-on-bare but the user is actually on a scroll wheel.
  *
- * Strategy — per-event signature plus a "trackpad mode" time-decay flag:
- * any event that is clearly not a classic wheel (fractional deltaY, non-zero
- * deltaX, ctrlKey=pinch, small deltaY) flips trackpad mode on for 500 ms.
- * While the flag is active, even events that look wheel-shaped in isolation
- * are treated as trackpad — this suppresses the misclassification that
- * happens in the middle of a fast trackpad gesture where individual events
- * occasionally hit all four wheel-signature conditions.
+ * Strategy — burst-latched timing analysis. The previous per-event signature
+ * (fractional deltaY, non-zero deltaX, magnitude<50) misfired on macOS/Safari
+ * where smooth-scrolling expands a single wheel click into 5-8 fractional
+ * events: the first event would classify as wheel (zoom), then the burst
+ * tail flipped to trackpad (pan), splitting one physical click into mixed
+ * pan + zoom frames.
+ *
+ * The new heuristic looks at *cadence over a burst*, not the shape of any
+ * single event:
+ *
+ *   - A new burst starts after a quiet gap (>250ms since last wheel event).
+ *   - The first event of a burst latches as "wheel" (the safety net's
+ *     intended target — users who enable wheelDetection are wheel users).
+ *   - The classification stays latched for the entire burst — every event
+ *     in the burst returns the same answer, so one physical input never
+ *     splits across pan/zoom paths.
+ *   - Sustained high-cadence input (≥6 consecutive gaps under 35ms — only
+ *     trackpad scrolls and pinches sustain this) demotes the burst to
+ *     "trackpad" one-way; demotion never reverses within the burst.
+ *   - Trackpad pinch (ctrlKey) is always trackpad immediately.
+ *
+ * Mac/Safari smooth-scroll wheel click = 5-8 events at ~16ms cadence over
+ * ~150ms total. Won't reach the 6-fast-gap threshold before the burst ends,
+ * so it stays latched as wheel. Trackpad swipes (30+ events at 16ms) cross
+ * the threshold quickly and flip to trackpad.
  */
-const TRACKPAD_MODE_MS = 500;
-let trackpadModeUntil = 0;
+const QUIET_GAP_MS = 250;
+const HIGH_CADENCE_MS = 35;
+const SUSTAINED_FAST_THRESHOLD = 6;
+
+let burstActive = false;
+let burstIsWheel = true;
+let consecutiveFast = 0;
+let lastEventTime = 0;
 
 export function looksLikeMouseWheel(e: WheelEvent): boolean {
   const now = performance.now();
+  const gap = lastEventTime > 0 ? now - lastEventTime : Infinity;
+  lastEventTime = now;
 
-  // Trackpad-signature detection: any of these → definitely not a classic wheel.
-  const trackpadSignature =
-    !Number.isInteger(e.deltaY) ||
-    e.deltaX !== 0 ||
-    e.ctrlKey ||
-    Math.abs(e.deltaY) < 50;
-
-  if (trackpadSignature) {
-    trackpadModeUntil = now + TRACKPAD_MODE_MS;
+  // Pinch is always trackpad — ctrlKey wheel events are the synthesized
+  // pinch signal in Chrome/FF (Safari fires gesture* events instead, which
+  // never reach this heuristic).
+  if (e.ctrlKey) {
+    burstActive = true;
+    burstIsWheel = false;
+    consecutiveFast = SUSTAINED_FAST_THRESHOLD;
     return false;
   }
 
-  // Tail of a recent trackpad gesture — do not override pan.
-  if (now < trackpadModeUntil) return false;
+  // Quiet gap → start of a new burst.
+  if (gap > QUIET_GAP_MS) {
+    burstActive = false;
+    consecutiveFast = 0;
+  }
 
-  // Looks like an isolated classic wheel click.
-  return true;
+  if (!burstActive) {
+    burstActive = true;
+    // Default classification for a new burst: wheel. Users who opted into
+    // wheelDetection want sparse classic-wheel clicks reinterpreted as
+    // zoom. Sustained-cadence detection below demotes if it's actually a
+    // trackpad gesture.
+    burstIsWheel = true;
+    consecutiveFast = 0;
+  }
+
+  if (gap < HIGH_CADENCE_MS) {
+    consecutiveFast++;
+  } else {
+    consecutiveFast = 0;
+  }
+
+  if (consecutiveFast >= SUSTAINED_FAST_THRESHOLD) {
+    burstIsWheel = false; // one-way demotion for the rest of this burst
+  }
+
+  return burstIsWheel;
 }
 
-/** Test/diagnostic helper: reset trackpad-mode state between scenarios. */
+/** Test/diagnostic helper: reset burst state between scenarios. */
 export function _resetTrackpadMode(): void {
-  trackpadModeUntil = 0;
+  burstActive = false;
+  burstIsWheel = true;
+  consecutiveFast = 0;
+  lastEventTime = 0;
 }
 
 /** React hook returning the current bare scroll action. Re-renders on change. */
