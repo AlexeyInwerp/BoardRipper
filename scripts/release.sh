@@ -201,10 +201,13 @@ mirror --reverse --only-newer --verbose \
   "$STAGE/boardripper" "/public_html/boardripper"
 
 cd /public_html/boardripper
-mv -f manifest.json.new manifest.json
-mv -f manifest.json.minisig.new manifest.json.minisig
+rm -f manifest.json
+mv manifest.json.new manifest.json
+rm -f manifest.json.minisig
+mv manifest.json.minisig.new manifest.json.minisig
 cd /public_html/boardripper/releases
-mv -f latest.tar.gz.new latest.tar.gz
+rm -f latest.tar.gz
+mv latest.tar.gz.new latest.tar.gz
 bye
 LFTP_EOF
 
