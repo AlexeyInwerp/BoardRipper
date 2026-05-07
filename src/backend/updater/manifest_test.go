@@ -46,12 +46,20 @@ func TestVerifyManifest_RejectsWrongKey(t *testing.T) {
 	}
 }
 
-func TestValidateManifest_RejectsStaleCounter(t *testing.T) {
-	m := &Manifest{
-		Version: "v0.8.0", Counter: 5,
+// freshManifest builds a Manifest with all freshness fields set to "now"
+// values so individual tests can override exactly the field under test.
+func freshManifest(version string, counter int64) *Manifest {
+	return &Manifest{
+		Version:             version,
+		Counter:             counter,
+		ReleasedAt:          time.Now(),
 		NotAfter:            time.Now().Add(24 * time.Hour),
-		MinSupportedVersion: "v0.8.0",
+		MinSupportedVersion: version,
 	}
+}
+
+func TestValidateManifest_RejectsStaleCounter(t *testing.T) {
+	m := freshManifest("v0.8.0", 5)
 	err := ValidateManifest(m, /*installedCounter*/ 5, /*installedVersion*/ "v0.8.0")
 	if err == nil {
 		t.Errorf("expected error for counter <= installed")
@@ -59,11 +67,8 @@ func TestValidateManifest_RejectsStaleCounter(t *testing.T) {
 }
 
 func TestValidateManifest_RejectsExpired(t *testing.T) {
-	m := &Manifest{
-		Version: "v0.8.0", Counter: 6,
-		NotAfter:            time.Now().Add(-1 * time.Hour),
-		MinSupportedVersion: "v0.8.0",
-	}
+	m := freshManifest("v0.8.0", 6)
+	m.NotAfter = time.Now().Add(-1 * time.Hour)
 	err := ValidateManifest(m, 5, "v0.8.0")
 	if err == nil {
 		t.Errorf("expected error for expired manifest")
@@ -71,11 +76,8 @@ func TestValidateManifest_RejectsExpired(t *testing.T) {
 }
 
 func TestValidateManifest_RejectsBelowMinSupported(t *testing.T) {
-	m := &Manifest{
-		Version: "v0.9.0", Counter: 6,
-		NotAfter:            time.Now().Add(24 * time.Hour),
-		MinSupportedVersion: "v0.9.0",
-	}
+	m := freshManifest("v0.9.0", 6)
+	m.MinSupportedVersion = "v0.9.0"
 	err := ValidateManifest(m, 5, /*installed*/ "v0.7.0")
 	if err == nil {
 		t.Errorf("expected error when installed < min_supported_version")
@@ -83,24 +85,54 @@ func TestValidateManifest_RejectsBelowMinSupported(t *testing.T) {
 }
 
 func TestValidateManifest_AcceptsValid(t *testing.T) {
-	m := &Manifest{
-		Version: "v0.8.0", Counter: 6,
-		NotAfter:            time.Now().Add(24 * time.Hour),
-		MinSupportedVersion: "v0.7.0",
-	}
+	m := freshManifest("v0.8.0", 6)
+	m.MinSupportedVersion = "v0.7.0"
 	if err := ValidateManifest(m, 5, "v0.7.0"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateManifest_AcceptsAnyCounterOnFirstInstall(t *testing.T) {
-	m := &Manifest{
-		Version: "v0.8.0", Counter: 1,
-		NotAfter:            time.Now().Add(24 * time.Hour),
-		MinSupportedVersion: "v0.7.0",
-	}
+	m := freshManifest("v0.8.0", 1)
+	m.MinSupportedVersion = "v0.7.0"
 	if err := ValidateManifest(m, /*installed*/ 0, "v0.7.0"); err != nil {
 		t.Errorf("first install should accept any counter, got: %v", err)
+	}
+}
+
+func TestValidateManifest_RejectsMissingReleasedAt(t *testing.T) {
+	m := freshManifest("v0.8.0", 6)
+	m.ReleasedAt = time.Time{} // zero value
+	err := ValidateManifest(m, 5, "v0.8.0")
+	if err == nil {
+		t.Errorf("expected error for missing released_at")
+	}
+}
+
+func TestValidateManifest_RejectsStaleReleasedAt(t *testing.T) {
+	m := freshManifest("v0.8.0", 6)
+	m.ReleasedAt = time.Now().Add(-(releasedAtMaxAge + 1*time.Hour))
+	err := ValidateManifest(m, /*installed*/ 0, "v0.8.0")
+	if err == nil {
+		t.Errorf("expected error for stale released_at on first-install replay")
+	}
+}
+
+func TestValidateManifest_RejectsFutureReleasedAt(t *testing.T) {
+	m := freshManifest("v0.8.0", 6)
+	m.ReleasedAt = time.Now().Add(releasedAtFutureSlack + 1*time.Hour)
+	err := ValidateManifest(m, 5, "v0.8.0")
+	if err == nil {
+		t.Errorf("expected error for far-future released_at")
+	}
+}
+
+func TestValidateManifest_AcceptsReleasedAtWithinFutureSlack(t *testing.T) {
+	m := freshManifest("v0.8.0", 6)
+	// 1 hour in the future — within the 24h tolerance for clock skew.
+	m.ReleasedAt = time.Now().Add(1 * time.Hour)
+	if err := ValidateManifest(m, 5, "v0.8.0"); err != nil {
+		t.Errorf("expected within-slack future released_at to validate, got: %v", err)
 	}
 }
 

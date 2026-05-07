@@ -41,11 +41,34 @@ type ManifestImage struct {
 	Digest   string `json:"digest"`
 }
 
-// ValidateManifest checks counter monotonicity, expiry, and min_supported_version.
-// installedCounter==0 means "first install" — counter check is skipped.
+// Freshness bounds for `released_at`. Without these, a compromised mirror could
+// serve any signed-but-stale manifest from anywhere in the 90-day `not_after`
+// window and downgrade or freeze a fresh install (the counter check skips when
+// installedCounter==0). The bounds also defeat clock-skew abuse on the future
+// side. 30 days is wide enough not to bite normal release cadence and tight
+// enough to reject quarter-year-old replays.
+const (
+	releasedAtFutureSlack = 24 * time.Hour
+	releasedAtMaxAge      = 30 * 24 * time.Hour
+)
+
+// ValidateManifest checks expiry, freshness, counter monotonicity, and
+// min_supported_version. installedCounter==0 means "first install" — counter
+// check is skipped, but the freshness bounds still bite (a fresh install must
+// not be onboarded onto a stale signed manifest).
 func ValidateManifest(m *Manifest, installedCounter int64, installedVersion string) error {
-	if time.Now().After(m.NotAfter) {
+	now := time.Now()
+	if now.After(m.NotAfter) {
 		return fmt.Errorf("manifest expired: not_after=%s", m.NotAfter.Format(time.RFC3339))
+	}
+	if m.ReleasedAt.IsZero() {
+		return errors.New("manifest missing released_at")
+	}
+	if m.ReleasedAt.After(now.Add(releasedAtFutureSlack)) {
+		return fmt.Errorf("manifest released_at is in the future: %s", m.ReleasedAt.Format(time.RFC3339))
+	}
+	if now.Sub(m.ReleasedAt) > releasedAtMaxAge {
+		return fmt.Errorf("manifest stale: released_at=%s older than %s", m.ReleasedAt.Format(time.RFC3339), releasedAtMaxAge)
 	}
 	if installedCounter > 0 && m.Counter <= installedCounter {
 		return fmt.Errorf("manifest counter not greater than installed (got %d, have %d)", m.Counter, installedCounter)
