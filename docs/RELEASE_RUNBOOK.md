@@ -128,10 +128,18 @@ The bridge is complete. From v0.19.1 onward, only the new pipeline is used:
 ## Recovery
 
 - **Bad release shipped:** the in-container updater auto-rolls-back if `/api/health` fails for 60s. For irreversible damage, cut `vX.Y.Z+1` immediately with the fix.
+- **Manual rollback to the previous image:** the orchestrator tags the prior image as `boardripper:previous` before each swap, so any host with a working Docker daemon can revert to it without the auto-rollback path:
+  ```bash
+  docker stop boardripper
+  docker rename boardripper boardripper-broken         # keep for forensics
+  docker run -d --name boardripper [original flags] boardripper:previous
+  ```
+  The original flags (volumes, port bindings, env, restart policy) come from the user's `docker-compose.yml` — `docker compose up -d` against an unchanged compose file plus `image: boardripper:previous` will recreate the container correctly.
 - **Lost signing key:** no recovery for existing installs. Cut a new key, ship a new bridge release as a **manual** download (no auto-update path will work). Tell users to `docker pull` it.
 - **GHCR down:** clients fall through to ripperdoc.de tarball automatically. No action needed.
 - **ripperdoc.de down:** clients use GHCR. Restore the FTP host at leisure.
-- **Manifest counter regression:** if a release.sh failure leaves `.release-counter` ahead of the published manifest, the next run will skip a counter value (no harm; counter just needs to be monotonic, not gap-free).
+- **Manifest counter regression:** if a release.sh failure leaves `.release-counter` ahead of the published manifest, the next run will skip a counter value (no harm; counter just needs to be monotonic, not gap-free). Note: clients track an independent counter at `/data/.update-counter`; if that file is wiped (e.g. user reset their data volume) the install is treated as a fresh first-install — counter check is skipped on the first manifest accepted. Freshness check still bites.
+- **Release pause exceeding 30 days:** clients reject any `released_at` older than 30d (defence against compromised-mirror replay of stale-but-signed manifests). If you don't cut a release in a month, all clients will stop seeing updates until you re-sign and republish — they'll keep running their installed version, just stop checking. The fix is to cut **any** release (even a no-op patch bump): the new manifest's `released_at` advances and clients resume normally. This is intentional, not a bug; surface it to anyone who pings about a stale install.
 - **In-binary updater is broken** (e.g. orchestrator bug, network fully blocked, GHCR + ripperdoc.de both unreachable): tell affected users to drop the bundle file. Each release also publishes `boardripper-update-vX.Y.Z.tar` (alias `latest-update.tar`) on FTP. Users download it, drag it onto the BoardRipper window, confirm — the running container verifies the signature, applies the update, restarts. Same trust envelope as the network path; only the manifest signature grants trust. This is the recovery escape-hatch for any future broken-self-update situation, but only works if the running container's binary already speaks the bundle protocol (v0.19.5+).
 
 ## Files written by the pipeline

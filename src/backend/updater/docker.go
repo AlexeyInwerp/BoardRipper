@@ -396,39 +396,18 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 
 	// Ensure the orchestrator base image is present locally — Engine API
 	// won't auto-pull on container create.
-	// orchImage may be: "alpine@sha256:abc..." (digest ref, production),
-	// "alpine:3.19" (tag ref), or just "alpine" (no tag — falls back to latest).
-	var orchName, orchTag string
-	if at := strings.Index(orchImage, "@"); at >= 0 {
-		// digest reference — Docker Engine API accepts the digest as the "tag" param.
-		orchName = orchImage[:at]
-		orchTag = orchImage[at+1:] // includes the "sha256:" prefix
-	} else if colon := strings.LastIndex(orchImage, ":"); colon >= 0 {
-		orchName = orchImage[:colon]
-		orchTag = orchImage[colon+1:]
-	} else {
-		orchName = orchImage
-		orchTag = "latest"
-	}
+	orchName, orchTag := parseDockerImageRef(orchImage)
 	if err := pullDockerImage(orchName, orchTag, logFn); err != nil {
 		return fmt.Errorf("orchestrator image %s unavailable: %w", orchImage, err)
 	}
 
-	// Image reference for `containers/create`. Use the canonical
-	// <registry>@<digest> form because pull-by-digest never creates a
-	// named tag in the local image store. Tarball-load preserves whatever
-	// docker save captured (the registry tag + digest), so the digest
-	// reference resolves there too. Fall back to <registry>:<tag>, then to
-	// the legacy local tag, only if the manifest is malformed.
-	var newImage string
-	switch {
-	case m.Image.Registry != "" && m.Image.Digest != "":
-		newImage = m.Image.Registry + "@" + m.Image.Digest
-	case m.Image.Registry != "" && m.Image.Tag != "":
-		newImage = m.Image.Registry + ":" + m.Image.Tag
-	default:
-		newImage = fmt.Sprintf("boardripper:%s", m.Version)
-	}
+	// Image reference for `containers/create`. Bug class: v0.19.2 shipped a
+	// "boardripper:<version>" local-tag form here, but pull-by-digest never
+	// creates a named tag in the local image store, so containers/create 404'd
+	// and the orchestrator left the host with no running container. The
+	// canonical <registry>@<digest> form fixes both pull paths (registry pull
+	// and tarball-load preserve the same digest).
+	newImage := selectNewImageRef(m)
 
 	// Build the create body for the new container
 	createBody := map[string]interface{}{
@@ -613,6 +592,54 @@ func shortID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// parseDockerImageRef splits a Docker image reference into (name, tag) for the
+// Engine API's POST /images/create call, which takes the two as separate
+// query params. Accepts three reference forms:
+//
+//   - "alpine@sha256:abc..."           → ("alpine", "sha256:abc...")
+//   - "alpine:3.19"                    → ("alpine", "3.19")
+//   - "alpine"                         → ("alpine", "latest")
+//   - "ghcr.io/org/repo@sha256:abc..." → ("ghcr.io/org/repo", "sha256:abc...")
+//   - "ghcr.io/org/repo:v1.2"          → ("ghcr.io/org/repo", "v1.2")
+//
+// Note: the digest form puts "sha256:..." in the tag slot. The Engine API's
+// /images/create endpoint accepts a digest as the "tag" param and treats it
+// as a content-addressed pull — the de-facto convention.
+func parseDockerImageRef(ref string) (name, tag string) {
+	if at := strings.Index(ref, "@"); at >= 0 {
+		return ref[:at], ref[at+1:]
+	}
+	if colon := strings.LastIndex(ref, ":"); colon >= 0 {
+		return ref[:colon], ref[colon+1:]
+	}
+	return ref, "latest"
+}
+
+// selectNewImageRef picks the image reference for the new container's
+// containers/create call. Preference order:
+//
+//  1. <registry>@<digest> — content-addressed; preferred because pull-by-digest
+//     never creates a named tag in the local image store, so the digest is the
+//     only stable handle the registry path produces. Tarball-load preserves the
+//     same digest, so this form resolves either way.
+//  2. <registry>:<tag>    — fallback when the manifest omits Digest but has Tag.
+//  3. boardripper:<ver>   — last-ditch local tag for malformed manifests.
+//
+// v0.19.2 shipped form 3 unconditionally; pull-by-digest then 404'd at
+// containers/create and the orchestrator's `set -e` killed the rollback path.
+// This helper is a drop-in capture of the corrected logic so it can be
+// regression-tested in isolation.
+func selectNewImageRef(m *Manifest) string {
+	switch {
+	case m.Image.Registry != "" && m.Image.Digest != "":
+		return m.Image.Registry + "@" + m.Image.Digest
+	case m.Image.Registry != "" && m.Image.Tag != "":
+		return m.Image.Registry + ":" + m.Image.Tag
+	default:
+		return fmt.Sprintf("boardripper:%s", m.Version)
+	}
 }
 
 // bindsFromMounts converts Docker mount objects to bind strings.
