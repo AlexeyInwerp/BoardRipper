@@ -25,7 +25,7 @@ import {
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
 import { renderSettingsStore, isPdfWatermarkText } from '../store/render-settings';
-import { looksLikeMouseWheel, invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
+import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -2279,19 +2279,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (isTrackpadPinch) log.ui.log('pdf wheel pinch (ctrlKey)', { deltaY: e.deltaY });
 
       // Resolve effective action: trackpad pinch → always zoom, otherwise use bindings.
+      // No `wheelDetection` safety net here — on PDF, classic mouse-wheel scrolling
+      // is the natural way to walk through pages, so pan stays as pan even if the
+      // input looks wheel-shaped. (Safety net remains active on the board view,
+      // where there's no "next page" affordance.)
       const bindings = scrollBindingsRef.current;
-      const action: ScrollAction = isTrackpadPinch
+      const effectiveAction: ScrollAction = isTrackpadPinch
         ? 'zoom'
         : (e.metaKey || e.ctrlKey) ? bindings.meta
         : e.shiftKey ? bindings.shift
         : bindings.bare;
-
-      // Safety net: classic mouse wheel + pan mode = unusable jerky pan.
-      // Reinterpret this single event as zoom. Does not write back to settings.
-      const wheelDetection = renderSettingsStore.settings.wheelDetection;
-      const effectiveAction: ScrollAction = (
-        wheelDetection && action === 'pan' && looksLikeMouseWheel(e)
-      ) ? 'zoom' : action;
 
       if (effectiveAction === 'zoom') {
         const rect = container.getBoundingClientRect();

@@ -36,38 +36,44 @@ export function invertScrollBindings(): void {
  * Used by the safety net to avoid jerky pan when the configured mode is
  * pan-on-bare but the user is actually on a scroll wheel.
  *
- * Strategy — burst-latched timing analysis. The previous per-event signature
- * (fractional deltaY, non-zero deltaX, magnitude<50) misfired on macOS/Safari
- * where smooth-scrolling expands a single wheel click into 5-8 fractional
- * events: the first event would classify as wheel (zoom), then the burst
- * tail flipped to trackpad (pan), splitting one physical click into mixed
- * pan + zoom frames.
- *
- * The new heuristic looks at *cadence over a burst*, not the shape of any
- * single event:
+ * Strategy — first-event signature, latched across the burst.
  *
  *   - A new burst starts after a quiet gap (>250ms since last wheel event).
- *   - The first event of a burst latches as "wheel" (the safety net's
- *     intended target — users who enable wheelDetection are wheel users).
+ *   - The first event of a burst is classified by signature: large integer
+ *     deltaY with no deltaX = wheel; everything else (small magnitude,
+ *     fractional, has deltaX, ctrlKey) = trackpad. A bare slow two-finger
+ *     trackpad scroll lands here and gets classified as trackpad on event 1,
+ *     not silently latched as wheel.
  *   - The classification stays latched for the entire burst — every event
  *     in the burst returns the same answer, so one physical input never
- *     splits across pan/zoom paths.
- *   - Sustained high-cadence input (≥6 consecutive gaps under 35ms — only
- *     trackpad scrolls and pinches sustain this) demotes the burst to
- *     "trackpad" one-way; demotion never reverses within the burst.
- *   - Trackpad pinch (ctrlKey) is always trackpad immediately.
+ *     splits across pan/zoom paths (this was the original mid-burst-flip
+ *     bug on Mac/Safari smooth-scroll: subsequent fractional events in a
+ *     wheel-click burst would re-classify as trackpad).
+ *   - Sustained high-cadence input (≥6 consecutive gaps under 35ms) demotes
+ *     the burst to "trackpad" one-way; demotion never reverses. This is a
+ *     safety net for wheel-shaped first events that turn out to be the
+ *     leading edge of a fast trackpad swipe.
  *
- * Mac/Safari smooth-scroll wheel click = 5-8 events at ~16ms cadence over
- * ~150ms total. Won't reach the 6-fast-gap threshold before the burst ends,
- * so it stays latched as wheel. Trackpad swipes (30+ events at 16ms) cross
- * the threshold quickly and flip to trackpad.
+ * Mac/Safari smooth-scroll wheel click: first event has large integer
+ * deltaY (e.g. ±100/±120) → latched wheel → all 5-8 burst events return
+ * wheel. Trackpad slow scroll: first event is small/fractional → latched
+ * trackpad immediately, regardless of cadence.
  */
 const QUIET_GAP_MS = 250;
 const HIGH_CADENCE_MS = 35;
 const SUSTAINED_FAST_THRESHOLD = 6;
+const WHEEL_MIN_MAGNITUDE = 50;
+
+function signatureLooksLikeWheel(e: WheelEvent): boolean {
+  if (e.ctrlKey) return false;
+  if (e.deltaX !== 0) return false;
+  if (Math.abs(e.deltaY) < WHEEL_MIN_MAGNITUDE) return false;
+  if (e.deltaY !== Math.trunc(e.deltaY)) return false;
+  return true;
+}
 
 let burstActive = false;
-let burstIsWheel = true;
+let burstIsWheel = false;
 let consecutiveFast = 0;
 let lastEventTime = 0;
 
@@ -94,11 +100,7 @@ export function looksLikeMouseWheel(e: WheelEvent): boolean {
 
   if (!burstActive) {
     burstActive = true;
-    // Default classification for a new burst: wheel. Users who opted into
-    // wheelDetection want sparse classic-wheel clicks reinterpreted as
-    // zoom. Sustained-cadence detection below demotes if it's actually a
-    // trackpad gesture.
-    burstIsWheel = true;
+    burstIsWheel = signatureLooksLikeWheel(e);
     consecutiveFast = 0;
   }
 
@@ -118,7 +120,7 @@ export function looksLikeMouseWheel(e: WheelEvent): boolean {
 /** Test/diagnostic helper: reset burst state between scenarios. */
 export function _resetTrackpadMode(): void {
   burstActive = false;
-  burstIsWheel = true;
+  burstIsWheel = false;
   consecutiveFast = 0;
   lastEventTime = 0;
 }
