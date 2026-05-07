@@ -47,7 +47,17 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.upd.Apply()
+	go func() {
+		if err := h.upd.Apply(); err != nil {
+			// Surface the error through the SSE progress channel so the
+			// frontend's overlay/dropdown can show it instead of hanging
+			// silently. Apply()'s internal logProgress calls cover most of
+			// the flow but a few code paths (applyTarball returning early,
+			// orchestrateRestart's preflight failures) used to bubble back
+			// here without ever appearing on the SSE stream.
+			h.upd.PushError("Update failed: " + err.Error())
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -93,9 +103,10 @@ func (h *UpdateHandler) ApplyBundle(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		if err := h.upd.ApplyBundle(body); err != nil {
-			// Error is already pushed to the progress log via logProgress;
-			// nothing else to do here. The frontend reads the SSE stream.
-			_ = err
+			// Most ApplyBundle paths logProgress before returning; the early
+			// returns (manifest signature failure, member missing) don't, so
+			// forward the return value the same way Apply does.
+			h.upd.PushError("Bundle update failed: " + err.Error())
 		}
 	}()
 

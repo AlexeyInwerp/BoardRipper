@@ -1,0 +1,12 @@
+keys/*.minisign
+keys/*.minisign.pub
+keys/pubkey.txt
+release/*.tar.gz
+release/manifest.json
+release/manifest.json.minisig
+results/
+results.log
+results.mockup.log
+node_modules/
+playwright/test-results/
+playwright/playwright-report/

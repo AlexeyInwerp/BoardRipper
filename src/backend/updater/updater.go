@@ -139,6 +139,16 @@ func (u *Updater) logProgress(msg, status string) {
 	log.Printf("[updater] %s", msg)
 }
 
+// PushError appends a terminal "error" entry to the progress log. Used by
+// the HTTP handler to forward Apply()/ApplyBundle() return values that
+// would otherwise be invisible to the SSE stream — without this, a failure
+// in applyTarball or orchestrateRestart's preflight (the early returns
+// before any logProgress call) leaves the frontend stuck on "Updating…"
+// until the 2-minute health-poll timeout expires.
+func (u *Updater) PushError(msg string) {
+	u.logProgress(msg, "error")
+}
+
 // Check queries the configured sources for the latest release and updates cached state.
 func (u *Updater) Check() (*UpdateState, error) {
 	if PubKey == "" {

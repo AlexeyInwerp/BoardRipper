@@ -277,21 +277,72 @@ class UpdateStore extends Emitter {
     this.waitForRestart();
   }
 
-  // Polls /api/health until either the new container responds (success →
-  // reload) or HEALTH_POLL_TIMEOUT_MS elapses (timeout → leave the modal up
-  // so the user can manually refresh; flag stays in localStorage).
+  // Wait for the orchestrator to actually swap containers, then reload.
+  //
+  // The earlier "first /api/health response wins" approach reloaded against
+  // the *old* backend in the (typical) window where Apply has launched the
+  // orchestrator container but the orchestrator's `containers/<self>/stop`
+  // call hasn't yet propagated. The page would reload, see the same old
+  // version, log "rolled back" via verifyResumeOutcome, and the user would
+  // sit on the apparently-unchanged UI for another 30 minutes (next
+  // background fetchStatus tick) before noticing the version had changed.
+  //
+  // Reload ONLY when we have real evidence of a swap. Two paths satisfy that:
+  //
+  //   (a) /api/update/status returns the manifest's expected new version.
+  //       The data volume holds the per-install secret so the cookie stays
+  //       valid across the swap; this is the authoritative signal.
+  //   (b) /api/health was observed down at least once, then up. Covers the
+  //       case where /api/update/status auth races and we can't read it
+  //       (rare, but the original poll-by-health flow was the prior shape
+  //       so keep it as a fallback).
+  //
+  // Polling stops at HEALTH_POLL_TIMEOUT_MS so a never-returning backend
+  // leaves the overlay up for manual refresh instead of looping forever.
   private async waitForRestart() {
     const start = Date.now();
+    const fromVersion = this._restartingFromVersion;
+    const expectedVersion = (() => {
+      const f = loadRestartFlag();
+      return f?.expectedVersion ?? '';
+    })();
+    let sawDown = false;
     while (Date.now() - start < HEALTH_POLL_TIMEOUT_MS) {
       await new Promise(r => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
+
+      // Path (a): authoritative version probe.
+      try {
+        const r = await fetch('/api/update/status', { credentials: 'same-origin', cache: 'no-store' });
+        if (r.ok) {
+          const s = await r.json().catch(() => null) as { current_version?: string } | null;
+          const cur = s?.current_version;
+          if (cur && cur !== 'dev' && cur !== fromVersion && (!expectedVersion || cur === expectedVersion)) {
+            log.update.log(`Backend now ${cur} — reloading`);
+            window.location.reload();
+            return;
+          }
+        } else if (r.status >= 500 || r.status === 0) {
+          sawDown = true;
+        }
+      } catch {
+        sawDown = true;
+      }
+
+      // Path (b): downtime-then-up health check.
       try {
         const r = await fetch('/api/health', { credentials: 'same-origin', cache: 'no-store' });
-        if (r.ok) {
-          log.update.log('Backend healthy — reloading');
+        if (!r.ok) {
+          sawDown = true;
+          continue;
+        }
+        if (sawDown) {
+          log.update.log('Backend healthy after downtime — reloading');
           window.location.reload();
           return;
         }
-      } catch { /* still restarting */ }
+      } catch {
+        sawDown = true;
+      }
     }
     log.update.warn(`Restart timeout (${HEALTH_POLL_TIMEOUT_MS / 1000}s) — backend did not return`);
   }
@@ -359,6 +410,16 @@ class UpdateStore extends Emitter {
 }
 
 export const updateStore = new UpdateStore();
+
+// Test-harness hook: expose the singleton on window so e2e tests can probe
+// `updating` / `restarting` / `progress.length` without having to drive
+// React-DevTools or walk the fiber tree. No security concern — every method
+// the store calls is already reachable from any in-page script with the
+// installed cookie. Kept under a `__br` prefix so it's clearly marked
+// internal and unlikely to collide with anything user code touches.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __brUpdateStore?: UpdateStore }).__brUpdateStore = updateStore;
+}
 
 // Initial fetch + periodic poll every 30 minutes (skip in test environments).
 // The resumeIfRestarting() call comes first so the in-progress modal can
