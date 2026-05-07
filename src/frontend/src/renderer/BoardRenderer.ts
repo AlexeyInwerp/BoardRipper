@@ -2666,6 +2666,20 @@ export class BoardRenderer {
     const perf = this.perfVisible;
     const selStart = perf ? performance.now() : 0;
 
+    // HMR safety-net: make sure decoration layers are non-interactive every
+    // time we render selection. The constructor sets these once, but Vite
+    // HMR can replace the module without re-instantiating the Application
+    // (we never call app.destroy() — see CLAUDE.md), leaving stale layers
+    // with default 'auto' eventMode that capture clicks over painted lines /
+    // dim / spotlight area. Idempotent — the assignments are cheap.
+    this.netDimGfx.eventMode = 'none';
+    this.netLinesGfx.eventMode = 'none';
+    this.crossSideGhostGfx.eventMode = 'none';
+    this.selectionGfx.eventMode = 'none';
+    this.butterflySelectionGfx.eventMode = 'none';
+    this.netLabelLayer.eventMode = 'none';
+    if (this._haloSprite) this._haloSprite.eventMode = 'none';
+
     this.needsRender = true;
     this.netLinesDirty = true; // selection changed → recompute net line geometry
     // Cancel any in-progress blink from a previous selection
