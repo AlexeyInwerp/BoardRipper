@@ -312,6 +312,11 @@ export class BoardRenderer {
   // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
   // Only recomputed when selection, viewport, or visibility changes.
   private netLineSegments: Array<{ start: Point; end: Point; color: number }> = [];
+  // Same data colour-keyed for the batched-stroke fast path. Populated alongside
+  // `netLineSegments` in recomputeNetLineSegments so the per-frame draw path
+  // can iterate without allocating a fresh Map / wrapper objects every tick
+  // (G-3 zero-allocation property).
+  private netLineSegmentsByColor: Map<number, Array<{ start: Point; end: Point }>> = new Map();
   private netLinesDirty = true;
   /** Extra state tracked for fade logic */
   private netLineFadeDist = 0;
@@ -3419,6 +3424,7 @@ export class BoardRenderer {
   /** Recompute cached net line segments (start/end points + color) when selection or viewport changes */
   private recomputeNetLineSegments() {
     this.netLineSegments = [];
+    this.netLineSegmentsByColor.clear();
     this.netLineFadeDist = 0;
     this.netLinesDirty = false;
 
@@ -3440,6 +3446,14 @@ export class BoardRenderer {
 
     for (const entry of activeNets) {
       this.appendNetLineSegmentsFor(entry.name, entry.color, mode, sel, s);
+    }
+
+    // Bucketise by colour once. The per-frame renderNetLines path iterates
+    // these directly with no further allocation (was: rebuilt each frame).
+    for (const seg of this.netLineSegments) {
+      let arr = this.netLineSegmentsByColor.get(seg.color);
+      if (!arr) { arr = []; this.netLineSegmentsByColor.set(seg.color, arr); }
+      arr.push(seg);
     }
   }
 
@@ -3585,16 +3599,10 @@ export class BoardRenderer {
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    // Group segments by base color so we can keep the fast batched-stroke path
-    // when fade/dash are off. The grouping cost is O(N) and tiny for typical N.
-    const byColor = new Map<number, Array<{ start: Point; end: Point }>>();
-    for (const seg of this.netLineSegments) {
-      let arr = byColor.get(seg.color);
-      if (!arr) { arr = []; byColor.set(seg.color, arr); }
-      arr.push({ start: seg.start, end: seg.end });
-    }
-
-    for (const [baseColor, segs] of byColor) {
+    // Iterate the colour-keyed buckets cached by recomputeNetLineSegments.
+    // No per-frame allocation here — was previously rebuilding the Map and
+    // wrapping every segment in a fresh {start,end} object 60 fps.
+    for (const [baseColor, segs] of this.netLineSegmentsByColor) {
       const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
       if (!useFade && !s.netLineDashed) {
         for (const { start, end } of segs) {
