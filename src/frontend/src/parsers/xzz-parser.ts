@@ -563,6 +563,28 @@ interface FoldResult {
   _debug: { source: string; sideSignal: string; compGap: number | null };
 }
 
+/** Multi-board pack: ≥4 outline components that all pair off by
+ *  (width, height, segCount). Each pair is one physical board (unfolded into
+ *  top + bottom halves placed side-by-side); the pairs themselves sit next to
+ *  each other in the file (e.g. iPhone AP+BB combined boardview). Such files
+ *  must NOT be globally folded — every per-board fold axis is emitted via
+ *  `boardGroups` and applied lazily when the user picks a board. */
+function isMultiBoardOutline(segments: Segment[]): boolean {
+  if (segments.length < 8) return false;
+  const bboxes = componentBBoxes(segments);
+  if (bboxes.length < 4 || bboxes.length % 2 !== 0) return false;
+  const buckets = new Map<string, number>();
+  for (const bb of bboxes) {
+    const w = Math.round(bb.maxX - bb.minX);
+    const h = Math.round(bb.maxY - bb.minY);
+    buckets.set(`${w}|${h}|${bb.segCount}`, (buckets.get(`${w}|${h}|${bb.segCount}`) ?? 0) + 1);
+  }
+  for (const cnt of buckets.values()) {
+    if (cnt < 2 || cnt % 2 !== 0) return false;
+  }
+  return true;
+}
+
 /**
  * Detect fold axis from two disconnected outline groups (connected-component analysis).
  *
@@ -665,6 +687,13 @@ function detectOutlineComponentFold(segments: Segment[]): { axis: number; dim: '
  *  Side determination: lower coordinate = top side (XZZ uses screen coords, Y down).
  */
 function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadData[]): FoldResult | null {
+  // Multi-board pack (≥4 paired outline components): no global fold — the
+  // per-board axes live in `boardGroups`. Without this gate the centroid
+  // gap detector below sometimes finds a spurious mid-Y gap (created by the
+  // empty CPU centerlines that all boards share), folding 4 distinct boards
+  // into one collapsed slab. Seen on iPhone14 Pro/ProMax combined boardview.
+  if (isMultiBoardOutline(segments)) return null;
+
   function bestGap(values: number[]): { axis: number; ratio: number } | null {
     if (values.length < 4) return null;
     const sorted = [...values].sort((a, b) => a - b);
@@ -1077,8 +1106,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       ` | outline: ${segsBefore}→${segments.length} segs (removed=${removed} clipped=${clipped})`,
     );
   } else {
+    const multiBoard = isMultiBoardOutline(segments);
     log.parser.log(
-      `(pcb flat) no butterfly signal — preserving native layout ` +
+      `(pcb ${multiBoard ? 'multi-board' : 'flat'}) ${multiBoard ? 'paired outline components — per-board folds via boardGroups' : 'no butterfly signal — preserving native layout'} ` +
       `| parts=${partDataList.length} outline=${segments.length} segs`,
     );
   }
