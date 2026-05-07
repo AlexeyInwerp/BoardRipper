@@ -759,16 +759,29 @@ export class BoardRenderer {
 
     // --- Recreate overlay Graphics (old ones were destroyed with the old app) ---
     // zIndex values must match init() — see comments there for the full layering map.
+    // eventMode='none' on every decoration layer so pointer events fall through
+    // to the underlying parts/pins. Without this, the netDimGfx full-screen
+    // darkening drawn in chain-adjacent / spotlight modes captures clicks
+    // before they can reach pin sprites — small pins become unselectable while
+    // the dim is active. Same risk applies to net-lines, ghosts, selection
+    // highlights, and label layers (any Graphics with painted content under
+    // the cursor counts as a hit otherwise).
     this.selectionGfx = new Graphics();
     this.selectionGfx.zIndex = 30;
+    this.selectionGfx.eventMode = 'none';
     this.netDimGfx = new Graphics();
     this.netDimGfx.zIndex = 10;
+    this.netDimGfx.eventMode = 'none';
     this.netLabelLayer = new Container();
     this.netLabelLayer.zIndex = 35;
+    this.netLabelLayer.eventMode = 'none';
     this.butterflySelectionGfx = new Graphics();
+    this.butterflySelectionGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
+    this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
+    this.crossSideGhostGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
     this.viewport.addChild(this.netLinesGfx);
     this.viewport.addChild(this.selectionLabelLayer);
@@ -777,17 +790,21 @@ export class BoardRenderer {
     const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
     this.elevatedPartBg.zIndex = 100;
+    this.elevatedPartBg.eventMode = 'none';
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPartLabel.anchor.set(0.5, 0.5);
     this.elevatedPartLabel.zIndex = 101;
     this.elevatedPartLabel.visible = false;
+    this.elevatedPartLabel.eventMode = 'none';
     this.elevatedPartBg.visible = false;
     this.elevatedPinBg = new Graphics();
     this.elevatedPinBg.zIndex = 102;
+    this.elevatedPinBg.eventMode = 'none';
     this.elevatedPinLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPinLabel.anchor.set(0.5, 0.5);
     this.elevatedPinLabel.zIndex = 103;
     this.elevatedPinLabel.visible = false;
+    this.elevatedPinLabel.eventMode = 'none';
     this.elevatedPinBg.visible = false;
 
     // --- Reinstall canvas event listeners ---
@@ -883,16 +900,30 @@ export class BoardRenderer {
     //   30       selectionGfx       — yellow highlight rectangles around selected parts/pins
     //   35       netLabelLayer      — net/pin labels raised above dim + selection
     //   100-103  elevated labels    — part/pin name badges, always topmost
+    //
+    // eventMode='none' on every decoration layer so pointer events fall through
+    // to the underlying parts/pins. Without this, the netDimGfx full-screen
+    // darkening drawn in chain-adjacent / spotlight modes captures clicks
+    // before they can reach pin sprites — small pins become unselectable while
+    // the dim is active. Same risk applies to net-lines, ghosts, selection
+    // highlights, and label layers (any Graphics with painted content under
+    // the cursor counts as a hit otherwise).
     this.selectionGfx = new Graphics();
     this.selectionGfx.zIndex = 30;
+    this.selectionGfx.eventMode = 'none';
     this.netDimGfx = new Graphics();
     this.netDimGfx.zIndex = 10;
+    this.netDimGfx.eventMode = 'none';
     this.netLabelLayer = new Container();
     this.netLabelLayer.zIndex = 35;
+    this.netLabelLayer.eventMode = 'none';
     this.butterflySelectionGfx = new Graphics();
+    this.butterflySelectionGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
+    this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below labels (20) and selection (30)
+    this.crossSideGhostGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
 
     // Elevated labels for selected part/pin — persistent objects reused across
@@ -902,17 +933,21 @@ export class BoardRenderer {
     const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
     this.elevatedPartBg = new Graphics();
     this.elevatedPartBg.zIndex = 100;
+    this.elevatedPartBg.eventMode = 'none';
     this.elevatedPartLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPartLabel.anchor.set(0.5, 0.5);
     this.elevatedPartLabel.zIndex = 101;
     this.elevatedPartLabel.visible = false;
+    this.elevatedPartLabel.eventMode = 'none';
     this.elevatedPartBg.visible = false;
     this.elevatedPinBg = new Graphics();
     this.elevatedPinBg.zIndex = 102;
+    this.elevatedPinBg.eventMode = 'none';
     this.elevatedPinLabel = new BitmapText({ text: '', style: labelStyle });
     this.elevatedPinLabel.anchor.set(0.5, 0.5);
     this.elevatedPinLabel.zIndex = 103;
     this.elevatedPinLabel.visible = false;
+    this.elevatedPinLabel.eventMode = 'none';
     this.elevatedPinBg.visible = false;
     this.viewport.addChild(this.netLinesGfx);
     this.viewport.addChild(this.selectionLabelLayer);
@@ -2505,6 +2540,9 @@ export class BoardRenderer {
       const tex = this.buildHaloTexture();
       const spr = new Sprite(tex);
       spr.anchor.set(0.5, 0.5);
+      // Decoration only — don't capture pointer events; pins under the
+      // halo's painted radius must remain selectable.
+      spr.eventMode = 'none';
       this._haloSprite = spr;
     }
 
