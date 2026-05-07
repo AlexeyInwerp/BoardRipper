@@ -30,7 +30,10 @@ MIT/Apache-2.0/BSD.
 - **CAD** — GenCAD 1.4 text-based PCB interchange. Spec: `docs/formats/CAD_FORMAT.md`
 - **XZZ** — XZZ PCB (DES-encrypted boardview). Spec: `docs/formats/XZZ_FORMAT.md`
 - **TVW** — Teboview binary (multi-layer, traces, drill data). Spec: `docs/formats/TVW_FORMAT.md`
-- **ALLEGRO_BRD** — Cadence Allegro binary PCB (v16.0–17.4, multi-layer). Spec: `docs/formats/ALLEGRO_BRD_FORMAT.md`
+- **MENTOR_NEUTRAL** — Mentor Graphics Boardstation/Expedition neutral export (text, `.cad` extension; not GenCAD). Spec: `docs/formats/MENTOR_NEUTRAL_FORMAT.md`
+- **ALLEGRO_BRD** — Cadence Allegro binary PCB. Two parser families share `parsers/allegro/`:
+  - v16.x–v17.x (magic `0x0013XXXX`) — original target. Spec: `docs/formats/ALLEGRO_BRD_FORMAT.md`
+  - v15.x (magic `0x0012XXXX`) — added in v0.17.0 via blind RE; ~99% net coverage on 15.5.7 corpus. Spec: `docs/formats/ALLEGRO_V15_FORMAT.md`
 
 ## Project Structure
 ```
@@ -44,33 +47,43 @@ Boardviewer/
 ├── Board Database/              # Reference board database (SQLite)
 ├── docs/
 │   ├── formats/                  # Format specifications (one per format)
-│   │   ├── BVR_FORMAT.md        # BVR1/BVR3
-│   │   ├── BRD_FORMAT.md        # BRD (Apple/Mac obfuscated)
-│   │   ├── BDV_FORMAT.md        # BDV (plain-text boardview)
-│   │   ├── BDV_ASC_FORMAT.md    # BDV ASC (Honhan / Tebo-ICT obfuscated)
-│   │   ├── FZ_FORMAT.md         # FZ (ASUS RC6-encrypted)
-│   │   ├── CAD_FORMAT.md        # GenCAD 1.4
-│   │   ├── XZZ_FORMAT.md        # XZZ PCB (DES-encrypted)
-│   │   ├── TVW_FORMAT.md        # Teboview (multi-layer binary)
-│   │   └── ALLEGRO_BRD_FORMAT.md # Cadence Allegro BRD
-│   └── PLANNING.md              # Architecture & implementation plan
+│   │   ├── BVR_FORMAT.md         # BVR1/BVR3
+│   │   ├── BRD_FORMAT.md         # BRD (Apple/Mac obfuscated)
+│   │   ├── BDV_FORMAT.md         # BDV (plain-text boardview)
+│   │   ├── BDV_ASC_FORMAT.md     # BDV ASC (Honhan / Tebo-ICT obfuscated)
+│   │   ├── FZ_FORMAT.md          # FZ (ASUS RC6-encrypted)
+│   │   ├── CAD_FORMAT.md         # GenCAD 1.4
+│   │   ├── XZZ_FORMAT.md         # XZZ PCB (DES-encrypted)
+│   │   ├── TVW_FORMAT.md         # Teboview (multi-layer binary)
+│   │   ├── MENTOR_NEUTRAL_FORMAT.md # Mentor Boardstation Neutral (.cad text)
+│   │   ├── ALLEGRO_BRD_FORMAT.md # Cadence Allegro v16/v17 BRD
+│   │   └── ALLEGRO_V15_FORMAT.md # Cadence Allegro v15.x BRD (RE'd in v0.17.0)
+│   ├── PLANNING.md               # Architecture & implementation plan
+│   ├── PDF_VIEWER.md             # PDF render-pipeline architecture
+│   ├── RELEASE_RUNBOOK.md        # Maintainer release-cutting procedure
+│   └── analysis/                 # Quarterly comprehensive code reviews
 ├── samples/                     # Real-world BVR3 + PDF test files
+├── landing/                     # Static landing page deployed to ripperdoc.de
+├── scripts/                     # release.sh, packaging, NAS deploy helpers
 └── src/
     ├── frontend/                # React + PixiJS SPA
     │   ├── tests/               # Playwright E2E specs
     │   └── src/
-    │       ├── parsers/         # Format parsers (pure TS functions, 10 formats)
+    │       ├── parsers/         # Format parsers (pure TS functions, 11 formats)
+    │       │   └── allegro/     # Allegro v15.x + v16/v17 (split families share types)
     │       ├── renderer/        # BoardRenderer, board-scene (shared), mockup-data
     │       ├── pdf/             # PDF glyph extraction & overlay utilities
-    │       ├── components/      # Toolbar, StatusBar, TabBar, ContextMenu, PanelAdder, BindLink, BoardSidebar
+    │       ├── components/      # Toolbar, StatusBar, TabBar, ContextMenu, PanelAdder, BindLink, BoardSidebar, UpdateBanner, UpdateModal, BoardOverlay, …
     │       ├── panels/          # BoardViewer, ComponentInfo, NetList, SearchResults, PDF, Settings, SettingsMockup, Debug, Library
-    │       ├── hooks/           # useBoardStore, usePdfStore, useDatabank, useKeyboardShortcuts, createStoreHook
-    │       └── store/           # board-store, render-settings, board-cache, pdf-store, databank-store, update-store, ...
+    │       ├── hooks/           # useBoardStore, usePdfStore, useDatabank, useObdForBoard, useKeyboardShortcuts, createStoreHook
+    │       └── store/           # board-store, render-settings, board-cache, pdf-store, databank-store, update-store, theme-store, overlay-store, obd-store, …
     └── backend/                 # Go net/http server
-        ├── handlers/            # HTTP handlers (files, boards, databank, update)
-        ├── boarddb/             # Board reference database (ODM matcher, resolver)
+        ├── handlers/            # HTTP handlers (auth, files, boards, databank, sync, obd, update, health)
+        ├── boarddb/             # Board reference database (v2 entity hierarchy, ODM matcher, resolver)
         ├── databank/            # File scanner, search, PDF text extraction
-        └── updater/             # Self-update via Docker socket
+        ├── librarysync/         # WebDAV pull + scheduler for shared library mirror
+        ├── obd/                 # OpenBoardData parser, cache, scraper
+        └── updater/             # Self-update via Docker socket — signed-manifest pipeline
 ```
 
 ## Key Architectural Decisions
@@ -89,6 +102,12 @@ Boardviewer/
 - **PDF canvas rules:** Only **pooled offscreen** canvases (freshly acquired, used once, released) use `getContext('2d', { alpha: false })`. Persistent canvases (main visible canvas, adjacent page canvases, tile canvases) must NOT use `alpha: false` — resetting `canvas.width` doesn't reliably reset the alpha attribute across browsers, causing mirroring artifacts on reused canvases. Canvas pool (8 entries) shrinks backing store synchronously before pooling — never defer shrinking (race condition with reuse). Highlight, glyph, and tile canvases retain alpha.
 - **Never pool pdf.js-rendered canvases.** After `page.render()` completes, the pdf.js Worker thread may still queue stale draw operations. Abandon the offscreen canvas to GC by setting `width = 1; height = 1` — do NOT return it to the canvas pool, or subsequent reuses will be corrupted with mirrored/flipped content.
 - **Scroll modifier zoom speeds:** Both BoardViewer and PDF viewer support modifier-dependent zoom speeds: Shift+Scroll = slow zoom (precise), Ctrl+Scroll = fast zoom (coarse), trackpad pinch = direct proportional zoom. Ctrl and Cmd are **distinct keys** even on Mac — browsers emit `ctrlKey=true` wheel events for both physical Ctrl+Scroll and trackpad pinch, but the pinch gesture produces small deltaY values that map to proportional zoom, while Ctrl+mouse-wheel produces large deltaY steps. pixi-viewport natively lacks shift-key awareness, so `BoardRenderer.installShiftWheelHandler()` intercepts Shift+Scroll in capture phase. The speed difference comes from divisor constants: `/500` (shift, slow) vs `/200` (ctrl+wheel, fast). Do not unify these — the two-speed zoom is a deliberate feature.
+- **Secure update pipeline (v0.19.0+):** Releases are signed offline by the maintainer (Ed25519/minisign); the running container's compiled-in `PubKey` (set via Docker build-arg `PUBKEY` → ldflags, **no env/file override**) verifies every manifest before any I/O on its body. Two delivery sources walked in order — `ghcr.io/alexeyinwerp/boardripper` (pull-by-digest) and `https://www.ripperdoc.de/boardripper/` (signed-tarball mirror with sha256 verification) — first source whose signature verifies wins. Manifest schema includes monotonic `counter` (replay defence), `not_after` (90-day expiry), `min_version` (downgrade defence), `important` flag, image digest, tarball sha256. `/api/update/*` is gated by a per-install 32-byte secret persisted at `/data/.update-secret` (mode 0600) and surfaced via an HttpOnly + SameSite=Strict cookie; the `Secure` cookie attribute is set conditionally based on the request scheme. Healthcheck-based rollback: orchestrator polls the new container's IP-resolved `/api/health` for 60 s and reverts on failure. Drop-to-update bundle (`POST /api/update/apply-bundle`) is the recovery escape-hatch — a signed-manifest+tarball single file the user can drag onto the window when GHCR + ripperdoc.de are both unreachable. Same trust envelope as the network path. See `docs/RELEASE_RUNBOOK.md` and `docs/superpowers/specs/2026-05-05-secure-update-pipeline-design.md`.
+- **Theme stack (v0.18.0+):** themes split into board-side concerns (the `THEMES` registry — pin/part/background colours used by `buildBoardScene`) and three independent interface knobs persisted separately by `themeStore`: `accent`, `background`, `chrome`. Boards adopt the theme; UI chrome obeys the knobs. Auto-flip of accent text colour is computed against perceived brightness (don't hardcode contrast pairs). User-pickable accent presets (BoardRipper default + ATARI palette) live in `theme-store.ts`.
+- **Board overlay slot system (v0.18.0+):** the floating in-canvas controls (top/bottom toggle, flip-axis, spotlight tri-state dim, parts/nets filters, separators, selection-name label) render via a slot registry under `components/BoardOverlay/`. Layout is persisted (`overlay-store.ts`) and reconciled against `DEFAULT_OVERLAY_LAYOUT` on load — new slots auto-append with `def.visible`, removed slots drop. Settings ▸ Board overlay edits the layout via drag-and-drop. Default position is left; the overlay is mounted as a `netDimGfx` sibling so highlight blending pattern works.
+- **Boards reference database v2 (v0.15.0+):** `Board Database/boards.db` is a SQLite reference DB shipped inside the container image (`/build/boards.db`). v2 schema replaces the old flat board table with an entity hierarchy (Brand → Family → Board), color cascade, and explicit family field. Resolver lives in `src/backend/boarddb/`. Imported sources include Wikidata Macs, XZZ Apple-laptop filenames, and an LLM-classified NAS dump (~2,914 boards as of v0.16.6). The Database Editor panel surfaces it read-only.
+- **Library sync (v0.16.11+):** `src/backend/librarysync/` pulls a remote WebDAV mirror into a local library mount on a schedule, with diff-then-fetch semantics, sync-error surfacing in the UI, and zero-byte-file skip. Configured via Settings ▸ Library. Scoped log: `log.scan.*`.
+- **OpenBoardData (OBD) integration (v0.16.7+):** `src/backend/obd/` parses the public OBDATA_V002 corpus, caches per-board entries with atomic writes + bpath sandbox, and exposes four HTTP handlers behind `/api/obd/*` with single-flight + drop-guard. Frontend renders a structured DIAGNOSIS section (collapsible blocks, clickable refs, multi-variant table) in LibraryPanel and surfaces readings in the canvas tooltip + Info pane. Scoped log: `log.obd.*`.
 
 ## Safety Rules
 - **COMMIT before removing code.** Before deleting or replacing any significant block of code (>10 lines), commit the current working state first. A stray `git checkout` must never destroy hours of work.
@@ -99,7 +118,7 @@ Boardviewer/
 - All coordinates internally in mils (thousandths of an inch)
 - Component naming: PascalCase for React components, camelCase for functions/variables
 - File format parsers are pure functions: `(buffer: ArrayBuffer) => BoardData | Promise<BoardData>` (see `FormatDescriptor.parse` in `parsers/registry.ts`)
-- **Logging:** Use scoped loggers from `store/log-store.ts` — never raw `console.log`. Import `{ log }` and use `log.parser.*`, `log.render.*`, `log.pdf.*`, `log.scan.*`, `log.ui.*`, `log.cache.*`, `log.perf.*`, `log.update.*`. The Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move).
+- **Logging:** Use scoped loggers from `store/log-store.ts` — never raw `console.log`. Import `{ log }` and use `log.parser.*`, `log.render.*`, `log.pdf.*`, `log.scan.*`, `log.ui.*`, `log.cache.*`, `log.perf.*`, `log.update.*`, `log.obd.*`. The Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move).
 
 ## Public landing page (`landing/`)
 The `landing/` folder owns the static page served at <https://www.ripperdoc.de/boardripper/>. It is plain HTML5 with embedded CSS — no JS, no build step, not part of any application build. To update the page (new feature, new screenshot, format-table change): edit `landing/index.html` directly and replace screenshots in `landing/screenshots/`. The RipperDocWeb deploy script rsyncs this folder; nothing in this repo's build pipeline is involved. See `landing/README.md` for the full update workflow.

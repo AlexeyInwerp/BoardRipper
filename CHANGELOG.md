@@ -134,8 +134,230 @@ system. From v0.19.1 onward, releases will only appear at GHCR + ripperdoc.de.
 
 ---
 
-## v0.18.1 and earlier
+## v0.18.1 — 2026-05-05
 
-For releases prior to v0.19.0, see the git tags directly:
+### Fixed
+
+- **FZ load failures on real-world ASUS / MSI / ASRock boardviews.** The dominant variant in our 116-file NAS corpus (84%) carries an undocumented 4-byte forward-pointer that strict zlib decoders reject as trailing junk. We now detect and trim it before decompression, and we replaced the browser-native `DecompressionStream` with `pako.inflate` for tighter error reporting. Combined fix: ~80% of previously-broken FZ files now load.
+
+## v0.18.0 — 2026-05-05
+
+### New: themes — accent / background / chrome split
+
+Themes are now two independent surfaces. The `THEMES` registry covers **board-side** concerns only (pin colours, part fills, background-of-board) and the board adopts whichever entry matches its file family. **UI chrome** obeys three independent knobs the user can set from the QuickSettings home dashboard or from Settings ▸ Themes:
+
+- `accent` — buttons, focus rings, primary chrome (with auto-flipped text colour against perceived brightness)
+- `background` — app shell background
+- `chrome` — toolbar / status bar / sidebar chrome
+
+Five accent presets ship: BoardRipper default (recoloured away from generic AI-cliché blue), and four ATARI homages (Pantone Bright Red C plus the Atari 2600 silver-label rainbow stripes). Each knob persists separately.
+
+### New: Mentor Boardstation Neutral parser
+
+11th supported format. Mentor Graphics Boardstation/Expedition exports a plain-text "neutral file" with the `.cad` extension shipped with some Samsung / Quanta / Compal / Acer notebook board packages — **not** GenCAD despite the shared extension. Detection cue: `# file : ...` first comment + `BOARD ... OFFSET ... ORIENTATION` record + `###Section` banners. Outline is synthesized from drill-hole geometry. See `docs/formats/MENTOR_NEUTRAL_FORMAT.md` for the full spec; AGPL provenance recorded in the spec footer.
+
+### New: board-overlay search dropdowns + customizer
+
+The floating in-canvas overlay (top/bottom toggle, flip-axis, parts/nets filters, dim-mode tri-state, selection-name label) is now slot-driven and user-customizable. Drag-and-drop in Settings ▸ Board overlay reorders or hides slots; "Add separator" inserts a divider; layout is persisted. Parts and Nets dropdowns use a shared popover scaffold with a memoized natural-sort index (refdes-aware) and a No-Connect partition for nets.
+
+The dim-mode button cycles three states (off / search-dim / spotlight) — spotlight is a smooth dark gradient with a clear core sized to the selected component; selected pins draw above the spotlight so the component stays fully bright.
+
+### New: home dashboard — bindings matrix + behaviour toggles
+
+The HomeBackdrop dashboard now carries a Bindings matrix (board↔PDF associations from the library) and Behaviour toggles (auto-open PDF on board load, theme switch). The QuickSettings strip got a compact accent picker.
+
+### Fixed
+
+- **Allegro pad rotation on diagonally-placed footprints.** 45° QFNs and similar non-axis-aligned packages now render with correctly rotated pads.
+- **`useThemeOverrides` `useSyncExternalStore` infinite loop.** Snapshot now caches a stable reference; the same fix shape applied to HomeBackdrop earlier in the cycle (`01eda1c`).
+- **Settings panel crash guards** for the new overlay/themes subtree (`?? DEFAULTS` + try/catch defensive paths in fresh code).
+- Browser-native page-zoom (Ctrl+/Ctrl-/Ctrl+wheel-on-page-chrome) no longer fires inside the BoardRipper window — would previously double-count with the in-canvas zoom.
+
+### Internal
+
+- `theme-store.ts` consolidated; the parallel registry shipped as a stop-gap was dropped.
+- `boardOverlay` slot registry under `components/BoardOverlay/` with per-slot toggle components and a Separator slot.
+- `panToPart` / `panToNetIfOffscreen` helpers added in renderer; focus-zoom capped at 3× fit-to-board scale.
+
+## v0.17.1 — 2026-05-04
+
+### New
+
+- **PixiJS `CullerPlugin` enabled.** Off-viewport pin labels and parts no longer pay GPU per frame; expect 5–20× p95 improvement at deep zoom on dense boards. Closes a long-deferred research item.
+- **Opt-in WebGPU backend** (PixiJS will fall back to WebGL if unavailable). Off by default.
+- **Tidier QuickSettings home dashboard** — Library stats and Cache actions hoisted above the keyboard-shortcut instructions.
+
+### Fixed
+
+- Part-hull polygon now generates a tighter axis-aligned chip-layout guard, fixing selection misses on small chip caps near component-clusters.
+
+## v0.17.0 — 2026-05-03
+
+### New: Cadence Allegro v15.x BRD support
+
+A second Allegro parser family. v15.x (magic `0x0012XXXX`) is a different binary from the v16/v17 family already supported (`0x0013XXXX`) — different header, different block table — but many block payloads are shared. Reverse-engineered blind from a 15.5.7 / 15.5.2 corpus over the previous week:
+
+- Component definitions (LL_0x06), footprints (LL_0x2B), placements (BLK_0x2D), refdes strings (BLK_0x07), nets (LL_0x1B), pad geometry (BLK_0x48), pin-net assignment (Route 5: BLK_0xC8 back-link + multi-layer variants).
+- **99.4%** perfect net coverage on the 15.5.7 corpus, ~92.7% on 15.5.2 (variant-split documented).
+- A per-component oracle correctness gate runs in CI to prevent regressions.
+
+Spec: `docs/formats/ALLEGRO_V15_FORMAT.md`. Future-work items captured inline.
+
+### Fixed
+
+- **BDV `BRDOUT: 0 0 0` (zero outline) regression.** v0.17.0-development restored the max-part-Y mirror axis fallback for files that ship a zeroed BRDOUT (e.g. creator 1457685 / DAG3BEMBCD0 — HP 17-an100 Quanta G3BE). Canary regression test pins it.
+
+## v0.16.15 — 2026-05-03
+
+### Fixed
+
+- **Library sync no longer re-downloads zero-byte files forever.** A long-tail of intentionally-empty files (placeholder schematics, `.gitkeep`-shaped markers) was bypassing the local-cache "skip if same size" check because zero-size compared as falsy in the diff path; we now treat 0 as a real size.
+
+## v0.16.14 — 2026-05-03
+
+### Fixed
+
+- **Library sync errors are now surfaced in the UI** instead of silently logging. The Settings ▸ Library section shows the most recent sync's status (success/fail/in-progress) and the failing path; a "Retry" button re-runs the failed step.
+
+## v0.16.13 — 2026-05-03
+
+### Fixed
+
+- **Library sync manifest parser preserves spaces in paths.** WebDAV PROPFIND responses with `<D:href>/Library/Apple iPhone 14/...</D:href>` were splitting on the space; sync skipped any board folder whose name contained a space. Fix: parse `<D:href>` as a single token, URL-decode after extraction.
+
+## v0.16.12 — 2026-05-03
+
+### Fixed
+
+- **Library sync diff phase no longer blocks for hours.** The diff was doing a per-file HEAD on every remote candidate, which on a 60k-file mirror added minutes-to-hours before any actual transfer started. We now use the manifest's enclosed PROPFIND size+mtime as authoritative and reserve HEAD for tiebreakers.
+
+## v0.16.11 — 2026-05-02
+
+### New: library sync (WebDAV pull)
+
+A scheduled background sync pulls a remote WebDAV-served library mirror into the local `/library/` mount. Settings ▸ Library exposes the endpoint, schedule, and a "Sync now" button. Diff-then-fetch semantics; per-file resume; never deletes remotely-missing files (Phase 1: pull-only). Useful for repair shops who keep an authoritative library on a NAS or office server and want every workstation to mirror it without manual copy.
+
+### Performance
+
+- **Net-line pulse skips when the page is hidden or the window is unfocused.** Browsers had been paying the 60 fps Graphics rebuild cost on background tabs; cutting it slashes the renderer's idle CPU.
+
+## v0.16.10 — 2026-05-02
+
+### New
+
+- **Per-tab sidebar isolation.** Each BoardViewer panel tab now keeps its own sidebar selection, scroll position, and overlay-toolbar state. Switching tabs no longer wipes the Component Info pane in the other tab.
+- **InfoTab OBData notes.** OBD readings (Diagnosis, Notes, Photos) now appear in the BoardSidebar InfoTab the same way they appear in the LibraryPanel's ObdSection.
+- **TVW BOM-variant + ghost detection.** TVW boards now light up the Revisions tab — bbox-overlap clustering catches stacked-cap "alternate parts" that share refdes but differ in value. The per-pair swap button (added in v0.16.9 for Revisions) now applies to TVW too.
+
+### Fixed
+
+- **TVW empty Through layer** (Landrex variant on Gigabyte boards) no longer fails to load.
+- **TVW pin-extension block** now fires on `partType=0x11` too — fixes broken pin geometry on the Gigabyte/Landrex variant.
+- **Net search** can now expand a selected net into its component spoiler.
+
+## v0.16.9 — 2026-05-01
+
+### New
+
+- **OBD structured DIAGNOSIS.** OpenBoardData diagnosis text is now parsed into collapsible sections with clickable refs (component refdes, net names) that select on the canvas. Multi-variant tables with comments displayed inline.
+
+## v0.16.8 — 2026-05-01
+
+### Fixed
+
+- **PDF↔board lookup** — net-line drawing across the schematic, board-search mirror behaviour. Focus-zoom capped at 600% so opening a tiny test pad doesn't fly the viewport into pixel territory.
+
+## v0.16.7 — 2026-05-01
+
+### New: OpenBoardData (OBD) integration
+
+BoardRipper now reads the public [OpenBoardData](https://openboarddata.org) corpus — community-maintained per-board diagnostics, pin readings, schematics, and notes — and surfaces it inline.
+
+- **Backend:** `OBDATA_V002` parser, filesystem cache with atomic writes + `bpath` sandboxing, scraper with drop-guard, four HTTP handlers under `/api/obd/*` with single-flight, integration tests.
+- **Frontend:** `obdStore`, `useObdForBoard` hook, Settings ▸ Library tab with disclaimer + "Sync OBD" button, `ObdSection` in LibraryPanel detail with a multi-variant table and visible comments. Canvas tooltip + Info pane surface readings on hover.
+- **Disclosure:** OBD content is third-party; the disclaimer in the sync UI sets expectations clearly. Cache is bounded; sync is opt-in.
+
+The aligned-with-real-format scraper fix in this release brought OBD live.
+
+## v0.16.6 — 2026-04-30
+
+### New
+
+- **Local-LLM NAS classifier.** A second-pass classifier runs against the maintainer's NAS dump using a local LLM, filling Brand/Family/Board placeholders for the boards the heuristic + Tavily passes left in `Unsorted`. Round 1 imported **1024** new boards.
+- **Family-hierarchy normalization** across all brands (so Apple `MacBook Pro` is one family, not three near-duplicates separated by capitalization).
+
+## v0.16.5 — 2026-04-29
+
+### New / Cleanup
+
+- Tightened the file-extension whitelist used by the librarian's filename scanner — drops dead `.cae` and `.xzz` (the parser handles `.xzz`; the scanner doesn't).
+- **Tavily classifier residue cleared.** From 1091 Unsorted → **170** Unsorted left.
+
+## v0.16.4 — 2026-04-29
+
+### New
+
+- **Tavily search backend** wired into the offline classifier (`--search-backend tavily`). LLM classifier is now searchable in three modes: offline (heuristic only), DuckDuckGo, Tavily.
+- boards.db curated from the v0.16.3 raw import down to **1091 Unsorted** (was ~2,800 after the filename-scan import).
+
+## v0.16.3 — 2026-04-29
+
+### New
+
+- **`apple-boards.ts` retired** — the hardcoded Apple-board lookup is gone; `boards.db` is now the single source of truth.
+- **Rescan re-resolves metadata.** Renaming a board in the DB no longer requires re-importing files.
+
+## v0.16.2 — 2026-04-29
+
+### Fixed
+
+- **Auto-bind log spam** on `FOREIGN KEY constraint failed` (787) now bounded — previously one full line per failed pair hammered stdout and the writer mutex on a busy rescan after Reset All.
+
+### Internal
+
+- Release pipeline trimmed to Docker-only (legacy CI tarball path removed).
+
+## v0.16.1 — 2026-04-29
+
+### New
+
+- **`boards.db` is now bundled inside the Docker image** at `/build/boards.db`. Fresh installs no longer need a side-channel DB download.
+- Desktop builds (Electron Mac/Windows) paused for this release window.
+
+## v0.16.0 — 2026-04-29
+
+### New: boards.db 20× expansion (145 → 2,914 boards)
+
+The board reference database expanded from 145 hand-curated entries to **2,914** via three import slices, all converging on the v2 schema:
+
+1. **Wikidata Macs import (Slice 1).** SPARQL fetch of all Apple Mac models → staging file → apply with INSERT OR IGNORE under v2 placeholders. Family resolver auto-assigns `MacBook` / `iMac` / `Mac mini` / `Mac Pro` / `Mac Studio`.
+2. **XZZ Apple-laptop skeleton import.** Replaces the Wikidata path with a filesystem walk of the maintainer's XZZ corpus — recovers boards Wikidata doesn't carry (Quanta / Compal / Foxconn ODM codes).
+3. **Filename-scan importer (Slice 1).** A pattern battery walks `/library/`, cross-references existing boards, tokenizes unmatched substrings, and emits a Markdown observation report + JSON sidecar. The JSON sidecar feeds an importer that creates placeholder Brand/Family/Board entries with `INSERT OR IGNORE`. **2.8K new boards** added in one pass.
+
+A snapshot of the 2026-04-29 observation report is archived under `docs/scan/archive/`.
+
+### Internal
+
+- All three importers landed via per-slice spec → plan → implementation, merged into main as separate feature branches (`feat/wikidata-macs-import`, `feat/filename-scan-observation`).
+
+## v0.15.0 — 2026-04-28
+
+### New: boards.db v2 schema redesign + Database Editor
+
+The flat `boards` table is replaced by an **entity hierarchy**: Brand → Family → Board, with a color cascade and an explicit `family` field on each Board. The v2 resolver walks the hierarchy and returns the most specific colour/identity available; UUIDs are always freshly generated in the migration so old `BoardColorHex` values don't pin to retired entries.
+
+- v2 migration script with full test coverage; step tracking + orphan-row defense; case-insensitive brand match; `FAMILY_PATTERNS` extended.
+- `boards.db` rewritten on the v2 schema; `create_mockup_db.sql` rewritten; `build_full_db.sql` archived.
+- **Database Editor panel** (Library tab) — read-only first slice. Lists Brands, Families, Boards in a tree view; clicking a Board surfaces its full row.
+
+### Fixed
+
+- **HomeBackdrop hides** when any Dockview panel is opened — previously it leaked through float-window seams.
+
+---
+
+## v0.14.0 and earlier
+
+For releases prior to v0.15.0, see the git tags directly:
 [`git log --oneline --tags`](https://github.com/AlexeyInwerp/BoardRipper/releases)
 (maintainer-only access until the repo is open-sourced).

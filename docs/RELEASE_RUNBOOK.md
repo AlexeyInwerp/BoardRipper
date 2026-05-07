@@ -7,9 +7,11 @@ Single-command release pipeline. Runs entirely from the maintainer's Mac.
 ### Tools
 
 ```bash
-brew install minisign lftp jq pandoc docker
+brew install minisign lftp jq docker
 docker buildx create --use --name boardripper-multiarch || true
 ```
+
+(v0.19.5 dropped the `pandoc` dependency — `scripts/release/site-artifacts.sh` now renders the changelog inline using `perl + sed + awk`. If you have an older clone that still references pandoc, pull main.)
 
 ### Signing key
 
