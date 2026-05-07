@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { Emitter } from './emitter';
 import { log } from './log-store';
+import { updateStore } from './update-store';
 
 // Mirrors the backend Match shape.
 export interface ObdMatch {
@@ -94,7 +95,13 @@ class ObdStore extends Emitter {
     try {
       const res = await fetch(`/api/obd/match?board_number=${encodeURIComponent(boardNumber)}`);
       if (!res.ok) {
-        if (res.status !== 503) log.obd.warn('match failed', res.status);
+        // 503 is "index not synced" — already swallowed. During a self-update
+        // settle window, transient 502s from the proxy/backend handoff are
+        // also expected; demote those to a debug log.
+        if (res.status !== 503) {
+          if (updateStore.isPostRestartSettling) log.obd.log(`match failed (post-restart settle): ${res.status}`);
+          else log.obd.warn('match failed', res.status);
+        }
         this._matchesByBn.set(boardNumber, []);
         this._bump();
         return [];
@@ -120,7 +127,8 @@ class ObdStore extends Emitter {
       }
       return json.matches;
     } catch (e) {
-      log.obd.error('match fetch error', e);
+      if (updateStore.isPostRestartSettling) log.obd.log('match fetch error (post-restart settle)', e);
+      else log.obd.error('match fetch error', e);
       this._matchesByBn.set(boardNumber, []);
       this._bump();
       return [];
@@ -136,7 +144,8 @@ class ObdStore extends Emitter {
       const res = await fetch(`/api/obd/data?bpath=${encodeURIComponent(bpath)}`);
       if (res.status === 404) return null;
       if (!res.ok) {
-        log.obd.warn('loadCachedData failed', res.status);
+        if (updateStore.isPostRestartSettling) log.obd.log(`loadCachedData failed (post-restart settle): ${res.status}`);
+        else log.obd.warn('loadCachedData failed', res.status);
         return null;
       }
       const data = await res.json() as ObdData;

@@ -93,12 +93,22 @@ class UpdateStore extends Emitter {
   private _restarting = false;            // true while the new container is coming up
   private _restartingFromVersion = '';
   private _terminalSeen = false;          // true once SSE delivered done|error
+  private _settleUntil = 0;               // ms-epoch; while in the future, peer
+                                          // stores should treat transient HTTP
+                                          // failures as expected (proxy → new
+                                          // container handoff) rather than logging
+                                          // them as real warnings.
 
   get state(): UpdateState { return this._state; }
   get updating(): boolean { return this._updating; }
   get progress(): ProgressEntry[] { return this._progress; }
   get restarting(): boolean { return this._restarting; }
   get restartingFromVersion(): string { return this._restartingFromVersion; }
+  /** True for the brief window after a self-update reload where the
+   *  proxy/backend handoff may produce transient 502/503/network errors.
+   *  Other stores can use this to suppress noisy `log.X.warn(...)` calls
+   *  for fetch failures that would otherwise read as a "broken update". */
+  get isPostRestartSettling(): boolean { return Date.now() < this._settleUntil; }
 
   async fetchStatus() {
     try {
@@ -290,24 +300,61 @@ class UpdateStore extends Emitter {
   // flag in localStorage, fetch status and log whether the orchestration
   // succeeded. Public because we call it via the exported singleton from
   // outside the class.
+  //
+  // The page may have rendered against a Synology DSM Reverse Proxy /
+  // ingress cache while the container itself is still in handoff (old stop
+  // → new start). The first /api/update/status call can therefore 502 or
+  // return stale data while the backend finishes binding port 8080. We
+  // retry until we see a real backend version (not the default 'dev'
+  // sentinel from this store's initial state) so the success/failure
+  // verdict isn't decided on the boot-time race; otherwise a clean update
+  // can read as "rollback or failure" purely because the bootstrap fetch
+  // landed in the wrong half-second.
   resumeIfRestarting() {
     const flag = loadRestartFlag();
     if (!flag) return;
 
-    // We just loaded — if the page rendered, the backend is already up.
-    // Compare current version to flag.fromVersion: if different, success;
-    // if same, the orchestrator either rolled back or never swapped.
-    // In both cases the page IS up, so we don't need to wait. Clear the
-    // flag and let the normal status fetch update the UI.
-    void this.fetchStatus().then(() => {
+    // Open the settle window before the first fetch attempt so peer stores
+    // hitting fetch the same instant don't warn-log their own 502s.
+    this._settleUntil = Date.now() + 30_000;
+    this.notify();
+
+    void this.verifyResumeOutcome(flag);
+  }
+
+  private async verifyResumeOutcome(flag: RestartFlag) {
+    const start = Date.now();
+    const maxWaitMs = 30_000;
+    const pollIntervalMs = 1_500;
+
+    while (Date.now() - start < maxWaitMs) {
+      await this.fetchStatus();
       const post = this._state.current_version;
-      if (post !== flag.fromVersion) {
-        log.update.log(`Update applied: ${flag.fromVersion} → ${post}`);
-      } else {
-        log.update.warn(`Update did not change version from ${flag.fromVersion} (rollback or failure)`);
+      if (post && post !== 'dev') {
+        // Real backend response. Issue the verdict.
+        if (post !== flag.fromVersion) {
+          log.update.log(`Update applied: ${flag.fromVersion} → ${post}`);
+        } else {
+          // Backend reports the same version we started from. Could be a
+          // legitimate rollback (orchestrator's 60 s healthcheck failed
+          // and it restored the previous container), or the orchestrator
+          // never reached the swap. Either way the user is on the old
+          // version — softer wording, since the user already knows the
+          // headline ("update did not take") from the version string.
+          log.update.warn(`Still on ${flag.fromVersion} after restart — orchestrator likely rolled back. Check Debug → updater logs.`);
+        }
+        clearRestartFlag();
+        return;
       }
-      clearRestartFlag();
-    });
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+    }
+
+    // Timed out waiting for a stable backend response. Don't lie about the
+    // outcome — neither success nor rollback is established. Most often
+    // the proxy is still warming up; the next periodic fetchStatus will
+    // resolve the UI normally.
+    log.update.log(`Restart settled without a confirmed status response — refresh manually if the version looks wrong.`);
+    clearRestartFlag();
   }
 }
 

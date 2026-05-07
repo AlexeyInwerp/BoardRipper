@@ -2,6 +2,7 @@ import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
 import { libraryCache } from './library-cache';
+import { updateStore } from './update-store';
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
@@ -437,13 +438,19 @@ class DatabankStore extends Emitter {
   /** Safely fetch JSON from the backend, returning null if unavailable. */
   private async apiFetch<T>(url: string, init?: RequestInit): Promise<T | null> {
     const method = init?.method ?? 'GET';
+    // During the post-update settle window the proxy → new container handoff
+    // routinely produces 502/503 for a few seconds; treat those as expected
+    // and demote to a debug log so the user doesn't read them as a broken
+    // update in the Debug panel.
+    const settling = updateStore.isPostRestartSettling;
     try {
       const res = await fetch(url, init);
       if (!res.ok) {
         // Surface the status + URL on every failure so a stale backend
         // (e.g. missing the PATCH /api/databank/bindings/{id} route) shows
         // up in devtools instead of silently leaving the UI unchanged.
-        log.scan.warn(`API ${method} ${url} → HTTP ${res.status}`);
+        if (settling) log.scan.log(`API ${method} ${url} → HTTP ${res.status} (post-restart settle)`);
+        else log.scan.warn(`API ${method} ${url} → HTTP ${res.status}`);
         throw new Error(`HTTP ${res.status}`);
       }
       const contentType = res.headers.get('content-type') || '';
@@ -458,7 +465,7 @@ class DatabankStore extends Emitter {
       }
       return await res.json();
     } catch {
-      if (!this._backendWarned) {
+      if (!this._backendWarned && !settling) {
         log.scan.warn('Backend unavailable — run the Docker container or backend on :8080');
         this._backendWarned = true;
       }
