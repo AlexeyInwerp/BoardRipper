@@ -3,6 +3,8 @@
 package updater
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+)
+
+// Network-asset download caps. The signed manifest carries an exact SizeBytes
+// for the tarball; we use it. The fallback cap exists for forward-compat with
+// older or hand-edited manifests that omit it — a malicious mirror serving an
+// infinite stream would otherwise OOM the container or fill the data volume
+// before any integrity check ran.
+const (
+	downloadTimeout      = 10 * time.Minute // accommodates 30–40 MB tarball over slow links
+	fallbackMaxAssetSize = 1 << 30          // 1 GiB hard cap when SizeBytes is unset
 )
 
 // Build-time variables injected via -ldflags.
@@ -250,15 +262,8 @@ func (u *Updater) Apply() error {
 // applyTarball downloads, verifies, and docker-loads the release tarball.
 func (u *Updater) applyTarball(m *Manifest) error {
 	dest := filepath.Join(u.dataDir, "boardripper-"+m.Version+".tar.gz")
-	if err := downloadAsset(m.Tarball.URLPrimary, dest); err != nil {
+	if err := downloadAssetVerified(m.Tarball.URLPrimary, dest, m.Tarball.SizeBytes, m.Tarball.SHA256); err != nil {
 		return fmt.Errorf("download: %w", err)
-	}
-	body, err := os.ReadFile(dest)
-	if err != nil {
-		return err
-	}
-	if err := VerifyTarballSHA256(body, m.Tarball.SHA256); err != nil {
-		return err
 	}
 	if err := u.dockerLoad(dest); err != nil {
 		return fmt.Errorf("docker load: %w", err)
@@ -266,9 +271,16 @@ func (u *Updater) applyTarball(m *Manifest) error {
 	return nil
 }
 
-// downloadAsset fetches url via plain HTTPS GET and writes the body to dest.
-func downloadAsset(url, dest string) error {
-	resp, err := http.Get(url) //nolint:gosec // URL comes from a signed manifest
+// downloadAssetVerified streams url → dest while computing SHA-256 and
+// enforcing both the manifest's declared size and a hard fallback cap. A
+// malicious mirror serving a never-ending stream is rejected before it can
+// fill the data volume; a stream that diverges from the signed SHA fails the
+// hash check after the bytes have already been written, but never grows the
+// file beyond the cap. Streaming avoids the previous os.ReadFile-after-copy
+// pattern that doubled peak RAM on a 30–40 MB tarball.
+func downloadAssetVerified(url, dest string, sizeBytes int64, expectedSHA256 string) error {
+	client := &http.Client{Timeout: downloadTimeout}
+	resp, err := client.Get(url) //nolint:gosec // URL comes from a signed manifest
 	if err != nil {
 		return err
 	}
@@ -276,13 +288,41 @@ func downloadAsset(url, dest string) error {
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("HTTP %d downloading %s", resp.StatusCode, url)
 	}
+
+	maxBytes := sizeBytes
+	if maxBytes <= 0 {
+		maxBytes = fallbackMaxAssetSize
+	}
+	// Read one byte past the cap so io.Copy returns n > maxBytes when the
+	// upstream actually ships more (otherwise io.LimitReader silently truncates
+	// at exactly the limit and a too-long stream looks identical to a perfect fit).
+	body := io.LimitReader(resp.Body, maxBytes+1)
+
 	out, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, resp.Body)
-	return err
+
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(out, h), body)
+	if err != nil {
+		return fmt.Errorf("stream copy: %w", err)
+	}
+	if n > maxBytes {
+		return fmt.Errorf("asset exceeds cap: read %d bytes, cap %d", n, maxBytes)
+	}
+	if sizeBytes > 0 && n != sizeBytes {
+		return fmt.Errorf("asset size mismatch: got %d bytes, manifest declared %d", n, sizeBytes)
+	}
+	if expectedSHA256 != "" {
+		got := hex.EncodeToString(h.Sum(nil))
+		want := strings.ToLower(strings.TrimSpace(expectedSHA256))
+		if got != want {
+			return fmt.Errorf("sha256 mismatch: got %s, want %s", got, want)
+		}
+	}
+	return nil
 }
 
 // parseVersion extracts numeric parts from a version string.
