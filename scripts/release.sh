@@ -135,9 +135,19 @@ echo "    digest: $IMAGE_DIGEST"
 
 # --- Pin orchestrator image (alpine for in-place restart) ---
 ORCHESTRATOR_IMG="alpine:3.19"
-docker pull --platform linux/amd64 "$ORCHESTRATOR_IMG" >/dev/null
-ORCHESTRATOR_REF="$(docker inspect "$ORCHESTRATOR_IMG" --format '{{index .RepoDigests 0}}' 2>/dev/null || echo "")"
-if [ -z "$ORCHESTRATOR_REF" ]; then
+# Capture the multi-arch INDEX digest from the registry, not a per-platform
+# manifest. The previous form (`docker pull --platform linux/amd64` then
+# `RepoDigests[0]`) captured the amd64-only manifest digest — which makes
+# pull-by-digest fail on arm64 hosts because the digest is platform-specific.
+# Same bug class as the main-image fix in d720a39. `imagetools inspect` reads
+# the registry's image index directly and returns the index digest, which
+# Docker resolves to the right per-arch manifest at pull time.
+ORCHESTRATOR_DIGEST="$(docker buildx imagetools inspect "$ORCHESTRATOR_IMG" 2>/dev/null \
+  | grep -E '^Digest:' | head -1 | awk '{print $2}')"
+if [ -n "$ORCHESTRATOR_DIGEST" ]; then
+  ORCHESTRATOR_REF="${ORCHESTRATOR_IMG%:*}@$ORCHESTRATOR_DIGEST"
+else
+  echo "WARN: could not capture orchestrator index digest; falling back to tag-pinned ref" >&2
   ORCHESTRATOR_REF="$ORCHESTRATOR_IMG"
 fi
 echo "    orchestrator: $ORCHESTRATOR_REF"
