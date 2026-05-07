@@ -1,5 +1,41 @@
 # BoardRipper changelog
 
+## v0.19.6 — 2026-05-07
+
+### Fixed
+
+- **Small pins were unselectable in chain-adjacent / search-dim / spotlight modes.** PixiJS v8 Graphics inherit `eventMode` from their parent — the viewport is interactive (so pins receive clicks), so every Graphics added underneath was *also* interactive and any painted pixel under the cursor counted as a hit. The full-board dim layer drawn in those modes silently swallowed clicks before they reached the pin sprites; tiny 0402 caps and dense BGA pins were the worst affected. Decoration layers now explicitly set `eventMode='none'` at construction *and* at every `renderSelection` (the latter is an HMR safety-net — Vite replaces the module without re-instantiating the PixiJS Application, so layers in a hot-reloaded session would otherwise stay stale on `'auto'`). User-reported as "extreme regression."
+- **XZZ multi-board packs were sometimes globally folded into one mirrored slab.** iPhone14 Pro/ProMax combined boardview was the canary — its tall portrait boards produce a strong mid-Y centroid gap (the empty CPU centerlines stacked on top of each other) that beat the X-direction inter-board gaps and slipped past the balance checks in `findFoldAxis()`. Now early-returns when the outline decomposes into ≥4 connected components that all pair off by `(width, height, segCount)`; per-board X-fold axes from `boardGroups` are the only thing the UI applies, with manual per-board folding still available from the sidebar. PARSER_VERSION bumped to invalidate cached entries.
+- **Board rotation now pivots around the viewport's current focus**, not the board's geometric centre. Rotating while looking at a non-centred region used to slide that region off-screen. Implementation captures the viewport's world-centre before `applyFlips`, then pans so the same world point lands at screen-centre again after the rotation completes. Net-line geometry is now also recomputed and redrawn immediately on rotation (previously stayed at pre-rotation world positions until the next selection/pan/pulse-tick).
+- **Flip-axis toggle now stays screen-stable across rotation.** Rotating to 90°/270° silently inverted the meaning of the flip-axis button — the stored hinge is a board-axis, but the user picks a *screen* direction. `rotateFlipAxis()` now flips the stored `'x'|'y'` whenever rotation crosses an axes-swap boundary so the screen direction the user selected is preserved. Toolbar icon and tooltip ('⇅ Vertical' vs '⇄ Horizontal') reflect the actual screen-axis result.
+
+### New
+
+- **180° rotation button** between the CCW/CW arrows. Repair work is dominated by boards photographed from the wrong end; one click is faster than two.
+- **Rotation disabled in butterfly mode** with an explanatory tooltip — rotating a side-by-side spread tilted the joint off-screen, and the auto-separation axis logic didn't track manual rotation.
+- **Public landing page** at <https://www.ripperdoc.de/boardripper/>. Plain HTML5, no JS, deployed via the RipperDocWeb rsync. Lives in `landing/`, excluded from the Docker image (the Dockerfile only `COPY`s `src/frontend/`, `src/backend/`, and `Board Database/boards.db`). See `landing/README.md` for the update workflow.
+
+### Performance — renderer hot-path
+
+Four findings from the 2026-05-07 review report; all sub-millisecond individually, compounding under sustained interaction. The bundle was reverted once when its `eventMode` interaction with the dim-layer bug surfaced as a click-blocking regression, then re-introduced piece by piece after that bug was traced to a separate root cause and fixed independently.
+
+- **R-1** — restored G-3's zero-allocation property for the net-line render path. Per-pulse-frame `Map<color, Segment[]>` and `{start,end}` wrapper allocations (added in `a9d99b4` for chain-adjacent) are now built once in `recomputeNetLineSegments` (already dirty-tracked) as `netLineSegmentsByColor`. ~30 allocs/frame → 0 (single net) or ~150 → 0 (chain-adjacent on a 60-net rail).
+- **R-2** — replaced `[...adjacentNets].sort().join(',')` sentinel with `.size` compare in `lastRenderedSel`. Content changes always co-occur with a change in `(partIndex, pinIndex, highlightedNet, board)` — the BFS inputs — so size is a sufficient sentinel. Saves ~0.05–0.3 ms per store notify on a 60-adjacent rail; biggest win during search iteration / PDF-binding refresh.
+- **R-3** — pulled the OBD tooltip lookup off the per-`pointermove` path. `formatObdForNet` was running 6 regex tests + O(matches × |nets|) per move (~4 500 string compares on a 3-variant × 1 500-net board). Now: `obdNetIndex(boardNumber)` exposes a snapshot-keyed `Map<netName, ObdNet[]>` cached on a `WeakMap` keyed by the obd-store snapshot, and `BoardRenderer` memoises `extractBoardNumberFromFilename` against `boardStore.fileName`. Per-move cost: 1 string compare + 1 `Map.get`.
+- **R-4** — promoted `crossSideGhostParts` from `number[]` to `Set<number>`. Two `.includes()` calls in the per-pin chain-mode net-line builder were O(g) linear scans called for every pin reference of every active net (~30 000 array scans → ~600 hash lookups on a busy 5 V rail with 60 nets, 10 pins, 50 ghosts).
+
+### Updater hardening
+
+Closes the two Important findings from `docs/analysis/2026-05-07-updater-security.md`. The crypto primitives were already well-covered; these tighten the surrounding I/O envelope.
+
+- **Enforce `released_at` freshness window in `ValidateManifest`.** The existing check rejected expired manifests (90-day `not_after`) but ignored `released_at`, so a compromised mirror could re-serve any signed-but-stale manifest from anywhere in the 90-day window — defeating the counter check on first install (where `installedCounter == 0` skips), and freezing installed clients on outdated releases. Now requires `released_at ∈ [now − 30 d, now + 24 h]`. The 30 d past bound is wide enough not to bite the maintainer's normal cadence (5 releases in 9 days during the v0.19 cycle); the 24 h future slack tolerates clock-skew between signing host and client. Manifests without `released_at` are rejected outright.
+- **Cap, time-out, and stream-verify the tarball download.** `downloadAsset()` previously did a plain `http.Get()` with no timeout, no size cap, and no streaming integrity check; `applyTarball` then re-read the whole tarball off disk to compute SHA-256, doubling peak RAM. New `downloadAssetVerified()` does it in one streaming pass: 10 min `http.Client.Timeout`, body cap = manifest's signed `SizeBytes` (or 1 GiB legacy fallback) by reading one byte past the cap so over-long streams are observed not silently truncated, incremental SHA-256 via `io.MultiWriter(file, sha256.New())` so peak memory stays at io.Copy's 32 KiB buffer. Rejects on size mismatch, SHA mismatch, or non-200.
+- **Test coverage for orchestration helpers.** v0.19.2 (image-ref form), v0.19.3 (ghost-pulse), and v0.19.4 (healthcheck-by-name) all regressed in the orchestration layer despite well-tested crypto primitives. `parseDockerImageRef` and `selectNewImageRef` extracted as pure functions and covered with 25 tests across `parseDockerImageRef` (6 forms incl. embedded-colon-in-digest), `selectNewImageRef` (4 paths incl. the v0.19.2 fallback case), `extractBundle` (path-traversal guard, bsdtar/gnu `./` parity, ignored-extras), `bindsFromMounts`, and `shortID`.
+
+### Release pipeline
+
+- **Multi-arch INDEX digest is now captured for both the BoardRipper image and the orchestrator alpine.** Two same-class fixes: (a) `release.sh` was reading `--raw | jq '.manifests[0].digest'` for the BoardRipper image, which grabs the *first* platform manifest (amd64) from the multi-arch index, then signing that amd64-only digest into `manifest.json`. amd64 hosts pulled fine; an arm64 install would error. Now uses the non-raw `imagetools inspect`'s top-level `Digest:` line, hard-failing if the parse returns empty. (b) Same bug class on `alpine:3.19` for the orchestrator: `docker pull --platform linux/amd64` then `RepoDigests[0]` gave the per-platform manifest digest, not the index digest. Now pulls without `--platform` and reads via `buildx imagetools`. v0.19.5's NAS deploy was unaffected because the maintainer's NAS is amd64-only.
+
 ## v0.19.5 — 2026-05-06
 
 ### New: update-in-progress modal
