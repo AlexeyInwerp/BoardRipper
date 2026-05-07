@@ -1051,16 +1051,6 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  /** 180° rotation — the common case for boards photographed from the wrong
-   *  end. flipAxis is invariant under a 180° turn (the screen axis-swap parity
-   *  is unchanged), so no flipAxis adjustment needed. */
-  rotate180() {
-    const tab = this.activeTab;
-    if (!tab) return;
-    this.updateActiveTab({ rotation: (tab.rotation + 180) % 360 });
-    this.notify();
-  }
-
   /** Set arbitrary rotation in degrees (from trackpad gesture or other free input). */
   /**
    * Switch the active board to a different revision (multi-revision .cad
