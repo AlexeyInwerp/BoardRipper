@@ -200,7 +200,10 @@ export class BoardRenderer {
   /** Ghost outlines for cross-side net components (hidden side, semi-transparent + pulsing) */
   private crossSideGhostGfx!: Graphics;
   /** Part indices currently drawn as cross-side ghosts (for ticker-driven pulse redraw) */
-  private crossSideGhostParts: number[] = [];
+  // Set, not array — `.has()` is O(1) and the field is hot inside the per-pin
+  // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
+  // not required; iteration in renderCrossSideGhosts is fine on a Set.
+  private crossSideGhostParts: Set<number> = new Set();
   private debugVertexLabels: Text[] = [];
   private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
@@ -437,7 +440,7 @@ export class BoardRenderer {
     // see the pulse, so advancing the phase + forcing a GPU render is pure waste.
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
-    const hasGhosts = this.crossSideGhostParts.length > 0;
+    const hasGhosts = this.crossSideGhostParts.size > 0;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
     if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
@@ -1203,7 +1206,7 @@ export class BoardRenderer {
         this.netLinesHiddenForZoom = false;
         this.netLinesDirty = true;
         this.renderNetLines();
-        if (this.crossSideGhostParts.length > 0) this.renderCrossSideGhosts();
+        if (this.crossSideGhostParts.size > 0) this.renderCrossSideGhosts();
       }
       this.needsRender = true;
     }, 32);
@@ -2712,7 +2715,7 @@ export class BoardRenderer {
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
     this.crossSideGhostGfx.clear();
-    this.crossSideGhostParts = [];
+    this.crossSideGhostParts = new Set();
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
@@ -3178,7 +3181,7 @@ export class BoardRenderer {
         }
       }
 
-      this.crossSideGhostParts = ghostPartIndices;
+      this.crossSideGhostParts = new Set(ghostPartIndices);
     }
 
     // ── Cross-side ghost components (hidden side, pulsing semi-transparent) ──
@@ -3489,7 +3492,7 @@ export class BoardRenderer {
       for (const [partIndex, pinIndices] of partNetPins) {
         const part = this.board.parts[partIndex];
         if (!part) continue;
-        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(partIndex);
+        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.has(partIndex);
         if (!this.isPartVisible(part) && !isGhost) continue;
 
         const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
@@ -3525,7 +3528,7 @@ export class BoardRenderer {
         seenParts.add(ref.partIndex);
         const part = this.board.parts[ref.partIndex];
         if (!part) continue;
-        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(ref.partIndex);
+        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.has(ref.partIndex);
         if (!this.isPartVisible(part) && !isGhost) continue;
         const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
         const eb = computePartRenderBounds(part, s);
@@ -3618,7 +3621,7 @@ export class BoardRenderer {
    */
   private renderCrossSideGhosts() {
     this.crossSideGhostGfx.clear();
-    if (this.crossSideGhostParts.length === 0 || !this.board) return;
+    if (this.crossSideGhostParts.size === 0 || !this.board) return;
 
     const s = renderSettingsStore.settings;
     // Pulse alpha between 0.12 and 0.35
