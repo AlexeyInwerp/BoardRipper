@@ -1417,19 +1417,26 @@ export class BoardRenderer {
       // parts during fold processing — they're at their overlaid positions. No
       // additional mirror needed; both halves use the same scale.
       //
-      // Y-fold boards (butterflyFoldAxis='y' or default): flip the perpendicular
-      // axis (Y) to create the visual fold effect. The renderer must undo the
-      // parser's Y-fold mirror so the bottom appears at its unfolded position.
+      // Y-fold boards (butterflyFoldAxis='y'): parser already Y-mirrored the bottom;
+      // renderer Y-mirrors to undo it so the bottom shows at its unfolded position.
+      //
+      // Default (no native fold): the fold-open view needs exactly ONE screen-axis
+      // mirror across the joint — vertical separation → screen-Y, horizontal →
+      // screen-X. Under 90°/270° rotation, board X and Y map to the opposite
+      // screen axes, so that single screen mirror is achieved by flipping the
+      // OTHER board axis. Flipping both at once would 180°-rotate the bottom
+      // half (the "left ends up on the right" symptom on auto-rotated tall boards).
       let botScaleX: number, botScaleY: number;
       if (board.butterflyFoldAxis === 'x') {
         botScaleX = sx;
         botScaleY = topSy;
-      } else {
-        const mirrorBoardX = board.butterflyFoldAxis === 'y'
-          ? false
-          : separateX !== axesSwapped;
-        botScaleX = mirrorBoardX ? -sx : sx;
+      } else if (board.butterflyFoldAxis === 'y') {
+        botScaleX = sx;
         botScaleY = -topSy;
+      } else {
+        const mirrorBoardX = separateX !== axesSwapped;
+        botScaleX = mirrorBoardX ? -sx : sx;
+        botScaleY = mirrorBoardX ? topSy : -topSy;
       }
 
       const dx = separateX ? halfSep : 0;

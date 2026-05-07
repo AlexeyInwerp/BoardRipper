@@ -270,7 +270,7 @@ function GlobalSearch() {
 export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // pdfInputRef removed — single Open button + unified file picker now.
-  const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis } = useBoardStore();
+  const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis, rotation } = useBoardStore();
 
   // For files where the label convention is inverted (primarySide='bottom'),
   // the UI presents the physical CPU side as "Top". The store's showTop flag
@@ -359,14 +359,23 @@ export function Toolbar() {
         >
           Top
         </button>
-        <button
-          onClick={() => boardStore.toggleFlipAxis()}
-          className="toolbar-btn toolbar-btn-icon"
-          data-tooltip={`Flip axis: ${flipAxis.toUpperCase()}`}
-          style={{ fontSize: '0.75em', padding: '0 4px', minWidth: 0 }}
-        >
-          {flipAxis === 'x' ? '⇅' : '⇄'}
-        </button>
+        {(() => {
+          // Icon reflects the SCREEN flip direction, not the internal board axis.
+          // Under 90°/270° rotation board X↔screen Y, so flipAxis='x' produces a
+          // horizontal screen flip — invert the icon to match what the user sees.
+          const axesSwapped = Math.round(rotation / 90) % 2 === 1;
+          const screenVertical = (flipAxis === 'x') !== axesSwapped;
+          return (
+            <button
+              onClick={() => boardStore.toggleFlipAxis()}
+              className="toolbar-btn toolbar-btn-icon"
+              data-tooltip={`Flip axis: ${screenVertical ? 'Vertical' : 'Horizontal'}`}
+              style={{ fontSize: '0.75em', padding: '0 4px', minWidth: 0 }}
+            >
+              {screenVertical ? '⇅' : '⇄'}
+            </button>
+          );
+        })()}
         <button
           onClick={(e) => boardStore.selectBottom(e.shiftKey)}
           className={`toolbar-btn ${uiShowBottom ? 'active' : ''}`}

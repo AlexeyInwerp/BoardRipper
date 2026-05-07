@@ -171,6 +171,17 @@ function flipAxisForRotation(rotationDeg: number): 'x' | 'y' {
   return axesSwapped ? 'y' : 'x';
 }
 
+/** When the rotation crosses an axes-swap boundary (90°↔0°, 270°↔180°, …),
+ *  flip the board-axis hinge identifier so the *screen* direction the user
+ *  selected stays the same. Without this, manual rotation silently inverts
+ *  the meaning of the flip-axis toggle every 90°. */
+function rotateFlipAxis(flipAxis: 'x' | 'y', oldRotationDeg: number, newRotationDeg: number): 'x' | 'y' {
+  const oldSwapped = Math.round(oldRotationDeg / 90) % 2 === 1;
+  const newSwapped = Math.round(newRotationDeg / 90) % 2 === 1;
+  if (oldSwapped === newSwapped) return flipAxis;
+  return flipAxis === 'x' ? 'y' : 'x';
+}
+
 /** Re-calibrate view orientation for the currently-derived board.
  *
  *  When a multi-board selection or fold mode changes, the derived BoardData
@@ -1017,14 +1028,26 @@ class BoardStore extends Emitter {
   rotateCW() {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ rotation: (tab.rotation + 90) % 360 });
+    const newRotation = (tab.rotation + 90) % 360;
+    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.notify();
   }
 
   rotateCCW() {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ rotation: (tab.rotation + 270) % 360 });
+    const newRotation = (tab.rotation + 270) % 360;
+    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    this.notify();
+  }
+
+  /** 180° rotation — the common case for boards photographed from the wrong
+   *  end. flipAxis is invariant under a 180° turn (the screen axis-swap parity
+   *  is unchanged), so no flipAxis adjustment needed. */
+  rotate180() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ rotation: (tab.rotation + 180) % 360 });
     this.notify();
   }
 
@@ -1299,7 +1322,8 @@ class BoardStore extends Emitter {
   setRotationFree(degrees: number) {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ rotation: ((degrees % 360) + 360) % 360 });
+    const newRotation = ((degrees % 360) + 360) % 360;
+    this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
     this.notify();
   }
 
