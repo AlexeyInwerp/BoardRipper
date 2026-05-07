@@ -31,7 +31,7 @@ import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
-import { obdNetLookup, extractBoardNumberFromFilename } from '../store/obd-store';
+import { obdNetIndex, extractBoardNumberFromFilename } from '../store/obd-store';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -4102,11 +4102,29 @@ export class BoardRenderer {
    *  every pin-hover move, so the work beyond a Map lookup must be cheap.
    *  Wrapped in try/catch because a throw here would propagate up through
    *  the pointermove handler and noisily fill the console on every move. */
+  /** Cached board-number for the current `boardStore.fileName`. The 6-regex
+   *  pass in extractBoardNumberFromFilename was running on every pointermove
+   *  (R-3 in 2026-05-07-renderer.md). The filename only changes on board
+   *  load / tab switch, so caching against it is sufficient. `null` is a
+   *  valid memoised "no match" — distinguished from "not yet computed" by
+   *  the sentinel filename `undefined`. */
+  private _obdMemoFileName: string | undefined = undefined;
+  private _obdMemoBoardNumber: string | null = null;
+
+  private getMemoizedObdBoardNumber(): string | null {
+    const fn = boardStore.fileName;
+    if (fn !== this._obdMemoFileName) {
+      this._obdMemoFileName = fn;
+      this._obdMemoBoardNumber = fn ? extractBoardNumberFromFilename(fn) : null;
+    }
+    return this._obdMemoBoardNumber;
+  }
+
   private formatObdForNet(netName: string): string {
     try {
-      const bn = extractBoardNumberFromFilename(boardStore.fileName);
+      const bn = this.getMemoizedObdBoardNumber();
       if (!bn) return '';
-      const nets = obdNetLookup(bn, netName);
+      const nets = obdNetIndex(bn).get(netName) ?? [];
       if (nets.length === 0) return '';
       const diodes = uniqOf(nets, n => n.diode);
       const volts = uniqOf(nets, n => n.voltage);

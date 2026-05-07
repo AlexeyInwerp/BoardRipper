@@ -308,20 +308,43 @@ export function useObdNetLookup(boardNumber: string | undefined) {
   };
 }
 
-/** Imperative companion for non-React consumers (e.g. BoardRenderer). Reads
- *  the current snapshot directly. */
-export function obdNetLookup(boardNumber: string | undefined, netName: string): ObdNet[] {
-  if (!boardNumber || !netName) return [];
+/** Snapshot-scoped index cache. Keyed by snapshot identity (replaced on every
+ *  _bump, so the WeakMap drops stale entries automatically). Each snapshot's
+ *  bucket holds Map<boardNumber, Map<netName, ObdNet[]>> so a multi-board
+ *  session pays one buildNetIndex pass per board per data update — not one
+ *  per pointermove (R-3 in 2026-05-07-renderer.md). */
+const _netIndexCache = new WeakMap<
+  ReturnType<ObdStore['getSnapshot']>,
+  Map<string, Map<string, ObdNet[]>>
+>();
+const EMPTY_NET_INDEX: ReadonlyMap<string, ObdNet[]> = new Map();
+
+/** Imperative companion for non-React consumers (e.g. BoardRenderer). Returns
+ *  a per-(boardNumber, snapshot) cached Map<netName, ObdNet[]>. Lookup is
+ *  O(1); the first call after a snapshot change pays one buildNetIndex pass
+ *  to populate the cache. Returned Map is treated as read-only by callers. */
+export function obdNetIndex(boardNumber: string | undefined): ReadonlyMap<string, ObdNet[]> {
+  if (!boardNumber) return EMPTY_NET_INDEX;
   const snap = obdStore.getSnapshot();
-  const matches = snap.matchesByBn.get(boardNumber) ?? [];
-  const out: ObdNet[] = [];
-  for (const m of matches) {
-    const data = snap.data.get(m.bpath);
-    if (!data) continue;
-    const net = data.nets.find(n => n.name === netName);
-    if (net) out.push(net);
+  let perSnap = _netIndexCache.get(snap);
+  if (!perSnap) {
+    perSnap = new Map();
+    _netIndexCache.set(snap, perSnap);
   }
-  return out;
+  let idx = perSnap.get(boardNumber);
+  if (!idx) {
+    idx = buildNetIndex(snap, boardNumber);
+    perSnap.set(boardNumber, idx);
+  }
+  return idx;
+}
+
+/** Imperative single-net lookup for non-React consumers. Backed by the
+ *  snapshot-scoped index cache built by obdNetIndex(); use that directly
+ *  if you'll do many lookups against the same board. */
+export function obdNetLookup(boardNumber: string | undefined, netName: string): ObdNet[] {
+  if (!netName) return [];
+  return obdNetIndex(boardNumber).get(netName) ?? [];
 }
 
 /** React hook: returns { matches, fetched, fetch, update, isFetching } for one board. */
