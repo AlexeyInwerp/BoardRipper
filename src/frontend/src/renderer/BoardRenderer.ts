@@ -31,7 +31,7 @@ import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
-import { obdNetIndex, extractBoardNumberFromFilename } from '../store/obd-store';
+import { obdNetLookup, extractBoardNumberFromFilename } from '../store/obd-store';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -200,11 +200,7 @@ export class BoardRenderer {
   /** Ghost outlines for cross-side net components (hidden side, semi-transparent + pulsing) */
   private crossSideGhostGfx!: Graphics;
   /** Part indices currently drawn as cross-side ghosts (for ticker-driven pulse redraw) */
-  // Set, not array — `.has()` is O(1) and the field is hot inside the per-pin
-  // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
-  // not required by any consumer; iteration in renderCrossSideGhosts is fine
-  // on a Set.
-  private crossSideGhostParts: Set<number> = new Set();
+  private crossSideGhostParts: number[] = [];
   private debugVertexLabels: Text[] = [];
   private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
@@ -293,7 +289,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsKey: '' as string, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -313,11 +309,6 @@ export class BoardRenderer {
   // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
   // Only recomputed when selection, viewport, or visibility changes.
   private netLineSegments: Array<{ start: Point; end: Point; color: number }> = [];
-  // Same data colour-keyed for the batched-stroke fast path. Populated alongside
-  // `netLineSegments` in recomputeNetLineSegments so the per-frame draw path
-  // can iterate without allocating a fresh Map / wrapper objects every tick
-  // (G-3 zero-allocation property).
-  private netLineSegmentsByColor: Map<number, Array<{ start: Point; end: Point }>> = new Map();
   private netLinesDirty = true;
   /** Extra state tracked for fade logic */
   private netLineFadeDist = 0;
@@ -446,7 +437,7 @@ export class BoardRenderer {
     // see the pulse, so advancing the phase + forcing a GPU render is pure waste.
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
-    const hasGhosts = this.crossSideGhostParts.size > 0;
+    const hasGhosts = this.crossSideGhostParts.length > 0;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
     if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
@@ -1212,7 +1203,7 @@ export class BoardRenderer {
         this.netLinesHiddenForZoom = false;
         this.netLinesDirty = true;
         this.renderNetLines();
-        if (this.crossSideGhostParts.size > 0) this.renderCrossSideGhosts();
+        if (this.crossSideGhostParts.length > 0) this.renderCrossSideGhosts();
       }
       this.needsRender = true;
     }, 32);
@@ -1986,15 +1977,10 @@ export class BoardRenderer {
       const sel = boardStore.selection;
       const searchLen = boardStore.searchResultIndices?.size ?? 0;
       const lrs = this.lastRenderedSel;
-      // adjacentNets content changes always co-occur with a change in
-      // (partIndex, pinIndex, highlightedNet, board) — those are the inputs
-      // that determine adjacency. Comparing .size is therefore sufficient and
-      // avoids the per-notification sort+join + 2× Set spread that the prior
-      // sentinel paid (R-2 in 2026-05-07-renderer.md).
       if (sel.partIndex !== lrs.partIndex
         || sel.pinIndex !== lrs.pinIndex
         || sel.highlightedNet !== lrs.highlightedNet
-        || sel.adjacentNets.size !== lrs.adjacentNetsSize
+        || [...sel.adjacentNets].sort().join(',') !== lrs.adjacentNetsKey
         || searchLen !== lrs.searchLen
         || this.board !== lrs.board
         || boardStore.dimMode !== lrs.dimMode
@@ -2004,7 +1990,7 @@ export class BoardRenderer {
         || boardStore.showGhosts !== lrs.showGhosts
         || boardStore.searchSelectionActive !== lrs.searchSelectionActive) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsKey: [...sel.adjacentNets].sort().join(','), searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
       }
 
       // PDF follow mode: search for selected component
@@ -2712,7 +2698,7 @@ export class BoardRenderer {
     this.selectionGfx.clear();
     this.butterflySelectionGfx.clear();
     this.crossSideGhostGfx.clear();
-    this.crossSideGhostParts = new Set();
+    this.crossSideGhostParts = [];
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
@@ -3178,7 +3164,7 @@ export class BoardRenderer {
         }
       }
 
-      this.crossSideGhostParts = new Set(ghostPartIndices);
+      this.crossSideGhostParts = ghostPartIndices;
     }
 
     // ── Cross-side ghost components (hidden side, pulsing semi-transparent) ──
@@ -3416,7 +3402,6 @@ export class BoardRenderer {
   /** Recompute cached net line segments (start/end points + color) when selection or viewport changes */
   private recomputeNetLineSegments() {
     this.netLineSegments = [];
-    this.netLineSegmentsByColor.clear();
     this.netLineFadeDist = 0;
     this.netLinesDirty = false;
 
@@ -3438,14 +3423,6 @@ export class BoardRenderer {
 
     for (const entry of activeNets) {
       this.appendNetLineSegmentsFor(entry.name, entry.color, mode, sel, s);
-    }
-
-    // Bucketise by colour once. The per-frame renderNetLines path iterates
-    // these directly with no further allocation (was: rebuilt each frame).
-    for (const seg of this.netLineSegments) {
-      let arr = this.netLineSegmentsByColor.get(seg.color);
-      if (!arr) { arr = []; this.netLineSegmentsByColor.set(seg.color, arr); }
-      arr.push(seg);
     }
   }
 
@@ -3498,7 +3475,7 @@ export class BoardRenderer {
       for (const [partIndex, pinIndices] of partNetPins) {
         const part = this.board.parts[partIndex];
         if (!part) continue;
-        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.has(partIndex);
+        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(partIndex);
         if (!this.isPartVisible(part) && !isGhost) continue;
 
         const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
@@ -3534,7 +3511,7 @@ export class BoardRenderer {
         seenParts.add(ref.partIndex);
         const part = this.board.parts[ref.partIndex];
         if (!part) continue;
-        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.has(ref.partIndex);
+        const isGhost = !this.isPartVisible(part) && this.crossSideGhostParts.includes(ref.partIndex);
         if (!this.isPartVisible(part) && !isGhost) continue;
         const root = isGhost ? this.activeScene?.root : this.rootForPart(part);
         const eb = computePartRenderBounds(part, s);
@@ -3591,10 +3568,16 @@ export class BoardRenderer {
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    // Iterate the colour-keyed buckets cached by recomputeNetLineSegments.
-    // No per-frame allocation here — was previously rebuilding the Map and
-    // wrapping every segment in a fresh {start,end} object 60 fps.
-    for (const [baseColor, segs] of this.netLineSegmentsByColor) {
+    // Group segments by base color so we can keep the fast batched-stroke path
+    // when fade/dash are off. The grouping cost is O(N) and tiny for typical N.
+    const byColor = new Map<number, Array<{ start: Point; end: Point }>>();
+    for (const seg of this.netLineSegments) {
+      let arr = byColor.get(seg.color);
+      if (!arr) { arr = []; byColor.set(seg.color, arr); }
+      arr.push({ start: seg.start, end: seg.end });
+    }
+
+    for (const [baseColor, segs] of byColor) {
       const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
       if (!useFade && !s.netLineDashed) {
         for (const { start, end } of segs) {
@@ -3621,7 +3604,7 @@ export class BoardRenderer {
    */
   private renderCrossSideGhosts() {
     this.crossSideGhostGfx.clear();
-    if (this.crossSideGhostParts.size === 0 || !this.board) return;
+    if (this.crossSideGhostParts.length === 0 || !this.board) return;
 
     const s = renderSettingsStore.settings;
     // Pulse alpha between 0.12 and 0.35
@@ -4096,24 +4079,6 @@ export class BoardRenderer {
     if (this.tooltipEl) this.tooltipEl.style.display = 'none';
   }
 
-  /** Cached board-number for the current `boardStore.fileName`. The 6-regex
-   *  pass in extractBoardNumberFromFilename was running on every pointermove
-   *  (R-3 in 2026-05-07-renderer.md). The filename only changes on board
-   *  load / tab switch, so caching against it is sufficient. `null` is a
-   *  valid memoised "no match" — distinguished from "not yet computed" by
-   *  the sentinel filename `undefined`. */
-  private _obdMemoFileName: string | undefined = undefined;
-  private _obdMemoBoardNumber: string | null = null;
-
-  private getMemoizedObdBoardNumber(): string | null {
-    const fn = boardStore.fileName;
-    if (fn !== this._obdMemoFileName) {
-      this._obdMemoFileName = fn;
-      this._obdMemoBoardNumber = fn ? extractBoardNumberFromFilename(fn) : null;
-    }
-    return this._obdMemoBoardNumber;
-  }
-
   /** Compose the OBD reading line for the currently-hovered net. Empty
    *  string when there is no board number, no cached OBD data, or no net
    *  match — the caller hides the span in that case. Hot path: called on
@@ -4122,9 +4087,9 @@ export class BoardRenderer {
    *  the pointermove handler and noisily fill the console on every move. */
   private formatObdForNet(netName: string): string {
     try {
-      const bn = this.getMemoizedObdBoardNumber();
+      const bn = extractBoardNumberFromFilename(boardStore.fileName);
       if (!bn) return '';
-      const nets = obdNetIndex(bn).get(netName) ?? [];
+      const nets = obdNetLookup(bn, netName);
       if (nets.length === 0) return '';
       const diodes = uniqOf(nets, n => n.diode);
       const volts = uniqOf(nets, n => n.voltage);
