@@ -192,6 +192,12 @@ export class BoardRenderer {
   /** Container for part-name labels drawn above the net-dim overlay */
   private netLabelLayer!: Container;
   private butterflySelectionGfx!: Graphics;
+  /** Bottom-half dim layer in butterfly mode. Mirrors netDimGfx but lives
+   *  inside butterflyRoot so the bottom half's parts (which sit in
+   *  butterflyRoot, NOT scene.root) are also dimmed when chain-adjacent /
+   *  search-dim / spotlight is active. Without this, the bottom half stays
+   *  bright while the top half dims. */
+  private butterflyDimGfx!: Graphics;
   private netLinesGfx!: Graphics;
   /** Render layer that lifts selection-related labels above netLinesGfx in render order.
    *  Labels keep scene.root as logical parent (for transform inheritance) but render
@@ -296,6 +302,10 @@ export class BoardRenderer {
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
+  // Track previous rotation so we can keep the viewport-center world point
+  // anchored across rotation changes (rotation pivot at board center would
+  // otherwise drag the user's focus off-screen on non-centered views).
+  private prevRotation = 0;
 
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
@@ -776,6 +786,8 @@ export class BoardRenderer {
     this.netLabelLayer.eventMode = 'none';
     this.butterflySelectionGfx = new Graphics();
     this.butterflySelectionGfx.eventMode = 'none';
+    this.butterflyDimGfx = new Graphics();
+    this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
@@ -918,6 +930,8 @@ export class BoardRenderer {
     this.netLabelLayer.eventMode = 'none';
     this.butterflySelectionGfx = new Graphics();
     this.butterflySelectionGfx.eventMode = 'none';
+    this.butterflyDimGfx = new Graphics();
+    this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
@@ -1513,6 +1527,10 @@ export class BoardRenderer {
     scene.butterflyRoot = broot;
     scene.butterflyOutline = boutline;
 
+    // Mount the bottom-half dim BEFORE the selection layer so dim renders
+    // under the selection highlight (mirrors the scene.root ordering: dim at
+    // zIndex 10, selectionGfx at zIndex 30).
+    broot.addChild(this.butterflyDimGfx);
     broot.addChild(this.butterflySelectionGfx);
     this.viewport.addChild(broot);
 
@@ -1542,9 +1560,11 @@ export class BoardRenderer {
     scene.root.addChild(this.elevatedPartBg!);
     scene.root.addChild(this.elevatedPartLabel!);
 
-    // Detach butterfly selection gfx before destroying
+    // Detach butterfly selection gfx + dim before destroying
     scene.butterflyRoot.removeChild(this.butterflySelectionGfx);
     this.butterflySelectionGfx.clear();
+    scene.butterflyRoot.removeChild(this.butterflyDimGfx);
+    this.butterflyDimGfx.clear();
 
     // Remove butterfly container from viewport and destroy (bottomLayer already detached)
     this.viewport.removeChild(scene.butterflyRoot);
@@ -1819,6 +1839,7 @@ export class BoardRenderer {
       this.activeScene = null;
     }
     this.netDimGfx.clear();
+    this.butterflyDimGfx.clear();
     this.crossSideGhostGfx.clear();
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
@@ -1916,10 +1937,17 @@ export class BoardRenderer {
         this.prevShowTop = boardStore.showTop;
         this.prevShowBottom = boardStore.showBottom;
 
+        // Detect rotation change so we can pivot the viewport's view around
+        // the user's current focus (not the board center).
+        const oldRotation = this.prevRotation;
+        const newRotation = boardStore.rotation;
+        const rotated = oldRotation !== newRotation;
+        this.prevRotation = newRotation;
+
         // Capture the viewport's world center + old flipX/flipY state before
         // applyFlips so we can mirror the center around the board center and
         // keep the same physical region visible.
-        const oldVpCenter = flipped ? { x: this.viewport.center.x, y: this.viewport.center.y } : null;
+        const oldVpCenter = (flipped || rotated) ? { x: this.viewport.center.x, y: this.viewport.center.y } : null;
         const oldScale = flipped ? { x: this.activeScene.root.scale.x, y: this.activeScene.root.scale.y } : null;
 
         // Same board — update layer visibility + flips
@@ -1928,6 +1956,16 @@ export class BoardRenderer {
         this.applyLayerVisibility(this.activeScene);
         this.applyFlips(board, this.activeScene);
         this.needsRender = true;
+        // Rotation changes the world transform of every pin, so cached net-line
+        // segments (built via sceneToWorld) become stale. Mark dirty AND
+        // immediately redraw — without the redraw call, lines stay at their
+        // pre-rotation world positions until the next selection / pan / pulse
+        // tick re-enters renderNetLines.
+        if (rotated) {
+          this.netLinesDirty = true;
+          this.renderNetLines();
+          if (this.crossSideGhostParts.size > 0) this.renderCrossSideGhosts();
+        }
 
         // After flip: re-center on selected component so the user keeps focus.
         // NOTE: zoomToBounds disabled for now — it over-zooms tiny selections
@@ -1977,6 +2015,26 @@ export class BoardRenderer {
           let ny = oldVpCenter.y;
           if (mirrorWorldX) nx = 2 * cx - nx;
           if (mirrorWorldY) ny = 2 * cy - ny;
+          this.viewport.moveCenter(nx, ny);
+        }
+
+        // Rotation re-center: the user expects rotation to pivot around the
+        // viewport's current focus, not the board center. Equivalently, after
+        // applyFlips moves the world content under a new rotation, pan the
+        // viewport so the world point that was at screen-center before the
+        // rotation is at screen-center after. Since both old and new applyFlips
+        // pivot around the board center (cx, cy), the new world position of
+        // that point is the old offset from (cx, cy) rotated by the delta.
+        if (rotated && !flipped && oldVpCenter) {
+          const cx = (board.bounds.minX + board.bounds.maxX) / 2;
+          const cy = (board.bounds.minY + board.bounds.maxY) / 2;
+          const deltaRad = (newRotation - oldRotation) * Math.PI / 180;
+          const cos = Math.cos(deltaRad);
+          const sin = Math.sin(deltaRad);
+          const dx = oldVpCenter.x - cx;
+          const dy = oldVpCenter.y - cy;
+          const nx = cx + dx * cos - dy * sin;
+          const ny = cy + dx * sin + dy * cos;
           this.viewport.moveCenter(nx, ny);
         }
       }
@@ -2685,6 +2743,7 @@ export class BoardRenderer {
     this.crossSideGhostGfx.eventMode = 'none';
     this.selectionGfx.eventMode = 'none';
     this.butterflySelectionGfx.eventMode = 'none';
+    this.butterflyDimGfx.eventMode = 'none';
     this.netLabelLayer.eventMode = 'none';
     if (this._haloSprite) this._haloSprite.eventMode = 'none';
 
@@ -2697,6 +2756,7 @@ export class BoardRenderer {
     }
     this.selectionBlinkPhase = 0;
     this.netDimGfx.clear();
+    this.butterflyDimGfx.clear();
     // Restore any pin labels previously raised above the dim overlay back to
     // their original parents (top/bottom pin layers inside the part container).
     // Visibility is not touched here — LoD (applyLabelVisibility) owns the
@@ -2895,6 +2955,12 @@ export class BoardRenderer {
         const cy = (b.minY + b.maxY) / 2;
         this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
         this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+        // Butterfly: mirror the dim into the bottom-half's own gfx so the
+        // bottom side also dims (it lives in butterflyRoot, not scene.root).
+        if (butterfly) {
+          this.butterflyDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
+          this.butterflyDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+        }
       }
 
       // Part-only selection under dim/spotlight: the part's pins are
@@ -2973,6 +3039,10 @@ export class BoardRenderer {
         const cy = (b.minY + b.maxY) / 2;
         this.netDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
         this.netDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+        if (butterfly) {
+          this.butterflyDimGfx.rect(cx - pad, cy - pad, pad * 2, pad * 2);
+          this.butterflyDimGfx.fill({ color: 0x000000, alpha: s.dimOverlayAlpha });
+        }
       }
 
       // ── Per-net highlight loop ───────────────────────────────────────
