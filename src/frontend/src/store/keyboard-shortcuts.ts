@@ -168,6 +168,77 @@ export const shortcuts: Shortcut[] = [
     key: 'ArrowUp',
     description: 'Go to previous PDF page (when PDF panel is active)',
   },
+
+  // --- View (gamer-style) ---
+  {
+    id: 'panBoardLeft',
+    label: 'Pan Left (game)',
+    category: 'view',
+    key: 'a',
+    description: 'Move the view left (board or PDF)',
+  },
+  {
+    id: 'panBoardRight',
+    label: 'Pan Right (game)',
+    category: 'view',
+    key: 'd',
+    description: 'Move the view right (board or PDF)',
+  },
+  {
+    id: 'panBoardUp',
+    label: 'Pan Up (game)',
+    category: 'view',
+    key: 'w',
+    description: 'Move the view up (board or PDF)',
+  },
+  {
+    id: 'panBoardDown',
+    label: 'Pan Down (game)',
+    category: 'view',
+    key: 's',
+    description: 'Move the view down (board or PDF)',
+  },
+  {
+    id: 'rotateBoardCCW',
+    label: 'Rotate CCW (game)',
+    category: 'view',
+    key: 'q',
+    description: 'Rotate the board 90° counter-clockwise',
+  },
+  {
+    id: 'rotateBoardCW',
+    label: 'Rotate CW (game)',
+    category: 'view',
+    key: 'e',
+    description: 'Rotate the board 90° clockwise',
+  },
+  {
+    id: 'zoomBoardIn',
+    label: 'Zoom In (game)',
+    category: 'view',
+    key: 'w',
+    shift: true,
+    description: 'Zoom in at the canvas center (board or PDF)',
+  },
+  {
+    id: 'zoomBoardOut',
+    label: 'Zoom Out (game)',
+    category: 'view',
+    key: 's',
+    shift: true,
+    description: 'Zoom out at the canvas center (board or PDF)',
+  },
+
+  // --- File (extended) ---
+  {
+    id: 'toggleLibrary',
+    label: 'Toggle Library',
+    category: 'file',
+    key: '',
+    code: 'Backquote',
+    displayLabel: '~',
+    description: 'Open or close the Library sidebar (layout-independent)',
+  },
 ];
 
 /** Find a shortcut by id */
