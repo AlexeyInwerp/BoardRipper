@@ -14,19 +14,47 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
 const dockerSocket = "/var/run/docker.sock"
 
-// Docker Engine API version pinned in URL paths. v1.44 is the minimum
-// supported by Docker Engine 29.x (released 2026-01) — every prior request
-// path used /v1.41 which 29.x rejects with HTTP 400 "client version 1.41
-// is too old. Minimum supported API version is 1.44". Older engines (back
-// to ~Docker 25, 2024) still accept v1.44, so this is a forward-compatible
-// bump. If Docker raises the floor again, every callsite below + the
-// orchestrator-script API constant must move together.
-const dockerAPIVersion = "v1.44"
+// Docker Engine API version. Resolved lazily from `GET /_ping` so we speak
+// whatever the local daemon supports — Synology DSM 7's bundled Container
+// Manager tops out at API 1.41, while Docker Desktop 29+ requires ≥1.44 and
+// rejects 1.41 as "too old". A hardcoded path can satisfy one but not the
+// other; probing the daemon makes us speak the right dialect on either.
+//
+// Fallback "v1.41" only applies if /_ping fails entirely (daemon down or
+// unreachable) — in which case nothing else will work either, but we don't
+// want a panic at first use.
+var (
+	apiVersion     = "v1.41"
+	apiVersionOnce sync.Once
+)
+
+func dockerAPI() string {
+	apiVersionOnce.Do(func() {
+		client := &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", dockerSocket)
+				},
+			},
+			Timeout: 2 * time.Second,
+		}
+		resp, err := client.Get("http://docker/_ping")
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		if v := resp.Header.Get("Api-Version"); v != "" {
+			apiVersion = "v" + v
+		}
+	})
+	return apiVersion
+}
 
 // isDockerAvailable checks if the Docker socket exists and is usable.
 func isDockerAvailable() bool {
@@ -73,7 +101,7 @@ func (u *Updater) dockerLoad(tarPath string) error {
 		},
 		Timeout: 10 * time.Minute,
 	}
-	req, _ := http.NewRequest("POST", "http://docker/v1.44/images/load", gz)
+	req, _ := http.NewRequest("POST", "http://docker/" + dockerAPI() + "/images/load", gz)
 	req.Header.Set("Content-Type", "application/x-tar")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -120,7 +148,7 @@ func findSelfContainer() (*containerInfo, error) {
 	}
 
 	// List all containers, find ours by hostname (Docker sets hostname = short container ID)
-	resp, err := client.Get("http://docker/v1.44/containers/json?all=true")
+	resp, err := client.Get("http://docker/" + dockerAPI() + "/containers/json?all=true")
 	if err != nil {
 		return nil, fmt.Errorf("Docker API error: %w", err)
 	}
@@ -156,7 +184,7 @@ func findSelfContainer() (*containerInfo, error) {
 	}
 
 	// Inspect the container for full config
-	resp2, err := client.Get(fmt.Sprintf("http://docker/v1.44/containers/%s/json", containerID))
+	resp2, err := client.Get(fmt.Sprintf("http://docker/" + dockerAPI() + "/containers/%s/json", containerID))
 	if err != nil {
 		return nil, fmt.Errorf("container inspect failed: %w", err)
 	}
@@ -213,7 +241,7 @@ func pullDockerImage(image, tag string, logFn func(string, string)) error {
 	q := url.Values{}
 	q.Set("fromImage", image)
 	q.Set("tag", tag)
-	endpoint := "http://docker/v1.44/images/create?" + q.Encode()
+	endpoint := "http://docker/" + dockerAPI() + "/images/create?" + q.Encode()
 
 	logFn(fmt.Sprintf("Pulling %s:%s ...", image, tag), "info")
 	req, _ := http.NewRequest("POST", endpoint, nil)
@@ -284,7 +312,7 @@ func (u *Updater) dockerPullByDigest(registry, digest string) error {
 	q := url.Values{}
 	q.Set("fromImage", registry)
 	q.Set("tag", digest)
-	endpoint := "http://docker/v1.44/images/create?" + q.Encode()
+	endpoint := "http://docker/" + dockerAPI() + "/images/create?" + q.Encode()
 
 	req, _ := http.NewRequest("POST", endpoint, nil)
 	resp, err := client.Do(req)
@@ -340,7 +368,7 @@ func dockerSockPOST(endpoint string, body []byte) (int, error) {
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest("POST", "http://docker/v1.44"+endpoint, bodyReader)
+	req, err := http.NewRequest("POST", "http://docker/" + dockerAPI() + ""+endpoint, bodyReader)
 	if err != nil {
 		return 0, err
 	}
@@ -439,11 +467,13 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 	}
 	bodyJSON, _ := json.Marshal(createBody)
 
-	// Shell script for the orchestrator to execute
+	// Shell script for the orchestrator to execute. The API= line is filled
+	// from dockerAPI() so the orchestrator container speaks the daemon's
+	// dialect (Synology DSM Container Manager = 1.41, Docker Desktop 29+ = 1.44+).
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 SOCK="/var/run/docker.sock"
-API="http://localhost/v1.44"
+API="http://localhost/%s"
 
 # Helper: Docker API via curl
 dapi() { curl -sf --unix-socket "$SOCK" "$@"; }
@@ -528,6 +558,7 @@ dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
 echo "[orchestrator] Rollback complete — previous container restarted."
 exit 1
 `,
+		dockerAPI(),                            // API= path version
 		self.Name, self.ID,                    // stop
 		self.Name,                              // delete -old
 		self.Name, self.Name,                   // rename log
@@ -562,14 +593,14 @@ exit 1
 	// Delete any existing orchestrator container first
 	logFn("Removing leftover boardripper-orchestrator container if present...", "info")
 	delReq, _ := http.NewRequest("DELETE",
-		"http://docker/v1.44/containers/boardripper-orchestrator?force=true", nil)
+		"http://docker/" + dockerAPI() + "/containers/boardripper-orchestrator?force=true", nil)
 	if resp, err := client.Do(delReq); err == nil {
 		resp.Body.Close()
 	}
 
 	logFn("Creating orchestrator container...", "info")
 	createReq, _ := http.NewRequest("POST",
-		"http://docker/v1.44/containers/create?name=boardripper-orchestrator",
+		"http://docker/" + dockerAPI() + "/containers/create?name=boardripper-orchestrator",
 		bytes.NewReader(orchJSON))
 	createReq.Header.Set("Content-Type", "application/json")
 
@@ -593,7 +624,7 @@ exit 1
 	// Start the orchestrator
 	logFn("Starting orchestrator container...", "info")
 	startReq, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://docker/v1.44/containers/%s/start", created.ID), nil)
+		fmt.Sprintf("http://docker/" + dockerAPI() + "/containers/%s/start", created.ID), nil)
 	startResp, err := client.Do(startReq)
 	if err != nil {
 		return fmt.Errorf("failed to start orchestrator: %w", err)
