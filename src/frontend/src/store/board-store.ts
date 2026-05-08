@@ -2,7 +2,7 @@ import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
-import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets } from '../parsers/types';
+import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets } from '../parsers/types';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
@@ -331,13 +331,17 @@ function buildRenderedBoard(
   const allPoints = filteredParts.flatMap(p => p.pins.map(pin => pin.position));
   const outline = generateSyntheticOutline(allPoints);
   const bounds = computeBBox([...outline, ...allPoints]);
+  // Net pinIndices are partIndex-based against the parts array they were built
+  // from. After dropping parts the indices shift, so rebuild nets against the
+  // filtered array — otherwise highlights, net-lines and adjacency all resolve
+  // pins to whichever part now occupies the original index.
   return {
     ...base,
     ...traceOverrides,
     parts: filteredParts,
     bounds,
     outline,
-    nets: rev.nets,
+    nets: buildNets(filteredParts),
     ghosts: rev.ghosts.length > 0 ? rev.ghosts : undefined,
     bomClusters: clusters && clusters.length > 0 ? clusters : undefined,
     activeRevision: rev.index,
