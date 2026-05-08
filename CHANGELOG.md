@@ -1,6 +1,12 @@
 # BoardRipper changelog
 
-## v0.20.0 — 2026-05-08
+## v0.19.9 — 2026-05-08
+
+### Fixed
+
+- **Self-update was silently broken on Synology DSM Container Manager.** v0.19.7 hardcoded the Engine API path to `/v1.44/` to fix Docker Engine 29.x rejecting `/v1.41/` as "too old"; the same hardcode now broke Synology DSM (Docker 20.10.3, max API 1.41) which rejects `/v1.44/` as `client version 1.44 is too new. Maximum supported API version is 1.41`. Every code path through `docker.sock` — pull, load, inspect, orchestrate — hit the same 400. Bundle-drop also affected (shares `dockerLoad`). User-reported on the maintainer's NAS, manual SSH swap was the only escape until this release. Fix: probe `GET /_ping` once on first use, parse the daemon's `Api-Version` header, and prefix every Engine API call with that. `sync.Once`-gated; falls back to `v1.41` if `/_ping` itself fails (in which case nothing else would work either, but no panic at first use). Replaces all 13 hardcoded `http://docker/v1.44/...` strings; the orchestrator shell script's `API=` line gets the same value via `Sprintf` so the alpine-curl payload speaks the same dialect. Forward-compatible to whatever Docker bumps the floor to next.
+
+## v0.19.8 — 2026-05-08
 
 ### Fixed
 
