@@ -33,6 +33,16 @@ export function setDockviewApi(api: DockviewApi) {
   _api = api;
 }
 
+// Dev hook: expose the dockview API on window so Playwright tests can read
+// activePanel.id without importing app modules inside page.evaluate().
+// Only installed in DEV builds — the property is never present in production.
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  Object.defineProperty(window as object, '__dockviewApi', {
+    get: () => getDockviewApi(),
+    configurable: true,
+  });
+}
+
 export function getDockviewApi(): DockviewApi | null {
   return _api;
 }

@@ -403,6 +403,10 @@ export class BoardRenderer {
     this.containerEl = container;
     this.tabId = tabId ?? null;
     this.app = new Application();
+    if (import.meta.env.DEV) {
+      const w = window as unknown as { __boardRenderer?: BoardRenderer };
+      w.__boardRenderer = this;
+    }
   }
 
   /** Safely stop the ticker — app or ticker may be null/destroyed. */

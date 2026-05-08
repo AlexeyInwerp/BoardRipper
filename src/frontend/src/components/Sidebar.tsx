@@ -92,6 +92,16 @@ export function getSidebarWidth(): number {
   return _collapsed ? 0 : loadWidth();
 }
 
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as unknown as {
+    __sidebar?: { isCollapsed: () => boolean; activeTab: () => SidebarTab; toggle: () => void };
+  }).__sidebar = {
+    isCollapsed: isSidebarCollapsed,
+    activeTab: getSidebarActiveTab,
+    toggle: toggleSidebar,
+  };
+}
+
 export function Sidebar() {
   const [, forceUpdate] = useState(0);
   useEffect(() => {
