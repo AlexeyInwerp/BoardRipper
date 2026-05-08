@@ -23,8 +23,7 @@ import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRend
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
-import { viewCommands } from '../store/view-commands';
-import type { PanDirection } from '../store/view-commands';
+import { viewCommands, KEY_ZOOM_RAW_DELTA, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -1051,8 +1050,11 @@ export class BoardRenderer {
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
-      if (cmd === 'pan' && this.tabId === boardStore.activeTabId) {
+      if (this.tabId !== boardStore.activeTabId) return;
+      if (cmd === 'pan') {
         this.panView(payload as PanDirection);
+      } else if (cmd === 'zoom') {
+        this.zoomKeyboard(payload as ZoomDirection);
       }
     });
 
@@ -4438,6 +4440,17 @@ export class BoardRenderer {
     const dx = direction === 'left' ? step : direction === 'right' ? -step : 0;
     const dy = direction === 'up' ? step : direction === 'down' ? -step : 0;
     this.viewport.position.set(this.viewport.position.x + dx, this.viewport.position.y + dy);
+    this.needsRender = true;
+    this.netLinesDirty = true;
+  }
+
+  private zoomKeyboard(direction: ZoomDirection) {
+    if (!this.viewport) return;
+    const cx = this.viewport.screenWidth / 2;
+    const cy = this.viewport.screenHeight / 2;
+    const rawDelta = direction === 'in' ? -KEY_ZOOM_RAW_DELTA : KEY_ZOOM_RAW_DELTA;
+    this.zoomAtScreen(cx, cy, rawDelta);
+    this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
     this.needsRender = true;
     this.netLinesDirty = true;
   }
