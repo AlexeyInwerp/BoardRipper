@@ -1,5 +1,11 @@
 # BoardRipper changelog
 
+## v0.20.0 — 2026-05-08
+
+### Fixed
+
+- **Net highlights resolved to wrong parts on any file with ≥1 BOM-alternate cluster.** `buildRenderedBoard`'s filtered branch (BOM-alternate filter / hide-ghosts toggle) returned `nets: rev.nets` from before any parts were dropped. `Net.pinIndices` are positional `partIndex` refs into the array they were built against — after dropping a single part every index past that slot pointed one element off in the filtered array, scrambling every net on the board. Latent since `176cced` (2026-04-14, hide-ghosts toggle, default off — almost no one hit it). Default-on as of `48ce8ae` (2026-05-05): BOM-alternate cluster filtering with `showBomAlternates: false` default means any CAD/TVW file with ≥1 detected cluster drops one part on first render. ROG STRIX RTX 4090 sample (1 cluster, C1903/C1906) was the user-reported canary — clicking PC101 lit PC104 / PC258 / C415 instead of PC265, and 12V_F_R1's 36 refs landed on a completely different 27 parts than the file actually says. Fix: rebuild nets via `buildNets(filteredParts)` whenever any part is dropped. Regression spec asserts every `pinIndex` in every net resolves to a pin actually on that net after filtering.
+
 ## v0.19.7 — 2026-05-07
 
 ### Fixed
