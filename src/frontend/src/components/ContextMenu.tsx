@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
+import { IconCopy, IconWorld } from '@tabler/icons-react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
@@ -39,8 +40,46 @@ import { SearchScopeBadge } from './SearchScopeBadge';
  *  When changing one body (row format, group structure, badge placement,
  *  spoiler rules, click behavior) update the other so the two right-click
  *  modes stay consistent.
+ *    • A top-of-menu icon strip (.context-menu-actions) renders quick
+ *      actions built from buildQuickActions(state). Board mode = up to
+ *      4 buttons (Copy net, Copy part, Search net, Search part). PDF
+ *      mode = up to 2 buttons (Copy, Search Web). The strip is hidden
+ *      when buildQuickActions returns []. Donor groups render below.
  * ============================================================================
  */
+
+type QuickActionKind = 'copy' | 'search';
+type QuickActionTarget = 'net' | 'part' | 'text';
+interface QuickAction {
+  kind: QuickActionKind;
+  target: QuickActionTarget;
+  value: string;
+  /** Short label shown next to the icon. Empty string = icon-only (PDF mode). */
+  label: string;
+}
+
+/** Build the icon-strip action list from the current ContextMenu state.
+ *  Order: copy-net, copy-part, search-net, search-part (board);
+ *         copy, search (pdf). Skips entries with empty values. */
+function buildQuickActions(state: ContextMenuState): QuickAction[] {
+  const out: QuickAction[] = [];
+  if (state.source === 'board') {
+    const compName = state.componentName.trim();
+    const netName = state.netName?.trim() ?? '';
+    if (netName)  out.push({ kind: 'copy',   target: 'net',  value: netName,  label: 'Net'  });
+    if (compName) out.push({ kind: 'copy',   target: 'part', value: compName, label: 'Part' });
+    if (netName)  out.push({ kind: 'search', target: 'net',  value: netName,  label: 'Net'  });
+    if (compName) out.push({ kind: 'search', target: 'part', value: compName, label: 'Part' });
+  } else {
+    const q = state.query.trim();
+    if (q) {
+      // PDF mode has only one target — render icon-only (no label) for compactness.
+      out.push({ kind: 'copy',   target: 'text', value: q, label: '' });
+      out.push({ kind: 'search', target: 'text', value: q, label: '' });
+    }
+  }
+  return out;
+}
 
 let version = 0;
 let lastVer = -1;
@@ -164,6 +203,53 @@ export function ContextMenu() {
     e.stopPropagation();
     findInPdf(state.query, fileName);
     contextMenuStore.hide();
+  };
+
+  const onCopy = async (action: QuickAction) => {
+    contextMenuStore.hide();
+    try {
+      await navigator.clipboard.writeText(action.value);
+      boardStore.addToast(`Copied '${action.value}'`, 'info');
+    } catch (err) {
+      boardStore.addToast(`Copy failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    }
+  };
+
+  const onSearch = (action: QuickAction) => {
+    contextMenuStore.hide();
+    const url = `https://www.google.com/search?q=${encodeURIComponent(action.value)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const renderQuickActions = (): React.ReactElement | null => {
+    const actions = buildQuickActions(state);
+    if (actions.length === 0) return null;
+    return (
+      <div className="context-menu-actions" data-testid="context-menu-actions">
+        {actions.map((a, i) => {
+          const Icon = a.kind === 'copy' ? IconCopy : IconWorld;
+          const verb = a.kind === 'copy' ? 'Copy' : 'Search';
+          const tail = a.kind === 'search' ? ' on the web' : '';
+          const title = `${verb} '${a.value}'${tail}`;
+          const onClick = (e: React.MouseEvent) => {
+            e.stopPropagation();
+            if (a.kind === 'copy') onCopy(a); else onSearch(a);
+          };
+          return (
+            <button
+              key={`${a.kind}:${a.target}:${i}`}
+              className="context-menu-action-btn"
+              title={title}
+              data-testid={`qa-${a.kind}-${a.target}`}
+              onClick={onClick}
+            >
+              <Icon size={14} />
+              {a.label && <span>{a.label}</span>}
+            </button>
+          );
+        })}
+      </div>
+    );
   };
 
   // ── Row renderers ────────────────────────────────────────────────────────
@@ -382,6 +468,7 @@ export function ContextMenu() {
     return <>{sections}</>;
   };
 
+  const quickActions = renderQuickActions();
   return (
     <div
       className="context-menu"
@@ -389,6 +476,8 @@ export function ContextMenu() {
       style={{ left: state.screenX, top: state.screenY }}
       onClick={(e) => e.stopPropagation()}
     >
+      {quickActions}
+      {quickActions && <div className="context-menu-separator" />}
       {state.source === 'board' ? renderBoardBody() : renderPdfBody()}
     </div>
   );
