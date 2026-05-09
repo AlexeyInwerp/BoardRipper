@@ -483,6 +483,10 @@ export function LibraryPanel() {
           <div className="library-empty">
             Failed to load library{loadError ? `: ${loadError.message}` : '.'} Open the Debug panel for details.
           </div>
+        ) : !backendAvailable && files.length === 0 ? (
+          <div className="library-empty">
+            Library will appear once the backend is reachable.
+          </div>
         ) : files.length === 0 ? (
           <div className="library-empty">
             No files found. Click Scan to index your data directory.
