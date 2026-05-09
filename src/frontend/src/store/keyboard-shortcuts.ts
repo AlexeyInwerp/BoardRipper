@@ -36,6 +36,12 @@ export interface Shortcut {
    *  `code` but wanting a friendly printed character (e.g. show '~' for
    *  Backquote). When set, overrides the formatKeyName() result. */
   displayLabel?: string;
+  /** When true, the matcher accepts the event regardless of whether shift is
+   *  held. Use sparingly — only for shortcuts where the physical key carries
+   *  the meaning and the shift state is incidental (e.g. `~` on US is
+   *  Shift+Backquote, `°` on DE is also Shift+Backquote — both should
+   *  toggle the library). */
+  ignoreShift?: boolean;
 }
 
 export const shortcuts: Shortcut[] = [
@@ -237,7 +243,8 @@ export const shortcuts: Shortcut[] = [
     key: '',
     code: 'Backquote',
     displayLabel: '~',
-    description: 'Open or close the Library sidebar (layout-independent)',
+    description: 'Open or close the Library sidebar (key left of `1`, layout-independent — works as `~` on US, `°` on DE, etc.)',
+    ignoreShift: true,
   },
 ];
 
@@ -292,14 +299,14 @@ export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
   const modKey = isMac ? e.metaKey : e.ctrlKey;
 
   // Check primary binding
-  if (matchesBinding(e, s.key, s.code, s.mod ? modKey : undefined, s.alt ? e.altKey : undefined, s.shift ? e.shiftKey : undefined, s.mod, s.alt, s.shift)) {
+  if (matchesBinding(e, s.key, s.code, s.mod ? modKey : undefined, s.alt ? e.altKey : undefined, s.shift ? e.shiftKey : undefined, s.mod, s.alt, s.shift, s.ignoreShift)) {
     return true;
   }
 
   // Check alt binding (e.g. Cmd+Down for PageDown on Mac)
   if (s.altKey) {
-    // Alt bindings reject shift (last `false` arg = requireShift=false → shift events rejected by the symmetric guard).
-    if (matchesBinding(e, s.altKey, undefined, s.altMod ? modKey : undefined, false, undefined, s.altMod, false, false)) {
+    // Alt bindings reject shift (ignoreShift=false → shift events rejected by the symmetric guard).
+    if (matchesBinding(e, s.altKey, undefined, s.altMod ? modKey : undefined, false, undefined, s.altMod, false, false, false)) {
       return true;
     }
   }
@@ -317,6 +324,7 @@ function matchesBinding(
   requireMod?: boolean,
   requireAlt?: boolean,
   requireShift?: boolean,
+  ignoreShift?: boolean,
 ): boolean {
   // Key match: when `code` is set, match KeyboardEvent.code (layout-independent)
   // and ignore `key` entirely. Otherwise match e.key case-insensitively.
@@ -334,7 +342,7 @@ function matchesBinding(
   if (requireAlt && !e.altKey) return false;
   if (!requireAlt && e.altKey) return false;
   if (requireShift && !e.shiftKey) return false;
-  if (!requireShift && e.shiftKey) return false;
+  if (!requireShift && e.shiftKey && !ignoreShift) return false;
 
   return true;
 }

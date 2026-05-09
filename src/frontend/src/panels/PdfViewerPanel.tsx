@@ -26,12 +26,6 @@ import {
 import type { TileGridInfo } from '../pdf/tile-manager';
 import { renderSettingsStore, isPdfWatermarkText } from '../store/render-settings';
 import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
-import { KEY_ZOOM_RAW_DELTA } from '../store/view-commands';
-
-/** Per-keypress zoom factor for Shift+W / Shift+S. Derived from the shared
- *  KEY_ZOOM_RAW_DELTA so a single press feels identical on board and PDF.
- *  factor = 2^(1.3 * (KEY_ZOOM_RAW_DELTA/500)) ≈ 1.72 */
-const KEY_ZOOM_FACTOR = Math.pow(2, 1.3 * (KEY_ZOOM_RAW_DELTA / 500));
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -2871,8 +2865,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (!containerEl || !wrapperRef.current) return;
       const cw = containerEl.clientWidth;
       const ch = containerEl.clientHeight;
-      const stepX = cw * 0.15;
-      const stepY = ch * 0.15;
+      const { keyboardPanFraction } = renderSettingsStore.settings;
+      const stepX = cw * keyboardPanFraction;
+      const stepY = ch * keyboardPanFraction;
       let dx = 0, dy = 0;
       if (detail.direction === 'left')  dx = +stepX;
       if (detail.direction === 'right') dx = -stepX;
@@ -2890,12 +2885,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const detail = (ev as CustomEvent<{ direction: 'in' | 'out' }>).detail;
       const containerEl = containerRef.current;
       if (!containerEl || !wrapperRef.current) return;
-      const factor = detail.direction === 'in' ? KEY_ZOOM_FACTOR : 1 / KEY_ZOOM_FACTOR;
+      const rawDelta = renderSettingsStore.settings.keyboardZoomDelta;
+      const factor = Math.pow(2, 1.3 * (rawDelta / 500));
+      const effFactor = detail.direction === 'in' ? factor : 1 / factor;
       const mid = { x: containerEl.clientWidth / 2, y: containerEl.clientHeight / 2 };
       const cssH = pageCssHRef.current;
       const minZoom = cssH > 0 ? Math.max(0.1, containerEl.clientHeight / (3 * cssH)) : 0.1;
       const oldZ = zoomRef.current;
-      const newZ = Math.max(minZoom, Math.min(oldZ * factor, 10));
+      const newZ = Math.max(minZoom, Math.min(oldZ * effFactor, 10));
       const ratio = newZ / oldZ;
       // Pan correction: anchor the zoom on the container centre so the visible
       // mid-point stays put when the scale changes. Same formula as wheel-zoom.

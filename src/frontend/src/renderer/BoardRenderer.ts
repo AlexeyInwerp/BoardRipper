@@ -23,7 +23,7 @@ import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRend
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
-import { viewCommands, KEY_ZOOM_RAW_DELTA, type PanDirection, type ZoomDirection } from '../store/view-commands';
+import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -4440,9 +4440,11 @@ export class BoardRenderer {
 
   private panView(direction: PanDirection) {
     if (!this.viewport) return;
-    const step = this.viewport.screenWidth * 0.15;
-    const dx = direction === 'left' ? step : direction === 'right' ? -step : 0;
-    const dy = direction === 'up' ? step : direction === 'down' ? -step : 0;
+    const { keyboardPanFraction } = renderSettingsStore.settings;
+    const stepX = this.viewport.screenWidth * keyboardPanFraction;
+    const stepY = this.viewport.screenHeight * keyboardPanFraction;
+    const dx = direction === 'left' ? stepX : direction === 'right' ? -stepX : 0;
+    const dy = direction === 'up' ? stepY : direction === 'down' ? -stepY : 0;
     this.viewport.position.set(this.viewport.position.x + dx, this.viewport.position.y + dy);
     this.needsRender = true;
     this.netLinesDirty = true;
@@ -4452,7 +4454,8 @@ export class BoardRenderer {
     if (!this.viewport) return;
     const cx = this.viewport.screenWidth / 2;
     const cy = this.viewport.screenHeight / 2;
-    const rawDelta = direction === 'in' ? -KEY_ZOOM_RAW_DELTA : KEY_ZOOM_RAW_DELTA;
+    const { keyboardZoomDelta } = renderSettingsStore.settings;
+    const rawDelta = direction === 'in' ? -keyboardZoomDelta : keyboardZoomDelta;
     this.zoomAtScreen(cx, cy, rawDelta);
     this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
     this.needsRender = true;

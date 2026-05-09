@@ -1620,6 +1620,30 @@ export function SettingsPanel() {
         <p className="settings-hint">Drag pills between slots to swap left-drag and Shift+left-drag actions.</p>
         <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateDraft} />
 
+        <div className="settings-subsection-label">Keyboard pan / zoom</div>
+        <div className="settings-row" title="Fraction of screen dimension panned per WSAD or Alt+Arrow keypress. Default: 10% of screen width/height per press.">
+          <label className="settings-label">
+            Keyboard Pan Step
+            <span className="settings-value">{Math.round(draft.keyboardPanFraction * 100)}%</span>
+          </label>
+          <div className="settings-slider-wrap">
+            <input
+              type="range" className="settings-slider"
+              min={2} max={30} step={1}
+              value={Math.round(draft.keyboardPanFraction * 100)}
+              onChange={(e) => updateDraft({ keyboardPanFraction: parseFloat(e.target.value) / 100 })}
+              onDoubleClick={() => updateDraft({ keyboardPanFraction: DEFAULTS.keyboardPanFraction })}
+            />
+          </div>
+        </div>
+        <Slider
+          label="Keyboard Zoom Step"
+          value={draft.keyboardZoomDelta}
+          min={50} max={400} step={10}
+          field="keyboardZoomDelta" onUpdate={updateDraft}
+          title={`Raw zoom delta per Shift+W / Shift+S keypress. Applies to both board and PDF. Current: ×${Math.pow(2, 1.3 * (draft.keyboardZoomDelta / 500)).toFixed(2)} per press. Default: 100 (≈×1.32).`}
+        />
+
         <div className="settings-subsection-label">Zoom</div>
         <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
           title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />

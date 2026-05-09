@@ -185,6 +185,28 @@ test('Backquote toggles Library sidebar', async ({ page }) => {
   expect(isCollapsed).not.toBe(wasCollapsed);
 });
 
+test('Shift+Backquote also toggles Library sidebar', async ({ page }) => {
+  await loadBoard(page);
+  // Read sidebar collapsed state from the global accessor
+  const wasCollapsed = await page.evaluate(() => {
+    const w = window as unknown as { __sidebar?: { isCollapsed: () => boolean; activeTab: () => string } };
+    return w.__sidebar?.isCollapsed() ?? false;
+  });
+
+  await page.keyboard.press('Shift+Backquote');
+  await page.waitForFunction((collapsed) => {
+    const w = window as unknown as { __sidebar?: { isCollapsed: () => boolean } };
+    return (w.__sidebar?.isCollapsed() ?? collapsed) !== collapsed;
+  }, wasCollapsed, { timeout: 5000 });
+
+  const isCollapsed = await page.evaluate(() => {
+    const w = window as unknown as { __sidebar?: { isCollapsed: () => boolean; activeTab: () => string } };
+    return w.__sidebar?.isCollapsed() ?? false;
+  });
+
+  expect(isCollapsed).not.toBe(wasCollapsed);
+});
+
 test('shortcut does not fire when search input is focused', async ({ page }) => {
   await loadBoard(page);
   const before = await readViewport(page);
