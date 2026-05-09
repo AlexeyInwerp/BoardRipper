@@ -778,6 +778,13 @@ export class BoardRenderer {
     // the dim is active. Same risk applies to net-lines, ghosts, selection
     // highlights, and label layers (any Graphics with painted content under
     // the cursor counts as a hit otherwise).
+    // selectionGfx zIndex 30 — sits below netLabelLayer (35) so pin numbers
+    // and net names stay readable on top of the highlight. It is attached to
+    // selectionLabelLayer in activateScene/setupButterfly so it still renders
+    // after netLinesGfx. The glow ring stroke painted in renderSelection is
+    // wide enough to remain visible at the pad perimeter regardless of label
+    // coverage at the pad center. Scene-graph parent stays scene.root so
+    // flip/rotation transforms still apply.
     this.selectionGfx = new Graphics();
     this.selectionGfx.zIndex = 30;
     this.selectionGfx.eventMode = 'none';
@@ -911,9 +918,19 @@ export class BoardRenderer {
     // zIndex values define the render order — higher = rendered later = on top.
     //   0        board content (outline, layers, pins, labels) — default zIndex
     //   10       netDimGfx          — dim/fade non-selected nets
-    //   30       selectionGfx       — yellow highlight rectangles around selected parts/pins
-    //   35       netLabelLayer      — net/pin labels raised above dim + selection
+    //   15       crossSideGhostGfx  — ghost outlines for hidden-side net components
+    //   30       selectionGfx       — highlight fills/strokes/glow (rendered via
+    //                                  selectionLabelLayer so it lands above netLinesGfx
+    //                                  but below pin/net labels at z=35)
+    //   35       netLabelLayer      — net/pin labels (rendered via selectionLabelLayer)
     //   100-103  elevated labels    — part/pin name badges, always topmost
+    //
+    // selectionGfx (and netLabelLayer + elevated badges) are attached to
+    // selectionLabelLayer in activateScene/setupButterfly. Render order inside
+    // that layer is by zIndex; the values above are the canonical map. Pin labels
+    // sit ABOVE highlights so pin numbers and net names stay readable; the glow
+    // ring stroke painted in renderSelection at the pad perimeter is what carries
+    // the "popping out" cue past the label.
     //
     // eventMode='none' on every decoration layer so pointer events fall through
     // to the underlying parts/pins. Without this, the netDimGfx full-screen
@@ -938,7 +955,7 @@ export class BoardRenderer {
     this.netLinesGfx = new Graphics();
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
-    this.crossSideGhostGfx.zIndex = 15; // above dim (10), below labels (20) and selection (30)
+    this.crossSideGhostGfx.zIndex = 15; // above dim (10), below selection (30) and labels (35)
     this.crossSideGhostGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
 
@@ -1542,7 +1559,9 @@ export class BoardRenderer {
 
     // Mount the bottom-half dim BEFORE the selection layer so dim renders
     // under the selection highlight (mirrors the scene.root ordering: dim at
-    // zIndex 10, selectionGfx at zIndex 30).
+    // zIndex 10, selectionGfx at zIndex 30 — note the top-side selectionGfx
+    // is rendered via selectionLabelLayer; butterflySelectionGfx renders here
+    // in butterflyRoot's local order).
     broot.addChild(this.butterflyDimGfx);
     broot.addChild(this.butterflySelectionGfx);
     this.viewport.addChild(broot);
@@ -1772,13 +1791,24 @@ export class BoardRenderer {
     }
 
     // Attach new scene + overlay objects inside root (so board flips apply to them too).
-    // Render order is controlled by zIndex (root.sortableChildren=true), not addChild order:
+    // scene.root is sortableChildren=true. zIndex order shown below; note that
+    // overlay objects whose render order is delegated to selectionLabelLayer
+    // (netLabelLayer, selectionGfx, elevated badges) skip scene.root's render
+    // pass entirely — the zIndex they carry positions them inside the
+    // RenderLayer instead. They're still scene-graph children of scene.root so
+    // flip/rotation/scale propagate to them.
     //   zIndex 0:       board content (outline, layers, pins, labels)
-    //   zIndex 10:      netDimGfx (dim non-selected nets)
-    //   zIndex 15:      crossSideGhostGfx (ghost outlines for hidden-side net components)
-    //   zIndex 20:      netLabelLayer (net name labels)
-    //   zIndex 30:      selectionGfx (yellow highlight)
-    //   zIndex 100-103: elevated selection labels (always topmost)
+    //   zIndex 10:      netDimGfx                    (rendered in scene.root)
+    //   zIndex 15:      crossSideGhostGfx            (rendered in scene.root)
+    //   zIndex 30:      selectionGfx                 (rendered via selectionLabelLayer
+    //                                                 above netLinesGfx, below pin
+    //                                                 labels — the glow ring stroke
+    //                                                 painted at the pad perimeter is
+    //                                                 the "popping out" cue that
+    //                                                 survives label coverage on dense
+    //                                                 BGAs)
+    //   zIndex 35:      netLabelLayer                (rendered via selectionLabelLayer)
+    //   zIndex 100-103: elevated selection labels    (rendered via selectionLabelLayer)
     this.viewport.addChild(scene.root);
     scene.root.addChild(this.netDimGfx);
     scene.root.addChild(this.crossSideGhostGfx);
@@ -1788,11 +1818,13 @@ export class BoardRenderer {
     scene.root.addChild(this.elevatedPinLabel!);
     scene.root.addChild(this.elevatedPartBg!);
     scene.root.addChild(this.elevatedPartLabel!);
-    // Lift selection-related labels above netLinesGfx in render order. Logical
-    // parent stays scene.root so they follow board flips/rotations; the render
-    // layer only controls draw order (sorted by zIndex within the layer).
+    // Lift selection-related overlays above netLinesGfx in render order — and
+    // for selectionGfx, above the raised pin labels too. Logical parent stays
+    // scene.root so flips/rotations apply; the render layer only controls
+    // draw order (sorted by zIndex within the layer).
     this.selectionLabelLayer.attach(
       this.netLabelLayer,
+      this.selectionGfx,
       this.elevatedPartBg!,
       this.elevatedPartLabel!,
       this.elevatedPinBg!,
@@ -3191,14 +3223,21 @@ export class BoardRenderer {
       }
 
       // Highlight glow on top, per glow color (yellow for primary, bluish
-      // for adjacents). Each color group flushes its own fill.
+      // for adjacents). Each color group flushes its own fill, then a stroke
+      // on the same path traces a crisp ring at the glow's outer edge — that
+      // ring sits beyond the pad and outside any pin label that renders on
+      // top of selectionGfx, so it carries the "highlighted" cue past the
+      // label coverage on dense BGA rails.
+      const ringW = s.selectionWidth * 0.6;
       for (const [glowColor, fns] of topHighlightsByColor) {
         for (const fn of fns) fn();
         this.selectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+        this.selectionGfx.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
       }
       for (const [glowColor, fns] of botHighlightsByColor) {
         for (const fn of fns) fn();
         this.butterflySelectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+        this.butterflySelectionGfx.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
       }
 
       // ── Trace highlight (PRIMARY net only) ───────────────────────────
