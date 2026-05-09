@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-// Store wraps the OBD on-disk cache rooted at <library_root>/.boardripper/openboarddata/.
+// Store wraps the OBD on-disk cache rooted at <data_dir>/obd/ (pre-v0.20.3 was
+// <library_root>/.boardripper/openboarddata/; see MigrateLegacyCache).
 type Store struct {
 	root string
 }
@@ -164,6 +166,54 @@ func (s *Store) DeleteCache() error {
 		return err
 	}
 	return os.MkdirAll(s.root, 0o755)
+}
+
+// MigrateLegacyCache moves a v0.20.2-or-earlier cache from the old library-rooted
+// path to the new dataDir-rooted path, ONCE. Called from main.go before NewStore
+// so the resulting store opens against the migrated content.
+//
+// Behavior:
+//   - If newRoot already has any content → no-op (already migrated, or fresh
+//     install that started syncing on the new layout). Silent.
+//   - If neither candidate path exists → no-op. Silent.
+//   - If a candidate exists and os.Rename works → log success and return.
+//   - If os.Rename fails (typically EXDEV when /library and /data are different
+//     mounts) → log a hint that the user should re-sync via
+//     POST /api/obd/index/sync. Do NOT recursively copy — keeps the helper tiny.
+//
+// candidates is the list of legacy paths to probe in order. Caller passes
+// {configLibRoot, libraryDirEnv} — both can be empty strings, which are skipped.
+func MigrateLegacyCache(newRoot string, candidates []string) {
+	// Skip if new root already has content.
+	if entries, err := os.ReadDir(newRoot); err == nil && len(entries) > 0 {
+		return
+	}
+	for _, libRoot := range candidates {
+		if libRoot == "" {
+			continue
+		}
+		old := filepath.Join(libRoot, ".boardripper", "openboarddata")
+		info, err := os.Stat(old)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Ensure the parent of newRoot exists; rename will fail if not.
+		if err := os.MkdirAll(filepath.Dir(newRoot), 0o755); err != nil {
+			log.Printf("OBD migrate: mkdir parent of %s failed: %v", newRoot, err)
+			return
+		}
+		if err := os.Rename(old, newRoot); err == nil {
+			log.Printf("OBD migrate: moved cache from %s to %s", old, newRoot)
+			return
+		} else {
+			log.Printf("OBD migrate: rename %s → %s failed (%v); user can re-sync via /api/obd/index/sync", old, newRoot, err)
+			// Don't try further candidates after a rename attempt — the user
+			// only had ONE active cache; the failure was filesystem-level
+			// (likely EXDEV cross-volume) and trying another candidate
+			// won't help.
+			return
+		}
+	}
 }
 
 func writeAtomic(path string, body []byte) error {

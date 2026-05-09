@@ -188,14 +188,14 @@ func main() {
 	go librarysync.Run(syncRootCtx, syncEngine, db)
 
 	// OpenBoardData (OBD) API routes — independent filesystem-backed data layer
-	// rooted at <library_root>/.boardripper/openboarddata/. The store is nil
-	// when no library_dir is configured; the handler returns 503 in that case.
-	var obdStore *obd.Store
-	if libRoot, _ := db.GetConfig("library_dir"); libRoot != "" {
-		obdStore = obd.NewStore(filepath.Join(libRoot, ".boardripper", "openboarddata"))
-	} else if libraryDir != "" {
-		obdStore = obd.NewStore(filepath.Join(libraryDir, ".boardripper", "openboarddata"))
-	}
+	// rooted at <dataDir>/obd/. /data is always writable across container updates;
+	// the library mount is typically read-only and was losing the cache pre-v0.20.3.
+	// MigrateLegacyCache transparently moves any pre-existing cache from the old
+	// library-rooted path on first boot.
+	obdRoot := filepath.Join(dataDir, "obd")
+	configLibRoot, _ := db.GetConfig("library_dir")
+	obd.MigrateLegacyCache(obdRoot, []string{configLibRoot, libraryDir})
+	obdStore := obd.NewStore(obdRoot)
 	obdScraper := obd.NewScraper("https://openboarddata.org")
 	obdHandler := handlers.NewObdHandler(obdStore, obdScraper)
 	mux.HandleFunc("POST /api/obd/index/sync", obdHandler.IndexSync) // long-running — no wrap
