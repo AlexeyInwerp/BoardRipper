@@ -1,5 +1,35 @@
 # BoardRipper changelog
 
+## v0.20.2 — 2026-05-09
+
+### New
+
+- **Right-click context-menu selection header.** A muted, smaller-font line at the very top of the menu shows what Copy / Search will act on: `<component> · pin <pinId> · net <netName>` in board mode, or the cursor word in PDF mode. Hidden when the relevant fields are empty. Removes the "wait, what am I about to copy?" pause that the new icon-strip introduced in v0.20.1.
+
+### Fixed
+
+- **Right-click menu was blocking ~1 s on bound PDFs.** `pdfStore.countTextMatches` walked every line of every page synchronously, called 3× per PDF donor (default query, chip@pin variant, net variant), all before the menu rendered. With one bound PDF that's 3 sync scans gating the open. New `countTextMatchesAsync` yields every 8 pages via `setTimeout(0)`; ContextMenu dispatches the counts in a `useEffect` after first paint and replaces `(…)` placeholders as each promise resolves. AbortController cancels stale work when the menu closes or the selection changes. Board counts (`countInBoardTab`) stay sync — they walk in-memory parsed objects, not text.
+
+### Docs
+
+- **README has a Keyboard Shortcuts section** covering the new game-style shortcuts (WSAD, Q/E, Shift+W/S), the `~` library toggle (with the layout note about Backquote / IntlBackslash and the AZERTY caveat), and the configurable Settings ▸ Navigation knob.
+
+## v0.20.1 — 2026-05-08
+
+### New
+
+- **Game-style keyboard shortcuts** (WSAD pan, Q/E rotate, Shift+W/S zoom, `~` toggles Library sidebar). Pan and zoom work on both board and PDF panels; rotate is board-only and silently no-ops on PDF. Library toggle binds to the physical key left of `1` via `KeyboardEvent.code` ('Backquote' on US, 'IntlBackslash' on German Mac), so `~` on US, `°` on German DE both fire the same toggle. Existing Cmd+arrow / Space / Cmd+F shortcuts unchanged. Auto-rendered in Settings ▸ Shortcuts and the home-screen Getting Started card under a new "WSAD Navigation" section. Pan and zoom step sizes configurable in Settings ▸ Navigation ▸ Keyboard pan / zoom (default: 10% of screen per pan, ×1.32 per zoom press; previous defaults were 15% / ×1.72).
+
+- **Right-click context-menu icon strip.** A new top-of-menu icon row with up to 4 board buttons (Copy net, Copy part, Search net, Search part) or 2 PDF buttons (Copy, Search Web) for the cursor word. Copy uses `navigator.clipboard.writeText` with toast feedback; Search opens Google in a new tab with `noopener,noreferrer`. Strip hides entirely when no entity is selected. The existing donor-row search functionality is unchanged below.
+
+- **Shortcut schema gained `code` (KeyboardEvent.code, single string or array for multi-layout binding), `displayLabel` (formatter override), and `ignoreShift` (matcher accepts shift-held events when set, used by the `~` library toggle so Shift+Backquote fires the same as bare Backquote).** Foundation for the AZERTY remapping work queued in `docs/superpowers/specs/2026-05-08-keyboard-shortcuts-wsad-rotate-zoom-library-design.md`.
+
+### Fixed
+
+- **The keyboard matcher was permissive about un-required modifiers.** `if (!requireShift && e.shiftKey) return false;` was missing — bare `W` would match `Shift+W` events, blocking the new zoom shortcut from registering distinctly. Added the symmetric guard. The `Shift+Cmd/Ctrl+F` "previous match" path (documented in the focusSearch shortcut description) re-enters with `{ ...focusSearch, shift: true }` so the routing block still receives both directions.
+
+- **Pin labels were being painted under the highlight ring**, so the ring's stroke clipped the bottom of pin numerals on selected nets. Renderer now stacks labels above the ring graphics so the typography reads cleanly on top, and the ring stroke pops past the label outline rather than through it. (Reported by the user on a Quanta board where 0402 caps were unreadable on a selected ground net.)
+
 ## v0.19.9 — 2026-05-08
 
 ### Fixed
