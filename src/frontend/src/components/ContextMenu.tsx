@@ -40,6 +40,10 @@ import { SearchScopeBadge } from './SearchScopeBadge';
  *  When changing one body (row format, group structure, badge placement,
  *  spoiler rules, click behavior) update the other so the two right-click
  *  modes stay consistent.
+ *    • A muted top-of-menu header (.context-menu-header) shows what
+ *      Copy/Search will act on: "<component> · pin <pinId> · net <netName>"
+ *      in board mode, or the cursor text in PDF mode. Hidden when the
+ *      relevant fields are empty.
  *    • A top-of-menu icon strip (.context-menu-actions) renders quick
  *      actions built from buildQuickActions(state). Board mode = up to
  *      4 buttons (Copy net, Copy part, Search net, Search part). PDF
@@ -219,6 +223,30 @@ export function ContextMenu() {
     contextMenuStore.hide();
     const url = `https://www.google.com/search?q=${encodeURIComponent(action.value)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const renderHeader = (): React.ReactElement | null => {
+    if (state.source === 'board') {
+      const compName = state.componentName.trim();
+      if (!compName) return null;
+      const pinId = state.pinId?.trim() ?? '';
+      const netName = state.netName?.trim() ?? '';
+      const parts: string[] = [compName];
+      if (pinId) parts.push(`pin ${pinId}`);
+      if (netName) parts.push(`net ${netName}`);
+      return (
+        <div className="context-menu-header" data-testid="context-menu-header">
+          {parts.join(' · ')}
+        </div>
+      );
+    }
+    const q = state.query.trim();
+    if (!q) return null;
+    return (
+      <div className="context-menu-header" data-testid="context-menu-header">
+        {q}
+      </div>
+    );
   };
 
   const renderQuickActions = (): React.ReactElement | null => {
@@ -468,6 +496,7 @@ export function ContextMenu() {
     return <>{sections}</>;
   };
 
+  const header = renderHeader();
   const quickActions = renderQuickActions();
   return (
     <div
@@ -476,6 +505,8 @@ export function ContextMenu() {
       style={{ left: state.screenX, top: state.screenY }}
       onClick={(e) => e.stopPropagation()}
     >
+      {header}
+      {header && <div className="context-menu-separator" />}
       {quickActions}
       {quickActions && <div className="context-menu-separator" />}
       {state.source === 'board' ? renderBoardBody() : renderPdfBody()}

@@ -2829,6 +2829,18 @@ html, body, #root {
   margin: 3px 8px;
 }
 
+/* Top-of-menu selection summary — what Copy/Search will act on. */
+.context-menu-header {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 380px;
+}
+
 /* Top-of-menu icon strip (Copy / Search quick actions). */
 .context-menu-actions {
   display: flex;

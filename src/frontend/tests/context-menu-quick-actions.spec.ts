@@ -125,3 +125,30 @@ test('empty PDF query renders no strip', async ({ page }) => {
 
   await expect(page.getByTestId('context-menu-actions')).toHaveCount(0);
 });
+
+test('board header shows component name when no pin', async ({ page }) => {
+  await loadBoard(page);
+  await showBoardMenu(page, { componentName: 'UF400' });
+
+  const header = page.getByTestId('context-menu-header');
+  await expect(header).toBeVisible();
+  await expect(header).toHaveText('UF400');
+});
+
+test('board header includes component, pin, and net when all are set', async ({ page }) => {
+  await loadBoard(page);
+  await showBoardMenu(page, { componentName: 'UF400', pinId: 'F11', netName: 'PP_VCC' });
+
+  const header = page.getByTestId('context-menu-header');
+  await expect(header).toBeVisible();
+  await expect(header).toHaveText('UF400 · pin F11 · net PP_VCC');
+});
+
+test('PDF header shows cursor query', async ({ page }) => {
+  await loadBoard(page);
+  await showPdfMenu(page, 'IC123');
+
+  const header = page.getByTestId('context-menu-header');
+  await expect(header).toBeVisible();
+  await expect(header).toHaveText('IC123');
+});
