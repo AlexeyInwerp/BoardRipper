@@ -1003,11 +1003,12 @@ function QuickSettings() {
 const CATEGORY_LABELS: Record<Shortcut['category'], string> = {
   file: 'File',
   view: 'Board',
+  wsad: 'WSAD Navigation',
   navigation: 'Navigation',
   pdf: 'PDF (when panel is active)',
 };
 
-const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'navigation', 'pdf'];
+const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'wsad', 'navigation', 'pdf'];
 
 function ShortcutList() {
   return (

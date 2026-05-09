@@ -1720,9 +1720,13 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.shortcuts && (
       <CollapsibleSection id="shortcuts" title="Keyboard Shortcuts" isOpen={openSections.has('shortcuts')}
         onToggle={toggleSection} sectionRef={shortcutsRef} isFocused={focusedSection === 'shortcuts'}>
-        {(['file', 'view', 'navigation', 'pdf'] as const).map(cat => (
+        {(['file', 'view', 'wsad', 'navigation', 'pdf'] as const).map(cat => (
           <div key={cat} className="shortcuts-category">
-            <div className="shortcuts-category-title">{cat[0].toUpperCase() + cat.slice(1)}</div>
+            <div className="shortcuts-category-title">{
+              cat === 'wsad' ? 'WSAD Navigation' :
+              cat === 'pdf' ? 'PDF' :
+              cat[0].toUpperCase() + cat.slice(1)
+            }</div>
             {shortcuts.filter(s => s.category === cat).map(s => (
               <div key={s.id} className="shortcuts-row">
                 <span className="shortcuts-label" title={s.description}>{s.label}</span>

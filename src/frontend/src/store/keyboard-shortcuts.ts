@@ -15,7 +15,7 @@ export interface Shortcut {
   /** Human label shown in settings */
   label: string;
   /** Category for grouping */
-  category: 'file' | 'view' | 'navigation' | 'pdf';
+  category: 'file' | 'view' | 'navigation' | 'pdf' | 'wsad';
   /** Key code (e.event.key) — case-insensitive match */
   key: string;
   /** Alternative key (for Mac PageUp/Down → Cmd+Up/Down) */
@@ -177,61 +177,61 @@ export const shortcuts: Shortcut[] = [
     description: 'Go to previous PDF page (when PDF panel is active)',
   },
 
-  // --- View (gamer-style) ---
+  // --- WSAD Navigation ---
   {
     id: 'panBoardLeft',
-    label: 'Pan Left (game)',
-    category: 'view',
+    label: 'Pan Left',
+    category: 'wsad',
     key: 'a',
     description: 'Move the view left (board or PDF)',
   },
   {
     id: 'panBoardRight',
-    label: 'Pan Right (game)',
-    category: 'view',
+    label: 'Pan Right',
+    category: 'wsad',
     key: 'd',
     description: 'Move the view right (board or PDF)',
   },
   {
     id: 'panBoardUp',
-    label: 'Pan Up (game)',
-    category: 'view',
+    label: 'Pan Up',
+    category: 'wsad',
     key: 'w',
     description: 'Move the view up (board or PDF)',
   },
   {
     id: 'panBoardDown',
-    label: 'Pan Down (game)',
-    category: 'view',
+    label: 'Pan Down',
+    category: 'wsad',
     key: 's',
     description: 'Move the view down (board or PDF)',
   },
   {
     id: 'rotateBoardCCW',
-    label: 'Rotate CCW (game)',
-    category: 'view',
+    label: 'Rotate CCW',
+    category: 'wsad',
     key: 'q',
     description: 'Rotate the board 90° counter-clockwise',
   },
   {
     id: 'rotateBoardCW',
-    label: 'Rotate CW (game)',
-    category: 'view',
+    label: 'Rotate CW',
+    category: 'wsad',
     key: 'e',
     description: 'Rotate the board 90° clockwise',
   },
   {
     id: 'zoomBoardIn',
-    label: 'Zoom In (game)',
-    category: 'view',
+    label: 'Zoom In',
+    category: 'wsad',
     key: 'w',
     shift: true,
     description: 'Zoom in at the canvas center (board or PDF)',
   },
   {
     id: 'zoomBoardOut',
-    label: 'Zoom Out (game)',
-    category: 'view',
+    label: 'Zoom Out',
+    category: 'wsad',
     key: 's',
     shift: true,
     description: 'Zoom out at the canvas center (board or PDF)',
