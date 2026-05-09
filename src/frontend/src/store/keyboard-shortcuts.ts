@@ -28,10 +28,12 @@ export interface Shortcut {
   altMod?: boolean;
   /** Short description for tooltip */
   description: string;
-  /** When set, match KeyboardEvent.code instead of e.key. Used for
-   *  layout-independent bindings (e.g. Backquote = physical key left of 1,
-   *  whose printed character changes between US/DE/etc. layouts). */
-  code?: string;
+  /** When set, match KeyboardEvent.code instead of e.key. Accepts a single
+   *  code (e.g. 'Backquote') or an array of codes (e.g.
+   *  ['Backquote', 'IntlBackslash']) — the latter is useful for keys whose
+   *  physical position varies across layouts (German Mac reports the
+   *  ^/° key as IntlBackslash, US reports Backquote, etc.). */
+  code?: string | string[];
   /** Explicit label override for formatShortcut(). Used when matching by
    *  `code` but wanting a friendly printed character (e.g. show '~' for
    *  Backquote). When set, overrides the formatKeyName() result. */
@@ -241,7 +243,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Toggle Library',
     category: 'file',
     key: '',
-    code: 'Backquote',
+    code: ['Backquote', 'IntlBackslash'],
     displayLabel: '~',
     description: 'Open or close the Library sidebar (key left of `1`, layout-independent — works as `~` on US, `°` on DE, etc.)',
     ignoreShift: true,
@@ -317,7 +319,7 @@ export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
 function matchesBinding(
   e: KeyboardEvent,
   key: string,
-  code: string | undefined,
+  code: string | string[] | undefined,
   _modPressed: boolean | undefined,
   _altPressed: boolean | undefined,
   _shiftPressed: boolean | undefined,
@@ -329,7 +331,8 @@ function matchesBinding(
   // Key match: when `code` is set, match KeyboardEvent.code (layout-independent)
   // and ignore `key` entirely. Otherwise match e.key case-insensitively.
   if (code !== undefined) {
-    if (e.code !== code) return false;
+    const codes = Array.isArray(code) ? code : [code];
+    if (!codes.includes(e.code)) return false;
   } else {
     if (e.key.toLowerCase() !== key.toLowerCase() && e.key !== key) return false;
   }
