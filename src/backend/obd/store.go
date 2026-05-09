@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-// Store wraps the OBD on-disk cache rooted at <library_root>/.boardripper/openboarddata/.
+// Store wraps the OBD on-disk cache rooted at <data_dir>/obd/ (pre-v0.20.3 was
+// <library_root>/.boardripper/openboarddata/; see MigrateLegacyCache).
 type Store struct {
 	root string
 }
