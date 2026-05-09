@@ -57,7 +57,7 @@ export function setLibrarySearch(query: string): void {
 export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
-    selectedFileDetail, loading,
+    selectedFileDetail, loadStatus, loadError,
     autoPdf, searchResults, searchQuery, backendAvailable,
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
@@ -96,44 +96,15 @@ export function LibraryPanel() {
     );
   }, [searchFilter]);
 
-  // Load data on mount
+  // Load data on mount.
+  //
+  // The actual data fetch is kicked off at app boot via App.tsx →
+  // databankStore.ensureLoaded(). Here we just refresh the scan-progress
+  // status so an in-flight scan started in a previous session shows its
+  // current progress on the first render of this panel. checkScanStatus
+  // is cheap and idempotent.
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.electronAPI?.scanLibrary) {
-      databankStore.initElectron();
-      return;
-    }
-    // loadConfig must run first: it discovers library_dir / _scan_root
-    // and flips _backendAvailable. Files + scan status can race.
-    databankStore.loadConfig().then(() => {
-      databankStore.checkScanStatus();
-      // History is the default tab and only references a small fixed set
-      // of files (≤ historyDepth). With 100k+ entries the full payload is
-      // multiple MB — fetch only the referenced IDs first so first paint
-      // doesn't block on the giant list, then hydrate the rest in idle time.
-      const initialMode = databankStore.viewMode;
-      const recent = databankStore.recentItems;
-      const recentIds = recent.map(r => r.fileId).filter((v): v is number => typeof v === 'number');
-      if (initialMode === 'history' && recentIds.length > 0) {
-        // Stats power the boardCount/pdfCount counters and the cache key —
-        // fetch them in parallel with the partial file fetch so the header
-        // shows correct totals even before the full hydrate completes.
-        databankStore.fetchStats();
-        databankStore.fetchFilesByIds(recentIds).then(() => {
-          // Hydrate the full list in the background. requestIdleCallback so
-          // we don't compete with the initial render or any user action.
-          const hydrate = () => databankStore.fetchFiles();
-          if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-            (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => void })
-              .requestIdleCallback(hydrate, { timeout: 5000 });
-          } else {
-            setTimeout(hydrate, 500);
-          }
-        });
-      } else {
-        databankStore.fetchFiles();
-      }
-    });
-    // folderTree fetch is deferred to first use (see the effect below)
+    databankStore.checkScanStatus();
   }, []);
 
   // When the user switches to a tab that needs the full file list, hydrate
@@ -506,8 +477,12 @@ export function LibraryPanel() {
       <div className="library-content">
         {pdfSearchMode && searchResults.length > 0 ? (
           <SearchResultsView results={searchResults} onOpenFile={handleOpenFile} />
-        ) : loading && files.length === 0 ? (
-          <div className="library-empty">Loading...</div>
+        ) : loadStatus === 'loading' && files.length === 0 ? (
+          <div className="library-empty">Loading library…</div>
+        ) : loadStatus === 'error' ? (
+          <div className="library-empty">
+            Failed to load library{loadError ? `: ${loadError.message}` : '.'} Open the Debug panel for details.
+          </div>
         ) : files.length === 0 ? (
           <div className="library-empty">
             No files found. Click Scan to index your data directory.
