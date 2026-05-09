@@ -26,6 +26,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
 import { updateStore } from './store/update-store';
+import { databankStore } from './store/databank-store';
 
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
@@ -71,6 +72,15 @@ function App() {
   // Subscribe to all sidebar changes (collapse, side flip, tab switch)
   const [, sidebarTick] = useState(0);
   useEffect(() => onSidebarChange(() => sidebarTick(n => n + 1)), []);
+
+  // Pre-load the library at app boot so the sidebar's Library tab is
+  // ready by the time the user opens it. ensureLoaded is idempotent —
+  // safe to call from a mount effect even if other code has already
+  // triggered the load. See databank-store.ts:_runStartupLoad.
+  useEffect(() => {
+    void databankStore.ensureLoaded();
+  }, []);
+
   const sidebarCollapsed = isSidebarCollapsed();
   const sidebarSide = getSidebarSide();
 
