@@ -1,5 +1,13 @@
 # BoardRipper changelog
 
+## v0.20.3 — 2026-05-10
+
+### Fixed
+
+- **OpenBoardData index now survives container updates.** OBD cache was rooted at `<libraryDir>/.boardripper/openboarddata/`. The library mount is `:ro` by default in Docker, so atomic writes silently failed and the index was effectively in-memory — gone on every container restart, including the restart triggered by self-update. Users had to re-sync (`POST /api/obd/index/sync`, ~2 min) after every release. Cache now lives at `<dataDir>/obd/`, which is the always-writable persistent volume by design. Existing caches at the legacy path are auto-migrated on first boot via `obd.MigrateLegacyCache`; cross-volume rename failures (typical when `/library` and `/data` are different mounts) fall back to a one-time re-sync. `obdStore` is no longer library-conditional — OBD works on fresh installs that haven't configured a library yet.
+
+- **Library "Browse" tab respects the search filter in live-filesystem mode.** Typing into the filter input had no effect when the user was browsing live (`viewMode === 'folders' && browseMode === 'live'`). The filter wired to the database-backed `FolderView` was silently dropped on the `LiveBrowser` side. `LiveBrowser` now receives `searchFilter` from the same `localSearch` state every other view uses, applies a case-insensitive substring filter to both directories and files in the current directory. A directory whose name matches stays visible so the user can navigate toward something they remember the parent name of. No descent into subdirectories — that stays as future work.
+
 ## v0.20.2 — 2026-05-09
 
 ### New
