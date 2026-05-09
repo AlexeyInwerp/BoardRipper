@@ -1163,3 +1163,9 @@ class DatabankStore extends Emitter {
 }
 
 export const databankStore = new DatabankStore();
+
+// Expose for integration tests (Playwright) — DEV builds only, eliminated
+// by Vite's tree-shaking in production.
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as { __databankStore?: typeof databankStore }).__databankStore = databankStore;
+}
