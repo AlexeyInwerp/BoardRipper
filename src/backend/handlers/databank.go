@@ -428,7 +428,7 @@ func (h *DatabankHandler) PreviewGet(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	http.ServeFile(w, r, path)
+	serveFileEager(w, r, path, "")
 }
 
 // PreviewPut accepts a client-generated preview image (PNG).
