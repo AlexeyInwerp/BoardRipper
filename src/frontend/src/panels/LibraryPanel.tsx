@@ -517,7 +517,7 @@ export function LibraryPanel() {
             onOpenFile={handleOpenFile}
           />
         ) : viewMode === 'folders' && browseMode === 'live' ? (
-          <LiveBrowser browseResult={browseResult} browsing={browsing} />
+          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={localSearch} />
         ) : (
           <FolderView
             tree={folderTree}
@@ -551,9 +551,10 @@ export function LibraryPanel() {
 
 // --- Live Browser ---
 
-function LiveBrowser({ browseResult, browsing }: {
+function LiveBrowser({ browseResult, browsing, searchFilter }: {
   browseResult: import('../store/databank-store').BrowseResult | null;
   browsing: boolean;
+  searchFilter: string;
 }) {
   const [currentPath, setCurrentPath] = useState('');
 
@@ -603,8 +604,15 @@ function LiveBrowser({ browseResult, browsing }: {
   if (!browseResult) return <div className="library-empty">Browse the live filesystem</div>;
 
   const entries = browseResult.entries || [];
-  const dirs = entries.filter(e => e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
-  const files = entries.filter(e => !e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+  // Client-side filter on the current directory's listing. Cheap — the
+  // backend already returns the full directory; we just hide non-matching
+  // entries pre-render. Both directories and files are filtered: a directory
+  // whose name matches stays visible so the user can navigate toward
+  // something they remember the parent name of.
+  const f = searchFilter.trim().toLowerCase();
+  const matches = (e: import('../store/databank-store').BrowseEntry) => !f || e.name.toLowerCase().includes(f);
+  const dirs = entries.filter(e => e.is_dir && matches(e)).sort((a, b) => a.name.localeCompare(b.name));
+  const files = entries.filter(e => !e.is_dir && matches(e)).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="library-tree">
