@@ -51,6 +51,27 @@ Web-based PCB boardview file viewer and inspector for board-level repair. GPU-ac
 
 ![Obscure CAD file with multiple boards stacked into one document — all outlines and components rendered correctly alongside the matching PDF](docs/screenshots/04-stacked-boards.png)
 
+## Keyboard Shortcuts
+
+The full, always-current list lives in **Settings ▸ Shortcuts** (and on the home-screen Getting Started card). The headline shortcuts:
+
+| | |
+|---|---|
+| **Open board / PDF** | `⌘O` / `⌘P` (Mac) · `Ctrl+O` / `Ctrl+P` (Win/Linux) |
+| **Find** (selection-aware) | `⌘F` / `Ctrl+F` — prefills PDF search with the selected component or net |
+| **Pan board / PDF** | `W A S D` or `Alt+arrows` |
+| **Rotate board** | `Q` / `E` (CCW / CW) or `⌘←` / `⌘→` |
+| **Mirror board** | `⌘↑` / `Ctrl+↑` |
+| **Flip layer** (top ↔ bottom) | `Space` |
+| **Zoom in / out** | `Shift+W` / `Shift+S` (centred on canvas) |
+| **Toggle Library sidebar** | `~` — the physical key left of `1` (`Backquote` / `IntlBackslash`); works on US, German, and most other layouts |
+| **Jump board ↔ PDF** | `Tab` |
+| **PDF page nav** | `PgUp` / `PgDn` (or `⌘↑` / `⌘↓` on Mac) |
+
+The keyboard pan and zoom step sizes are configurable in **Settings ▸ Navigation ▸ Keyboard pan / zoom**. The right-click context menu adds a top-row icon strip with **Copy net / Copy part / Search net / Search part** (board) and **Copy / Search Web** (PDF text) — all clipboard-friendly, search opens Google in a new tab.
+
+> **Layout note.** WSAD/QE/Shift+WS bind to the printed letter on your keyboard, so on AZERTY layouts the keys are physically Z/Q/S/D rather than the W/A/S/D positions — a layout-aware remapping is on the roadmap. The `~` library toggle is layout-independent.
+
 ## Stack
 
 | Layer | Technology |
