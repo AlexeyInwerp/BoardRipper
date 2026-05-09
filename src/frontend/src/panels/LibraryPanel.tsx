@@ -8,6 +8,7 @@ import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
 import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText, IconPin, IconPinFilled } from '@tabler/icons-react';
 import { log } from '../store/log-store';
+import { fetchWithCloudRetry } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
@@ -578,8 +579,23 @@ function LiveBrowser({ browseResult, browsing, searchFilter }: {
   const handleOpenLiveFile = useCallback(async (entry: import('../store/databank-store').BrowseEntry) => {
     const fullPath = currentPath ? currentPath + '/' + entry.name : entry.name;
     try {
-      const res = await fetch(`/api/files/path/${encodeURIComponent(fullPath)}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetchWithCloudRetry(
+        `/api/files/path/${encodeURIComponent(fullPath)}`,
+        undefined,
+        {
+          onRetry: (attempt) => {
+            if (attempt === 2) {
+              boardStore.addToast(`Downloading "${entry.name}" from cloud storage…`, 'info');
+            }
+          },
+        },
+      );
+      if (!res.ok) {
+        if (res.status === 503) {
+          boardStore.addToast(`Couldn't download "${entry.name}" from cloud storage. Try again in a moment.`, 'error');
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       const buffer = await res.arrayBuffer();
       const fileObj = new File([buffer], entry.name, {
         lastModified: entry.mod_time ? entry.mod_time * 1000 : Date.now(),
