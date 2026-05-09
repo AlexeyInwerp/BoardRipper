@@ -26,6 +26,12 @@ import { SearchScopeBadge } from './SearchScopeBadge';
  *    • Zero-count rows stay clickable — users may jump to a target and
  *      tweak the query there. Do not add `disabled` based on count.
  *    • Spoiler expansion state resets each time the menu reopens.
+ *    • PDF donor counts are computed asynchronously via
+ *      pdfStore.countTextMatchesAsync — the menu opens immediately
+ *      with "(…)" placeholders for any uncomputed count, and React
+ *      state updates each row as its promise resolves. Board counts
+ *      (countInBoardTab) stay sync. The cache is keyed by
+ *      (fileName, lowercased query) and cleared when the menu closes.
  *
  *  Board right-click:
  *      • Default query = componentName.
@@ -125,6 +131,17 @@ export function ContextMenu() {
     });
   };
 
+  // Async PDF count cache: rowKey -> count (-1 = pending placeholder).
+  // Populated on menu open by a useEffect that dispatches countTextMatchesAsync
+  // for each unique (fileName, query) the rendered rows need.
+  const [pdfCounts, setPdfCounts] = useState<Map<string, number>>(new Map());
+
+  const pdfCountKey = (fileName: string, query: string) => `${fileName} ${query.toLowerCase()}`;
+  const lookupPdfCount = (fileName: string, query: string): number | null => {
+    const v = pdfCounts.get(pdfCountKey(fileName, query));
+    return v === undefined ? null : v;
+  };
+
   // Clamp menu position to viewport after render
   useEffect(() => {
     const el = menuRef.current;
@@ -156,6 +173,59 @@ export function ContextMenu() {
       document.removeEventListener('keydown', handleKey);
     };
   }, [state.visible]);
+
+  useEffect(() => {
+    if (!state.visible) {
+      // Menu closed — clear the cache so a re-open recomputes.
+      setPdfCounts(new Map());
+      return;
+    }
+    const controller = new AbortController();
+    const needs: Array<{ fileName: string; query: string }> = [];
+    if (state.source === 'board') {
+      const compName = state.componentName;
+      const pinId = state.pinId;
+      const netName = state.netName;
+      const chipPinQuery = pinId ? `${pinId}@${compName}` : null;
+      const allOpenPdfs = pdfStore.loadedFileNames;
+      for (const fileName of allOpenPdfs) {
+        if (compName) needs.push({ fileName, query: compName });
+        if (chipPinQuery) needs.push({ fileName, query: chipPinQuery });
+        if (netName) needs.push({ fileName, query: netName });
+      }
+    } else {
+      // PDF mode: scan all OTHER open PDFs for the cursor query.
+      const originPdf = state.originPdfFileName;
+      const allOpenPdfs = pdfStore.loadedFileNames;
+      for (const fileName of allOpenPdfs) {
+        if (fileName !== originPdf && state.query) {
+          needs.push({ fileName, query: state.query });
+        }
+      }
+    }
+    // Deduplicate
+    const seen = new Set<string>();
+    const unique = needs.filter(n => {
+      const k = pdfCountKey(n.fileName, n.query);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    // Dispatch all in parallel (each yields internally so they interleave).
+    for (const { fileName, query } of unique) {
+      const k = pdfCountKey(fileName, query);
+      pdfStore.countTextMatchesAsync(fileName, query, controller.signal).then(count => {
+        if (controller.signal.aborted || count < 0) return;
+        setPdfCounts(prev => {
+          if (prev.has(k)) return prev; // already set
+          const next = new Map(prev);
+          next.set(k, count);
+          return next;
+        });
+      });
+    }
+    return () => controller.abort();
+  }, [state.visible, state.source, state.componentName, state.pinId, state.netName, state.query, state.originPdfFileName]);
 
   if (!state.visible) return null;
 
@@ -297,7 +367,7 @@ export function ContextMenu() {
     scope: 'board' | 'pdf',
     donorLabel: string,
     defaultQuery: string,
-    defaultCount: number,
+    defaultCount: number | null,
     onDefaultClick: (e: React.MouseEvent) => void,
     extraVariants: React.ReactElement[] = [],
   ): React.ReactElement => {
@@ -308,7 +378,7 @@ export function ContextMenu() {
         <div className="context-menu-item context-menu-donor-row" onClick={onDefaultClick}>
           <span>
             <SearchScopeBadge scope={scope} />
-            {' '}{donorLabel} | {defaultQuery} ({defaultCount})
+            {' '}{donorLabel} | {defaultQuery} ({defaultCount == null ? '…' : defaultCount})
           </span>
           {hasVariants && (
             <span
@@ -329,7 +399,7 @@ export function ContextMenu() {
   const renderVariantRow = (
     key: string,
     queryLabel: string,
-    count: number,
+    count: number | null,
     onClick: (e: React.MouseEvent) => void,
   ): React.ReactElement => (
     <div
@@ -337,7 +407,7 @@ export function ContextMenu() {
       className="context-menu-item context-menu-variant-row"
       onClick={onClick}
     >
-      {queryLabel} ({count})
+      {queryLabel} ({count == null ? '…' : count})
     </div>
   );
 
@@ -372,18 +442,18 @@ export function ContextMenu() {
     const pdfRowFor = (name: string, keyPrefix: string) => {
       const short = shortPdfName(name);
       const key = `${keyPrefix}:${name}`;
-      const compCount = pdfStore.countTextMatches(name, componentName.toLowerCase());
+      const compCount = lookupPdfCount(name, componentName);
 
       const extras: React.ReactElement[] = [];
       if (chipPinQuery) {
-        const ccount = pdfStore.countTextMatches(name, chipPinQuery.toLowerCase());
+        const ccount = lookupPdfCount(name, chipPinQuery);
         extras.push(renderVariantRow(
           `${key}:chip`, chipPinQuery, ccount,
           (e) => doPdfSearch(e, name, chipPinQuery),
         ));
       }
       if (netName) {
-        const ncount = pdfStore.countTextMatches(name, netName.toLowerCase());
+        const ncount = lookupPdfCount(name, netName);
         extras.push(renderVariantRow(
           `${key}:net`, `net ${netName}`, ncount,
           (e) => doPdfSearch(e, name, netName),
@@ -478,7 +548,7 @@ export function ContextMenu() {
         `pdf-other-pdf:${name}`, 'pdf',
         shortPdfName(name),
         state.query,
-        pdfStore.countTextMatches(name, state.query.toLowerCase()),
+        lookupPdfCount(name, state.query),
         (e) => doPdfDonorFromPdf(e, name),
       ))],
     ];

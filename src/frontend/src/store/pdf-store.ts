@@ -1275,6 +1275,44 @@ class PdfStore extends Emitter {
     return count;
   }
 
+  /** Async version of countTextMatches that yields to the event loop every N
+   *  pages so it doesn't block the main thread. Used by the right-click
+   *  context menu, which opens instantly with placeholder counts and fills
+   *  them in as each promise resolves.
+   *
+   *  Returns -1 if the AbortSignal fires (caller can ignore the result).
+   *  Yields every 8 pages — small enough to keep the UI responsive even on
+   *  100+ page PDFs, large enough that the per-page cost dominates the
+   *  per-yield setTimeout cost. */
+  async countTextMatchesAsync(
+    fileName: string,
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const doc = this._documents.get(fileName);
+    if (!doc?.textPages || !query) return 0;
+    const ql = query.toLowerCase();
+    let count = 0;
+    let pagesSinceYield = 0;
+    for (const pageItems of doc.textPages) {
+      if (signal?.aborted) return -1;
+      const lines = mergeItemsIntoLines(pageItems);
+      for (const line of lines) {
+        const text = line.denseText.toLowerCase();
+        let pos = 0;
+        while ((pos = text.indexOf(ql, pos)) !== -1) {
+          count++;
+          pos += ql.length;
+        }
+      }
+      if (++pagesSinceYield >= 8) {
+        pagesSinceYield = 0;
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+      }
+    }
+    return count;
+  }
+
   getDocMatchesForPage(fileName: string, pageIndex: number): PdfTextMatch[] {
     return this._documents.get(fileName)?.matchesByPage.get(pageIndex) ?? [];
   }
