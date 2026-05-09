@@ -36,7 +36,14 @@ export function useKeyboardShortcuts() {
       //   2. A PDF panel is already active (ref set) → focus its search.
       //   3. Otherwise → fall back to top-bar board search.
       const focusSearch = getShortcut('focusSearch');
-      if (focusSearch && matchesShortcut(e, focusSearch)) {
+      // Match focusSearch with OR without shift — the block below routes
+      // shift to prevMatch and unshifted to nextMatch. The matcher's
+      // symmetric shift-guard otherwise rejects Shift+Cmd+F outright.
+      const focusSearchMatch = focusSearch && (
+        matchesShortcut(e, focusSearch) ||
+        matchesShortcut(e, { ...focusSearch, shift: true })
+      );
+      if (focusSearch && focusSearchMatch) {
         // Standard behavior: if the PDF search field is already focused with a
         // query, repeat Cmd+F steps to the next match (Shift reverses direction).
         if (fileInputRefs.pdfSearch

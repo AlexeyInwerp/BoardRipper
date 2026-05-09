@@ -208,3 +208,103 @@ test('shortcut does not fire when search input is focused', async ({ page }) => 
   // The search input should now contain "w"
   await expect(searchInput).toHaveValue(/w/i);
 });
+
+// --- PDF-side shortcut tests ---
+
+const PDF = path.join(SAMPLES, '820-02016.pdf');
+const PDF_NAME = '820-02016.pdf';
+
+/** Load a PDF and wait for the panel to be active and the test hooks to appear. */
+async function loadPdf(page: import('@playwright/test').Page) {
+  await page.goto('/');
+  // The toolbar has a single unified file picker (data-testid="file-input") that
+  // accepts both boards and PDFs — pdf-input was removed in this branch.
+  await page.getByTestId('file-input').setInputFiles(PDF);
+  await expect(page.locator('.dv-tab', { hasText: PDF_NAME })).toBeVisible({ timeout: 15000 });
+  // Click the tab so the PDF panel is the active dockview panel.
+  await page.locator('.dv-tab', { hasText: PDF_NAME }).click();
+  // Wait for dockview to register the PDF panel as active.
+  await page.waitForFunction(() => {
+    const w = window as unknown as { __dockviewApi?: { activePanel?: { id?: string } } };
+    return (w.__dockviewApi?.activePanel?.id ?? '').startsWith('pdf-');
+  }, undefined, { timeout: 10000 });
+  // Wait for the test hooks to be registered (they appear once the panel mounts).
+  await page.waitForFunction((name: string) => {
+    const w = window as unknown as { __pdfPanelTestHooks?: Record<string, { getPan: () => { x: number; y: number }; getZoom: () => number }> };
+    return typeof w.__pdfPanelTestHooks?.[name]?.getPan === 'function';
+  }, PDF_NAME, { timeout: 10000 });
+}
+
+/** Read pan and zoom directly from the dev hooks. */
+async function readPdfState(page: import('@playwright/test').Page): Promise<{ x: number; y: number; zoom: number }> {
+  return page.evaluate((name: string) => {
+    const w = window as unknown as { __pdfPanelTestHooks?: Record<string, { getPan: () => { x: number; y: number }; getZoom: () => number }> };
+    const hooks = w.__pdfPanelTestHooks![name];
+    const pan = hooks.getPan();
+    return { x: pan.x, y: pan.y, zoom: hooks.getZoom() };
+  }, PDF_NAME);
+}
+
+test('D pans the PDF right', async ({ page }) => {
+  await loadPdf(page);
+
+  // Zoom in so the page is wider than the container (clampPan centers
+  // the page when it fits exactly, so X panning only works zoomed in).
+  await page.keyboard.press('Shift+W');
+  await page.waitForFunction(
+    (name: string) => {
+      const w = window as unknown as { __pdfPanelTestHooks?: Record<string, { getZoom: () => number }> };
+      const z = w.__pdfPanelTestHooks?.[name]?.getZoom();
+      return z != null && z > 1;
+    },
+    PDF_NAME,
+    { timeout: 5000 },
+  );
+
+  const before = await readPdfState(page);
+
+  await page.keyboard.press('d'); // pan right → panRef.x decreases
+  await page.waitForFunction(
+    ({ name, beforeX }: { name: string; beforeX: number }) => {
+      const w = window as unknown as { __pdfPanelTestHooks?: Record<string, { getPan: () => { x: number; y: number } }> };
+      const pan = w.__pdfPanelTestHooks?.[name]?.getPan();
+      return pan != null && pan.x < beforeX;
+    },
+    { name: PDF_NAME, beforeX: before.x },
+    { timeout: 5000 },
+  );
+  const after = await readPdfState(page);
+  expect(after.x).toBeLessThan(before.x);
+});
+
+test('Shift+W zooms the PDF in', async ({ page }) => {
+  await loadPdf(page);
+  const before = await readPdfState(page);
+
+  await page.keyboard.press('Shift+W');
+  await page.waitForFunction(
+    ({ name, beforeZoom }: { name: string; beforeZoom: number }) => {
+      const w = window as unknown as { __pdfPanelTestHooks?: Record<string, { getZoom: () => number }> };
+      const zoom = w.__pdfPanelTestHooks?.[name]?.getZoom();
+      return zoom != null && zoom > beforeZoom;
+    },
+    { name: PDF_NAME, beforeZoom: before.zoom },
+    { timeout: 5000 },
+  );
+  const after = await readPdfState(page);
+  expect(after.zoom).toBeGreaterThan(before.zoom);
+});
+
+test('Q does not rotate the PDF (no-op)', async ({ page }) => {
+  await loadPdf(page);
+  const before = await readPdfState(page);
+
+  await page.keyboard.press('q');
+  // No positive condition to poll — use a fixed wait, then assert unchanged.
+  await page.waitForTimeout(150);
+
+  const after = await readPdfState(page);
+  expect(after.x).toBeCloseTo(before.x, 3);
+  expect(after.y).toBeCloseTo(before.y, 3);
+  expect(after.zoom).toBeCloseTo(before.zoom, 5);
+});

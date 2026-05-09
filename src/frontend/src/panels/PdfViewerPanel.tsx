@@ -2814,6 +2814,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     target.__pdfPanelTestHooks = {
       ...(target.__pdfPanelTestHooks || {}),
       [pdfFileName]: {
+        // Direct ref access — used by keyboard-shortcuts-game.spec.ts to read
+        // pan/zoom state after dispatching pdf-pan / pdf-zoom events.
+        getPan: () => ({ ...panRef.current }),
+        getZoom: () => zoomRef.current,
         firstItemScreenCenter: () => {
           const container = containerRef.current;
           if (!container) return null;
