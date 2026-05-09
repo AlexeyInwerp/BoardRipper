@@ -129,6 +129,7 @@ export interface BrowseResult {
   entries: BrowseEntry[];
 }
 
+export type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 export type ViewMode = 'history' | 'metadata' | 'folders' | 'model';
 
 /** Entry in the recently-opened history */
@@ -167,6 +168,15 @@ export interface ModelGroup {
 }
 
 class DatabankStore extends Emitter {
+  // ── Load lifecycle (added 2026-05-09) ───────────────────────────────
+  /** Tracks the app-startup load orchestrated by ensureLoaded(). */
+  private _loadStatus: LoadStatus = 'idle';
+  /** When status === 'loading', the inflight promise so concurrent
+   *  callers share work instead of re-firing the chain. */
+  private _loadInflight: Promise<void> | null = null;
+  /** Most recent error from a failed load attempt; cleared on next ensureLoaded(). */
+  private _loadError: Error | null = null;
+
   private _files: DatabankFile[] = [];
   private _filesVersion = 0;
   /** True once the full file list has been fetched. False while we're showing
@@ -309,6 +319,8 @@ class DatabankStore extends Emitter {
   get recentItems() { return this._recentItems; }
   get historyDepth() { return this._historyDepth; }
   get favoritePaths() { return this._favoritePaths; }
+  get loadStatus(): LoadStatus { return this._loadStatus; }
+  get loadError(): Error | null { return this._loadError; }
 
   isFavorite(path: string): boolean {
     return this._favoritePaths.has(path);
@@ -497,6 +509,75 @@ class DatabankStore extends Emitter {
         log.scan.log('Resuming scan polling — scan still in progress');
         this._startScanPolling();
       }
+    }
+  }
+
+  /** App-startup orchestrator. Idempotent: returns immediately if already
+   *  loaded; returns the inflight promise if a previous call is in flight;
+   *  otherwise runs the full load chain in the background and resolves when
+   *  done. Must NOT be called from React component bodies — call it from
+   *  App.tsx's mount effect (or any one-shot top-level lifecycle hook). */
+  async ensureLoaded(): Promise<void> {
+    if (this._loadStatus === 'loaded') return;
+    if (this._loadInflight) return this._loadInflight;
+    this._loadStatus = 'loading';
+    this._loadError = null;
+    this.notify();
+    this._loadInflight = this._runStartupLoad();
+    try {
+      await this._loadInflight;
+    } finally {
+      this._loadInflight = null;
+    }
+  }
+
+  /** Internal: actually walks the load chain. Wrapped in a try/catch so
+   *  ensureLoaded can transition to 'error' on any thrown failure. */
+  private async _runStartupLoad(): Promise<void> {
+    try {
+      // Electron branch: same as today's initElectron path.
+      if (typeof window !== 'undefined' && window.electronAPI?.scanLibrary) {
+        await this.initElectron();
+        this._loadStatus = 'loaded';
+        this.notify();
+        return;
+      }
+
+      // Browser branch: matches the order in today's LibraryPanel useEffect
+      // (which this method is replacing).
+      await this.loadConfig();
+      this.checkScanStatus();
+
+      const recentIds = this._recentItems
+        .map(r => r.fileId)
+        .filter((v): v is number => typeof v === 'number');
+
+      if (this._viewMode === 'history' && recentIds.length > 0) {
+        // History tab is the default; first paint only needs the referenced
+        // file rows. Stats run in parallel for the totals badge. Then the
+        // full file list hydrates in the background.
+        await Promise.all([
+          this.fetchStats(),
+          this.fetchFilesByIds(recentIds),
+        ]);
+        const hydrate = () => { void this.fetchFiles(); };
+        if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+          (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => void })
+            .requestIdleCallback(hydrate, { timeout: 5000 });
+        } else {
+          setTimeout(hydrate, 500);
+        }
+      } else {
+        // Cold load: full list right away.
+        await Promise.all([this.fetchStats(), this.fetchFiles()]);
+      }
+
+      this._loadStatus = 'loaded';
+      this.notify();
+    } catch (err) {
+      this._loadStatus = 'error';
+      this._loadError = err instanceof Error ? err : new Error(String(err));
+      this.notify();
     }
   }
 
@@ -1082,3 +1163,9 @@ class DatabankStore extends Emitter {
 }
 
 export const databankStore = new DatabankStore();
+
+// Expose for integration tests (Playwright) — DEV builds only, eliminated
+// by Vite's tree-shaking in production.
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as { __databankStore?: typeof databankStore }).__databankStore = databankStore;
+}

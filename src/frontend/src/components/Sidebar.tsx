@@ -146,18 +146,17 @@ export function Sidebar() {
     _listeners.forEach(fn => fn());
   }, [clampWidth]);
 
-  if (_collapsed) return null;
-
   const isLeft = _side === 'left';
 
   return (
     <div
       className={`sidebar sidebar-${_side}`}
       style={{
-        width,
-        minWidth: MIN_WIDTH,
+        width: _collapsed ? 0 : width,
+        minWidth: _collapsed ? 0 : MIN_WIDTH,
         flexShrink: 0,
         order: isLeft ? 0 : 1,
+        display: _collapsed ? 'none' : undefined,
         borderRight: isLeft ? '1px solid var(--border)' : 'none',
         borderLeft: isLeft ? 'none' : '1px solid var(--border)',
       }}
@@ -206,9 +205,19 @@ export function Sidebar() {
         )}
       </div>
       <div className="sidebar-content">
-        {_activeTab === 'library' && <LibraryPanel />}
-        {_activeTab === 'settings' && <SettingsPanel />}
-        {_activeTab === 'debug' && <DebugPanel />}
+        {/* All three panels stay mounted at all times — display toggling
+            preserves React state (scroll, expanded folders, search query)
+            across tab switches. The panel that's not active just renders
+            with display:none and contributes no layout. */}
+        <div style={{ display: _activeTab === 'library' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+          <LibraryPanel />
+        </div>
+        <div style={{ display: _activeTab === 'settings' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+          <SettingsPanel />
+        </div>
+        <div style={{ display: _activeTab === 'debug' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+          <DebugPanel />
+        </div>
       </div>
       <div
         className="sidebar-resize-handle"
