@@ -7,11 +7,19 @@ import { fileInputRefs } from '../store/file-inputs';
 import { ensurePdfPanel, getDockviewApi } from '../store/dockview-api';
 import { openBoardSearch } from '../panels/BoardViewerPanel';
 import { focusBoardSearchInput } from '../components/BoardSidebar';
+import { toggleLibrarySidebar } from '../components/Sidebar';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
  * Uses shared fileInputRefs set by Toolbar.
  */
+function activePanelKind(): 'board' | 'pdf' | null {
+  const id = getDockviewApi()?.activePanel?.id ?? '';
+  if (id.startsWith('board-')) return 'board';
+  if (id.startsWith('pdf-')) return 'pdf';
+  return null;
+}
+
 // Track last known cursor position for context-sensitive shortcuts
 let _lastMouseX = 0;
 let _lastMouseY = 0;
@@ -28,7 +36,14 @@ export function useKeyboardShortcuts() {
       //   2. A PDF panel is already active (ref set) → focus its search.
       //   3. Otherwise → fall back to top-bar board search.
       const focusSearch = getShortcut('focusSearch');
-      if (focusSearch && matchesShortcut(e, focusSearch)) {
+      // Match focusSearch with OR without shift — the block below routes
+      // shift to prevMatch and unshifted to nextMatch. The matcher's
+      // symmetric shift-guard otherwise rejects Shift+Cmd+F outright.
+      const focusSearchMatch = focusSearch && (
+        matchesShortcut(e, focusSearch) ||
+        matchesShortcut(e, { ...focusSearch, shift: true })
+      );
+      if (focusSearch && focusSearchMatch) {
         // Standard behavior: if the PDF search field is already focused with a
         // query, repeat Cmd+F steps to the next match (Shift reverses direction).
         if (fileInputRefs.pdfSearch
@@ -255,6 +270,59 @@ export function useKeyboardShortcuts() {
             e.preventDefault();
             pdfStore.goToPage(pdfStore.currentPage - 1);
             return;
+
+          case 'panBoardLeft':
+          case 'panBoardRight':
+          case 'panBoardUp':
+          case 'panBoardDown': {
+            const kind = activePanelKind();
+            if (kind === null) return;
+            e.preventDefault();
+            const dir = shortcut.id === 'panBoardLeft'  ? 'left'
+                      : shortcut.id === 'panBoardRight' ? 'right'
+                      : shortcut.id === 'panBoardUp'    ? 'up'
+                      : 'down';
+            if (kind === 'board') {
+              viewCommands.pan(dir);
+            } else {
+              window.dispatchEvent(new CustomEvent('pdf-pan', { detail: { direction: dir } }));
+            }
+            return;
+          }
+
+          case 'rotateBoardCCW':
+          case 'rotateBoardCW': {
+            const kind = activePanelKind();
+            if (kind === null) return;
+            // PDFs do not rotate — silently no-op when active panel is PDF.
+            if (kind === 'pdf') { e.preventDefault(); return; }
+            e.preventDefault();
+            if (shortcut.id === 'rotateBoardCCW') boardStore.rotateCCW();
+            else boardStore.rotateCW();
+            return;
+          }
+
+          case 'zoomBoardIn':
+          case 'zoomBoardOut': {
+            const kind = activePanelKind();
+            if (kind === null) return;
+            e.preventDefault();
+            const dir = shortcut.id === 'zoomBoardIn' ? 'in' : 'out';
+            if (kind === 'board') {
+              viewCommands.zoom(dir);
+            } else {
+              window.dispatchEvent(new CustomEvent('pdf-zoom', { detail: { direction: dir } }));
+            }
+            return;
+          }
+
+          case 'toggleLibrary': {
+            const kind = activePanelKind();
+            if (kind === null) return;
+            e.preventDefault();
+            toggleLibrarySidebar();
+            return;
+          }
         }
       }
     };

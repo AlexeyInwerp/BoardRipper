@@ -168,6 +168,13 @@ export interface RenderSettings {
    *  matches "www.chinafix.com"). */
   pdfWatermarkFilter: string[];
 
+  /** Fraction of screen dimension panned per WSAD keypress. Range 0.02–0.30, default 0.10. */
+  keyboardPanFraction: number;
+
+  /** Raw scroll-delta equivalent per Shift+W / Shift+S keypress. Range 50–400, default 100.
+   *  Maps to zoom factor via 2^(1.3 × Δ/500). Used by both board and PDF surfaces. */
+  keyboardZoomDelta: number;
+
   /** Debug: draw a crosshair at each pin's exact file coordinates */
   showPadVertices: boolean;
   /** Debug: show numbered markers at each outline vertex */
@@ -333,6 +340,9 @@ export const DEFAULTS: RenderSettings = {
   showLabelSizeDebug: false,
   showComponentColors: true,
   componentFillAlpha: 0.55,
+
+  keyboardPanFraction: 0.10,
+  keyboardZoomDelta: 100,
 
   clickThreshold: 30,
   fitPadding: 50,
@@ -904,6 +914,9 @@ function loadFromStorage(): RenderSettings {
       if (parsed.overlayPosition === 'left' || parsed.overlayPosition === 'center') {
         result.overlayPosition = parsed.overlayPosition;
       }
+      // Clamp keyboard navigation settings to valid ranges
+      result.keyboardPanFraction = Math.min(0.30, Math.max(0.02, result.keyboardPanFraction));
+      result.keyboardZoomDelta = Math.min(400, Math.max(50, result.keyboardZoomDelta));
       return result;
     }
   } catch { /* ignore corrupt data */ }

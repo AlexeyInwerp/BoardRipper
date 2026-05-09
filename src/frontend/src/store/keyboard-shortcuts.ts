@@ -15,7 +15,7 @@ export interface Shortcut {
   /** Human label shown in settings */
   label: string;
   /** Category for grouping */
-  category: 'file' | 'view' | 'navigation' | 'pdf';
+  category: 'file' | 'view' | 'navigation' | 'pdf' | 'wsad';
   /** Key code (e.event.key) — case-insensitive match */
   key: string;
   /** Alternative key (for Mac PageUp/Down → Cmd+Up/Down) */
@@ -28,6 +28,22 @@ export interface Shortcut {
   altMod?: boolean;
   /** Short description for tooltip */
   description: string;
+  /** When set, match KeyboardEvent.code instead of e.key. Accepts a single
+   *  code (e.g. 'Backquote') or an array of codes (e.g.
+   *  ['Backquote', 'IntlBackslash']) — the latter is useful for keys whose
+   *  physical position varies across layouts (German Mac reports the
+   *  ^/° key as IntlBackslash, US reports Backquote, etc.). */
+  code?: string | string[];
+  /** Explicit label override for formatShortcut(). Used when matching by
+   *  `code` but wanting a friendly printed character (e.g. show '~' for
+   *  Backquote). When set, overrides the formatKeyName() result. */
+  displayLabel?: string;
+  /** When true, the matcher accepts the event regardless of whether shift is
+   *  held. Use sparingly — only for shortcuts where the physical key carries
+   *  the meaning and the shift state is incidental (e.g. `~` on US is
+   *  Shift+Backquote, `°` on DE is also Shift+Backquote — both should
+   *  toggle the library). */
+  ignoreShift?: boolean;
 }
 
 export const shortcuts: Shortcut[] = [
@@ -160,6 +176,78 @@ export const shortcuts: Shortcut[] = [
     key: 'ArrowUp',
     description: 'Go to previous PDF page (when PDF panel is active)',
   },
+
+  // --- WSAD Navigation ---
+  {
+    id: 'panBoardLeft',
+    label: 'Pan Left',
+    category: 'wsad',
+    key: 'a',
+    description: 'Move the view left (board or PDF)',
+  },
+  {
+    id: 'panBoardRight',
+    label: 'Pan Right',
+    category: 'wsad',
+    key: 'd',
+    description: 'Move the view right (board or PDF)',
+  },
+  {
+    id: 'panBoardUp',
+    label: 'Pan Up',
+    category: 'wsad',
+    key: 'w',
+    description: 'Move the view up (board or PDF)',
+  },
+  {
+    id: 'panBoardDown',
+    label: 'Pan Down',
+    category: 'wsad',
+    key: 's',
+    description: 'Move the view down (board or PDF)',
+  },
+  {
+    id: 'rotateBoardCCW',
+    label: 'Rotate CCW',
+    category: 'wsad',
+    key: 'q',
+    description: 'Rotate the board 90° counter-clockwise',
+  },
+  {
+    id: 'rotateBoardCW',
+    label: 'Rotate CW',
+    category: 'wsad',
+    key: 'e',
+    description: 'Rotate the board 90° clockwise',
+  },
+  {
+    id: 'zoomBoardIn',
+    label: 'Zoom In',
+    category: 'wsad',
+    key: 'w',
+    shift: true,
+    description: 'Zoom in at the canvas center (board or PDF)',
+  },
+  {
+    id: 'zoomBoardOut',
+    label: 'Zoom Out',
+    category: 'wsad',
+    key: 's',
+    shift: true,
+    description: 'Zoom out at the canvas center (board or PDF)',
+  },
+
+  // --- File (extended) ---
+  {
+    id: 'toggleLibrary',
+    label: 'Toggle Library',
+    category: 'file',
+    key: '',
+    code: ['Backquote', 'IntlBackslash'],
+    displayLabel: '~',
+    description: 'Open or close the Library sidebar (key left of `1`, layout-independent — works as `~` on US, `°` on DE, etc.)',
+    ignoreShift: true,
+  },
 ];
 
 /** Find a shortcut by id */
@@ -179,7 +267,7 @@ function formatShortcutDef(s: Shortcut): string {
   if (s.mod) parts.push(MOD_LABEL);
   if (s.alt) parts.push(ALT_LABEL);
   if (s.shift) parts.push(SHIFT_LABEL);
-  parts.push(formatKeyName(s.key));
+  parts.push(s.displayLabel ?? formatKeyName(s.key));
 
   const primary = parts.join(isMac ? '' : '+');
 
@@ -203,6 +291,7 @@ function formatKeyName(key: string): string {
     case 'ArrowDown': return isMac ? '\u2193' : 'Down';
     case 'PageUp': return isMac ? 'PgUp' : 'PgUp';
     case 'PageDown': return isMac ? 'PgDn' : 'PgDn';
+    case 'Backquote': return '~';
     default: return key.toUpperCase();
   }
 }
@@ -212,13 +301,14 @@ export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
   const modKey = isMac ? e.metaKey : e.ctrlKey;
 
   // Check primary binding
-  if (matchesBinding(e, s.key, s.mod ? modKey : undefined, s.alt ? e.altKey : undefined, s.shift ? e.shiftKey : undefined, s.mod, s.alt, s.shift)) {
+  if (matchesBinding(e, s.key, s.code, s.mod ? modKey : undefined, s.alt ? e.altKey : undefined, s.shift ? e.shiftKey : undefined, s.mod, s.alt, s.shift, s.ignoreShift)) {
     return true;
   }
 
   // Check alt binding (e.g. Cmd+Down for PageDown on Mac)
   if (s.altKey) {
-    if (matchesBinding(e, s.altKey, s.altMod ? modKey : undefined, false, undefined, s.altMod, false, false)) {
+    // Alt bindings reject shift (ignoreShift=false → shift events rejected by the symmetric guard).
+    if (matchesBinding(e, s.altKey, undefined, s.altMod ? modKey : undefined, false, undefined, s.altMod, false, false, false)) {
       return true;
     }
   }
@@ -229,15 +319,23 @@ export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
 function matchesBinding(
   e: KeyboardEvent,
   key: string,
+  code: string | string[] | undefined,
   _modPressed: boolean | undefined,
   _altPressed: boolean | undefined,
   _shiftPressed: boolean | undefined,
   requireMod?: boolean,
   requireAlt?: boolean,
   requireShift?: boolean,
+  ignoreShift?: boolean,
 ): boolean {
-  // Key match (case-insensitive)
-  if (e.key.toLowerCase() !== key.toLowerCase() && e.key !== key) return false;
+  // Key match: when `code` is set, match KeyboardEvent.code (layout-independent)
+  // and ignore `key` entirely. Otherwise match e.key case-insensitively.
+  if (code !== undefined) {
+    const codes = Array.isArray(code) ? code : [code];
+    if (!codes.includes(e.code)) return false;
+  } else {
+    if (e.key.toLowerCase() !== key.toLowerCase() && e.key !== key) return false;
+  }
 
   const modKey = isMac ? e.metaKey : e.ctrlKey;
 
@@ -247,6 +345,7 @@ function matchesBinding(
   if (requireAlt && !e.altKey) return false;
   if (!requireAlt && e.altKey) return false;
   if (requireShift && !e.shiftKey) return false;
+  if (!requireShift && e.shiftKey && !ignoreShift) return false;
 
   return true;
 }

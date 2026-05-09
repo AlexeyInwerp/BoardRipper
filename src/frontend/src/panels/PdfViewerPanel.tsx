@@ -2808,6 +2808,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     target.__pdfPanelTestHooks = {
       ...(target.__pdfPanelTestHooks || {}),
       [pdfFileName]: {
+        // Direct ref access — used by keyboard-shortcuts-game.spec.ts to read
+        // pan/zoom state after dispatching pdf-pan / pdf-zoom events.
+        getPan: () => ({ ...panRef.current }),
+        getZoom: () => zoomRef.current,
         firstItemScreenCenter: () => {
           const container = containerRef.current;
           if (!container) return null;
@@ -2844,12 +2848,70 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     scheduleTierRender();
   }, [syncTransform, scheduleTierRender]);
 
-  // Listen for global Space key → fit-to-width dispatch
+  // Listen for global Space key → fit-to-width dispatch, and keyboard pan/zoom events
   useEffect(() => {
     const handler = () => handleFitWidth();
+    // pdf-fit-width intentionally omits the props.api.isActive gate: the
+    // shortcut dispatch site already restricts firing to the PDF panel under
+    // the cursor, so gating here would double-filter and miss legitimate cases.
     window.addEventListener('pdf-fit-width', handler);
-    return () => window.removeEventListener('pdf-fit-width', handler);
-  }, [handleFitWidth]);
+
+    const panHandler = (ev: Event) => {
+      // Active-panel gate: only the dockview-active PDF panel acts.
+      if (!props.api.isActive) return;
+
+      const detail = (ev as CustomEvent<{ direction: 'left' | 'right' | 'up' | 'down' }>).detail;
+      const containerEl = containerRef.current;
+      if (!containerEl || !wrapperRef.current) return;
+      const cw = containerEl.clientWidth;
+      const ch = containerEl.clientHeight;
+      const { keyboardPanFraction } = renderSettingsStore.settings;
+      const stepX = cw * keyboardPanFraction;
+      const stepY = ch * keyboardPanFraction;
+      let dx = 0, dy = 0;
+      if (detail.direction === 'left')  dx = +stepX;
+      if (detail.direction === 'right') dx = -stepX;
+      if (detail.direction === 'up')    dy = +stepY;
+      if (detail.direction === 'down')  dy = -stepY;
+      panRef.current = { x: panRef.current.x + dx, y: panRef.current.y + dy };
+      syncTransform();
+    };
+    window.addEventListener('pdf-pan', panHandler as EventListener);
+
+    const zoomHandler = (ev: Event) => {
+      // Active-panel gate: only the dockview-active PDF panel acts.
+      if (!props.api.isActive) return;
+
+      const detail = (ev as CustomEvent<{ direction: 'in' | 'out' }>).detail;
+      const containerEl = containerRef.current;
+      if (!containerEl || !wrapperRef.current) return;
+      const rawDelta = renderSettingsStore.settings.keyboardZoomDelta;
+      const factor = Math.pow(2, 1.3 * (rawDelta / 500));
+      const effFactor = detail.direction === 'in' ? factor : 1 / factor;
+      const mid = { x: containerEl.clientWidth / 2, y: containerEl.clientHeight / 2 };
+      const cssH = pageCssHRef.current;
+      const minZoom = cssH > 0 ? Math.max(0.1, containerEl.clientHeight / (3 * cssH)) : 0.1;
+      const oldZ = zoomRef.current;
+      const newZ = Math.max(minZoom, Math.min(oldZ * effFactor, 10));
+      const ratio = newZ / oldZ;
+      // Pan correction: anchor the zoom on the container centre so the visible
+      // mid-point stays put when the scale changes. Same formula as wheel-zoom.
+      panRef.current = {
+        x: mid.x - ratio * (mid.x - panRef.current.x),
+        y: mid.y - ratio * (mid.y - panRef.current.y),
+      };
+      zoomRef.current = newZ;
+      syncTransform();
+      scheduleTierRender();
+    };
+    window.addEventListener('pdf-zoom', zoomHandler as EventListener);
+
+    return () => {
+      window.removeEventListener('pdf-fit-width', handler);
+      window.removeEventListener('pdf-pan', panHandler as EventListener);
+      window.removeEventListener('pdf-zoom', zoomHandler as EventListener);
+    };
+  }, [handleFitWidth, props.api, syncTransform, scheduleTierRender]);
 
   const handleAddBookmark = useCallback(() => {
     pdfStore.switchTo(pdfFileName);

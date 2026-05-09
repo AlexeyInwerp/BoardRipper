@@ -2829,6 +2829,38 @@ html, body, #root {
   margin: 3px 8px;
 }
 
+/* Top-of-menu icon strip (Copy / Search quick actions). */
+.context-menu-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.context-menu-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  transition: background 80ms ease;
+}
+.context-menu-action-btn:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+.context-menu-action-btn:active {
+  transform: translateY(1px);
+}
+
 .context-menu-group-header {
   padding: 2px 12px;
   font-size: 10px;

@@ -71,6 +71,18 @@ export function flipSidebarSide(): void {
   _listeners.forEach(fn => fn());
 }
 
+export function toggleLibrarySidebar(): void {
+  // Pure toggle:
+  //   collapsed                          → open with library tab
+  //   open on a non-library tab          → switch to library tab
+  //   open on library tab                → collapse
+  if (_collapsed || _activeTab !== 'library') {
+    showSidebarTab('library');
+  } else {
+    toggleSidebar();
+  }
+}
+
 export function onSidebarChange(fn: () => void): () => void {
   _listeners.add(fn);
   return () => { _listeners.delete(fn); };
@@ -78,6 +90,16 @@ export function onSidebarChange(fn: () => void): () => void {
 
 export function getSidebarWidth(): number {
   return _collapsed ? 0 : loadWidth();
+}
+
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as unknown as {
+    __sidebar?: { isCollapsed: () => boolean; activeTab: () => SidebarTab; toggle: () => void };
+  }).__sidebar = {
+    isCollapsed: isSidebarCollapsed,
+    activeTab: getSidebarActiveTab,
+    toggle: toggleSidebar,
+  };
 }
 
 export function Sidebar() {

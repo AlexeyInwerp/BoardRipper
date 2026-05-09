@@ -64,6 +64,15 @@ Second row — overlay toggles:
 - **Space** flips between top and bottom layers.
 - Click a pin or component to highlight its net and (if a PDF is linked) jump to the matching schematic location.
 
+### Game-style shortcuts
+
+- **W / A / S / D** pan the board (and the PDF, when its panel is active).
+- **Q / E** rotate the board 90° CCW / CW.
+- **Shift + W / Shift + S** zoom in / out at the canvas center.
+- **`~`** toggles the Library sidebar — the key left of `1` (layout-independent: works as `~` on US, `°` on DE, etc.).
+
+> AZERTY note: today these shortcuts follow the printed letters on your keyboard, so on AZERTY layouts the keys are Z/Q/S/D rather than the physical W/A/S/D positions. Layout-aware remapping is on the roadmap.
+
 ## Tips
 
 - Open multiple boards at once — each gets its own tab.

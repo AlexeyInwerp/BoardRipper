@@ -23,8 +23,7 @@ import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRend
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
-import { viewCommands } from '../store/view-commands';
-import type { PanDirection } from '../store/view-commands';
+import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -404,6 +403,10 @@ export class BoardRenderer {
     this.containerEl = container;
     this.tabId = tabId ?? null;
     this.app = new Application();
+    if (import.meta.env.DEV) {
+      const w = window as unknown as { __boardRenderer?: BoardRenderer };
+      w.__boardRenderer = this;
+    }
   }
 
   /** Safely stop the ticker — app or ticker may be null/destroyed. */
@@ -1051,8 +1054,11 @@ export class BoardRenderer {
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
-      if (cmd === 'pan' && this.tabId === boardStore.activeTabId) {
+      if (this.tabId !== boardStore.activeTabId) return;
+      if (cmd === 'pan') {
         this.panView(payload as PanDirection);
+      } else if (cmd === 'zoom') {
+        this.zoomKeyboard(payload as ZoomDirection);
       }
     });
 
@@ -4434,10 +4440,24 @@ export class BoardRenderer {
 
   private panView(direction: PanDirection) {
     if (!this.viewport) return;
-    const step = this.viewport.screenWidth * 0.15;
-    const dx = direction === 'left' ? step : direction === 'right' ? -step : 0;
-    const dy = direction === 'up' ? step : direction === 'down' ? -step : 0;
+    const { keyboardPanFraction } = renderSettingsStore.settings;
+    const stepX = this.viewport.screenWidth * keyboardPanFraction;
+    const stepY = this.viewport.screenHeight * keyboardPanFraction;
+    const dx = direction === 'left' ? stepX : direction === 'right' ? -stepX : 0;
+    const dy = direction === 'up' ? stepY : direction === 'down' ? -stepY : 0;
     this.viewport.position.set(this.viewport.position.x + dx, this.viewport.position.y + dy);
+    this.needsRender = true;
+    this.netLinesDirty = true;
+  }
+
+  private zoomKeyboard(direction: ZoomDirection) {
+    if (!this.viewport) return;
+    const cx = this.viewport.screenWidth / 2;
+    const cy = this.viewport.screenHeight / 2;
+    const { keyboardZoomDelta } = renderSettingsStore.settings;
+    const rawDelta = direction === 'in' ? -keyboardZoomDelta : keyboardZoomDelta;
+    this.zoomAtScreen(cx, cy, rawDelta);
+    this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
     this.needsRender = true;
     this.netLinesDirty = true;
   }
