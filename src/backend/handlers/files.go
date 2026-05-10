@@ -119,9 +119,8 @@ func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
-	http.ServeFile(w, r, filePath)
+	serveFileEager(w, r, filePath, "text/plain; charset=utf-8")
 }
 
 // GetByPath serves files from subdirectories within dataDir.
@@ -165,9 +164,8 @@ func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
 		contentType = "text/plain; charset=utf-8"
 	}
 
-	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
-	http.ServeFile(w, r, filePath)
+	serveFileEager(w, r, filePath, contentType)
 }
 
 func (h *FileHandler) Delete(w http.ResponseWriter, r *http.Request) {

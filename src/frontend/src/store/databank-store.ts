@@ -3,6 +3,8 @@ import { log } from './log-store';
 import { Emitter } from './emitter';
 import { libraryCache } from './library-cache';
 import { updateStore } from './update-store';
+import { boardStore } from './board-store';
+import { fetchWithCloudRetry } from './fetch-with-cloud-retry';
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
@@ -1083,8 +1085,26 @@ class DatabankStore extends Emitter {
       const result = await window.electronAPI!.readLibraryFile(file.path);
       return new File([result.buffer], result.name, { lastModified: result.lastModified });
     }
-    const res = await fetch(`/api/files/path/${encodeURIComponent(file.path)}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await fetchWithCloudRetry(
+      `/api/files/path/${encodeURIComponent(file.path)}`,
+      undefined,
+      {
+        onRetry: (attempt) => {
+          // First retry only — subsequent waits are implied. The toast
+          // self-dismisses after a few seconds so the user doesn't get
+          // a stack of them on long retries.
+          if (attempt === 2) {
+            boardStore.addToast(`Downloading "${file.filename}" from cloud storage…`, 'info');
+          }
+        },
+      },
+    );
+    if (!res.ok) {
+      if (res.status === 503) {
+        boardStore.addToast(`Couldn't download "${file.filename}" from cloud storage. Try again in a moment.`, 'error');
+      }
+      throw new Error(`HTTP ${res.status}`);
+    }
     const buffer = await res.arrayBuffer();
     return new File([buffer], file.filename, { lastModified: file.mod_time * 1000 });
   }
