@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -139,19 +140,32 @@ func TestServeFileEager_OpenError(t *testing.T) {
 	}
 }
 
-func TestServeFileEager_Placeholder(t *testing.T) {
-	// placeholderFileInfo is defined in serve_test_unix.go (Unix) and
-	// serve_test_other.go (non-Unix). On non-Unix platforms the Sys()
-	// type assertion in statBlocks fails so isPlaceholder returns false
-	// and this test expects a 200 instead — see serve_test_other.go for
-	// the platform-specific expected code.
+// edeadlkReadCloser returns syscall.EDEADLK on Read — simulates the
+// cloud-placeholder read failure that occurs inside Docker bind-mounts of
+// macOS File Provider folders (Docker Desktop's FUSE bridge can't drive
+// host-side materialization, so the read deadlocks).
+type edeadlkReadCloser struct{}
+
+func (e *edeadlkReadCloser) Read(p []byte) (int, error) {
+	return 0, syscall.EDEADLK
+}
+func (e *edeadlkReadCloser) Close() error { return nil }
+
+func TestServeFileEager_PlaceholderEDEADLK(t *testing.T) {
 	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
-		return io.NopCloser(strings.NewReader("")), placeholderFileInfo{
-			fakeFileInfo: fakeFileInfo{name: "p.bin", size: 1234567},
-		}, nil
+		return &edeadlkReadCloser{}, fakeFileInfo{name: "p.bin", size: 1234567}, nil
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	serveFileEagerWith(rec, req, "/fake/p.bin", "", opener)
-	assertPlaceholderResponse(t, rec)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Fatalf("Retry-After: got %q want 60", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(strings.ToLower(body), "placeholder") {
+		t.Fatalf("body should mention 'placeholder'; got %q", body)
+	}
 }
