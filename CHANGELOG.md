@@ -1,5 +1,18 @@
 # BoardRipper changelog
 
+## v0.20.4 — 2026-05-10
+
+### Fixed
+
+- **Library files served from cloud-sync placeholders no longer reach the parser as truncated bytes.** When the user's library mount lives on a cloud-managed filesystem (Google Drive on macOS via File Provider, OneDrive on Windows via NTFS reparse points, iCloud, Dropbox Smart Sync), the OS lazily materializes content on read. `http.ServeFile` was happy to stream whatever the kernel returned — sometimes a partial file or zero bytes — and the frontend parser would fail with "empty/truncated file." The two cloud-exposed file-serve handlers (`files.Get`, `files.GetByPath`) now route through a new `serveFileEager` (`src/backend/handlers/serve.go`) that reads the file fully into memory and verifies byte count matches `stat().Size()` before responding. Truncated reads return 503 + `Retry-After: 5`; the 30s read deadline returns 503 + `Retry-After: 10`. Frontend `fetchWithCloudRetry` retries up to 6 attempts / 3 min, surfaces a "Downloading from cloud storage…" toast on retry, and surfaces an error toast on exhaustion. `databank.PreviewGet` deliberately keeps `http.ServeFile` — previews live in the always-local `<dataDir>/.previews/` and benefit from `ServeFile`'s ETag/304 caching there.
+
+- **Docker-bound cloud placeholders surface a clear "materialize on host first" error** instead of a generic 500. When BoardRipper runs in a Docker container on macOS with a Google Drive folder bind-mounted as the library, the FUSE bridge can't drive host-side materialization and reads return `EDEADLK` (resource deadlock avoided). `serveFileEager` now detects this specific error and returns 503 with a body that tells the user how to fix it: "Cloud-storage placeholder: file not yet materialized on host. Open it on the host (Finder → right-click → 'Keep on this device' for Google Drive/iCloud, equivalent for OneDrive) or sync your library to a fully-local directory." Native macOS reads of the same placeholder block 1–2 seconds for materialization and succeed normally — `EDEADLK` only fires inside the container, so the friendly error is scoped to the case where it's actually useful.
+
+### Trade-offs
+
+- Range-request and `ETag`/`If-Modified-Since` caching are dropped on the two affected handlers. No current consumer relied on either (boardview parsers always read from byte 0; PDF.js doesn't issue range requests in the current implementation).
+- 512 MiB cap on in-memory reads in `serveFileEager`. Boardview files are <10 MB, PDFs <100 MB; the cap is a safety net, not a hot path.
+
 ## v0.20.3 — 2026-05-10
 
 ### Fixed
