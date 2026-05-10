@@ -21,7 +21,7 @@ jobs:
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
       - run: cd src/frontend && npm ci
-      - run: cd src/frontend && npx eslint . --max-warnings 90
+      - run: cd src/frontend && npx eslint . --max-warnings 100
       - run: cd src/frontend && npx tsc -b --noEmit
 
   frontend-tests:

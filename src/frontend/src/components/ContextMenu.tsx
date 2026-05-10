@@ -176,8 +176,11 @@ export function ContextMenu() {
 
   useEffect(() => {
     if (!state.visible) {
-      // Menu closed — clear the cache so a re-open recomputes.
-      setPdfCounts(new Map());
+      // Menu closed — let inflight requests cancel via the cleanup below;
+      // the cache stays warm. Cache entries are keyed by (fileName, query)
+      // so they remain valid across reopens. Calling setPdfCounts here
+      // would synchronously update state inside the effect — banned by
+      // react-x/no-set-state-in-effect — and is unnecessary anyway.
       return;
     }
     const controller = new AbortController();
