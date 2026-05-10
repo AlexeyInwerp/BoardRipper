@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -166,6 +167,137 @@ func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
 	serveFileEager(w, r, filePath, contentType)
+}
+
+// probeReadBytes is how many bytes the diagnostic Probe handler reads
+// before declaring success. Small enough that even a slow cloud-sync
+// driver shouldn't take more than a few seconds.
+const probeReadBytes = 64 * 1024
+
+// probeReadDeadline is the per-request budget for Probe. Shorter than
+// the main serve deadline so the diagnostic endpoint can't itself hang.
+const probeReadDeadline = 5 * time.Second
+
+// ProbeResult is the shape returned by GET /api/files/probe. All fields
+// are diagnostic — operators paste this output when reporting cloud-sync
+// failures so we know whether they're hitting a placeholder, a slow
+// network, or a real read error.
+type ProbeResult struct {
+	Path         string `json:"path"`
+	ResolvedPath string `json:"resolved_path"`
+	Size         int64  `json:"size"`
+	Blocks       int64  `json:"blocks"`
+	BlocksKnown  bool   `json:"blocks_known"`
+	ModTime      string `json:"mod_time"`
+	// PlaceholderSignal is true when size>0 && blocks==0 — the
+	// cross-platform cloud-placeholder signature. Diagnostic only; the
+	// serve path does NOT gate on this (see serve_blocks_unix.go).
+	PlaceholderSignal bool `json:"placeholder_signal"`
+	Probe             struct {
+		Ok        bool   `json:"ok"`
+		BytesRead int    `json:"bytes_read"`
+		Errno     string `json:"errno,omitempty"`
+		Error     string `json:"error,omitempty"`
+		ElapsedMs int64  `json:"elapsed_ms"`
+		// TimedOut is true if the probe hit probeReadDeadline before
+		// reaching probeReadBytes. Distinct from Error so callers can
+		// tell "kernel hung" from "kernel returned an error".
+		TimedOut bool `json:"timed_out"`
+	} `json:"probe"`
+}
+
+// Probe is a diagnostic endpoint that stat()s the requested path and
+// attempts a small read with a short deadline. Used to triage cloud-sync
+// failures — a placeholder typically reports size>0/blocks=0 and the
+// probe read either deadlocks (Docker-on-Mac with macOS File Provider)
+// or returns errno=ENXIO/EIO. Path-resolution and traversal-protection
+// mirror GetByPath.
+func (h *FileHandler) Probe(w http.ResponseWriter, r *http.Request) {
+	relPath := r.URL.Query().Get("path")
+	if relPath == "" {
+		http.Error(w, "Missing path query param", http.StatusBadRequest)
+		return
+	}
+	relPath = filepath.Clean(relPath)
+	if strings.Contains(relPath, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	resolved := filepath.Join(h.scanRootFn(), relPath)
+	info, err := os.Stat(resolved)
+	if os.IsNotExist(err) {
+		resolved = filepath.Join(h.dataDir, relPath)
+		info, err = os.Stat(resolved)
+	}
+	if os.IsNotExist(err) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Stat error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	res := ProbeResult{
+		Path:         relPath,
+		ResolvedPath: resolved,
+		Size:         info.Size(),
+		ModTime:      info.ModTime().UTC().Format(time.RFC3339),
+	}
+	if b, ok := statBlocks(info); ok {
+		res.Blocks = b
+		res.BlocksKnown = true
+		res.PlaceholderSignal = res.Size > 0 && b == 0
+	}
+
+	if !info.IsDir() {
+		probeStart := time.Now()
+		ctx, cancel := context.WithTimeout(r.Context(), probeReadDeadline)
+		defer cancel()
+		type probeResult struct {
+			n   int
+			err error
+		}
+		ch := make(chan probeResult, 1)
+		go func() {
+			f, openErr := os.Open(resolved)
+			if openErr != nil {
+				ch <- probeResult{0, openErr}
+				return
+			}
+			defer f.Close()
+			buf := make([]byte, probeReadBytes)
+			n, readErr := io.ReadFull(f, buf)
+			// io.ReadFull returns io.ErrUnexpectedEOF on short EOF and
+			// io.EOF on zero-byte read. Either is a successful probe of a
+			// real (small) file — promote both to nil so we don't surface
+			// them as errors.
+			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				readErr = nil
+			}
+			ch <- probeResult{n, readErr}
+		}()
+
+		select {
+		case <-ctx.Done():
+			res.Probe.TimedOut = true
+			res.Probe.ElapsedMs = time.Since(probeStart).Milliseconds()
+			res.Probe.Error = "probe deadline exceeded — kernel-side read is hung (placeholder unreachable through this mount?)"
+		case pr := <-ch:
+			res.Probe.BytesRead = pr.n
+			res.Probe.ElapsedMs = time.Since(probeStart).Milliseconds()
+			if pr.err == nil {
+				res.Probe.Ok = true
+			} else {
+				res.Probe.Errno = errnoName(pr.err)
+				res.Probe.Error = pr.err.Error()
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 func (h *FileHandler) Delete(w http.ResponseWriter, r *http.Request) {

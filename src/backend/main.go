@@ -115,6 +115,7 @@ func main() {
 
 	// Recursive file serving for databank (subdirectory support)
 	mux.HandleFunc("GET /api/files/path/{path...}", fileHandler.GetByPath)  // streaming download — no wrap
+	mux.HandleFunc("GET /api/files/probe", read(fileHandler.Probe))         // diagnostic: cloud-placeholder triage
 
 	// Databank API routes
 	dbHandler := handlers.NewDatabankHandler(db, scanner, extractor, dataDir)

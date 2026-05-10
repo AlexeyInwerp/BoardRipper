@@ -66,6 +66,9 @@ func TestServeFileEager_HappyPath(t *testing.T) {
 	if got := rec.Header().Get("Content-Length"); got != "11" {
 		t.Fatalf("Content-Length: got %q want 11", got)
 	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "" {
+		t.Fatalf("happy-path should not set %s; got %q", cloudErrorHeader, got)
+	}
 }
 
 func TestServeFileEager_ShortRead(t *testing.T) {
@@ -82,6 +85,9 @@ func TestServeFileEager_ShortRead(t *testing.T) {
 	}
 	if got := rec.Header().Get("Retry-After"); got != "5" {
 		t.Fatalf("Retry-After: got %q want 5", got)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "short-read" {
+		t.Fatalf("%s: got %q want short-read", cloudErrorHeader, got)
 	}
 }
 
@@ -101,6 +107,9 @@ func TestServeFileEager_Deadline(t *testing.T) {
 	}
 	if got := rec.Header().Get("Retry-After"); got != "10" {
 		t.Fatalf("Retry-After: got %q want 10", got)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "deadline" {
+		t.Fatalf("%s: got %q want deadline", cloudErrorHeader, got)
 	}
 }
 
@@ -167,5 +176,37 @@ func TestServeFileEager_PlaceholderEDEADLK(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(strings.ToLower(body), "placeholder") {
 		t.Fatalf("body should mention 'placeholder'; got %q", body)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "edeadlk" {
+		t.Fatalf("%s: got %q want edeadlk", cloudErrorHeader, got)
+	}
+}
+
+// errnoReadCloser returns the configured syscall.Errno on Read. Used to
+// verify that non-EDEADLK read failures still tag the response with a
+// stable code that includes the errno name, even though they currently
+// stay 500 (broadening the retry set is a deferred follow-up).
+type errnoReadCloser struct{ errno syscall.Errno }
+
+func (e *errnoReadCloser) Read(p []byte) (int, error) { return 0, e.errno }
+func (e *errnoReadCloser) Close() error               { return nil }
+
+func TestServeFileEager_OtherReadErrno_TaggedHeader(t *testing.T) {
+	// EIO is the most plausible non-EDEADLK errno from a wedged FUSE bridge
+	// driving a cloud placeholder. Verify the response carries
+	// X-Boardripper-Cloud-Error: read-error:<errno-string> so the frontend
+	// can log it for diagnosis.
+	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
+		return &errnoReadCloser{errno: syscall.EIO}, fakeFileInfo{name: "p.bin", size: 1234567}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	serveFileEagerWith(rec, req, "/fake/p.bin", "", opener)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 (non-EDEADLK errors are not retried yet), got %d", rec.Code)
+	}
+	got := rec.Header().Get(cloudErrorHeader)
+	if !strings.HasPrefix(got, "read-error:") {
+		t.Fatalf("%s: got %q want prefix 'read-error:'", cloudErrorHeader, got)
 	}
 }

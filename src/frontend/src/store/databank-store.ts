@@ -4,7 +4,7 @@ import { Emitter } from './emitter';
 import { libraryCache } from './library-cache';
 import { updateStore } from './update-store';
 import { boardStore } from './board-store';
-import { fetchWithCloudRetry } from './fetch-with-cloud-retry';
+import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from './fetch-with-cloud-retry';
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
@@ -1089,6 +1089,7 @@ class DatabankStore extends Emitter {
       `/api/files/path/${encodeURIComponent(file.path)}`,
       undefined,
       {
+        label: file.filename,
         onRetry: (attempt) => {
           // First retry only — subsequent waits are implied. The toast
           // self-dismisses after a few seconds so the user doesn't get
@@ -1101,7 +1102,9 @@ class DatabankStore extends Emitter {
     );
     if (!res.ok) {
       if (res.status === 503) {
-        boardStore.addToast(`Couldn't download "${file.filename}" from cloud storage. Try again in a moment.`, 'error');
+        const { code, message } = await readCloudError(res);
+        boardStore.addToast(formatCloudErrorToast(file.filename, code, message), 'error');
+        throw new Error(`HTTP 503${code ? ` (${code})` : ''}`);
       }
       throw new Error(`HTTP ${res.status}`);
     }

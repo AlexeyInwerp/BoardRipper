@@ -8,7 +8,7 @@ import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
 import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText, IconPin, IconPinFilled } from '@tabler/icons-react';
 import { log } from '../store/log-store';
-import { fetchWithCloudRetry } from '../store/fetch-with-cloud-retry';
+import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
@@ -583,6 +583,7 @@ function LiveBrowser({ browseResult, browsing, searchFilter }: {
         `/api/files/path/${encodeURIComponent(fullPath)}`,
         undefined,
         {
+          label: entry.name,
           onRetry: (attempt) => {
             if (attempt === 2) {
               boardStore.addToast(`Downloading "${entry.name}" from cloud storage…`, 'info');
@@ -592,7 +593,9 @@ function LiveBrowser({ browseResult, browsing, searchFilter }: {
       );
       if (!res.ok) {
         if (res.status === 503) {
-          boardStore.addToast(`Couldn't download "${entry.name}" from cloud storage. Try again in a moment.`, 'error');
+          const { code, message } = await readCloudError(res);
+          boardStore.addToast(formatCloudErrorToast(entry.name, code, message), 'error');
+          throw new Error(`HTTP 503${code ? ` (${code})` : ''}`);
         }
         throw new Error(`HTTP ${res.status}`);
       }
