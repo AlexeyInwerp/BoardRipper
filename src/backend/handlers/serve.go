@@ -31,6 +31,12 @@ const retryAfterShortRead = "5"
 // Longer retry — kernel is likely still downloading; give it time.
 const retryAfterDeadline = "10"
 
+// retryAfterPlaceholder is the Retry-After when we detect a cloud-storage
+// placeholder before attempting the read. Long retry — the user typically
+// has to manually materialize the file on the host (Finder → "Keep on
+// this device" for Google Drive / iCloud, equivalent for OneDrive).
+const retryAfterPlaceholder = "60"
+
 // readDeadlineForTest allows tests to override readDeadline. Production
 // code reads the var; tests reassign it within a test scope.
 var readDeadlineForTest = readDeadline
@@ -55,6 +61,28 @@ func defaultOpener(path string) (io.ReadCloser, os.FileInfo, error) {
 		return nil, info, err
 	}
 	return f, info, nil
+}
+
+// isPlaceholder returns true if info reports a non-empty file with zero
+// allocated blocks — the cross-platform signature of a cloud-storage
+// placeholder (macOS File Provider's UF_DATALESS, Windows NTFS reparse
+// points, FUSE-based sync clients on Linux). Detectable without triggering
+// any read on the file, so it works even from inside a Docker container
+// where reading a placeholder would EDEADLK.
+//
+// st_blocks is platform-specific (lives on syscall.Stat_t with different
+// field names per OS). On any platform where the type assertion fails,
+// returns false — falling through to the eager-read path which has its
+// own short-read / deadline handling. So we never wrongly classify a
+// local file as a placeholder.
+func isPlaceholder(info os.FileInfo) bool {
+	if info.Size() == 0 {
+		return false
+	}
+	if blocks, ok := statBlocks(info); ok {
+		return blocks == 0
+	}
+	return false
 }
 
 // serveFileEager reads the file at path fully into memory, verifies byte
@@ -92,6 +120,21 @@ func serveFileEagerWith(w http.ResponseWriter, r *http.Request, path string, con
 		rc.Close()
 		log.Printf("serveFileEager: %s exceeds maxFileBytes (%d > %d)", path, expectedSize, maxFileBytes)
 		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	// Pre-flight placeholder check: cloud-storage providers (Google Drive
+	// File Provider on macOS, OneDrive NTFS reparse points on Windows,
+	// FUSE-based sync clients) expose placeholders with logical size but
+	// zero allocated blocks. Reading a placeholder via Docker bind-mount
+	// fails with EDEADLK because Docker's FUSE bridge can't drive host-side
+	// materialization. Detect placeholders up-front and return a 503 with a
+	// clear "materialize on host" message so the user knows what to do.
+	if isPlaceholder(info) {
+		rc.Close()
+		log.Printf("serveFileEager: %s is a cloud-storage placeholder (st_size=%d, st_blocks=0); cannot serve through container", path, expectedSize)
+		w.Header().Set("Retry-After", retryAfterPlaceholder)
+		http.Error(w, "Cloud-storage placeholder: file not yet materialized on host. Open it on the host (Finder → right-click → 'Keep on this device' for Google Drive/iCloud, equivalent for OneDrive) or sync your library to a fully-local directory.", http.StatusServiceUnavailable)
 		return
 	}
 

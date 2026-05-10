@@ -138,3 +138,20 @@ func TestServeFileEager_OpenError(t *testing.T) {
 		t.Fatalf("expected 500, got %d", rec.Code)
 	}
 }
+
+func TestServeFileEager_Placeholder(t *testing.T) {
+	// placeholderFileInfo is defined in serve_test_unix.go (Unix) and
+	// serve_test_other.go (non-Unix). On non-Unix platforms the Sys()
+	// type assertion in statBlocks fails so isPlaceholder returns false
+	// and this test expects a 200 instead — see serve_test_other.go for
+	// the platform-specific expected code.
+	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
+		return io.NopCloser(strings.NewReader("")), placeholderFileInfo{
+			fakeFileInfo: fakeFileInfo{name: "p.bin", size: 1234567},
+		}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	serveFileEagerWith(rec, req, "/fake/p.bin", "", opener)
+	assertPlaceholderResponse(t, rec)
+}
