@@ -126,9 +126,17 @@ sdocker stop ${IMAGE_NAME} 2>/dev/null || true
 sdocker rm ${IMAGE_NAME} 2>/dev/null || true
 
 echo "[NAS] Starting new container..."
+# USER override: the in-image default is UID 65532 (good for fresh OSS
+# deployments), but this NAS's library mounts contain subdirs owned by
+# many different users (inwerp, sc-syncthing, etc.) with restrictive
+# perms — only root can read across all of them. Override the image's
+# USER for this specific install. The permission audit's H9 finding
+# stays open as a follow-up: support non-root with mixed-ownership
+# library mounts (likely via --group-add detection or a per-mount UID
+# probe in the deploy script).
 RUN_CMD=$(python3 -c "
 import shlex
-args = ['run', '-d', '--name', '${IMAGE_NAME}', '--restart', '${RESTART_POLICY}']
+args = ['run', '-d', '--name', '${IMAGE_NAME}', '--restart', '${RESTART_POLICY}', '--user', '0:0']
 for raw in '''${PORT_ARGS}
 ${MOUNT_ARGS}
 ${ENV_ARGS}'''.strip().splitlines():
