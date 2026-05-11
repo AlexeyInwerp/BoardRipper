@@ -13,6 +13,8 @@ src/frontend/playwright-report/
 
 # Go
 src/backend/server
+src/backend/boardripper
+src/backend/boardripper-server
 
 # Docker build artifacts
 data/
@@ -38,22 +40,21 @@ desktop/out-legacy/
 desktop/out-win/
 desktop/webapp/
 
-# Samples — ignore everything, then whitelist one per format
+# Samples — ignored by default. The public repo does NOT ship real-world
+# boardview files or schematic PDFs (not redistributable). Local working tree
+# may have whatever you bring. To re-introduce a redistributable test fixture,
+# whitelist it explicitly here.
 samples/*
-!samples/820-02016.bvr
-!samples/820-02016.pdf
-!samples/820-02935-05.brd
-!samples/820-02935 051-08286 Rev 5.0.3.pdf
-!samples/820-00165.pcb
-!samples/Asus G532LWS 60NR02T0-MB7010 r1.3.fz
-!samples/Quanta NJM - DANJMMB1AA0_revA_Asus TUF Gaming FA507RM.cad
-!samples/TVW/
-samples/TVW/*
-!samples/TVW/NSE562R10_View_0402.tvw
 
-# Claude worktrees
+# Claude — local settings stay out of the public repo
+.claude/settings.json
 .claude/worktrees/
 .worktrees/
+
+# Internal AI-assisted-development working notes — not for public consumption
+docs/superpowers/
+docs/agents/
+docs/analysis/
 
 # Test results (root level)
 test-results/
