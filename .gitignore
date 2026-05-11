@@ -17,6 +17,13 @@ src/backend/server
 # Docker build artifacts
 data/
 
+# Local Docker Compose files and overrides
+compose.*.y*ml
+docker-compose.*.y*ml
+
+# Local scratch/dev runtime overrides
+scratch/
+
 # Editor
 .vscode/*
 !.vscode/extensions.json
@@ -66,6 +73,5 @@ out/
 
 # Transient import-review staging files; never committed
 import-staging/
-scripts/lib/__pycache__/
-scripts/__pycache__/
+**/__pycache__/
 .tavily-env
