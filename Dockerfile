@@ -22,6 +22,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -X boardripper/updater.SourceList=${SOURCES}" \
     -o server .
 
+# Pre-create /data and /library owned by the runtime UID. scratch has no
+# shell + no mkdir, so we stage the dirs in alpine first and COPY them
+# into the final image. Without this, running the image with no host
+# bind-mount fails at startup with `mkdir /data: permission denied`
+# (the server's MkdirAll can't create top-level dirs as non-root).
+RUN mkdir -p /opt/empty/data /opt/empty/library && \
+    chown -R 65532:65532 /opt/empty
+
 # Stage 3: Final minimal image. Runs as non-root (UID 65532, the
 # `nonroot` user from the distroless convention) so a hypothetical RCE in
 # the binary doesn't own the bind-mounted /data and /library volumes.
@@ -36,6 +44,11 @@ COPY --from=frontend /app/frontend/dist /static
 # /data is empty (default fresh install). Override with BOARDDB_PATH.
 COPY ["Board Database/boards.db", "/boards.db"]
 COPY etc-passwd /etc/passwd
+# --chown is required: cross-stage COPY otherwise resets ownership to
+# root:root and the runtime UID 65532 can't write into /data (SQLite
+# fails with `unable to open database file (14)`).
+COPY --chown=65532:65532 --from=backend /opt/empty/data    /data
+COPY --chown=65532:65532 --from=backend /opt/empty/library /library
 USER 65532:65532
 EXPOSE 8080
 ENV STATIC_DIR=/static

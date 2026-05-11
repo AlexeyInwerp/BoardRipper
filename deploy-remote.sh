@@ -26,6 +26,13 @@ gunzip -f /tmp/${IMAGE_NAME}.tar.gz
 echo "[NAS] Loading Docker image..."
 sdocker load -i /tmp/${IMAGE_NAME}.tar
 
+# Image now ships USER 65532 (non-root). Existing /volume1/docker/boardripper/data
+# was owned by root from prior root-running deploys; chown so the container can
+# still write databank.db / .update-secret. Idempotent — no-op if already 65532.
+echo "[NAS] Ensuring /volume1/docker/boardripper/data is owned by 65532:65532..."
+echo "${PW}" | sudo -S chown -R 65532:65532 /volume1/docker/boardripper/data 2>&1 \
+  | grep -v '^\[sudo\]' | grep -v '^Password:' || true
+
 # ── Capture existing container config and persist to file ──
 EXISTING=$(echo "${PW}" | sudo -S ${DOCKER} ps -a --filter "name=^${IMAGE_NAME}$" --format '{{.Names}}' 2>/dev/null | grep -v '^\[sudo\]' | grep -v '^Password:' || true)
 
