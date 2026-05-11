@@ -698,7 +698,11 @@ func (s *Scanner) BrowseDir(relPath string) (*BrowseResult, error) {
 		return nil, fmt.Errorf("resolve path: %w", err)
 	}
 	resolvedRoot, _ := filepath.EvalSymlinks(root)
-	if !strings.HasPrefix(resolved, resolvedRoot) {
+	// String-prefix check would let `/library_secrets/...` slip past a root
+	// of `/library`. filepath.Rel returns a leading `..` when the target is
+	// outside the root, regardless of separator handling.
+	rel, err := filepath.Rel(resolvedRoot, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("path escapes scan root")
 	}
 

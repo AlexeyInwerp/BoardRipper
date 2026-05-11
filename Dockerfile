@@ -22,7 +22,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -X boardripper/updater.SourceList=${SOURCES}" \
     -o server .
 
-# Stage 3: Final minimal image
+# Stage 3: Final minimal image. Runs as non-root (UID 65532, the
+# `nonroot` user from the distroless convention) so a hypothetical RCE in
+# the binary doesn't own the bind-mounted /data and /library volumes.
+# scratch has no /etc/passwd, so we synthesize one with just the entry
+# that USER references — Go's HTTP stack doesn't need a real user lookup.
 FROM scratch
 COPY --from=backend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=backend /app/backend/server /server
@@ -31,6 +35,8 @@ COPY --from=frontend /app/frontend/dist /static
 # the user has staged a curated copy on their volume; falls back here when
 # /data is empty (default fresh install). Override with BOARDDB_PATH.
 COPY ["Board Database/boards.db", "/boards.db"]
+COPY etc-passwd /etc/passwd
+USER 65532:65532
 EXPOSE 8080
 ENV STATIC_DIR=/static
 ENV DATA_DIR=/data

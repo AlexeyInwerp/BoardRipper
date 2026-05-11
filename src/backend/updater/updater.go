@@ -404,5 +404,9 @@ func (u *Updater) readInstalledCounter() int64 {
 }
 
 func (u *Updater) writeInstalledCounter(n int64) error {
-	return os.WriteFile(u.installedCounterPath(), []byte(strconv.FormatInt(n, 10)), 0o644)
+	// 0o600 matches .update-secret — neither file should be readable by
+	// processes other than the BoardRipper user. World-readable opens up
+	// "any container on the host can zero this and replay a stale signed
+	// manifest" — see the secure-update-pipeline audit.
+	return os.WriteFile(u.installedCounterPath(), []byte(strconv.FormatInt(n, 10)), 0o600)
 }

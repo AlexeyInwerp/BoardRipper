@@ -467,9 +467,18 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 	}
 	bodyJSON, _ := json.Marshal(createBody)
 
-	// Shell script for the orchestrator to execute. The API= line is filled
-	// from dockerAPI() so the orchestrator container speaks the daemon's
-	// dialect (Synology DSM Container Manager = 1.41, Docker Desktop 29+ = 1.44+).
+	// Shell script for the orchestrator to execute. self.Name and self.ID
+	// come in via $BR_NAME / $BR_ID environment variables (set on the
+	// orchestrator container's Env), NOT via string interpolation into the
+	// script body. Docker constrains container names to a safe charset
+	// today, but interpolating user-controllable identifiers into a bash
+	// heredoc is brittle — if a future Docker release widens the allowed
+	// chars (or if a malicious image relabels the container at runtime),
+	// shell injection becomes possible. Env vars sidestep this entirely.
+	//
+	// The two parameters that DO need interpolation — dockerAPI() and the
+	// container-create body JSON — are both produced by this binary, not
+	// derived from user input, so they remain inline.
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 SOCK="/var/run/docker.sock"
@@ -478,27 +487,27 @@ API="http://localhost/%s"
 # Helper: Docker API via curl
 dapi() { curl -sf --unix-socket "$SOCK" "$@"; }
 
-echo "[orchestrator] Stopping %s..."
-dapi -X POST "$API/containers/%s/stop?t=10" >/dev/null 2>&1 || true
+echo "[orchestrator] Stopping $BR_NAME..."
+dapi -X POST "$API/containers/$BR_ID/stop?t=10" >/dev/null 2>&1 || true
 sleep 2
 
 echo "[orchestrator] Removing old -old container if exists..."
-dapi -X DELETE "$API/containers/%s-old?force=true" >/dev/null 2>&1 || true
+dapi -X DELETE "$API/containers/$BR_NAME-old?force=true" >/dev/null 2>&1 || true
 
-echo "[orchestrator] Renaming %s → %s-old..."
-dapi -X POST "$API/containers/%s/rename?name=%s-old" >/dev/null
+echo "[orchestrator] Renaming $BR_NAME → $BR_NAME-old..."
+dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME-old" >/dev/null
 
-echo "[orchestrator] Creating new container %s with image %s..."
+echo "[orchestrator] Creating new container $BR_NAME with image %s..."
 CREATE_BODY=$(cat <<'ENDJSON'
 %s
 ENDJSON
 )
-RESP=$(dapi -X POST -H "Content-Type: application/json" -d "$CREATE_BODY" "$API/containers/create?name=%s")
+RESP=$(dapi -X POST -H "Content-Type: application/json" -d "$CREATE_BODY" "$API/containers/create?name=$BR_NAME")
 NEW_ID=$(echo "$RESP" | sed -n 's/.*"Id":"\([^"]*\)".*/\1/p')
 if [ -z "$NEW_ID" ]; then
   echo "[orchestrator] FAIL: create returned: $RESP — rolling back"
-  dapi -X POST "$API/containers/%s/rename?name=%s" >/dev/null 2>&1 || true
-  dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
   exit 1
 fi
 
@@ -507,8 +516,8 @@ START_CODE=$(dapi -o /dev/null -w "%%{http_code}" -X POST "$API/containers/$NEW_
 if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
   echo "[orchestrator] FAIL: start returned $START_CODE — rolling back"
   dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
-  dapi -X POST "$API/containers/%s/rename?name=%s" >/dev/null 2>&1 || true
-  dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
+  dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
   exit 1
 fi
 
@@ -526,7 +535,7 @@ while [ -z "$NEW_IP" ] && [ $ipattempts -lt 10 ]; do
 done
 if [ -z "$NEW_IP" ]; then
   echo "[orchestrator] WARN: could not resolve new container IP after 10s — falling back to name lookup (only works on user-defined networks)"
-  NEW_IP="%s"
+  NEW_IP="$BR_NAME"
 fi
 echo "[orchestrator] Polling http://$NEW_IP:8080/api/health (60s timeout)..."
 i=0
@@ -545,7 +554,7 @@ done
 
 if [ "$ok" = "1" ]; then
   echo "[orchestrator] Health check passed — removing old container."
-  dapi -X DELETE "$API/containers/%s-old?force=true" >/dev/null 2>&1 || true
+  dapi -X DELETE "$API/containers/$BR_NAME-old?force=true" >/dev/null 2>&1 || true
   echo "[orchestrator] Done."
   exit 0
 fi
@@ -553,34 +562,31 @@ fi
 echo "[orchestrator] WARN: health check failed after 60s — rolling back to previous container."
 dapi -X POST "$API/containers/$NEW_ID/stop?t=5" >/dev/null 2>&1 || true
 dapi -X DELETE "$API/containers/$NEW_ID?force=true" >/dev/null 2>&1 || true
-dapi -X POST "$API/containers/%s/rename?name=%s" >/dev/null 2>&1 || true
-dapi -X POST "$API/containers/%s/start" >/dev/null 2>&1 || true
+dapi -X POST "$API/containers/$BR_ID/rename?name=$BR_NAME" >/dev/null 2>&1 || true
+dapi -X POST "$API/containers/$BR_ID/start" >/dev/null 2>&1 || true
 echo "[orchestrator] Rollback complete — previous container restarted."
 exit 1
 `,
-		dockerAPI(),                            // API= path version
-		self.Name, self.ID,                    // stop
-		self.Name,                              // delete -old
-		self.Name, self.Name,                   // rename log
-		self.ID, self.Name,                     // rename API
-		self.Name, newImage,                    // create log
-		string(bodyJSON), self.Name,            // create API
-		self.ID, self.Name,                     // rollback rename
-		self.ID,                                // rollback start
-		self.ID, self.Name,                     // rollback rename (start fail)
-		self.ID,                                // rollback start (start fail)
-		self.Name,                              // healthcheck name fallback (line: NEW_IP="%s")
-		self.Name,                              // cleanup old on success
-		self.ID, self.Name,                     // rollback rename old→original
-		self.ID,                                // rollback start old
+		dockerAPI(),       // API= path version
+		newImage,          // create-log line: human-readable image reference
+		string(bodyJSON),  // CREATE_BODY heredoc (JSON produced by this binary, not user-derived)
 	)
 
 	client := dockerClient()
 
 	// Create the orchestrator container using the pinned orchestrator image (with curl).
+	// $BR_NAME and $BR_ID feed the script via Env, not via shell-interpolation
+	// of self.Name / self.ID into the script body. See H5 in the secure-update-
+	// pipeline audit: any future widening of Docker's container-name charset
+	// (or a malicious image relabeling its container) would otherwise become a
+	// shell-injection vector inside a Docker-socket-privileged container.
 	orchBody := map[string]interface{}{
 		"Image": orchImage,
 		"Cmd":   []string{"sh", "-c", "apk add --no-cache curl >/dev/null 2>&1 && " + script},
+		"Env": []string{
+			"BR_NAME=" + self.Name,
+			"BR_ID=" + self.ID,
+		},
 		"HostConfig": map[string]interface{}{
 			"Binds":     []string{"/var/run/docker.sock:/var/run/docker.sock"},
 			"AutoRemove": true,

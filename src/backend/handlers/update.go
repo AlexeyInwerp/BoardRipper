@@ -78,11 +78,14 @@ func (h *UpdateHandler) ApplyBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 64 MiB ceiling on the multipart body — bundle should be <40 MiB for any
-	// realistic OCI archive. Reject larger uploads at the parse stage rather
-	// than after extracting.
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
+	// 48 MiB ceiling on the multipart body. Bundle is manifest (~1 KiB) +
+	// signature (~150 B) + image tarball (typically ~30 MiB). 48 MiB
+	// leaves headroom; tighter than the previous 64 MiB so a holder of
+	// the bootstrap cookie can't stack as many concurrent allocations
+	// against the 512 MiB container memory limit. Per-member extraction
+	// in extractBundle is independently capped.
+	r.Body = http.MaxBytesReader(w, r.Body, 48<<20)
+	if err := r.ParseMultipartForm(48 << 20); err != nil {
 		http.Error(w, `{"error":"parse multipart: `+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}

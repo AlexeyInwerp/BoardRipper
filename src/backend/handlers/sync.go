@@ -104,6 +104,7 @@ func (h *SyncHandler) putConfig(w http.ResponseWriter, r *http.Request) {
 		Schedule      *string `json:"schedule,omitempty"`
 		Strict        *bool   `json:"strict,omitempty"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
@@ -125,9 +126,19 @@ func (h *SyncHandler) putConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.URL != nil {
-		if err := h.db.SetConfig("sync_url", strings.TrimSpace(*req.URL)); err != nil {
+		newURL := strings.TrimSpace(*req.URL)
+		oldURL, _ := h.db.GetConfig("sync_url")
+		if err := h.db.SetConfig("sync_url", newURL); err != nil {
 			http.Error(w, "Failed to set sync_url: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// If the URL changes, drop the saved password — otherwise the
+		// stored credential rides whatever host the caller just pointed
+		// us at (the audit's "swap sync_url + reuse saved password to
+		// exfil to attacker.com" path). Caller must re-supply password
+		// for the new URL in the same PUT or a follow-up.
+		if oldURL != "" && newURL != oldURL && req.Password == nil && !req.ClearPassword {
+			_ = h.db.SetConfig("__sync_secret_pass", "")
 		}
 	}
 	if req.User != nil {

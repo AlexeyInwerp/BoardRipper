@@ -250,7 +250,11 @@ func main() {
 	log.Printf("Library scan root: %s", scanner.ScanRoot())
 
 	addr := fmt.Sprintf(":%s", port)
-	handler := gzipMiddleware(mux)
+	// Middleware order (outer → inner):
+	//   securityHeaders → CSRF check → gzip → mux
+	// CSRF check has to see the request before mux dispatches; gzip wraps
+	// only the inner handler so headers go on the un-compressed response.
+	handler := withSecurityHeaders(withCSRFCheck(gzipMiddleware(mux)))
 	// Protocol-level timeouts (slowloris defence). ReadHeaderTimeout caps
 	// how long a client can drip-feed headers; ReadTimeout caps the whole
 	// request including body (file uploads up to ~5 min); WriteTimeout

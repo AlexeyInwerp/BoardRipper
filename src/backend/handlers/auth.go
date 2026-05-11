@@ -1,18 +1,28 @@
 package handlers
 
-import "net/http"
+import (
+	"crypto/subtle"
+	"net/http"
+)
 
 const updateCookieName = "br_update_token"
 
 // WithUpdateAuth wraps next with auth: passes if either the
 // X-BoardRipper-Update-Token header or the br_update_token cookie matches.
+// Constant-time compare so the check itself never leaks timing data about
+// the per-install secret to a remote attacker.
 func WithUpdateAuth(secret string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-BoardRipper-Update-Token") == secret {
-			next.ServeHTTP(w, r); return
+		secretB := []byte(secret)
+		if h := r.Header.Get("X-BoardRipper-Update-Token"); h != "" &&
+			subtle.ConstantTimeCompare([]byte(h), secretB) == 1 {
+			next.ServeHTTP(w, r)
+			return
 		}
-		if c, err := r.Cookie(updateCookieName); err == nil && c.Value == secret {
-			next.ServeHTTP(w, r); return
+		if c, err := r.Cookie(updateCookieName); err == nil &&
+			subtle.ConstantTimeCompare([]byte(c.Value), secretB) == 1 {
+			next.ServeHTTP(w, r)
+			return
 		}
 		w.WriteHeader(401)
 	})

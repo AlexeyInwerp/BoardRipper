@@ -32,6 +32,28 @@ func NewFileHandler(dataDir string, scanRootFn ScanRootFunc) *FileHandler {
 	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn}
 }
 
+// resolveWithinRoot rejects paths whose symlink-resolved target escapes
+// `root`. `..` traversal is also blocked. os.Stat / os.Open follow
+// symlinks transparently, so a symlink inside the library mount that
+// points at /etc/passwd would otherwise be served verbatim. Returns the
+// fully-resolved absolute path on success.
+func resolveWithinRoot(root, relPath string) (string, error) {
+	abs := filepath.Join(root, relPath)
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootResolved, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes root")
+	}
+	return resolved, nil
+}
+
 func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// Limit upload size to 50MB
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
@@ -141,15 +163,19 @@ func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check scan root first (may be library_dir), then fall back to dataDir
-	filePath := filepath.Join(h.scanRootFn(), relPath)
-	info, err := os.Stat(filePath)
-	if os.IsNotExist(err) {
-		// Try dataDir as fallback
-		filePath = filepath.Join(h.dataDir, relPath)
-		info, err = os.Stat(filePath)
+	// Check scan root first (may be library_dir), then fall back to dataDir.
+	// resolveWithinRoot also blocks symlink-out-of-root escapes — necessary
+	// because os.Stat / os.Open follow symlinks transparently.
+	filePath, err := resolveWithinRoot(h.scanRootFn(), relPath)
+	if err != nil {
+		filePath, err = resolveWithinRoot(h.dataDir, relPath)
 	}
-	if os.IsNotExist(err) || (info != nil && info.IsDir()) {
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	info, err := os.Stat(filePath)
+	if err != nil || info.IsDir() {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
@@ -224,16 +250,15 @@ func (h *FileHandler) Probe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved := filepath.Join(h.scanRootFn(), relPath)
-	info, err := os.Stat(resolved)
-	if os.IsNotExist(err) {
-		resolved = filepath.Join(h.dataDir, relPath)
-		info, err = os.Stat(resolved)
+	resolved, err := resolveWithinRoot(h.scanRootFn(), relPath)
+	if err != nil {
+		resolved, err = resolveWithinRoot(h.dataDir, relPath)
 	}
-	if os.IsNotExist(err) {
+	if err != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
+	info, err := os.Stat(resolved)
 	if err != nil {
 		http.Error(w, "Stat error: "+err.Error(), http.StatusInternalServerError)
 		return

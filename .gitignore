@@ -56,6 +56,10 @@ docs/superpowers/
 docs/agents/
 docs/analysis/
 
+# SQLite WAL / shared-memory transient files (created when DB is open)
+*.db-shm
+*.db-wal
+
 # Test results (root level)
 test-results/
 

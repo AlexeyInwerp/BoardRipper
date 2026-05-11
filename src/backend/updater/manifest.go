@@ -54,8 +54,10 @@ const (
 
 // ValidateManifest checks expiry, freshness, counter monotonicity, and
 // min_supported_version. installedCounter==0 means "first install" — counter
-// check is skipped, but the freshness bounds still bite (a fresh install must
-// not be onboarded onto a stale signed manifest).
+// monotonicity is skipped (no prior counter to compare against), but the
+// manifest's version still must be >= the running binary's version so a
+// fresh install cannot be onboarded onto a downgraded build. The freshness
+// bounds also bite regardless.
 func ValidateManifest(m *Manifest, installedCounter int64, installedVersion string) error {
 	now := time.Now()
 	if now.After(m.NotAfter) {
@@ -70,8 +72,21 @@ func ValidateManifest(m *Manifest, installedCounter int64, installedVersion stri
 	if now.Sub(m.ReleasedAt) > releasedAtMaxAge {
 		return fmt.Errorf("manifest stale: released_at=%s older than %s", m.ReleasedAt.Format(time.RFC3339), releasedAtMaxAge)
 	}
-	if installedCounter > 0 && m.Counter <= installedCounter {
-		return fmt.Errorf("manifest counter not greater than installed (got %d, have %d)", m.Counter, installedCounter)
+	if installedCounter > 0 {
+		if m.Counter <= installedCounter {
+			return fmt.Errorf("manifest counter not greater than installed (got %d, have %d)", m.Counter, installedCounter)
+		}
+	} else {
+		// First install (counter file missing or zeroed). Refuse to
+		// onboard a manifest whose Version is older than the running
+		// binary's — otherwise an attacker who can wipe /data (or who
+		// is staging a fresh install) can replay a 30-day-old signed
+		// manifest for a previously-released-but-known-buggy build.
+		// Equal versions are accepted (legitimate re-publish of the
+		// same release with adjusted notes_url etc.).
+		if installedVersion != "" && !versionGTE(m.Version, installedVersion) {
+			return fmt.Errorf("manifest version %s below running version %s on fresh install — refusing", m.Version, installedVersion)
+		}
 	}
 	if !versionGTE(installedVersion, m.MinSupportedVersion) {
 		return fmt.Errorf("installed version %s below min_supported_version %s — manual update required", installedVersion, m.MinSupportedVersion)

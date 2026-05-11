@@ -1114,9 +1114,13 @@ func (db *DB) SetConfig(key, value string) error {
 	return err
 }
 
-// AllConfig returns all config key-value pairs.
+// AllConfig returns all public config key-value pairs. Keys prefixed with
+// "__" hold secrets (e.g. __sync_secret_pass — the WebDAV library-sync
+// password) and are filtered out so they never appear in GET /api/config
+// responses, log dumps, etc. Per-secret accessors are responsible for
+// reading these by exact key when they need them.
 func (db *DB) AllConfig() (map[string]string, error) {
-	rows, err := db.reader.Query(`SELECT key, value FROM config`)
+	rows, err := db.reader.Query(`SELECT key, value FROM config WHERE key NOT LIKE '\_\_%' ESCAPE '\'`)
 	if err != nil {
 		return nil, err
 	}

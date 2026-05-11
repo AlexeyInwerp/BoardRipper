@@ -273,6 +273,7 @@ func (h *DatabankHandler) UpdateFile(w http.ResponseWriter, r *http.Request) {
 		Model        *string `json:"model"`
 		DonorPool    *bool   `json:"donor_pool"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
@@ -328,6 +329,7 @@ func (h *DatabankHandler) CreateBinding(w http.ResponseWriter, r *http.Request) 
 		Category    *string `json:"category,omitempty"`
 		AutoOpen    *bool   `json:"auto_open,omitempty"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
@@ -370,6 +372,7 @@ func (h *DatabankHandler) UpdateBinding(w http.ResponseWriter, r *http.Request) 
 		Category *string `json:"category,omitempty"`
 		AutoOpen *bool   `json:"auto_open,omitempty"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
@@ -561,6 +564,7 @@ func (h *DatabankHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		Key   string `json:"key"`
 		Value string `json:"value"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
@@ -638,6 +642,9 @@ func (h *DatabankHandler) UploadText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Pages map[string]string `json:"pages"`
 	}
+	// PDF page-text payloads are bounded by the upload cap (50 MiB); allow
+	// up to 64 MiB headroom for JSON overhead.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return

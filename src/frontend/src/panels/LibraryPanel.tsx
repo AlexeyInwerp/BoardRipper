@@ -49,6 +49,30 @@ function tailTruncate(s: string, max = 60) {
   return s.length > max ? '...' + s.slice(-(max - 3)) : s;
 }
 
+/** Render an FTS5 snippet safely. SQLite's snippet() wraps each match in
+ *  literal `<b>` / `</b>` delimiters; the rest is the user's PDF text which
+ *  may contain arbitrary HTML (`<script>`, `<img onerror=…>`, etc.). Split
+ *  on the delimiters and render the segments as plain React text — React
+ *  auto-escapes — wrapping the marked segments in <b> elements. The only
+ *  HTML that ever ends up in the DOM is the literal <b>; nothing the
+ *  attacker controls. */
+function renderSnippet(snippet: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let rest = snippet;
+  let key = 0;
+  while (rest.length > 0) {
+    const open = rest.indexOf('<b>');
+    if (open < 0) { out.push(rest); break; }
+    if (open > 0) out.push(<span key={key++}>{rest.slice(0, open)}</span>);
+    rest = rest.slice(open + 3);
+    const close = rest.indexOf('</b>');
+    if (close < 0) { out.push(<b key={key++}>{rest}</b>); break; }
+    out.push(<b key={key++}>{rest.slice(0, close)}</b>);
+    rest = rest.slice(close + 4);
+  }
+  return out;
+}
+
 // Global setter for toolbar search integration
 let _externalSearchSetter: ((q: string) => void) | null = null;
 export function setLibrarySearch(query: string): void {
@@ -1263,10 +1287,9 @@ function SearchResultsView({ results, onOpenFile }: {
             </button>
           </div>
           {r.snippet && (
-            <div
-              className="library-search-result-snippet"
-              dangerouslySetInnerHTML={{ __html: r.snippet }}
-            />
+            <div className="library-search-result-snippet">
+              {renderSnippet(r.snippet)}
+            </div>
           )}
           {r.board_bindings && r.board_bindings.length > 0 && (
             <div className="library-search-result-boards">
