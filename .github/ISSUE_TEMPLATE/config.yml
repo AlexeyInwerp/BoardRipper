@@ -1,0 +1,19 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/AlexeyInwerp/BoardRipper/security/policy
+    about: |
+      Please do NOT file security issues in the public tracker. Email
+      mail@ripperdoc.de — see SECURITY.md for the full policy and
+      what counts as out-of-scope.
+  - name: Discord — All Things Repair (general help / questions)
+    url: https://discord.gg/Yv9Ecshy
+    about: |
+      Quicker than the issue tracker for questions about deployment,
+      file formats, or "is this thing on?" — ping @inwerp on the
+      All Things Repair server.
+  - name: Buy me a coffee (donations)
+    url: https://buymeacoffee.com/inwerp
+    about: |
+      Optional. Funds go to the maintainer (one person) and help
+      keep the lights on for the public download mirror.

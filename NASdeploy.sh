@@ -18,15 +18,15 @@ CONTAINER_PORT=8080    # Internal port the Go server listens on
 REMOTE="origin"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
-# Read config from deploy.conf
+# Read config from deploy.conf. `github_token:` is no longer read — the
+# self-update path uses offline-signed manifests (Ed25519) and pulls from
+# the public GHCR registry, so end-user installs need no GitHub credential.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAS_PW=""
-GITHUB_UPDATE_TOKEN=""
 if [[ -f "${SCRIPT_DIR}/deploy.conf" ]]; then
     NAS_HOST=$(grep '^server:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $2}')
     NAS_USER=$(grep '^ssh user:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $3}')
     NAS_PW=$(grep '^ssh pw:' "${SCRIPT_DIR}/deploy.conf" | awk '{print $3}')
-    GITHUB_UPDATE_TOKEN=$(grep '^github_token:' "${SCRIPT_DIR}/deploy.conf" 2>/dev/null | awk '{print $2}' || true)
 fi
 APP_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
 
@@ -129,7 +129,7 @@ $(scp_cmd) "${SCRIPT_DIR}/deploy-remote.sh" "${NAS_USER}@${NAS_HOST}:/tmp/deploy
 }
 
 info "Deploying on NAS..."
-$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "bash /tmp/deploy-remote.sh '${NAS_PW}' '${GITHUB_UPDATE_TOKEN}'"
+$(ssh_cmd) "${NAS_USER}@${NAS_HOST}" "bash /tmp/deploy-remote.sh '${NAS_PW}'"
 
 # Clean up local tar
 rm -f "${TAR_FILE}"

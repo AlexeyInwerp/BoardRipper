@@ -123,7 +123,7 @@ The bridge is complete. From v0.19.1 onward, only the new pipeline is used:
 
 1. ~~Delete or rename `.github/workflows/release.yml`~~ — done (commit `7200694`).
 2. github.com → repo Settings → Secrets and variables → Actions → remove old `GH_TOKEN`/`GITHUB_PAT` secrets.
-3. **Rotate the leaked PAT in `deploy.conf`.** github.com → revoke `github_pat_11ADU6R5I0…`. Move what's left of `deploy.conf` to `~/.config/boardripper-deploy/`.
+3. **Delete the legacy maintainer PAT after the public flip.** github.com → Developer settings → Personal access tokens → revoke any fine-grained token still scoped to `BoardRipper` (it was previously needed to fetch updates from a private repo; once the repo is public, no token is required for cloning or pulling images). The deploy scripts no longer read `github_token:` from `deploy.conf`.
 
 ## Recovery
 
