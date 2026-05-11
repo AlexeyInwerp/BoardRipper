@@ -44,12 +44,19 @@ type DB struct {
 
 // Open opens boards.db at the given path in read-only mode.
 // Returns nil (not error) if the file does not exist — feature is disabled.
+//
+// `immutable=1` tells SQLite the file won't change while open, which
+// disables journal-mode side effects entirely. Without this, SQLite
+// tries to create WAL/SHM journal files next to the DB — and the bundled
+// boards.db lives at /boards.db inside the scratch image, where the
+// non-root container user can't write. (Prior to USER 65532 the
+// orchestrator ran as root and the side-files succeeded by accident.)
 func Open(dbPath string) *DB {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		log.Printf("[boarddb] %s not found — board resolution disabled", dbPath)
 		return nil
 	}
-	dsn := fmt.Sprintf("file:%s?mode=ro&_journal_mode=WAL", dbPath)
+	dsn := fmt.Sprintf("file:%s?mode=ro&immutable=1", dbPath)
 	reader, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Printf("[boarddb] failed to open %s: %v", dbPath, err)
