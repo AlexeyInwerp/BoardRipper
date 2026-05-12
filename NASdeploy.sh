@@ -30,6 +30,18 @@ if [[ -f "${SCRIPT_DIR}/deploy.conf" ]]; then
 fi
 APP_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
 
+# Self-update needs the minisign public key baked into the binary so the
+# updater can verify signed manifests from ghcr.io / ripperdoc.de. Without
+# this the running binary fails every update check with
+#   "updater not configured: PubKey is empty (built without -ldflags)"
+# Reads the same release.pub as scripts/release.sh.
+PUBKEY_FILE="${PUBKEY_FILE:-${HOME}/.config/boardripper/release.pub}"
+if [[ -f "${PUBKEY_FILE}" ]]; then
+    PUBKEY_B64=$(grep -v '^untrusted' "${PUBKEY_FILE}" | tr -d '\n')
+else
+    PUBKEY_B64=""
+fi
+
 # ── Colors ─────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -62,7 +74,10 @@ info "=== Pre-deploy checks ==="
 
 # 1. Verify Docker image builds locally
 info "Building image..."
-docker build --build-arg APP_VERSION="${APP_VERSION}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
+docker build --build-arg APP_VERSION="${APP_VERSION}" --build-arg PUBKEY="${PUBKEY_B64}" -t boardripper:deploy-check . || { error "FAIL: Docker build failed"; exit 1; }
+if [[ -z "${PUBKEY_B64}" ]]; then
+    warn "WARN: PUBKEY empty (${PUBKEY_FILE} missing). Self-update on the NAS will be disabled until you re-deploy with the key."
+fi
 
 # 2. Smoke-test the image locally
 info "Smoke-testing image..."
@@ -102,7 +117,7 @@ info "Push complete."
 # ── Step 2: Build Docker image for linux/amd64 ────────────────
 TAR_FILE="/tmp/${IMAGE_NAME}.tar.gz"
 info "Building Docker image ${IMAGE_NAME}:${IMAGE_TAG} for linux/amd64..."
-docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
+docker buildx build --platform linux/amd64 --build-arg APP_VERSION="${APP_VERSION}" --build-arg PUBKEY="${PUBKEY_B64}" -t "${IMAGE_NAME}:${IMAGE_TAG}" --load . || {
     error "Docker build failed."
     exit 1
 }
