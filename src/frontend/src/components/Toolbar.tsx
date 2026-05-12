@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { IconFlipHorizontal } from '@tabler/icons-react';
+import { IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useDatabank } from '../hooks/useDatabank';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { toggleSidebar, showSidebarTab } from './Sidebar';
 import { exportToBVR3, getAllExtensions, getFileExtension, getFormat } from '../parsers';
@@ -271,6 +272,7 @@ export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // pdfInputRef removed — single Open button + unified file picker now.
   const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis, rotation } = useBoardStore();
+  const { electronMode } = useDatabank();
 
   // For files where the label convention is inverted (primarySide='bottom'),
   // the UI presents the physical CPU side as "Top". The store's showTop flag
@@ -345,8 +347,19 @@ export function Toolbar() {
         >
           &#x2261;
         </button>
-        <button onClick={handleFileOpen} className="toolbar-btn" data-testid="open-btn" data-tooltip="Open boards or PDFs">
-          Open
+        {/* In Electron the picker reaches into the local filesystem (truly "Open").
+         *  In a browser the file is read into memory client-side — closer to an
+         *  upload from the user's mental model — so the web build uses an
+         *  IconUpload-prefixed "Upload" label. testid stays `open-btn` to keep
+         *  Playwright tests stable across both modes. */}
+        <button
+          onClick={handleFileOpen}
+          className="toolbar-btn"
+          data-testid="open-btn"
+          data-tooltip={electronMode ? 'Open boards or PDFs' : 'Upload boards or PDFs from your device'}
+          style={electronMode ? undefined : { gap: 6 }}
+        >
+          {electronMode ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
         </button>
       </div>
 
