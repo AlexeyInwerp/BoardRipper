@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## v0.20.5 — 2026-05-12
+
+### Fixed
+
+- **TVW (Teboview) parser now handles two previously-unobserved variants — three sample boards that produced an empty viewer now parse cleanly.**
+  - **Header `h5/h6/h7` Pascal strings.** Three pstr fields between `date` and `size1` were being read as 3 raw bytes (`const3` in eagleview). In every previously-known sample those fields are empty (3 zero length-bytes), so the raw read worked by coincidence. `samples/BROKEN/NM-D355_r1.0_HT4BT.tvw` ships one of them as `"q798"`, which shifted every subsequent header field by 4 bytes; the parser then read `layerCount = 2` instead of 20 and bailed on the first layer with "unknown object type 20." Fix: parse the three fields as Pascal strings (byte-compatible with all prior samples).
+  - **Per-pin opposite-side contact count.** The trailing `u32` after each pin's name pstr was assumed to be `Z2 == 0` (eagleview asserts this). It's actually a per-pin counter for opposite-side through-hole/edge contacts. When **any** pin in a part has it set, a mirrored-contact block follows the primary pin list: `(u32 cont_flag, u32 reserved)` then `Σ ext_contact_count` more pin records (no trailing counter of their own). The previous heuristic-based `looksLikePinExtension` detector was a weaker proxy for the same signal — it over-fired on NM-D355's H11 SWITCH (2 declared pins + 1 mirrored contact, read as 2 ext-pins instead of 1) and was inconsistent on Landrex connectors. Observed in three in-the-wild patterns:
+    - LianBao SWITCH (NM-D355 H11): `pinCount=2`, sum=1 — mechanical switch with one mirrored mechanical contact
+    - Landrex vertical connector (Gigabyte GV-N5080 CN1): `pinCount=82`, sum=82 — every pin mirrored on opposite copper layer
+    - Landrex edge connector (Gigabyte GV-R79X MPCIE1): `pinCount=82`, sum=82 — PCIe slot dual-sided
+  - **Verified across the 16-file TVW corpus:** `NM-D355` 0 → 3957 parts, `GV-N5080` 28 → 3161 parts, `GV-R79X` 0 → 4825 parts. Every other working sample unchanged. The format note is captured in `docs/formats/TVW_FORMAT.md` so upstream eagleview and future parsers don't make the same `Z2 == 0` assumption.
+
 ## v0.20.4 — 2026-05-10
 
 ### Fixed
