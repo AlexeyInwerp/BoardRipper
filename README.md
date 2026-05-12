@@ -313,7 +313,7 @@ Treat that as you would any AI-assisted software: it works on the boards I've te
 
 ## Feedback
 
-- Discord: **@inwerp** on the [All Things Repair](https://discord.gg/Yv9Ecshy) server.
+- Discord: **@inwerp** on the [All Things Repair](https://discord.gg/BYEkKTMNNY) server.
 - Email: <mail@ripperdoc.de>.
 - Bugs and feature requests: file an issue on GitHub, or reach out via Discord / email.
 

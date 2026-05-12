@@ -109,5 +109,5 @@ is a tools project for a niche audience — that's hopefully never needed.
 
 ## Questions
 
-Discord: **@inwerp** on the [All Things Repair](https://discord.gg/Yv9Ecshy)
+Discord: **@inwerp** on the [All Things Repair](https://discord.gg/BYEkKTMNNY)
 server, or [mail@ripperdoc.de](mailto:mail@ripperdoc.de).
