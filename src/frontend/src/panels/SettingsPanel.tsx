@@ -73,7 +73,10 @@ export const SECTION_TO_TAB: Record<SectionId, SettingsTabId> = {
   // System tab
   performance: 'system',
   pdf:         'system',
-  server:      'system',
+  // Library folder + auto-scan + DB info + library prefs lives on the Library
+  // tab. The internal section id is still `server` for localStorage continuity
+  // (`boardripper-settings-open-sections-*`) and focus refs.
+  server:      'library',
 };
 
 const ACTIVE_TAB_KEY = 'boardripper-settings-active-tab';
@@ -1708,7 +1711,7 @@ export function SettingsPanel() {
       )}
 
       {activeTab === SECTION_TO_TAB.server && (
-      <CollapsibleSection id="server" title="Server / Library" isOpen={openSections.has('server')}
+      <CollapsibleSection id="server" title="Library Folder & Database" isOpen={openSections.has('server')}
         onToggle={toggleSection} sectionRef={serverRef} isFocused={focusedSection === 'server'}>
         <LibraryFolderSetting />
         <AutoScanToggle />
