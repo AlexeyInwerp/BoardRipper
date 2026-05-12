@@ -712,9 +712,17 @@ html, body, #root {
   font-size: 9px;
 }
 .sidebar-content {
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  overflow: auto;
   min-height: 0;
+  /* Children (LibraryPanel, SettingsPanel, DebugPanel wrappers) claim flex: 1
+   * and manage their own internal overflow via .library-content etc. — this
+   * container just sizes the active panel to fill available sidebar height
+   * so margin-top:auto on the stats bar / sticky search row can do their
+   * job. Regressed in 3267185 when wrappers were added without making this
+   * a flex container. */
+  overflow: hidden;
 }
 .sidebar-resize-handle {
   position: absolute;
