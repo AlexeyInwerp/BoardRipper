@@ -125,20 +125,27 @@ func (h *SyncHandler) putConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// "Password is being supplied" means EITHER an explicit clear OR a
+	// non-empty value. `req.Password != nil` alone isn't enough — a JSON
+	// body of `{"url":"...","password":""}` deserializes to a non-nil
+	// pointer at an empty string, but doesn't actually supply credentials,
+	// so the URL change must still drop the saved password to avoid
+	// re-using it against the new host.
+	passwordSupplied := req.ClearPassword || (req.Password != nil && *req.Password != "")
 	if req.URL != nil {
 		newURL := strings.TrimSpace(*req.URL)
 		oldURL, _ := h.db.GetConfig("sync_url")
+		// If the URL changes and no new password is supplied in the same
+		// PUT, drop the saved password BEFORE writing the new URL so a
+		// concurrent /api/sync/test (or /api/sync/start) can't grab the
+		// new URL + old password mid-update. Audit's "swap sync_url +
+		// reuse saved password to exfil to attacker.com" path.
+		if oldURL != "" && newURL != oldURL && !passwordSupplied {
+			_ = h.db.SetConfig("__sync_secret_pass", "")
+		}
 		if err := h.db.SetConfig("sync_url", newURL); err != nil {
 			http.Error(w, "Failed to set sync_url: "+err.Error(), http.StatusInternalServerError)
 			return
-		}
-		// If the URL changes, drop the saved password — otherwise the
-		// stored credential rides whatever host the caller just pointed
-		// us at (the audit's "swap sync_url + reuse saved password to
-		// exfil to attacker.com" path). Caller must re-supply password
-		// for the new URL in the same PUT or a follow-up.
-		if oldURL != "" && newURL != oldURL && req.Password == nil && !req.ClearPassword {
-			_ = h.db.SetConfig("__sync_secret_pass", "")
 		}
 	}
 	if req.User != nil {

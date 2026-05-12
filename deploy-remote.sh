@@ -114,7 +114,11 @@ fi
 # Strip any legacy GITHUB_TOKEN that an old deploy may have baked into the
 # saved container config — the offline-signed update path doesn't use it,
 # and a stale token in the env can confuse external tools that key off it.
-ENV_ARGS=$(echo "${ENV_ARGS}" | sed 's/-e GITHUB_TOKEN=[^ ]* //g')
+# Trailing-space-OR-end-of-string on the value match handles the case where
+# the token is the last item in ENV_ARGS — earlier `[^ ]* `-with-mandatory-
+# trailing-space pattern silently kept tokens at end-of-string. Add a
+# trailing space first so a single regex form catches every position.
+ENV_ARGS=$(echo "${ENV_ARGS} " | sed -E 's/-e GITHUB_TOKEN=[^ ]* //g; s/[[:space:]]+$//')
 
 echo "[NAS]   mounts:  ${MOUNT_ARGS}"
 echo "[NAS]   ports:   ${PORT_ARGS}"

@@ -626,7 +626,7 @@ source of truth.
 
 ## Next-session brief (handoff for 2026-05-04+)
 
-**Status as of commit `a213477`** — feat/allegro-v15-support branch, worktree `/Users/besitzer/Desktop/Boardviewer/.worktrees/allegro-v15/`.
+**Status as of commit `a213477`** — `feat/allegro-v15-support` branch.
 
 ### What ships now
 - LA-7321P (Allegro 15.5.7, magic `0x00120A06`): **99.4% perfect components**, 5435 correct nets, 0 FP, 14 missed across 1827 walked components. Pin geometry + nets all 1-to-1 with .cad oracle.
@@ -678,7 +678,7 @@ all (so empty-set vs empty-set matches trivially).
 - Assembler: `src/frontend/src/parsers/allegro/allegro-assembler.ts` (`extractComponentsV15`, `buildV15Nets`)
 - Spec: `docs/formats/ALLEGRO_V15_FORMAT.md` (this file)
 - Oracle harness (disposable): `/tmp/oracle-harness.mjs` — re-create from spec section above if missing
-- Samples: `/Users/besitzer/Desktop/Boardviewer/samples/BROKEN/brd new set/{COMPAL LA-7321P,v13tl-0629}.{brd,cad}`
+- Samples: `samples/BROKEN/brd new set/{COMPAL LA-7321P,v13tl-0629}.{brd,cad}` (your local clone — these are not redistributed in the public repo)
 
 ### Hard rule going forward
 Any new net-resolution route MUST be validated against the per-component oracle harness on **both** samples before shipping. `False positives = 0` is the gate. Naive "coverage went up" metrics deceived us into shipping 32%-precision routes that contaminated U2 with 156 wrong nets. Do not trust aggregate numbers; trust per-component oracle agreement.

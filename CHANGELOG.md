@@ -43,7 +43,7 @@
 
 - **Right-click context-menu icon strip.** A new top-of-menu icon row with up to 4 board buttons (Copy net, Copy part, Search net, Search part) or 2 PDF buttons (Copy, Search Web) for the cursor word. Copy uses `navigator.clipboard.writeText` with toast feedback; Search opens Google in a new tab with `noopener,noreferrer`. Strip hides entirely when no entity is selected. The existing donor-row search functionality is unchanged below.
 
-- **Shortcut schema gained `code` (KeyboardEvent.code, single string or array for multi-layout binding), `displayLabel` (formatter override), and `ignoreShift` (matcher accepts shift-held events when set, used by the `~` library toggle so Shift+Backquote fires the same as bare Backquote).** Foundation for the AZERTY remapping work queued in `docs/superpowers/specs/2026-05-08-keyboard-shortcuts-wsad-rotate-zoom-library-design.md`.
+- **Shortcut schema gained `code` (KeyboardEvent.code, single string or array for multi-layout binding), `displayLabel` (formatter override), and `ignoreShift` (matcher accepts shift-held events when set, used by the `~` library toggle so Shift+Backquote fires the same as bare Backquote).** Foundation for layout-aware keybinding (AZERTY remapping is queued for a future release).
 
 ### Fixed
 
@@ -224,7 +224,6 @@ docker compose up -d
   `/api/update/apply` now return 401. The web UI bootstraps an `HttpOnly +
   SameSite=Strict` cookie on first load.
 
-Full design: `docs/superpowers/specs/2026-05-05-secure-update-pipeline-design.md`.
 Maintainer release runbook: `docs/RELEASE_RUNBOOK.md`.
 
 ### Fixed

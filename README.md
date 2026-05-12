@@ -87,7 +87,7 @@ The keyboard pan and zoom step sizes are configurable in **Settings ▸ Navigati
 | Frontend | React 19 + TypeScript + Vite 7 |
 | Panels | Dockview v5 |
 | Backend | Go (`net/http` stdlib) |
-| Container | Docker multi-stage, scratch-based, ~5 MB image |
+| Container | Docker multi-stage, scratch-based, ~25 MB image / ~13 MB compressed |
 | Desktop | Electron (macOS universal + Windows) |
 | Tests | Playwright (Chromium headless) |
 
@@ -110,17 +110,21 @@ docker pull ghcr.io/alexeyinwerp/boardripper:latest
 
 Mount your board-file folders under `/library` to expose them in the Library panel — see Docker Setup below.
 
-### Standalone binary
+### Build from source
 
 ```bash
-# Download boardripper-<platform>-<version>.tar.gz from ripperdoc.de/boardripper/releases/, then:
-tar -xzf boardripper-<platform>-<version>.tar.gz
-STATIC_DIR=./static DATA_DIR=./data ./boardripper
-# → http://localhost:8080
+git clone https://github.com/AlexeyInwerp/BoardRipper.git
+cd BoardRipper
 
-# Windows:
-# Unzip, then: set STATIC_DIR=static& set DATA_DIR=data& boardripper.exe
+# Build the frontend bundle:
+cd src/frontend && npm install && npm run build && cd ../..
+
+# Run the Go server pointing at the built bundle:
+STATIC_DIR=./src/frontend/dist DATA_DIR=./data go run ./src/backend
+# → http://localhost:8080
 ```
+
+The released artifact is the Docker image (above) — no per-platform standalone binaries are published. If you need a portable binary, build the Go server with `CGO_ENABLED=0 go build -o boardripper ./src/backend` and ship it next to the `dist/` directory and a `STATIC_DIR=` env var. Self-update only works in Docker (it needs the host's Docker socket).
 
 ### Development
 
@@ -176,7 +180,7 @@ These appear as top-level folders in the Library panel. Use `:ro` for read-only 
 
 ### Synology NAS (DSM 7.2+)
 
-1. Download `boardripper-docker-<version>.tar.gz` from <https://www.ripperdoc.de/boardripper/releases/>
+1. Download `boardripper-<version>.tar.gz` (or `latest.tar.gz`) from <https://www.ripperdoc.de/boardripper/releases/>
 2. SSH into your NAS and load the image:
    ```bash
    docker load < boardripper-docker-<version>.tar.gz
@@ -213,7 +217,7 @@ Updates are pulled from `ghcr.io/alexeyinwerp/boardripper` (primary) or the sign
 
 For installs that can't reach the registry or the mirror (firewalled networks, air-gapped shops, recovery from a broken self-update):
 
-1. Download `latest-update.tar` from <https://www.ripperdoc.de/boardripper/releases/latest-update.tar> (signed bundle: manifest + signature + image, ~30 MB).
+1. Download `latest-update.tar` from <https://www.ripperdoc.de/boardripper/releases/latest-update.tar> (signed bundle: manifest + signature + image, ~13 MB).
 2. Drag the file anywhere on the BoardRipper UI.
 3. Confirm the prompt; the running container verifies the signature, applies the update, and restarts.
 4. The browser reloads after ~30 s.
@@ -275,7 +279,7 @@ BoardRipper exists because of the reverse-engineering work already done by the b
 - [brd_parser](https://github.com/bernayigit/brd_parser) by Jeff Wheeler *(MIT)* — cross-validation reference for Allegro block layout.
 - [piernov's Honhan BDV gist](https://gist.github.com/piernov/37849a3b92375e18515160b8a1efde18) & [OpenBoardView issue #2](https://github.com/OpenBoardView/OpenBoardView/issues/2) — identified the BDV ASC signature and line-key cipher.
 - Mentor Boardstation Neutral — original reverse engineering, no third-party code or text incorporated.
-- **Cryptographic standards** — [RC6](https://people.csail.mit.edu/rivest/pubs/RRSY98.pdf) by Rivest/Robshaw/Sidney/Yin (FZ), [DES / FIPS PUB 46-3](https://csrc.nist.gov/pubs/fips/46-3/final) (XZZ), [GenCAD 1.4 specification](https://en.wikipedia.org/wiki/GenCAD) (CAD).
+- **Cryptographic standards** — [RC6](https://people.csail.mit.edu/rivest/pubs/RRSY98.pdf) by Rivest/Robshaw/Sidney/Yin (FZ), [DES / FIPS PUB 46-3](https://csrc.nist.gov/pubs/fips/46-3/final) (XZZ). GenCAD 1.4 has no canonical online specification — see [docs/formats/CAD_FORMAT.md](docs/formats/CAD_FORMAT.md) for the BoardRipper interpretation.
 
 **Rendering & runtime**
 

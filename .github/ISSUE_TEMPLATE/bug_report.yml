@@ -21,7 +21,7 @@ body:
     id: format
     attributes:
       label: File Format (if applicable)
-      description: "BVR1, BVR3, BRD, BDV, FZ, CAD, XZZ, TVW, Allegro BRD"
+      description: "BVR1, BVR3, BRD, BDV, BDV ASC, FZ, GenCAD, Mentor Neutral, XZZ, TVW, Allegro BRD"
       placeholder: "e.g. BRD"
   - type: textarea
     id: description

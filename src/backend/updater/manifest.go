@@ -83,15 +83,30 @@ func ValidateManifest(m *Manifest, installedCounter int64, installedVersion stri
 		// is staging a fresh install) can replay a 30-day-old signed
 		// manifest for a previously-released-but-known-buggy build.
 		// Equal versions are accepted (legitimate re-publish of the
-		// same release with adjusted notes_url etc.).
-		if installedVersion != "" && !versionGTE(m.Version, installedVersion) {
+		// same release with adjusted notes_url etc.). Skip the
+		// comparison entirely when the running version is unparseable
+		// (dev / test builds); the freshness window still binds.
+		if installedVersion != "" && parseableSemver(installedVersion) && !versionGTE(m.Version, installedVersion) {
 			return fmt.Errorf("manifest version %s below running version %s on fresh install — refusing", m.Version, installedVersion)
 		}
 	}
-	if !versionGTE(installedVersion, m.MinSupportedVersion) {
+	// min_supported_version: also skip on unparseable installed versions
+	// (a `-X updater.Version=dev` or `=test-sec-abc123` ldflag should not
+	// brick the install's update path forever; the maintainer running
+	// the e2e harness needs the apply path to remain testable).
+	if parseableSemver(installedVersion) && !versionGTE(installedVersion, m.MinSupportedVersion) {
 		return fmt.Errorf("installed version %s below min_supported_version %s — manual update required", installedVersion, m.MinSupportedVersion)
 	}
 	return nil
+}
+
+// parseableSemver reports whether v looks like a real semver-ish version
+// the gates can reason about. Returns false for the empty string and for
+// non-numeric build tags (dev, test-sec-abc123) where parseVersion
+// produces no positive leading component.
+func parseableSemver(v string) bool {
+	parts := parseVersion(v)
+	return len(parts) > 0 && parts[0] >= 0
 }
 
 // versionGTE returns true if a >= b. Reuses parseVersion from updater.go.

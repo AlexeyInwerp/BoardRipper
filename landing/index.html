@@ -65,7 +65,7 @@
   <h1>BoardRipper</h1>
   <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
   <!-- BR_VERSION:START -->
-  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.7.0</b> &mdash; released 2026-05-05</span></p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.20.4</b> &mdash; released 2026-05-10</span></p>
   <!-- BR_VERSION:END -->
   <nav>
     [<a href="#what">What is this?</a>] |
@@ -101,7 +101,7 @@
 
 <section id="what">
 <h2>What is this, and why self-host it?</h2>
-<p>Docker is a way to ship an application as a single image that runs the same on any machine: no installer, no per-OS binary, no dependency hell. You give Docker the image, point a port at it, and it runs. BoardRipper ships as a ~5&nbsp;MB Docker image; <code>docker compose up -d</code> and it's online.</p>
+<p>Docker is a way to ship an application as a single image that runs the same on any machine: no installer, no per-OS binary, no dependency hell. You give Docker the image, point a port at it, and it runs. BoardRipper ships as a ~25&nbsp;MB Docker image (~13&nbsp;MB compressed); <code>docker compose up -d</code> and it's online.</p>
 <p>Why run it on a NAS or shop server:</p>
 <ul>
   <li>One library, every workstation. Boards and schematics live in one place &mdash; open them from the bench laptop, the office desktop, or a tablet next to the microscope.</li>
@@ -191,7 +191,7 @@ C12*</pre>
 <p>Two sources, same signed bytes. Pick whichever your network prefers:</p>
 <ul>
   <li><b>Container registry</b> (recommended) &mdash; <code>docker pull ghcr.io/alexeyinwerp/boardripper:latest</code>. Public, no login. Fast incremental updates via layer dedup.</li>
-  <li><b>Tarball mirror</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/latest.tar.gz">latest.tar.gz</a> (OCI image archive, ~5&nbsp;MB), shipped alongside a signed <a href="https://www.ripperdoc.de/boardripper/manifest.json">manifest.json</a>. Use this if your network blocks container registries; load with <code>docker load &lt; latest.tar.gz</code>.</li>
+  <li><b>Tarball mirror</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/latest.tar.gz">latest.tar.gz</a> (OCI image archive, ~13&nbsp;MB), shipped alongside a signed <a href="https://www.ripperdoc.de/boardripper/manifest.json">manifest.json</a>. Use this if your network blocks container registries; load with <code>docker load &lt; latest.tar.gz</code>.</li>
   <li><b>Older versions</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/">browse the release archive</a>.</li>
   <li><b>Release notes and version history</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/changelog.html">changelog</a>.</li>
 </ul>
@@ -200,7 +200,7 @@ C12*</pre>
 <h3>Drop-to-update fallback</h3>
 <p>For installs that can&rsquo;t reach the registry or the mirror (firewalled networks, air-gapped shops, or recovering from a broken self-update), download the bundle and drop it onto the BoardRipper window:</p>
 <ul>
-  <li><a href="https://www.ripperdoc.de/boardripper/releases/latest-update.tar">latest-update.tar</a> &mdash; signed bundle (manifest + signature + image), ~30&nbsp;MB</li>
+  <li><a href="https://www.ripperdoc.de/boardripper/releases/latest-update.tar">latest-update.tar</a> &mdash; signed bundle (manifest + signature + image), ~13&nbsp;MB</li>
 </ul>
 <p class="small">Drag the file anywhere on the BoardRipper UI. A confirmation prompt appears; click OK and the running container verifies the signature, applies the update, and restarts. The browser reloads after ~30&nbsp;s. Same trust envelope as the in-app updater &mdash; the manifest signature is what grants trust, the file itself is treated as untrusted bytes until verification passes.</p>
 </section>
@@ -234,7 +234,7 @@ C12*</pre>
 <ul>
   <li><a href="https://people.csail.mit.edu/rivest/pubs/RRSY98.pdf">RC6</a> by Rivest, Robshaw, Sidney, Yin &mdash; FZ format.</li>
   <li><a href="https://csrc.nist.gov/pubs/fips/46-3/final">DES (FIPS&nbsp;PUB&nbsp;46-3)</a> &mdash; XZZ format.</li>
-  <li><a href="https://en.wikipedia.org/wiki/GenCAD">GenCAD 1.4 specification</a> &mdash; CAD format.</li>
+  <li>GenCAD 1.4 specification &mdash; CAD format. (No canonical online reference; the format is documented in <code>docs/formats/CAD_FORMAT.md</code>.)</li>
 </ul>
 
 <h3>Rendering &amp; runtime</h3>
