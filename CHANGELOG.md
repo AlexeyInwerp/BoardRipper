@@ -1,5 +1,19 @@
 # BoardRipper changelog
 
+## v0.20.6 — 2026-05-12
+
+### Fixed
+
+- **Library sidebar's search bar and stats bar regressed to scrolling with the file list.** After the post-OSS-flip change that kept all three sidebar panels mounted at once (`3267185`), each panel got wrapped in a `<div style={{ flex: 1, minHeight: 0 }}>` that expected a flex parent — but `.sidebar-content` was a plain block container, so the wrapper fell back to content-sized height. `LibraryPanel { height: 100% }` then resolved against an auto-height parent and collapsed; the search row scrolled with the list instead of staying pinned at top, and the stats bar (with `margin-top: auto`) had no room to push to the bottom — it landed at the end of the file list. `.sidebar-content` is now `display: flex; flex-direction: column` so the active panel actually claims the sidebar's height, internal scrolling stays inside `.library-content`, and pinned top/bottom rows behave like they used to. SettingsPanel and DebugPanel had the same latent issue and benefit from the same fix.
+
+- **Library filter no longer freezes the input on large libraries.** Per-keystroke filtering was re-running `HistoryView`, `FolderView`, `LiveBrowser`, and the `filterFile` callback synchronously on every character. On a small library that's invisible; on a multi-thousand-file library the main-thread work blocked the input event loop and typing felt laggy. The filter pipeline now debounces with a 200 ms trailing delay — the input itself binds to the raw value so typed text appears instantly, only the downstream filtering waits. Empty values short-circuit the delay so clearing via the "x" button stays immediate.
+
+### Changed
+
+- **Toolbar "Open" button is "Upload" with an upload icon in the web build; Electron keeps "Open."** In a browser the picker reads the file into memory client-side — closer to "upload from your device" in a user's mental model than "open a path on disk." New web users were expecting an OS-style file-open dialog reaching into their library folder and clicking the button on the live site mismatched that expectation. Electron's file picker really does reach into the local filesystem, so it stays labeled "Open." Same handler, same `data-testid="open-btn"` (Playwright tests still pass on both builds), tooltip mirrors the distinction.
+
+- **Settings ▸ Library tab now houses the library folder picker, auto-scan toggle, database info, and library prefs (auto-load bound PDFs, history depth).** They previously lived under Settings ▸ System inside a section titled "Server / Library" — a historical name from before a dedicated Library tab existed. With the Library tab covering sync and OBD already, the folder/DB fundamentals belong on the same tab. New ordering on the Library tab: **Library Folder & Database** → **Library Sync** → **OpenBoardData** (fundamentals → sync → external data). Internal section id stays `server` so per-user expansion state in localStorage carries over unchanged.
+
 ## v0.20.5 — 2026-05-12
 
 ### Fixed
