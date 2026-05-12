@@ -41,6 +41,21 @@ function usePersistedExpanded(storageKey: string, defaultKeys: string[] = []): [
   return [expanded, toggle, collapseAll];
 }
 
+/** Returns `value` after `delayMs` ms of stillness — empty values short-circuit
+ *  the delay so clearing the search feels instant. Used to keep the filter
+ *  input responsive on large libraries where per-keystroke re-filtering blocks
+ *  the input event loop. */
+function useDebouncedValue<T extends string>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === debounced) return;
+    if (value === '') { setDebounced(value); return; }
+    const id = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(id);
+  }, [value, debounced, delayMs]);
+  return debounced;
+}
+
 const MULTILAYER_FORMATS = new Set(['TVW', 'ALLEGRO_BRD']);
 /** Extensions that always indicate multi-layer formats (format_id may not be set by backend) */
 const MULTILAYER_EXTENSIONS = new Set(['.tvw']);
@@ -109,8 +124,15 @@ export function LibraryPanel() {
   }, []);
   const [pdfSearchMode, setPdfSearchMode] = useState(false);
 
+  // Debounced mirror of `localSearch` driving the actual filter pipeline. The
+  // input itself uses `localSearch` so typing stays responsive; everything
+  // downstream (filterFile, view re-renders) keys off `debouncedSearch` so
+  // large libraries don't re-filter on every keystroke. Cleared values
+  // short-circuit the delay since "x" is meant to feel instant.
+  const debouncedSearch = useDebouncedValue(localSearch, 200);
+
   // Client-side filter: match filename, board_number, manufacturer, model (case-insensitive)
-  const searchFilter = localSearch.trim().toLowerCase();
+  const searchFilter = debouncedSearch.trim().toLowerCase();
   const filterFile = useCallback((f: DatabankFile) => {
     if (!searchFilter) return true;
     return (
@@ -523,7 +545,7 @@ export function LibraryPanel() {
             onOpenFile={handleOpenFile}
             onSelectFile={handleSelectFile}
             selectedFileId={selectedFileId}
-            searchFilter={localSearch}
+            searchFilter={debouncedSearch}
           />
         ) : viewMode === 'model' ? (
           <ModelView
@@ -542,13 +564,13 @@ export function LibraryPanel() {
             onOpenFile={handleOpenFile}
           />
         ) : viewMode === 'folders' && browseMode === 'live' ? (
-          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={localSearch} />
+          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} />
         ) : (
           <FolderView
             tree={folderTree}
             selectedFileId={selectedFileId}
             filterFile={filterFile}
-            searchFilter={localSearch}
+            searchFilter={debouncedSearch}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
           />
