@@ -704,13 +704,14 @@ function loadLayer(r: TvwReader): TvwLayer | null {
 
 // ─── Parts Parsing ──────────────────────────────────────────────────────────
 
-function loadPin(r: TvwReader, trailing = true): TvwPin {
+function loadPin(r: TvwReader, trailing = true): { pin: TvwPin; z2: number } {
   const handle = r.readU32();
   r.readU32(); // z1 = 0
   const id = r.readU32();
   const name = r.readPStr();
-  if (trailing) r.readU32(); // z2 = 0
-  return { handle, id, name };
+  let z2 = 0;
+  if (trailing) z2 = r.readU32(); // 0 on normal pins; non-zero = opposite-side contact count for this pin
+  return { pin: { handle, id, name }, z2 };
 }
 
 function loadPart(r: TvwReader): TvwPart {
@@ -738,35 +739,43 @@ function loadPart(r: TvwReader): TvwPart {
   r.readU32(); // p2 = 0
 
   const pins: TvwPin[] = [];
+  let extContactSum = 0;
   for (let i = 0; i < pinCount; i++) {
-    pins.push(loadPin(r));
+    const { pin, z2 } = loadPin(r);
+    pins.push(pin);
+    extContactSum += z2;
   }
 
-  // Landrex-variant extension: parts whose pad layer reaches both copper
-  // sides (edge connectors, through-hole connectors) carry a second pin
-  // list for the OPPOSITE copper layer. After the first pin list:
-  //   (contFlag:u32, reserved:u32) then `pinCount` more pins.
-  // The *last* pin of the extension has no trailing z2 — the writer packs
-  // the next part's pstr there.
+  // Two flavours of "extra pin block" follow the primary pin list:
   //
-  // Originally this only fired for partType == 0xFFFFFFFF (LianBao Apple
-  // edge connectors). The Gigabyte/Landrex GV-N5080 GPU has a vertical
-  // power connector with partType=0x11 that ALSO carries the extension
-  // block — without reading it, the parser walks into the next part's
-  // bytes and runs to EOF after ~28 parts (only 28 of 3161 loaded).
+  //  (a) Per-pin opposite-side contacts (LianBao NM-D355 SWITCH variant) —
+  //      each primary pin carries a z2 counter; when sum > 0, that many
+  //      pin records follow, preceded by an 8-byte (contFlag, reserved)
+  //      header. The pin records here have NO trailing z2 of their own.
   //
-  // We trust looksLikePinExtension's 5 conjoined heuristics (small
-  // contFlag, zero reserved, nonzero handle, zero z1, small id) to gate
-  // this for ALL part types; false positives would need 4 simultaneous
-  // numeric coincidences inside the next part's pstr-prefixed name field,
-  // which is vanishingly unlikely in practice.
+  //  (b) Whole-part opposite-side mirror (Landrex/Gigabyte edge & vertical
+  //      connectors, LianBao Apple edge connectors with partType=0xFFFFFFFF)
+  //      — the SAME primary pin list is repeated on the opposite copper
+  //      layer. Detected via `looksLikePinExtension` peeking at the next
+  //      bytes; reads `pinCount` more pins, with the last one missing its
+  //      trailing z2 (the writer packs the next part's pstr there).
+  //
+  // (a) takes priority since it's driven by a hard signal (sum of z2s)
+  // rather than a heuristic; (b) is the historical broad-match path.
   let pinsExt: TvwPin[] | undefined;
-  if (pinCount > 0 && looksLikePinExtension(r)) {
+  if (extContactSum > 0) {
+    r.readU32(); // contFlag
+    r.readU32(); // reserved
+    pinsExt = [];
+    for (let i = 0; i < extContactSum; i++) {
+      pinsExt.push(loadPin(r, i !== extContactSum - 1).pin);
+    }
+  } else if (pinCount > 0 && looksLikePinExtension(r)) {
     r.readU32(); // contFlag
     r.readU32(); // reserved
     pinsExt = [];
     for (let i = 0; i < pinCount; i++) {
-      pinsExt.push(loadPin(r, i !== pinCount - 1));
+      pinsExt.push(loadPin(r, i !== pinCount - 1).pin);
     }
   }
 
@@ -1007,7 +1016,12 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   const customer = decodeString(r.readPStr());
   r.readPStr(); // password pstr — usually empty; non-empty on protected files (see inflex notvwpwd.py)
   const date = decodeString(r.readPStr());
-  r.readBytes(3); // const3
+  // Three trailing header pstrs (h5/h6/h7 in TVW_FORMAT.md). All known
+  // working samples ship them empty, which is why eagleview and earlier
+  // BoardRipper builds read them as `readBytes(3)`. NM-D355_r1.0_HT4BT
+  // carries a non-empty one ("q798"), which shifts every subsequent field
+  // by 4 bytes and makes the parser read layerCount=2 instead of 20.
+  r.readPStr(); r.readPStr(); r.readPStr();
   r.readU32(); // size1
   r.readU32(); // size2
   r.readU32(); // size3

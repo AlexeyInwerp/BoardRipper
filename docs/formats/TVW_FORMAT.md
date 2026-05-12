@@ -394,13 +394,27 @@ enum PartType : u32 {
 
 ```c
 struct Pin {
-    u32     handle;         // *** KEY: handle / 8 = pad index in layer ***
-    u32     unknown;        // always 0
-    u32     pin_index;      // 1-based sequential
-    pstr    pin_name;       // "1", "2" for passives; "AA42", "B24" for BGA
-    u32     unknown2;       // always 0
+    u32     handle;             // *** KEY: handle / 8 = pad index in layer ***
+    u32     unknown;            // always 0
+    u32     pin_index;          // 1-based sequential
+    pstr    pin_name;           // "1", "2" for passives; "AA42", "B24" for BGA
+    u32     ext_contact_count;  // count of opposite-side mirror contacts for this pin (0 on most pins)
 };
 ```
+
+> **Note:** the `ext_contact_count` field was previously thought to always be 0
+> (eagleview asserts `Z2 == 0`). It is actually a per-pin counter for
+> opposite-side through-hole contacts. When **any** pin in a part has
+> `ext_contact_count > 0`, an "ext-contact block" follows the primary pin list:
+> `(u32 cont_flag, u32 reserved)` then `Σ ext_contact_count` more pin records
+> (without their own trailing `ext_contact_count` field). Observed in three
+> distinct file families:
+> - **LianBao SWITCH** (NM-D355 H11): `pinCount=2`, sum=1 — mechanical switch
+>   with one mirrored contact
+> - **Landrex vertical connector** (Gigabyte GV-N5080 CN1): `pinCount=82`,
+>   sum=82 — every pin mirrored on opposite copper layer
+> - **Landrex edge connector** (Gigabyte GV-R79X MPCIE1): `pinCount=82`,
+>   sum=82 — PCIe slot dual-sided
 
 ### Pin-to-Pad-to-Net Mapping (The Critical Link)
 
