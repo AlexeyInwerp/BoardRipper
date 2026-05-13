@@ -216,7 +216,14 @@ echo "    package.json -> $PKG_VERSION"
 # ════════════════════════════════════════════════════════════════════════
 if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   PUBKEY_B64="$(grep -v '^untrusted' "$MINISIGN_PUB" | tr -d '\n')"
-  SOURCES_CSV="https://ghcr.io/alexeyinwerp/boardripper,https://www.ripperdoc.de/boardripper"
+  # ripperdoc.de is the only manifest source. The image at GHCR
+  # (ghcr.io/alexeyinwerp/boardripper@<digest>) is still used during Apply for
+  # pull-by-digest — that's an OCI Distribution v2 endpoint, totally different
+  # protocol — but GHCR cannot serve `/manifest.json`. The previous form here
+  # also listed `https://ghcr.io/alexeyinwerp/boardripper` as a Check() source;
+  # every install ever shipped wasted one HTTP request on a guaranteed
+  # 405 there before falling through to ripperdoc.de.
+  SOURCES_CSV="https://www.ripperdoc.de/boardripper"
 
   if [ "$DRY_RUN" != "true" ]; then
     echo ">>> Logging into GHCR"
@@ -322,7 +329,6 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   "min_supported_version": "v0.8.0",
   "orchestrator_image_digest": "$ORCHESTRATOR_REF",
   "source_list_next": [
-    "https://ghcr.io/alexeyinwerp/boardripper",
     "https://www.ripperdoc.de/boardripper"
   ]
 }
