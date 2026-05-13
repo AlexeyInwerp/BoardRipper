@@ -122,6 +122,7 @@ type containerInfo struct {
 	Name    string
 	Image   string
 	Env     []string
+	User    string
 	Mounts  []mount
 	Ports   map[string][]portBinding
 	Restart string
@@ -196,6 +197,7 @@ func findSelfContainer() (*containerInfo, error) {
 		Config struct {
 			Image string   `json:"Image"`
 			Env   []string `json:"Env"`
+			User  string   `json:"User"`
 		} `json:"Config"`
 		HostConfig struct {
 			Binds       []string                       `json:"Binds"`
@@ -215,6 +217,7 @@ func findSelfContainer() (*containerInfo, error) {
 		Name:    strings.TrimPrefix(inspect.Name, "/"),
 		Image:   inspect.Config.Image,
 		Env:     inspect.Config.Env,
+		User:    inspect.Config.User,
 		Mounts:  inspect.Mounts,
 		Ports:   inspect.HostConfig.PortBindings,
 		Restart: inspect.HostConfig.RestartPolicy.Name,
@@ -455,9 +458,19 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 	// and tarball-load preserve the same digest).
 	newImage := selectNewImageRef(m)
 
-	// Build the create body for the new container
+	// Build the create body for the new container.
+	// "User" propagates the runtime user override (e.g. `--user 0:0` from
+	// `docker run`) into the new container's Config. Without this, deploys
+	// that override the image-default USER (the production NAS install does
+	// this via deploy-remote.sh:143 because the bind-mounted data dir has
+	// mixed root/65532 ownership) silently regressed to image-default USER
+	// on every update — the new container would start, fail to read/write
+	// /data files that the root-running OLD container had written, and the
+	// orchestrator would time out on /api/health and roll back. Image-default
+	// USER installs (self.User == "") fall through unchanged.
 	createBody := map[string]interface{}{
 		"Image": newImage,
+		"User":  self.User,
 		"Env":   self.Env,
 		"HostConfig": map[string]interface{}{
 			"Binds":         bindsFromMounts(self.Mounts),

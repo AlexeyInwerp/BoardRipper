@@ -114,8 +114,14 @@ docker volume rm "$DATA_VOLUME" >/dev/null 2>&1 || true
 docker volume create "$DATA_VOLUME" >/dev/null
 
 echo "==> starting OLD container ($CONTAINER_NAME) on :$HOST_PORT"
+# --user 0:0 mirrors `scripts/deploy-remote.sh` (line ~143). Since 430a219
+# (2026-05-12) the image ships USER 65532 — without an override the
+# container can't read /var/run/docker.sock and every updater call fails
+# with `permission denied`. The harness has no `docker` group plumbing
+# of its own; running as root matches what every real NAS deploy does.
 docker run -d \
   --name "$CONTAINER_NAME" \
+  --user 0:0 \
   -p "${HOST_PORT}:8080" \
   -v "/var/run/docker.sock:/var/run/docker.sock" \
   -v "${DATA_VOLUME}:/data" \
