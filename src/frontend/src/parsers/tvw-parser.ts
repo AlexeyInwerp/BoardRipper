@@ -657,7 +657,7 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
       const toolIndex = r.readU32();
       const pos = r.readVec2S();
       holes.push({ net, toolIndex, pos });
-    } else if (code === 0x0A || code === 0x0B) {
+    } else if (code === 0x0A) {
       // drill slot — line segment
       const net = r.readS32();
       r.readU32(); // tool
@@ -665,6 +665,50 @@ function loadThroughLayer(r: TvwReader, header: ReturnType<typeof readLayerHeade
       const end = r.readVec2S();
       r.readU32(); // zero
       slots.push({ net, start, end });
+    } else if (code === 0x0B) {
+      // ARC record (same 29-byte footprint as 0x0A slot but DIFFERENT field
+      // layout). Eagleview / earlier BoardRipper builds treated it as another
+      // slot variant — reading the center as `start` and the radius+angles
+      // as `end`+`zero` produces 4,000–12,000 mil garbage diagonals all
+      // anchored near (~20, 0). The ThinkPad P14s Gen 2 NM-D352 BoardView
+      // file ships 59 of these alongside 90 real 0x0A slots; misreading them
+      // is what produced the "diagonal fan from bottom-left corner" bug.
+      //
+      // Layout (verified geometrically against NM-D352's mount-hole fillets):
+      //   net      : s32           — same position as 0x0A
+      //   tool     : u32           — same
+      //   center   : Vec2S         — (cx, cy), Fixed32 ×2
+      //   radius   : Fixed32       — i32/100 mils
+      //   start    : float32       — start angle in degrees (0 = +X axis)
+      //   sweep    : float32       — sweep angle in degrees, signed (CW = negative)
+      // The start/sweep angles are float32, not the Fixed32 / u32 that the
+      // slot path would otherwise expect — that's why prior parsers saw the
+      // diagonal-fan garbage on files with corner-fillet arcs.
+      //
+      // Tessellate to a polyline so the outline chains continuously. 16
+      // sub-segments per arc matches the Logic-layer arc handling in
+      // chainLines() and is plenty for the small corner-fillet radii these
+      // arcs carry in practice (typically 5–60 mils).
+      const net = r.readS32();
+      r.readU32(); // tool
+      const center = r.readVec2S();
+      const radius = r.readFixed32();
+      const startDeg = r.readFloat();
+      const sweepDeg = r.readFloat();
+      if (radius > 0 && isFinite(startDeg) && isFinite(sweepDeg) && Math.abs(sweepDeg) > 0.1) {
+        const steps = 16;
+        const startRad = startDeg * Math.PI / 180;
+        const sweepRad = sweepDeg * Math.PI / 180;
+        for (let s = 0; s < steps; s++) {
+          const a1 = startRad + (sweepRad * s) / steps;
+          const a2 = startRad + (sweepRad * (s + 1)) / steps;
+          slots.push({
+            net,
+            start: { x: center.x + radius * Math.cos(a1), y: center.y + radius * Math.sin(a1) },
+            end:   { x: center.x + radius * Math.cos(a2), y: center.y + radius * Math.sin(a2) },
+          });
+        }
+      }
     } else {
       throw new Error(`TVW: unknown drill code 0x${code.toString(16)} at offset 0x${(r.tell() - 1).toString(16)}`);
     }

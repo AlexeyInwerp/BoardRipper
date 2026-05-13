@@ -280,7 +280,8 @@ struct ThroughLayer {
     DrillTool[] tools;          // count-prefixed
     // Then iterate entries discriminated by 1-byte code:
     //   0x08 = DrillHole
-    //   0x0A, 0x0B = DrillSlot
+    //   0x0A = DrillSlot (straight line)
+    //   0x0B = DrillArc  (circular arc; same 29-byte footprint, DIFFERENT fields)
 };
 
 struct DrillTool {
@@ -298,13 +299,32 @@ struct DrillHole {
 };
 
 struct DrillSlot {
-    u8      code;               // 0x0A or 0x0B
+    u8      code;               // 0x0A
     i32     net_index;
     u32     tool_index;
     Fixed32 x0, y0;             // start
     Fixed32 x1, y1;             // end
+    u32     zero;
+};
+
+struct DrillArc {
+    u8      code;               // 0x0B
+    i32     net_index;
+    u32     tool_index;
+    Fixed32 cx, cy;             // arc center
+    Fixed32 radius;
+    float32 start_angle_deg;    // 0° = +X axis
+    float32 sweep_angle_deg;    // signed; negative = clockwise
 };
 ```
+
+> **Note:** eagleview and pre-v0.20.8 BoardRipper both treated `0x0B` as another
+> slot variant and read its center/radius/angle bytes as a line's start/end —
+> producing a "diagonal fan" of 4,000–12,000 mil garbage segments anchored
+> near the origin on any file whose Roul layer used arc records for board-edge
+> corner fillets (observed on ThinkPad P14s Gen 2 NM-D352). `0x0B` shares the
+> 29-byte footprint with `0x0A` but the angle fields are **float32**, not the
+> Fixed32 / trailing `zero` u32 the slot path expects.
 
 ---
 
