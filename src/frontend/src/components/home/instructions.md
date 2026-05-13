@@ -16,9 +16,9 @@ Running from source locally also works, but the auto-scan library is the killer 
 
 ## Open a file
 
-- Drop a board file (`.bvr`, `.brd`, `.bdv` — both plain-text and Honhan/Tebo-ICT obfuscated, `.fz`, `.cad`, `.xzz`, `.tvw`, or Allegro `.brd`) anywhere on this window.
+- Drop a board file (`.bvr`, `.brd`, `.bdv` — both plain-text and Honhan/Tebo-ICT obfuscated, `.fz`, `.cad` — GenCAD or Mentor Boardstation Neutral, `.xzz`, `.tvw`, or Allegro `.brd`) anywhere on this window.
 - Or drop a PDF schematic next to it — PDFs open in a side panel and stay linked to the board.
-- You can also press **⌘O** to pick a board, or **⌘P** to pick a PDF.
+- **⌘O** / **⌘P** open the same unified file picker (boards + PDFs are routed by extension).
 - In Docker mode: open the **Library** tab in the sidebar and pick any board from the auto-scanned folder.
 
 ## Top toolbar
@@ -26,7 +26,7 @@ Running from source locally also works, but the auto-scan library is the killer 
 The bar above this screen is mostly self-explanatory. In short:
 
 - **☰** opens the sidebar (Library / Settings / Debug).
-- **Open Board / Open PDF** are file pickers.
+- **Open** (desktop build) / **Upload** (web build) is a single file picker that accepts boards and PDFs in the same dialog.
 - **Top / Bottom** pick the layer; Shift-click shows both; the small arrow between them flips the mirror axis.
 - **↺ ↻ ⇔ ⇕** rotate and mirror the board.
 - **Traces** toggles PCB traces when the file has them.
@@ -81,4 +81,4 @@ Second row — overlay toggles:
 
 ## Feedback / issues
 
-Found a parser quirk or a rendering glitch? File an issue on [GitHub](https://github.com/inwerp/Boardviewer/issues) — sample files help a lot.
+Found a parser quirk or a rendering glitch? File an issue on [GitHub](https://github.com/alexeyinwerp/boardripper/issues) — sample files help a lot.
