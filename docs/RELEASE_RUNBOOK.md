@@ -47,31 +47,55 @@ chmod 600 ~/.config/boardripper/release.env
 ```bash
 cd ~/Desktop/Boardviewer
 git pull
-# (edit CHANGELOG.md with new entry)
-./scripts/release.sh v0.19.1
+# (edit CHANGELOG.md, add a `## v0.X.Y — YYYY-MM-DD` heading at the top)
+./scripts/release.sh v0.X.Y
 # (or with important flag:)
-./scripts/release.sh v0.19.1 --important "Security fix: unauthenticated update endpoint"
+./scripts/release.sh v0.X.Y --important "Security fix: unauthenticated update endpoint"
 ```
 
 The script will:
 
-1. Validate working tree is clean and on `main`.
-2. Increment `.release-counter`.
-3. Build multi-arch image, push to `ghcr.io/alexeyinwerp/boardripper`.
-4. Save image as tarball with sha256.
-5. Generate manifest.json (filling counter / sha / digest / important).
-6. Prompt for minisign passphrase to sign manifest.
-7. Render landing-page version block, changelog.html, third_party.html.
-8. Upload via lftp to ftp.ripperdoc.de with atomic renames.
-9. Commit counter bump and create local git tag.
+1. **Gate** on clean tree, branch=main, tag doesn't exist locally or on origin, and `## v0.X.Y` heading exists in CHANGELOG.md.
+2. **Pre-flight** `tsc --noEmit` (frontend) + `go build ./...` (backend) — refuses to proceed on errors.
+3. Ask **"Build desktop Electron apps too? [y/N]"** (default N — Docker-only release). Skip the prompt with `--desktop` / `--no-desktop` / `--desktop-only`.
+4. Increment `.release-counter`, sync `src/frontend/package.json` to match `$VERSION`.
+5. Build multi-arch image, push to `ghcr.io/alexeyinwerp/boardripper`.
+6. **Update-test sanity gate**: runs `tools/update-test/run.sh` (~1 min) which builds OLD/NEW images locally and Playwright-drives the full apply→swap→reload. Skip with `--skip-update-test` (not recommended).
+7. Save image as tarball, generate `manifest.json`, prompt for minisign passphrase to sign.
+8. Build drop-to-update bundle.
+9. Render landing-page version block + `changelog.html` + `third_party.html`.
+10. Upload via lftp to ftp.ripperdoc.de with atomic renames.
+11. Verify the published manifest reports the expected version.
+12. **If desktop builds were requested**: run `desktop/build-all.mjs`, verify zip integrity + macOS codesign.
+13. Commit (`.release-counter` + `package.json`), tag `v0.X.Y`.
+14. **Push** `main` + tag to origin (skip with `--no-push`).
+15. **Create GitHub Release** with sliced CHANGELOG section as notes + (if built) Electron zips as assets. Skip with `--no-gh-release`.
 
 After the script finishes:
 
 ```bash
-git push origin main v0.19.1
-curl -I https://www.ripperdoc.de/boardripper/manifest.json
-curl https://www.ripperdoc.de/boardripper/manifest.json | jq .
+# Manual verification (optional — the script already prints the manifest check)
+curl -s https://www.ripperdoc.de/boardripper/manifest.json | jq .
 ```
+
+The script's final summary prints the GHCR image, manifest URL, GitHub release URL, and desktop zip filenames.
+
+### Flag cheatsheet
+
+```
+./scripts/release.sh v0.X.Y                       # docker-only, prompt for desktop
+./scripts/release.sh v0.X.Y --desktop             # docker + desktop, no prompt
+./scripts/release.sh v0.X.Y --no-desktop          # docker only, no prompt
+./scripts/release.sh v0.X.Y --desktop-only        # desktop + GH release only, no counter/FTP/Docker
+./scripts/release.sh v0.X.Y --skip-update-test    # bypass the sanity gate (avoid)
+./scripts/release.sh v0.X.Y --no-push             # local commit/tag only, no remote push or GH release
+./scripts/release.sh v0.X.Y --no-gh-release       # everything except the GH release page
+./scripts/release.sh v0.X.Y --important "reason"  # red-banner update for users
+```
+
+### `--desktop-only` mode
+
+For when the in-app updater is fine but you need to ship a desktop hotfix without re-touching GHCR / FTP / counter. Bumps `package.json`, builds Electron apps, commits with `release: vX.Y.Z (electron-only)`, tags, pushes, creates a GH release. The signed Docker manifest is **not** updated, so existing Docker users continue running their last full version.
 
 To verify the manifest signature against the published public key:
 
