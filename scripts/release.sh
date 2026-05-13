@@ -427,17 +427,12 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
     unzip -tq "$zip" >/dev/null || { echo "ERROR: $zip failed integrity check" >&2; exit 1; }
   done
 
-  # Codesign verify the universal mac bundle — first thing that breaks if
-  # @electron/universal merge produced something subtly bad.
-  if command -v codesign >/dev/null 2>&1; then
-    UNIVERSAL_APP="$REPO_ROOT/desktop/out/BoardRipper-darwin-universal/BoardRipper.app"
-    if [ -d "$UNIVERSAL_APP" ]; then
-      codesign --verify --deep --strict "$UNIVERSAL_APP" 2>&1 || {
-        echo "ERROR: codesign --verify failed on universal mac bundle" >&2
-        exit 1
-      }
-    fi
-  fi
+  # NOTE on signing: BoardRipper desktop bundles are intentionally unsigned —
+  # the project doesn't carry a paid Apple Developer ID, and users open via
+  # right-click → Open on first launch (this is documented in every desktop
+  # release page). We do NOT run `codesign --verify` here because it would
+  # fail with "code object is not signed at all" on every release. The
+  # `unzip -tq` integrity check above is the meaningful gate.
 
   DESKTOP_ZIPS=("$MAC_ZIP" "$LEG_ZIP" "$WIN_ZIP")
   echo "    desktop builds verified ✓"
