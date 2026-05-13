@@ -21,6 +21,19 @@
 services:
   boardripper:
     build: .
+    # The image ships USER 65532:65532 (the distroless nonroot convention)
+    # so a hypothetical RCE doesn't own the bind-mounted volumes. The
+    # default `docker compose up -d` flow creates ./data and ./library on
+    # the host as root, which UID 65532 then can't write — `databank.Open`
+    # log.Fatals at boot, the container exits, and the user gets a restart
+    # loop on a clean install. The simplest fix that preserves the
+    # documented one-command flow is to override USER → root for this
+    # compose deploy, matching what `scripts/deploy-remote.sh` already
+    # does on the NAS. Comment this out (or remove it) and either
+    # (a) chown your host bind-mount targets to 65532:65532, or
+    # (b) switch ./data to a named volume — Docker initializes named
+    #     volumes from the image's pre-chowned /data, preserving 65532.
+    user: "0:0"
     ports:
       - "8081:8080"       # Change 8081 to your preferred external port
     volumes:
