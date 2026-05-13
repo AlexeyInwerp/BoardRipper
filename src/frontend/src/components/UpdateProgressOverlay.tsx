@@ -3,41 +3,84 @@
  *
  * After the user clicks "Update Now," the backend orchestrator stops
  * the running container, the SSE progress stream dies, and the new
- * container takes ~30–60 seconds to come up (image load, databank reopen,
+ * container takes ~5–30 seconds to come up (image load, databank reopen,
  * library scan restore). Without this overlay the user sees "SSE
  * connection lost," assumes the update failed, and may click "Update"
  * again on a stale tab.
+ *
+ * Renders:
+ * - spinner + heading + reload note
+ * - elapsed-time counter (ticks every second while restarting)
+ * - the most-recent slice of `updateStore.progress[]` — the entries
+ *   captured before SSE died, so the user can see what the orchestrator
+ *   was doing instead of just staring at a spinner. Same styling as the
+ *   toolbar's dropdown progress so visual identity is consistent.
  *
  * Visible whenever updateStore.restarting === true. Cleared by a full
  * page reload once the backend's /api/health responds.
  */
 
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { updateStore } from '../store/update-store';
 
 function subscribe(cb: () => void): () => void {
   return updateStore.subscribe(cb);
 }
-function getSnapshot(): boolean {
+function getRestarting(): boolean {
   return updateStore.restarting;
+}
+function getProgressLen(): number {
+  return updateStore.progress.length;
 }
 
 export function UpdateProgressOverlay() {
-  const restarting = useSyncExternalStore(subscribe, getSnapshot);
+  const restarting = useSyncExternalStore(subscribe, getRestarting);
+  // progressLen drives re-render when entries arrive — primitive snapshot
+  // keeps useSyncExternalStore's stability invariant intact (no new object
+  // identities on every read).
+  useSyncExternalStore(subscribe, getProgressLen);
+
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!restarting) return;
+    const start = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [restarting]);
+
   if (!restarting) return null;
 
   const fromVersion = updateStore.restartingFromVersion || updateStore.state.current_version;
+  // Show only the tail — older entries are typically environment setup
+  // ("Pulling alpine") that's less informative than the swap-window steps.
+  const allEntries = updateStore.progress;
+  const tailEntries = allEntries.slice(-14);
+
   return (
     <div className="update-progress-overlay" role="alertdialog" aria-modal="true" aria-labelledby="update-progress-title">
       <div className="update-progress-modal">
         <div className="update-progress-spinner" aria-hidden="true" />
         <h2 id="update-progress-title">Update in progress</h2>
-        <p>
-          BoardRipper is restarting on the new version.
-        </p>
+        <p>BoardRipper is restarting on the new version.</p>
         <p className="update-progress-note">
-          The page will reload automatically in 30–60 seconds. You can leave this tab open and continue using the rest of your machine.
+          Page reloads automatically when the new container responds. <span className="update-progress-elapsed">Elapsed: {elapsed}s</span>
         </p>
+        {tailEntries.length > 0 && (
+          <div className="update-progress-modal-log-wrap">
+            <div className="update-progress-modal-log-label">
+              Progress log{allEntries.length > tailEntries.length ? ` (last ${tailEntries.length} of ${allEntries.length})` : ` (${tailEntries.length})`}
+            </div>
+            <ol className="update-progress-modal-log">
+              {tailEntries.map((entry, i) => (
+                <li key={i} className={`update-progress-line update-progress-${entry.status}`}>
+                  <span className="update-progress-modal-log-time">{entry.time.split('T')[1]?.split('.')[0] ?? ''}</span>
+                  <span className="update-progress-modal-log-msg">{entry.message}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         <p className="update-progress-version">From <code>{fromVersion}</code></p>
       </div>
     </div>

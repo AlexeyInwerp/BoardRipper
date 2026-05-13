@@ -6206,6 +6206,52 @@ html, body, #root {
   padding: 1px 6px;
   border-radius: 3px;
 }
+.update-progress-elapsed {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: 4px;
+  opacity: 0.85;
+}
+.update-progress-modal-log-wrap {
+  margin: 14px 0 4px;
+  text-align: left;
+  border-top: 1px solid var(--border, #444);
+  padding-top: 10px;
+}
+.update-progress-modal-log-label {
+  font-size: 0.72rem;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.update-progress-modal-log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: 'Courier New', ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.update-progress-modal-log li {
+  display: flex;
+  gap: 8px;
+  padding: 0;
+}
+.update-progress-modal-log-time {
+  color: var(--text-muted, #888);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.update-progress-modal-log-msg {
+  flex: 1 1 auto;
+  word-break: break-word;
+}
 .update-progress-spinner {
   width: 36px;
   height: 36px;
