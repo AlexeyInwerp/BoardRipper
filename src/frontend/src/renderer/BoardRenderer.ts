@@ -2750,6 +2750,19 @@ export class BoardRenderer {
   private acquireNetLabel(srcLabel: BitmapText) {
     const srcFontSize = srcLabel.style.fontSize as number;
     const srcFontFamily = srcLabel.style.fontFamily as string;
+    // Walk past any non-BitmapText children sitting at the current pool
+    // index. `renderSelection` raises the selected part's pin labels into
+    // netLabelLayer mid-pass, and when `pinNetLabelBg` is enabled those are
+    // Container wrappers (background Graphics + BitmapText) rather than bare
+    // BitmapTexts. A later `acquireNetLabel` call (e.g. the dim re-clone
+    // loop) would otherwise reuse one of those wrappers as a BitmapText and
+    // crash on `label.style.fontSize` since Container has no `.style`.
+    while (
+      this.netLabelPoolIdx < this.netLabelLayer.children.length
+      && !(this.netLabelLayer.children[this.netLabelPoolIdx] instanceof BitmapText)
+    ) {
+      this.netLabelPoolIdx++;
+    }
     let label: BitmapText;
     if (this.netLabelPoolIdx < this.netLabelLayer.children.length) {
       label = this.netLabelLayer.children[this.netLabelPoolIdx] as BitmapText;
