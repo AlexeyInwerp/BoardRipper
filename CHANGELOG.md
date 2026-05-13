@@ -2,6 +2,14 @@
 
 ## v0.20.8 — 2026-05-13
 
+### Important: silent-update-failure root cause
+
+- **Auto-update silently rolled back on every install whose `/data` is mixed-ownership.** Since `430a219` (2026-05-12) the image ships `USER 65532:65532`. Production installs that override that at runtime (`docker run --user 0:0`, e.g. the maintainer's `deploy-remote.sh:143` does this because the Synology bind-mounted data dir is mixed root/65532) ran the OLD container as root. The orchestrator's `createBody`, however, did not propagate `Config.User` into the NEW container — it always started at the image default `65532`. The new binary then `log.Fatal`'d on `databank.Open` and update-secret read/create because the OLD container had written `/data/databank.db` and `/data/.update-secret` as root and 65532 can't write them; the process exited before listening on `:8080`; the orchestrator's 60s `/api/health` poll on the new container's IP timed out; rollback restored the old container; and the user saw nothing — the update "succeeded" silently and reverted. `findSelfContainer` now reads `Config.User` and `orchestrateRestart` includes `"User": self.User` in the create body. Image-default-USER installs (`self.User == ""`) fall through unchanged. (`b9b5e10`)
+
+  **Chicken-and-egg caveat:** the fix lives in v0.20.8's binary, but the orchestrator that creates v0.20.8's container runs v0.20.7's (or earlier) code — which still has the bug. So the v0.20.7 → v0.20.8 update on an affected install **will still roll back**. Recovery: one manual `NASdeploy.sh` / `docker pull ghcr.io/alexeyinwerp/boardripper:v0.20.8 && docker rm -f boardripper && docker run -d ... boardripper:v0.20.8` to land v0.20.8 in place. From v0.20.8 onward, every future auto-update works as designed.
+
+  The update-test harness (`tools/update-test/run.sh`) now passes `--user 0:0` on the OLD container, mirroring production. This reproduces the bug end-to-end (without the fix the harness fails the same way production fails); with the fix the harness passes in ~10 s. The new `scripts/release.sh` runs the harness as a mandatory gate before signing — same class of regression cannot land silently again.
+
 ### Fixed
 
 - **Clicking a pin on a selected part no longer crashes the renderer with `Cannot set properties of undefined (setting 'fontSize')`.** The selected part's pin labels get raised into `netLabelLayer` mid-pass so they render above the netDim overlay. When `pinNetLabelBg` is on, those entries are `Container` wrappers (background Graphics + BitmapText child) rather than bare BitmapTexts. A later `acquireNetLabel` call in the same `renderSelection` walked `netLabelPoolIdx` into the wrapper's slot, cast it as BitmapText, and crashed on `label.style.fontSize` because `Container` has no `.style`. `acquireNetLabel` now skips past any non-BitmapText children at the current pool index before reusing or creating. Reported from a deployed v0.20.7 install. (`248f8eb`)
