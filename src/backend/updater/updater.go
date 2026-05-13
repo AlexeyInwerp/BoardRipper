@@ -175,10 +175,23 @@ func (u *Updater) Check() (*UpdateState, error) {
 		return &u.state, err
 	}
 	installedCtr := u.readInstalledCounter()
-	if err := ValidateManifest(m, installedCtr, Version); err != nil {
-		u.state.Error = err.Error()
+	if validateErr := ValidateManifest(m, installedCtr, Version); validateErr != nil {
+		// "Manifest matches the release we already applied" is not an error —
+		// the validator rejects `m.Counter <= installedCounter` as a replay
+		// defence, but when counter is *equal* AND the binary's compiled-in
+		// version matches the manifest's, the check is simply telling us
+		// "you're on the latest." Surface as no-update rather than bubbling a
+		// 502 through the UI every 6h post-install.
+		if m.Counter == installedCtr && m.Version == Version {
+			u.state.Error = ""
+			u.state.LatestVersion = m.Version
+			u.state.HasUpdate = false
+			u.state.Manifest = m
+			return &u.state, nil
+		}
+		u.state.Error = validateErr.Error()
 		u.state.HasUpdate = false
-		return &u.state, err
+		return &u.state, validateErr
 	}
 	u.state.Error = ""
 	u.state.LatestVersion = m.Version
