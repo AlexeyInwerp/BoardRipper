@@ -1,5 +1,33 @@
 # BoardRipper changelog
 
+## v0.20.8 — 2026-05-13
+
+### Fixed
+
+- **Clicking a pin on a selected part no longer crashes the renderer with `Cannot set properties of undefined (setting 'fontSize')`.** The selected part's pin labels get raised into `netLabelLayer` mid-pass so they render above the netDim overlay. When `pinNetLabelBg` is on, those entries are `Container` wrappers (background Graphics + BitmapText child) rather than bare BitmapTexts. A later `acquireNetLabel` call in the same `renderSelection` walked `netLabelPoolIdx` into the wrapper's slot, cast it as BitmapText, and crashed on `label.style.fontSize` because `Container` has no `.style`. `acquireNetLabel` now skips past any non-BitmapText children at the current pool index before reusing or creating. Reported from a deployed v0.20.7 install. (`248f8eb`)
+
+### Release pipeline
+
+- **Single command owns the end-to-end release.** Today's v0.20.7 mishap (electron-only desktop release tagged ahead of `release.sh`'s run, then `release.sh` committed counter 17, failed at `git tag`, and exited 128 with no rollback help) exposed that nothing enforced CHANGELOG-entry presence, tag-collision detection, type-check / build preflight, update-test before signing, push, or GitHub Release creation. `scripts/release.sh` now owns all of it. Interactive `Build desktop Electron apps too? [y/N]` prompt; `--desktop` / `--no-desktop` / `--desktop-only` bypass the prompt. After GHCR push the script runs `tools/update-test/run.sh` as a mandatory sanity gate before signing. After commit + tag it pushes `main` + tag and creates a GitHub Release with the sliced CHANGELOG section + (if built) Electron zips as assets. Pre-release tags (`.beta` / `.rc` / `.alpha`) get `--prerelease` instead of `--latest`. New `--desktop-only` mode bumps `package.json` + builds + ships Electron apps + creates a GH release **without** touching `.release-counter`, Docker, manifest signing, or FTP — the recovery path for "in-app updater is fine, but desktop users need a hotfix." See `docs/RELEASE_RUNBOOK.md` for the full flag cheatsheet. (`4508c2d`)
+
+## v0.20.7 — 2026-05-13
+
+### Fixed
+
+- **Board outline now reads as a clean filled rectangle on TVW files whose CAD source ships only straight edges (no corner arcs).** Some Teboview Roul Through layers encode the board edge as drill-slot line segments. `chainLines` would return dozens of 2-point sub-paths instead of one perimeter loop; `gfx.fill()` on that pile flowed PixiJS's even-odd rule across all the disconnected sub-paths and produced cross-hatched "wrong polygon fillings" (reported on ThinkPad P14s Gen 2 NM-D352). `drawOutline` now pre-passes to find the largest sub-path; when the largest is under 20 points (no real perimeter), it fills the outline-points bbox once and strokes the fragmented segments on top. Well-formed outlines (HY568, NM-D355 with its 415-pt perimeter) hit the existing path-fill branch unchanged. (`1a40813`)
+
+- **Self-update check no longer logs a red `Check failed: HTTP 502` every 6 hours when you're already on the latest release.** After a successful self-update the install's counter file is bumped to the applied manifest's counter. The next background check fetched the same manifest, `ValidateManifest` rejected it at the `m.Counter <= installedCounter` branch (replay defence), `Check()` returned an error, the handler answered 502, and the frontend dutifully logged red. `Check()` now distinguishes the "manifest is exactly what we already applied" case (`m.Counter == installedCtr && m.Version == Version`) from a real validation failure and reports it as no-update with HTTP 200. Replay / downgrade / counter-regression cases still bubble through to the user. (`e184b94`)
+
+- **Welcome-screen footer link points at the public GitHub repo** (was pointing at the old `inwerp/Boardviewer` placeholder URL that 404s after the public flip). (`350f636`)
+
+### Docs
+
+- **Welcome-screen copy refresh** — dropped stale wording from before the public release. (`cfb5f19`)
+
+### Release pipeline
+
+- **`NASdeploy.sh` bakes `PUBKEY` into the deployed image.** The Dockerfile defaults `ARG PUBKEY=""`; `release.sh` always read `~/.config/boardripper/release.pub` and passed it via `--build-arg PUBKEY`, but `NASdeploy.sh` only passed `APP_VERSION`. Every NAS deploy since the secure-update pipeline landed in v0.19.0 had therefore shipped with an empty PubKey baked into the binary, and every update check short-circuited at `updater not configured: PubKey is empty`. Users on a NAS deployed by `NASdeploy.sh` would see no update banner even with a fresh manifest live on GHCR + ripperdoc.de. `NASdeploy.sh` now reads `release.pub` (overridable via `$PUBKEY_FILE`) and passes it through. (`11b0959`)
+
 ## v0.20.6 — 2026-05-12
 
 ### Fixed
