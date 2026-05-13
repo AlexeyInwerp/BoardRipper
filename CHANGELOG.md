@@ -1,5 +1,29 @@
 # BoardRipper changelog
 
+## v0.20.9 — 2026-05-13
+
+### Fixed
+
+- **TVW board outlines: `0x0B` drill-code is an ARC record, not another slot variant.** ThinkPad P14s Gen 2 NM-D352 ships 59 of these `0x0B` records alongside 90 real `0x0A` slots in its OUTLINE Roul layer. The parser was folding `0x0A` and `0x0B` into the same `DrillSlot` branch (inherited from eagleview) and reading both as straight line segments — the misread center+radius bytes happened to plot as 4,000–12,000 mil diagonals back near the origin, and `gfx.fill()` then cross-hatched the board with PixiJS's even-odd rule across the 98 disjoint sub-paths. `0x0B` has the same 29-byte footprint as `0x0A` but a different field layout (`net:s32, tool:u32, center:Vec2S, radius:Fixed32, start:f32 deg, sweep:f32 deg`); the parser now tessellates it to a 16-segment polyline so `chainLines` sees connected geometry, matching the Logic-layer arc-tessellation constants. (`0cc71c8`)
+
+- **Clean `docker compose up -d` no longer restart-loops on Linux hosts.** `Dockerfile:52` ships `USER 65532:65532` for safety, but a fresh `docker compose up` on Linux has the Docker daemon create `./data` as root, which UID 65532 can't write — `databank.Open` then `log.Fatal`s at boot and the container exits. The bundled `docker-compose.yml` now overrides `user: "0:0"` (mirrors `deploy-remote.sh`) so the documented one-command install works. Users who'd rather keep 65532 can remove that line and either `chown -R 65532:65532 ./data` or switch to a named volume — Docker initializes named volumes from `/data` inside the image (pre-chowned to 65532 in the Dockerfile), so USER 65532 stays meaningful. (`f456c12`)
+
+### Release pipeline
+
+- **`SOURCES_CSV` no longer lists GHCR as a manifest source.** GHCR is a Docker Distribution v2 registry; `https://ghcr.io/.../manifest.json` returns HTTP 405 (it only speaks `/v2/`). Every install ever shipped wasted one HTTP request on a guaranteed-fail there before falling through to ripperdoc.de. Both the compiled-in `SOURCES_CSV` and the manifest's `source_list_next` field are now single-entry. GHCR is still used during `Apply` for pull-by-digest — different protocol on the same hostname. (`c4666b0`)
+
+- **`scripts/release.sh` is now fully non-interactive.** Set `MINISIGN_PASSWORD` in `~/.config/boardripper/release.env` and the script pipes it to `minisign -S` over stdin (minisign accepts stdin when not on a tty). Falls back to the interactive prompt if the env var is unset, so hands-on runs still work. Combined with the `Build desktop Electron apps too? [y/N]` prompt's existing tty-check (which falls through to "off" in non-tty contexts), a release now runs end-to-end with zero operator input — chat-driven, cron-driven, CI-driven all behave the same. `--desktop` flag forces Electron builds when needed. (`fb0f91a`)
+
+- **Version archive page at <https://www.ripperdoc.de/boardripper/archive.html>** is now regenerated on every release. Lists every CHANGELOG entry with per-version Docker-tarball / drop-bundle / GHCR-pull / source-tag links. The GitHub Releases page is intentionally scoped to the current release (older entries cleaned out 2026-05-13); the archive is the canonical "give me an older version" landing. Retention policy and tier-migration procedure documented in `docs/RELEASE_ARCHIVE.md`. (`fb0f91a`)
+
+### Docs
+
+- **README**: docker-compose snippet now includes the `user: "0:0"` override matching the in-repo `docker-compose.yml` (was missing, copy-paste users hit the restart loop). Self-update section corrected — the signed manifest is fetched from ripperdoc.de, then the image is pulled by content-addressed digest from GHCR; the previous "GHCR primary, ripperdoc.de fallback" phrasing was backwards (GHCR can't serve manifests). A new "Older versions" subsection points at the archive page. (`eca9d11`)
+
+### CI
+
+- **`--max-warnings 100` dropped from the eslint step.** The previous cap meant nearly every push hit the cap and failed CI (30 of the last 50 runs failed on the same `react-hooks/preserve-manual-memoization` and `react-refresh/only-export-components` warnings the React Compiler emits in batches); `tsc -b --noEmit` + backend tests + docker-build never ran because they `needs: lint-and-typecheck`. The cap was raised once before in `55a3a12` for the same reason — drift faster than the rules. Warnings still print to the run log; `tsc --noEmit` stays as the hard gate. (`ae68bc7`)
+
 ## v0.20.8 — 2026-05-13
 
 ### Important: silent-update-failure root cause
