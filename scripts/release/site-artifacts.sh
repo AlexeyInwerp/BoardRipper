@@ -130,7 +130,12 @@ cat > "$OUT/site/releases/index.html" <<EOF
 <!DOCTYPE html><html><body><h1>BoardRipper releases</h1>
 <p>Latest: <a href="boardripper-$VERSION.tar.gz">$VERSION</a> (released $RELEASE_DATE).</p>
 <p>Manifest: <a href="../manifest.json">manifest.json</a> (signed).</p>
-<p>For older versions, ask the maintainer.</p></body></html>
+<p>For older versions, see the <a href="../archive.html">version archive</a>.</p></body></html>
 EOF
+
+# --- archive.html (all historical versions, regenerated each release) ---
+# See docs/RELEASE_ARCHIVE.md for retention policy (GHCR_KEEP env var).
+REPO_ROOT="$REPO_ROOT" OUT="$OUT/site/archive.html" \
+  "$REPO_ROOT/scripts/release/gen-archive.sh"
 
 echo ">>> Site artifacts generated under $OUT/site/"

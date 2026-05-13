@@ -32,9 +32,19 @@ FTP_USER=ftp@ripperdoc.de
 FTP_PASSWORD=<from 1Password>
 GHCR_USER=alexeyinwerp
 GHCR_TOKEN=<github PAT, write:packages scope>
+MINISIGN_PASSWORD=<minisign-key passphrase>
 EOF
 chmod 600 ~/.config/boardripper/release.env
 ```
+
+**`MINISIGN_PASSWORD` makes `release.sh` non-interactive.** Without it, the
+script prompts for the passphrase via `/dev/tty` as before — fine for
+hands-on runs, but it blocks anyone driving the release from a non-tty
+context (chat, CI, cron). With it set, the script pipes the password to
+`minisign -S` over stdin (minisign accepts stdin when not on a tty).
+The env file lives at mode 0600 on a maintainer-only machine; the key
+itself is in the same directory at `release.minisign`. If the key is
+compromised, you have bigger problems than the env var.
 
 ### GHCR
 

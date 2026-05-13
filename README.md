@@ -248,6 +248,12 @@ docker load < boardripper-docker-<new-version>.tar.gz
 docker compose down && docker compose up -d
 ```
 
+### Older versions
+
+Historical releases live at **<https://www.ripperdoc.de/boardripper/archive.html>** — Docker tarballs and signed drop-bundles for v0.19.0 onward, with per-version source links for everything older. The GitHub Releases page intentionally lists only the current release; the archive is the canonical "give me an older version" landing page.
+
+A handful of versions are also kept on GHCR (`v0.19.0`, `v0.19.5`, `v0.20.5`, `v0.20.8`) for direct `docker pull` — see the archive table for which ones are still pull-able vs. tarball/source-only.
+
 ## Electron desktop wrapper (optional)
 
 Prebuilt Electron wrappers are published with every release (`BoardRipper-macOS-universal-<version>.zip`, `BoardRipper-Windows-x64-<version>.zip`). They run the same Go backend + React frontend inside an Electron shell. The Docker / server path is the primary way to deploy BoardRipper; the desktop wrapper is here for single-machine use.

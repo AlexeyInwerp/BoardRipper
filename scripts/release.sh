@@ -336,8 +336,17 @@ EOF
 
   jq . out/manifest.json >/dev/null
 
-  echo ">>> Signing manifest (will prompt for passphrase)"
-  minisign -S -s "$MINISIGN_KEY" -m out/manifest.json
+  # minisign reads the password from stdin when stdin isn't a tty. Set
+  # MINISIGN_PASSWORD in ~/.config/boardripper/release.env to drive it
+  # non-interactively (required when invoking from chat / CI / cron); fall
+  # back to an interactive prompt for hands-on runs.
+  if [ -n "${MINISIGN_PASSWORD:-}" ]; then
+    echo ">>> Signing manifest (using MINISIGN_PASSWORD from release.env)"
+    printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$MINISIGN_KEY" -m out/manifest.json
+  else
+    echo ">>> Signing manifest (will prompt for passphrase — set MINISIGN_PASSWORD in release.env to skip)"
+    minisign -S -s "$MINISIGN_KEY" -m out/manifest.json
+  fi
   # Produces out/manifest.json.minisig
 
   # --- Build drop-to-update bundle (recovery escape-hatch) ---
@@ -363,6 +372,7 @@ EOF
     cp out/site/index.html        "$STAGE/boardripper/index.html"
     [ -f out/site/changelog.html ]    && cp out/site/changelog.html "$STAGE/boardripper/changelog.html"
     [ -f out/site/third_party.html ]  && cp out/site/third_party.html "$STAGE/boardripper/third_party.html"
+    [ -f out/site/archive.html ]      && cp out/site/archive.html "$STAGE/boardripper/archive.html"
     cp out/site/releases/index.html "$STAGE/boardripper/releases/index.html"
     cp -r landing/screenshots     "$STAGE/boardripper/screenshots"
     cp out/manifest.json          "$STAGE/boardripper/manifest.json.new"

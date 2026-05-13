@@ -192,7 +192,7 @@ C12*</pre>
 <ul>
   <li><b>Container registry</b> (recommended) &mdash; <code>docker pull ghcr.io/alexeyinwerp/boardripper:latest</code>. Public, no login. Fast incremental updates via layer dedup.</li>
   <li><b>Tarball mirror</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/latest.tar.gz">latest.tar.gz</a> (OCI image archive, ~13&nbsp;MB), shipped alongside a signed <a href="https://www.ripperdoc.de/boardripper/manifest.json">manifest.json</a>. Use this if your network blocks container registries; load with <code>docker load &lt; latest.tar.gz</code>.</li>
-  <li><b>Older versions</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/">browse the release archive</a>.</li>
+  <li><b>Older versions</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/archive.html">version archive</a> (every release, with tarball / drop-bundle / source links).</li>
   <li><b>Release notes and version history</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/changelog.html">changelog</a>.</li>
 </ul>
 <p class="small">Both downloads ship the same image. The running container verifies an Ed25519 signature against a key compiled into its own binary before installing any update &mdash; a hijacked mirror cannot deliver a forged update.</p>
