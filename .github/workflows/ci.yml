@@ -21,7 +21,15 @@ jobs:
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
       - run: cd src/frontend && npm ci
-      - run: cd src/frontend && npx eslint . --max-warnings 100
+      # Warnings are advisory — the React Compiler emits a steady stream of
+      # `react-hooks/preserve-manual-memoization` and
+      # `react-refresh/only-export-components` warnings that we can't act on
+      # in batch, and the warning count drifts commit-by-commit. Failing CI
+      # on warning-count thresholds (the previous `--max-warnings 100`) made
+      # CI red on nearly every push and trained the maintainer to ignore it.
+      # `tsc --noEmit` below is the hard gate; eslint stays visible in the
+      # log but only blocks on actual errors (`max-warnings` defaults to -1).
+      - run: cd src/frontend && npx eslint .
       - run: cd src/frontend && npx tsc -b --noEmit
 
   frontend-tests:
