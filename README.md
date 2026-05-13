@@ -144,6 +144,16 @@ cd src/backend && go run .                       # http://localhost:8080
 services:
   boardripper:
     image: ghcr.io/alexeyinwerp/boardripper:latest    # or build: .
+    # The image ships USER 65532:65532 (distroless `nonroot`) so a hypothetical
+    # RCE doesn't own your bind-mounted /data. The default `docker compose up`
+    # flow creates ./data as root on Linux hosts (Docker daemon runs as root),
+    # which UID 65532 can't then write — the container exits at databank.Open
+    # with "unable to open database file". Override to root for the compose
+    # path, matching what NASdeploy.sh already does. Alternatively, remove this
+    # line and either (a) `chown -R 65532:65532 ./data` before `up -d`, or
+    # (b) switch ./data to a named volume — Docker initializes named volumes
+    # from /data inside the image (pre-chowned to 65532 in the Dockerfile).
+    user: "0:0"
     ports:
       - "8081:8080"              # access at http://your-host:8081
     volumes:
@@ -211,7 +221,7 @@ BoardRipper can update itself when running in Docker:
 Requires:
 - Docker socket mounted (`-v /var/run/docker.sock:/var/run/docker.sock`).
 
-Updates are pulled from `ghcr.io/alexeyinwerp/boardripper` (primary) or the signed tarball mirror at <https://www.ripperdoc.de/boardripper/releases/> (fallback). Every manifest is verified against an Ed25519 public key **compiled into the running binary** before any I/O on the body — a hijacked mirror cannot deliver a forged update. The pipeline also enforces a monotonic counter (replay defence), a 30-day freshness window, a 90-day expiry, and a `min_supported_version` downgrade defence. See [docs/RELEASE_RUNBOOK.md](docs/RELEASE_RUNBOOK.md) for the maintainer-side release procedure.
+The signed release manifest is fetched from <https://www.ripperdoc.de/boardripper/manifest.json> and verified against an Ed25519 public key **compiled into the running binary** before any I/O on the body — a hijacked mirror cannot deliver a forged update. Once the manifest verifies, the image itself is pulled by content-addressed digest from `ghcr.io/alexeyinwerp/boardripper@sha256:…`; the [signed tarball mirror](https://www.ripperdoc.de/boardripper/releases/) is the fallback if GHCR is unreachable. The pipeline also enforces a monotonic counter (replay defence), a 30-day freshness window, a 90-day expiry, and a `min_supported_version` downgrade defence. See [docs/RELEASE_RUNBOOK.md](docs/RELEASE_RUNBOOK.md) for the maintainer-side release procedure.
 
 ### Drop-to-update fallback
 
