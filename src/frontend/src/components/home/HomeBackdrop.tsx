@@ -1046,7 +1046,7 @@ function Footer() {
     <footer className="home-footer">
       BoardRipper {state.current_version} · AGPL-3.0 ·{' '}
       <a
-        href="https://github.com/inwerp/Boardviewer"
+        href="https://github.com/alexeyinwerp/boardripper"
         target="_blank"
         rel="noreferrer"
         className="home-footer-link"
