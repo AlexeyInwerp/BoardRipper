@@ -369,6 +369,41 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings, 
   const pts = board.outline;
   if (pts.length <= 1) return;
 
+  // Pre-pass: find the largest sub-path so we can decide whether the outline
+  // is a coherent perimeter we can fill, or just a pile of fragmented slot
+  // segments (some Teboview Roul layers ship without the corner arcs that
+  // would join their straight edges — chainLines then returns dozens of
+  // 2-point sub-paths and any direct .fill() call cross-hatches the board).
+  // When the outline is fragmented we fill the data's bbox instead so the
+  // board still reads as a filled area, and stroke the actual segments
+  // on top for whatever real-outline information they convey.
+  let largestSubpath = 0;
+  let inSubpath = 0;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (isNaN(p.x) || isNaN(p.y)) {
+      if (inSubpath > largestSubpath) largestSubpath = inSubpath;
+      inSubpath = 0;
+    } else {
+      inSubpath++;
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (inSubpath > largestSubpath) largestSubpath = inSubpath;
+  // A real perimeter has at least ~20 points (corner segments + straight
+  // edges). Anything smaller means no sub-path encloses the whole board.
+  const fragmented = largestSubpath < 20;
+
+  if (fragmented && s.boardFillAlpha > 0 && isFinite(minX)) {
+    // Lay down a clean rectangle fill before the stroke pass so the board
+    // area reads as filled even though the outline data is in fragments.
+    gfx.rect(minX, minY, maxX - minX, maxY - minY);
+    gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
+  }
+
   let penDown = false;
   let prevX = NaN, prevY = NaN;
   let firstX = NaN, firstY = NaN;
@@ -401,7 +436,11 @@ export function drawOutline(gfx: Graphics, board: BoardData, s: RenderSettings, 
   }
   closeIfMatchingStart();
 
-  if (s.boardFillAlpha > 0) {
+  // Skip the path-fill on fragmented outlines — the bbox fill above already
+  // covered the board area, and applying fill() here would re-flood the
+  // disconnected sub-paths with PixiJS's even-odd rule and produce the
+  // exact "weird polygon fillings" we're trying to avoid.
+  if (!fragmented && s.boardFillAlpha > 0) {
     gfx.fill({ color: resolveBoardFillColor(metadataHex, s.useMetadataBoardColor), alpha: s.boardFillAlpha });
   }
   gfx.stroke({ width: s.outlineWidth, color: BOARD_COLORS.outline, alpha: s.outlineAlpha });
