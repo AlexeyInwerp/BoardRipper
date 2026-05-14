@@ -177,3 +177,35 @@ test.describe('altium-cfb', () => {
     expect(cfb.getStream('NoSuchStream/Data')).toBeNull();
   });
 });
+
+test.describe('altium-pcb-format', () => {
+  test('detects CFB magic + Altium signature', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    const buf = fs.readFileSync(SAMPLE_PCB);
+    const header = new Uint8Array(buf.buffer, buf.byteOffset, 512);
+    expect(AltiumPcbFormat.detect(header)).toBe(true);
+  });
+
+  test('rejects non-CFB headers', async () => {
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    const random = new Uint8Array(64);
+    expect(AltiumPcbFormat.detect(random)).toBe(false);
+    const bvr = new TextEncoder().encode('BVRAW_FORMAT_3\n');
+    expect(AltiumPcbFormat.detect(bvr)).toBe(false);
+  });
+
+  test('detects PCB ASCII Version 5.0 header', async () => {
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    const ascii = new TextEncoder().encode('PCB ASCII Version 5.0\nrest\n');
+    expect(AltiumPcbFormat.detect(ascii)).toBe(true);
+  });
+
+  test('extensions include sister formats', async () => {
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    expect(AltiumPcbFormat.extensions).toEqual(
+      expect.arrayContaining(['.pcbdoc', '.cmpcbdoc', '.cspcbdoc']),
+    );
+    expect(AltiumPcbFormat.id).toBe('ALTIUM_PCB');
+  });
+});
