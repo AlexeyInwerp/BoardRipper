@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { worklistStore } from '../store/worklist-store';
+import React, { useEffect, useRef, useState } from 'react';
+import { IconReplace, IconTool, IconSparkles, IconMinus } from '@tabler/icons-react';
+import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
@@ -7,28 +8,30 @@ import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
 
-// Single-character label keeps the row compact. The full meaning is in the
-// browser-native tooltip — hover the button to see "Replaced — click to
-// cycle to Reworked" under the cursor. No click-time toast: the colour
-// change at the button is the confirmation; the title carries the why.
-// Cycling order: none → replaced → reworked → cleaned → none.
-const MARK_LABELS: Record<WorklistMark, string> = {
-  none: '·',
-  replaced: 'R',
-  reworked: 'W',
-  cleaned: 'C',
+// Icon per mark + hover tooltip with full meaning. Cycling order:
+// none → replaced → reworked → cleaned → none. The same colours are used
+// on the canvas highlight (MARK_COLOR_HEX in worklist-store).
+const MARK_ICON: Record<WorklistMark, typeof IconReplace> = {
+  none: IconMinus,
+  replaced: IconReplace,
+  reworked: IconTool,
+  cleaned: IconSparkles,
 };
 const MARK_TITLE: Record<WorklistMark, string> = {
-  none: 'No mark. Click to set Replaced (R). Cycle: R → W (Reworked) → C (Cleaned) → no mark. Shift-click cycles backwards.',
-  replaced: 'Replaced (R). Click to advance to Reworked (W). Shift-click to clear.',
-  reworked: 'Reworked (W). Click to advance to Cleaned (C). Shift-click to go back to Replaced.',
-  cleaned: 'Cleaned (C). Click to clear. Shift-click to go back to Reworked.',
+  none: 'No mark. Click to set Replaced. Cycle: Replaced → Reworked → Cleaned → no mark. Shift-click cycles backwards.',
+  replaced: 'Replaced. Click to advance to Reworked. Shift-click to clear.',
+  reworked: 'Reworked. Click to advance to Cleaned. Shift-click to go back to Replaced.',
+  cleaned: 'Cleaned. Click to clear. Shift-click to go back to Reworked.',
 };
-const MARK_COLOR: Record<WorklistMark, string> = {
+// Button-side colour map: 'none' stays muted so an unmarked row reads as
+// "not yet touched" instead of glowing in MARK_COLOR_CSS.none amber, which
+// is the canvas-side colour used for worklist outlines that don't carry a
+// per-part mark yet.
+const MARK_BTN_COLOR: Record<WorklistMark, string> = {
   none: 'var(--muted, #888)',
-  replaced: '#ff5566',
-  reworked: '#ffaa33',
-  cleaned: '#33cc88',
+  replaced: MARK_COLOR_CSS.replaced,
+  reworked: MARK_COLOR_CSS.reworked,
+  cleaned: MARK_COLOR_CSS.cleaned,
 };
 
 async function copyToClipboard(text: string, summary: string): Promise<void> {
@@ -46,25 +49,12 @@ async function copyToClipboard(text: string, summary: string): Promise<void> {
 export function WorklistPanel() {
   const { current, activeWorklist, hasBoard } = useWorklist();
   const sel = useSelectionSet();
-  const { activeTabId, board } = useBoardStore();
+  const { activeTabId } = useBoardStore();
 
   // Hydrate when this panel mounts / tab changes.
   useEffect(() => {
     void worklistStore.syncToActiveTab();
   }, [activeTabId]);
-
-  const selectedRefdes = useMemo(() => {
-    if (!board) return [];
-    return sel.ordered
-      .map(i => board.parts[i]?.name)
-      .filter((n): n is string => !!n);
-  }, [sel.ordered, board]);
-
-  const onCopySelection = () => {
-    if (selectedRefdes.length === 0) return;
-    const text = selectedRefdes.join('\n');
-    void copyToClipboard(text, `Copied ${selectedRefdes.length} refdes`);
-  };
 
   const onClearSelection = () => {
     if (activeTabId != null) selectionSetStore.clear(activeTabId);
@@ -90,21 +80,18 @@ export function WorklistPanel() {
   return (
     <div style={rootStyle}>
       {/* ─── Selection band (cyan canvas highlight) ──────────────────────── */}
-      <section style={bandStyle}>
-        <div style={bandHeaderStyle}>
-          <span style={{ fontWeight: 600 }}>Selection</span>
-          <span style={countPillStyle}>{sel.count}</span>
-          <span style={{ opacity: 0.55, fontSize: 11, marginLeft: 'auto' }}>cyan on canvas</span>
-        </div>
-        <div style={{ fontSize: 12, opacity: 0.7, margin: '4px 0 8px' }}>
-          Click <b>Select</b> on a worklist below to load its parts here as cyan outlines on the canvas.
-          Copy gives you a refdes list — no marks/notes (use Copy on the worklist for those).
-        </div>
-        <div style={btnRowStyle}>
-          <button style={subtleBtnStyle} disabled={sel.count === 0} onClick={onCopySelection} title="Copy refdes list, one per line">Copy refdes</button>
-          <button style={subtleBtnStyle} disabled={sel.count === 0} onClick={onClearSelection} title="Clear the selection (parts stay on the board)">Clear</button>
-        </div>
-      </section>
+      {sel.count > 0 && (
+        <section style={bandStyle}>
+          <div style={bandHeaderStyle}>
+            <span style={{ fontWeight: 600 }}>Cyan selection</span>
+            <span style={countPillStyle}>{sel.count}</span>
+            <button style={{ ...subtleBtnStyle, marginLeft: 'auto' }} onClick={onClearSelection} title="Clear the cyan canvas highlight (parts stay on the board, worklist untouched)">Clear</button>
+          </div>
+          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+            Loaded by <b>Select</b> on a worklist below. Visual only — has no effect on the worklist contents.
+          </div>
+        </section>
+      )}
 
       {/* ─── Worklist tabs ─────────────────────────────────────────────────── */}
       <section style={{ ...bandStyle, padding: '6px 8px' }}>
@@ -279,13 +266,16 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
         <button
           style={{
             ...markBtnStyle,
-            color: MARK_COLOR[entry.mark],
-            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_COLOR[entry.mark],
+            color: MARK_BTN_COLOR[entry.mark],
+            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
           }}
           onClick={onCycleMark}
           title={MARK_TITLE[entry.mark]}
         >
-          {MARK_LABELS[entry.mark]}
+          {(() => {
+            const Icon = MARK_ICON[entry.mark];
+            return <Icon size={14} stroke={2} />;
+          })()}
         </button>
         <span style={{ fontFamily: 'monospace', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {entry.refdes}
@@ -348,12 +338,6 @@ const countPillStyle: React.CSSProperties = {
   borderRadius: 8,
   minWidth: 18,
   textAlign: 'center',
-};
-
-const btnRowStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 6,
-  alignItems: 'center',
 };
 
 const subtleBtnStyle: React.CSSProperties = {

@@ -25,7 +25,7 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
-import { worklistStore } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_HEX } from '../store/worklist-store';
 import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -4403,17 +4403,23 @@ export class BoardRenderer {
 
   /** Redraw the multi-select + active-worklist outline overlay.
    *
-   *  Outline geometry: we draw an *expanded* rect whose inner edge is the
-   *  part's bbox, then stroke at default (centered) alignment. This avoids
-   *  relying on PixiJS v8's `alignment` value (project never uses it; earlier
-   *  experiment with `alignment:1` painted the stroke INSIDE the bbox,
-   *  eating into the part body — visible "blob inside the resistor"). Width
-   *  targets ~2 screen pixels at the current viewport zoom, capped at 10%
-   *  of the part's smaller dimension so tiny SMD parts don't get swamped.
+   *  Width rule matches native part borders (see board-scene.ts
+   *  `updateBorderWidths`): `max(s.partBorderWidth, minScreenPx/scale)`.
+   *  Highlight uses a 2-px floor (regular borders use 1-px) so it reads as
+   *  visibly heavier than a normal outline without becoming a blob on small
+   *  components. The stroke sits OUTSIDE the bbox via expanded-rect geometry
+   *  (path runs `half` mils outside the bbox on each side) so the part body
+   *  is never covered.
+   *
+   *  Colour:
+   *    • Active-worklist entries  → coloured by per-entry mark
+   *      (none/replaced/reworked/cleaned), via shared MARK_COLOR_HEX so the
+   *      panel UI and the canvas agree on what each state looks like.
+   *    • Ephemeral selection set → cyan (distinct from any mark colour).
    *
    *  Highlight set is rebuilt from `refdes` each frame against the live
-   *  board so that fold-mode / sub-board changes (which re-derive part
-   *  indices) don't paint outlines on the wrong components.
+   *  board so fold-mode / sub-board changes (which re-derive part indices)
+   *  don't paint outlines on the wrong components.
    *
    *  Called on store notify, on viewport `moved`, and on board change. */
   private redrawMultiHighlight(): void {
@@ -4422,51 +4428,46 @@ export class BoardRenderer {
     gfx.clear();
     const board = this.board;
     if (!board) return;
-    // 2px target in mil units at current zoom. viewport.scale.x is
-    // screenPixels per mil; invert for mils per pixel.
+    const s = renderSettingsStore.settings;
     const scale = this.viewport?.scale?.x ?? 1;
-    const targetPx = 2;
-    const baseWidthMils = scale > 0 ? targetPx / scale : 1;
-    const drawOutline = (idx: number, color: number, alpha: number, widthMult: number) => {
+    // Same formula as `updateBorderWidths` for part borders, just with a
+    // 2-px floor instead of 1-px so the highlight reads as heavier.
+    const minScreenPx = 2;
+    const width = Math.max(s.partBorderWidth, scale > 0 ? minScreenPx / scale : 1);
+    const half = width / 2;
+    const drawOutline = (idx: number, color: number, alpha: number) => {
       const part = board.parts[idx];
       if (!part) return;
       if (!this.isPartVisible(part)) return;
       const b = part.bounds;
       const w = b.maxX - b.minX;
       const h = b.maxY - b.minY;
-      const cap = Math.max(baseWidthMils, Math.min(w, h) * 0.1);
-      const width = Math.min(baseWidthMils * widthMult, cap);
-      const half = width / 2;
-      // Expanded rect: path runs `half` mils outside the bbox on each side,
-      // so the stroke's inner edge lands exactly on the bbox boundary and
-      // the part body is never covered. (Avoids relying on PixiJS v8's
-      // stroke `alignment` value — the codebase never uses it elsewhere.)
       gfx.rect(b.minX - half, b.minY - half, w + width, h + width)
          .stroke({ color, alpha, width });
     };
     const tabId = boardStore.activeTabId;
     if (tabId == null) return;
     // Build refdes → partIndex once per frame so we can re-resolve stored
-    // worklist entries (whose cached partIndex may be stale after a fold-mode
-    // change re-derived the board).
+    // worklist entries (whose cached partIndex may be stale after a
+    // fold-mode change re-derived the board).
     const byRefdes = new Map<string, number>();
     for (let i = 0; i < board.parts.length; i++) {
       const n = board.parts[i]?.name;
       if (n) byRefdes.set(n, i);
     }
-    // Active worklist first (drawn under the ephemeral selection so a part in
-    // both still shows the brighter selection colour on top).
+    // Active worklist first; ephemeral selection drawn over the top so a
+    // part in both retains the brighter cyan cue.
     const worklist = worklistStore.activeWorklist;
     if (worklist) {
       for (const e of worklist.entries) {
         const idx = byRefdes.get(e.refdes);
         if (idx == null) continue;
-        drawOutline(idx, 0xffaa00, 0.95, 2.5);
+        drawOutline(idx, MARK_COLOR_HEX[e.mark], 0.95);
       }
     }
     const sel = selectionSetStore.current;
     for (const idx of sel.ordered) {
-      drawOutline(idx, 0x00e5ff, 1.0, 3);
+      drawOutline(idx, 0x00e5ff, 1.0);
     }
   }
 

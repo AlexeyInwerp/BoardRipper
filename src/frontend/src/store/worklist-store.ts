@@ -7,6 +7,22 @@ import { log } from './log-store';
 
 export type WorklistMark = 'none' | 'replaced' | 'reworked' | 'cleaned';
 
+/** Mark → display colour. CSS strings for the panel UI, matching numeric
+ *  values for the canvas overlay. Kept here so the renderer and the panel
+ *  agree visually on what state each mark represents. */
+export const MARK_COLOR_CSS: Record<WorklistMark, string> = {
+  none: '#ffaa00',       // amber — "in a worklist, not yet acted on"
+  replaced: '#ff5566',   // red — heaviest action
+  reworked: '#ffaa33',   // orange — touched but not replaced
+  cleaned: '#33cc88',    // green — resolved
+};
+export const MARK_COLOR_HEX: Record<WorklistMark, number> = {
+  none: 0xffaa00,
+  replaced: 0xff5566,
+  reworked: 0xffaa33,
+  cleaned: 0x33cc88,
+};
+
 export interface WorklistEntry {
   /** Resolved part index in the currently-loaded board. May go stale on
    *  re-parse — re-resolve from `refdes` on load. */
