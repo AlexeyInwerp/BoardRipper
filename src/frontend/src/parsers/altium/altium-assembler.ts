@@ -6,7 +6,7 @@
  * assembler converts to mils via altium-units.ts at the boundary.
  */
 
-import type { BoardData, Part, Pin, Point, Net } from '../types';
+import type { BoardData, Part, Pin, Point, Net, Pad } from '../types';
 import { buildNets, computeBBox, generateSyntheticOutline } from '../types';
 import type { AltiumPcbDb, AComponent6, APad6 } from './altium-types';
 import { altiumToMils, altiumYToMils, altiumAngleToDegrees } from './altium-units';
@@ -107,6 +107,8 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
 
   const nets: Map<string, Net> = buildNets(parts);
 
+  const pads: Pad[] = buildPads(db.pads, netNames);
+
   return {
     format: 'ALTIUM_PCB',
     formatVersion: db.board.formatVersion || undefined,
@@ -115,5 +117,53 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
     nails: [],
     nets,
     bounds,
+    pads,
   };
+}
+
+function padSide(p: APad6): 'top' | 'bottom' | 'both' {
+  return altiumLayerSide(p.layer);
+}
+
+function padShape(topShape: number): 'round' | 'rect' | 'roundrect' {
+  switch (topShape) {
+    case 1: return 'round';
+    case 9: return 'roundrect';
+    default: return 'rect';
+  }
+}
+
+function buildPads(decoded: APad6[], netNames: string[]): Pad[] {
+  const out: Pad[] = [];
+  for (const pad of decoded) {
+    const xMils = altiumToMils(pad.x);
+    const yMils = altiumYToMils(pad.y);
+    const w = altiumToMils(pad.xsize);
+    const h = altiumToMils(pad.ysize);
+    // Skip the zero-size sentinel pads that signal "shape in subrecord 6"
+    // (currently unparsed — see ALTIUM_PCB_FORMAT.md). They'd render as
+    // single pixels and clutter the pads layer.
+    if (w <= 0 || h <= 0) continue;
+    const side = padSide(pad);
+    const net = pad.netIndex >= 0 && pad.netIndex < netNames.length
+      ? netNames[pad.netIndex]
+      : undefined;
+    out.push({
+      bounds: {
+        minX: xMils - w / 2,
+        minY: yMils - h / 2,
+        maxX: xMils + w / 2,
+        maxY: yMils + h / 2,
+      },
+      side,
+      net,
+      drill: pad.isThroughHole && pad.holeSize > 0 ? altiumToMils(pad.holeSize) : undefined,
+      attached: pad.componentIndex >= 0,
+      shape: padShape(pad.topShape),
+      width: w,
+      height: h,
+      angleDeg: altiumAngleToDegrees(pad.rotation),
+    });
+  }
+  return out;
 }
