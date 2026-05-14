@@ -415,42 +415,66 @@ class WorklistStore {
     return lines.join('\n');
   }
 
-  /** Try to parse text as a worklist. Returns null if the text doesn't look
-   *  like one (first non-empty line must match `-[name]-`). Subsequent lines
-   *  follow the `REFDES[mark] (note)` schema written by
-   *  `formatWorklistForClipboard`; unknown mark words become 'none' and the
-   *  raw token after the refdes is captured into the note for forensics. */
+  /** Try to parse text as a worklist. Designed to be safe against arbitrary
+   *  clipboard contents — refuses oversize input, requires a proper
+   *  `-[name]-` header, and only accepts refdes tokens that look like real
+   *  PCB designators (`[A-Z][A-Z0-9_\-./]{0,31}`). When the header matches
+   *  but none of the trailing non-empty lines parse as entries, returns
+   *  null — so a coincidental `-[…]-` line at the top of an arbitrary log
+   *  or source file doesn't get silently imported as a worklist of garbage.
+   *
+   *  Caps:
+   *    text          ≤ 256 KiB
+   *    lines scanned ≤ 2000
+   *    entries kept  ≤ 1000
+   *    name length   ≤ 200 chars
+   *    note length   ≤ 500 chars (per entry, post-trim) */
   static parseWorklistText(text: string): {
     name: string;
     entries: Array<{ refdes: string; mark: WorklistMark; note: string }>;
   } | null {
-    const lines = text.split(/\r?\n/);
-    // Skip leading blanks
+    if (typeof text !== 'string' || text.length === 0) return null;
+    if (text.length > 256 * 1024) return null;
+    const lines = text.split(/\r?\n/, 2001); // hard cap on line scan
     let i = 0;
     while (i < lines.length && lines[i].trim() === '') i++;
     if (i >= lines.length) return null;
     const headerMatch = lines[i].trim().match(/^-\[(.+)\]-$/);
     if (!headerMatch) return null;
-    const name = headerMatch[1].trim();
-    if (!name) return null;
+    const name = headerMatch[1].trim().slice(0, 200);
+    // Reject names containing control chars — those don't survive clipboard
+    // roundtrips cleanly and usually signal binary garbage masquerading as
+    // text.
+    // eslint-disable-next-line no-control-regex
+    if (!name || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(name)) return null;
     i++;
-    // Row regex: refdes (any non-whitespace tokens up to the first `[` or
-    // `(`), optional `[mark]`, optional ` (note)`. Note can contain `)`
-    // characters by being greedy — `(.*)\)` at end of line.
+    // Refdes shape: starts with uppercase letter, then up to 31 chars of
+    // [A-Z0-9_.\/-]. Filters out source-code identifiers like `function`,
+    // `import`, `const` that would otherwise match the lenient row regex
+    // and pollute the imported worklist with fake entries.
+    const refdesRe = /^[A-Z][A-Z0-9_\-./]{0,31}$/;
     const rowRe = /^\s*(\S+?)(?:\[([a-z]+)\])?(?:\s*\((.*)\))?\s*$/i;
     const knownMarks = new Set<WorklistMark>(['none', 'replaced', 'reworked', 'cleaned']);
     const entries: Array<{ refdes: string; mark: WorklistMark; note: string }> = [];
-    for (; i < lines.length; i++) {
+    let trailingNonEmpty = 0;
+    for (; i < lines.length && entries.length < 1000; i++) {
       const raw = lines[i].trim();
       if (!raw) continue;
+      trailingNonEmpty++;
       const m = raw.match(rowRe);
       if (!m) continue;
       const refdes = m[1];
+      if (!refdesRe.test(refdes)) continue;
       const markRaw = (m[2] ?? 'none').toLowerCase() as WorklistMark;
       const mark = knownMarks.has(markRaw) ? markRaw : 'none';
-      const note = (m[3] ?? '').trim();
+      const note = (m[3] ?? '').trim().slice(0, 500);
       entries.push({ refdes, mark, note });
     }
+    // False-positive guard: header matched but no entries parsed AND there
+    // was meaningful content after the header → likely a coincidence (e.g.
+    // a markdown line that happens to be `-[heading]-` followed by prose).
+    // Empty worklists (header + nothing) are allowed through.
+    if (entries.length === 0 && trailingNonEmpty >= 5) return null;
     return { name, entries };
   }
 
