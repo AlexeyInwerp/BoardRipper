@@ -133,8 +133,9 @@ class WorklistStore {
    *  from the panel when it mounts and from boardStore tab-change hooks. */
   async syncToActiveTab(): Promise<void> {
     const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
-    if (!tab || !tab.cacheKey) return;
-    const key = tab.cacheKey;
+    if (!tab) return;
+    const key = this.activeKey;
+    if (!key) return;
     if (this.byKey.has(key)) {
       // Re-resolve in case the board was re-parsed (parts re-indexed)
       const cur = this.byKey.get(key)!;
@@ -169,9 +170,19 @@ class WorklistStore {
     return key ? this.byKey.get(key) ?? null : null;
   }
 
+  /** Stable per-board key. Prefers the board-cache triple
+   *  `${fileName}:${fileSize}:${lastModified}` when available — that's the
+   *  same key board-cache uses, so worklists and parsed-board cache co-track.
+   *  Falls back to `noCache:${fileName}` when the board was loaded by a path
+   *  that didn't populate `cacheKey` (drag-drop, OpenBoardData, library nav
+   *  — see board-store.ts loadFromBoard which sets `cacheKey: ''`). Without
+   *  the fallback, `createWorklist` silently no-ops on those boards. */
   get activeKey(): string | null {
     const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
-    return tab?.cacheKey || null;
+    if (!tab) return null;
+    if (tab.cacheKey) return tab.cacheKey;
+    if (tab.fileName) return `noCache:${tab.fileName}`;
+    return null;
   }
 
   get activeWorklist(): Worklist | null {
@@ -182,17 +193,19 @@ class WorklistStore {
 
   private getOrInit(): BoardWorklistes | null {
     const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
-    if (!tab || !tab.cacheKey) return null;
-    let cur = this.byKey.get(tab.cacheKey);
+    if (!tab) return null;
+    const key = this.activeKey;
+    if (!key) return null;
+    let cur = this.byKey.get(key);
     if (!cur) {
       cur = {
-        key: tab.cacheKey,
+        key,
         fileName: tab.fileName,
         activeWorklistId: null,
         worklistes: [],
         updatedAt: Date.now(),
       };
-      this.byKey.set(tab.cacheKey, cur);
+      this.byKey.set(key, cur);
     }
     return cur;
   }

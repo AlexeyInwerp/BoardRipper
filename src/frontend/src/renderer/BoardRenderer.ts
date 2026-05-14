@@ -26,6 +26,7 @@ import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore } from '../store/worklist-store';
+import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -780,7 +781,15 @@ export class BoardRenderer {
     this.applyViewportPlugins();
     this.installShiftWheelHandler();
     this.installDragZoomHandler();
-    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.viewportMovingUntil = performance.now() + 100; this.scheduleFollowDebounce(); });
+    this.viewport.on('moved', () => {
+      this.needsRender = true;
+      this.netLinesDirty = true;
+      this.viewportMovingUntil = performance.now() + 100;
+      this.scheduleFollowDebounce();
+      // Keep multi-select / worklist outline thickness ~constant in screen
+      // pixels across zoom changes. Cheap (small rectangle count).
+      this.redrawMultiHighlight();
+    });
     this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
     this.app.stage.addChild(this.viewport);
 
@@ -933,7 +942,15 @@ export class BoardRenderer {
     this.installDragZoomHandler();
 
     // Viewport pan/zoom/decelerate → mark dirty so we render
-    this.viewport.on('moved', () => { this.needsRender = true; this.netLinesDirty = true; this.viewportMovingUntil = performance.now() + 100; this.scheduleFollowDebounce(); });
+    this.viewport.on('moved', () => {
+      this.needsRender = true;
+      this.netLinesDirty = true;
+      this.viewportMovingUntil = performance.now() + 100;
+      this.scheduleFollowDebounce();
+      // Keep multi-select / worklist outline thickness ~constant in screen
+      // pixels across zoom changes. Cheap (small rectangle count).
+      this.redrawMultiHighlight();
+    });
     this.app.stage.addChild(this.viewport);
 
     // Overlay objects live inside scene.root (sortableChildren=true).
@@ -4349,11 +4366,20 @@ export class BoardRenderer {
     const hit = this.hitTest(world);
     if (hit) {
       if (shift) {
-        // Shift+click toggles the part in the ephemeral multi-select set.
-        // Doesn't disturb the primary single-selection / net highlight.
-        const tabId = boardStore.activeTabId;
-        if (tabId != null) {
-          selectionSetStore.toggle(tabId, hit.partIndex);
+        // Shift+click goes straight to the active worklist (auto-creates one
+        // on first shift-click) and opens the sidebar Worklist tab so the
+        // user sees the row appear. Shift+click on a part already in the
+        // active worklist removes it. No intermediate "push" step.
+        const board = boardStore.board;
+        const refdes = board?.parts[hit.partIndex]?.name;
+        if (refdes) {
+          const wl = worklistStore.activeWorklist;
+          if (wl && wl.entries.some(e => e.refdes === refdes)) {
+            worklistStore.removeEntry(wl.id, refdes);
+          } else {
+            worklistStore.pushRefdesToActive(refdes);
+            openBoardSidebarTab('worklist');
+          }
         }
         return;
       }
@@ -4375,38 +4401,56 @@ export class BoardRenderer {
     if (!shift) boardStore.selectPart(null);
   }
 
-  /** Redraw the multi-select + active-worklist outline overlay. Cheap — a few
-   *  dozen thin rectangles even for a busy worklist. Called on store notify
-   *  and on board change. No-op until the renderer is fully initialized. */
+  /** Redraw the multi-select + active-worklist outline overlay.
+   *
+   *  Outlines are drawn OUTSIDE the part's bounding box (alignment=1) so the
+   *  part body stays uncovered, and the stroke width scales inversely with
+   *  the viewport zoom so the ring stays ~2 screen-pixels thick regardless
+   *  of zoom level — at deep zoom a 10-mil-wide stroke on a 20-mil resistor
+   *  looked like a blob; at low zoom a 1-mil stroke was invisible. The width
+   *  is also capped by part size so tiny components don't get oversized
+   *  outlines that swamp them.
+   *
+   *  Called on store notify and on board change. */
   private redrawMultiHighlight(): void {
     const gfx = this.multiHighlightGfx;
     if (!gfx) return;
     gfx.clear();
     const board = this.board;
     if (!board) return;
-    const drawOutline = (idx: number, color: number, alpha: number, widthMils: number) => {
+    // 2px target in mil units at current zoom. viewport.scale.x is
+    // screenPixels per mil; invert for mils per pixel.
+    const scale = this.viewport?.scale?.x ?? 1;
+    const targetPx = 2;
+    const baseWidthMils = scale > 0 ? targetPx / scale : 1;
+    const drawOutline = (idx: number, color: number, alpha: number, widthMult: number) => {
       const part = board.parts[idx];
       if (!part) return;
       if (!this.isPartVisible(part)) return;
       const b = part.bounds;
       const w = b.maxX - b.minX;
       const h = b.maxY - b.minY;
-      gfx.rect(b.minX, b.minY, w, h).stroke({ color, alpha, width: widthMils, alignment: 0.5 });
+      // Cap stroke width to ~10% of the smaller part dimension so the outline
+      // never overwhelms the part body. Floor at the 2px target so it stays
+      // visible on huge ICs at low zoom too.
+      const cap = Math.max(baseWidthMils, Math.min(w, h) * 0.1);
+      const width = Math.min(baseWidthMils * widthMult, cap);
+      gfx.rect(b.minX, b.minY, w, h).stroke({ color, alpha, width, alignment: 1 });
     };
-    // Active worklist first (drawn under selection set so a part in both shows
-    // the brighter ephemeral colour on top).
+    // Active worklist first (drawn under the ephemeral selection so a part in
+    // both still shows the brighter selection colour on top).
     const tabId = boardStore.activeTabId;
     if (tabId != null) {
       const worklist = worklistStore.activeWorklist;
       if (worklist) {
         for (const e of worklist.entries) {
           if (e.unresolved) continue;
-          drawOutline(e.partIndex, 0xffaa00, 0.95, 8);
+          drawOutline(e.partIndex, 0xffaa00, 0.95, 2.5);
         }
       }
       const sel = selectionSetStore.current;
       for (const idx of sel.ordered) {
-        drawOutline(idx, 0x00e5ff, 1.0, 10);
+        drawOutline(idx, 0x00e5ff, 1.0, 3);
       }
     }
   }

@@ -7,17 +7,26 @@ import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
 
+// 3-letter caps + tooltip with full meaning. Cycling order: none → replaced →
+// reworked → cleaned → none. Each click also raises a toast naming the new
+// state so the user gets unambiguous confirmation without hovering.
 const MARK_LABELS: Record<WorklistMark, string> = {
-  none: '·',
-  replaced: 'R',
-  reworked: 'W',
-  cleaned: 'C',
+  none: '—',
+  replaced: 'REPL',
+  reworked: 'RWK',
+  cleaned: 'CLN',
+};
+const MARK_FULL: Record<WorklistMark, string> = {
+  none: 'no mark',
+  replaced: 'replaced',
+  reworked: 'reworked',
+  cleaned: 'cleaned',
 };
 const MARK_TITLE: Record<WorklistMark, string> = {
-  none: 'no mark — click to cycle: replaced → reworked → cleaned',
-  replaced: 'replaced — click to cycle to reworked',
-  reworked: 'reworked — click to cycle to cleaned',
-  cleaned: 'cleaned — click to clear',
+  none: 'No mark yet. Click to cycle: REPL (replaced) → RWK (reworked) → CLN (cleaned) → no mark. Shift-click to cycle backwards.',
+  replaced: 'Marked REPLACED. Click to advance to REWORKED. Shift-click to clear.',
+  reworked: 'Marked REWORKED. Click to advance to CLEANED. Shift-click to go back to REPLACED.',
+  cleaned: 'Marked CLEANED. Click to clear. Shift-click to go back to REWORKED.',
 };
 const MARK_COLOR: Record<WorklistMark, string> = {
   none: 'var(--muted, #888)',
@@ -42,25 +51,11 @@ export function WorklistPanel() {
   const { current, activeWorklist, hasBoard } = useWorklist();
   const sel = useSelectionSet();
   const { activeTabId, board } = useBoardStore();
-  const [pushMenuOpen, setPushMenuOpen] = useState(false);
-  const pushMenuRef = useRef<HTMLDivElement>(null);
 
   // Hydrate when this panel mounts / tab changes.
   useEffect(() => {
     void worklistStore.syncToActiveTab();
   }, [activeTabId]);
-
-  // Close push menu on outside click
-  useEffect(() => {
-    if (!pushMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (pushMenuRef.current && !pushMenuRef.current.contains(e.target as Node)) {
-        setPushMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [pushMenuOpen]);
 
   const selectedRefdes = useMemo(() => {
     if (!board) return [];
@@ -68,16 +63,6 @@ export function WorklistPanel() {
       .map(i => board.parts[i]?.name)
       .filter((n): n is string => !!n);
   }, [sel.ordered, board]);
-
-  const onPushToWorklist = (worklistId: string | null) => {
-    if (sel.ordered.length === 0) return;
-    const result = worklistStore.pushParts(worklistId, sel.ordered);
-    setPushMenuOpen(false);
-    if (result > 0) {
-      const target = worklistStore.activeWorklist?.name ?? 'worklist';
-      boardStore.addToast(`Pushed ${result} part${result === 1 ? '' : 's'} to ${target}`, 'info');
-    }
-  };
 
   const onCopySelection = () => {
     if (selectedRefdes.length === 0) return;
@@ -92,7 +77,10 @@ export function WorklistPanel() {
   const onCreateWorklist = () => {
     const name = window.prompt('Worklist name (ticket #, location, …)');
     if (name === null) return;
-    worklistStore.createWorklist(name);
+    const created = worklistStore.createWorklist(name);
+    if (!created) {
+      boardStore.addToast('Could not create worklist — open a board first.', 'error');
+    }
   };
 
   if (!hasBoard) {
@@ -105,81 +93,20 @@ export function WorklistPanel() {
 
   return (
     <div style={rootStyle}>
-      {/* ─── Selection band ─────────────────────────────────────────────── */}
+      {/* ─── Selection band (cyan canvas highlight) ──────────────────────── */}
       <section style={bandStyle}>
         <div style={bandHeaderStyle}>
           <span style={{ fontWeight: 600 }}>Selection</span>
           <span style={countPillStyle}>{sel.count}</span>
+          <span style={{ opacity: 0.55, fontSize: 11, marginLeft: 'auto' }}>cyan on canvas</span>
         </div>
         <div style={{ fontSize: 12, opacity: 0.7, margin: '4px 0 8px' }}>
-          Shift-click parts on the board to build a set. Push it into a worklist to keep it.
+          Build with right-click → Select net, or the Select button on a worklist below.
+          Copy gives you a refdes list — no marks/notes (use Copy on the worklist for those).
         </div>
         <div style={btnRowStyle}>
-          <div ref={pushMenuRef} style={{ position: 'relative', display: 'flex' }}>
-            <button
-              style={primaryBtnStyle}
-              disabled={sel.count === 0}
-              onClick={() => {
-                if (!current || current.worklistes.length === 0) {
-                  // No worklist yet — create one and push.
-                  const s = worklistStore.createWorklist();
-                  if (s) onPushToWorklist(s.id);
-                  return;
-                }
-                onPushToWorklist(current.activeWorklistId);
-              }}
-              title={activeWorklist ? `Push selection to "${activeWorklist.name}"` : 'Create a new worklist and push'}
-            >
-              Push to {activeWorklist?.name ?? 'new worklist'}
-            </button>
-            <button
-              style={{ ...primaryBtnStyle, borderLeft: '1px solid rgba(0,0,0,0.25)', padding: '4px 8px' }}
-              disabled={sel.count === 0}
-              onClick={() => setPushMenuOpen(o => !o)}
-              title="Pick another worklist to push into"
-            >
-              ▾
-            </button>
-            {pushMenuOpen && current && (
-              <div style={dropdownStyle}>
-                {current.worklistes.map(s => (
-                  <button key={s.id} style={dropdownItemStyle} onClick={() => onPushToWorklist(s.id)}>
-                    {s.name}
-                    {s.id === current.activeWorklistId && <span style={{ opacity: 0.5, marginLeft: 8 }}>(active)</span>}
-                  </button>
-                ))}
-                <div style={dropdownSepStyle} />
-                <button
-                  style={dropdownItemStyle}
-                  onClick={() => {
-                    setPushMenuOpen(false);
-                    const name = window.prompt('Name for the new worklist');
-                    if (name === null) return;
-                    const s = worklistStore.createWorklist(name);
-                    if (s) onPushToWorklist(s.id);
-                  }}
-                >
-                  + New worklist…
-                </button>
-              </div>
-            )}
-          </div>
-          <button
-            style={subtleBtnStyle}
-            disabled={sel.count === 0}
-            onClick={onCopySelection}
-            title="Copy refdes list (one per line)"
-          >
-            Copy
-          </button>
-          <button
-            style={subtleBtnStyle}
-            disabled={sel.count === 0}
-            onClick={onClearSelection}
-            title="Clear the selection set (parts stay on the board)"
-          >
-            Clear
-          </button>
+          <button style={subtleBtnStyle} disabled={sel.count === 0} onClick={onCopySelection} title="Copy refdes list, one per line">Copy refdes</button>
+          <button style={subtleBtnStyle} disabled={sel.count === 0} onClick={onClearSelection} title="Clear the selection (parts stay on the board)">Clear</button>
         </div>
       </section>
 
@@ -258,6 +185,16 @@ function ActiveWorklistView() {
     worklistStore.deleteWorklist(activeWorklist.id);
   };
 
+  const onSelectAll = () => {
+    const tabId = boardStore.activeTabId;
+    if (tabId == null) return;
+    const indices = activeWorklist.entries
+      .filter(e => !e.unresolved)
+      .map(e => e.partIndex);
+    selectionSetStore.replaceWith(tabId, indices);
+    boardStore.addToast(`Selected ${indices.length} part${indices.length === 1 ? '' : 's'} on canvas`, 'info');
+  };
+
   return (
     <>
       <header style={worklistHeaderStyle}>
@@ -282,6 +219,7 @@ function ActiveWorklistView() {
             {activeWorklist.name}
           </span>
         )}
+        <button style={subtleBtnStyle} onClick={onSelectAll} disabled={activeWorklist.entries.length === 0} title="Put every part in this worklist into the canvas selection (cyan outline)">Select</button>
         <button style={subtleBtnStyle} onClick={onCopyAll} disabled={activeWorklist.entries.length === 0} title="Copy all rows to clipboard">Copy</button>
         <button style={subtleBtnStyle} onClick={onWipe} disabled={activeWorklist.entries.length === 0} title="Wipe all entries (keeps the worklist)">Wipe</button>
         <button style={dangerBtnStyle} onClick={onDeleteWorklist} title="Delete this worklist entirely">✕</button>
@@ -289,7 +227,7 @@ function ActiveWorklistView() {
       <div style={listStyle}>
         {activeWorklist.entries.length === 0 && (
           <div style={emptyStyle}>
-            <div style={{ opacity: 0.55 }}>Empty. Shift-click parts on the board and push them here.</div>
+            <div style={{ opacity: 0.55 }}>Empty. Shift-click parts on the board to add them.</div>
           </div>
         )}
         {activeWorklist.entries.map(entry => (
@@ -321,6 +259,12 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   const onCycleMark = (e: React.MouseEvent) => {
     e.stopPropagation();
     worklistStore.cycleMark(worklistId, entry.refdes, e.shiftKey);
+    // Show the new state by name so the meaning of REPL/RWK/CLN is never in
+    // doubt at click time (tooltip still carries the full explanation).
+    const fresh = worklistStore.activeWorklist?.entries.find(x => x.refdes === entry.refdes);
+    if (fresh) {
+      boardStore.addToast(`${entry.refdes}: ${MARK_FULL[fresh.mark]}`, 'info');
+    }
   };
 
   const onRemove = (e: React.MouseEvent) => {
@@ -415,16 +359,6 @@ const btnRowStyle: React.CSSProperties = {
   alignItems: 'center',
 };
 
-const primaryBtnStyle: React.CSSProperties = {
-  background: 'var(--accent, #00e5ff)',
-  color: '#000',
-  border: 'none',
-  padding: '4px 10px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  borderRadius: 3,
-};
-
 const subtleBtnStyle: React.CSSProperties = {
   background: 'transparent',
   color: 'inherit',
@@ -439,36 +373,6 @@ const dangerBtnStyle: React.CSSProperties = {
   ...subtleBtnStyle,
   color: '#ff5566',
   borderColor: '#553034',
-};
-
-const dropdownStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: '100%',
-  left: 0,
-  marginTop: 2,
-  background: 'var(--panel-bg, #222)',
-  border: '1px solid var(--border, #444)',
-  borderRadius: 4,
-  minWidth: 180,
-  zIndex: 100,
-  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-};
-
-const dropdownItemStyle: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  textAlign: 'left',
-  background: 'transparent',
-  color: 'inherit',
-  border: 'none',
-  padding: '6px 10px',
-  cursor: 'pointer',
-  fontSize: 12,
-};
-
-const dropdownSepStyle: React.CSSProperties = {
-  borderTop: '1px solid var(--border, #444)',
-  margin: '2px 0',
 };
 
 const tabsRowStyle: React.CSSProperties = {
@@ -550,13 +454,15 @@ const rowMainStyle: React.CSSProperties = {
 };
 
 const markBtnStyle: React.CSSProperties = {
-  width: 24,
+  minWidth: 42,
   height: 22,
+  padding: '0 6px',
   border: '1px solid var(--border, #444)',
   background: 'transparent',
   borderRadius: 3,
   fontFamily: 'monospace',
   fontWeight: 700,
+  fontSize: 11,
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',

@@ -89,6 +89,34 @@ class SelectionSetStore {
     }
   }
 
+  /** Replace the selection set with the given part indices (deduped, order
+   *  preserved). Used by "Select all rows" on a worklist and "Select net"
+   *  in the right-click menu. */
+  replaceWith(tabId: number, partIndices: readonly number[]): void {
+    const s = this.ensure(tabId);
+    s.ordered = [];
+    s.set.clear();
+    for (const i of partIndices) {
+      if (s.set.has(i)) continue;
+      s.set.add(i);
+      s.ordered.push(i);
+    }
+    this.notify();
+  }
+
+  /** Add the given part indices to the selection set without clearing. */
+  addMany(tabId: number, partIndices: readonly number[]): void {
+    const s = this.ensure(tabId);
+    let added = 0;
+    for (const i of partIndices) {
+      if (s.set.has(i)) continue;
+      s.set.add(i);
+      s.ordered.push(i);
+      added++;
+    }
+    if (added > 0) this.notify();
+  }
+
   /** Drop selection for a tab being closed. No notify — caller is mid-teardown. */
   dropTab(tabId: number): void {
     this.byTab.delete(tabId);
