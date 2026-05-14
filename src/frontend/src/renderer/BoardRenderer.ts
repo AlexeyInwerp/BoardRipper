@@ -24,6 +24,8 @@ import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
+import { selectionSetStore } from '../store/selection-set-store';
+import { stashStore } from '../store/stash-store';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -216,6 +218,19 @@ export class BoardRenderer {
   private unsubscribeSettings: (() => void) | null = null;
   private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
+  private unsubscribeSelectionSet: (() => void) | null = null;
+  private unsubscribeStash: (() => void) | null = null;
+  /** Outline-only highlight overlay for the ephemeral multi-select set AND the
+   *  active stash. Single Graphics object — re-cleared and redrawn on store
+   *  notify. Sits above standard selection at zIndex 28 (just below the rich
+   *  selectionGfx at 30, so single-select keeps visual primacy). */
+  private multiHighlightGfx!: Graphics;
+  /** Shift-key state captured at the most recent pointerdown — read by
+   *  handleClick (pixi-viewport's "clicked" event fires on pointerup but
+   *  doesn't carry the down-time modifier reliably across browsers). */
+  private lastPointerShift = false;
+  /** Bound pointerdown handler that captures shift state. */
+  private boundShiftCapture: ((e: PointerEvent) => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
   private initialized = false;
@@ -804,8 +819,12 @@ export class BoardRenderer {
     this.crossSideGhostGfx.zIndex = 15;
     this.crossSideGhostGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
+    this.multiHighlightGfx = new Graphics();
+    this.multiHighlightGfx.zIndex = 28;
+    this.multiHighlightGfx.eventMode = 'none';
     this.viewport.addChild(this.netLinesGfx);
     this.viewport.addChild(this.selectionLabelLayer);
+    this.viewport.addChild(this.multiHighlightGfx);
 
     // Recreate elevated labels (see init() for detailed comments)
     const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
@@ -982,8 +1001,21 @@ export class BoardRenderer {
     this.elevatedPinLabel.visible = false;
     this.elevatedPinLabel.eventMode = 'none';
     this.elevatedPinBg.visible = false;
+    this.multiHighlightGfx = new Graphics();
+    this.multiHighlightGfx.zIndex = 28;
+    this.multiHighlightGfx.eventMode = 'none';
     this.viewport.addChild(this.netLinesGfx);
     this.viewport.addChild(this.selectionLabelLayer);
+    this.viewport.addChild(this.multiHighlightGfx);
+
+    // Capture shift state at pointerdown — pixi-viewport's "clicked" event
+    // fires on pointerup but the underlying event reaches handlers via
+    // multiple stop-propagation paths; reading the down-time modifier from
+    // a capture-phase listener is the most reliable signal.
+    this.boundShiftCapture = (e: PointerEvent) => {
+      if (e.button === 0) this.lastPointerShift = e.shiftKey;
+    };
+    this.containerEl.addEventListener('pointerdown', this.boundShiftCapture, { capture: true });
 
     this.viewport.on('clicked', (e: ViewportClickEvent) => {
       this.handleClick(e.world);
@@ -1070,6 +1102,14 @@ export class BoardRenderer {
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
+    this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
+      this.redrawMultiHighlight();
+      this.needsRender = true;
+    });
+    this.unsubscribeStash = stashStore.subscribe(() => {
+      this.redrawMultiHighlight();
+      this.needsRender = true;
+    });
     this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
       if (this.tabId !== boardStore.activeTabId) return;
       if (cmd === 'pan') {
@@ -1970,6 +2010,10 @@ export class BoardRenderer {
           this.deactivateScene();
         }
         this.board = board;
+        // Hydrate this board's persisted stashes (resolves refdes → partIndex
+        // against the freshly-loaded parts) and repaint the multi-highlight.
+        void stashStore.syncToActiveTab().then(() => this.redrawMultiHighlight());
+        this.redrawMultiHighlight();
       } else if (board && !this.activeScene) {
         // Same board but scene was lost (e.g. settings update while paused failed
         // to rebuild, or invalidateAllScenes ran without a successful activateScene).
@@ -4290,8 +4334,19 @@ export class BoardRenderer {
       this.dragZoomConsumedClick = false;
       return;
     }
+    const shift = this.lastPointerShift;
+    this.lastPointerShift = false;
     const hit = this.hitTest(world);
     if (hit) {
+      if (shift) {
+        // Shift+click toggles the part in the ephemeral multi-select set.
+        // Doesn't disturb the primary single-selection / net highlight.
+        const tabId = boardStore.activeTabId;
+        if (tabId != null) {
+          selectionSetStore.toggle(tabId, hit.partIndex);
+        }
+        return;
+      }
       if (hit.pinIndex >= 0) {
         boardStore.selectPin(hit.partIndex, hit.pinIndex);
       } else {
@@ -4307,7 +4362,43 @@ export class BoardRenderer {
       );
       return;
     }
-    boardStore.selectPart(null);
+    if (!shift) boardStore.selectPart(null);
+  }
+
+  /** Redraw the multi-select + active-stash outline overlay. Cheap — a few
+   *  dozen thin rectangles even for a busy stash. Called on store notify
+   *  and on board change. No-op until the renderer is fully initialized. */
+  private redrawMultiHighlight(): void {
+    const gfx = this.multiHighlightGfx;
+    if (!gfx) return;
+    gfx.clear();
+    const board = this.board;
+    if (!board) return;
+    const drawOutline = (idx: number, color: number, alpha: number, widthMils: number) => {
+      const part = board.parts[idx];
+      if (!part) return;
+      if (!this.isPartVisible(part)) return;
+      const b = part.bounds;
+      const w = b.maxX - b.minX;
+      const h = b.maxY - b.minY;
+      gfx.rect(b.minX, b.minY, w, h).stroke({ color, alpha, width: widthMils, alignment: 0.5 });
+    };
+    // Active stash first (drawn under selection set so a part in both shows
+    // the brighter ephemeral colour on top).
+    const tabId = boardStore.activeTabId;
+    if (tabId != null) {
+      const stash = stashStore.activeStash;
+      if (stash) {
+        for (const e of stash.entries) {
+          if (e.unresolved) continue;
+          drawOutline(e.partIndex, 0xffaa00, 0.95, 8);
+        }
+      }
+      const sel = selectionSetStore.current;
+      for (const idx of sel.ordered) {
+        drawOutline(idx, 0x00e5ff, 1.0, 10);
+      }
+    }
   }
 
   /** Double-click on a component → force-search it in the linked PDF (overwrites user search). */
@@ -4530,6 +4621,12 @@ export class BoardRenderer {
     this.unsubscribeSettings?.();
     this.unsubscribeTheme?.();
     this.unsubscribeViewCommands?.();
+    this.unsubscribeSelectionSet?.();
+    this.unsubscribeStash?.();
+    if (this.boundShiftCapture) {
+      this.containerEl.removeEventListener('pointerdown', this.boundShiftCapture, true);
+      this.boundShiftCapture = null;
+    }
     this.resizeObserver?.disconnect();
     if (this.boundShiftWheel) {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);

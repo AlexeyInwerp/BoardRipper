@@ -11,6 +11,7 @@ import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
+import { ensureStashPanel } from '../store/dockview-api';
 import { databankStore } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
@@ -360,6 +361,14 @@ export function Toolbar() {
           style={electronMode ? undefined : { gap: 6 }}
         >
           {electronMode ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
+        </button>
+        <button
+          onClick={() => ensureStashPanel()}
+          className="toolbar-btn"
+          data-testid="stash-btn"
+          data-tooltip="Open Stash panel (multi-select / mark / export)"
+        >
+          Stash
         </button>
       </div>
 

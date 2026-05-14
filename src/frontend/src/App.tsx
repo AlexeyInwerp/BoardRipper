@@ -14,6 +14,7 @@ import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebar
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel';
+import { StashPanel } from './panels/StashPanel';
 import { BoardTab } from './components/BoardTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
@@ -32,6 +33,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
   boardViewer: (props) => <BoardViewerPanel {...props} />,
   pdfViewer: (props) => <PdfViewerPanel {...props} />,
   databaseEditor: (props) => <DatabaseEditorPanel {...props} />,
+  stash: () => <StashPanel />,
 };
 
 const tabComponents = {

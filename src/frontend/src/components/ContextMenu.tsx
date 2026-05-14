@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
-import { IconCopy, IconWorld } from '@tabler/icons-react';
+import { IconCopy, IconWorld, IconStack2 } from '@tabler/icons-react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { ensurePdfPanel } from '../store/dockview-api';
+import { ensurePdfPanel, ensureStashPanel } from '../store/dockview-api';
+import { stashStore } from '../store/stash-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge } from './SearchScopeBadge';
@@ -322,9 +323,26 @@ export function ContextMenu() {
     );
   };
 
+  const onAddToStash = (refdes: string) => {
+    contextMenuStore.hide();
+    const r = stashStore.pushRefdesToActive(refdes);
+    if (!r) {
+      boardStore.addToast(`Could not stash '${refdes}' (no active board?)`, 'error');
+      return;
+    }
+    ensureStashPanel();
+    const stashName = stashStore.activeStash?.name ?? 'stash';
+    if (r.added > 0) {
+      boardStore.addToast(`Added '${refdes}' to ${stashName}`, 'info');
+    } else {
+      boardStore.addToast(`'${refdes}' already in ${stashName}`, 'info');
+    }
+  };
+
   const renderQuickActions = (): React.ReactElement | null => {
     const actions = buildQuickActions(state);
-    if (actions.length === 0) return null;
+    const compName = state.source === 'board' ? state.componentName.trim() : '';
+    if (actions.length === 0 && !compName) return null;
     return (
       <div className="context-menu-actions" data-testid="context-menu-actions">
         {actions.map((a, i) => {
@@ -349,6 +367,18 @@ export function ContextMenu() {
             </button>
           );
         })}
+        {compName && (
+          <button
+            key="qa-stash-part"
+            className="context-menu-action-btn"
+            title={`Add '${compName}' to the active stash`}
+            data-testid="qa-stash-part"
+            onClick={(e) => { e.stopPropagation(); onAddToStash(compName); }}
+          >
+            <IconStack2 size={14} />
+            <span>Stash</span>
+          </button>
+        )}
       </div>
     );
   };
