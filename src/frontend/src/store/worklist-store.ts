@@ -1,4 +1,5 @@
 import { boardStore } from './board-store';
+import { selectionSetStore } from './selection-set-store';
 import { log } from './log-store';
 
 /** Persistent per-board "worklist" — named collections of parts a repair-tech
@@ -271,7 +272,17 @@ class WorklistStore {
   setActiveWorklist(id: string | null): void {
     const cur = this.current;
     if (!cur) return;
+    if (cur.activeWorklistId === id) return;
     cur.activeWorklistId = id;
+    // The ephemeral cyan selection was loaded from the *previous* active
+    // worklist via its "Select" button (or shift-click stragglers). After
+    // a switch those parts no longer match the new worklist's marks, and
+    // the cyan overlay would visually swallow the new worklist's
+    // mark-coloured ring. Clearing keeps the highlight model honest:
+    // cyan = "I asked to look at this set right now", and on switch you
+    // weren't asking.
+    const tabId = boardStore.activeTabId;
+    if (tabId != null) selectionSetStore.clear(tabId);
     this.save(cur);
   }
 

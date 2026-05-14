@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { IconReplace, IconTool, IconSparkles, IconMinus } from '@tabler/icons-react';
+import { IconReplace, IconBrush, IconSparkles, IconMinus } from '@tabler/icons-react';
 import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -14,8 +14,14 @@ import { useBoardStore } from '../hooks/useBoardStore';
 const MARK_ICON: Record<WorklistMark, typeof IconReplace> = {
   none: IconMinus,
   replaced: IconReplace,
-  reworked: IconTool,
+  reworked: IconBrush,   // brush = re-flowed, touched up, re-soldered
   cleaned: IconSparkles,
+};
+const MARK_SHORT_LABEL: Record<WorklistMark, string> = {
+  none: 'No mark',
+  replaced: 'Replaced',
+  reworked: 'Reworked',
+  cleaned: 'Cleaned',
 };
 const MARK_TITLE: Record<WorklistMark, string> = {
   none: 'No mark. Click to set Replaced. Cycle: Replaced → Reworked → Cleaned → no mark. Shift-click cycles backwards.',
@@ -240,6 +246,14 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   // not sync subsequent prop.note changes back into local state — the user's
   // in-progress edits win, and onCommitNote persists them on blur.
   const [noteDraft, setNoteDraft] = useState(entry.note);
+  /** Click-time popover under the mark button. Set on cycle, auto-cleared
+   *  after 1.6s. Bypasses the browser-native `title` 1+s hover delay so
+   *  the new mark name appears immediately at click. */
+  const [flashMark, setFlashMark] = useState<WorklistMark | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+  }, []);
 
   const onFocus = () => {
     if (entry.unresolved) return;
@@ -249,6 +263,14 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   const onCycleMark = (e: React.MouseEvent) => {
     e.stopPropagation();
     worklistStore.cycleMark(worklistId, entry.refdes, e.shiftKey);
+    // Read the freshly-set mark from the store (cycleMark already notified;
+    // entry is the stale prop snapshot from this render pass).
+    const updated = worklistStore.activeWorklist?.entries.find(x => x.refdes === entry.refdes);
+    if (updated) {
+      setFlashMark(updated.mark);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashMark(null), 1600);
+    }
   };
 
   const onRemove = (e: React.MouseEvent) => {
@@ -263,20 +285,34 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   return (
     <div style={{ ...rowStyle, opacity: entry.unresolved ? 0.45 : 1 }}>
       <div style={rowMainStyle} onClick={onFocus}>
-        <button
-          style={{
-            ...markBtnStyle,
-            color: MARK_BTN_COLOR[entry.mark],
-            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
-          }}
-          onClick={onCycleMark}
-          title={MARK_TITLE[entry.mark]}
-        >
-          {(() => {
-            const Icon = MARK_ICON[entry.mark];
-            return <Icon size={14} stroke={2} />;
-          })()}
-        </button>
+        <div style={markBtnWrapStyle}>
+          <button
+            style={{
+              ...markBtnStyle,
+              color: MARK_BTN_COLOR[entry.mark],
+              borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
+            }}
+            onClick={onCycleMark}
+            title={MARK_TITLE[entry.mark]}
+          >
+            {(() => {
+              const Icon = MARK_ICON[entry.mark];
+              return <Icon size={14} stroke={2} />;
+            })()}
+          </button>
+          {flashMark != null && (
+            <div
+              style={{
+                ...flashTooltipStyle,
+                background: flashMark === 'none' ? 'var(--panel-bg, #222)' : MARK_BTN_COLOR[flashMark],
+                color: flashMark === 'none' ? 'var(--text, #ddd)' : '#0a0a0a',
+              }}
+              role="status"
+            >
+              {MARK_SHORT_LABEL[flashMark]}
+            </div>
+          )}
+        </div>
         <span style={{ fontFamily: 'monospace', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {entry.refdes}
           {entry.unresolved && <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 11 }}>(missing)</span>}
@@ -447,6 +483,27 @@ const markBtnStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   flexShrink: 0,
+  padding: 0,
+};
+
+const markBtnWrapStyle: React.CSSProperties = {
+  position: 'relative',
+  flexShrink: 0,
+};
+
+const flashTooltipStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 'calc(100% + 4px)',
+  left: '50%',
+  transform: 'translateX(-50%)',
+  padding: '3px 8px',
+  fontSize: 11,
+  fontWeight: 700,
+  borderRadius: 3,
+  whiteSpace: 'nowrap',
+  zIndex: 50,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+  pointerEvents: 'none',
 };
 
 const chevronBtnStyle: React.CSSProperties = {

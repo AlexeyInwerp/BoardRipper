@@ -4439,10 +4439,13 @@ export class BoardRenderer {
       const part = board.parts[idx];
       if (!part) return;
       if (!this.isPartVisible(part)) return;
-      const b = part.bounds;
-      const w = b.maxX - b.minX;
-      const h = b.maxY - b.minY;
-      gfx.rect(b.minX - half, b.minY - half, w + width, h + width)
+      // Use computePartRenderBounds — the same function the part borders use.
+      // Raw `part.bounds` is the pin-cloud envelope and gives degenerate
+      // shapes for 2-pin parts (a line) and BGAs (just the pin grid, no
+      // body padding). render-bounds applies the 40% body expansion that
+      // 2-pin parts get, plus any partType body-shape override.
+      const rb = computePartRenderBounds(part, s);
+      gfx.rect(rb.px - half, rb.py - half, rb.pw + width, rb.ph + width)
          .stroke({ color, alpha, width });
     };
     const tabId = boardStore.activeTabId;
