@@ -10,9 +10,17 @@
  *   ParseNets6Data, ParseClasses6Data, ParseWideStrings6Data
  */
 
-import type { ABoard6, ANet6, AClass6, AWideStringTable } from './altium-types';
+import type { ABoard6, AComponent6, ANet6, AClass6, AWideStringTable } from './altium-types';
 import { AltiumStream } from './altium-stream';
-import { iterateRecords, parsePropBagText, readPropInt, readPropString } from './altium-props';
+import {
+  iterateRecords,
+  parsePropBagText,
+  readPropBool,
+  readPropFloat,
+  readPropInt,
+  readPropString,
+} from './altium-props';
+import { parseAltiumLayerName } from './altium-layers';
 
 /**
  * Nets6/Data — property-bag text. Net index = record order (0-based);
@@ -117,4 +125,34 @@ export function parseWideStrings6(buf: Uint8Array): AWideStringTable {
       return map.get(idx) ?? '';
     },
   };
+}
+
+/**
+ * Components6/Data is property-bag text. Each record (one per component) has:
+ *   RECORD=1
+ *   LAYER=TOP|BOTTOM|…
+ *   X=<altium-units>, Y=<altium-units>
+ *   ROTATION=<deg>
+ *   SOURCEDESIGNATOR=<refdes>
+ *   PATTERN=<footprint>, COMPONENT=<lib-name>
+ *   COMPONENTDESCRIPTION=<free-text>, LOCKED=TRUE|FALSE
+ *
+ * Port from: altium_parser_pcb.cpp :: ParseComponents6Data
+ */
+export function parseComponents6(buf: Uint8Array): AComponent6[] {
+  const out: AComponent6[] = [];
+  for (const props of iterateRecords(buf)) {
+    out.push({
+      designator: readPropString(props, 'SOURCEDESIGNATOR', readPropString(props, 'NAME', '')),
+      pattern: readPropString(props, 'PATTERN', ''),
+      componentName: readPropString(props, 'COMPONENT', ''),
+      description: readPropString(props, 'COMPONENTDESCRIPTION', ''),
+      layer: parseAltiumLayerName(readPropString(props, 'LAYER', 'TOP')),
+      x: readPropInt(props, 'X', 0),
+      y: readPropInt(props, 'Y', 0),
+      rotation: readPropFloat(props, 'ROTATION', 0),
+      locked: readPropBool(props, 'LOCKED', false),
+    });
+  }
+  return out;
 }

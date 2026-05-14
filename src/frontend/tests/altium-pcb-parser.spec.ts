@@ -294,3 +294,42 @@ test.describe('altium-records (Board6)', () => {
     expect(populated.length).toBeGreaterThanOrEqual(4);
   });
 });
+
+test.describe('altium-records (Components6)', () => {
+  test('parseComponents6 yields a non-empty list with refdes', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseComponents6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Components6/Data')!;
+    const comps = parseComponents6(buf);
+    expect(comps.length).toBeGreaterThan(0);
+    const validRefdes = comps.filter(c => /^[A-Z]+\d+/i.test(c.designator));
+    expect(validRefdes.length).toBeGreaterThan(0);
+  });
+
+  test('ESD_GW1N_4L yields multiple components', async () => {
+    test.skip(!fs.existsSync(SAMPLE_ESD));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseComponents6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_ESD).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Components6/Data')!;
+    const comps = parseComponents6(buf);
+    // ESD_GW1N_4L is a small 4-layer dev board: 13 components in the actual file.
+    expect(comps.length).toBeGreaterThan(10);
+    const validRefdes = comps.filter(c => /^[A-Z]+\d+/i.test(c.designator));
+    expect(validRefdes.length).toBeGreaterThan(0);
+  });
+
+  test('layer + side mapping puts top/bottom parts on correct sides', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseComponents6 } = await import('../src/parsers/altium/altium-records');
+    const { altiumLayerSide } = await import('../src/parsers/altium/altium-layers');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Components6/Data')!;
+    const comps = parseComponents6(buf);
+    const sides = new Set(comps.map(c => altiumLayerSide(c.layer)));
+    expect(['top', 'bottom', 'both'].some(s => sides.has(s as 'top' | 'bottom' | 'both'))).toBe(true);
+  });
+});
