@@ -33,6 +33,8 @@ export const AltiumPcbFormat: FormatDescriptor = {
   description: 'Altium Designer / Circuit Maker / Circuit Studio PCB (binary or ASCII)',
   docUrl: 'docs/formats/ALTIUM_PCB_FORMAT.md',
   hasPads: true,
+  hasTraces: true,
+  hasLayers: true,
   detect(header: Uint8Array): boolean {
     if (startsWith(header, CFB_MAGIC)) return true;
     const probe = new TextDecoder('utf-8', { fatal: false }).decode(header.subarray(0, Math.min(64, header.byteLength)));

@@ -56,10 +56,61 @@ export interface AWideStringTable {
   byIndex(idx: number): string;
 }
 
+export interface ATrack6 {
+  layer: number;
+  netIndex: number;
+  componentIndex: number;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  width: number;
+}
+
+export interface AVia6 {
+  netIndex: number;
+  x: number;
+  y: number;
+  diameter: number;
+  holeSize: number;
+  layerStart: number;
+  layerEnd: number;
+}
+
+export interface AArc6 {
+  layer: number;
+  netIndex: number;
+  componentIndex: number;
+  centerX: number;
+  centerY: number;
+  radius: number;
+  /** degrees */
+  startAngle: number;
+  /** degrees */
+  endAngle: number;
+  width: number;
+}
+
+export interface AFill6 {
+  layer: number;
+  netIndex: number;
+  componentIndex: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** degrees */
+  rotation: number;
+}
+
 export interface AltiumPcbDb {
   board: ABoard6;
   components: AComponent6[];
   pads: APad6[];
+  tracks: ATrack6[];
+  vias: AVia6[];
+  arcs: AArc6[];
+  fills: AFill6[];
   nets: ANet6[];
   classes: AClass6[];
   wideStrings: AWideStringTable;

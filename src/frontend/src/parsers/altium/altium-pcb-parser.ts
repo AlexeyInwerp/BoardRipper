@@ -11,6 +11,10 @@ import {
   parseBoard6,
   parseComponents6,
   parsePads6,
+  parseTracks6,
+  parseVias6,
+  parseArcs6,
+  parseFills6,
   parseNets6,
   parseClasses6,
   parseWideStrings6,
@@ -38,13 +42,18 @@ export function parseAltiumPcb(buffer: ArrayBuffer): BoardData {
     if (!b) throw new Error(`Altium PCB: missing required stream "${name}"`);
     return b;
   };
+  const empty = new Uint8Array();
   const db: AltiumPcbDb = {
     board: parseBoard6(must('Board6/Data')),
     components: parseComponents6(must('Components6/Data')),
     pads: parsePads6(must('Pads6/Data')),
+    tracks: parseTracks6(cfb.getStream('Tracks6/Data') ?? empty),
+    vias: parseVias6(cfb.getStream('Vias6/Data') ?? empty),
+    arcs: parseArcs6(cfb.getStream('Arcs6/Data') ?? empty),
+    fills: parseFills6(cfb.getStream('Fills6/Data') ?? empty),
     nets: parseNets6(must('Nets6/Data')),
-    classes: parseClasses6(cfb.getStream('Classes6/Data') ?? new Uint8Array()),
-    wideStrings: parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),
+    classes: parseClasses6(cfb.getStream('Classes6/Data') ?? empty),
+    wideStrings: parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? empty),
   };
   return assembleBoardData(db);
 }

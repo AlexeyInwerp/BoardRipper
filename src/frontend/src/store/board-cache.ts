@@ -21,7 +21,8 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * pdf-text cache or require any data migration.
  */
 // 50: ALTIUM_PCB parser added (Phase 1) — parts/pins/nets from CFB streams.
-const PARSER_VERSION = 50;
+// 51: ALTIUM_PCB Phase 2 partial — pads/traces/vias/arcs/fills + layerNames + Part.layer.
+const PARSER_VERSION = 51;
 
 interface CachedBoard {
   key: string;

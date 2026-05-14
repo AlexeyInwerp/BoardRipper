@@ -374,10 +374,15 @@ test.describe('altium-assembler', () => {
     const { assembleBoardData } = await import('../src/parsers/altium/altium-assembler');
 
     const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const r = await import('../src/parsers/altium/altium-records');
     const db = {
       board: parseBoard6(cfb.getStream('Board6/Data')!),
       components: parseComponents6(cfb.getStream('Components6/Data')!),
       pads: parsePads6(cfb.getStream('Pads6/Data')!),
+      tracks: r.parseTracks6(cfb.getStream('Tracks6/Data') ?? new Uint8Array()),
+      vias: r.parseVias6(cfb.getStream('Vias6/Data') ?? new Uint8Array()),
+      arcs: r.parseArcs6(cfb.getStream('Arcs6/Data') ?? new Uint8Array()),
+      fills: r.parseFills6(cfb.getStream('Fills6/Data') ?? new Uint8Array()),
       nets: parseNets6(cfb.getStream('Nets6/Data')!),
       classes: parseClasses6(cfb.getStream('Classes6/Data')!),
       wideStrings: parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),
@@ -403,6 +408,10 @@ test.describe('altium-assembler', () => {
       board: r.parseBoard6(cfb.getStream('Board6/Data')!),
       components: r.parseComponents6(cfb.getStream('Components6/Data')!),
       pads: r.parsePads6(cfb.getStream('Pads6/Data')!),
+      tracks: r.parseTracks6(cfb.getStream('Tracks6/Data') ?? new Uint8Array()),
+      vias: r.parseVias6(cfb.getStream('Vias6/Data') ?? new Uint8Array()),
+      arcs: r.parseArcs6(cfb.getStream('Arcs6/Data') ?? new Uint8Array()),
+      fills: r.parseFills6(cfb.getStream('Fills6/Data') ?? new Uint8Array()),
       nets: r.parseNets6(cfb.getStream('Nets6/Data')!),
       classes: r.parseClasses6(cfb.getStream('Classes6/Data')!),
       wideStrings: r.parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),
@@ -430,7 +439,18 @@ test.describe('parseAltiumPcb (end-to-end)', () => {
     const board = await AltiumPcbFormat.parse(ab as ArrayBuffer);
     expect(board.format).toBe('ALTIUM_PCB');
     expect(board.parts.length).toBeGreaterThan(10);
-    console.log(`[ESD] parts=${board.parts.length} nets=${board.nets.size}`);
+    console.log(`[ESD] parts=${board.parts.length} nets=${board.nets.size} pads=${board.pads?.length ?? 0} traces=${board.traces?.length ?? 0} vias=${board.vias?.length ?? 0}`);
+  });
+
+  test('ESD_GW1N_4L surfaces traces, vias, and copper pads', async () => {
+    test.skip(!fs.existsSync(SAMPLE_ESD));
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    const ab = fs.readFileSync(SAMPLE_ESD).buffer;
+    const board = await AltiumPcbFormat.parse(ab as ArrayBuffer);
+    expect(board.traces?.length ?? 0).toBeGreaterThan(20);
+    expect(board.vias?.length ?? 0).toBeGreaterThan(5);
+    expect(board.pads?.length ?? 0).toBeGreaterThan(20);
+    expect(board.layerNames?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
   test('parseBoardFile dispatches .PcbDoc by content detection', async () => {

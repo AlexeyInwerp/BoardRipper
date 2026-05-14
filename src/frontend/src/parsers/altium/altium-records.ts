@@ -16,7 +16,18 @@
  *   ParseBoard6Data, ParseComponents6Data, ParsePads6Data
  */
 
-import type { ABoard6, AComponent6, ANet6, AClass6, APad6, AWideStringTable } from './altium-types';
+import type {
+  ABoard6,
+  AComponent6,
+  ANet6,
+  AClass6,
+  APad6,
+  ATrack6,
+  AVia6,
+  AArc6,
+  AFill6,
+  AWideStringTable,
+} from './altium-types';
 import { AltiumStream } from './altium-stream';
 import { ALTIUM_LAYER } from './altium-layers';
 import { log } from '../../store/log-store';
@@ -279,5 +290,119 @@ export function parsePads6(buf: Uint8Array): APad6[] {
     });
   }
 
+  return out;
+}
+
+/**
+ * Generic walker for single-subrecord binary streams (tracks, vias, arcs, fills).
+ * Each record is `u8 recordType + u32 subrecordLen + body`. Caller validates
+ * the expected recordType and reads from the body via a sub-cursor.
+ */
+function* iterateSingleSubrecord(
+  buf: Uint8Array,
+  expectedRecordType: number,
+): Generator<{ body: AltiumStream; bodyLen: number }> {
+  const s = new AltiumStream(buf);
+  while (!s.eof()) {
+    const recordType = s.readUint8();
+    if (recordType !== expectedRecordType) {
+      log.parser.warn(`altium: unexpected record type ${recordType} (expected ${expectedRecordType}); halting walk`);
+      return;
+    }
+    const bodyLen = s.readUint32();
+    if (bodyLen > s.remaining()) return;
+    const bodyBytes = s.slice(bodyLen);
+    yield { body: new AltiumStream(bodyBytes), bodyLen };
+  }
+}
+
+/**
+ * Tracks6/Data — line segments on a copper or non-copper layer.
+ * recordType = 4. KiCad ParseTracks6Data.
+ */
+export function parseTracks6(buf: Uint8Array): ATrack6[] {
+  const out: ATrack6[] = [];
+  for (const { body } of iterateSingleSubrecord(buf, 4)) {
+    const layer = body.readUint8();
+    body.skip(2); // flags1, flags2
+    const netIndex = body.readInt16();
+    body.skip(2); // polygon index
+    const componentIndex = body.readInt16();
+    body.skip(4);
+    const startX = body.readInt32();
+    const startY = body.readInt32();
+    const endX = body.readInt32();
+    const endY = body.readInt32();
+    const width = body.readInt32();
+    out.push({ layer, netIndex, componentIndex, startX, startY, endX, endY, width });
+  }
+  return out;
+}
+
+/**
+ * Vias6/Data — drilled connections. recordType = 3. KiCad ParseVias6Data.
+ */
+export function parseVias6(buf: Uint8Array): AVia6[] {
+  const out: AVia6[] = [];
+  for (const { body } of iterateSingleSubrecord(buf, 3)) {
+    body.skip(1);
+    body.skip(2); // flags1 + flags2
+    const netIndex = body.readInt16();
+    body.skip(8);
+    const x = body.readInt32();
+    const y = body.readInt32();
+    const diameter = body.readInt32();
+    const holeSize = body.readInt32();
+    const layerStart = body.readUint8();
+    const layerEnd = body.readUint8();
+    out.push({ netIndex, x, y, diameter, holeSize, layerStart, layerEnd });
+  }
+  return out;
+}
+
+/**
+ * Arcs6/Data — arc segments. recordType = 1. KiCad ParseArcs6Data.
+ * Caller tessellates to line segments (see altium-assembler).
+ */
+export function parseArcs6(buf: Uint8Array): AArc6[] {
+  const out: AArc6[] = [];
+  for (const { body } of iterateSingleSubrecord(buf, 1)) {
+    const layer = body.readUint8();
+    body.skip(2); // flags1, flags2
+    const netIndex = body.readInt16();
+    body.skip(2); // polygon
+    const componentIndex = body.readInt16();
+    body.skip(4);
+    const centerX = body.readInt32();
+    const centerY = body.readInt32();
+    const radius = body.readInt32();
+    const startAngle = body.readFloat64();
+    const endAngle = body.readFloat64();
+    const width = body.readInt32();
+    out.push({ layer, netIndex, componentIndex, centerX, centerY, radius, startAngle, endAngle, width });
+  }
+  return out;
+}
+
+/**
+ * Fills6/Data — rotatable copper fill rectangles. recordType = 6.
+ * KiCad ParseFills6Data. Two corner points + rotation angle.
+ */
+export function parseFills6(buf: Uint8Array): AFill6[] {
+  const out: AFill6[] = [];
+  for (const { body } of iterateSingleSubrecord(buf, 6)) {
+    const layer = body.readUint8();
+    body.skip(2); // flags1, flags2
+    const netIndex = body.readInt16();
+    body.skip(2);
+    const componentIndex = body.readInt16();
+    body.skip(4);
+    const x1 = body.readInt32();
+    const y1 = body.readInt32();
+    const x2 = body.readInt32();
+    const y2 = body.readInt32();
+    const rotation = body.readFloat64();
+    out.push({ layer, netIndex, componentIndex, x1, y1, x2, y2, rotation });
+  }
   return out;
 }
