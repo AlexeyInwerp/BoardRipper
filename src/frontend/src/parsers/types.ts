@@ -898,6 +898,11 @@ export function detectBomAlternateClusters(parts: Part[]): BomAlternateCluster[]
 /**
  * Generate a rectangular outline from a set of points with an optional margin.
  * Returns an empty array if no points are provided.
+ *
+ * Returns 5 points — 4 corners + the first corner repeated — so `drawOutline`
+ * in board-scene.ts treats it as geometrically closed (`Math.hypot(prev-first) < CLOSE_EPS`)
+ * and emits a `closePath()` for the final edge instead of leaving the rectangle
+ * three-sided.
  */
 export function generateSyntheticOutline(points: Point[], margin = 20): Point[] {
   if (points.length === 0) return [];
@@ -907,6 +912,7 @@ export function generateSyntheticOutline(points: Point[], margin = 20): Point[] 
     { x: b.maxX + margin, y: b.minY - margin },
     { x: b.maxX + margin, y: b.maxY + margin },
     { x: b.minX - margin, y: b.maxY + margin },
+    { x: b.minX - margin, y: b.minY - margin },
   ];
 }
 
