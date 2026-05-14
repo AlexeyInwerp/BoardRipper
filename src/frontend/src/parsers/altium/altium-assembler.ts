@@ -39,7 +39,8 @@ function pinNet(p: APad6, netNames: string[]): string {
 
 export function assembleBoardData(db: AltiumPcbDb): BoardData {
   const netNames = db.nets.map(n => n.name);
-  const { idxByAltiumLayer: copperLayerByAltium, names: layerNames } = buildCopperLayerTable(db.board.layerNames);
+  const usedCopper = collectUsedCopperLayers(db);
+  const { idxByAltiumLayer: copperLayerByAltium, names: layerNames } = buildCopperLayerTable(db.board.layerNames, usedCopper);
 
   const padsByComp = new Map<number, APad6[]>();
   for (const pad of db.pads) {
@@ -147,20 +148,26 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
 
 /**
  * Builds a deterministic Altium-layer → output-layer-index mapping in
- * physical stackup order (TOP → MID1 → … → BOTTOM), restricted to layers
- * that have a populated name in Board6 (so we don't expose phantom MID
- * slots the board file doesn't actually use).
+ * physical stackup order (TOP → MID1 → … → BOTTOM). Only includes inner
+ * copper layers (MID1..30) that are *actually used* by the file — i.e.
+ * referenced by at least one component, pad, track, or via.
  *
- * Returns `{ idxByAltiumLayer, names }` where `names[idx]` is the user-
- * visible layer label and `idxByAltiumLayer.get(altiumLayerId)` is the
- * output index for that raw Altium layer.
+ * Why empirical and not name-based: Altium populates default names for
+ * every mid-layer slot (`Mid-Layer 1`..`Mid-Layer 30`) regardless of
+ * whether they're part of the stackup, so the name field alone can't
+ * distinguish a 2-layer board from a 32-layer one. The presence of
+ * geometry is the only reliable signal.
+ *
+ * TOP and BOTTOM are always included even if empty — the side toggle in
+ * the UI needs both poles defined.
  */
-function buildCopperLayerTable(boardLayerNames: string[]): {
+function buildCopperLayerTable(
+  boardLayerNames: string[],
+  usedAltiumLayers: Set<number>,
+): {
   idxByAltiumLayer: Map<number, number>;
   names: string[];
 } {
-  // Altium layer IDs in physical stackup order: TOP=1, MID1=2, …, MID30=31, BOTTOM=32.
-  // boardLayerNames[i] holds the name for Altium layer (i+1).
   const order: number[] = [];
   order.push(ALTIUM_LAYER.TOP);
   for (let i = 0; i < 30; i++) order.push(ALTIUM_LAYER.MID_LAYER_1 + i);
@@ -169,21 +176,44 @@ function buildCopperLayerTable(boardLayerNames: string[]): {
   const idxByAltiumLayer = new Map<number, number>();
   const names: string[] = [];
   for (const layerId of order) {
-    const rawName = boardLayerNames[layerId - 1] ?? '';
-    // Always include TOP and BOTTOM (some files leave their names blank);
-    // only include MID layers when the file gave them an explicit name.
     const include = layerId === ALTIUM_LAYER.TOP
       || layerId === ALTIUM_LAYER.BOTTOM
-      || rawName.length > 0;
+      || usedAltiumLayers.has(layerId);
     if (!include) continue;
-    let label = rawName;
-    if (!label) {
-      label = layerId === ALTIUM_LAYER.TOP ? 'Top' : 'Bottom';
-    }
+    const rawName = boardLayerNames[layerId - 1] ?? '';
+    const label = rawName || (layerId === ALTIUM_LAYER.TOP ? 'Top' : layerId === ALTIUM_LAYER.BOTTOM ? 'Bottom' : `Mid ${layerId - 1}`);
     idxByAltiumLayer.set(layerId, names.length);
     names.push(label);
   }
   return { idxByAltiumLayer, names };
+}
+
+/**
+ * Scan everything that references a copper layer and return the set of
+ * Altium layer IDs actually used. Used to gate which MID layers appear
+ * in the layer selector.
+ */
+function collectUsedCopperLayers(db: AltiumPcbDb): Set<number> {
+  const used = new Set<number>();
+  const isCopper = (layer: number): boolean =>
+    layer === ALTIUM_LAYER.TOP
+    || layer === ALTIUM_LAYER.BOTTOM
+    || (layer >= ALTIUM_LAYER.MID_LAYER_1 && layer <= ALTIUM_LAYER.MID_LAYER_30);
+  for (const c of db.components) if (isCopper(c.layer)) used.add(c.layer);
+  for (const p of db.pads) {
+    if (isCopper(p.layer)) used.add(p.layer);
+    // through-hole pads (MULTI_LAYER) implicitly use top and bottom — leave
+    // that to the always-include rule in the table builder.
+  }
+  for (const t of db.tracks) if (isCopper(t.layer)) used.add(t.layer);
+  for (const a of db.arcs) if (isCopper(a.layer)) used.add(a.layer);
+  for (const f of db.fills) if (isCopper(f.layer)) used.add(f.layer);
+  for (const v of db.vias) {
+    // A via's layer-span ends are themselves copper layer ids.
+    if (isCopper(v.layerStart)) used.add(v.layerStart);
+    if (isCopper(v.layerEnd)) used.add(v.layerEnd);
+  }
+  return used;
 }
 
 function netNameAt(idx: number, netNames: string[]): string {
