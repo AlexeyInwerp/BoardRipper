@@ -757,7 +757,7 @@ class BoardStore extends Emitter {
           // primarySide swap drives only the user-facing side toggle (which
           // happened above); the layer list represents the file's etch stack
           // so users expect TOP-of-stack visible on first open.
-          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
+          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames, undefined, !cachedFmt?.hasLayers);
           if (vp.defaultButterfly && !(cached.layerNames && cached.layerNames.length > 0)) {
             tab.butterfly = true;
             tab.showTop = true;
@@ -808,7 +808,13 @@ class BoardStore extends Emitter {
           tab.showTop = false;
           tab.showBottom = true;
         }
-        if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames);
+        if (board.layerNames) {
+          // For formats where the side toggle (not per-layer toggles) is
+          // the primary visibility control (hasLayers=false — e.g. Altium),
+          // default ALL layers to visible so the side toggle alone gates.
+          // For butterfly formats (TVW) keep the primary-only default.
+          tab.layerStates = createLayerStates(board.layerNames, undefined, !fmt?.hasLayers);
+        }
         if (vp.defaultButterfly && !(board.layerNames && board.layerNames.length > 0)) {
           tab.butterfly = true;
           tab.showTop = true;

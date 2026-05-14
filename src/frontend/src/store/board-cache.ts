@@ -27,7 +27,12 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     polygons surface as outline-trace segments. Empty meta fields elided.
 // 54: ALTIUM_PCB Regions6 now emits filled CopperRegion polygons. New
 //     BoardData.copperRegions field; renderer fills with even-odd rule.
-const PARSER_VERSION = 54;
+// 55: layerStates for hasLayers=false formats default to all-visible so
+//     the side toggle alone gates trace/pour visibility (Altium UX).
+// 56: ALTIUM_PCB regions render as AABB-fill + stroke; closing-vertex
+//     duplicate stripped in assembler. PixiJS earcut chokes on the
+//     pad-anti-pad shapes so true polygon fill is deferred.
+const PARSER_VERSION = 56;
 
 interface CachedBoard {
   key: string;

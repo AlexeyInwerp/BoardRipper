@@ -36,8 +36,17 @@ export interface LayerState {
 }
 
 /** Create initial layer states from board layer names.
- *  Only the primary view layer is visible by default. */
-export function createLayerStates(layerNames: string[], primarySide?: 'top' | 'bottom'): LayerState[] {
+ *  By default only the primary view layer is visible (TVW butterfly
+ *  convention — you navigate one layer at a time). For formats that
+ *  expose layer names but still rely on the side toggle as the primary
+ *  visibility control (Altium, where hasLayers=false), pass
+ *  `allVisible: true` so the side toggle alone gates the trace/pour
+ *  visibility instead of an additional per-layer mask. */
+export function createLayerStates(
+  layerNames: string[],
+  primarySide?: 'top' | 'bottom',
+  allVisible = false,
+): LayerState[] {
   // Find the index of the primary layer
   const side = primarySide ?? 'top';
   const primaryIdx = side === 'bottom'
@@ -45,7 +54,7 @@ export function createLayerStates(layerNames: string[], primarySide?: 'top' | 'b
     : layerNames.findIndex(n => n.toUpperCase().includes('TOP'));
 
   return layerNames.map((name, i) => ({
-    visible: primaryIdx >= 0 ? i === primaryIdx : i === 0,
+    visible: allVisible ? true : (primaryIdx >= 0 ? i === primaryIdx : i === 0),
     color: DEFAULT_LAYER_PALETTE[i % DEFAULT_LAYER_PALETTE.length],
     name,
   }));

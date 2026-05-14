@@ -431,9 +431,22 @@ function buildCopperRegions(
     const net = netNameAt(r.netIndex, netNames) || undefined;
     const verts = r.vertices.map(v => ({ x: altiumToMils(v.x), y: altiumYToMils(v.y) }));
     if (verts.some(v => !sane(v.x) || !sane(v.y))) continue;
+    // Strip the trailing closing vertex if the parser included one (extended-
+    // encoding regions duplicate v[0] as the final vertex). PixiJS's poly()
+    // closePath default already handles closure; an explicit duplicate makes
+    // earcut produce a zero-area triangle that silently kills the whole fill.
+    if (verts.length >= 4) {
+      const a = verts[0], z = verts[verts.length - 1];
+      if (Math.abs(a.x - z.x) < 1e-6 && Math.abs(a.y - z.y) < 1e-6) verts.pop();
+    }
+    if (verts.length < 3) continue;
     const holes: Point[][] = [];
     for (const h of r.holes) {
       const pts = h.map(v => ({ x: altiumToMils(v.x), y: altiumYToMils(v.y) }));
+      if (pts.length >= 4) {
+        const a = pts[0], z = pts[pts.length - 1];
+        if (Math.abs(a.x - z.x) < 1e-6 && Math.abs(a.y - z.y) < 1e-6) pts.pop();
+      }
       if (pts.length >= 3 && pts.every(v => sane(v.x) && sane(v.y))) holes.push(pts);
     }
     // Map Altium copper side: TOP-family → 'top', BOTTOM-family → 'bottom',

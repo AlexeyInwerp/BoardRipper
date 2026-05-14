@@ -687,28 +687,57 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
     // Tone is a notch darker than PAD_TOP_COLOR / PAD_BOTTOM_COLOR.
     const POUR_TOP_COLOR    = 0xa07a30;  // darker warm copper
     const POUR_BOTTOM_COLOR = 0x607a98;  // darker cool copper-grey
-    const POUR_ALPHA        = 0.65;
+    const POUR_ALPHA        = 0.6;
 
     const topPourGfx = new Graphics();
     const botPourGfx = new Graphics();
+
+    // Render each region twice:
+    //   1) Stroke the polygon perimeter so the actual shape is visible.
+    //      PixiJS's earcut tessellator silently fails on the curved /
+    //      pad-anti-pad polygons Altium emits (e.g. 19-vertex crescents
+    //      with long diagonal closing edges) — fills produce nothing.
+    //      Stroking always works because no triangulation is needed.
+    //   2) Fill the polygon's AABB rectangle as a coarse "where copper
+    //      lives" hint — rect() bypasses earcut and reliably fills.
+    //  Together: outline reads as the true polygon shape; rect fills the
+    //  AABB envelope so the eye reads it as a copper area.
+    //  Filled-polygon rendering is deferred until we either pre-triangulate
+    //  the geometry ourselves or switch to a renderer path that handles
+    //  concave self-touching polygons correctly.
+    const POUR_STROKE_WIDTH = 0.5; // mils
     for (const region of board.copperRegions) {
-      const targetGfx = region.side === 'bottom' ? botPourGfx : topPourGfx;
-      // Outer ring + optional holes, using even-odd fill rule to punch holes.
       if (region.vertices.length < 3) continue;
-      const outerFlat: number[] = [];
-      for (const v of region.vertices) outerFlat.push(v.x, v.y);
-      targetGfx.poly(outerFlat);
+      const targetGfx = region.side === 'bottom' ? botPourGfx : topPourGfx;
+      const color = region.side === 'bottom' ? POUR_BOTTOM_COLOR : POUR_TOP_COLOR;
+
+      // (2) AABB fill
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      for (const v of region.vertices) {
+        if (v.x < xMin) xMin = v.x;
+        if (v.x > xMax) xMax = v.x;
+        if (v.y < yMin) yMin = v.y;
+        if (v.y > yMax) yMax = v.y;
+      }
+      targetGfx.rect(xMin, yMin, xMax - xMin, yMax - yMin);
+      targetGfx.fill({ color, alpha: 0.8 });
+
+      // (1) Polygon perimeter stroke
+      targetGfx.moveTo(region.vertices[0].x, region.vertices[0].y);
+      for (let i = 1; i < region.vertices.length; i++) {
+        targetGfx.lineTo(region.vertices[i].x, region.vertices[i].y);
+      }
+      targetGfx.closePath();
       if (region.holes) {
         for (const hole of region.holes) {
           if (hole.length < 3) continue;
-          const holeFlat: number[] = [];
-          for (const v of hole) holeFlat.push(v.x, v.y);
-          targetGfx.poly(holeFlat);
+          targetGfx.moveTo(hole[0].x, hole[0].y);
+          for (let i = 1; i < hole.length; i++) targetGfx.lineTo(hole[i].x, hole[i].y);
+          targetGfx.closePath();
         }
       }
+      targetGfx.stroke({ color, alpha: POUR_ALPHA, width: POUR_STROKE_WIDTH });
     }
-    topPourGfx.fill({ color: POUR_TOP_COLOR,    alpha: POUR_ALPHA });
-    botPourGfx.fill({ color: POUR_BOTTOM_COLOR, alpha: POUR_ALPHA });
     copperPoursTop.addChild(topPourGfx);
     copperPoursBottom.addChild(botPourGfx);
     copperPoursLayer.addChild(copperPoursBottom);
