@@ -110,13 +110,6 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
     if (pads.some(pad => pad.isThroughHole)) parts[i].type = 'throughhole';
   }
 
-  const allPoints: Point[] = [];
-  for (const p of parts) for (const pin of p.pins) allPoints.push(pin.position);
-  const bounds = allPoints.length > 0
-    ? computeBBox(allPoints)
-    : { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
-  const outline = generateSyntheticOutline(allPoints, 50);
-
   const nets: Map<string, Net> = buildNets(parts);
 
   const pads: Pad[] = [
@@ -130,6 +123,23 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
   ];
 
   const vias: Via[] = buildVias(db.vias, netNames, copperLayerByAltium);
+
+  // The synthetic outline + bounds must envelope ALL geometry the renderer
+  // draws, not just pin positions — otherwise the board outline ends up
+  // smaller than the trace/via field and the user sees routing escape the
+  // box. Sample pins + trace endpoints + via centers + pad bounds corners.
+  const allPoints: Point[] = [];
+  for (const p of parts) for (const pin of p.pins) allPoints.push(pin.position);
+  for (const t of traces) { allPoints.push(t.start); allPoints.push(t.end); }
+  for (const v of vias) allPoints.push(v.position);
+  for (const pad of pads) {
+    allPoints.push({ x: pad.bounds.minX, y: pad.bounds.minY });
+    allPoints.push({ x: pad.bounds.maxX, y: pad.bounds.maxY });
+  }
+  const bounds = allPoints.length > 0
+    ? computeBBox(allPoints)
+    : { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
+  const outline = generateSyntheticOutline(allPoints, 50);
 
   return {
     format: 'ALTIUM_PCB',
