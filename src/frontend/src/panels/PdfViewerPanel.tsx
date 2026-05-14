@@ -860,7 +860,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [adjTrigger, setAdjTrigger] = useState(0);
   const adjDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** Clamp pan so the page stays within view boundaries */
+  /** Clamp pan so the page stays within view boundaries.
+   *
+   *  Single-page PDFs use *loose* clamps with a margin overshoot on both axes
+   *  so the user can pull the page slightly off-screen to zoom-anchor near the
+   *  edges. Multi-page first/last keep hard clamps because the page-flip
+   *  threshold at `containerH/2` depends on them. */
   const clampPan = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -870,30 +875,33 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const cssH = pageCssHRef.current;
     let { x, y } = panRef.current;
 
-    // --- X axis: keep page covering the container width ---
-    // Page screen width = containerW * zoom (CSS width is containerW, scaled by zoom).
-    // When page is narrower than container, center it.
-    // When wider, clamp so both edges stay reachable:
-    //   left edge on screen  = panX              → must be ≤ 0  (can't expose left gap)
-    //   right edge on screen = panX + pageW      → must be ≥ containerW (can't expose right gap)
+    const total = pdfStore.getDocPageCount(pdfFileName);
+    const singlePage = total === 1;
+    const SINGLE_PAGE_MARGIN = 80;
+
+    // --- X axis ---
     const pageW = containerW * zoom;
     if (pageW <= containerW) {
-      // Page fits — center horizontally
-      x = (containerW - pageW) / 2;
+      x = (containerW - pageW) / 2; // page fits — centered
     } else {
-      // Page wider — clamp so both edges stay reachable
-      const xMin = containerW - pageW; // most negative pan (scrolled fully right)
-      const xMax = 0;                  // most positive pan (left edge at container left)
-      x = Math.max(xMin, Math.min(xMax, x));
+      const margin = singlePage ? SINGLE_PAGE_MARGIN : 0;
+      x = Math.max(containerW - pageW - margin, Math.min(margin, x));
     }
 
-    // --- Y axis: can't scroll past first/last page ---
+    // --- Y axis ---
     if (cssH > 0) {
       const pageH = cssH * zoom;
-      const curPage = pdfStore.getDocCurrentPage(pdfFileName);
-      const total = pdfStore.getDocPageCount(pdfFileName);
-      if (curPage === 1) y = Math.min(y, 0);
-      if (curPage === total) y = Math.max(y, containerH - pageH);
+      if (singlePage) {
+        if (pageH > containerH) {
+          y = Math.max(containerH - pageH - SINGLE_PAGE_MARGIN, Math.min(SINGLE_PAGE_MARGIN, y));
+        } else {
+          y = (containerH - pageH) / 2; // page fits vertically — centered
+        }
+      } else {
+        const curPage = pdfStore.getDocCurrentPage(pdfFileName);
+        if (curPage === 1) y = Math.min(y, 0);
+        if (curPage === total) y = Math.max(y, containerH - pageH);
+      }
     }
 
     panRef.current = { x, y };
@@ -2096,10 +2104,18 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const observer = new ResizeObserver(() => renderPageRef.current());
+    const observer = new ResizeObserver(() => {
+      // Container size changed → fit-to-width baseScale changes too, so tiles
+      // cached at the old containerWidth would blit at the wrong size. Drop
+      // them. Re-clamp pan/zoom against the new bounds so the page doesn't
+      // sit off-screen until the next user input.
+      invalidateTileCache(pdfFileName);
+      renderPageRef.current();
+      syncTransform();
+    });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [pdfFileName, syncTransform]);
 
   // Reload PDF with fontExtraProperties when glyph debug is first activated
   useEffect(() => {
@@ -2295,9 +2311,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // Min zoom: at most 3 pages visible vertically
+        // Min zoom: fit-to-width (zoom = 1.0). Below this the page is narrower
+        // than the container — there's no useful detail to see and the boundary
+        // bounce/glitch surfaces more aggressively.
         const cssH = pageCssHRef.current;
-        const minZoom = cssH > 0 ? Math.max(0.1, container.clientHeight / (3 * cssH)) : 0.1;
+        const minZoom = 1;
 
         // Trackpad pinch has small deltaY values — use higher sensitivity
         const speed = isTrackpadPinch ? TRACKPAD_PINCH_SPEED : MOUSE_WHEEL_SPEED;
@@ -2466,9 +2484,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
 
     const onGestureChange = (e: GestureEvent) => {
-      const cssH = pageCssHRef.current;
-      const containerH = container.clientHeight;
-      const minZoom = cssH > 0 && containerH > 0 ? Math.max(0.1, containerH / (3 * cssH)) : 0.1;
+      const minZoom = 1;
       const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, 10));
       const ratio = newZoom / zoomRef.current;
       panRef.current = {
@@ -2552,9 +2568,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const rawScale = dist / pinchStartDistRef.current;
         const scale = 1 + (rawScale - 1) * TOUCH_PINCH_FACTOR;
         const oldZoom = zoomRef.current;
-        const cssH = pageCssHRef.current;
-        const containerH = containerRef.current?.clientHeight ?? 0;
-        const minZoom = cssH > 0 && containerH > 0 ? Math.max(0.1, containerH / (3 * cssH)) : 0.1;
+        const minZoom = 1;
         const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 10));
         const ratio = newZoom / oldZoom;
         const mid = pinchMidRef.current;
@@ -2889,8 +2903,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const factor = Math.pow(2, 1.3 * (rawDelta / 500));
       const effFactor = detail.direction === 'in' ? factor : 1 / factor;
       const mid = { x: containerEl.clientWidth / 2, y: containerEl.clientHeight / 2 };
-      const cssH = pageCssHRef.current;
-      const minZoom = cssH > 0 ? Math.max(0.1, containerEl.clientHeight / (3 * cssH)) : 0.1;
+      const minZoom = 1;
       const oldZ = zoomRef.current;
       const newZ = Math.max(minZoom, Math.min(oldZ * effFactor, 10));
       const ratio = newZ / oldZ;
