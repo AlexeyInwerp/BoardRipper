@@ -209,3 +209,26 @@ test.describe('altium-pcb-format', () => {
     expect(AltiumPcbFormat.id).toBe('ALTIUM_PCB');
   });
 });
+
+test.describe('altium-layers', () => {
+  test('TOP/BOTTOM map to top/bottom', async () => {
+    const { altiumLayerSide, ALTIUM_LAYER } = await import('../src/parsers/altium/altium-layers');
+    expect(altiumLayerSide(ALTIUM_LAYER.TOP)).toBe('top');
+    expect(altiumLayerSide(ALTIUM_LAYER.BOTTOM)).toBe('bottom');
+  });
+
+  test('property-bag LAYER strings parse', async () => {
+    const { parseAltiumLayerName, ALTIUM_LAYER } = await import('../src/parsers/altium/altium-layers');
+    expect(parseAltiumLayerName('TOP')).toBe(ALTIUM_LAYER.TOP);
+    expect(parseAltiumLayerName('BOTTOM')).toBe(ALTIUM_LAYER.BOTTOM);
+    expect(parseAltiumLayerName('MULTILAYER')).toBe(ALTIUM_LAYER.MULTI_LAYER);
+    expect(parseAltiumLayerName('TOPOVERLAY')).toBe(ALTIUM_LAYER.TOP_OVERLAY);
+    expect(parseAltiumLayerName('UNKNOWN_BOGUS')).toBe(ALTIUM_LAYER.UNKNOWN);
+  });
+
+  test('inner copper layers cycle through MID_LAYER_1..30', async () => {
+    const { ALTIUM_LAYER, parseAltiumLayerName } = await import('../src/parsers/altium/altium-layers');
+    expect(parseAltiumLayerName('MID1')).toBe(ALTIUM_LAYER.MID_LAYER_1);
+    expect(parseAltiumLayerName('MID4')).toBe(ALTIUM_LAYER.MID_LAYER_4);
+  });
+});
