@@ -53,8 +53,8 @@ export function parseAltiumPcb(buffer: ArrayBuffer): BoardData {
     arcs: parseArcs6(cfb.getStream('Arcs6/Data') ?? empty),
     fills: parseFills6(cfb.getStream('Fills6/Data') ?? empty),
     regions: [
-      ...parseRegions6(cfb.getStream('Regions6/Data') ?? empty),
-      ...parseRegions6(cfb.getStream('ShapeBasedRegions6/Data') ?? empty),
+      ...parseRegions6(cfb.getStream('Regions6/Data') ?? empty, false),
+      ...parseRegions6(cfb.getStream('ShapeBasedRegions6/Data') ?? empty, true),
     ],
     nets: parseNets6(must('Nets6/Data')),
     classes: parseClasses6(cfb.getStream('Classes6/Data') ?? empty),

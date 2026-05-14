@@ -415,6 +415,12 @@ function buildRegionOutlineTraces(
   // Use a deliberately thick width so the polygon boundary reads as
   // copper-area-edge rather than fine route. ~3 mils is visible at most zooms.
   const OUTLINE_WIDTH_MILS = 3;
+  // Reject obviously corrupt vertices — Altium boards never legitimately
+  // exceed ~100 inches (100_000 mils) per axis. Anything larger means we
+  // got the binary offsets wrong somewhere; better to drop the whole
+  // region than poison the synthetic outline with 1e+269 coordinates.
+  const COORD_SANITY_MILS = 1_000_000;
+  const sane = (n: number) => Number.isFinite(n) && Math.abs(n) < COORD_SANITY_MILS;
   for (const r of regions) {
     if (r.kind === REGION_KIND_POLYGON_CUTOUT || r.kind === REGION_KIND_BOARD_CUTOUT) continue;
     const layer = copperLayer.get(r.layer);
@@ -422,10 +428,10 @@ function buildRegionOutlineTraces(
     if (r.vertices.length < 2) continue;
     const net = netNameAt(r.netIndex, netNames);
     const verts = r.vertices.map(v => ({ x: altiumToMils(v.x), y: altiumYToMils(v.y) }));
+    if (verts.some(v => !sane(v.x) || !sane(v.y))) continue;
     for (let i = 0; i < verts.length - 1; i++) {
       out.push({ start: verts[i], end: verts[i + 1], width: OUTLINE_WIDTH_MILS, net, layer });
     }
-    // Close the polygon if the file didn't already include a closing vertex.
     const a = verts[0], b = verts[verts.length - 1];
     if (Math.hypot(a.x - b.x, a.y - b.y) > 0.1) {
       out.push({ start: b, end: a, width: OUTLINE_WIDTH_MILS, net, layer });

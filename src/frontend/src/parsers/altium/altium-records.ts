@@ -433,7 +433,7 @@ export function parseFills6(buf: Uint8Array): AFill6[] {
  *   then `holecount` hole loops:
  *     u32 num_hole_vertices, per vertex f64 x + f64 y
  */
-export function parseRegions6(buf: Uint8Array): ARegion6[] {
+export function parseRegions6(buf: Uint8Array, forceExtended = false): ARegion6[] {
   const out: ARegion6[] = [];
   for (const { body } of iterateSingleSubrecord(buf, 11)) {
     const layer = body.readUint8();
@@ -458,7 +458,8 @@ export function parseRegions6(buf: Uint8Array): ARegion6[] {
     const isShapeBased = readPropBool(props, 'ISSHAPEBASED', false);
     const REGION_KIND_BOARD_CUTOUT = 5;
     const REGION_KIND_POLYGON_CUTOUT = 1;
-    const extended = isShapeBased
+    const extended = forceExtended
+      || isShapeBased
       || kind === REGION_KIND_BOARD_CUTOUT
       || kind === REGION_KIND_POLYGON_CUTOUT;
 
