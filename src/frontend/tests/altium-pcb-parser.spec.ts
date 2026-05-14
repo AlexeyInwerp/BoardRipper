@@ -24,3 +24,27 @@ test.describe('Altium PCB Parser — Phase 1', () => {
     }
   });
 });
+
+test.describe('altium-units', () => {
+  test('altiumToMils divides by 10000', async () => {
+    const { altiumToMils } = await import('../src/parsers/altium/altium-units');
+    expect(altiumToMils(254000)).toBe(25.4);
+    expect(altiumToMils(0)).toBe(0);
+    expect(altiumToMils(-100000)).toBe(-10);
+  });
+
+  test('altiumYToMils negates after scaling', async () => {
+    const { altiumYToMils } = await import('../src/parsers/altium/altium-units');
+    expect(altiumYToMils(254000)).toBe(-25.4);
+    expect(altiumYToMils(-100000)).toBe(10);
+    expect(altiumYToMils(0)).toBe(0);
+  });
+
+  test('altiumAngleToDegrees handles wraps', async () => {
+    const { altiumAngleToDegrees } = await import('../src/parsers/altium/altium-units');
+    expect(altiumAngleToDegrees(0)).toBe(0);
+    expect(altiumAngleToDegrees(90)).toBe(90);
+    expect(altiumAngleToDegrees(370)).toBe(10);
+    expect(altiumAngleToDegrees(-10)).toBe(350);
+  });
+});
