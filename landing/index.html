@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BoardRipper — boardview viewer for board-level repair</title>
-<meta name="description" content="Web-based PCB boardview viewer. Eleven formats, PDF schematics, GPU-accelerated rendering. Self-hosted via Docker. Free, AGPL-3.0.">
+<meta name="description" content="Web-based PCB boardview viewer. Twelve formats, PDF schematics, GPU-accelerated rendering. Self-hosted via Docker. Free, AGPL-3.0.">
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -83,7 +83,7 @@
   </nav>
 </header>
 
-<p>BoardRipper opens eleven boardview formats and the matching PDF schematic, side by side, in a browser. Designed to be self-hosted on a NAS via Docker. Works on desktop and on touch screens.</p>
+<p>BoardRipper opens twelve boardview formats and the matching PDF schematic, side by side, in a browser. Designed to be self-hosted on a NAS via Docker. Works on desktop and on touch screens.</p>
 
 <p>It is the viewer only. BoardRipper does not ship with any boardview files, schematics, or PDFs &mdash; you bring your own. The bundled board database is reference metadata (board numbers and device models), no copyrighted content.</p>
 
@@ -157,6 +157,7 @@ C12*</pre>
   <tr><td>XZZ</td><td><span class="small">.pcb</span></td><td>XZZ PCB, DES-encrypted boardview</td></tr>
   <tr><td>TVW</td><td><span class="small">.tvw</span></td><td>Teboview binary, multi-layer + traces + drill data</td></tr>
   <tr><td>Cadence Allegro BRD</td><td><span class="small">.brd</span></td><td>Cadence Allegro PCB binary, v16.x / v17.x / v18.x. v15 partial, still in beta.</td></tr>
+  <tr><td>Altium PCB</td><td><span class="small">.PcbDoc / .CMPcbDoc / .CSPcbDoc</span></td><td>Altium Designer 6.0+ (and Circuit Maker / Circuit Studio / SolidWorks PCB Connector). Binary CFB + ASCII v5.0 variants. Phase&nbsp;1 (parts / pins / nets / outline).</td></tr>
 </table>
 <p class="small">Both <code>.cad</code> and <code>.brd</code> are shared extensions &mdash; BoardRipper sniffs file content to pick the right parser.</p>
 </section>

@@ -472,3 +472,14 @@ test.describe('altium-ascii', () => {
     expect(board.nets.has('VCC')).toBe(true);
   });
 });
+
+test('AltiumPcbFormat appears in the format list with sister extensions', async () => {
+  const parsers = await import('../src/parsers');
+  const all = parsers.getAllFormats();
+  const altium = all.find(f => f.id === 'ALTIUM_PCB');
+  expect(altium).toBeDefined();
+  expect(altium!.name).toBe('Altium PCB');
+  expect(altium!.extensions).toEqual(
+    expect.arrayContaining(['.pcbdoc', '.cmpcbdoc', '.cspcbdoc']),
+  );
+});

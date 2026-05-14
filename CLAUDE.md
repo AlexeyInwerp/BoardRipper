@@ -7,10 +7,12 @@ BoardRipper — web-based PCB boardview file viewer and inspector. Hosted via Do
 AGPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY.md](THIRD_PARTY.md). AGPL was
 chosen because the Allegro parser (`src/frontend/src/parsers/allegro/`) is a
 TypeScript re-implementation derived from KiCad (GPL-3.0), which forces the
-whole project to be GPL-3.0-compatible. AGPL additionally closes the SaaS
-loophole. All other parsers (BVR/BRD/BDV/FZ/CAD/XZZ) draw from OpenBoardView
-(MIT); TVW draws from eagleview (MIT). All runtime dependencies are
-MIT/Apache-2.0/BSD.
+whole project to be GPL-3.0-compatible. The Altium parser
+(`src/frontend/src/parsers/altium/`) is also transliterated from KiCad
+(GPL-2.0+ with one GPL-3.0+ file) — same lineage as Allegro. AGPL additionally
+closes the SaaS loophole. All other parsers (BVR/BRD/BDV/FZ/CAD/XZZ) draw from
+OpenBoardView (MIT); TVW draws from eagleview (MIT). All runtime dependencies
+are MIT/Apache-2.0/BSD.
 
 ## Tech Stack
 - **Rendering:** PixiJS v8 (WebGL) + pixi-viewport v6 (pan/zoom/culling/deceleration)
@@ -34,6 +36,7 @@ MIT/Apache-2.0/BSD.
 - **ALLEGRO_BRD** — Cadence Allegro binary PCB. Two parser families share `parsers/allegro/`:
   - v16.x / v17.x / v18.x (magic `0x0013xxxx` / `0x0014xxxx` / `0x0015xxxx`) — original target. Spec: `docs/formats/ALLEGRO_BRD_FORMAT.md`
   - v15.x (magic `0x0012xxxx`) — added in v0.17.0 via blind RE; ~99% net coverage on 15.5.7 corpus, partial on 15.5.2. Spec: `docs/formats/ALLEGRO_V15_FORMAT.md`
+- **ALTIUM_PCB** — Altium Designer / Circuit Maker / Circuit Studio binary `.PcbDoc` + PCB ASCII Version 5.0 text variant. CFB container (Designer 6.0+, 2005+). Phase 1: parts/pins/nets/outline. Spec: `docs/formats/ALTIUM_PCB_FORMAT.md`
 
 ## Project Structure
 ```
@@ -57,7 +60,8 @@ Boardviewer/
 │   │   ├── TVW_FORMAT.md         # Teboview (multi-layer binary)
 │   │   ├── MENTOR_NEUTRAL_FORMAT.md # Mentor Boardstation Neutral (.cad text)
 │   │   ├── ALLEGRO_BRD_FORMAT.md # Cadence Allegro v16/v17 BRD
-│   │   └── ALLEGRO_V15_FORMAT.md # Cadence Allegro v15.x BRD (RE'd in v0.17.0)
+│   │   ├── ALLEGRO_V15_FORMAT.md # Cadence Allegro v15.x BRD (RE'd in v0.17.0)
+│   │   └── ALTIUM_PCB_FORMAT.md  # Altium Designer .PcbDoc (binary CFB + ASCII v5.0)
 │   ├── PDF_VIEWER.md             # PDF render-pipeline architecture
 │   └── RELEASE_RUNBOOK.md        # Maintainer release-cutting procedure
 ├── samples/                     # Local-only board fixtures (not redistributed)
