@@ -566,10 +566,28 @@ func (s *Scanner) autoMatchBindings() {
 			continue
 		}
 
+		boardDir := filepath.Dir(board.Path)
 		var bestPdf *FileRecord
 		bestScore := 0
 		for i := range pdfs {
+			// Drop page-fragment / pure-digit PDF names — they substring-match
+			// too many boards and produce garbage bindings (see MatchScore +
+			// IsLikelyJunkPdfName in metadata.go).
+			if IsLikelyJunkPdfName(pdfs[i].Filename) {
+				continue
+			}
 			score := MatchScore(board.Filename, pdfs[i].Filename)
+			if score == 0 {
+				continue
+			}
+			// Folder scope: same-folder pairs keep the score-50 threshold;
+			// cross-folder pairs must be a strong match (≥ 80, i.e. exact
+			// base name or Apple-board-number embedded in the PDF name).
+			// Without this guard, "any board × any PDF" anywhere in the
+			// library is fair game and unrelated docs latch on easily.
+			if filepath.Dir(pdfs[i].Path) != boardDir && score < 80 {
+				continue
+			}
 			if score > bestScore {
 				bestScore = score
 				bestPdf = &pdfs[i]

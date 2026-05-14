@@ -304,6 +304,20 @@ func BoardNumberTokens(filename string) []string {
 	return tokens
 }
 
+// alnumCount returns the number of ASCII alphanumeric characters in s.
+// Used as a "meaningfulness" gate for filename substring matching — a base
+// like "1" or "01" has too few alphanumerics to convey identity and shouldn't
+// be allowed to substring-match arbitrary board names.
+func alnumCount(s string) int {
+	n := 0
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			n++
+		}
+	}
+	return n
+}
+
 // MatchScore returns a simple score for how well a PDF filename matches a board filename.
 // Higher score = better match. Returns 0 for no match.
 func MatchScore(boardFilename, pdfFilename string) int {
@@ -322,8 +336,16 @@ func MatchScore(boardFilename, pdfFilename string) int {
 		}
 	}
 
-	// Check if PDF base contains board base or vice versa
-	if strings.Contains(pdfBase, boardBase) || strings.Contains(boardBase, pdfBase) {
+	// Check if PDF base contains board base or vice versa.
+	// Require the shorter of the two basenames to carry ≥ 4 alphanumeric
+	// characters before declaring a substring match — otherwise a PDF named
+	// "1.pdf" matches every board whose name contains a digit "1", which
+	// happens to be most of them.
+	minAlnum := alnumCount(boardBase)
+	if a := alnumCount(pdfBase); a < minAlnum {
+		minAlnum = a
+	}
+	if minAlnum >= 4 && (strings.Contains(pdfBase, boardBase) || strings.Contains(boardBase, pdfBase)) {
 		return 50
 	}
 
@@ -345,4 +367,26 @@ func MatchScore(boardFilename, pdfFilename string) int {
 	}
 
 	return 0
+}
+
+// IsLikelyJunkPdfName returns true for PDF basenames too generic to use as
+// auto-bind targets — page-fragment names like "1.pdf", "4.pdf", "01.pdf",
+// pure-digit filenames ("1234.pdf", "20240101.pdf"). The manual binding UI
+// in LibraryPanel is unaffected; this only guards the bulk auto-match phase.
+func IsLikelyJunkPdfName(filename string) bool {
+	base := strings.TrimSpace(strings.TrimSuffix(filename, filepath.Ext(filename)))
+	if base == "" {
+		return true
+	}
+	if alnumCount(base) < 3 {
+		return true
+	}
+	for _, r := range base {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	// Pure-digit basename at any length — typically scanned-page numbers,
+	// indices, or date prefixes, not the schematic the user wants bound.
+	return true
 }
