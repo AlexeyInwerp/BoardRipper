@@ -1,25 +1,25 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { stashStore } from '../store/stash-store';
-import type { StashEntry, StashMark } from '../store/stash-store';
+import { worklistStore } from '../store/worklist-store';
+import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
-import { useStash } from '../hooks/useStash';
+import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
 
-const MARK_LABELS: Record<StashMark, string> = {
+const MARK_LABELS: Record<WorklistMark, string> = {
   none: '·',
   replaced: 'R',
   reworked: 'W',
   cleaned: 'C',
 };
-const MARK_TITLE: Record<StashMark, string> = {
+const MARK_TITLE: Record<WorklistMark, string> = {
   none: 'no mark — click to cycle: replaced → reworked → cleaned',
   replaced: 'replaced — click to cycle to reworked',
   reworked: 'reworked — click to cycle to cleaned',
   cleaned: 'cleaned — click to clear',
 };
-const MARK_COLOR: Record<StashMark, string> = {
+const MARK_COLOR: Record<WorklistMark, string> = {
   none: 'var(--muted, #888)',
   replaced: '#ff5566',
   reworked: '#ffaa33',
@@ -38,8 +38,8 @@ async function copyToClipboard(text: string, summary: string): Promise<void> {
   }
 }
 
-export function StashPanel() {
-  const { current, activeStash, hasBoard } = useStash();
+export function WorklistPanel() {
+  const { current, activeWorklist, hasBoard } = useWorklist();
   const sel = useSelectionSet();
   const { activeTabId, board } = useBoardStore();
   const [pushMenuOpen, setPushMenuOpen] = useState(false);
@@ -47,7 +47,7 @@ export function StashPanel() {
 
   // Hydrate when this panel mounts / tab changes.
   useEffect(() => {
-    void stashStore.syncToActiveTab();
+    void worklistStore.syncToActiveTab();
   }, [activeTabId]);
 
   // Close push menu on outside click
@@ -69,12 +69,12 @@ export function StashPanel() {
       .filter((n): n is string => !!n);
   }, [sel.ordered, board]);
 
-  const onPushToStash = (stashId: string | null) => {
+  const onPushToWorklist = (worklistId: string | null) => {
     if (sel.ordered.length === 0) return;
-    const result = stashStore.pushParts(stashId, sel.ordered);
+    const result = worklistStore.pushParts(worklistId, sel.ordered);
     setPushMenuOpen(false);
     if (result > 0) {
-      const target = stashStore.activeStash?.name ?? 'stash';
+      const target = worklistStore.activeWorklist?.name ?? 'worklist';
       boardStore.addToast(`Pushed ${result} part${result === 1 ? '' : 's'} to ${target}`, 'info');
     }
   };
@@ -89,16 +89,16 @@ export function StashPanel() {
     if (activeTabId != null) selectionSetStore.clear(activeTabId);
   };
 
-  const onCreateStash = () => {
-    const name = window.prompt('Stash name (ticket #, location, …)');
+  const onCreateWorklist = () => {
+    const name = window.prompt('Worklist name (ticket #, location, …)');
     if (name === null) return;
-    stashStore.createStash(name);
+    worklistStore.createWorklist(name);
   };
 
   if (!hasBoard) {
     return (
       <div style={emptyStyle}>
-        <div style={{ opacity: 0.6 }}>Open a board to begin stashing.</div>
+        <div style={{ opacity: 0.6 }}>Open a board to begin worklisting.</div>
       </div>
     );
   }
@@ -112,7 +112,7 @@ export function StashPanel() {
           <span style={countPillStyle}>{sel.count}</span>
         </div>
         <div style={{ fontSize: 12, opacity: 0.7, margin: '4px 0 8px' }}>
-          Shift-click parts on the board to build a set. Push it into a stash to keep it.
+          Shift-click parts on the board to build a set. Push it into a worklist to keep it.
         </div>
         <div style={btnRowStyle}>
           <div ref={pushMenuRef} style={{ position: 'relative', display: 'flex' }}>
@@ -120,32 +120,32 @@ export function StashPanel() {
               style={primaryBtnStyle}
               disabled={sel.count === 0}
               onClick={() => {
-                if (!current || current.stashes.length === 0) {
-                  // No stash yet — create one and push.
-                  const s = stashStore.createStash();
-                  if (s) onPushToStash(s.id);
+                if (!current || current.worklistes.length === 0) {
+                  // No worklist yet — create one and push.
+                  const s = worklistStore.createWorklist();
+                  if (s) onPushToWorklist(s.id);
                   return;
                 }
-                onPushToStash(current.activeStashId);
+                onPushToWorklist(current.activeWorklistId);
               }}
-              title={activeStash ? `Push selection to "${activeStash.name}"` : 'Create a new stash and push'}
+              title={activeWorklist ? `Push selection to "${activeWorklist.name}"` : 'Create a new worklist and push'}
             >
-              Push to {activeStash?.name ?? 'new stash'}
+              Push to {activeWorklist?.name ?? 'new worklist'}
             </button>
             <button
               style={{ ...primaryBtnStyle, borderLeft: '1px solid rgba(0,0,0,0.25)', padding: '4px 8px' }}
               disabled={sel.count === 0}
               onClick={() => setPushMenuOpen(o => !o)}
-              title="Pick another stash to push into"
+              title="Pick another worklist to push into"
             >
               ▾
             </button>
             {pushMenuOpen && current && (
               <div style={dropdownStyle}>
-                {current.stashes.map(s => (
-                  <button key={s.id} style={dropdownItemStyle} onClick={() => onPushToStash(s.id)}>
+                {current.worklistes.map(s => (
+                  <button key={s.id} style={dropdownItemStyle} onClick={() => onPushToWorklist(s.id)}>
                     {s.name}
-                    {s.id === current.activeStashId && <span style={{ opacity: 0.5, marginLeft: 8 }}>(active)</span>}
+                    {s.id === current.activeWorklistId && <span style={{ opacity: 0.5, marginLeft: 8 }}>(active)</span>}
                   </button>
                 ))}
                 <div style={dropdownSepStyle} />
@@ -153,13 +153,13 @@ export function StashPanel() {
                   style={dropdownItemStyle}
                   onClick={() => {
                     setPushMenuOpen(false);
-                    const name = window.prompt('Name for the new stash');
+                    const name = window.prompt('Name for the new worklist');
                     if (name === null) return;
-                    const s = stashStore.createStash(name);
-                    if (s) onPushToStash(s.id);
+                    const s = worklistStore.createWorklist(name);
+                    if (s) onPushToWorklist(s.id);
                   }}
                 >
-                  + New stash…
+                  + New worklist…
                 </button>
               </div>
             )}
@@ -183,16 +183,16 @@ export function StashPanel() {
         </div>
       </section>
 
-      {/* ─── Stash tabs ─────────────────────────────────────────────────── */}
+      {/* ─── Worklist tabs ─────────────────────────────────────────────────── */}
       <section style={{ ...bandStyle, padding: '6px 8px' }}>
         <div style={tabsRowStyle}>
-          {(current?.stashes ?? []).map(s => {
-            const isActive = s.id === current?.activeStashId;
+          {(current?.worklistes ?? []).map(s => {
+            const isActive = s.id === current?.activeWorklistId;
             return (
               <button
                 key={s.id}
                 style={isActive ? activeTabStyle : tabStyle}
-                onClick={() => stashStore.setActiveStash(s.id)}
+                onClick={() => worklistStore.setActiveWorklist(s.id)}
                 title={`${s.entries.length} part${s.entries.length === 1 ? '' : 's'}`}
               >
                 {s.name}
@@ -200,26 +200,26 @@ export function StashPanel() {
               </button>
             );
           })}
-          <button style={newTabStyle} onClick={onCreateStash} title="New stash">+</button>
+          <button style={newTabStyle} onClick={onCreateWorklist} title="New worklist">+</button>
         </div>
       </section>
 
-      {/* ─── Active stash body ──────────────────────────────────────────── */}
+      {/* ─── Active worklist body ──────────────────────────────────────────── */}
       <section style={{ ...bodyStyle, flex: 1, minHeight: 0 }}>
-        {!activeStash ? (
+        {!activeWorklist ? (
           <div style={emptyStyle}>
-            <div style={{ opacity: 0.6 }}>No active stash. Create one above to begin.</div>
+            <div style={{ opacity: 0.6 }}>No active worklist. Create one above to begin.</div>
           </div>
         ) : (
-          <ActiveStashView />
+          <ActiveWorklistView />
         )}
       </section>
     </div>
   );
 }
 
-function ActiveStashView() {
-  const { activeStash } = useStash();
+function ActiveWorklistView() {
+  const { activeWorklist } = useWorklist();
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
@@ -228,39 +228,39 @@ function ActiveStashView() {
     if (renaming) renameRef.current?.select();
   }, [renaming]);
 
-  if (!activeStash) return null;
+  if (!activeWorklist) return null;
 
   const startRename = () => {
-    setRenameDraft(activeStash.name);
+    setRenameDraft(activeWorklist.name);
     setRenaming(true);
   };
   const commitRename = () => {
-    stashStore.renameStash(activeStash.id, renameDraft);
+    worklistStore.renameWorklist(activeWorklist.id, renameDraft);
     setRenaming(false);
   };
 
   const onCopyAll = () => {
-    const text = stashStore.formatStashForClipboard(activeStash.id);
+    const text = worklistStore.formatWorklistForClipboard(activeWorklist.id);
     if (!text) return;
-    void copyToClipboard(text, `Copied ${activeStash.entries.length} row${activeStash.entries.length === 1 ? '' : 's'}`);
+    void copyToClipboard(text, `Copied ${activeWorklist.entries.length} row${activeWorklist.entries.length === 1 ? '' : 's'}`);
   };
 
   const onWipe = () => {
-    if (activeStash.entries.length === 0) return;
-    const ok = window.confirm(`Wipe all ${activeStash.entries.length} entries from "${activeStash.name}"?`);
+    if (activeWorklist.entries.length === 0) return;
+    const ok = window.confirm(`Wipe all ${activeWorklist.entries.length} entries from "${activeWorklist.name}"?`);
     if (!ok) return;
-    stashStore.wipeStash(activeStash.id);
+    worklistStore.wipeWorklist(activeWorklist.id);
   };
 
-  const onDeleteStash = () => {
-    const ok = window.confirm(`Delete stash "${activeStash.name}"? This cannot be undone.`);
+  const onDeleteWorklist = () => {
+    const ok = window.confirm(`Delete worklist "${activeWorklist.name}"? This cannot be undone.`);
     if (!ok) return;
-    stashStore.deleteStash(activeStash.id);
+    worklistStore.deleteWorklist(activeWorklist.id);
   };
 
   return (
     <>
-      <header style={stashHeaderStyle}>
+      <header style={worklistHeaderStyle}>
         {renaming ? (
           <input
             ref={renameRef}
@@ -279,33 +279,33 @@ function ActiveStashView() {
             style={{ cursor: 'text', fontWeight: 600, flex: 1, padding: '2px 4px', borderRadius: 3 }}
             title="Click to rename"
           >
-            {activeStash.name}
+            {activeWorklist.name}
           </span>
         )}
-        <button style={subtleBtnStyle} onClick={onCopyAll} disabled={activeStash.entries.length === 0} title="Copy all rows to clipboard">Copy</button>
-        <button style={subtleBtnStyle} onClick={onWipe} disabled={activeStash.entries.length === 0} title="Wipe all entries (keeps the stash)">Wipe</button>
-        <button style={dangerBtnStyle} onClick={onDeleteStash} title="Delete this stash entirely">✕</button>
+        <button style={subtleBtnStyle} onClick={onCopyAll} disabled={activeWorklist.entries.length === 0} title="Copy all rows to clipboard">Copy</button>
+        <button style={subtleBtnStyle} onClick={onWipe} disabled={activeWorklist.entries.length === 0} title="Wipe all entries (keeps the worklist)">Wipe</button>
+        <button style={dangerBtnStyle} onClick={onDeleteWorklist} title="Delete this worklist entirely">✕</button>
       </header>
       <div style={listStyle}>
-        {activeStash.entries.length === 0 && (
+        {activeWorklist.entries.length === 0 && (
           <div style={emptyStyle}>
             <div style={{ opacity: 0.55 }}>Empty. Shift-click parts on the board and push them here.</div>
           </div>
         )}
-        {activeStash.entries.map(entry => (
-          <StashRow key={entry.refdes} stashId={activeStash.id} entry={entry} />
+        {activeWorklist.entries.map(entry => (
+          <WorklistRow key={entry.refdes} worklistId={activeWorklist.id} entry={entry} />
         ))}
       </div>
     </>
   );
 }
 
-interface StashRowProps {
-  stashId: string;
-  entry: StashEntry;
+interface WorklistRowProps {
+  worklistId: string;
+  entry: WorklistEntry;
 }
 
-function StashRow({ stashId, entry }: StashRowProps) {
+function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   const [expanded, setExpanded] = useState(false);
   // The row is keyed by refdes upstream, so a refdes change remounts the
   // component and re-seeds noteDraft from the new entry. We deliberately do
@@ -320,16 +320,16 @@ function StashRow({ stashId, entry }: StashRowProps) {
 
   const onCycleMark = (e: React.MouseEvent) => {
     e.stopPropagation();
-    stashStore.cycleMark(stashId, entry.refdes, e.shiftKey);
+    worklistStore.cycleMark(worklistId, entry.refdes, e.shiftKey);
   };
 
   const onRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
-    stashStore.removeEntry(stashId, entry.refdes);
+    worklistStore.removeEntry(worklistId, entry.refdes);
   };
 
   const onCommitNote = () => {
-    if (noteDraft !== entry.note) stashStore.setNote(stashId, entry.refdes, noteDraft);
+    if (noteDraft !== entry.note) worklistStore.setNote(worklistId, entry.refdes, noteDraft);
   };
 
   return (
@@ -358,7 +358,7 @@ function StashRow({ stashId, entry }: StashRowProps) {
           {expanded ? '▾' : '▸'}
           {entry.note && !expanded && <span style={notePeekStyle}>{entry.note.length > 14 ? entry.note.slice(0, 14) + '…' : entry.note}</span>}
         </button>
-        <button style={removeBtnStyle} onClick={onRemove} title="Remove from stash">✕</button>
+        <button style={removeBtnStyle} onClick={onRemove} title="Remove from worklist">✕</button>
       </div>
       {expanded && (
         <textarea
@@ -510,7 +510,7 @@ const bodyStyle: React.CSSProperties = {
   overflow: 'hidden',
 };
 
-const stashHeaderStyle: React.CSSProperties = {
+const worklistHeaderStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 6,

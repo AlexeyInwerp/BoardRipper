@@ -110,26 +110,26 @@ export function pdfPanelId(fileName: string): string {
   return 'pdf-' + fileName.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
-export function stashPanelId(): string { return 'stash-panel'; }
+export function worklistPanelId(): string { return 'worklist-panel'; }
 
-export function ensureStashPanel(): void {
+export function ensureWorklistPanel(): void {
   try {
     const api = getDockviewApi();
     if (!api) return;
-    const id = stashPanelId();
+    const id = worklistPanelId();
     const existing = api.getPanel(id);
     if (existing) {
       existing.api.setActive();
       return;
     }
     // Default placement: tab into the nearest non-board, non-pdf group so the
-    // Stash panel lives alongside other tool panels (or float as a standalone
+    // Worklist panel lives alongside other tool panels (or float as a standalone
     // group if none exist).
     const anchorPanel = api.panels.find(p => !p.id.startsWith('board-') && !p.id.startsWith('pdf-'));
     api.addPanel({
       id,
-      component: 'stash',
-      title: 'Stash',
+      component: 'worklist',
+      title: 'Worklist',
       ...(anchorPanel
         ? { position: { referencePanel: anchorPanel.id } }
         : (() => {
@@ -140,7 +140,7 @@ export function ensureStashPanel(): void {
           })()),
     });
   } catch (err) {
-    log.ui.error('Failed to open Stash panel:', err);
+    log.ui.error('Failed to open Worklist panel:', err);
   }
 }
 

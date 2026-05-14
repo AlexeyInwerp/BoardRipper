@@ -5,9 +5,10 @@ import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
 import { DiagnosisNotes } from './DiagnosisNotes';
+import { WorklistPanel } from '../panels/WorklistPanel';
 import type { BoardData } from '../parsers';
 
-type SidebarTab = 'layers' | 'info' | 'search' | 'revisions';
+type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
 
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set();
 const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map();
@@ -99,6 +100,13 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
               Revisions{(hasGhosts || hasBomClusters) && <span className="tab-badge">!</span>}
             </button>
           )}
+          <button
+            className={`board-sidebar-tab ${activeTab === 'worklist' ? 'active' : ''}`}
+            onClick={() => setActiveTab('worklist')}
+            title="Multi-select scratchpad + named worklistes (mark/note/export)"
+          >
+            Worklist
+          </button>
         </div>
         <button className="board-sidebar-close" onClick={onClose} title="Close sidebar">
           ×
@@ -109,6 +117,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
         {activeTab === 'info' && <InfoTab tabId={tabId} />}
         {activeTab === 'search' && <SearchTab tabId={tabId} />}
         {activeTab === 'revisions' && showRevisionsTab && <RevisionsTab tabId={tabId} />}
+        {activeTab === 'worklist' && <WorklistPanel />}
       </div>
     </div>
   );

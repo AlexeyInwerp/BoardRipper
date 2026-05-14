@@ -4,7 +4,7 @@ import { boardStore } from './board-store';
  *  cleared on tab close, reload, or board switch. Companion to the
  *  single-`selectedPart` selection: shift-click adds/removes parts
  *  from this set without touching the primary selection. Pushing to
- *  a stash copies refdes + partIndex out of this set. */
+ *  a worklist copies refdes + partIndex out of this set. */
 
 interface TabSelection {
   /** Insertion-ordered list of partIndex. Order = navigation order. */

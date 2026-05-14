@@ -1,51 +1,51 @@
 import { boardStore } from './board-store';
 import { log } from './log-store';
 
-/** Persistent per-board "stash" — named collections of parts a repair-tech
+/** Persistent per-board "worklist" — named collections of parts a repair-tech
  *  is tracking (water damage candidates, ticket worklists, etc). Survives
  *  reload and container upgrade via IndexedDB. */
 
-export type StashMark = 'none' | 'replaced' | 'reworked' | 'cleaned';
+export type WorklistMark = 'none' | 'replaced' | 'reworked' | 'cleaned';
 
-export interface StashEntry {
+export interface WorklistEntry {
   /** Resolved part index in the currently-loaded board. May go stale on
    *  re-parse — re-resolve from `refdes` on load. */
   partIndex: number;
   /** Stable reference designator, used to re-resolve `partIndex` after the
    *  board is re-parsed (PARSER_VERSION bump, file replacement). */
   refdes: string;
-  mark: StashMark;
+  mark: WorklistMark;
   note: string;
   /** True if `refdes` couldn't be found in the current board on hydration.
    *  Row is rendered greyed-out and excluded from canvas highlight. */
   unresolved?: boolean;
 }
 
-export interface Stash {
+export interface Worklist {
   id: string;
   name: string;
   createdAt: number;
-  entries: StashEntry[];
+  entries: WorklistEntry[];
 }
 
-export interface BoardStashes {
+export interface BoardWorklistes {
   /** Cache key from board-cache (`${fileName}:${fileSize}:${lastModified}`) */
   key: string;
   /** Human-readable file name — kept so future cross-board features can list
-   *  stashes without forcing the matching board to be loaded. */
+   *  worklistes without forcing the matching board to be loaded. */
   fileName: string;
-  activeStashId: string | null;
-  stashes: Stash[];
+  activeWorklistId: string | null;
+  worklistes: Worklist[];
   updatedAt: number;
 }
 
-const DB_NAME = 'boardripper-stash';
+const DB_NAME = 'boardripper-worklist';
 const DB_VERSION = 1;
 const STORE = 'boards';
 
-class StashStore {
+class WorklistStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
-  private byKey = new Map<string, BoardStashes>();
+  private byKey = new Map<string, BoardWorklistes>();
   private hydrating = new Map<string, Promise<void>>();
   private listeners = new Set<() => void>();
 
@@ -74,22 +74,22 @@ class StashStore {
     return this.dbPromise;
   }
 
-  private async loadFromDb(key: string): Promise<BoardStashes | null> {
+  private async loadFromDb(key: string): Promise<BoardWorklistes | null> {
     try {
       const db = await this.openDB();
       return await new Promise((resolve, reject) => {
         const tx = db.transaction(STORE, 'readonly');
         const req = tx.objectStore(STORE).get(key);
-        req.onsuccess = () => resolve((req.result as BoardStashes | undefined) ?? null);
+        req.onsuccess = () => resolve((req.result as BoardWorklistes | undefined) ?? null);
         req.onerror = () => reject(req.error);
       });
     } catch (e) {
-      log.cache?.warn('stash: load failed', e);
+      log.cache?.warn('worklist: load failed', e);
       return null;
     }
   }
 
-  private async persist(value: BoardStashes): Promise<void> {
+  private async persist(value: BoardWorklistes): Promise<void> {
     try {
       const db = await this.openDB();
       await new Promise<void>((resolve, reject) => {
@@ -99,16 +99,16 @@ class StashStore {
         req.onerror = () => reject(req.error);
       });
     } catch (e) {
-      log.cache?.warn('stash: persist failed', e);
+      log.cache?.warn('worklist: persist failed', e);
     }
   }
 
   /** Re-resolve partIndex from refdes for the freshly-loaded board.
    *  Rows whose refdes is gone are flagged unresolved. */
-  private resolveEntries(stashes: Stash[]): void {
+  private resolveEntries(worklistes: Worklist[]): void {
     const board = boardStore.board;
     if (!board) {
-      for (const s of stashes) for (const e of s.entries) e.unresolved = true;
+      for (const s of worklistes) for (const e of s.entries) e.unresolved = true;
       return;
     }
     const byRefdes = new Map<string, number>();
@@ -116,7 +116,7 @@ class StashStore {
       const name = board.parts[i]?.name;
       if (name) byRefdes.set(name, i);
     }
-    for (const s of stashes) {
+    for (const s of worklistes) {
       for (const e of s.entries) {
         const idx = byRefdes.get(e.refdes);
         if (idx == null) {
@@ -129,7 +129,7 @@ class StashStore {
     }
   }
 
-  /** Hydrate the stash for the current active board tab (idempotent). Called
+  /** Hydrate the worklist for the current active board tab (idempotent). Called
    *  from the panel when it mounts and from boardStore tab-change hooks. */
   async syncToActiveTab(): Promise<void> {
     const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
@@ -138,7 +138,7 @@ class StashStore {
     if (this.byKey.has(key)) {
       // Re-resolve in case the board was re-parsed (parts re-indexed)
       const cur = this.byKey.get(key)!;
-      this.resolveEntries(cur.stashes);
+      this.resolveEntries(cur.worklistes);
       this.notify();
       return;
     }
@@ -148,14 +148,14 @@ class StashStore {
     }
     const p = (async () => {
       const loaded = await this.loadFromDb(key);
-      const value: BoardStashes = loaded ?? {
+      const value: BoardWorklistes = loaded ?? {
         key,
         fileName: tab.fileName,
-        activeStashId: null,
-        stashes: [],
+        activeWorklistId: null,
+        worklistes: [],
         updatedAt: Date.now(),
       };
-      this.resolveEntries(value.stashes);
+      this.resolveEntries(value.worklistes);
       this.byKey.set(key, value);
       this.notify();
     })();
@@ -163,8 +163,8 @@ class StashStore {
     try { await p; } finally { this.hydrating.delete(key); }
   }
 
-  /** Current board's stash record (or null if no board is active). */
-  get current(): BoardStashes | null {
+  /** Current board's worklist record (or null if no board is active). */
+  get current(): BoardWorklistes | null {
     const key = this.activeKey;
     return key ? this.byKey.get(key) ?? null : null;
   }
@@ -174,13 +174,13 @@ class StashStore {
     return tab?.cacheKey || null;
   }
 
-  get activeStash(): Stash | null {
+  get activeWorklist(): Worklist | null {
     const cur = this.current;
-    if (!cur || cur.activeStashId == null) return null;
-    return cur.stashes.find(s => s.id === cur.activeStashId) ?? null;
+    if (!cur || cur.activeWorklistId == null) return null;
+    return cur.worklistes.find(s => s.id === cur.activeWorklistId) ?? null;
   }
 
-  private getOrInit(): BoardStashes | null {
+  private getOrInit(): BoardWorklistes | null {
     const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
     if (!tab || !tab.cacheKey) return null;
     let cur = this.byKey.get(tab.cacheKey);
@@ -188,8 +188,8 @@ class StashStore {
       cur = {
         key: tab.cacheKey,
         fileName: tab.fileName,
-        activeStashId: null,
-        stashes: [],
+        activeWorklistId: null,
+        worklistes: [],
         updatedAt: Date.now(),
       };
       this.byKey.set(tab.cacheKey, cur);
@@ -197,81 +197,81 @@ class StashStore {
     return cur;
   }
 
-  private save(cur: BoardStashes): void {
+  private save(cur: BoardWorklistes): void {
     cur.updatedAt = Date.now();
     this.notify();
     void this.persist(cur);
   }
 
-  createStash(name?: string): Stash | null {
+  createWorklist(name?: string): Worklist | null {
     const cur = this.getOrInit();
     if (!cur) return null;
     const id = 'st-' + Math.random().toString(36).slice(2, 10);
     const trimmed = (name ?? '').trim();
-    const stash: Stash = {
+    const worklist: Worklist = {
       id,
-      name: trimmed || `Stash ${cur.stashes.length + 1}`,
+      name: trimmed || `Worklist ${cur.worklistes.length + 1}`,
       createdAt: Date.now(),
       entries: [],
     };
-    cur.stashes.push(stash);
-    cur.activeStashId = id;
+    cur.worklistes.push(worklist);
+    cur.activeWorklistId = id;
     this.save(cur);
-    return stash;
+    return worklist;
   }
 
-  renameStash(id: string, name: string): void {
+  renameWorklist(id: string, name: string): void {
     const cur = this.current;
     if (!cur) return;
-    const s = cur.stashes.find(x => x.id === id);
+    const s = cur.worklistes.find(x => x.id === id);
     if (!s) return;
     s.name = name.trim() || s.name;
     this.save(cur);
   }
 
-  deleteStash(id: string): void {
+  deleteWorklist(id: string): void {
     const cur = this.current;
     if (!cur) return;
-    cur.stashes = cur.stashes.filter(s => s.id !== id);
-    if (cur.activeStashId === id) {
-      cur.activeStashId = cur.stashes[0]?.id ?? null;
+    cur.worklistes = cur.worklistes.filter(s => s.id !== id);
+    if (cur.activeWorklistId === id) {
+      cur.activeWorklistId = cur.worklistes[0]?.id ?? null;
     }
     this.save(cur);
   }
 
-  setActiveStash(id: string | null): void {
+  setActiveWorklist(id: string | null): void {
     const cur = this.current;
     if (!cur) return;
-    cur.activeStashId = id;
+    cur.activeWorklistId = id;
     this.save(cur);
   }
 
-  wipeStash(id: string): void {
+  wipeWorklist(id: string): void {
     const cur = this.current;
     if (!cur) return;
-    const s = cur.stashes.find(x => x.id === id);
+    const s = cur.worklistes.find(x => x.id === id);
     if (!s) return;
     s.entries = [];
     this.save(cur);
   }
 
-  /** Push the given partIndex array into stashId, creating one if needed.
+  /** Push the given partIndex array into worklistId, creating one if needed.
    *  Skips duplicates (same refdes). Returns the count actually added. */
-  pushParts(stashId: string | null, partIndices: readonly number[]): number {
+  pushParts(worklistId: string | null, partIndices: readonly number[]): number {
     const cur = this.getOrInit();
     if (!cur) return 0;
     const board = boardStore.board;
     if (!board) return 0;
-    let stash: Stash | null = null;
-    if (stashId) {
-      stash = cur.stashes.find(s => s.id === stashId) ?? null;
+    let worklist: Worklist | null = null;
+    if (worklistId) {
+      worklist = cur.worklistes.find(s => s.id === worklistId) ?? null;
     }
-    if (!stash) {
-      // No active stash and none requested → auto-create
-      stash = this.createStash() ?? null;
-      if (!stash) return 0;
+    if (!worklist) {
+      // No active worklist and none requested → auto-create
+      worklist = this.createWorklist() ?? null;
+      if (!worklist) return 0;
     }
-    const seen = new Set(stash.entries.map(e => e.refdes));
+    const seen = new Set(worklist.entries.map(e => e.refdes));
     let added = 0;
     for (const idx of partIndices) {
       const part = board.parts[idx];
@@ -279,7 +279,7 @@ class StashStore {
       if (!refdes) continue;
       if (seen.has(refdes)) continue;
       seen.add(refdes);
-      stash.entries.push({
+      worklist.entries.push({
         partIndex: idx,
         refdes,
         mark: 'none',
@@ -293,34 +293,34 @@ class StashStore {
 
   /** Convenience for the right-click context menu — look up a part by refdes
    *  in the current board and push it into the (possibly auto-created) active
-   *  stash. Returns the resolved stash id, or null on failure. */
-  pushRefdesToActive(refdes: string): { stashId: string; added: number } | null {
+   *  worklist. Returns the resolved worklist id, or null on failure. */
+  pushRefdesToActive(refdes: string): { worklistId: string; added: number } | null {
     const board = boardStore.board;
     if (!board) return null;
     const idx = board.parts.findIndex(p => p?.name === refdes);
     if (idx < 0) return null;
     const cur = this.current ?? this.getOrInit();
     if (!cur) return null;
-    const stashId = cur.activeStashId ?? (this.createStash()?.id ?? null);
-    if (!stashId) return null;
-    const added = this.pushParts(stashId, [idx]);
-    return { stashId, added };
+    const worklistId = cur.activeWorklistId ?? (this.createWorklist()?.id ?? null);
+    if (!worklistId) return null;
+    const added = this.pushParts(worklistId, [idx]);
+    return { worklistId, added };
   }
 
-  removeEntry(stashId: string, refdes: string): void {
+  removeEntry(worklistId: string, refdes: string): void {
     const cur = this.current;
     if (!cur) return;
-    const s = cur.stashes.find(x => x.id === stashId);
+    const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return;
     const before = s.entries.length;
     s.entries = s.entries.filter(e => e.refdes !== refdes);
     if (s.entries.length !== before) this.save(cur);
   }
 
-  setMark(stashId: string, refdes: string, mark: StashMark): void {
+  setMark(worklistId: string, refdes: string, mark: WorklistMark): void {
     const cur = this.current;
     if (!cur) return;
-    const s = cur.stashes.find(x => x.id === stashId);
+    const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return;
     const e = s.entries.find(x => x.refdes === refdes);
     if (!e || e.mark === mark) return;
@@ -328,10 +328,10 @@ class StashStore {
     this.save(cur);
   }
 
-  setNote(stashId: string, refdes: string, note: string): void {
+  setNote(worklistId: string, refdes: string, note: string): void {
     const cur = this.current;
     if (!cur) return;
-    const s = cur.stashes.find(x => x.id === stashId);
+    const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return;
     const e = s.entries.find(x => x.refdes === refdes);
     if (!e || e.note === note) return;
@@ -340,11 +340,11 @@ class StashStore {
   }
 
   /** Cycle the per-row mark: none → replaced → reworked → cleaned → none. */
-  cycleMark(stashId: string, refdes: string, reverse = false): void {
-    const order: StashMark[] = ['none', 'replaced', 'reworked', 'cleaned'];
+  cycleMark(worklistId: string, refdes: string, reverse = false): void {
+    const order: WorklistMark[] = ['none', 'replaced', 'reworked', 'cleaned'];
     const cur = this.current;
     if (!cur) return;
-    const s = cur.stashes.find(x => x.id === stashId);
+    const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return;
     const e = s.entries.find(x => x.refdes === refdes);
     if (!e) return;
@@ -354,13 +354,13 @@ class StashStore {
     this.save(cur);
   }
 
-  /** Format the active stash for clipboard:
+  /** Format the active worklist for clipboard:
    *    REFDES[mark] (note)
    *  with [mark] omitted when 'none' and (note) omitted when empty. */
-  formatStashForClipboard(stashId: string): string {
+  formatWorklistForClipboard(worklistId: string): string {
     const cur = this.current;
     if (!cur) return '';
-    const s = cur.stashes.find(x => x.id === stashId);
+    const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return '';
     const lines: string[] = [];
     for (const e of s.entries) {
@@ -373,4 +373,4 @@ class StashStore {
   }
 }
 
-export const stashStore = new StashStore();
+export const worklistStore = new WorklistStore();

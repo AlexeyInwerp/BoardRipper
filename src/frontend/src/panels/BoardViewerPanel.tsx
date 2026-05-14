@@ -26,6 +26,19 @@ export function openBoardSearch(query: string, tabId?: number): void {
   }
 }
 
+// Per-tab handlers for "open a specific sidebar tab" (right-click → Worklist,
+// toolbar → Worklist, etc). Mirrors the search handler pattern above.
+type SidebarTabName = 'layers' | 'info' | 'search' | 'worklist' | 'revisions';
+const _sidebarTabHandlers = new Map<number, (tab: SidebarTabName) => void>();
+export function openBoardSidebarTab(tab: SidebarTabName, tabId?: number): void {
+  if (tabId != null) {
+    _sidebarTabHandlers.get(tabId)?.(tab);
+  } else {
+    const activeId = boardStore.activeTabId;
+    if (activeId != null) _sidebarTabHandlers.get(activeId)?.(tab);
+  }
+}
+
 export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: number }>) {
   const tabId = props.params.boardTabId;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,7 +54,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const bareAction = useBareScrollAction();
   const renderSettings = useRenderSettings();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | 'worklist' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
   const [sliderVisible, setSliderVisible] = useState(false);
   const sliderGroupRef = useRef<HTMLDivElement>(null);
@@ -60,6 +73,25 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
     };
     _boardSearchHandlers.set(tabId, handler);
     return () => { _boardSearchHandlers.delete(tabId); };
+  }, [tabId, props.api]);
+
+  // Register per-tab handler for "open this sidebar tab" requests (Worklist, etc).
+  useEffect(() => {
+    if (tabId == null) return;
+    const handler = (tab: SidebarTabName) => {
+      // Worklist is unconditional; revisions is gated on showRevisionsTab. We
+      // accept the request optimistically — BoardSidebar's own fallback effect
+      // will drop us back to 'info' if the requested tab isn't available.
+      boardStore.switchTab(tabId);
+      setSidebarOpen(true);
+      // The 'revisions' value is a valid SidebarTab inside BoardSidebar, but
+      // BoardViewerPanel's local state was narrower historically — kept here
+      // since we widened it above.
+      setSidebarTab(tab === 'revisions' ? null : tab);
+      props.api.setActive();
+    };
+    _sidebarTabHandlers.set(tabId, handler);
+    return () => { _sidebarTabHandlers.delete(tabId); };
   }, [tabId, props.api]);
 
   // Auto-open sidebar to layers tab when this tab's board first loads with

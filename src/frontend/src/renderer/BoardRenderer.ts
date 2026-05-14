@@ -25,7 +25,7 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
-import { stashStore } from '../store/stash-store';
+import { worklistStore } from '../store/worklist-store';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -219,9 +219,9 @@ export class BoardRenderer {
   private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
   private unsubscribeSelectionSet: (() => void) | null = null;
-  private unsubscribeStash: (() => void) | null = null;
+  private unsubscribeWorklist: (() => void) | null = null;
   /** Outline-only highlight overlay for the ephemeral multi-select set AND the
-   *  active stash. Single Graphics object — re-cleared and redrawn on store
+   *  active worklist. Single Graphics object — re-cleared and redrawn on store
    *  notify. Sits above standard selection at zIndex 28 (just below the rich
    *  selectionGfx at 30, so single-select keeps visual primacy). */
   private multiHighlightGfx!: Graphics;
@@ -819,12 +819,15 @@ export class BoardRenderer {
     this.crossSideGhostGfx.zIndex = 15;
     this.crossSideGhostGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
+    // multiHighlightGfx is attached to scene.root in activateScene() so the
+    // board's rotation/flip/butterfly transforms apply to the outlines too —
+    // attaching to viewport would draw them at raw mil coords, which lands
+    // in the wrong place once the board is rotated or mirrored.
     this.multiHighlightGfx = new Graphics();
     this.multiHighlightGfx.zIndex = 28;
     this.multiHighlightGfx.eventMode = 'none';
     this.viewport.addChild(this.netLinesGfx);
     this.viewport.addChild(this.selectionLabelLayer);
-    this.viewport.addChild(this.multiHighlightGfx);
 
     // Recreate elevated labels (see init() for detailed comments)
     const labelStyle = { fontSize: 12, fill: BOARD_COLORS.labelPin, fontFamily: 'monospace' };
@@ -1001,12 +1004,13 @@ export class BoardRenderer {
     this.elevatedPinLabel.visible = false;
     this.elevatedPinLabel.eventMode = 'none';
     this.elevatedPinBg.visible = false;
+    // multiHighlightGfx is created here but parented to scene.root in
+    // activateScene so board rotation/flip transforms apply.
     this.multiHighlightGfx = new Graphics();
     this.multiHighlightGfx.zIndex = 28;
     this.multiHighlightGfx.eventMode = 'none';
     this.viewport.addChild(this.netLinesGfx);
     this.viewport.addChild(this.selectionLabelLayer);
-    this.viewport.addChild(this.multiHighlightGfx);
 
     // Capture shift state at pointerdown — pixi-viewport's "clicked" event
     // fires on pointerup but the underlying event reaches handlers via
@@ -1106,7 +1110,7 @@ export class BoardRenderer {
       this.redrawMultiHighlight();
       this.needsRender = true;
     });
-    this.unsubscribeStash = stashStore.subscribe(() => {
+    this.unsubscribeWorklist = worklistStore.subscribe(() => {
       this.redrawMultiHighlight();
       this.needsRender = true;
     });
@@ -1820,6 +1824,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
       this.activeScene.root.removeChild(this.elevatedPinBg!);
@@ -1854,6 +1859,11 @@ export class BoardRenderer {
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
+    // Multi-select / active-worklist outlines — child of scene.root so the
+    // board's rotation/flip transforms apply. Rendered via standard root
+    // pass (no RenderLayer) at zIndex 28 — sits above ghosts/dim, below
+    // the rich selection highlight (30) and pin/net labels (35).
+    scene.root.addChild(this.multiHighlightGfx);
     scene.root.addChild(this.elevatedPinBg!);
     scene.root.addChild(this.elevatedPinLabel!);
     scene.root.addChild(this.elevatedPartBg!);
@@ -2010,9 +2020,9 @@ export class BoardRenderer {
           this.deactivateScene();
         }
         this.board = board;
-        // Hydrate this board's persisted stashes (resolves refdes → partIndex
+        // Hydrate this board's persisted worklistes (resolves refdes → partIndex
         // against the freshly-loaded parts) and repaint the multi-highlight.
-        void stashStore.syncToActiveTab().then(() => this.redrawMultiHighlight());
+        void worklistStore.syncToActiveTab().then(() => this.redrawMultiHighlight());
         this.redrawMultiHighlight();
       } else if (board && !this.activeScene) {
         // Same board but scene was lost (e.g. settings update while paused failed
@@ -4365,8 +4375,8 @@ export class BoardRenderer {
     if (!shift) boardStore.selectPart(null);
   }
 
-  /** Redraw the multi-select + active-stash outline overlay. Cheap — a few
-   *  dozen thin rectangles even for a busy stash. Called on store notify
+  /** Redraw the multi-select + active-worklist outline overlay. Cheap — a few
+   *  dozen thin rectangles even for a busy worklist. Called on store notify
    *  and on board change. No-op until the renderer is fully initialized. */
   private redrawMultiHighlight(): void {
     const gfx = this.multiHighlightGfx;
@@ -4383,13 +4393,13 @@ export class BoardRenderer {
       const h = b.maxY - b.minY;
       gfx.rect(b.minX, b.minY, w, h).stroke({ color, alpha, width: widthMils, alignment: 0.5 });
     };
-    // Active stash first (drawn under selection set so a part in both shows
+    // Active worklist first (drawn under selection set so a part in both shows
     // the brighter ephemeral colour on top).
     const tabId = boardStore.activeTabId;
     if (tabId != null) {
-      const stash = stashStore.activeStash;
-      if (stash) {
-        for (const e of stash.entries) {
+      const worklist = worklistStore.activeWorklist;
+      if (worklist) {
+        for (const e of worklist.entries) {
           if (e.unresolved) continue;
           drawOutline(e.partIndex, 0xffaa00, 0.95, 8);
         }
@@ -4622,7 +4632,7 @@ export class BoardRenderer {
     this.unsubscribeTheme?.();
     this.unsubscribeViewCommands?.();
     this.unsubscribeSelectionSet?.();
-    this.unsubscribeStash?.();
+    this.unsubscribeWorklist?.();
     if (this.boundShiftCapture) {
       this.containerEl.removeEventListener('pointerdown', this.boundShiftCapture, true);
       this.boundShiftCapture = null;

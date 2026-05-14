@@ -4,8 +4,9 @@ import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
-import { ensurePdfPanel, ensureStashPanel } from '../store/dockview-api';
-import { stashStore } from '../store/stash-store';
+import { ensurePdfPanel } from '../store/dockview-api';
+import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
+import { worklistStore } from '../store/worklist-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge } from './SearchScopeBadge';
@@ -323,19 +324,19 @@ export function ContextMenu() {
     );
   };
 
-  const onAddToStash = (refdes: string) => {
+  const onAddToWorklist = (refdes: string) => {
     contextMenuStore.hide();
-    const r = stashStore.pushRefdesToActive(refdes);
+    const r = worklistStore.pushRefdesToActive(refdes);
     if (!r) {
-      boardStore.addToast(`Could not stash '${refdes}' (no active board?)`, 'error');
+      boardStore.addToast(`Could not worklist '${refdes}' (no active board?)`, 'error');
       return;
     }
-    ensureStashPanel();
-    const stashName = stashStore.activeStash?.name ?? 'stash';
+    openBoardSidebarTab('worklist');
+    const worklistName = worklistStore.activeWorklist?.name ?? 'worklist';
     if (r.added > 0) {
-      boardStore.addToast(`Added '${refdes}' to ${stashName}`, 'info');
+      boardStore.addToast(`Added '${refdes}' to ${worklistName}`, 'info');
     } else {
-      boardStore.addToast(`'${refdes}' already in ${stashName}`, 'info');
+      boardStore.addToast(`'${refdes}' already in ${worklistName}`, 'info');
     }
   };
 
@@ -369,14 +370,14 @@ export function ContextMenu() {
         })}
         {compName && (
           <button
-            key="qa-stash-part"
+            key="qa-worklist-part"
             className="context-menu-action-btn"
-            title={`Add '${compName}' to the active stash`}
-            data-testid="qa-stash-part"
-            onClick={(e) => { e.stopPropagation(); onAddToStash(compName); }}
+            title={`Add '${compName}' to the active worklist`}
+            data-testid="qa-worklist-part"
+            onClick={(e) => { e.stopPropagation(); onAddToWorklist(compName); }}
           >
             <IconStack2 size={14} />
-            <span>Stash</span>
+            <span>Worklist</span>
           </button>
         )}
       </div>
