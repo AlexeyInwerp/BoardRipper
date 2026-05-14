@@ -68,7 +68,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -122,6 +122,11 @@ func (db *DB) migrate() error {
 	if ver < 8 {
 		if err := db.migrateV8(); err != nil {
 			return fmt.Errorf("v8: %w", err)
+		}
+	}
+	if ver < 9 {
+		if err := db.migrateV9(); err != nil {
+			return fmt.Errorf("v9: %w", err)
 		}
 	}
 
@@ -382,6 +387,96 @@ func (db *DB) migrateV8() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 8); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// migrateV9 prunes stale auto-matched bindings created by the pre-fix
+// scanner — most notably PDFs with junk basenames ("1.pdf", "4.pdf",
+// pure-digit names) that substring-matched any board whose name happened
+// to contain that digit, and cross-folder bindings that wouldn't satisfy
+// the new same-folder-or-strong-match rule. Only `auto_matched = 1` rows
+// are evaluated; manual bindings created via the Library UI are untouched.
+func (db *DB) migrateV9() error {
+	// Phase 1: read all auto-matched bindings (reader pool — no writer lock).
+	rows, err := db.reader.Query(`
+		SELECT b.id, fb.filename, fb.path, fp.filename, fp.path
+		  FROM bindings b
+		  JOIN files fb ON fb.id = b.board_file_id
+		  JOIN files fp ON fp.id = b.pdf_file_id
+		 WHERE b.auto_matched = 1`)
+	if err != nil {
+		return fmt.Errorf("list auto-bindings: %w", err)
+	}
+	type autoRow struct {
+		id           int64
+		bFile, bPath string
+		pFile, pPath string
+	}
+	var auto []autoRow
+	for rows.Next() {
+		var r autoRow
+		if err := rows.Scan(&r.id, &r.bFile, &r.bPath, &r.pFile, &r.pPath); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan auto-binding: %w", err)
+		}
+		auto = append(auto, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Phase 2: re-apply the new auto-bind criteria. Mirror scanner.autoMatchBindings.
+	var toDelete []int64
+	for _, r := range auto {
+		if IsLikelyJunkPdfName(r.pFile) {
+			toDelete = append(toDelete, r.id)
+			continue
+		}
+		score := MatchScore(r.bFile, r.pFile)
+		if score < 50 {
+			toDelete = append(toDelete, r.id)
+			continue
+		}
+		if filepath.Dir(r.bPath) != filepath.Dir(r.pPath) && score < 80 {
+			toDelete = append(toDelete, r.id)
+		}
+	}
+
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if len(toDelete) > 0 {
+		// Chunked DELETE — SQLite defaults to a 999-parameter limit; 500 is a
+		// comfortable margin and keeps each DELETE short enough to log on errors.
+		const chunk = 500
+		for i := 0; i < len(toDelete); i += chunk {
+			end := i + chunk
+			if end > len(toDelete) {
+				end = len(toDelete)
+			}
+			placeholders := strings.Repeat("?,", end-i-1) + "?"
+			args := make([]any, end-i)
+			for j, id := range toDelete[i:end] {
+				args[j] = id
+			}
+			if _, err := tx.Exec(`DELETE FROM bindings WHERE id IN (`+placeholders+`)`, args...); err != nil {
+				return fmt.Errorf("delete stale bindings: %w", err)
+			}
+		}
+		log.Printf("Bindings cleanup (migrateV9): removed %d stale auto-bindings (of %d auto-matched total)", len(toDelete), len(auto))
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 9); err != nil {
 		return err
 	}
 
