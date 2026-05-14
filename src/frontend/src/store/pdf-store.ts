@@ -667,15 +667,30 @@ class PdfStore extends Emitter {
     } catch { /* cache miss — fall through to extraction */ }
 
     // Extract from PDF, notifying periodically for the progress bar.
+    // We drive streamTextContent() with a reader instead of calling
+    // page.getTextContent(): pdf.js v5 implements getTextContent() with
+    // `for await (const v of readableStream)`, which needs the
+    // ReadableStream async-iterator protocol — absent on Safari before 17.4
+    // (March 2024). The reader-loop form works on every browser that
+    // ships ReadableStream.
     try {
       const NOTIFY_INTERVAL = 5; // update UI every N pages
       for (let i = 1; i <= pdfDoc.pageCount; i++) {
         if (!this._documents.has(pdfDoc.fileName)) return; // closed
         const page = await pdfDoc.doc.getPage(i);
-        const content = await page.getTextContent();
+        const collected: TextItem[] = [];
+        const reader = page.streamTextContent().getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            for (const it of value.items) collected.push(it as TextItem);
+          }
+        } finally {
+          reader.releaseLock();
+        }
         const items: PdfTextItem[] = [];
-        for (const item of content.items) {
-          const ti = item as TextItem;
+        for (const ti of collected) {
           if (!ti.str) continue;
           // Skip degenerate whitespace-only items with absurd widths — pdf.js emits
           // these as inter-column spacers in some PDFs and they cover the entire page,
@@ -698,7 +713,8 @@ class PdfStore extends Emitter {
         if (i % NOTIFY_INTERVAL === 0) this.notify(); // progress update
       }
     } catch (err) {
-      log.pdf.error('text extraction failed:', err);
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      log.pdf.error('text extraction failed:', detail, err);
     }
 
     this.notify();
