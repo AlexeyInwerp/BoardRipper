@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { IconReplace, IconBrush, IconSparkles, IconMinus } from '@tabler/icons-react';
+import { IconReplace, IconBandage, IconSparkles, IconMinus } from '@tabler/icons-react';
 import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -14,7 +14,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 const MARK_ICON: Record<WorklistMark, typeof IconReplace> = {
   none: IconMinus,
   replaced: IconReplace,
-  reworked: IconBrush,   // brush = re-flowed, touched up, re-soldered
+  reworked: IconBandage, // bandage = repaired / patched (electronics rework)
   cleaned: IconSparkles,
 };
 const MARK_SHORT_LABEL: Record<WorklistMark, string> = {
@@ -248,8 +248,11 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   const [noteDraft, setNoteDraft] = useState(entry.note);
   /** Click-time popover under the mark button. Set on cycle, auto-cleared
    *  after 1.6s. Bypasses the browser-native `title` 1+s hover delay so
-   *  the new mark name appears immediately at click. */
-  const [flashMark, setFlashMark] = useState<WorklistMark | null>(null);
+   *  the new mark name appears immediately at click. Uses position:fixed
+   *  + button bounding rect so the chip escapes ancestor `overflow:auto`
+   *  (sidebar scroll container) — earlier `position:absolute` was clipped
+   *  by the worklist list and could end up tucked behind the canvas. */
+  const [flash, setFlash] = useState<{ mark: WorklistMark; x: number; y: number } | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -263,13 +266,16 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   const onCycleMark = (e: React.MouseEvent) => {
     e.stopPropagation();
     worklistStore.cycleMark(worklistId, entry.refdes, e.shiftKey);
-    // Read the freshly-set mark from the store (cycleMark already notified;
-    // entry is the stale prop snapshot from this render pass).
     const updated = worklistStore.activeWorklist?.entries.find(x => x.refdes === entry.refdes);
     if (updated) {
-      setFlashMark(updated.mark);
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setFlash({
+        mark: updated.mark,
+        x: rect.left + rect.width / 2,
+        y: rect.bottom + 4,
+      });
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-      flashTimerRef.current = setTimeout(() => setFlashMark(null), 1600);
+      flashTimerRef.current = setTimeout(() => setFlash(null), 1600);
     }
   };
 
@@ -285,34 +291,34 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   return (
     <div style={{ ...rowStyle, opacity: entry.unresolved ? 0.45 : 1 }}>
       <div style={rowMainStyle} onClick={onFocus}>
-        <div style={markBtnWrapStyle}>
-          <button
+        <button
+          style={{
+            ...markBtnStyle,
+            color: MARK_BTN_COLOR[entry.mark],
+            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
+          }}
+          onClick={onCycleMark}
+          title={MARK_TITLE[entry.mark]}
+        >
+          {(() => {
+            const Icon = MARK_ICON[entry.mark];
+            return <Icon size={14} stroke={2} />;
+          })()}
+        </button>
+        {flash && (
+          <div
             style={{
-              ...markBtnStyle,
-              color: MARK_BTN_COLOR[entry.mark],
-              borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
+              ...flashTooltipStyle,
+              left: flash.x,
+              top: flash.y,
+              background: flash.mark === 'none' ? 'var(--panel-bg, #222)' : MARK_BTN_COLOR[flash.mark],
+              color: flash.mark === 'none' ? 'var(--text, #ddd)' : '#0a0a0a',
             }}
-            onClick={onCycleMark}
-            title={MARK_TITLE[entry.mark]}
+            role="status"
           >
-            {(() => {
-              const Icon = MARK_ICON[entry.mark];
-              return <Icon size={14} stroke={2} />;
-            })()}
-          </button>
-          {flashMark != null && (
-            <div
-              style={{
-                ...flashTooltipStyle,
-                background: flashMark === 'none' ? 'var(--panel-bg, #222)' : MARK_BTN_COLOR[flashMark],
-                color: flashMark === 'none' ? 'var(--text, #ddd)' : '#0a0a0a',
-              }}
-              role="status"
-            >
-              {MARK_SHORT_LABEL[flashMark]}
-            </div>
-          )}
-        </div>
+            {MARK_SHORT_LABEL[flash.mark]}
+          </div>
+        )}
         <span style={{ fontFamily: 'monospace', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {entry.refdes}
           {entry.unresolved && <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 11 }}>(missing)</span>}
@@ -486,22 +492,20 @@ const markBtnStyle: React.CSSProperties = {
   padding: 0,
 };
 
-const markBtnWrapStyle: React.CSSProperties = {
-  position: 'relative',
-  flexShrink: 0,
-};
-
 const flashTooltipStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  left: '50%',
+  // position:fixed so the chip escapes ancestor overflow:auto (sidebar
+  // scroll container) and any z-index stacking context — earlier
+  // position:absolute was clipped by the worklist list and ended up
+  // behind the canvas at row edges. left/top are set per-click from
+  // the button's getBoundingClientRect.
+  position: 'fixed',
   transform: 'translateX(-50%)',
   padding: '3px 8px',
   fontSize: 11,
   fontWeight: 700,
   borderRadius: 3,
   whiteSpace: 'nowrap',
-  zIndex: 50,
+  zIndex: 10000,
   boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
   pointerEvents: 'none',
 };
