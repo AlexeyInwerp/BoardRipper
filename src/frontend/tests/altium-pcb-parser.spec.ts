@@ -101,3 +101,50 @@ test.describe('altium-props', () => {
     expect(rows).toEqual(['X', 'Y']);
   });
 });
+
+test.describe('altium-stream', () => {
+  test('reads typed scalars little-endian', async () => {
+    const { AltiumStream } = await import('../src/parsers/altium/altium-stream');
+    // 17 bytes of payload (u8 + u32 + i32 + f64) + 1 trailing byte so eof()===false after reads
+    const buf = new Uint8Array(18);
+    const dv = new DataView(buf.buffer);
+    dv.setUint8(0, 0xAB);
+    dv.setUint32(1, 0x12345678, true);
+    dv.setInt32(5, -42, true);
+    dv.setFloat64(9, 3.14, true);
+    const s = new AltiumStream(buf);
+    expect(s.readUint8()).toBe(0xAB);
+    expect(s.readUint32()).toBe(0x12345678);
+    expect(s.readInt32()).toBe(-42);
+    expect(s.readFloat64()).toBeCloseTo(3.14);
+    expect(s.eof()).toBe(false);
+    expect(s.pos).toBe(17);
+  });
+
+  test('readShortPascalString reads uint8-prefixed string', async () => {
+    const { AltiumStream } = await import('../src/parsers/altium/altium-stream');
+    const buf = new Uint8Array([3, 0x41, 0x42, 0x43]);
+    expect(new AltiumStream(buf).readShortPascalString()).toBe('ABC');
+  });
+
+  test('readFullPascalString reads uint32-prefixed string', async () => {
+    const { AltiumStream } = await import('../src/parsers/altium/altium-stream');
+    const buf = new Uint8Array(8);
+    new DataView(buf.buffer).setUint32(0, 3, true);
+    buf.set([0x58, 0x59, 0x5A], 4);
+    expect(new AltiumStream(buf).readFullPascalString()).toBe('XYZ');
+  });
+
+  test('peek + skip + slice work', async () => {
+    const { AltiumStream } = await import('../src/parsers/altium/altium-stream');
+    const buf = new Uint8Array([1, 2, 3, 4, 5]);
+    const s = new AltiumStream(buf);
+    expect(s.peekUint8()).toBe(1);
+    expect(s.pos).toBe(0);
+    s.skip(2);
+    expect(s.pos).toBe(2);
+    const sub = s.slice(2);
+    expect(Array.from(sub)).toEqual([3, 4]);
+    expect(s.pos).toBe(4);
+  });
+});
