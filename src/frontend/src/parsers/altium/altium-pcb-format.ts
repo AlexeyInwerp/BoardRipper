@@ -34,7 +34,12 @@ export const AltiumPcbFormat: FormatDescriptor = {
   docUrl: 'docs/formats/ALTIUM_PCB_FORMAT.md',
   hasPads: true,
   hasTraces: true,
-  hasLayers: true,
+  // hasLayers stays false on purpose: setting it would hide the Top/Bottom +
+  // Traces toolbar toggles (Toolbar.tsx:447 — TVW pattern assumes per-layer
+  // visibility from the sidebar replaces those). The sidebar Layers tab is
+  // driven by BoardData.layerNames being populated (board-store.ts:805) so
+  // we still get per-layer visibility there — without sacrificing the
+  // toolbar toggles users expect on a side-poled board view.
   detect(header: Uint8Array): boolean {
     if (startsWith(header, CFB_MAGIC)) return true;
     const probe = new TextDecoder('utf-8', { fatal: false }).decode(header.subarray(0, Math.min(64, header.byteLength)));
