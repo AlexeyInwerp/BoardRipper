@@ -449,3 +449,26 @@ test.describe('parseAltiumPcb (end-to-end)', () => {
     expect(exts).toEqual(expect.arrayContaining(['.pcbdoc', '.cmpcbdoc', '.cspcbdoc']));
   });
 });
+
+test.describe('altium-ascii', () => {
+  test('parses a minimal hand-crafted PCB ASCII buffer', async () => {
+    const { parseAltiumAscii } = await import('../src/parsers/altium/altium-ascii');
+    const ascii = [
+      'PCB ASCII Version 5.0',
+      '|RECORD=Board|ORIGINX=0|ORIGINY=0|LAYER1NAME=TOP|LAYER32NAME=BOTTOM|',
+      '|RECORD=Net|NAME=GND|',
+      '|RECORD=Net|NAME=VCC|',
+      '|RECORD=Component|SOURCEDESIGNATOR=R1|PATTERN=0603|LAYER=TOP|X=100000|Y=200000|ROTATION=0|',
+      '|RECORD=Pad|NAME=1|COMPONENTINDEX=0|NETINDEX=0|LAYER=TOP|X=100000|Y=200000|XSIZE=10000|YSIZE=10000|TOPSHAPE=1|HOLESIZE=0|ROTATION=0|',
+      '|RECORD=Pad|NAME=2|COMPONENTINDEX=0|NETINDEX=1|LAYER=TOP|X=110000|Y=200000|XSIZE=10000|YSIZE=10000|TOPSHAPE=1|HOLESIZE=0|ROTATION=0|',
+    ].join('\n');
+    const buf = new TextEncoder().encode(ascii).buffer;
+    const board = parseAltiumAscii(buf as ArrayBuffer);
+    expect(board.format).toBe('ALTIUM_PCB');
+    expect(board.parts.length).toBe(1);
+    expect(board.parts[0].name).toBe('R1');
+    expect(board.parts[0].pins.length).toBe(2);
+    expect(board.nets.has('GND')).toBe(true);
+    expect(board.nets.has('VCC')).toBe(true);
+  });
+});
