@@ -10,9 +10,9 @@
  *   ParseNets6Data, ParseClasses6Data, ParseWideStrings6Data
  */
 
-import type { ANet6, AClass6, AWideStringTable } from './altium-types';
+import type { ABoard6, ANet6, AClass6, AWideStringTable } from './altium-types';
 import { AltiumStream } from './altium-stream';
-import { iterateRecords, readPropString } from './altium-props';
+import { iterateRecords, parsePropBagText, readPropInt, readPropString } from './altium-props';
 
 /**
  * Nets6/Data — property-bag text. Net index = record order (0-based);
@@ -69,6 +69,38 @@ export function parseClasses6(buf: Uint8Array): AClass6[] {
  * version drift across Altium releases. We accept a malformed tail by
  * stopping early — the P1 assembler only needs lookup-not-found tolerance.
  */
+/**
+ * Board6/Data is property-bag text. Unlike other text streams it is *not*
+ * length-prefixed by record — the whole stream is one big property bag.
+ * Some files prepend a uint32 length wrapper; detect by checking whether
+ * the first 4 bytes form a length matching the rest of the stream.
+ *
+ * Port from: altium_parser_pcb.cpp :: ParseBoard6Data
+ */
+export function parseBoard6(buf: Uint8Array): ABoard6 {
+  let offset = 0;
+  if (buf.length >= 4) {
+    const len = new DataView(buf.buffer, buf.byteOffset, 4).getUint32(0, true);
+    if (len > 0 && len + 4 === buf.length) offset = 4;
+  }
+  const text = new TextDecoder('utf-8').decode(buf.subarray(offset));
+  const props = parsePropBagText(text);
+
+  const layerNames: string[] = [];
+  for (let i = 1; i <= 82; i++) {
+    layerNames.push(readPropString(props, `LAYER${i}NAME`, ''));
+  }
+  while (layerNames.length > 0 && layerNames[layerNames.length - 1] === '') layerNames.pop();
+
+  return {
+    name: readPropString(props, 'BOARDDESCRIPTION', ''),
+    originX: readPropInt(props, 'ORIGINX', 0),
+    originY: readPropInt(props, 'ORIGINY', 0),
+    layerNames,
+    formatVersion: readPropString(props, 'VERSION', ''),
+  };
+}
+
 export function parseWideStrings6(buf: Uint8Array): AWideStringTable {
   const s = new AltiumStream(buf);
   const map = new Map<number, string>();

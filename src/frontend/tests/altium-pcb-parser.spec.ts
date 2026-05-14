@@ -267,3 +267,30 @@ test.describe('altium-records (lookup tables)', () => {
     expect(typeof table.byIndex(0)).toBe('string');
   });
 });
+
+test.describe('altium-records (Board6)', () => {
+  test('parseBoard6 reads origin + layer names', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseBoard6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Board6/Data')!;
+    const board = parseBoard6(buf);
+    expect(typeof board.originX).toBe('number');
+    expect(typeof board.originY).toBe('number');
+    expect(Number.isFinite(board.originX)).toBe(true);
+    expect(Array.isArray(board.layerNames)).toBe(true);
+    expect(board.layerNames.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('parseBoard6 on 4-layer sample yields 4 named copper layers', async () => {
+    test.skip(!fs.existsSync(SAMPLE_ESD));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseBoard6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_ESD).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Board6/Data')!;
+    const board = parseBoard6(buf);
+    const populated = board.layerNames.filter(n => n.length > 0);
+    expect(populated.length).toBeGreaterThanOrEqual(4);
+  });
+});
