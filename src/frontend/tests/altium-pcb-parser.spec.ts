@@ -411,3 +411,25 @@ test.describe('altium-assembler', () => {
     expect(sides.has('top') || sides.has('bottom')).toBe(true);
   });
 });
+
+test.describe('parseAltiumPcb (end-to-end)', () => {
+  test('parses PCB.PcbDoc end-to-end via the FormatDescriptor', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    const ab = fs.readFileSync(SAMPLE_PCB).buffer;
+    const board = await AltiumPcbFormat.parse(ab as ArrayBuffer);
+    expect(board.format).toBe('ALTIUM_PCB');
+    expect(board.parts.length).toBeGreaterThan(0);
+    console.log(`[PCB] parts=${board.parts.length} nets=${board.nets.size} bounds=${JSON.stringify(board.bounds)}`);
+  });
+
+  test('parses ESD_GW1N_4L.PcbDoc end-to-end', async () => {
+    test.skip(!fs.existsSync(SAMPLE_ESD));
+    const { AltiumPcbFormat } = await import('../src/parsers/altium/altium-pcb-format');
+    const ab = fs.readFileSync(SAMPLE_ESD).buffer;
+    const board = await AltiumPcbFormat.parse(ab as ArrayBuffer);
+    expect(board.format).toBe('ALTIUM_PCB');
+    expect(board.parts.length).toBeGreaterThan(10);
+    console.log(`[ESD] parts=${board.parts.length} nets=${board.nets.size}`);
+  });
+});

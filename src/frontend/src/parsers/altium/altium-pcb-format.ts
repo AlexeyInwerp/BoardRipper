@@ -13,6 +13,7 @@
 
 import type { FormatDescriptor } from '../registry';
 import type { BoardData } from '../types';
+import { parseAltiumPcb } from './altium-pcb-parser';
 
 const CFB_MAGIC = new Uint8Array([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
 const ASCII_MAGIC = 'PCB ASCII Version 5.0';
@@ -37,7 +38,7 @@ export const AltiumPcbFormat: FormatDescriptor = {
     const probe = new TextDecoder('utf-8', { fatal: false }).decode(header.subarray(0, Math.min(64, header.byteLength)));
     return probe.startsWith(ASCII_MAGIC) || probe.trimStart().startsWith(ASCII_MAGIC);
   },
-  async parse(_buffer: ArrayBuffer): Promise<BoardData> {
-    throw new Error('Altium PCB parser not yet implemented (Task 14 will replace this).');
+  async parse(buffer: ArrayBuffer): Promise<BoardData> {
+    return parseAltiumPcb(buffer);
   },
 };
