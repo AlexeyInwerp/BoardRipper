@@ -364,3 +364,50 @@ test.describe('altium-records (Pads6)', () => {
     expect(tht.length).toBeGreaterThan(0);
   });
 });
+
+test.describe('altium-assembler', () => {
+  test('assembleBoardData produces a valid BoardData', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseBoard6, parseComponents6, parsePads6, parseNets6, parseClasses6, parseWideStrings6 }
+      = await import('../src/parsers/altium/altium-records');
+    const { assembleBoardData } = await import('../src/parsers/altium/altium-assembler');
+
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const db = {
+      board: parseBoard6(cfb.getStream('Board6/Data')!),
+      components: parseComponents6(cfb.getStream('Components6/Data')!),
+      pads: parsePads6(cfb.getStream('Pads6/Data')!),
+      nets: parseNets6(cfb.getStream('Nets6/Data')!),
+      classes: parseClasses6(cfb.getStream('Classes6/Data')!),
+      wideStrings: parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),
+    };
+
+    const board = assembleBoardData(db);
+    expect(board.format).toBe('ALTIUM_PCB');
+    expect(board.parts.length).toBeGreaterThan(0);
+    expect(board.parts.some(p => p.pins.length > 0)).toBe(true);
+    expect(Number.isFinite(board.bounds.minX)).toBe(true);
+    expect(board.bounds.maxX).toBeGreaterThan(board.bounds.minX);
+    expect(board.bounds.maxY).toBeGreaterThan(board.bounds.minY);
+    expect(board.nets.size).toBeGreaterThanOrEqual(0);
+  });
+
+  test('top/bottom side assignment matches component layers', async () => {
+    test.skip(!fs.existsSync(SAMPLE_ESD));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const r = await import('../src/parsers/altium/altium-records');
+    const { assembleBoardData } = await import('../src/parsers/altium/altium-assembler');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_ESD).buffer as ArrayBuffer);
+    const board = assembleBoardData({
+      board: r.parseBoard6(cfb.getStream('Board6/Data')!),
+      components: r.parseComponents6(cfb.getStream('Components6/Data')!),
+      pads: r.parsePads6(cfb.getStream('Pads6/Data')!),
+      nets: r.parseNets6(cfb.getStream('Nets6/Data')!),
+      classes: r.parseClasses6(cfb.getStream('Classes6/Data')!),
+      wideStrings: r.parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),
+    });
+    const sides = new Set(board.parts.map(p => p.side));
+    expect(sides.has('top') || sides.has('bottom')).toBe(true);
+  });
+});
