@@ -407,33 +407,26 @@ export function Toolbar() {
         )}
       </div>
 
-      {/* ── Rotation & mirroring ──
-          Rotation is disabled in butterfly mode: rotating the spread layout
-          would tilt the side-by-side joint off-screen and the auto-separation
-          axis logic doesn't track manual rotation. */}
       <div className="toolbar-group">
         <button
           onClick={() => boardStore.rotateCCW()}
-          disabled={butterfly}
           className="toolbar-btn toolbar-btn-icon"
-          data-tooltip={butterfly ? "Rotate CCW (disabled in butterfly)" : "Rotate CCW (90°)"}
+          data-tooltip="Rotate CCW (90°)"
         >
           ↺
         </button>
         <button
           onClick={() => boardStore.rotate180()}
-          disabled={butterfly}
           className="toolbar-btn toolbar-btn-icon"
-          data-tooltip={butterfly ? "Rotate 180° (disabled in butterfly)" : "Rotate 180°"}
+          data-tooltip="Rotate 180°"
           style={{ fontSize: '0.7em', padding: '0 4px', minWidth: 0, fontWeight: 600 }}
         >
           180°
         </button>
         <button
           onClick={() => boardStore.rotateCW()}
-          disabled={butterfly}
           className="toolbar-btn toolbar-btn-icon"
-          data-tooltip={butterfly ? "Rotate CW (disabled in butterfly)" : "Rotate CW (90°)"}
+          data-tooltip="Rotate CW (90°)"
         >
           ↻
         </button>

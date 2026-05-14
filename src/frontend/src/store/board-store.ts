@@ -235,9 +235,12 @@ interface ViewPrefs {
   dimMode: 'off' | 'dim' | 'darklight';
   showHoverInfo: boolean;
   followPdf: boolean;
+  /** When true, newly opened single-layer boards default to butterfly mode.
+   *  Toggled by the user clicking the butterfly toolbar button. */
+  defaultButterfly: boolean;
 }
 
-const DEFAULT_VIEW_PREFS: ViewPrefs = { netLineMode: 'off', dimMode: 'dim', showHoverInfo: true, followPdf: false };
+const DEFAULT_VIEW_PREFS: ViewPrefs = { netLineMode: 'off', dimMode: 'dim', showHoverInfo: true, followPdf: false, defaultButterfly: false };
 
 /**
  * Build a renderable BoardData from a base board + a chosen revision +
@@ -749,6 +752,11 @@ class BoardStore extends Emitter {
           // happened above); the layer list represents the file's etch stack
           // so users expect TOP-of-stack visible on first open.
           if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
+          if (vp.defaultButterfly && !(cached.layerNames && cached.layerNames.length > 0)) {
+            tab.butterfly = true;
+            tab.showTop = true;
+            tab.showBottom = true;
+          }
           if (cached.parserNotes) {
             for (const note of cached.parserNotes) this.addToast(note, 'info');
           }
@@ -795,6 +803,11 @@ class BoardStore extends Emitter {
           tab.showBottom = true;
         }
         if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames);
+        if (vp.defaultButterfly && !(board.layerNames && board.layerNames.length > 0)) {
+          tab.butterfly = true;
+          tab.showTop = true;
+          tab.showBottom = true;
+        }
 
         await boardCache.put(file.name, file.size, file.lastModified, board);
 
@@ -1026,6 +1039,8 @@ class BoardStore extends Emitter {
     } else {
       this.updateActiveTab({ butterfly: false, showTop: true, showBottom: false });
     }
+    // Persist the user's choice so subsequent board opens default to it.
+    saveViewPrefs({ ...loadViewPrefs(), defaultButterfly: newButterfly });
     this.notify();
   }
 
@@ -1345,7 +1360,9 @@ class BoardStore extends Emitter {
   private _saveCurrentViewPrefs() {
     const tab = this.activeTab;
     if (!tab) return;
-    saveViewPrefs({ netLineMode: tab.netLineMode, dimMode: tab.dimMode, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
+    // Merge with stored prefs so fields not derived from the active tab
+    // (e.g. defaultButterfly) survive partial updates.
+    saveViewPrefs({ ...loadViewPrefs(), netLineMode: tab.netLineMode, dimMode: tab.dimMode, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
   /** Cycle the net-line visualization: off → star → chain → chain-adjacent → off. */
