@@ -150,6 +150,10 @@ interface BoardScene {
   copperDropsLayer: Container | null;
   copperDropsTop: Container | null;
   copperDropsBottom: Container | null;
+  /** Filled copper-pour polygons — toggled by showCopperPours, default ON */
+  copperPoursLayer: Container | null;
+  copperPoursTop: Container | null;
+  copperPoursBottom: Container | null;
   /** Via/drill hole overlay container */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */

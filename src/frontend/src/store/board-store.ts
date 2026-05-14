@@ -885,6 +885,7 @@ class BoardStore extends Emitter {
       showSilkscreen: true,
       showPads: true,
       showCopperDrops: false,
+      showCopperPours: true,
       showPins: true,
       showOutlines: true,
       showLabels: true,
