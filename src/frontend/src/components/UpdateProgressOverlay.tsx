@@ -37,19 +37,24 @@ export function UpdateProgressOverlay() {
   const restarting = useSyncExternalStore(subscribe, getRestarting);
   // progressLen drives re-render when entries arrive — primitive snapshot
   // keeps useSyncExternalStore's stability invariant intact (no new object
-  // identities on every read).
+  // identities on every read). Read here (not in the inner component) so the
+  // store subscription persists across restarting transitions.
   useSyncExternalStore(subscribe, getProgressLen);
 
+  if (!restarting) return null;
+  // Inner component owns `elapsed` state. Splitting the gate here means each
+  // restart mounts a fresh instance, so `elapsed` naturally resets to 0
+  // without a setState-in-effect.
+  return <UpdateProgressActive />;
+}
+
+function UpdateProgressActive() {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    if (!restarting) return;
     const start = Date.now();
-    setElapsed(0);
     const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(id);
-  }, [restarting]);
-
-  if (!restarting) return null;
+  }, []);
 
   const fromVersion = updateStore.restartingFromVersion || updateStore.state.current_version;
   // Show only the tail — older entries are typically environment setup

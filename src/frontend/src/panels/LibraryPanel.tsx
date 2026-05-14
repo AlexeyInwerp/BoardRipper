@@ -49,8 +49,12 @@ function useDebouncedValue<T extends string>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
     if (value === debounced) return;
-    if (value === '') { setDebounced(value); return; }
-    const id = setTimeout(() => setDebounced(value), delayMs);
+    // Empty values short-circuit the debounce so clearing the search feels
+    // instant. Both paths schedule via setTimeout (rather than a synchronous
+    // setState in this effect) — same async update shape, avoids the
+    // react-hooks "cascading renders" error.
+    const delay = value === '' ? 0 : delayMs;
+    const id = setTimeout(() => setDebounced(value), delay);
     return () => clearTimeout(id);
   }, [value, debounced, delayMs]);
   return debounced;
