@@ -88,6 +88,9 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
       ? computeBBox(pins.map(p => p.position))
       : { minX: origin.x - 50, minY: origin.y - 50, maxX: origin.x + 50, maxY: origin.y + 50 };
 
+    const meta: NonNullable<Part['meta']> = { angleDeg: compRot };
+    if (comp.pattern) meta.package = comp.pattern;
+    if (comp.componentName) meta.partType = comp.componentName;
     parts.push({
       name: comp.designator || `_unnamed_${ci}`,
       side,
@@ -95,12 +98,12 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
       origin,
       pins,
       bounds,
-      layer: copperLayerByAltium.get(comp.layer),
-      meta: {
-        package: comp.pattern,
-        partType: comp.componentName,
-        angleDeg: compRot,
-      },
+      // Part.layer left undefined: no other parser sets it, and the renderer
+      // only consumes Part.layer for selection highlighting (multi-layer
+      // butterfly views) — but our hasLayers flag is false. Setting it makes
+      // some labels render twice on the canvas. The side field is the
+      // canonical top/bottom signal.
+      meta,
     });
   }
 
