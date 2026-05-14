@@ -15,7 +15,7 @@ export function altiumToMils(value: number): number {
 }
 
 export function altiumYToMils(value: number): number {
-  // `0 || 0` normalises -0 → 0 so downstream equality checks behave.
+  // Trailing `|| 0` collapses -0 → 0 so downstream Object.is equality checks behave.
   return (-value / ALTIUM_UNITS_PER_MIL) || 0;
 }
 

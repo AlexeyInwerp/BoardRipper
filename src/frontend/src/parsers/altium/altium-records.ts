@@ -1,13 +1,19 @@
 /**
- * Altium lookup-table decoders — Nets6, Classes6, WideStrings6.
+ * Altium record-stream decoders.
  *
- * These three streams are consumed by every other Altium decoder:
- *   - Nets6/Data         — net index → net name (text property-bag)
- *   - Classes6/Data      — class name + kind + member list (text property-bag)
- *   - WideStrings6/Data  — non-ASCII string pool (binary, version-dependent)
+ *   Lookup tables (consumed by every other decoder):
+ *     - Nets6/Data         — net index → net name (text property-bag)
+ *     - Classes6/Data      — class name + kind + member list (text property-bag)
+ *     - WideStrings6/Data  — non-ASCII string pool (binary, version-dependent)
+ *
+ *   Geometry/metadata (P1 subset):
+ *     - Board6/Data        — origin + layer stackup + board name (text property-bag)
+ *     - Components6/Data   — component instances (text property-bag)
+ *     - Pads6/Data         — pin pads + through-hole pads (binary records)
  *
  * Port from KiCad: pcbnew/pcb_io/altium/altium_parser_pcb.cpp ::
- *   ParseNets6Data, ParseClasses6Data, ParseWideStrings6Data
+ *   ParseNets6Data, ParseClasses6Data, ParseWideStrings6Data,
+ *   ParseBoard6Data, ParseComponents6Data, ParsePads6Data
  */
 
 import type { ABoard6, AComponent6, ANet6, AClass6, APad6, AWideStringTable } from './altium-types';
@@ -74,12 +80,6 @@ export function parseClasses6(buf: Uint8Array): AClass6[] {
 }
 
 /**
- * WideStrings6/Data — binary string pool. KiCad reads it as a sequence of
- * (uint32 index, uint32 byteLength, utf16le bytes) tuples; layout has minor
- * version drift across Altium releases. We accept a malformed tail by
- * stopping early — the P1 assembler only needs lookup-not-found tolerance.
- */
-/**
  * Board6/Data is property-bag text. Unlike other text streams it is *not*
  * length-prefixed by record — the whole stream is one big property bag.
  * Some files prepend a uint32 length wrapper; detect by checking whether
@@ -111,6 +111,12 @@ export function parseBoard6(buf: Uint8Array): ABoard6 {
   };
 }
 
+/**
+ * WideStrings6/Data — binary string pool. KiCad reads it as a sequence of
+ * (uint32 index, uint32 byteLength, utf16le bytes) tuples; layout has minor
+ * version drift across Altium releases. We accept a malformed tail by
+ * stopping early — the P1 assembler only needs lookup-not-found tolerance.
+ */
 export function parseWideStrings6(buf: Uint8Array): AWideStringTable {
   const s = new AltiumStream(buf);
   const map = new Map<number, string>();
