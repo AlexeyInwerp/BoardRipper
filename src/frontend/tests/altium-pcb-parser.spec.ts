@@ -148,3 +148,32 @@ test.describe('altium-stream', () => {
     expect(s.pos).toBe(4);
   });
 });
+
+test.describe('altium-cfb', () => {
+  test('opens PCB.PcbDoc and enumerates streams', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const ab = fs.readFileSync(SAMPLE_PCB).buffer;
+    const cfb = openAltiumCfb(ab as ArrayBuffer);
+    const names = cfb.listStreams();
+    expect(names).toContain('FileHeader');
+    expect(names).toContain('Board6/Data');
+    expect(names).toContain('Components6/Data');
+    expect(names).toContain('Pads6/Data');
+    expect(names).toContain('Nets6/Data');
+    const fh = cfb.getStream('FileHeader');
+    expect(fh).not.toBeNull();
+    expect(fh!.byteLength).toBe(24);
+    // FileHeader = u32 length prefix + UTF-16LE wide-char body ("PCB 5.0 Bi…").
+    const wide = new TextDecoder('utf-16le').decode(fh!.subarray(4));
+    expect(wide).toContain('PCB 5.0');
+  });
+
+  test('returns null for unknown streams', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const ab = fs.readFileSync(SAMPLE_PCB).buffer;
+    const cfb = openAltiumCfb(ab as ArrayBuffer);
+    expect(cfb.getStream('NoSuchStream/Data')).toBeNull();
+  });
+});
