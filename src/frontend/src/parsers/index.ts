@@ -11,6 +11,7 @@ import { TVWFormat } from './tvw-format';
 import { AllegroBRDFormat } from './allegro-brd-format';
 import { BDVFormat } from './bdv-format';
 import { BDVAscFormat } from './bdv-asc-format';
+import { AltiumPcbFormat } from './altium/altium-pcb-format';
 
 // Register all known formats in detection-priority order.
 // Content-based detection runs in this order; the first match wins.
@@ -25,6 +26,7 @@ registerFormat(MentorNeutralFormat); // Before CAD — both share .cad; content 
 registerFormat(CADFormat);
 registerFormat(XZZFormat);
 registerFormat(TVWFormat);
+registerFormat(AltiumPcbFormat);
 
 export type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Part, Pin, Net, Point, BBox, Pad, SilkscreenPath, Trace, Via } from './types';
 export { computeBBox, buildNets } from './types';

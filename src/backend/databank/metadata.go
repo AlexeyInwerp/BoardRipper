@@ -21,6 +21,9 @@ var boardExtensions = map[string]bool{
 	".cad": true, // GenCAD 1.4, Mentor Boardstation Neutral
 	".pcb": true, // XZZ
 	".tvw": true, // Teboview
+	".pcbdoc":   true, // Altium Designer / SolidWorks PCB Connector
+	".cmpcbdoc": true, // Circuit Maker
+	".cspcbdoc": true, // Circuit Studio
 }
 
 // PDF extension.

@@ -432,4 +432,20 @@ test.describe('parseAltiumPcb (end-to-end)', () => {
     expect(board.parts.length).toBeGreaterThan(10);
     console.log(`[ESD] parts=${board.parts.length} nets=${board.nets.size}`);
   });
+
+  test('parseBoardFile dispatches .PcbDoc by content detection', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { parseBoardFile } = await import('../src/parsers');
+    const ab = fs.readFileSync(SAMPLE_PCB).buffer;
+    const board = await parseBoardFile(ab as ArrayBuffer, 'PCB.PcbDoc');
+    expect(board.format).toBe('ALTIUM_PCB');
+  });
+
+  test('AltiumPcbFormat is registered globally', async () => {
+    await import('../src/parsers'); // triggers registration side-effects
+    const { getFormat, getAllExtensions } = await import('../src/parsers');
+    expect(getFormat('ALTIUM_PCB')).toBeTruthy();
+    const exts = getAllExtensions();
+    expect(exts).toEqual(expect.arrayContaining(['.pcbdoc', '.cmpcbdoc', '.cspcbdoc']));
+  });
 });
