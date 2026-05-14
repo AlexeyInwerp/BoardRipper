@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { IconReplace, IconBandage, IconSparkles, IconMinus } from '@tabler/icons-react';
+import { IconReplace, IconBandage, IconSparkles, IconMinus, IconClipboardText } from '@tabler/icons-react';
 import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -75,6 +75,44 @@ export function WorklistPanel() {
     }
   };
 
+  /** Read the clipboard, validate the `-[name]-` header, and import as a
+   *  new active worklist. Entries whose refdes can't be found in this
+   *  board are still imported but flagged unresolved — useful when the
+   *  sender's board version is slightly off but you want their notes. */
+  const onImportFromClipboard = async () => {
+    let text = '';
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      boardStore.addToast(
+        `Clipboard read failed: ${e instanceof Error ? e.message : String(e)}`,
+        'error',
+      );
+      return;
+    }
+    if (!text.trim()) {
+      boardStore.addToast('Clipboard is empty.', 'error');
+      return;
+    }
+    const r = worklistStore.importFromText(text);
+    if (!r) {
+      boardStore.addToast(
+        'Clipboard does not look like a worklist. First line must be -[name]-.',
+        'error',
+      );
+      return;
+    }
+    const missing = r.total - r.resolved;
+    if (missing > 0) {
+      boardStore.addToast(
+        `Imported "${r.created}": ${r.resolved}/${r.total} parts found on this board (${missing} missing).`,
+        'info',
+      );
+    } else {
+      boardStore.addToast(`Imported "${r.created}" (${r.total} parts).`, 'info');
+    }
+  };
+
   if (!hasBoard) {
     return (
       <div style={emptyStyle}>
@@ -116,7 +154,15 @@ export function WorklistPanel() {
               </button>
             );
           })}
-          <button style={newTabStyle} onClick={onCreateWorklist} title="New worklist">+</button>
+          <button style={newTabStyle} onClick={onCreateWorklist} title="New empty worklist">+</button>
+          <button
+            style={{ ...newTabStyle, display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={onImportFromClipboard}
+            title="Import a worklist from the clipboard. Must start with -[name]- on the first line."
+          >
+            <IconClipboardText size={13} stroke={1.8} />
+            <span>Import</span>
+          </button>
         </div>
       </section>
 

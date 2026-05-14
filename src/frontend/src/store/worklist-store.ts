@@ -394,15 +394,18 @@ class WorklistStore {
     this.save(cur);
   }
 
-  /** Format the active worklist for clipboard:
-   *    REFDES[mark] (note)
-   *  with [mark] omitted when 'none' and (note) omitted when empty. */
+  /** Format a worklist for clipboard. First line is the marker
+   *    `-[<name>]-`
+   *  followed by one entry per line:
+   *    `REFDES[mark] (note)`
+   *  with `[mark]` omitted when 'none' and ` (note)` omitted when empty.
+   *  The marker doubles as the import header — see `parseWorklistText`. */
   formatWorklistForClipboard(worklistId: string): string {
     const cur = this.current;
     if (!cur) return '';
     const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return '';
-    const lines: string[] = [];
+    const lines: string[] = [`-[${s.name}]-`];
     for (const e of s.entries) {
       let line = e.refdes;
       if (e.mark !== 'none') line += `[${e.mark}]`;
@@ -410,6 +413,86 @@ class WorklistStore {
       lines.push(line);
     }
     return lines.join('\n');
+  }
+
+  /** Try to parse text as a worklist. Returns null if the text doesn't look
+   *  like one (first non-empty line must match `-[name]-`). Subsequent lines
+   *  follow the `REFDES[mark] (note)` schema written by
+   *  `formatWorklistForClipboard`; unknown mark words become 'none' and the
+   *  raw token after the refdes is captured into the note for forensics. */
+  static parseWorklistText(text: string): {
+    name: string;
+    entries: Array<{ refdes: string; mark: WorklistMark; note: string }>;
+  } | null {
+    const lines = text.split(/\r?\n/);
+    // Skip leading blanks
+    let i = 0;
+    while (i < lines.length && lines[i].trim() === '') i++;
+    if (i >= lines.length) return null;
+    const headerMatch = lines[i].trim().match(/^-\[(.+)\]-$/);
+    if (!headerMatch) return null;
+    const name = headerMatch[1].trim();
+    if (!name) return null;
+    i++;
+    // Row regex: refdes (any non-whitespace tokens up to the first `[` or
+    // `(`), optional `[mark]`, optional ` (note)`. Note can contain `)`
+    // characters by being greedy — `(.*)\)` at end of line.
+    const rowRe = /^\s*(\S+?)(?:\[([a-z]+)\])?(?:\s*\((.*)\))?\s*$/i;
+    const knownMarks = new Set<WorklistMark>(['none', 'replaced', 'reworked', 'cleaned']);
+    const entries: Array<{ refdes: string; mark: WorklistMark; note: string }> = [];
+    for (; i < lines.length; i++) {
+      const raw = lines[i].trim();
+      if (!raw) continue;
+      const m = raw.match(rowRe);
+      if (!m) continue;
+      const refdes = m[1];
+      const markRaw = (m[2] ?? 'none').toLowerCase() as WorklistMark;
+      const mark = knownMarks.has(markRaw) ? markRaw : 'none';
+      const note = (m[3] ?? '').trim();
+      entries.push({ refdes, mark, note });
+    }
+    return { name, entries };
+  }
+
+  /** Import a worklist from raw text (typically the clipboard). Returns
+   *  - `{ created, total, resolved }` on success
+   *  - `null` if the text isn't a valid worklist (no `-[name]-` header).
+   *
+   *  Entries whose refdes can't be found in the current board are still
+   *  imported, but flagged `unresolved` — they render greyed-out in the
+   *  panel and skip the canvas highlight, so the user sees what's missing
+   *  without losing the marks/notes the sender attached. The name is
+   *  reused as-is — duplicates are allowed (rename inline if you care). */
+  importFromText(text: string): { created: string; total: number; resolved: number } | null {
+    const parsed = WorklistStore.parseWorklistText(text);
+    if (!parsed) return null;
+    const board = boardStore.board;
+    const cur = this.getOrInit();
+    if (!cur) return null;
+    const id = 'wl-' + Math.random().toString(36).slice(2, 10);
+    const worklist: Worklist = {
+      id,
+      name: parsed.name,
+      createdAt: Date.now(),
+      entries: [],
+    };
+    let resolved = 0;
+    for (const p of parsed.entries) {
+      const idx = board ? board.parts.findIndex(x => x?.name === p.refdes) : -1;
+      const entry: WorklistEntry = {
+        partIndex: idx >= 0 ? idx : 0,
+        refdes: p.refdes,
+        mark: p.mark,
+        note: p.note,
+      };
+      if (idx < 0) entry.unresolved = true;
+      else resolved++;
+      worklist.entries.push(entry);
+    }
+    cur.worklistes.push(worklist);
+    cur.activeWorklistId = id;
+    this.save(cur);
+    return { created: parsed.name, total: parsed.entries.length, resolved };
   }
 }
 
