@@ -10,8 +10,10 @@
  *   ParseNets6Data, ParseClasses6Data, ParseWideStrings6Data
  */
 
-import type { ABoard6, AComponent6, ANet6, AClass6, AWideStringTable } from './altium-types';
+import type { ABoard6, AComponent6, ANet6, AClass6, APad6, AWideStringTable } from './altium-types';
 import { AltiumStream } from './altium-stream';
+import { ALTIUM_LAYER } from './altium-layers';
+import { log } from '../../store/log-store';
 import {
   iterateRecords,
   parsePropBagText,
@@ -154,5 +156,122 @@ export function parseComponents6(buf: Uint8Array): AComponent6[] {
       locked: readPropBool(props, 'LOCKED', false),
     });
   }
+  return out;
+}
+
+/**
+ * Pads6/Data is a binary stream of length-prefixed records. Each record is:
+ *
+ *   uint8  recordType (must be 2 = PAD)
+ *   --- Subrecord 1 (name) ---
+ *   uint32 len1
+ *   uint8  nameLen, name[nameLen]                           // ReadWxString = short-pascal
+ *   (any trailing bytes inside len1 are skipped)
+ *   --- Subrecord 2,3,4 (each: uint32 length + body, all skipped) ---
+ *   --- Subrecord 5 (pad geometry, ≥110 bytes) ---
+ *   uint32 len5  (≥110; layout has version-conditional tail)
+ *   uint8  layer_v6
+ *   uint8  flags1, uint8 flags2
+ *   uint16 net,  skip(2)
+ *   uint16 component, skip(4)                               // pos 13 within body
+ *   int32  posX,  int32 posY                                // raw Altium units (no Y-flip; assembler does it)
+ *   int32  topX,  int32 topY                                // size
+ *   int32  midX,  int32 midY                                // unused in P1
+ *   int32  botX,  int32 botY                                // unused in P1
+ *   int32  holeSize                                         // pos 49
+ *   uint8  topShape, uint8 midShape, uint8 botShape
+ *   f64    direction (degrees)
+ *   uint8  plated, skip(1)
+ *   uint8  padmode, skip(23)
+ *   int32  pastemaskManual, int32 soldermaskManual
+ *   skip(7)
+ *   uint8  pastemaskMode, uint8 soldermaskMode, skip(3)     // pos 106
+ *   (version tail: holerotation, tolayer/fromlayer, pad-to-die …
+ *    — we skip to end of subrecord via len5)
+ *   --- Subrecord 6 (optional size+shape table, ≥596 bytes, skipped) ---
+ *   uint32 len6 + body
+ *
+ * Port from: altium_parser_pcb.cpp :: APAD6::APAD6 (lines 920-1089).
+ */
+export function parsePads6(buf: Uint8Array): APad6[] {
+  const s = new AltiumStream(buf);
+  const out: APad6[] = [];
+  const PAD_RECORD = 2;
+
+  while (!s.eof()) {
+    const recordType = s.readUint8();
+    if (recordType !== PAD_RECORD) {
+      log.parser.warn(`Pads6: unexpected record type ${recordType} at pos ${s.pos - 1}, stopping`);
+      break;
+    }
+
+    // Subrecord 1 — name (ReadWxString = uint8 length + bytes), wrapped in uint32.
+    const len1 = s.readUint32();
+    const sub1End = s.pos + len1;
+    let name = '';
+    if (len1 >= 1 && len1 <= s.remaining()) {
+      const nameByteLen = s.readUint8();
+      if (nameByteLen <= s.remaining()) {
+        name = new TextDecoder('latin1').decode(s.slice(nameByteLen));
+      }
+    }
+    s.pos = sub1End;
+
+    // Subrecords 2, 3, 4 — skipped entirely.
+    for (let i = 0; i < 3; i++) {
+      if (s.remaining() < 4) break;
+      const subLen = s.readUint32();
+      s.pos += subLen;
+    }
+
+    // Subrecord 5 — pad geometry (≥110 bytes).
+    if (s.remaining() < 4) break;
+    const len5 = s.readUint32();
+    const sub5End = s.pos + len5;
+    if (len5 < 110 || sub5End > buf.byteLength) {
+      log.parser.warn(`Pads6: subrecord5 length ${len5} too small or out of bounds at pos ${s.pos}`);
+      break;
+    }
+
+    const layer = s.readUint8();                                  // +1
+    s.skip(2);                                                    // +2  flags1, flags2
+    const netIndex = s.readInt16();                               // +2
+    s.skip(2);                                                    // +2  padding
+    const componentIndex = s.readInt16();                         // +2
+    s.skip(4);                                                    // +4  padding  -> pos 13 within sub5
+    const x = s.readInt32();                                      // +4
+    const y = s.readInt32();                                      // +4  raw Altium Y (assembler flips)
+    const xsize = s.readInt32();                                  // +4
+    const ysize = s.readInt32();                                  // +4
+    s.skip(4 * 4);                                                // +16 mid + bot sizes (4 int32)
+    const holeSize = s.readInt32();                               // +4  -> pos 49
+    const topShape = s.readUint8();                               // +1
+    s.skip(2);                                                    // +2  mid + bot shape
+    const rotation = s.readFloat64();                             // +8  pad rotation (degrees)
+    // remainder of subrecord 5 (plated, padmode, masks, version tail) — skip.
+    s.pos = sub5End;
+
+    // Subrecord 6 — optional size-and-shape table, skipped.
+    if (s.remaining() >= 4) {
+      const len6 = s.readUint32();
+      s.pos += len6;
+    }
+
+    out.push({
+      name,
+      componentIndex,
+      netIndex,
+      layer,
+      x,
+      y,
+      xsize: Math.max(0, xsize),
+      ysize: Math.max(0, ysize),
+      topShape,
+      holeSize,
+      rotation,
+      isThroughHole: layer === ALTIUM_LAYER.MULTI_LAYER,
+    });
+  }
+
   return out;
 }

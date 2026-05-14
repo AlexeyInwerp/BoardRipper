@@ -333,3 +333,34 @@ test.describe('altium-records (Components6)', () => {
     expect(['top', 'bottom', 'both'].some(s => sides.has(s as 'top' | 'bottom' | 'both'))).toBe(true);
   });
 });
+
+test.describe('altium-records (Pads6)', () => {
+  test('parsePads6 yields a non-empty list with sane fields', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parsePads6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Pads6/Data')!;
+    const pads = parsePads6(buf);
+    expect(pads.length).toBeGreaterThan(0);
+    for (const p of pads) {
+      expect(typeof p.name).toBe('string');
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+      expect(p.xsize).toBeGreaterThanOrEqual(0);
+      expect(p.ysize).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('ESD_GW1N_4L has dozens of pads', async () => {
+    test.skip(!fs.existsSync(SAMPLE_ESD));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parsePads6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_ESD).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Pads6/Data')!;
+    const pads = parsePads6(buf);
+    expect(pads.length).toBeGreaterThan(30);  // 58KB / ~250 bytes/record ≈ 230 expected; ≥30 catches catastrophic mis-walk
+    const tht = pads.filter(p => p.isThroughHole);
+    expect(tht.length).toBeGreaterThan(0);
+  });
+});
