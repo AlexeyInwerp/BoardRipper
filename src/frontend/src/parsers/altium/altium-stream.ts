@@ -10,9 +10,11 @@ const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
 
 export class AltiumStream {
   pos = 0;
-  private dv: DataView;
+  private readonly buf: Uint8Array;
+  private readonly dv: DataView;
 
-  constructor(private readonly buf: Uint8Array) {
+  constructor(buf: Uint8Array) {
+    this.buf = buf;
     this.dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   }
 
