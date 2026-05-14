@@ -103,6 +103,20 @@ export interface AFill6 {
   rotation: number;
 }
 
+export interface ARegion6 {
+  layer: number;
+  netIndex: number;
+  componentIndex: number;
+  /** Outer polygon vertices in raw Altium units (Y in Altium orientation). */
+  vertices: { x: number; y: number }[];
+  /** Optional inner cutout polygons. */
+  holes: { x: number; y: number }[][];
+  /** From the property bag: 0=COPPER, 1=POLYGON_CUTOUT, 4=CAVITY_DEFINITION, 5=BOARD_CUTOUT. */
+  kind: number;
+  /** From the property bag: true if vertices use the extended encoding (with per-vertex arc data). */
+  isShapeBased: boolean;
+}
+
 export interface AltiumPcbDb {
   board: ABoard6;
   components: AComponent6[];
@@ -111,6 +125,7 @@ export interface AltiumPcbDb {
   vias: AVia6[];
   arcs: AArc6[];
   fills: AFill6[];
+  regions: ARegion6[];
   nets: ANet6[];
   classes: AClass6[];
   wideStrings: AWideStringTable;

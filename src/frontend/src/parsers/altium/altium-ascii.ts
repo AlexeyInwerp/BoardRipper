@@ -97,6 +97,7 @@ export function parseAltiumAscii(buffer: ArrayBuffer): BoardData {
     vias: [],
     arcs: [],
     fills: [],
+    regions: [],
     nets,
     classes: [],
     wideStrings: { byIndex: () => '' },

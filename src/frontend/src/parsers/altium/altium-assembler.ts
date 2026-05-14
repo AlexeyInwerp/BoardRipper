@@ -17,6 +17,7 @@ import type {
   AVia6,
   AArc6,
   AFill6,
+  ARegion6,
 } from './altium-types';
 import { altiumToMils, altiumYToMils, altiumAngleToDegrees } from './altium-units';
 import { altiumLayerSide, ALTIUM_LAYER } from './altium-layers';
@@ -123,6 +124,7 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
   const traces: Trace[] = [
     ...buildTraces(db.tracks, netNames, copperLayerByAltium),
     ...buildArcTraces(db.arcs, netNames, copperLayerByAltium),
+    ...buildRegionOutlineTraces(db.regions, netNames, copperLayerByAltium),
   ];
 
   const vias: Via[] = buildVias(db.vias, netNames, copperLayerByAltium);
@@ -221,6 +223,7 @@ function collectUsedCopperLayers(db: AltiumPcbDb): Set<number> {
   for (const t of db.tracks) if (isCopper(t.layer)) used.add(t.layer);
   for (const a of db.arcs) if (isCopper(a.layer)) used.add(a.layer);
   for (const f of db.fills) if (isCopper(f.layer)) used.add(f.layer);
+  for (const r of db.regions) if (isCopper(r.layer)) used.add(r.layer);
   for (const v of db.vias) {
     // A via's layer-span ends are themselves copper layer ids.
     if (isCopper(v.layerStart)) used.add(v.layerStart);
@@ -390,6 +393,43 @@ function buildFillPads(fills: AFill6[], netNames: string[]): Pad[] {
       height: h,
       angleDeg: altiumAngleToDegrees(f.rotation),
     });
+  }
+  return out;
+}
+
+/**
+ * Emit each Regions6 outline polygon as a series of Trace segments along
+ * the polygon perimeter. Not a true fill (no renderer support for filled
+ * polygon copper), but a visible boundary marking where the GND/VCC pour
+ * actually lives — significantly more informative than nothing. Skip
+ * board-cutout and polygon-cutout regions (they're holes, not copper).
+ */
+function buildRegionOutlineTraces(
+  regions: ARegion6[],
+  netNames: string[],
+  copperLayer: Map<number, number>,
+): Trace[] {
+  const out: Trace[] = [];
+  const REGION_KIND_POLYGON_CUTOUT = 1;
+  const REGION_KIND_BOARD_CUTOUT = 5;
+  // Use a deliberately thick width so the polygon boundary reads as
+  // copper-area-edge rather than fine route. ~3 mils is visible at most zooms.
+  const OUTLINE_WIDTH_MILS = 3;
+  for (const r of regions) {
+    if (r.kind === REGION_KIND_POLYGON_CUTOUT || r.kind === REGION_KIND_BOARD_CUTOUT) continue;
+    const layer = copperLayer.get(r.layer);
+    if (layer === undefined) continue;
+    if (r.vertices.length < 2) continue;
+    const net = netNameAt(r.netIndex, netNames);
+    const verts = r.vertices.map(v => ({ x: altiumToMils(v.x), y: altiumYToMils(v.y) }));
+    for (let i = 0; i < verts.length - 1; i++) {
+      out.push({ start: verts[i], end: verts[i + 1], width: OUTLINE_WIDTH_MILS, net, layer });
+    }
+    // Close the polygon if the file didn't already include a closing vertex.
+    const a = verts[0], b = verts[verts.length - 1];
+    if (Math.hypot(a.x - b.x, a.y - b.y) > 0.1) {
+      out.push({ start: b, end: a, width: OUTLINE_WIDTH_MILS, net, layer });
+    }
   }
   return out;
 }

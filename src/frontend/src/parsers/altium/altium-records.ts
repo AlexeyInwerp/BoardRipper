@@ -26,6 +26,7 @@ import type {
   AVia6,
   AArc6,
   AFill6,
+  ARegion6,
   AWideStringTable,
 } from './altium-types';
 import { AltiumStream } from './altium-stream';
@@ -403,6 +404,100 @@ export function parseFills6(buf: Uint8Array): AFill6[] {
     const y2 = body.readInt32();
     const rotation = body.readFloat64();
     out.push({ layer, netIndex, componentIndex, x1, y1, x2, y2, rotation });
+  }
+  return out;
+}
+
+/**
+ * Regions6/Data (and ShapeBasedRegions6/Data) — copper-pour polygons.
+ * recordType = 11. KiCad ParseRegions6Data; covers both regular and shape-
+ * based regions in a single decoder (the latter just has ISSHAPEBASED=TRUE
+ * in the embedded property bag and uses per-vertex extended encoding).
+ *
+ * Layout (after the type byte + subrecord length):
+ *   u8  layer
+ *   u8  flags1 / u8 flags2
+ *   u16 net
+ *   u16 polygon
+ *   u16 component
+ *   skip 5
+ *   u16 holecount
+ *   skip 2
+ *   ReadProperties() — KEY=VALUE| text with ISSHAPEBASED, KIND, etc.
+ *   u32 num_outline_vertices
+ *   (extended-vertex layout iff isShapeBased || kind ∈ {BOARD_CUTOUT, POLYGON_CUTOUT})
+ *     per vertex: u8 isRound + i32×4 (pos.x, pos.y, center.x, center.y) + i32 radius + f64×2 angles
+ *     (vertex count is bumped by 1 in this branch — closing vertex included)
+ *   else:
+ *     per vertex: f64 x, f64 y  (NOTE: f64, not i32)
+ *   then `holecount` hole loops:
+ *     u32 num_hole_vertices, per vertex f64 x + f64 y
+ */
+export function parseRegions6(buf: Uint8Array): ARegion6[] {
+  const out: ARegion6[] = [];
+  for (const { body } of iterateSingleSubrecord(buf, 11)) {
+    const layer = body.readUint8();
+    body.skip(2); // flags1, flags2
+    const netIndex = body.readInt16();
+    body.skip(2); // polygon index
+    const componentIndex = body.readInt16();
+    body.skip(5);
+    const holeCount = body.readUint16();
+    body.skip(2);
+
+    // Property bag — uint32 length prefix followed by `len` bytes of ASCII KEY=VALUE|...
+    const propLen = body.readUint32();
+    if (propLen > body.remaining()) {
+      log.parser.warn(`altium: Regions6 prop-bag length ${propLen} > remaining ${body.remaining()}; skipping record`);
+      continue;
+    }
+    const propBytes = body.slice(propLen);
+    const propText = new TextDecoder('utf-8', { fatal: false }).decode(propBytes).replace(/\0+$/, '');
+    const props = parsePropBagText(propText);
+    const kind = readPropInt(props, 'KIND', 0);
+    const isShapeBased = readPropBool(props, 'ISSHAPEBASED', false);
+    const REGION_KIND_BOARD_CUTOUT = 5;
+    const REGION_KIND_POLYGON_CUTOUT = 1;
+    const extended = isShapeBased
+      || kind === REGION_KIND_BOARD_CUTOUT
+      || kind === REGION_KIND_POLYGON_CUTOUT;
+
+    let numOutline = body.readUint32();
+    if (extended) numOutline += 1; // closing vertex
+
+    const vertices: { x: number; y: number }[] = [];
+    for (let i = 0; i < numOutline; i++) {
+      if (body.remaining() <= 0) break;
+      if (extended) {
+        body.readUint8();                 // isRound (ignored — straight-line approximation only)
+        const x = body.readInt32();
+        const y = body.readInt32();
+        body.skip(4 + 4);                 // center.x, center.y
+        body.skip(4);                     // radius
+        body.skip(8 + 8);                 // angle1, angle2
+        vertices.push({ x, y });
+      } else {
+        if (body.remaining() < 16) break;
+        const x = body.readFloat64();
+        const y = body.readFloat64();
+        vertices.push({ x, y });
+      }
+    }
+
+    const holes: { x: number; y: number }[][] = [];
+    for (let h = 0; h < holeCount; h++) {
+      if (body.remaining() < 4) break;
+      const numHole = body.readUint32();
+      const holePts: { x: number; y: number }[] = [];
+      for (let i = 0; i < numHole && body.remaining() >= 16; i++) {
+        const x = body.readFloat64();
+        const y = body.readFloat64();
+        holePts.push({ x, y });
+      }
+      if (holePts.length > 0) holes.push(holePts);
+    }
+
+    out.push({ layer, netIndex, componentIndex, vertices, holes, kind, isShapeBased });
   }
   return out;
 }

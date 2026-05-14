@@ -383,6 +383,10 @@ test.describe('altium-assembler', () => {
       vias: r.parseVias6(cfb.getStream('Vias6/Data') ?? new Uint8Array()),
       arcs: r.parseArcs6(cfb.getStream('Arcs6/Data') ?? new Uint8Array()),
       fills: r.parseFills6(cfb.getStream('Fills6/Data') ?? new Uint8Array()),
+      regions: [
+        ...r.parseRegions6(cfb.getStream('Regions6/Data') ?? new Uint8Array()),
+        ...r.parseRegions6(cfb.getStream('ShapeBasedRegions6/Data') ?? new Uint8Array()),
+      ],
       nets: parseNets6(cfb.getStream('Nets6/Data')!),
       classes: parseClasses6(cfb.getStream('Classes6/Data')!),
       wideStrings: parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),
@@ -412,6 +416,10 @@ test.describe('altium-assembler', () => {
       vias: r.parseVias6(cfb.getStream('Vias6/Data') ?? new Uint8Array()),
       arcs: r.parseArcs6(cfb.getStream('Arcs6/Data') ?? new Uint8Array()),
       fills: r.parseFills6(cfb.getStream('Fills6/Data') ?? new Uint8Array()),
+      regions: [
+        ...r.parseRegions6(cfb.getStream('Regions6/Data') ?? new Uint8Array()),
+        ...r.parseRegions6(cfb.getStream('ShapeBasedRegions6/Data') ?? new Uint8Array()),
+      ],
       nets: r.parseNets6(cfb.getStream('Nets6/Data')!),
       classes: r.parseClasses6(cfb.getStream('Classes6/Data')!),
       wideStrings: r.parseWideStrings6(cfb.getStream('WideStrings6/Data') ?? new Uint8Array()),

@@ -23,7 +23,9 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 // 50: ALTIUM_PCB parser added (Phase 1) — parts/pins/nets from CFB streams.
 // 51: ALTIUM_PCB Phase 2 partial — pads/traces/vias/arcs/fills + layerNames + Part.layer.
 // 52: ALTIUM_PCB layerNames now filtered to layers with actual geometry.
-const PARSER_VERSION = 52;
+// 53: ALTIUM_PCB outline envelopes all geometry; Part.layer dropped; Regions6
+//     polygons surface as outline-trace segments. Empty meta fields elided.
+const PARSER_VERSION = 53;
 
 interface CachedBoard {
   key: string;
