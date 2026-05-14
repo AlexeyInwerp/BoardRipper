@@ -7,26 +7,22 @@ import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
 
-// 3-letter caps + tooltip with full meaning. Cycling order: none → replaced →
-// reworked → cleaned → none. Each click also raises a toast naming the new
-// state so the user gets unambiguous confirmation without hovering.
+// Single-character label keeps the row compact. The full meaning is in the
+// browser-native tooltip — hover the button to see "Replaced — click to
+// cycle to Reworked" under the cursor. No click-time toast: the colour
+// change at the button is the confirmation; the title carries the why.
+// Cycling order: none → replaced → reworked → cleaned → none.
 const MARK_LABELS: Record<WorklistMark, string> = {
-  none: '—',
-  replaced: 'REPL',
-  reworked: 'RWK',
-  cleaned: 'CLN',
-};
-const MARK_FULL: Record<WorklistMark, string> = {
-  none: 'no mark',
-  replaced: 'replaced',
-  reworked: 'reworked',
-  cleaned: 'cleaned',
+  none: '·',
+  replaced: 'R',
+  reworked: 'W',
+  cleaned: 'C',
 };
 const MARK_TITLE: Record<WorklistMark, string> = {
-  none: 'No mark yet. Click to cycle: REPL (replaced) → RWK (reworked) → CLN (cleaned) → no mark. Shift-click to cycle backwards.',
-  replaced: 'Marked REPLACED. Click to advance to REWORKED. Shift-click to clear.',
-  reworked: 'Marked REWORKED. Click to advance to CLEANED. Shift-click to go back to REPLACED.',
-  cleaned: 'Marked CLEANED. Click to clear. Shift-click to go back to REWORKED.',
+  none: 'No mark. Click to set Replaced (R). Cycle: R → W (Reworked) → C (Cleaned) → no mark. Shift-click cycles backwards.',
+  replaced: 'Replaced (R). Click to advance to Reworked (W). Shift-click to clear.',
+  reworked: 'Reworked (W). Click to advance to Cleaned (C). Shift-click to go back to Replaced.',
+  cleaned: 'Cleaned (C). Click to clear. Shift-click to go back to Reworked.',
 };
 const MARK_COLOR: Record<WorklistMark, string> = {
   none: 'var(--muted, #888)',
@@ -101,7 +97,7 @@ export function WorklistPanel() {
           <span style={{ opacity: 0.55, fontSize: 11, marginLeft: 'auto' }}>cyan on canvas</span>
         </div>
         <div style={{ fontSize: 12, opacity: 0.7, margin: '4px 0 8px' }}>
-          Build with right-click → Select net, or the Select button on a worklist below.
+          Click <b>Select</b> on a worklist below to load its parts here as cyan outlines on the canvas.
           Copy gives you a refdes list — no marks/notes (use Copy on the worklist for those).
         </div>
         <div style={btnRowStyle}>
@@ -188,9 +184,16 @@ function ActiveWorklistView() {
   const onSelectAll = () => {
     const tabId = boardStore.activeTabId;
     if (tabId == null) return;
-    const indices = activeWorklist.entries
-      .filter(e => !e.unresolved)
-      .map(e => e.partIndex);
+    const board = boardStore.board;
+    if (!board) return;
+    // Re-resolve refdes → partIndex against the *current* derived board so
+    // fold-mode / sub-board changes since hydration don't paint highlights
+    // on the wrong components.
+    const indices: number[] = [];
+    for (const e of activeWorklist.entries) {
+      const idx = board.parts.findIndex(p => p?.name === e.refdes);
+      if (idx >= 0) indices.push(idx);
+    }
     selectionSetStore.replaceWith(tabId, indices);
     boardStore.addToast(`Selected ${indices.length} part${indices.length === 1 ? '' : 's'} on canvas`, 'info');
   };
@@ -259,12 +262,6 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
   const onCycleMark = (e: React.MouseEvent) => {
     e.stopPropagation();
     worklistStore.cycleMark(worklistId, entry.refdes, e.shiftKey);
-    // Show the new state by name so the meaning of REPL/RWK/CLN is never in
-    // doubt at click time (tooltip still carries the full explanation).
-    const fresh = worklistStore.activeWorklist?.entries.find(x => x.refdes === entry.refdes);
-    if (fresh) {
-      boardStore.addToast(`${entry.refdes}: ${MARK_FULL[fresh.mark]}`, 'info');
-    }
   };
 
   const onRemove = (e: React.MouseEvent) => {
@@ -454,15 +451,13 @@ const rowMainStyle: React.CSSProperties = {
 };
 
 const markBtnStyle: React.CSSProperties = {
-  minWidth: 42,
+  width: 24,
   height: 22,
-  padding: '0 6px',
   border: '1px solid var(--border, #444)',
   background: 'transparent',
   borderRadius: 3,
   fontFamily: 'monospace',
   fontWeight: 700,
-  fontSize: 11,
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',

@@ -7,7 +7,6 @@ import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
 import { worklistStore } from '../store/worklist-store';
-import { selectionSetStore } from '../store/selection-set-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge } from './SearchScopeBadge';
@@ -341,24 +340,6 @@ export function ContextMenu() {
     }
   };
 
-  /** "Select net" — gather every part with a pin on the named net and load
-   *  them into the canvas selection (cyan outline). Useful for "select all
-   *  parts on PP_VCC" → copy refdes → paste into a report. */
-  const onSelectNet = (netName: string) => {
-    contextMenuStore.hide();
-    const board = boardStore.board;
-    const tabId = boardStore.activeTabId;
-    if (!board || tabId == null) return;
-    const indices: number[] = [];
-    for (let i = 0; i < board.parts.length; i++) {
-      const part = board.parts[i];
-      if (!part?.pins) continue;
-      if (part.pins.some(p => p.net === netName)) indices.push(i);
-    }
-    selectionSetStore.replaceWith(tabId, indices);
-    boardStore.addToast(`Selected ${indices.length} part${indices.length === 1 ? '' : 's'} on net '${netName}'`, 'info');
-  };
-
   const renderQuickActions = (): React.ReactElement | null => {
     const actions = buildQuickActions(state);
     const compName = state.source === 'board' ? state.componentName.trim() : '';
@@ -397,18 +378,6 @@ export function ContextMenu() {
           >
             <IconStack2 size={14} />
             <span>Worklist</span>
-          </button>
-        )}
-        {state.source === 'board' && state.netName && (
-          <button
-            key="qa-select-net"
-            className="context-menu-action-btn"
-            title={`Select every part with a pin on net '${state.netName}' (cyan canvas outline)`}
-            data-testid="qa-select-net"
-            onClick={(e) => { e.stopPropagation(); onSelectNet(state.netName!); }}
-          >
-            <IconCopy size={14} />
-            <span>Select net</span>
           </button>
         )}
       </div>
