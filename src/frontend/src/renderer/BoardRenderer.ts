@@ -1357,7 +1357,7 @@ export class BoardRenderer {
 
   /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showCopperPours, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers
@@ -1380,6 +1380,11 @@ export class BoardRenderer {
     if (scene.copperDropsLayer)    scene.copperDropsLayer.visible    = showCopperDrops;
     if (scene.copperDropsTop)      scene.copperDropsTop.visible      = showTop;
     if (scene.copperDropsBottom)   scene.copperDropsBottom.visible   = showBottom;
+    // Filled copper pours (GND/VCC ground planes). Independent toggle so
+    // the user can hide busy pours and focus on routing.
+    if (scene.copperPoursLayer)    scene.copperPoursLayer.visible    = showCopperPours;
+    if (scene.copperPoursTop)      scene.copperPoursTop.visible      = showTop;
+    if (scene.copperPoursBottom)   scene.copperPoursBottom.visible   = showBottom;
     // Component sub-layer visibility (master: showComponents)
     scene.topFillLayer.visible       = showComponents;
     scene.bottomFillLayer.visible    = showComponents;

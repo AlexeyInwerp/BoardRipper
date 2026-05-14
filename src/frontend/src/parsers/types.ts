@@ -109,6 +109,26 @@ export interface SilkscreenPath {
   side: 'top' | 'bottom';
 }
 
+/** Filled copper polygon — GND/VCC ground planes, copper pours, etc. The
+ *  outer ring is given in winding order; optional inner `holes` punch
+ *  cutouts via the even-odd fill rule. Currently only the Altium parser
+ *  surfaces these (Regions6 / ShapeBasedRegions6); other parsers can opt
+ *  in later. */
+export interface CopperRegion {
+  /** Outer polygon vertices, in board coordinates (mils). */
+  vertices: Point[];
+  /** Optional inner cutouts (mounting-hole exclusions, anti-pads). */
+  holes?: Point[][];
+  /** Side the pour lives on. For inner-layer pours on multi-layer boards
+   *  the `layer` field carries the exact layer index; `side` collapses to
+   *  'top' for inner so the renderer keeps a sensible default. */
+  side: 'top' | 'bottom';
+  /** Layer index into BoardData.layerNames. Undefined = top/bottom only. */
+  layer?: number;
+  /** Net this pour is part of (e.g. "GND"). Drives net-highlight propagation. */
+  net?: string;
+}
+
 /** Discriminator for the original copper-pad shape so the renderer can draw
  *  the right primitive. `bounds` always holds the axis-aligned envelope (used
  *  for hit-test and clipping); `shape` + `width`/`height`/`angleDeg`/
@@ -163,6 +183,8 @@ export interface BoardData {
   silkscreen?: SilkscreenPath[];
   /** Copper pad rectangles, tagged by side ('both' = through-hole). */
   pads?: Pad[];
+  /** Filled copper-pour polygons (GND/VCC planes, hatched areas). */
+  copperRegions?: CopperRegion[];
   /** Layer names for multi-layer formats (e.g. TVW butterfly columns). Index = column. */
   layerNames?: string[];
   /** Butterfly fold axis in board coordinates — renderer mirrors this axis for the bottom half.

@@ -241,6 +241,12 @@ export interface BoardSceneGraph {
   copperDropsLayer: Container | null;
   copperDropsTop: Container | null;
   copperDropsBottom: Container | null;
+  /** Filled copper-pour polygons (GND/VCC planes) — toggled by
+   *  showCopperPours. Drawn BELOW pads and traces so routing reads on
+   *  top of the pour. Side-split for top/bottom toggle behavior. */
+  copperPoursLayer: Container | null;
+  copperPoursTop: Container | null;
+  copperPoursBottom: Container | null;
   /** Via/drill hole overlay container — toggled by showVias */
   viaLayer: Container | null;
   /** Via labels — tracked for counter-rotation on board flip */
@@ -659,6 +665,55 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
     silkscreenLayer.addChild(silkscreenBottom);
     silkscreenLayer.addChild(silkscreenTop);
     root.addChild(silkscreenLayer);
+  }
+
+  // ── Copper pours ────────────────────────────────────────────────────────────
+  // Filled polygon copper-pour regions (GND/VCC planes, hatched areas).
+  // Rendered BEFORE pads and traces so they sit visually below the routing.
+  // Side-split: pours on the top copper layer go to copperPoursTop, etc.
+  let copperPoursLayer: Container | null = null;
+  let copperPoursTop: Container | null = null;
+  let copperPoursBottom: Container | null = null;
+  if (board.copperRegions && board.copperRegions.length > 0) {
+    copperPoursLayer = new Container();
+    copperPoursLayer.label = 'copper-pours';
+    copperPoursTop = new Container();
+    copperPoursTop.label = 'copper-pours-top';
+    copperPoursBottom = new Container();
+    copperPoursBottom.label = 'copper-pours-bottom';
+
+    // Pours are visually subtler than pin pads — they're a base layer the eye
+    // should read as "where copper exists" without overpowering routing on top.
+    // Tone is a notch darker than PAD_TOP_COLOR / PAD_BOTTOM_COLOR.
+    const POUR_TOP_COLOR    = 0xa07a30;  // darker warm copper
+    const POUR_BOTTOM_COLOR = 0x607a98;  // darker cool copper-grey
+    const POUR_ALPHA        = 0.65;
+
+    const topPourGfx = new Graphics();
+    const botPourGfx = new Graphics();
+    for (const region of board.copperRegions) {
+      const targetGfx = region.side === 'bottom' ? botPourGfx : topPourGfx;
+      // Outer ring + optional holes, using even-odd fill rule to punch holes.
+      if (region.vertices.length < 3) continue;
+      const outerFlat: number[] = [];
+      for (const v of region.vertices) outerFlat.push(v.x, v.y);
+      targetGfx.poly(outerFlat);
+      if (region.holes) {
+        for (const hole of region.holes) {
+          if (hole.length < 3) continue;
+          const holeFlat: number[] = [];
+          for (const v of hole) holeFlat.push(v.x, v.y);
+          targetGfx.poly(holeFlat);
+        }
+      }
+    }
+    topPourGfx.fill({ color: POUR_TOP_COLOR,    alpha: POUR_ALPHA });
+    botPourGfx.fill({ color: POUR_BOTTOM_COLOR, alpha: POUR_ALPHA });
+    copperPoursTop.addChild(topPourGfx);
+    copperPoursBottom.addChild(botPourGfx);
+    copperPoursLayer.addChild(copperPoursBottom);
+    copperPoursLayer.addChild(copperPoursTop);
+    root.addChild(copperPoursLayer);
   }
 
   // ── Copper pads ─────────────────────────────────────────────────────────────
@@ -1670,5 +1725,5 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsLayer, padsTop, padsBottom, copperDropsLayer, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsLayer, padsTop, padsBottom, copperDropsLayer, copperDropsTop, copperDropsBottom, copperPoursLayer, copperPoursTop, copperPoursBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

@@ -1,4 +1,4 @@
-import type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Net, Pad, Point, SilkscreenPath, Trace, Via } from '../parsers';
+import type { BoardData, BoardRevision, BomAlternateCluster, CopperRegion, GhostComponent, Net, Pad, Point, SilkscreenPath, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
 // DB_VERSION is ONLY bumped for schema changes (new/removed object stores,
@@ -25,7 +25,9 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 // 52: ALTIUM_PCB layerNames now filtered to layers with actual geometry.
 // 53: ALTIUM_PCB outline envelopes all geometry; Part.layer dropped; Regions6
 //     polygons surface as outline-trace segments. Empty meta fields elided.
-const PARSER_VERSION = 53;
+// 54: ALTIUM_PCB Regions6 now emits filled CopperRegion polygons. New
+//     BoardData.copperRegions field; renderer fills with even-odd rule.
+const PARSER_VERSION = 54;
 
 interface CachedBoard {
   key: string;
@@ -51,6 +53,7 @@ interface SerializedBoardData {
   vias?: Via[];
   silkscreen?: SilkscreenPath[];
   pads?: Pad[];
+  copperRegions?: CopperRegion[];
   layerNames?: string[];
   butterflyFoldAxis?: 'x' | 'y';
   rawOutline?: Point[];
@@ -101,6 +104,7 @@ function serialize(board: BoardData): SerializedBoardData {
     vias: board.vias,
     silkscreen: board.silkscreen,
     pads: board.pads,
+    copperRegions: board.copperRegions,
     layerNames: board.layerNames,
     butterflyFoldAxis: board.butterflyFoldAxis,
     rawOutline: board.rawOutline,
@@ -145,6 +149,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       vias: data.vias,
       silkscreen: data.silkscreen,
       pads: data.pads,
+      copperRegions: data.copperRegions,
       layerNames: data.layerNames,
       butterflyFoldAxis: data.butterflyFoldAxis,
       rawOutline: data.rawOutline,

@@ -7,7 +7,7 @@
  * raw Altium units; the assembler converts to mils via altium-units.ts.
  */
 
-import type { BoardData, Part, Pin, Point, Net, Pad, Trace, Via } from '../types';
+import type { BoardData, Part, Pin, Point, Net, Pad, Trace, Via, CopperRegion } from '../types';
 import { buildNets, computeBBox, generateSyntheticOutline } from '../types';
 import type {
   AltiumPcbDb,
@@ -124,10 +124,11 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
   const traces: Trace[] = [
     ...buildTraces(db.tracks, netNames, copperLayerByAltium),
     ...buildArcTraces(db.arcs, netNames, copperLayerByAltium),
-    ...buildRegionOutlineTraces(db.regions, netNames, copperLayerByAltium),
   ];
 
   const vias: Via[] = buildVias(db.vias, netNames, copperLayerByAltium);
+
+  const copperRegions: CopperRegion[] = buildCopperRegions(db.regions, netNames, copperLayerByAltium);
 
   // The synthetic outline + bounds must envelope ALL geometry the renderer
   // draws, not just pin positions — otherwise the board outline ends up
@@ -141,6 +142,7 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
     allPoints.push({ x: pad.bounds.minX, y: pad.bounds.minY });
     allPoints.push({ x: pad.bounds.maxX, y: pad.bounds.maxY });
   }
+  for (const region of copperRegions) for (const v of region.vertices) allPoints.push(v);
   const bounds = allPoints.length > 0
     ? computeBBox(allPoints)
     : { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
@@ -157,6 +159,7 @@ export function assembleBoardData(db: AltiumPcbDb): BoardData {
     pads,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
+    copperRegions: copperRegions.length > 0 ? copperRegions : undefined,
     layerNames,
   };
 }
@@ -404,38 +407,46 @@ function buildFillPads(fills: AFill6[], netNames: string[]): Pad[] {
  * actually lives — significantly more informative than nothing. Skip
  * board-cutout and polygon-cutout regions (they're holes, not copper).
  */
-function buildRegionOutlineTraces(
+/**
+ * Emit each Regions6 record as a filled CopperRegion. The renderer fills
+ * these polygons with copper color (see board-scene.ts :: drawCopperRegions).
+ * Skip cutout kinds (board cutouts / polygon cutouts — those are holes,
+ * not copper). Sanity-clamp coords so a mis-decoded vertex can't poison
+ * synthetic outline / bounds calculations.
+ */
+function buildCopperRegions(
   regions: ARegion6[],
   netNames: string[],
   copperLayer: Map<number, number>,
-): Trace[] {
-  const out: Trace[] = [];
+): CopperRegion[] {
+  const out: CopperRegion[] = [];
   const REGION_KIND_POLYGON_CUTOUT = 1;
   const REGION_KIND_BOARD_CUTOUT = 5;
-  // Use a deliberately thick width so the polygon boundary reads as
-  // copper-area-edge rather than fine route. ~3 mils is visible at most zooms.
-  const OUTLINE_WIDTH_MILS = 3;
-  // Reject obviously corrupt vertices — Altium boards never legitimately
-  // exceed ~100 inches (100_000 mils) per axis. Anything larger means we
-  // got the binary offsets wrong somewhere; better to drop the whole
-  // region than poison the synthetic outline with 1e+269 coordinates.
   const COORD_SANITY_MILS = 1_000_000;
   const sane = (n: number) => Number.isFinite(n) && Math.abs(n) < COORD_SANITY_MILS;
   for (const r of regions) {
     if (r.kind === REGION_KIND_POLYGON_CUTOUT || r.kind === REGION_KIND_BOARD_CUTOUT) continue;
+    if (r.vertices.length < 3) continue;
     const layer = copperLayer.get(r.layer);
-    if (layer === undefined) continue;
-    if (r.vertices.length < 2) continue;
-    const net = netNameAt(r.netIndex, netNames);
+    const net = netNameAt(r.netIndex, netNames) || undefined;
     const verts = r.vertices.map(v => ({ x: altiumToMils(v.x), y: altiumYToMils(v.y) }));
     if (verts.some(v => !sane(v.x) || !sane(v.y))) continue;
-    for (let i = 0; i < verts.length - 1; i++) {
-      out.push({ start: verts[i], end: verts[i + 1], width: OUTLINE_WIDTH_MILS, net, layer });
+    const holes: Point[][] = [];
+    for (const h of r.holes) {
+      const pts = h.map(v => ({ x: altiumToMils(v.x), y: altiumYToMils(v.y) }));
+      if (pts.length >= 3 && pts.every(v => sane(v.x) && sane(v.y))) holes.push(pts);
     }
-    const a = verts[0], b = verts[verts.length - 1];
-    if (Math.hypot(a.x - b.x, a.y - b.y) > 0.1) {
-      out.push({ start: b, end: a, width: OUTLINE_WIDTH_MILS, net, layer });
-    }
+    // Map Altium copper side: TOP-family → 'top', BOTTOM-family → 'bottom',
+    // inner copper collapses to 'top' (renderer uses `layer` index to gate).
+    const altiumSide = altiumLayerSide(r.layer);
+    const side: 'top' | 'bottom' = altiumSide === 'bottom' ? 'bottom' : 'top';
+    out.push({
+      vertices: verts,
+      holes: holes.length > 0 ? holes : undefined,
+      side,
+      layer,
+      net,
+    });
   }
   return out;
 }

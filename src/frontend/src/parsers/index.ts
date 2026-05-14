@@ -28,7 +28,7 @@ registerFormat(XZZFormat);
 registerFormat(TVWFormat);
 registerFormat(AltiumPcbFormat);
 
-export type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Part, Pin, Net, Point, BBox, Pad, SilkscreenPath, Trace, Via } from './types';
+export type { BoardData, BoardRevision, BomAlternateCluster, CopperRegion, GhostComponent, Part, Pin, Net, Point, BBox, Pad, SilkscreenPath, Trace, Via } from './types';
 export { computeBBox, buildNets } from './types';
 export type { FormatDescriptor, FormatId } from './registry';
 export { getFormat, getAllFormats, getAllExtensions, getFileExtension } from './registry';

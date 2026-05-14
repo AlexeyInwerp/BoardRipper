@@ -65,6 +65,10 @@ export interface BoardTab {
    *  meaning. Only TVW currently tags pads with `attached`; for other
    *  formats this flag is a no-op. */
   showCopperDrops: boolean;
+  /** Show filled copper-pour polygons (GND/VCC ground planes). Default ON.
+   *  Only the Altium parser currently emits BoardData.copperRegions; for
+   *  other formats this flag is a no-op. */
+  showCopperPours: boolean;
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
@@ -505,6 +509,7 @@ class BoardStore extends Emitter {
   get showSilkscreen(): boolean { return this.activeTab?.showSilkscreen ?? true; }
   get showPads(): boolean { return this.activeTab?.showPads ?? true; }
   get showCopperDrops(): boolean { return this.activeTab?.showCopperDrops ?? false; }
+  get showCopperPours(): boolean { return this.activeTab?.showCopperPours ?? true; }
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
@@ -705,6 +710,7 @@ class BoardStore extends Emitter {
         showSilkscreen: true,
         showPads: true,
         showCopperDrops: false,
+        showCopperPours: true,
         showPins: true,
         showOutlines: true,
         showLabels: true,
@@ -1428,6 +1434,13 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showCopperDrops: !tab.showCopperDrops });
+    this.notify();
+  }
+
+  toggleCopperPours() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showCopperPours: !tab.showCopperPours });
     this.notify();
   }
 

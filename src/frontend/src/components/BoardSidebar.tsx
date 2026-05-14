@@ -125,6 +125,7 @@ function LayersTab({ tabId }: { tabId: number }) {
   const showSilkscreen = tab?.showSilkscreen ?? true;
   const showPads = tab?.showPads ?? true;
   const showCopperDrops = tab?.showCopperDrops ?? false;
+  const showCopperPours = tab?.showCopperPours ?? true;
   const showPins = tab?.showPins ?? true;
   const showOutlines = tab?.showOutlines ?? true;
   const showLabels = tab?.showLabels ?? true;
@@ -274,6 +275,15 @@ function LayersTab({ tabId }: { tabId: number }) {
             title={showCopperDrops ? 'Hide standalone GND/power copper drops' : 'Show standalone GND/power copper drops'}
           >
             <span className="toggle-check">{showCopperDrops ? '■' : '□'}</span> Copper drops
+          </button>
+        )}
+        {board?.copperRegions && board.copperRegions.length > 0 && (
+          <button
+            className={`visibility-toggle ${showCopperPours ? '' : 'off'}`}
+            onClick={() => boardStore.toggleCopperPours()}
+            title={showCopperPours ? 'Hide GND/VCC copper pours' : 'Show GND/VCC copper pours'}
+          >
+            <span className="toggle-check">{showCopperPours ? '■' : '□'}</span> Copper pours
           </button>
         )}
         <div className="visibility-toggle-group">
