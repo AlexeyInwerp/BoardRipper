@@ -232,3 +232,38 @@ test.describe('altium-layers', () => {
     expect(parseAltiumLayerName('MID4')).toBe(ALTIUM_LAYER.MID_LAYER_4);
   });
 });
+
+test.describe('altium-records (lookup tables)', () => {
+  test('parseNets6 produces a net list with expected count', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseNets6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Nets6/Data')!;
+    const nets = parseNets6(buf);
+    expect(nets.length).toBeGreaterThan(0);
+    expect(nets.every(n => typeof n.name === 'string')).toBe(true);
+    expect(nets.length).toBeGreaterThan(5);
+  });
+
+  test('parseClasses6 yields named classes', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseClasses6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('Classes6/Data')!;
+    const classes = parseClasses6(buf);
+    expect(Array.isArray(classes)).toBe(true);
+    expect(classes.every(c => typeof c.name === 'string')).toBe(true);
+  });
+
+  test('parseWideStrings6 returns a working index lookup', async () => {
+    test.skip(!fs.existsSync(SAMPLE_PCB));
+    const { openAltiumCfb } = await import('../src/parsers/altium/altium-cfb');
+    const { parseWideStrings6 } = await import('../src/parsers/altium/altium-records');
+    const cfb = openAltiumCfb(fs.readFileSync(SAMPLE_PCB).buffer as ArrayBuffer);
+    const buf = cfb.getStream('WideStrings6/Data')!;
+    const table = parseWideStrings6(buf);
+    expect(typeof table.byIndex(0)).toBe('string');
+  });
+});

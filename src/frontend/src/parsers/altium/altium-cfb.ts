@@ -27,7 +27,12 @@ export function openAltiumCfb(buffer: ArrayBuffer): AltiumCfb {
         .map(p => p.replace(/^Root Entry\//, ''));
     },
     getStream(name: string): Uint8Array | null {
-      const entry = cfbFind(container, name);
+      // SheetJS cfb.find expects either a top-level entry name or a slash-rooted
+      // path; bare 'Foo/Bar' returns null because it's neither. Try the raw
+      // name first (top-level streams like 'FileHeader') and fall back to a
+      // slash-rooted lookup for nested streams ('Nets6/Data' → '/Nets6/Data').
+      let entry = cfbFind(container, name);
+      if (!entry && !name.startsWith('/')) entry = cfbFind(container, '/' + name);
       if (!entry || !entry.content) return null;
       const c = entry.content;
       if (c instanceof Uint8Array) return c;
