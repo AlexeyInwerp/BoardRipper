@@ -1,5 +1,31 @@
 # BoardRipper changelog
 
+## v0.30.0 — 2026-05-14
+
+Headline addition: the **Worklist** — a per-board, persistent multi-select with named lists, marks, notes, and roundtrip clipboard sync. Plus a stack of PDF / scanner / updater fixes from the day after the v0.20.x cleanup.
+
+The version jump from v0.20.9 to v0.30.0 marks the first release of the new stable pipeline (signed manifest + GHCR + ripperdoc.de archive + chat-runnable `release.sh`) as a milestone, distinct from the 0.20.x stabilisation series.
+
+### New
+
+- **Worklist** — per-board, multi-select-driven scratch list with named groups. Shift+click on the board adds/removes parts from an ephemeral multi-select set (cyan outline). Right-click ▸ "Add to worklist" or the toolbar Worklist button pushes the selection into a per-board named worklist (amber outline). Lists persist in IndexedDB (`boardripper-worklist`) keyed off the same fileName/size/mtime triple as the board cache — they survive reloads and container upgrades. Each row carries a cycling mark state (none → replaced → reworked → cleaned → bandage) plus an optional free-form note under a spoiler caret. Per-mark coloured outline + glyph on the board so you can see at-a-glance which parts are in which state. The whole list copies as `REFDES[mark] (note)` for paste-into-issue tracking. The panel lives as a tab inside the BoardSidebar (no separate Dockview window). (`2461b8c`, `59bf9ff`, `df50276`, `5cc5a02`, `872b750`, `b64f143`, `f106dac`)
+
+- **Worklist roundtrip export + clipboard import.** Export writes the list name as the first line wrapped in a `-[<name>-<bnum>]-` marker, then `REFDES[mark] (note)` lines. Paste it back into another BoardRipper instance and the Worklist panel reads the marker, recreates the list, re-resolves refdeses against the open board, and restores marks + notes. `importFromText` is hardened against arbitrary clipboard payloads (random text doesn't accidentally create a list; only the marker-form is accepted). Survives renames + minor format drift in pasted content. (`c962d30`, `8dc817d`)
+
+- **Butterfly mode allows board rotation.** Previously the rotation toolbar buttons were disabled in butterfly mode (the auto-separation axis logic didn't track manual rotation). The renderer's `applyFlips()` butterfly branch was actually already rotation-aware — it picks the separation axis from the rotated bounds and uses `axesSwapped` to flip the right board axis under 90°/270°. The toolbar gate was the only thing in the way. Preference persists per-install. (`6e2b835`)
+
+### Fixed
+
+- **PDF text extraction on Safari < 17.4.** `pdf.js` v5's `getTextContent()` iterates the underlying ReadableStream with `for await`, which needs `ReadableStream[@@asyncIterator]` — absent on Safari before 17.4. Users on Safari 16.4–17.3 could render PDFs fine (the `sendWithPromise` path is unaffected) but PDF text scan / search returned nothing. The text-extractor now drives `streamTextContent().getReader()` directly. Safari stacks omit `err.message`, so log lines explicitly include `err.name + err.message` for diagnosability on the field. (`609f8cc`)
+
+- **PDF: macOS rubber-band overscroll killed, zoom/resize tightened.** Trackpad momentum-phase wheel events at the top of page 1 were leaking past `preventDefault` and triggering the browser-native rubber-band bounce, briefly showing the page behind the canvas. `overscroll-behavior: none` on html/body/#root and `contain` on `.pdf-canvas-container` close that. Additional polish: zoom-around-cursor honours `transformOrigin` consistently across resize transitions; ResizeObserver no longer fires spurious resizes during DPI changes. (`a876c74`)
+
+- **Scanner: garbage-name PDF auto-binding cured + historical bindings pruned.** The auto-match phase scored 50 for any pair where one filename's lowercased base contained the other's — with no minimum-length guard. A PDF named `1.pdf` matched every board whose name contained a "1" (i.e., most of them); a single page-fragment with a short generic name silently latched onto dozens of unrelated boards. Now a minimum substring length (≥4 chars) and a stop-list (`pdf`, `boardview`, page-marker patterns) gate the score. `migrateV9` runs once on hydration to delete pre-existing garbage bindings produced by the old heuristic — the scan re-runs cleanly on next bind. (`e81bdcd`, `7c1ffce`)
+
+### Self-update overlay
+
+- **The update-in-progress overlay now shows the captured progress log + a live elapsed-time counter.** The first measured clean v0.20.8 → v0.20.9 update on local Docker swapped in 9 s end-to-end (vs. the previous "30–60 seconds" copy the overlay used to display). During those 9 s the SSE stream emitted 14 informative entries — "Tagged previous image", "Pulling …@digest", "Locating self container", "Orchestrator launched — this container will exit and the new image will start momentarily" — which were sitting in `updateStore.progress[]` but were never rendered to the user. The overlay now subscribes to that array via a primitive `progressLen` `useSyncExternalStore` snapshot (keeps the stability invariant intact) and renders the last 14 entries in a scrollable monospace list, reusing the toolbar dropdown's existing `.update-progress-line` styling. New `<Elapsed: Ns>` counter ticks every second from overlay mount — the inner-component split means each restart transition mounts a fresh instance, so the counter naturally resets to 0 without a `setState`-in-effect. (`8b87a16`, `7f753d9` for the inner-component refactor cleaning up the react-hooks lint warning)
+
 ## v0.20.9 — 2026-05-13
 
 ### Fixed
