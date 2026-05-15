@@ -1,5 +1,13 @@
 # BoardRipper changelog
 
+## v0.30.1 — 2026-05-15
+
+### Polish
+
+- **Hover tooltip surfaces Value and Package.** On boards whose parsers fill `PartMeta` (primarily TVW Teboview; partial coverage from BVR / BDV / Allegro), the in-canvas tooltip now shows a new line between `R123 · pin 2` and the OBD readings, joining whatever fields are present with ` · ` — e.g. `10uF · CHIP0603R`, `100K`, or `QFN32` on its own. The line is hidden entirely when both fields are empty, so boards without metadata keep the compact two-line tooltip. ComponentInfoPanel + BoardSidebar already showed these fields; the tooltip now matches without requiring a click. (`07f018f`)
+
+- **Trace hover label is no longer "Top · pin trace".** The detail line on trace-only hits now reads `trace · Top` (or just `trace` when the source format has no layer name), keeping the trace's net name on line 1 as before. The old phrasing was a leftover from constructing the detail string from a part/pin pair; pin became optional in `showTooltip` so trace hits can drop the suffix. (`07f018f`)
+
 ## v0.30.0 — 2026-05-14
 
 Headline addition: the **Worklist** — a per-board, persistent multi-select with named lists, marks, notes, and roundtrip clipboard sync. Plus a stack of PDF / scanner / updater fixes from the day after the v0.20.x cleanup.
