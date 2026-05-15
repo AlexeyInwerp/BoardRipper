@@ -10,6 +10,7 @@ import { worklistStore } from '../store/worklist-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge } from './SearchScopeBadge';
+import { copyText } from '../clipboard';
 
 /**
  * ============================================================================
@@ -287,7 +288,7 @@ export function ContextMenu() {
   const onCopy = async (action: QuickAction) => {
     contextMenuStore.hide();
     try {
-      await navigator.clipboard.writeText(action.value);
+      await copyText(action.value);
       boardStore.addToast(`Copied '${action.value}'`, 'info');
     } catch (err) {
       boardStore.addToast(`Copy failed: ${err instanceof Error ? err.message : String(err)}`, 'error');

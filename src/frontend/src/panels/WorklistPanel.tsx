@@ -7,6 +7,7 @@ import { boardStore } from '../store/board-store';
 import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { copyText } from '../clipboard';
 
 // Icon per mark + hover tooltip with full meaning. Cycling order:
 // none → replaced → reworked → cleaned → none. The same colours are used
@@ -42,7 +43,7 @@ const MARK_BTN_COLOR: Record<WorklistMark, string> = {
 
 async function copyToClipboard(text: string, summary: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     boardStore.addToast(summary, 'info');
   } catch (e) {
     boardStore.addToast(
@@ -132,7 +133,7 @@ export function WorklistPanel() {
             <button style={{ ...subtleBtnStyle, marginLeft: 'auto' }} onClick={onClearSelection} title="Clear the cyan canvas highlight (parts stay on the board, worklist untouched)">Clear</button>
           </div>
           <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-            Loaded by <b>Select</b> on a worklist below. Visual only — has no effect on the worklist contents.
+            Loaded by <b>Highlight</b> on a worklist below. Visual only — has no effect on the worklist contents.
           </div>
         </section>
       )}
@@ -261,7 +262,7 @@ function ActiveWorklistView() {
             {activeWorklist.name}
           </span>
         )}
-        <button style={subtleBtnStyle} onClick={onSelectAll} disabled={activeWorklist.entries.length === 0} title="Put every part in this worklist into the canvas selection (cyan outline)">Select</button>
+        <button style={subtleBtnStyle} onClick={onSelectAll} disabled={activeWorklist.entries.length === 0} title="Highlight every part in this worklist on the canvas (cyan outline)">Highlight</button>
         <button style={subtleBtnStyle} onClick={onCopyAll} disabled={activeWorklist.entries.length === 0} title="Copy all rows to clipboard">Copy</button>
         <button style={subtleBtnStyle} onClick={onWipe} disabled={activeWorklist.entries.length === 0} title="Wipe all entries (keeps the worklist)">Wipe</button>
         <button style={dangerBtnStyle} onClick={onDeleteWorklist} title="Delete this worklist entirely">✕</button>

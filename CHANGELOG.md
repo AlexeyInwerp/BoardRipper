@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.30.2 — 2026-05-15
+
+### Fixed
+
+- **Worklist Copy + context-menu Copy worked over `localhost` but failed over LAN / NAS / Tailscale.** `navigator.clipboard.writeText` is only defined on secure contexts (HTTPS, or `http://localhost`). Opening BoardRipper at `http://192.168.x.x:1336`, the Vite dev server's network URL, or a Tailscale `100.x.x.x` address left `navigator.clipboard` undefined; both call sites threw `Cannot read properties of undefined (reading 'writeText')`. A new `copyText()` helper (`src/frontend/src/clipboard.ts`) tries the modern API first and falls back to a transient off-screen `<textarea>` + `document.execCommand('copy')` — works everywhere the dashboard is reachable.
+
+### Polish
+
+- **Worklist tab button "Select" renamed to "Highlight".** Better matches what the action actually does: it loads the worklist's parts into the cyan canvas highlight overlay, no real "selection" mutation. The Cyan-selection band's helper text was updated to match.
+
 ## v0.30.1 — 2026-05-15
 
 ### Polish
