@@ -1947,6 +1947,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
       this.activeScene.root.removeChild(this.elevatedPinBg!);
@@ -1970,6 +1971,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
       this.activeScene.root.removeChild(this.elevatedPinBg!);

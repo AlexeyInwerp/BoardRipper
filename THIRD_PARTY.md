@@ -57,6 +57,18 @@ in BoardRipper.
 - **DES (FIPS PUB 46-3)** (used in `src/frontend/src/parsers/xzz-parser.ts`): standard FIPS lookup tables (IP, FP, S-boxes, P-box, expansion, PC-1, PC-2) are reproductions of the public specification; key schedule and round function written from the standard.
 - **GenCAD 1.4 specification** (used in `src/frontend/src/parsers/cad-parser.ts`): public interchange format specification.
 
+### Material Design Icons — `mdi:soldering-iron`
+- **License:** Apache 2.0
+- **Upstream:** https://github.com/Templarian/MaterialDesign (curated by Pictogrammers)
+- **Used in:** `src/frontend/src/icons/IconSolderingIron.tsx`
+- **Nature of use:** The iron silhouette in BoardRipper's `IconSolderingIron` (used as the Worklist "rework" mark) reuses two of the three SVG subpaths from `mdi:soldering-iron` — the handle/plug and the heating-element + tip. The third subpath (cord coil) was dropped and the remaining paths were mirrored horizontally + scaled to 0.92 for layout. Apache-2.0 is GPL-3.0-compatible, so no license-propagation issue.
+
+### Game Icons — `game-icons:soldering-iron` (smoke wisp shape inspiration)
+- **License:** CC BY 3.0
+- **Upstream:** https://github.com/game-icons/icons (project license: https://creativecommons.org/licenses/by/3.0/)
+- **Used in:** `src/frontend/src/icons/IconSolderingIron.tsx`
+- **Nature of use:** The smoke-wisp idea above the iron was inspired by the smoke curl in `game-icons:soldering-iron`. No path data is copied verbatim — the wisp in BoardRipper is a hand-traced tapered shape redrawn from scratch with explicit pointy endpoints to fit the 24×24 viewBox. Attribution kept per CC BY 3.0's BY clause.
+
 ---
 
 ## Runtime Dependencies (npm, bundled at build time)

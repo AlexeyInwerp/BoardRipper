@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { IconReplace, IconBandage, IconSparkles, IconMinus, IconClipboardText } from '@tabler/icons-react';
+import { createPortal } from 'react-dom';
+import { IconReplace, IconSparkles, IconMinus, IconClipboardText, IconDroplet } from '@tabler/icons-react';
+import { IconSolderingIron } from '../icons/IconSolderingIron';
 import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -15,7 +17,7 @@ import { copyText } from '../clipboard';
 const MARK_ICON: Record<WorklistMark, typeof IconReplace> = {
   none: IconMinus,
   replaced: IconReplace,
-  reworked: IconBandage, // bandage = repaired / patched (electronics rework)
+  reworked: IconSolderingIron as typeof IconReplace, // hand-composed (MDI + game-icons), fill-based
   cleaned: IconSparkles,
 };
 const MARK_SHORT_LABEL: Record<WorklistMark, string> = {
@@ -186,6 +188,20 @@ function ActiveWorklistView() {
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
+  const [ticketOpen, setTicketOpen] = useState(false);
+  // Local draft for the ticket-level note. Re-seeded when the worklist id
+  // changes (tab switch), otherwise the user's in-progress edit wins and
+  // is committed on blur — same pattern as the per-row note.
+  const [ticketDraft, setTicketDraft] = useState(activeWorklist?.note ?? '');
+  const lastSeenWorklistIdRef = useRef<string | null>(activeWorklist?.id ?? null);
+  useEffect(() => {
+    if (!activeWorklist) return;
+    if (lastSeenWorklistIdRef.current !== activeWorklist.id) {
+      lastSeenWorklistIdRef.current = activeWorklist.id;
+      setTicketDraft(activeWorklist.note ?? '');
+      setTicketOpen(false);
+    }
+  }, [activeWorklist]);
 
   useEffect(() => {
     if (renaming) renameRef.current?.select();
@@ -219,6 +235,12 @@ function ActiveWorklistView() {
     const ok = window.confirm(`Delete worklist "${activeWorklist.name}"? This cannot be undone.`);
     if (!ok) return;
     worklistStore.deleteWorklist(activeWorklist.id);
+  };
+
+  const onCommitTicketNote = () => {
+    if (!activeWorklist) return;
+    if ((activeWorklist.note ?? '') === ticketDraft) return;
+    worklistStore.setWorklistNote(activeWorklist.id, ticketDraft);
   };
 
   const onSelectAll = () => {
@@ -267,6 +289,36 @@ function ActiveWorklistView() {
         <button style={subtleBtnStyle} onClick={onWipe} disabled={activeWorklist.entries.length === 0} title="Wipe all entries (keeps the worklist)">Wipe</button>
         <button style={dangerBtnStyle} onClick={onDeleteWorklist} title="Delete this worklist entirely">✕</button>
       </header>
+      <div style={ticketNoteWrapStyle}>
+        <button
+          style={ticketNoteToggleStyle}
+          onClick={() => setTicketOpen(x => !x)}
+          title={ticketOpen ? 'Collapse ticket note' : 'Expand ticket note'}
+        >
+          <span>{ticketOpen ? '▾' : '▸'}</span>
+          <span style={{ fontWeight: 600 }}>Ticket note</span>
+          {!ticketOpen && ticketDraft.trim() && (
+            <span style={ticketNotePeekStyle}>
+              {(() => {
+                const firstLine = ticketDraft.split('\n', 1)[0].trim();
+                return firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine;
+              })()}
+            </span>
+          )}
+          {!ticketOpen && !ticketDraft.trim() && (
+            <span style={{ opacity: 0.45, fontSize: 11 }}>(empty)</span>
+          )}
+        </button>
+        {ticketOpen && (
+          <textarea
+            style={ticketNoteAreaStyle}
+            value={ticketDraft}
+            placeholder="General note for this worklist / ticket. Saved when you click out."
+            onChange={e => setTicketDraft(e.target.value)}
+            onBlur={onCommitTicketNote}
+          />
+        )}
+      </div>
       <div style={listStyle}>
         {activeWorklist.entries.length === 0 && (
           <div style={emptyStyle}>
@@ -326,6 +378,11 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
     }
   };
 
+  const onToggleWater = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    worklistStore.toggleWaterdamage(worklistId, entry.refdes);
+  };
+
   const onRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
     worklistStore.removeEntry(worklistId, entry.refdes);
@@ -352,7 +409,7 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
             return <Icon size={14} stroke={2} />;
           })()}
         </button>
-        {flash && (
+        {flash && createPortal(
           <div
             style={{
               ...flashTooltipStyle,
@@ -364,8 +421,17 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
             role="status"
           >
             {MARK_SHORT_LABEL[flash.mark]}
-          </div>
+          </div>,
+          document.body,
         )}
+        <button
+          style={waterBtnStyle(entry.waterdamage === true)}
+          onClick={onToggleWater}
+          title={entry.waterdamage ? 'Water damage flagged. Click to clear.' : 'Mark as water-damaged.'}
+          aria-pressed={entry.waterdamage === true}
+        >
+          <IconDroplet size={14} stroke={2} />
+        </button>
         <span style={{ fontFamily: 'monospace', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {entry.refdes}
           {entry.unresolved && <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 11 }}>(missing)</span>}
@@ -510,6 +576,51 @@ const listStyle: React.CSSProperties = {
   minHeight: 0,
 };
 
+const ticketNoteWrapStyle: React.CSSProperties = {
+  borderBottom: '1px solid var(--border, #2a2a2a)',
+  flexShrink: 0,
+  background: 'transparent',
+};
+
+const ticketNoteToggleStyle: React.CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  background: 'transparent',
+  border: 'none',
+  color: 'inherit',
+  cursor: 'pointer',
+  padding: '6px 10px',
+  fontSize: 12,
+  textAlign: 'left',
+};
+
+const ticketNotePeekStyle: React.CSSProperties = {
+  opacity: 0.6,
+  fontStyle: 'italic',
+  fontSize: 11,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  flex: 1,
+  minWidth: 0,
+};
+
+const ticketNoteAreaStyle: React.CSSProperties = {
+  width: 'calc(100% - 20px)',
+  margin: '0 10px 8px 10px',
+  minHeight: 70,
+  background: 'var(--input-bg, #0e0e0e)',
+  color: 'inherit',
+  border: '1px solid var(--border, #333)',
+  borderRadius: 3,
+  padding: 6,
+  fontSize: 12,
+  resize: 'vertical',
+  fontFamily: 'inherit',
+};
+
 const rowStyle: React.CSSProperties = {
   borderBottom: '1px solid var(--border, #232323)',
   background: 'transparent',
@@ -538,6 +649,26 @@ const markBtnStyle: React.CSSProperties = {
   flexShrink: 0,
   padding: 0,
 };
+
+const WATER_COLOR = '#5fb6ff';
+
+function waterBtnStyle(on: boolean): React.CSSProperties {
+  return {
+    width: 22,
+    height: 22,
+    background: 'transparent',
+    border: 'none',
+    borderRadius: 3,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    padding: 0,
+    color: on ? WATER_COLOR : 'var(--muted, #888)',
+    opacity: on ? 1 : 0.35,
+  };
+}
 
 const flashTooltipStyle: React.CSSProperties = {
   // position:fixed so the chip escapes ancestor overflow:auto (sidebar

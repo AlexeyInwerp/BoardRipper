@@ -33,6 +33,10 @@ export interface WorklistEntry {
   refdes: string;
   mark: WorklistMark;
   note: string;
+  /** Binary "water damage observed at this site" flag. Orthogonal to `mark`
+   *  (a part can be both water-damaged AND replaced). Omitted when false to
+   *  keep persisted records small; consumers must treat absence as false. */
+  waterdamage?: boolean;
   /** True if `refdes` couldn't be found in the current board on hydration.
    *  Row is rendered greyed-out and excluded from canvas highlight. */
   unresolved?: boolean;
@@ -43,6 +47,10 @@ export interface Worklist {
   name: string;
   createdAt: number;
   entries: WorklistEntry[];
+  /** Free-form ticket / list note, shown under a spoiler at the top of the
+   *  active worklist. Roundtrips through clipboard via `> `-prefixed lines
+   *  immediately after the `-[name]-` header. */
+  note?: string;
 }
 
 export interface BoardWorklistes {
@@ -379,6 +387,31 @@ class WorklistStore {
     this.save(cur);
   }
 
+  toggleWaterdamage(worklistId: string, refdes: string): void {
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const e = s.entries.find(x => x.refdes === refdes);
+    if (!e) return;
+    if (e.waterdamage) delete e.waterdamage;
+    else e.waterdamage = true;
+    this.save(cur);
+  }
+
+  setWorklistNote(worklistId: string, note: string): void {
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const trimmed = note.replace(/\r\n/g, '\n').slice(0, 4000);
+    const current = s.note ?? '';
+    if (current === trimmed) return;
+    if (trimmed === '') delete s.note;
+    else s.note = trimmed;
+    this.save(cur);
+  }
+
   /** Cycle the per-row mark: none → replaced → reworked → cleaned → none. */
   cycleMark(worklistId: string, refdes: string, reverse = false): void {
     const order: WorklistMark[] = ['none', 'replaced', 'reworked', 'cleaned'];
@@ -396,9 +429,11 @@ class WorklistStore {
 
   /** Format a worklist for clipboard. First line is the marker
    *    `-[<name>]-`
-   *  followed by one entry per line:
-   *    `REFDES[mark] (note)`
-   *  with `[mark]` omitted when 'none' and ` (note)` omitted when empty.
+   *  optionally followed by one or more `> note` lines (the worklist-level
+   *  ticket note), then one entry per line:
+   *    `REFDES[mark][water] (note)`
+   *  `[mark]` is omitted when 'none', `[water]` is only present when the
+   *  waterdamage flag is set, and ` (note)` is omitted when empty.
    *  The marker doubles as the import header — see `parseWorklistText`. */
   formatWorklistForClipboard(worklistId: string): string {
     const cur = this.current;
@@ -406,9 +441,15 @@ class WorklistStore {
     const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return '';
     const lines: string[] = [`-[${s.name}]-`];
+    if (s.note && s.note.trim()) {
+      for (const noteLine of s.note.split('\n')) {
+        lines.push(`> ${noteLine}`);
+      }
+    }
     for (const e of s.entries) {
       let line = e.refdes;
       if (e.mark !== 'none') line += `[${e.mark}]`;
+      if (e.waterdamage) line += `[water]`;
       if (e.note.trim()) line += ` (${e.note.trim()})`;
       lines.push(line);
     }
@@ -431,7 +472,8 @@ class WorklistStore {
    *    note length   ≤ 500 chars (per entry, post-trim) */
   static parseWorklistText(text: string): {
     name: string;
-    entries: Array<{ refdes: string; mark: WorklistMark; note: string }>;
+    note: string;
+    entries: Array<{ refdes: string; mark: WorklistMark; note: string; waterdamage: boolean }>;
   } | null {
     if (typeof text !== 'string' || text.length === 0) return null;
     if (text.length > 256 * 1024) return null;
@@ -448,14 +490,29 @@ class WorklistStore {
     // eslint-disable-next-line no-control-regex
     if (!name || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(name)) return null;
     i++;
+    // Worklist-level ticket note: contiguous `> ` lines immediately after
+    // the header. Empty lines end the note block.
+    const noteLines: string[] = [];
+    while (i < lines.length) {
+      const raw = lines[i];
+      const m = raw.match(/^>\s?(.*)$/);
+      if (!m) break;
+      noteLines.push(m[1]);
+      i++;
+      if (noteLines.length > 200) break; // safety cap
+    }
+    const note = noteLines.join('\n').slice(0, 4000);
     // Refdes shape: starts with uppercase letter, then up to 31 chars of
     // [A-Z0-9_.\/-]. Filters out source-code identifiers like `function`,
     // `import`, `const` that would otherwise match the lenient row regex
     // and pollute the imported worklist with fake entries.
     const refdesRe = /^[A-Z][A-Z0-9_\-./]{0,31}$/;
-    const rowRe = /^\s*(\S+?)(?:\[([a-z]+)\])?(?:\s*\((.*)\))?\s*$/i;
+    // Row shape: REFDES followed by 0+ `[token]` chunks (mark and/or water),
+    // optional ` (note)`. Tokens parsed below.
+    const rowRe = /^\s*(\S+?)((?:\[[a-z]+\])*)\s*(?:\(([^)]*)\))?\s*$/i;
+    const tokenRe = /\[([a-z]+)\]/gi;
     const knownMarks = new Set<WorklistMark>(['none', 'replaced', 'reworked', 'cleaned']);
-    const entries: Array<{ refdes: string; mark: WorklistMark; note: string }> = [];
+    const entries: Array<{ refdes: string; mark: WorklistMark; note: string; waterdamage: boolean }> = [];
     let trailingNonEmpty = 0;
     for (; i < lines.length && entries.length < 1000; i++) {
       const raw = lines[i].trim();
@@ -465,17 +522,26 @@ class WorklistStore {
       if (!m) continue;
       const refdes = m[1];
       if (!refdesRe.test(refdes)) continue;
-      const markRaw = (m[2] ?? 'none').toLowerCase() as WorklistMark;
-      const mark = knownMarks.has(markRaw) ? markRaw : 'none';
-      const note = (m[3] ?? '').trim().slice(0, 500);
-      entries.push({ refdes, mark, note });
+      let mark: WorklistMark = 'none';
+      let waterdamage = false;
+      const tokenBlock = m[2] ?? '';
+      tokenRe.lastIndex = 0;
+      let tm: RegExpExecArray | null;
+      while ((tm = tokenRe.exec(tokenBlock)) !== null) {
+        const tok = tm[1].toLowerCase();
+        if (tok === 'water') waterdamage = true;
+        else if (knownMarks.has(tok as WorklistMark)) mark = tok as WorklistMark;
+      }
+      const noteStr = (m[3] ?? '').trim().slice(0, 500);
+      entries.push({ refdes, mark, note: noteStr, waterdamage });
     }
     // False-positive guard: header matched but no entries parsed AND there
     // was meaningful content after the header → likely a coincidence (e.g.
     // a markdown line that happens to be `-[heading]-` followed by prose).
-    // Empty worklists (header + nothing) are allowed through.
+    // Empty worklists (header + nothing, optionally with a ticket note) are
+    // allowed through.
     if (entries.length === 0 && trailingNonEmpty >= 5) return null;
-    return { name, entries };
+    return { name, note, entries };
   }
 
   /** Import a worklist from raw text (typically the clipboard). Returns
@@ -500,6 +566,7 @@ class WorklistStore {
       createdAt: Date.now(),
       entries: [],
     };
+    if (parsed.note) worklist.note = parsed.note;
     let resolved = 0;
     for (const p of parsed.entries) {
       const idx = board ? board.parts.findIndex(x => x?.name === p.refdes) : -1;
@@ -509,6 +576,7 @@ class WorklistStore {
         mark: p.mark,
         note: p.note,
       };
+      if (p.waterdamage) entry.waterdamage = true;
       if (idx < 0) entry.unresolved = true;
       else resolved++;
       worklist.entries.push(entry);
