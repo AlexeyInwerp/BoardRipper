@@ -240,6 +240,7 @@ export class BoardRenderer {
   private tooltipEl: HTMLDivElement | null = null;
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
+  private tooltipMetaSpan: HTMLSpanElement | null = null;   // value / package (TVW + parsers that fill PartMeta)
   private tooltipObdSpan: HTMLSpanElement | null = null;  // OBD diode/V/Ω line
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
@@ -1058,6 +1059,9 @@ export class BoardRenderer {
     this.tooltipNetSpan.className = 'pnt-net';
     this.tooltipDetailSpan = document.createElement('span');
     this.tooltipDetailSpan.className = 'pnt-detail';
+    this.tooltipMetaSpan = document.createElement('span');
+    this.tooltipMetaSpan.className = 'pnt-meta';
+    this.tooltipMetaSpan.style.display = 'none';
     this.tooltipObdSpan = document.createElement('span');
     this.tooltipObdSpan.className = 'pnt-obd';
     this.tooltipObdSpan.style.display = 'none';
@@ -1065,7 +1069,7 @@ export class BoardRenderer {
     this.tooltipObdSpan.style.fontSize = '11px';
     this.tooltipObdSpan.style.color = '#9f9';
     this.tooltipObdSpan.style.marginTop = '2px';
-    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipObdSpan);
+    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipMetaSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     this.boundHover = (e: PointerEvent) => this.handleHover(e);
@@ -4243,7 +4247,13 @@ export class BoardRenderer {
       const pin = part?.pins[hit.pinIndex];
       if (pin && part) {
         const pinId = pin.number || String(hit.pinIndex + 1);
-        this.showTooltip(e.offsetX, e.offsetY, { net: pin.net ?? '', part: part.name, pin: pinId });
+        this.showTooltip(e.offsetX, e.offsetY, {
+          net: pin.net ?? '',
+          part: part.name,
+          pin: pinId,
+          value: part.meta?.value,
+          packageName: part.meta?.package,
+        });
         this.setHoverNet(pin.net || null);
         return;
       }
@@ -4254,7 +4264,10 @@ export class BoardRenderer {
       const t = this.board.traces![traceHit.traceIndex];
       const layerName = t.layer != null && this.board.layerNames?.[t.layer]
         ? this.board.layerNames[t.layer] : '';
-      this.showTooltip(e.offsetX, e.offsetY, { net: traceHit.net, part: layerName, pin: 'trace' });
+      this.showTooltip(e.offsetX, e.offsetY, {
+        net: traceHit.net,
+        part: layerName ? `trace · ${layerName}` : 'trace',
+      });
       this.setHoverNet(traceHit.net || null);
       return;
     }
@@ -4273,7 +4286,7 @@ export class BoardRenderer {
     }
   }
 
-  private showTooltip(x: number, y: number, info: { net: string; part: string; pin: string }) {
+  private showTooltip(x: number, y: number, info: { net: string; part: string; pin?: string; value?: string; packageName?: string }) {
     const el = this.tooltipEl;
     if (!el) return;
 
@@ -4284,7 +4297,17 @@ export class BoardRenderer {
       this.tooltipNetSpan.style.display = hasNet ? '' : 'none';
     }
     if (this.tooltipDetailSpan) {
-      this.tooltipDetailSpan.textContent = `${info.part} · pin ${info.pin}`;
+      this.tooltipDetailSpan.textContent = info.pin ? `${info.part} · pin ${info.pin}` : info.part;
+    }
+    // Meta line: value / package from PartMeta (TVW + any parser that fills it).
+    // Hidden when both fields are empty so non-TVW boards keep the compact tooltip.
+    if (this.tooltipMetaSpan) {
+      const value = info.value?.trim() ?? '';
+      const pkg = info.packageName?.trim() ?? '';
+      const parts = [value, pkg].filter(Boolean);
+      const metaLine = parts.join(' · ');
+      this.tooltipMetaSpan.textContent = metaLine;
+      this.tooltipMetaSpan.style.display = metaLine ? '' : 'none';
     }
     // OBD enrichment: if the hovered net has cached OpenBoardData readings,
     // append a compact "d 0.45 · 3.30 V · 47k Ω · 📝" line.
@@ -4736,6 +4759,8 @@ export class BoardRenderer {
     this.tooltipEl = null;
     this.tooltipNetSpan = null;
     this.tooltipDetailSpan = null;
+    this.tooltipMetaSpan = null;
+    this.tooltipObdSpan = null;
     if (this.boundGestureStart) {
       this.containerEl.removeEventListener('gesturestart', this.boundGestureStart);
       this.boundGestureStart = null;

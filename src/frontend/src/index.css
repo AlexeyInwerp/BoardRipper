@@ -2672,6 +2672,14 @@ html, body, #root {
   line-height: 1.3;
   margin-top: 1px;
 }
+.pin-net-tooltip .pnt-meta {
+  display: block;
+  color: rgba(200, 215, 230, 0.85);
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.3;
+  margin-top: 2px;
+}
 
 /* Selection overlay (big centered component/net name) — sits just below
    the .board-status-indicators pill. Centered horizontally so it stays
