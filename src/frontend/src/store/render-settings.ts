@@ -168,6 +168,13 @@ export interface RenderSettings {
    *  matches "www.chinafix.com"). */
   pdfWatermarkFilter: string[];
 
+  /** PDF render mode.
+   *  - 'auto' (default): tile above 1.05× zoom, full-page below — crisp at deep zoom.
+   *  - 'standard': always full-page, never tile. Smoother gesture feel; pixels go soft
+   *    past the browser canvas-max dimension (~5–6× on A4). Firefox-style.
+   *  - 'always-tile': tile at every zoom. Mostly a debugging escape hatch. */
+  pdfRenderMode: 'auto' | 'standard' | 'always-tile';
+
   /** Fraction of screen dimension panned per WSAD keypress. Range 0.02–0.30, default 0.10. */
   keyboardPanFraction: number;
 
@@ -340,6 +347,8 @@ export const DEFAULTS: RenderSettings = {
     'notebookschematics.com',
     'notebook-schematics.com',
   ],
+
+  pdfRenderMode: 'auto',
 
   showPadVertices: false,
   showVertexNumbers: false,
@@ -936,6 +945,10 @@ function loadFromStorage(): RenderSettings {
       if (parsed.overlayPosition === 'left' || parsed.overlayPosition === 'center') {
         result.overlayPosition = parsed.overlayPosition;
       }
+
+      if (parsed.pdfRenderMode === 'auto' || parsed.pdfRenderMode === 'standard' || parsed.pdfRenderMode === 'always-tile') {
+        result.pdfRenderMode = parsed.pdfRenderMode;
+      }
       // Clamp keyboard navigation settings to valid ranges
       result.keyboardPanFraction = Math.min(0.30, Math.max(0.02, result.keyboardPanFraction));
       result.keyboardZoomDelta = Math.min(400, Math.max(50, result.keyboardZoomDelta));
@@ -1106,6 +1119,14 @@ class RenderSettingsStore extends Emitter {
 
   setOverlayPosition(pos: 'left' | 'center') {
     this._global = { ...this._global, overlayPosition: pos };
+    saveToStorage(this._global);
+    this.recomputeEffective();
+    this.notify();
+  }
+
+  setPdfRenderMode(mode: 'auto' | 'standard' | 'always-tile') {
+    if (this._global.pdfRenderMode === mode) return;
+    this._global = { ...this._global, pdfRenderMode: mode };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();

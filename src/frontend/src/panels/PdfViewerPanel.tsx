@@ -648,6 +648,38 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
    *  without circular-dependency gymnastics in the useCallback chain. */
   const scheduleTierRenderRef = useRef<() => void>(() => {});
 
+  /** Current PDF render mode (auto/standard/always-tile). Ref-backed so the render
+   *  router and pan/zoom handlers don't take renderSettingsStore as a dep — a
+   *  useEffect (below) keeps it in sync and re-triggers a render on change. */
+  const pdfRenderModeRef = useRef<'auto' | 'standard' | 'always-tile'>(
+    renderSettingsStore.settings.pdfRenderMode
+  );
+
+  /** Should the panel render in tiled mode right now? Function so callers always
+   *  read the latest mode AND zoom — both can change between event and render. */
+  const shouldUseTilesRef = useRef<() => boolean>(() => false);
+  shouldUseTilesRef.current = () => {
+    const mode = pdfRenderModeRef.current;
+    if (mode === 'always-tile') return true;
+    if (mode === 'standard') return false;
+    return zoomRef.current > 1.05;
+  };
+
+  /** Gesture-active flag: true while the user is actively zooming via wheel/pinch.
+   *  Adaptive-throttle renders in scheduleTierRender are suspended when set; the
+   *  60 ms trailing debounce still fires after the gesture ends, so the user sees
+   *  CSS-scaled transform during interaction and one crisp render at settle. */
+  const gestureActiveRef = useRef(false);
+  const gestureEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markGestureActive = useCallback(() => {
+    gestureActiveRef.current = true;
+    if (gestureEndTimerRef.current) clearTimeout(gestureEndTimerRef.current);
+    gestureEndTimerRef.current = setTimeout(() => {
+      gestureActiveRef.current = false;
+      gestureEndTimerRef.current = null;
+    }, 150);
+  }, []);
+
   /** Zoom level at which every in-DOM wrapper child's CSS dimensions are
    *  currently committed. See applyTransform docstring for rationale. */
   const committedZoomRef = useRef(1);
@@ -810,6 +842,22 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return unsub;
   }, [pdfFileName]);
 
+  // Sync pdfRenderMode ref + re-route on change. shouldUseTilesRef reads the ref
+  // on every call, so the next render picks up the new mode automatically. The
+  // explicit renderPageRef.current() call handles the case where nothing else
+  // would naturally trigger a re-render (e.g. user toggles mode while idle).
+  useEffect(() => {
+    pdfRenderModeRef.current = renderSettingsStore.settings.pdfRenderMode;
+    const unsub = renderSettingsStore.subscribe(() => {
+      const cur = renderSettingsStore.settings.pdfRenderMode;
+      if (cur === pdfRenderModeRef.current) return;
+      pdfRenderModeRef.current = cur;
+      log.pdf.log(`render mode → ${cur}`);
+      renderPageRef.current();
+    });
+    return unsub;
+  }, []);
+
   const [editingBookmarkId, setEditingBookmarkId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
   const [glyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
@@ -935,7 +983,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         setZoomDisplay(zoomRef.current);
       });
     }
-    if (zoomRef.current > 1.05) scheduleTierRenderRef.current();
+    if (shouldUseTilesRef.current()) scheduleTierRenderRef.current();
   }, [clampPan]);
 
   /** Schedule a re-render at exact zoom resolution.
@@ -960,14 +1008,20 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     // Adaptive throttle: re-render when zooming in (higher tier needed) or
     // when in tiled mode and zoom level changed (new tiles needed for viewport).
-    const candidateTier = quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier));
-    if (candidateTier > renderTierRef.current) {
-      const ema = renderTimeEmaRef.current;
-      const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
-      const now = performance.now();
-      if (now - lastThrottleRenderRef.current >= throttleMs) {
-        lastThrottleRenderRef.current = now;
-        renderPageRef.current();
+    // Suspended during active gesture (wheel-zoom burst, pinch) — the trailing
+    // 60 ms debounce above still fires once the gesture stops, so the user
+    // sees CSS-transform-only motion during interaction and a crisp render at
+    // settle. Same model as Firefox's PDFViewer.
+    if (!gestureActiveRef.current) {
+      const candidateTier = quantiseTier(mainTierFromZoom(zoomRef.current, qcfgRef.current.maxMainTier));
+      if (candidateTier > renderTierRef.current) {
+        const ema = renderTimeEmaRef.current;
+        const throttleMs = ema > 0 ? Math.max(ema * 1.5, 16) : 0;
+        const now = performance.now();
+        if (now - lastThrottleRenderRef.current >= throttleMs) {
+          lastThrottleRenderRef.current = now;
+          renderPageRef.current();
+        }
       }
     }
 
@@ -1689,13 +1743,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     }
   }, [pdfFileName, isLoaded, currentPage, cleanMode, clearTileDom]);
 
-  /** Route to tiled or full-page render based on zoom level.
+  /** Route to tiled or full-page render based on the active mode + zoom level.
+   *  Mode is read via shouldUseTilesRef so a runtime mode switch (Settings ▸
+   *  PDF ▸ Render mode) re-routes the next render without a deps refresh.
    *  Never clear tiles during a page boundary crossing — tiles may temporarily
    *  show at the wrong zoom (effect chain fires renderActive with stale zoom).
-   *  Tiles are only cleared when explicitly zooming out to ≤ 1. */
+   *  Tiles are only cleared when the predicate flips off (zoom drops below
+   *  threshold in 'auto' mode, or user switches to 'standard'). */
   const renderActive = useCallback(() => {
-    const zoom = zoomRef.current;
-    if (zoom > 1.05) {
+    if (shouldUseTilesRef.current()) {
       setTiledMode(true);
       renderTiledPage();
     } else {
@@ -1703,7 +1759,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       renderPage();
       if (tileContainerRef.current.size > 0) {
         requestAnimationFrame(() => {
-          if (zoomRef.current <= 1.05) clearTileDom();
+          if (!shouldUseTilesRef.current()) clearTileDom();
         });
       }
     }
@@ -2369,6 +2425,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         }
 
         syncTransform();
+        markGestureActive();
         scheduleTierRender();
         return;
       }
@@ -2397,7 +2454,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           for (const c of tileContainerRef.current.values()) c.style.display = 'none';
           // In tiled mode: reposition the adjacent canvas as backdrop until tiles render.
           // In full-page mode: renderPage blits from cache instantly, no backdrop needed.
-          if (zoom > 1.05) {
+          if (shouldUseTilesRef.current()) {
             const adj = adjCanvasMapRef.current.get(curPage + 1);
             if (adj) {
               adj.canvas.style.top = '0px';
@@ -2414,7 +2471,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
           if (crispTimerRef.current) { clearTimeout(crispTimerRef.current); crispTimerRef.current = null; }
           for (const c of tileContainerRef.current.values()) c.style.display = 'none';
-          if (zoom > 1.05) {
+          if (shouldUseTilesRef.current()) {
             const adj = adjCanvasMapRef.current.get(curPage - 1);
             if (adj) {
               adj.canvas.style.top = '0px';
@@ -2459,7 +2516,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleWheel);
 
-  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber]);
+  }, [pdfFileName, isLoaded, syncTransform, scheduleTierRender, flashScrubber, markGestureActive]);
 
   // --- Safari trackpad pinch via gesture* events ---
   // Mac Safari emits gesture* events for trackpad pinch. The global handler in

@@ -881,6 +881,49 @@ function PdfQualitySelector() {
   );
 }
 
+// ---- PDF render mode selector ----
+
+const RENDER_MODE_LABELS: Record<'auto' | 'standard' | 'always-tile', string> = {
+  auto: 'Auto',
+  standard: 'Standard',
+  'always-tile': 'Always tile',
+};
+
+const RENDER_MODE_DESCRIPTIONS: Record<'auto' | 'standard' | 'always-tile', string> = {
+  auto: 'Tile above 1.05× zoom for crisp text at deep zoom. Full page below. Default.',
+  standard: 'Always render the full page into one canvas (Firefox-style). Smoother during pinch/zoom; pixels go soft past ~5–6× zoom on A4.',
+  'always-tile': 'Always tile. Mostly an escape hatch for debugging — rarely useful.',
+};
+
+function PdfRenderModeSelector() {
+  const mode = useSyncExternalStore(
+    cb => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.settings.pdfRenderMode,
+  );
+
+  const handleChange = useCallback((next: 'auto' | 'standard' | 'always-tile') => {
+    renderSettingsStore.setPdfRenderMode(next);
+  }, []);
+
+  return (
+    <div className="pdf-quality-selector">
+      <div className="settings-btn-group">
+        {(['auto', 'standard', 'always-tile'] as const).map(m => (
+          <button
+            key={m}
+            className={`settings-btn-option${mode === m ? ' active' : ''}`}
+            onClick={() => handleChange(m)}
+            title={RENDER_MODE_DESCRIPTIONS[m]}
+          >
+            {RENDER_MODE_LABELS[m]}
+          </button>
+        ))}
+      </div>
+      <p className="settings-hint">{RENDER_MODE_DESCRIPTIONS[mode]}</p>
+    </div>
+  );
+}
+
 /** Format the stored filter array into a textarea-friendly string (one term per line). */
 function formatWatermarkFilter(terms: string[]): string {
   return terms.join('\n');
@@ -1691,6 +1734,8 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={pdfRef} isFocused={focusedSection === 'pdf'}>
         <div className="settings-subsection-label">Render quality</div>
         <PdfQualitySelector />
+        <div className="settings-subsection-label">Render mode</div>
+        <PdfRenderModeSelector />
         <div className="settings-subsection-label">Watermark filter</div>
         <PdfWatermarkFilterEditor />
         <div className="settings-subsection-label">Navigation</div>
