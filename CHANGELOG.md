@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.30.4 — 2026-05-16
+
+PDF viewer feel — two complementary changes aimed at making zoom and multi-page navigation smoother on heavy schematics.
+
+### PDF
+
+- **Render-mode switch (Auto / Standard / Always-tile).** New control under Settings ▸ PDF ▸ Render mode. *Auto* (default) keeps the existing behaviour — tile above 1.05× zoom for crisp deep-zoom text, full-page below. *Standard* always renders the full page into one canvas (Firefox-style) — smoother during pinch/zoom and one fewer compositor layer; pixels go soft past the browser's canvas-max dimension (~5–6× on A4). *Always tile* is a debugging escape hatch. The router lives behind a `shouldUseTilesRef` predicate that reads both mode + zoom, replacing the four scattered `zoom > 1.05` literals; mode flips re-route the next render without a React-deps refresh. (`b84510a`)
+- **Gesture-suspend during wheel-zoom bursts.** Adaptive-throttle renders inside `scheduleTierRender` are now paused while a trackpad pinch / Ctrl+wheel zoom is active (150 ms self-expiring `gestureActiveRef` set in `markGestureActive`). The 60 ms trailing debounce still fires once the burst ends, so the user sees CSS-transform-only motion during interaction and one crisp render at settle — same model Firefox's PDFViewer uses. Touch pinch and Safari `gesture*` paths already had this implicitly (neither calls `scheduleTierRender` mid-gesture); this brings the wheel-pinch path in line. (`b84510a`)
+- **Min zoom floor dropped 1.0 → 0.5 to unstick multi-page navigation.** v0.27's fit-to-width zoom lock (`a876c74`) was masking a boundary-bounce glitch, but the side effect was that at zoom ≥ 1 each page is taller than the viewport and the wheel-pan flip threshold at `containerH/2` takes many wheel events to reach — felt like being "stuck" on one page mid-document. Restored the zoom-out-to-see-adjacent-pages workflow across all four zoom paths (wheel, Safari `gesturechange`, touch pinch, keyboard). 50% is far enough to see neighbours without re-surfacing the original glitch. (`e5ef926`)
+
 ## v0.30.3 — 2026-05-16
 
 The headline feature is a complete rewrite of the **PDF watermark filter**: it now runs *inside* pdf.js (via a `patch-package`-managed patch) and drops watermark glyphs **at parse time** instead of at render dispatch. Plus a stack of Worklist polish (waterdamage flag, ticket note, custom soldering-iron icon) and a couple of tooltip / hover-info improvements from earlier in the session.
