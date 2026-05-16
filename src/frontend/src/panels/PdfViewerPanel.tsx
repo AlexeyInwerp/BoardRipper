@@ -449,11 +449,18 @@ function textItemRect(
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
-/** Build render() options for the pdf.js watermark filter. Returns an empty
- *  object when there's nothing to skip, so spreading is a no-op. */
-function wmFilterProps(skipSet: Set<number>): { operationsFilter?: (idx: number) => boolean } {
-  if (skipSet.size === 0) return {};
-  return { operationsFilter: (idx: number) => !skipSet.has(idx) };
+/** Watermark filtering happens at the pdf.js worker / parser level via a
+ *  patch in `src/frontend/patches/pdfjs-dist+<version>.patch` (applied by
+ *  `npm run postinstall`). The worker examines each `showText` op's
+ *  reconstructed glyph string against the filter terms forwarded through
+ *  the custom `watermarkFilter` render option and drops matching ops before
+ *  they enter the operator list. No client-side filter callback is needed.
+ *
+ *  Returns the spreadable options blob (cast through `unknown` because the
+ *  upstream pdf.js types don't declare our patched-in field). Pass `[]` /
+ *  empty to disable on a given render. */
+function wmFilterOptions(filter: readonly string[] | undefined): Record<string, readonly string[] | null> {
+  return { watermarkFilter: (filter && filter.length > 0 ? filter : null) } as Record<string, readonly string[] | null>;
 }
 
 /** Compute zoom & pan to center a group of text items in the viewport */
@@ -791,7 +798,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (curFilter === prevFilter) return;
       prevFilter = curFilter;
       setWmFilterActive((curFilter?.length ?? 0) > 0);
-      pdfStore.invalidateWatermarkSkipSets(pdfFileName);
+      // pdf.js keys intentStates only on rendering intent + annotation hash,
+      // so a watermark-filter change alone doesn't invalidate the cached
+      // operator list. Flush it explicitly so the worker re-parses with the
+      // new filter. Then drop our bitmap caches and trigger a fresh render.
+      pdfStore.flushOperatorListCache(pdfFileName);
       invalidatePageCache(pdfFileName);
       invalidateTileCache(pdfFileName);
       renderPageRef.current();
@@ -811,7 +822,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const savedWmFilterRef = useRef<string[]>(
     renderSettingsStore.globalSettings.pdfWatermarkFilter?.length
       ? [...renderSettingsStore.globalSettings.pdfWatermarkFilter]
-      : ['www.chinafix.com', 'NotebookSchematics.com']
+      : ['Vinafix', 'www.chinafix.com', 'www.xinxunwei.com', 'notebookschematics.com', 'notebook-schematics.com']
   );
   const toggleWatermarkFilter = useCallback(() => {
     const current = renderSettingsStore.globalSnapshot();
@@ -1044,14 +1055,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const offCtx = offscreen.getContext('2d', { alpha: false });
     if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
-    // Watermark filter — same skip set used by main + tile render paths.
-    const skipSet = await pdfStore.getWatermarkSkipSet(pdfFileName, pageNum - 1);
-    if (signal?.aborted) { offscreen.width = 1; offscreen.height = 1; throw new DOMException('Aborted', 'AbortError'); }
-
     // 'display' intent is significantly faster than 'print' for complex schematics
     const task = page.render({
       canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display',
-      ...wmFilterProps(skipSet),
+      ...wmFilterOptions(renderSettingsStore.globalSettings.pdfWatermarkFilter),
     });
     const onAbort = () => task.cancel();
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -1204,16 +1211,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const offCtx = offscreen.getContext('2d', { alpha: false });
       if (!offCtx) { releaseCanvas(offscreen); throw new Error(`Canvas too large: ${viewport.width}x${viewport.height}`); }
 
-      // Watermark filter: compute skip set (operator indices to exclude).
-      // Uses pdf.js public `operationsFilter` — glyph draw ops in the set
-      // are skipped entirely at dispatch, leaving underlying paths untouched.
-      const skipSet = await pdfStore.getWatermarkSkipSet(pdfFileName, currentPage - 1);
-      if (renderIdRef.current !== renderId) { releaseCanvas(offscreen); return; }
-
       // 'display' intent is significantly faster than 'print' for complex schematics
       const task = page.render({
         canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display',
-        ...wmFilterProps(skipSet),
+        ...wmFilterOptions(renderSettingsStore.globalSettings.pdfWatermarkFilter),
       });
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
@@ -1558,10 +1559,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const t0 = performance.now();
       const rendered: { key: string; bitmap: ImageBitmap; col: number; row: number; pixelW: number; pixelH: number }[] = [];
 
-      // Watermark skip set — computed once per page, shared by all tiles.
-      // Uses pdf.js public `operationsFilter` callback to skip glyph ops.
-      const skipSet = await pdfStore.getWatermarkSkipSet(pdfFileName, currentPage - 1);
-      if (tileRenderIdRef.current !== tileRenderId) return;
+      // Watermark filter forwarded through the patched `watermarkFilter`
+      // render option — the worker drops matching showText ops at parse time.
+      const wmOptions = wmFilterOptions(renderSettingsStore.globalSettings.pdfWatermarkFilter);
 
       for (const t of toRender) {
         if (tileRenderIdRef.current !== tileRenderId) return;
@@ -1579,7 +1579,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const task = page.render({
           canvas: offscreen, canvasContext: offCtx,
           viewport: tileViewport, intent: 'display',
-          ...wmFilterProps(skipSet),
+          ...wmOptions,
         });
         renderTaskRef.current = { cancel: () => task.cancel() };
 

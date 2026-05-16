@@ -333,7 +333,13 @@ export const DEFAULTS: RenderSettings = {
   bgaLabelGapFactor: 0,
   twoPinLabelGapFactor: 0.6,
 
-  pdfWatermarkFilter: ['www.chinafix.com', 'NotebookSchematics.com'],
+  pdfWatermarkFilter: [
+    'Vinafix',
+    'www.chinafix.com',
+    'www.xinxunwei.com',
+    'notebookschematics.com',
+    'notebook-schematics.com',
+  ],
 
   showPadVertices: false,
   showVertexNumbers: false,
@@ -889,6 +895,22 @@ function loadFromStorage(): RenderSettings {
       // previous default get the new cap so testpoints and other large-radius
       // pins stop dominating the view. Explicit customisations are preserved.
       if (result.pinMaxRadius === 30) result.pinMaxRadius = 15;
+      // Migration: PDF watermark filter defaults grew over time. Whenever the
+      // saved filter is an exact match for any previous compile-time default,
+      // replace with the current default so users keep getting new
+      // watermark patterns automatically. Explicit customisations (any other
+      // contents) are preserved verbatim.
+      const _wmF = result.pdfWatermarkFilter;
+      const PRIOR_DEFAULTS: readonly (readonly string[])[] = [
+        ['www.chinafix.com', 'NotebookSchematics.com'],
+        ['Vinafix', 'www.chinafix.com', 'notebookschematics.com', 'notebook-schematics.com'],
+      ];
+      const _wmMatchesPrior = Array.isArray(_wmF) && PRIOR_DEFAULTS.some(
+        d => _wmF.length === d.length && _wmF.every((v, i) => v === d[i])
+      );
+      if (_wmMatchesPrior) {
+        result.pdfWatermarkFilter = structuredClone(DEFAULTS.pdfWatermarkFilter);
+      }
       // Migration: wheelDetection default flipped true → false. The per-event
       // safety net could split a Mac/Safari smooth-scrolled wheel click into
       // mixed pan+zoom frames. Force-flip ONCE for users carrying the legacy
@@ -1171,7 +1193,12 @@ class RenderSettingsStore extends Emitter {
 export const renderSettingsStore = new RenderSettingsStore();
 
 function normalizeForWatermark(s: string): string {
-  return s.replace(/\s+/g, '').toLowerCase();
+  // NFKC decomposes compatibility characters — crucially, Latin ligatures
+  // like ﬁ (U+FB01), ﬂ (U+FB02), ﬀ, ﬃ, ﬄ, ﬆ — into their constituent
+  // letters. Many vendor watermark fonts emit ligature glyphs for fi/fl/etc.,
+  // so without this step "Vinaﬁx.com" never matches a "Vinafix" filter term.
+  // Must stay in lock-step with the worker-side filter in the pdf.js patch.
+  return s.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
 }
 
 export function isPdfWatermarkText(str: string, filter: string[]): boolean {

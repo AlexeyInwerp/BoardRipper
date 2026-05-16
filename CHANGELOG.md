@@ -1,5 +1,53 @@
 # BoardRipper changelog
 
+## v0.30.3 — 2026-05-16
+
+The headline feature is a complete rewrite of the **PDF watermark filter**: it now runs *inside* pdf.js (via a `patch-package`-managed patch) and drops watermark glyphs **at parse time** instead of at render dispatch. Plus a stack of Worklist polish (waterdamage flag, ticket note, custom soldering-iron icon) and a couple of tooltip / hover-info improvements from earlier in the session.
+
+### Worklist
+
+- **Per-row waterdamage flag.** Each entry has a binary "water damage observed" toggle alongside the existing mark cycle. Dim/transparent droplet icon when off, cyan-blue when on. Independent of the mark state — a part can be both water-damaged AND replaced. Roundtrips through the clipboard via a `[water]` token on the row (`R12[replaced][water] (note)`). (`762cfe5`)
+- **Per-worklist ticket note.** A `Ticket note ▸` spoiler at the top of the active worklist holds a free-form note (~4 KB cap). Preview of the first line shows when collapsed. Roundtrips through the clipboard via `> `-prefixed lines immediately after the `-[name]-` header. (`762cfe5`)
+- **Mark-cycle flash chip rendered through a React portal.** Previously the per-row "Replaced / Reworked / Cleaned" popover anchored to its button via `position: fixed` could land in the wrong place when an ancestor Dockview/sidebar wrapper created a containing block. Now portaled to `document.body` so `position: fixed` coords always reach viewport space. (`762cfe5`)
+- **Custom soldering-iron icon for the "Reworked" mark.** New `IconSolderingIron` component in `src/icons/`: iron body from `mdi:soldering-iron` (Apache 2.0) with the cord subpath dropped and horizontally mirrored; smoke wisp hand-traced inspired by `game-icons:soldering-iron` (CC BY 3.0). Replaces the bandage emoji-substitute. Attributions in `THIRD_PARTY.md`. (`762cfe5`)
+- **"Select" button renamed to "Highlight"** — matches what it does (load worklist parts into the cyan canvas overlay, not a real selection mutation). (`4bdc9ad`)
+
+### PDF watermark filter — complete rewrite
+
+The v0.4.2 – v0.30.2 implementation passed a `Set<number>` of pre-computed operator indices into pdf.js's public `operationsFilter` render callback. That had two latent bugs that manifested on more PDFs as the filter list grew: pdf.js's `getOperatorList` uses `NullOptimizer` (raw operator stream) while `render` uses `QueueOptimizer` (merges/reorders ops), so pre-computed indices didn't line up; and any PDF that emits one `showText` per glyph for sub-pixel positioning (Gigabyte schematics, for example) never matched substring filters per-op anyway.
+
+The new design lives **inside the pdf.js worker**, via a `patch-package`-managed diff at `src/frontend/patches/pdfjs-dist+5.5.207.patch`. The patch:
+
+- Adds a `watermarkFilter: string[]` option to `PDFPageProxy.render(...)`, forwarded through `_pumpOperatorList` → `GetOperatorList` worker message → `Page.getOperatorList` → `PartialEvaluator.getOperatorList`.
+- In the evaluator's main switch, between `BT` and `ET`, tracks every `showText` op's `args` reference and the accumulated glyph-unicode string. Ops flow through `operatorList.addOp` in source order — no buffering, no reordering — so async-emitted state ops (`setFont`) land where pdf.js expects them.
+- At `ET`, NFKC-normalises the accumulated string + each filter term, lowercases, strips whitespace, substring-matches. If any term matches, retroactively sets each tracked showText's `args[0] = []` so the op still executes but draws nothing.
+
+Trade-offs and why this shape: we tried a per-op filter (broke on per-glyph PDFs), a whole-BT-buffer-then-emit approach (broke rendering whenever a real text block went through the buffer, because state ops emitted async to the operator list landed before the buffered BT did), and finally landed on in-place glyph-array zapping after the fact — the only approach that preserves pdf.js's strict op-stream ordering while still letting us decide at BT-block granularity.
+
+Notable shipped fixes inside this rewrite:
+
+- **NFKC normalisation** so Latin ligatures like `ﬁ` (U+FB01) decompose to `f` + `i`. Without it, `"Vinaﬁx.com"` never matches the user's `Vinafix` filter term. Click-test path (`isPdfWatermarkText` in `render-settings.ts`) uses the same rule, kept in lock-step by design.
+- **`cMapUrl` + `standardFontDataUrl`** wired into every `pdfjsLib.getDocument` call. Some donor PDFs (Gigabyte schematics) ship fonts that reference CJK/vendor CMaps; without these URLs, pdf.js's font loader fails with `Ensure that the cMapUrl and cMapPacked API parameters are provided` and the glyphs arrive at the operator stream with no `.unicode` — the filter then has nothing to match against. Dev server points at unminified `pdf.worker.mjs` so the patch targets readable source; vite still minifies for production.
+- **`flushOperatorListCache(fileName)` on filter toggle** — pdf.js's `intentStates` cacheKey doesn't include the filter, so a toggle alone leaves the cached operator list in place. We now call `page.doc.cleanup(true)` to force a re-parse with the new filter.
+- **`self.` instead of `this.` in the showText branch.** The switch sits inside `new Promise(function promiseBody(resolve, reject) { … })`, a regular function — `this` is `undefined` in strict-mode module scope. The earlier `this.watermarkFilter` read threw a `TypeError` that pdf.js's `ignoreErrors` catch silently swallowed, dropping the whole operator list, which manifested as "no text renders at all". Caught via Playwright probe.
+- **Right-click → "Hide as watermark"** context-menu item on PDF text. Adds the clicked text to `pdfWatermarkFilter`; the existing filter-change subscription flushes caches and triggers a re-parse with the new term.
+- **Default filter expanded** to `Vinafix`, `www.chinafix.com`, `www.xinxunwei.com`, `notebookschematics.com`, `notebook-schematics.com`. Migration recognises any prior default list and upgrades automatically; explicit customisations are preserved.
+
+The patch survives `npm install` / Docker builds via a `postinstall` script wired into `src/frontend/package.json`. Updating procedure for pdf.js version bumps is documented in `src/frontend/patches/README.md`.
+
+### Hover tooltip
+
+- **Value and Package surfaced in the hover tooltip.** On boards whose parsers fill `PartMeta` (primarily TVW; partial coverage from BVR/BDV/Allegro), a new line appears between `R123 · pin 2` and any OBD readings, joining `value` and `package` with ` · ` (e.g. `10uF · CHIP0603R`). Hidden entirely when both are empty so non-TVW tooltips stay compact. Matches what `ComponentInfoPanel` and `BoardSidebar` already show. (`07f018f`)
+- **Trace-hover label cleaned up.** Was `Top · pin trace` (awkward). Now `trace · Top` (or just `trace` when no layer name). Net stays on line 1. (`07f018f`)
+
+### Clipboard
+
+- **Worklist Copy + context-menu Copy work over LAN / NAS / Tailscale, not just `localhost`.** `navigator.clipboard.writeText` is only defined on secure contexts (HTTPS or `http://localhost`); the dashboard accessed at `http://192.168.x.x:1336`, Vite's network URL, or a Tailscale `100.x.x.x` address left it undefined and the copy threw `Cannot read properties of undefined (reading 'writeText')`. A new `copyText()` helper in `src/clipboard.ts` falls back to a transient off-screen `<textarea>` + `document.execCommand('copy')`. (`4bdc9ad`)
+
+### Renderer
+
+- **`BoardRenderer.teardownForReinit` removes `multiHighlightGfx` alongside the other highlight layers** — was missing from one of the two teardown paths, leaking the graphics object on tab switch. (`762cfe5`)
+
 ## v0.30.2 — 2026-05-15
 
 ### Fixed

@@ -5,7 +5,6 @@ import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, 
 import { boardCache } from './board-cache';
 import { Emitter } from './emitter';
 import { log } from './log-store';
-import { renderSettingsStore, isPdfWatermarkText } from './render-settings';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
 // TS lib doesn't ship the Stage-3 prototype additions yet; declare them for the typechecker.
@@ -38,14 +37,37 @@ if (typeof Map.prototype.getOrInsertComputed !== 'function') {
 // In Electron (file:// protocol), try dynamic import first (sets globalThis.pdfjsWorker
 // for main-thread execution). If that fails, fall back to workerSrc with file:// URL.
 // In normal web mode, use workerSrc for a real Web Worker.
+//
+// NOTE — we deliberately use the *unminified* `pdf.worker.mjs` (not `.min.mjs`)
+// because BoardRipper patches the worker to support a parse-time watermark
+// filter (`src/frontend/patches/pdfjs-dist+<version>.patch`, applied via the
+// `postinstall` script). The patch targets readable source. Vite still minifies
+// the worker chunk for production. See `src/frontend/patches/README.md`.
 const _workerUrl = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
+  'pdfjs-dist/build/pdf.worker.mjs',
   import.meta.url,
 ).toString();
 
+// CMap + standard-font assets shipped with pdfjs-dist. Required when a PDF
+// references a CJK / vendor CMap or relies on the standard 14 PDF fonts —
+// without these, pdf.js's font loader fails with "Ensure that the cMapUrl
+// and cMapPacked API parameters are provided", and the resulting glyphs
+// arrive at the operator stream with no `.unicode`, so BoardRipper's
+// watermark filter (which matches on reconstructed glyph strings) can't
+// see them. cmaps in pdfjs-dist are pre-packed .bcmap files.
+//
+// `new URL('pdfjs-dist/cmaps/', import.meta.url)` doesn't work — vite only
+// resolves bare module specifiers when the URL points at a file (e.g.
+// 'pdfjs-dist/build/pdf.worker.mjs'), not a directory. So we derive the
+// asset directory from `_workerUrl` by trimming `build/pdf.worker.mjs`.
+const _pdfjsBase = _workerUrl.replace(/build\/pdf\.worker\.mjs$/, '');
+const _cMapUrl = _pdfjsBase + 'cmaps/';
+const _standardFontDataUrl = _pdfjsBase + 'standard_fonts/';
+const _getDocOpts = { cMapUrl: _cMapUrl, cMapPacked: true, standardFontDataUrl: _standardFontDataUrl };
+
 let _workerReady: Promise<void> = Promise.resolve();
 if (window.location.protocol === 'file:') {
-  _workerReady = import('pdfjs-dist/build/pdf.worker.min.mjs').then(() => {
+  _workerReady = import('pdfjs-dist/build/pdf.worker.mjs').then(() => {
     log.pdf.log('pdf.js worker loaded via dynamic import (main-thread mode)');
   }).catch((err) => {
     log.pdf.warn('pdf.js worker dynamic import failed, setting workerSrc fallback:', err);
@@ -53,63 +75,6 @@ if (window.location.protocol === 'file:') {
   });
 } else {
   pdfjsLib.GlobalWorkerOptions.workerSrc = _workerUrl;
-}
-
-// pdf.js operator codes (OPS enum in pdfjs-dist/build/pdf.mjs).
-// Only the ones we need for text-operator scanning.
-const OP_BEGIN_TEXT = 31;
-const OP_SET_FONT = 37;
-const OP_SET_TEXT_MATRIX = 42;
-const OP_SHOW_TEXT = 44;
-const OP_SHOW_SPACED_TEXT = 45;
-const OP_NEXT_LINE_SHOW_TEXT = 46;
-const OP_NEXT_LINE_SET_SPACING_SHOW_TEXT = 47;
-
-/** Scan a pdf.js operator list and return the set of indices for glyph-drawing
- *  operators whose effective font size matches any watermark item. Runs
- *  once per page at load/filter-change time. */
-function scanOperatorListForWatermarkGlyphs(
-  opList: { fnArray: number[]; argsArray: (readonly unknown[] | null)[] },
-  watermarkFontSizes: readonly number[],
-): Set<number> {
-  const skip = new Set<number>();
-  if (watermarkFontSizes.length === 0) return skip;
-
-  const EPS_REL = 0.05; // 5% relative tolerance
-  let textMatrixScale = 1;
-  let fontSize = 1;
-
-  const { fnArray, argsArray } = opList;
-  for (let i = 0; i < fnArray.length; i++) {
-    const op = fnArray[i];
-    const args = argsArray[i];
-    switch (op) {
-      case OP_BEGIN_TEXT:
-        textMatrixScale = 1;
-        break;
-      case OP_SET_FONT:
-        if (args && typeof args[1] === 'number') fontSize = args[1];
-        break;
-      case OP_SET_TEXT_MATRIX:
-        if (args && args.length >= 4) {
-          const a = Number(args[0]);
-          const b = Number(args[1]);
-          textMatrixScale = Math.hypot(a, b) || 1;
-        }
-        break;
-      case OP_SHOW_TEXT:
-      case OP_SHOW_SPACED_TEXT:
-      case OP_NEXT_LINE_SHOW_TEXT:
-      case OP_NEXT_LINE_SET_SPACING_SHOW_TEXT: {
-        const eff = textMatrixScale * Math.abs(fontSize);
-        for (const wmSize of watermarkFontSizes) {
-          if (Math.abs(eff - wmSize) / wmSize < EPS_REL) { skip.add(i); break; }
-        }
-        break;
-      }
-    }
-  }
-  return skip;
 }
 
 export interface PdfTextItem {
@@ -454,11 +419,6 @@ interface PdfDocument {
   pageCount: number;
   currentPage: number;
   textPages: PdfTextItem[][];
-  /** Per-page watermark skip sets — operator indices to exclude from rendering.
-   *  Index is pageIndex (0-based). null = not yet computed. Signature is the
-   *  joined filter terms at compute time; mismatching signature triggers recompute. */
-  watermarkSkipSets: (Set<number> | null)[];
-  watermarkSkipFilterSig: string;
   searchQuery: string;
   matches: PdfTextMatch[];
   activeMatchIndex: number;
@@ -599,7 +559,7 @@ class PdfStore extends Emitter {
       const buffer = await file.arrayBuffer();
       // Copy buffer before passing to pdf.js — getDocument() transfers/detaches the original
       const bufferCopy = buffer.slice(0);
-      const doc = await pdfjsLib.getDocument({ data: bufferCopy }).promise;
+      const doc = await pdfjsLib.getDocument({ data: bufferCopy, ..._getDocOpts }).promise;
 
       // Make the document available immediately — text is extracted in the background.
       const pdfDoc: PdfDocument = {
@@ -613,8 +573,6 @@ class PdfStore extends Emitter {
         pageCount: doc.numPages,
         currentPage: 1,
         textPages: [],
-        watermarkSkipSets: new Array(doc.numPages).fill(null),
-        watermarkSkipFilterSig: '',
         searchQuery: '',
         searchSource: null,
         lookupHint: null,
@@ -724,46 +682,9 @@ class PdfStore extends Emitter {
       boardCache.putPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified, pdfDoc.textPages).catch(() => {});
     }
 
-    // Pre-warm watermark skip sets in the background so every render path
-    // (main, tiles, adjacent pages) sees them as instantly ready. Errors are
-    // ignored — skip sets are computed lazily on first use as a fallback.
-    void this._prewarmWatermarkSkipSets(pdfDoc.fileName);
-  }
-
-  /** Background prewarm runs one page per idle callback so it yields to
-   *  user-interactive renders on the shared pdf.js worker queue. Falls back
-   *  to setTimeout(0) in browsers without requestIdleCallback (Safari). */
-  private async _prewarmWatermarkSkipSets(fileName: string): Promise<void> {
-    const doc = this._documents.get(fileName);
-    if (!doc) return;
-    const filter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
-    if (!filter || filter.length === 0) return;
-
-    // Use requestIdleCallback when available; otherwise fall back to setTimeout.
-    // We don't care about the deadline — we process exactly one page per tick and
-    // let the browser decide when a tick fires. The whole loop yields the worker
-    // queue between pages so user renders can slip in.
-    const w = window as unknown as {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    };
-    const scheduleTick = (cb: () => void) => {
-      if (w.requestIdleCallback) {
-        w.requestIdleCallback(cb, { timeout: 2000 });
-      } else {
-        setTimeout(cb, 0);
-      }
-    };
-
-    let i = 0;
-    const step = async () => {
-      // Abort if document was closed or replaced
-      if (this._documents.get(fileName) !== doc) return;
-      if (i >= doc.pageCount) return;
-      const pageIndex = i++;
-      try { await this.getWatermarkSkipSet(fileName, pageIndex); } catch { /* ignore */ }
-      scheduleTick(() => { void step(); });
-    };
-    scheduleTick(() => { void step(); });
+    // Watermark sizes are computed lazily per page on first render — the
+    // calculation is just an iteration over textPages[pageIndex], cheap
+    // enough to do on demand without a background prewarm.
   }
 
   /** Return the effective PDFDocumentProxy (stripped if clean mode is on). */
@@ -793,6 +714,7 @@ class PdfStore extends Emitter {
     const doc = await pdfjsLib.getDocument({
       data: buffer,
       fontExtraProperties: true,
+      ..._getDocOpts,
     }).promise;
     pdfDoc.doc = doc;
     // Clean up old proxy (safe — only tears down worker connection)
@@ -807,6 +729,23 @@ class PdfStore extends Emitter {
     return d ? (d.cleanMode && d.strippedDoc ? d.strippedDoc : d.doc) : null;
   }
 
+  /** Flush pdf.js's per-page `intentStates` so the next render re-parses
+   *  the content stream. Needed when the watermark filter changes: pdf.js
+   *  keys `intentStates` only on rendering intent + annotation hash, so a
+   *  filter toggle alone doesn't invalidate the cached operator list.
+   *  Called from the filter-change subscription in PdfViewerPanel. */
+  flushOperatorListCache(fileName?: string): void {
+    const docs = fileName
+      ? ([this._documents.get(fileName)].filter(Boolean) as PdfDocument[])
+      : Array.from(this._documents.values());
+    for (const doc of docs) {
+      // Keep loaded fonts — they're expensive to re-fetch and don't depend
+      // on watermark filtering.
+      doc.doc?.cleanup(true).catch(() => { /* in-flight render — fine */ });
+      doc.strippedDoc?.cleanup(true).catch(() => { /* same */ });
+    }
+  }
+
   /** Toggle clean mode: strip small watermark images from the PDF data. */
   async toggleClean(fileName: string, enabled: boolean) {
     const d = this._documents.get(fileName);
@@ -818,7 +757,7 @@ class PdfStore extends Emitter {
       try {
         const stripped = await stripWatermarkImages(d.originalBuffer);
         const tStrip = performance.now();
-        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped }).promise;
+        d.strippedDoc = await pdfjsLib.getDocument({ data: stripped, ..._getDocOpts }).promise;
         const tLoad = performance.now();
         const metrics = {
           file: fileName,
@@ -1202,72 +1141,11 @@ class PdfStore extends Emitter {
     return this._documents.get(fileName)?.textPages[pageIndex] ?? [];
   }
 
-  /** Get (and lazily compute) the watermark skip set for a page.
-   *  Returns a Set of pdf.js operator indices to exclude from rendering.
-   *  The set is computed once per (file, page, filterSig) and cached until
-   *  the filter changes. Returns empty Set when the filter is empty. */
-  async getWatermarkSkipSet(fileName: string, pageIndex: number): Promise<Set<number>> {
-    const doc = this._documents.get(fileName);
-    if (!doc) return new Set();
-
-    const filter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
-    const sig = (filter ?? []).join('|');
-
-    // Filter changed — drop all cached sets for this doc
-    if (doc.watermarkSkipFilterSig !== sig) {
-      doc.watermarkSkipFilterSig = sig;
-      doc.watermarkSkipSets = new Array(doc.pageCount).fill(null);
-    }
-
-    if (!filter || filter.length === 0) return new Set();
-
-    const cached = doc.watermarkSkipSets[pageIndex];
-    if (cached) return cached;
-
-    // Compute watermark font sizes from text items on this page
-    const items = doc.textPages[pageIndex] ?? [];
-    const sizes: number[] = [];
-    for (const item of items) {
-      if (!isPdfWatermarkText(item.str, filter)) continue;
-      const size = Math.hypot(item.transform[2], item.transform[3]);
-      if (size > 0) sizes.push(size);
-    }
-
-    if (sizes.length === 0) {
-      const empty = new Set<number>();
-      doc.watermarkSkipSets[pageIndex] = empty;
-      return empty;
-    }
-
-    // Fetch operator list and scan for glyph-drawing ops at watermark font sizes
-    const page = await this._effectiveDoc(doc).getPage(pageIndex + 1);
-    const opList = await page.getOperatorList();
-    const skip = scanOperatorListForWatermarkGlyphs(opList, sizes);
-    doc.watermarkSkipSets[pageIndex] = skip;
-    return skip;
-  }
-
-  /** Invalidate watermark skip sets for a document (or all). Called when
-   *  the user changes the filter. Re-triggers background prewarm so the
-   *  first render after toggling ON doesn't freeze waiting for getOperatorList. */
-  invalidateWatermarkSkipSets(fileName?: string): void {
-    const reset = (doc: PdfDocument) => {
-      doc.watermarkSkipSets = new Array(doc.pageCount).fill(null);
-      doc.watermarkSkipFilterSig = '';
-    };
-    if (fileName) {
-      const doc = this._documents.get(fileName);
-      if (doc) {
-        reset(doc);
-        void this._prewarmWatermarkSkipSets(fileName);
-      }
-    } else {
-      for (const [name, doc] of this._documents) {
-        reset(doc);
-        void this._prewarmWatermarkSkipSets(name);
-      }
-    }
-  }
+  // Watermark filtering used to live here as a `getWatermarkSizes` +
+  // `invalidateWatermarkSizes` pair driving a client-side `operationsFilter`
+  // callback. That whole machinery is gone — the patched pdf.js worker now
+  // drops watermark `showText` ops at parse time, so the operator stream
+  // never carries them. See `src/frontend/patches/README.md`.
 
   /** Count occurrences of `query` across all pages of a loaded document.
    *  Searches merged-line dense text so identifiers split across pdf.js

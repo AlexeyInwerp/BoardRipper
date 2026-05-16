@@ -1313,16 +1313,15 @@ class BoardStore extends Emitter {
   }
 
   /** Clear all PDF-related caches: IDB pdf-text store, in-memory tile
-   *  bitmap cache, glyph/font cache, and per-document watermark skip
-   *  sets. Board caches are left alone. */
+   *  bitmap cache, and glyph/font cache. Watermark filtering moved into
+   *  the patched pdf.js worker; nothing to invalidate there. Board caches
+   *  are left alone. */
   async resetPdfCaches(): Promise<void> {
-    const { pdfStore } = await import('./pdf-store');
     const { invalidateTileCache } = await import('../pdf/tile-manager');
     const { clearFontCache } = await import('../pdf/glyph-extractor');
     await boardCache.clearPdfText();
     invalidateTileCache();
     clearFontCache();
-    pdfStore.invalidateWatermarkSkipSets();
     log.cache.log('PDF caches cleared');
     this.addToast('PDF caches cleared.', 'info');
     this.notify();

@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
-import { IconCopy, IconWorld, IconStack2 } from '@tabler/icons-react';
+import { IconCopy, IconWorld, IconStack2, IconShieldPlus } from '@tabler/icons-react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
+import { renderSettingsStore } from '../store/render-settings';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
 import { worklistStore } from '../store/worklist-store';
@@ -295,6 +296,23 @@ export function ContextMenu() {
     }
   };
 
+  /** Add the right-clicked PDF text as a new watermark-filter term. Forces
+   *  every open PDF to re-parse so the patched worker drops matching glyph
+   *  runs at the source. */
+  const onAddWatermarkTerm = () => {
+    const term = state.query.trim();
+    contextMenuStore.hide();
+    if (!term) return;
+    const current = renderSettingsStore.globalSnapshot();
+    const existing = current.pdfWatermarkFilter ?? [];
+    if (existing.some(t => t === term)) {
+      boardStore.addToast(`"${term}" is already a watermark term`, 'info');
+      return;
+    }
+    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: [...existing, term] });
+    boardStore.addToast(`Added "${term}" to watermark filter — reparsing`, 'info');
+  };
+
   const onSearch = (action: QuickAction) => {
     contextMenuStore.hide();
     const url = `https://www.google.com/search?q=${encodeURIComponent(action.value)}`;
@@ -551,16 +569,38 @@ export function ContextMenu() {
       return <div className="context-menu-item disabled">No text at this point</div>;
     }
 
+    // Watermark-filter shortcut. Always shown above the donor-search groups
+    // — turns "right-click on the watermark, hide it" into one click.
+    const wmFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter ?? [];
+    const alreadyWatermark = wmFilter.some(t => t === state.query.trim());
+    const wmItem = (
+      <div
+        key="add-watermark"
+        className={`context-menu-item${alreadyWatermark ? ' disabled' : ''}`}
+        onClick={alreadyWatermark ? undefined : onAddWatermarkTerm}
+        title={alreadyWatermark
+          ? 'This text is already a watermark term'
+          : 'Hide every occurrence of this text in every open PDF (reparses)'}
+      >
+        <IconShieldPlus size={14} stroke={1.8} />
+        <span style={{ marginLeft: 6 }}>
+          {alreadyWatermark
+            ? `Watermark filter already includes "${state.query}"`
+            : `Hide as watermark — "${state.query}"`}
+        </span>
+      </div>
+    );
+
     const nothingToSearch =
       boundBoardTabs.length === 0 &&
       otherBoardsForPdf.length === 0 &&
       otherPdfsForPdf.length === 0;
 
     if (nothingToSearch) {
-      return <div className="context-menu-item disabled">Nowhere to search</div>;
+      return <>{wmItem}<div className="context-menu-separator" /><div className="context-menu-item disabled">Nowhere to search</div></>;
     }
 
-    const sections: React.ReactNode[] = [];
+    const sections: React.ReactNode[] = [wmItem];
 
     // PDF mode has exactly one query per right-click, so donor rows are
     // flat (no spoiler, no variants). Each row = click = jump + search.
