@@ -1,5 +1,13 @@
 # BoardRipper changelog
 
+## v0.30.5 — 2026-05-17
+
+PDF tile render path — single perf change with measurable settle-time win on fresh-tile renders.
+
+### PDF
+
+- **Pipeline tile `createImageBitmap` with the next tile's `page.render()`.** The tile loop in `renderTiledPage` used to await BOTH `page.render()` and `createImageBitmap` strictly in sequence per tile, leaving the pdf.js worker idle for the duration of each bitmap pump. The new structure holds each iteration's bitmap promise as `pending` and collects it at the top of the next iteration — meaning tile N+1's `page.render()` is in flight in the worker while tile N's pixels are being pumped into an `ImageBitmap` on the main thread. `page.render()` itself stays strictly serial per pdf.js's constraint (parallel calls on the same page produce flipped/mirrored tiles); only the JS-side bitmap creation overlaps. Cancellation drains the in-flight bitmap before returning so the LRU cache still gets valid pixels rendered before the cancel. Expected ~30–50% reduction on all-fresh-tile settle paths (zoom change, page change); no impact on cache-hit pan paths. Directly addresses the observation that Standard mode's crisp settle felt faster than Tiles mode's — the 2N awaits in sequence were the structural cause. (`40edb70`)
+
 ## v0.30.4 — 2026-05-16
 
 PDF viewer feel — two complementary changes aimed at making zoom and multi-page navigation smoother on heavy schematics.
