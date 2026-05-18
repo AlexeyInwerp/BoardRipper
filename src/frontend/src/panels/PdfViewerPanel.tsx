@@ -24,7 +24,7 @@ import {
   setTileCacheLimit,
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
-import { renderSettingsStore, isPdfWatermarkText } from '../store/render-settings';
+import { renderSettingsStore, isPdfWatermarkText, getActiveWatermarkFilter } from '../store/render-settings';
 import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
 
 const DRAG_THRESHOLD = 3;
@@ -821,15 +821,19 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   }, [pdfFileName]);
 
   // Sync wand button + caches with the store's watermark filter. Runs on
-  // every render-settings change, but the filter's own reference identity
-  // is the fast guard — no stringify per notify.
+  // every render-settings change, but reference identity on the list AND the
+  // enabled flag's primitive equality act as fast guards — no stringify per
+  // notify.
   useEffect(() => {
     let prevFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+    let prevEnabled = renderSettingsStore.globalSettings.pdfWatermarkFilterEnabled;
     const unsub = renderSettingsStore.subscribe(() => {
       const curFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
-      if (curFilter === prevFilter) return;
+      const curEnabled = renderSettingsStore.globalSettings.pdfWatermarkFilterEnabled;
+      if (curFilter === prevFilter && curEnabled === prevEnabled) return;
       prevFilter = curFilter;
-      setWmFilterActive((curFilter?.length ?? 0) > 0);
+      prevEnabled = curEnabled;
+      setWmFilterActive(curEnabled !== false);
       // pdf.js keys intentStates only on rendering intent + annotation hash,
       // so a watermark-filter change alone doesn't invalidate the cached
       // operator list. Flush it explicitly so the worker re-parses with the
@@ -862,25 +866,19 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const [editingLabel, setEditingLabel] = useState('');
   const [glyphDebug] = useState<GlyphDebugState>(DEFAULT_GLYPH_DEBUG_STATE);
 
-  // Watermark filter toggle. `wmFilterActive` is driven from the store so
-  // edits via SettingsPanel's editor keep the wand button in sync.
+  // Watermark filter toggle. `wmFilterActive` mirrors the persistent
+  // `pdfWatermarkFilterEnabled` flag. The user's term list is preserved across
+  // toggles — flipping the flag never touches `pdfWatermarkFilter`, so a wand
+  // off → reload → wand on cycle restores the exact terms the user had.
   const [wmFilterActive, setWmFilterActive] = useState(() =>
-    (renderSettingsStore.globalSettings.pdfWatermarkFilter?.length ?? 0) > 0
-  );
-  const savedWmFilterRef = useRef<string[]>(
-    renderSettingsStore.globalSettings.pdfWatermarkFilter?.length
-      ? [...renderSettingsStore.globalSettings.pdfWatermarkFilter]
-      : ['Vinafix', 'www.chinafix.com', 'www.xinxunwei.com', 'notebookschematics.com', 'notebook-schematics.com']
+    renderSettingsStore.globalSettings.pdfWatermarkFilterEnabled !== false
   );
   const toggleWatermarkFilter = useCallback(() => {
     const current = renderSettingsStore.globalSnapshot();
-    const active = (current.pdfWatermarkFilter?.length ?? 0) > 0;
-    if (active) {
-      savedWmFilterRef.current = [...current.pdfWatermarkFilter];
-      renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: [] });
-    } else {
-      renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: savedWmFilterRef.current });
-    }
+    renderSettingsStore.applyGlobal({
+      ...current,
+      pdfWatermarkFilterEnabled: !current.pdfWatermarkFilterEnabled,
+    });
   }, []);
   // glyphMenuOpen/glyphMenuTimerRef removed — legacy glyph-debug menu was
   // rendered inside the now-commented cleaner popup.
@@ -1112,7 +1110,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // 'display' intent is significantly faster than 'print' for complex schematics
     const task = page.render({
       canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display',
-      ...wmFilterOptions(renderSettingsStore.globalSettings.pdfWatermarkFilter),
+      ...wmFilterOptions(getActiveWatermarkFilter(renderSettingsStore.globalSettings)),
     });
     const onAbort = () => task.cancel();
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -1268,7 +1266,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // 'display' intent is significantly faster than 'print' for complex schematics
       const task = page.render({
         canvas: offscreen, canvasContext: offCtx, viewport, intent: 'display',
-        ...wmFilterOptions(renderSettingsStore.globalSettings.pdfWatermarkFilter),
+        ...wmFilterOptions(getActiveWatermarkFilter(renderSettingsStore.globalSettings)),
       });
       renderTaskRef.current = { cancel: () => task.cancel() };
       await task.promise;
@@ -1628,7 +1626,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       // Watermark filter forwarded through the patched `watermarkFilter`
       // render option — the worker drops matching showText ops at parse time.
-      const wmOptions = wmFilterOptions(renderSettingsStore.globalSettings.pdfWatermarkFilter);
+      const wmOptions = wmFilterOptions(getActiveWatermarkFilter(renderSettingsStore.globalSettings));
 
       for (const t of toRender) {
         if (tileRenderIdRef.current !== tileRenderId) { await drainPending(); return; }
@@ -2724,7 +2722,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     // Collect all matching items at the click point, pick the smallest font.
     // Watermark filter: skip text items matching any configured watermark term.
-    const wmFilter = renderSettingsStore.globalSettings.pdfWatermarkFilter;
+    const wmFilter = getActiveWatermarkFilter(renderSettingsStore.globalSettings);
     let bestHit: { word: string; rect: { x: number; y: number; w: number; h: number }; fontSize: number; itemIndex: number } | null = null;
 
     for (let ii = 0; ii < items.length; ii++) {

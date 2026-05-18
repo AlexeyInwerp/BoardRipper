@@ -165,8 +165,15 @@ export interface RenderSettings {
 
   /** PDF watermark filter — list of terms to erase from rendered PDF pages.
    *  Matching is case-insensitive and whitespace-insensitive (so "w w w . c h i n a f i x . c o m"
-   *  matches "www.chinafix.com"). */
+   *  matches "www.chinafix.com"). Always represents the user's list verbatim;
+   *  the on/off state of the filter lives in `pdfWatermarkFilterEnabled` so
+   *  toggling the wand button never destroys the list. */
   pdfWatermarkFilter: string[];
+
+  /** Whether the watermark filter is currently active. Decoupled from the
+   *  list itself so toggling off doesn't drop the user's terms — the list
+   *  survives across reload, settings edits, and "off then on" cycles. */
+  pdfWatermarkFilterEnabled: boolean;
 
   /** PDF render mode.
    *  - 'auto' (default): tile above 1.05× zoom, full-page below — crisp at deep zoom.
@@ -347,6 +354,7 @@ export const DEFAULTS: RenderSettings = {
     'notebookschematics.com',
     'notebook-schematics.com',
   ],
+  pdfWatermarkFilterEnabled: true,
 
   pdfRenderMode: 'auto',
 
@@ -920,6 +928,21 @@ function loadFromStorage(): RenderSettings {
       if (_wmMatchesPrior) {
         result.pdfWatermarkFilter = structuredClone(DEFAULTS.pdfWatermarkFilter);
       }
+      // Migration: pre-v0.30.7 the wand-toggle "off" state was persisted as
+      // `pdfWatermarkFilter: []`, which destroyed the user's custom terms on
+      // reload. Recover by promoting `[]` to the current defaults *and*
+      // setting `pdfWatermarkFilterEnabled: false`. Users who had genuinely
+      // cleared their list (rare) get the defaults back plus a one-click
+      // toggle to dismiss — that's the better failure mode than silently
+      // remaining empty forever.
+      if (Array.isArray(_wmF) && _wmF.length === 0 && parsed.pdfWatermarkFilterEnabled === undefined) {
+        result.pdfWatermarkFilter = structuredClone(DEFAULTS.pdfWatermarkFilter);
+        result.pdfWatermarkFilterEnabled = false;
+      } else if (parsed.pdfWatermarkFilterEnabled === undefined) {
+        // Existing user, non-empty list, no flag yet → assume filter is on
+        // (matches pre-v0.30.7 semantics where any non-empty list was active).
+        result.pdfWatermarkFilterEnabled = true;
+      }
       // Migration: wheelDetection default flipped true → false. The per-event
       // safety net could split a Mac/Safari smooth-scrolled wheel click into
       // mixed pan+zoom frames. Force-flip ONCE for users carrying the legacy
@@ -1220,6 +1243,14 @@ function normalizeForWatermark(s: string): string {
   // so without this step "Vinaﬁx.com" never matches a "Vinafix" filter term.
   // Must stay in lock-step with the worker-side filter in the pdf.js patch.
   return s.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+}
+
+/** Return the effective watermark filter — the user's list when the filter is
+ *  enabled, an empty array otherwise. Consumers should call this instead of
+ *  reading `pdfWatermarkFilter` directly so the enabled flag is respected
+ *  uniformly. */
+export function getActiveWatermarkFilter(s: RenderSettings): string[] {
+  return s.pdfWatermarkFilterEnabled !== false ? s.pdfWatermarkFilter : [];
 }
 
 export function isPdfWatermarkText(str: string, filter: string[]): boolean {

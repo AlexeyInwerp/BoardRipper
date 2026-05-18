@@ -309,7 +309,13 @@ export function ContextMenu() {
       boardStore.addToast(`"${term}" is already a watermark term`, 'info');
       return;
     }
-    renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: [...existing, term] });
+    // Adding a term implies the user wants it filtered now — auto-enable
+    // the filter if the wand was previously toggled off.
+    renderSettingsStore.applyGlobal({
+      ...current,
+      pdfWatermarkFilter: [...existing, term],
+      pdfWatermarkFilterEnabled: true,
+    });
     boardStore.addToast(`Added "${term}" to watermark filter — reparsing`, 'info');
   };
 
