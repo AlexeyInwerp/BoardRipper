@@ -159,6 +159,24 @@ function detectSideInversion(
 
 export function parseBRD(buffer: ArrayBuffer): BoardData {
   const bytes = new Uint8Array(buffer);
+
+  // Proprietary "BRD_V1.0" container: 16-byte ASCII header followed by an
+  // encoded body. Decoding is under active investigation — the algorithm
+  // isn't published and no client-side artifact carries the key. Reject
+  // early with a descriptive message instead of letting OpenBoardView-style
+  // decoding emit garbage. Support may be added in a future release once
+  // the format is understood.
+  if (
+    bytes.length >= 16 &&
+    bytes[0] === 0x42 && bytes[1] === 0x52 && bytes[2] === 0x44 && bytes[3] === 0x5F &&
+    bytes[4] === 0x56 && bytes[5] === 0x31 && bytes[6] === 0x2E && bytes[7] === 0x30
+  ) {
+    throw new Error(
+      'BRD_V1.0 is a proprietary, encoded boardview format. ' +
+      'Decoding is under active investigation — support may be added in a future release.'
+    );
+  }
+
   const text  = decodeBRDBytes(bytes);
   const secs  = parseSections(text);
 

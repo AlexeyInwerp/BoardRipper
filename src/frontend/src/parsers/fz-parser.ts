@@ -385,15 +385,29 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
     contentEnd -= 4;
   }
 
-  const contentCompressed = data.subarray(contentStart, contentEnd);
-
-  // Decompress content section
+  // Decompress content section.
+  //
+  // Some converters (e.g. the Vietnamese GOCCANH-XJ tool) write `descrSize` 4 bytes
+  // longer than the standard layout, which chops 4 bytes off the deflate stream and
+  // makes pako fail with "unexpected end of file". When the canonical slice fails,
+  // retry with contentEnd + 4 before reporting failure — symmetrical to the
+  // forward-pointer trim above.
   let contentText: string;
 
   try {
-    contentText = decoder.decode(inflate(contentCompressed));
+    contentText = decoder.decode(inflate(data.subarray(contentStart, contentEnd)));
   } catch (e) {
-    throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
+    const altEnd = contentEnd + 4;
+    if (altEnd <= data.length - 4) {
+      try {
+        contentText = decoder.decode(inflate(data.subarray(contentStart, altEnd)));
+        contentEnd = altEnd;
+      } catch {
+        throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
+      }
+    } else {
+      throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   // Parse unit multiplier
