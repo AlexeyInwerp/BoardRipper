@@ -1,5 +1,23 @@
 # BoardRipper changelog
 
+## v0.30.8 — 2026-05-18
+
+Right-click context menu redesign and two parser fixes.
+
+### Context menu
+
+- **Density pass.** Font 12px, padding 4px 10px (was 0.9em / 6px 14px); the action strip is gone, replaced by inline chips inside the existing header row. Menu caps at 360px wide; long PDF / board donor names ellipsis-truncate with the full path available on hover (`title` attribute). The whole menu reads ~30% shorter at the same content. (`ac6fcc8`)
+- **Header chips.** Each value (part / pin / net under the cursor) renders as a chip with a copy-on-click affordance; search-on-web and worklist-pin sit as 22px icon buttons on the chips that own them. No more "pin F11" prefix — the value alone speaks in chip context. The previous three-row Copy / Search / Worklist strip is gone; everything an action could target now lives next to its name. (`ac6fcc8`)
+- **Pin chip leads + lit state for worklist membership.** The worklist pin sits FIRST inside the part chip, before the value name. When the right-clicked component is already in the active worklist the pin renders filled + accent-coloured (`IconPinFilled` on `.is-lit`), tooltip switches to "click to remove", and the click removes the entry — mirrors shift-click on the canvas. (`ac6fcc8`)
+- **Donor row: chevron on the left, variant connector hairline.** The variant-expansion glyph moved from a 2em right-side icon (often misread as "submenu →") to a 1.4em left-side chevron in a fixed 18px slot, matching the file-tree disclosure pattern. Expanded variants now render inside a wrapper with a 1px left border that visually ties them to their donor row. (`ac6fcc8`)
+- **Auto-expand donor groups when total donor rows < 5.** Small lists default to open — no extra clicks needed for the typical "one bound PDF + one sibling board" case. The chevron still toggles, and explicit user collapses persist for the lifetime of that menu open. (`ac6fcc8`)
+- **`IconMinus` retired for the "no mark" worklist row.** Reads as "subtract"; replaced by a dim `·` (opacity 0.4). The mark-cycle popover already names the new state on click, so the row's idle look stays calm. (`ac6fcc8`)
+
+### Parsers
+
+- **BRD parser early-rejects the proprietary `BRD_V1.0` container.** New 16-byte ASCII header check at the top of `parseBRD` throws with a descriptive message: "proprietary, encoded boardview format. Decoding is under active investigation — support may be added in a future release." Without this gate, OpenBoardView-style decoding ran against the encoded body and emitted garbage geometry that took users a while to diagnose. (`8fe1b94`)
+- **FZ alt-end fallback for non-canonical `descrSize`.** The Vietnamese GOCCANH-XJ converter writes `descrSize` 4 bytes longer than the canonical layout, which chops 4 bytes off the deflate stream and makes pako abort with "unexpected end of file". When the canonical slice fails, the parser now retries once with `contentEnd + 4` before reporting failure — symmetrical to the trailing-pointer trim already in place on the forward path. Fixes silent failures on a small but real set of community boards. (`8fe1b94`)
+
 ## v0.30.7 — 2026-05-18
 
 PDF watermark wand toggle — fixes a long-standing bug where the user's custom watermark term list was destroyed on every wand-off→reload→wand-on cycle.
