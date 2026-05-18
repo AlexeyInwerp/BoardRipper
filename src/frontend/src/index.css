@@ -2811,14 +2811,15 @@ html, body, #root {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 4px 0;
+  padding: 3px 0;
   min-width: 180px;
+  max-width: 360px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
 .context-menu-item {
-  padding: 6px 14px;
-  font-size: 0.9em;
+  padding: 4px 10px;
+  font-size: 12px;
   color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
@@ -2846,49 +2847,93 @@ html, body, #root {
   margin: 3px 8px;
 }
 
-/* Top-of-menu selection summary — what Copy/Search will act on. */
+/* Top-of-menu selection summary — the names of part/pin/net under the
+ * cursor, with inline action chips (copy / search / worklist). Replaces
+ * the older separate quick-action strip; the chip approach keeps Copy/
+ * Search/Worklist next to the value they apply to and collapses three
+ * action rows into one. */
 .context-menu-header {
-  padding: 6px 10px 4px;
-  font-size: 11px;
+  padding: 4px 8px 3px;
+  font-size: 11.5px;
   color: var(--text-secondary, #888);
   font-family: var(--font-mono, monospace);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 380px;
-}
-
-/* Top-of-menu icon strip (Copy / Search quick actions). */
-.context-menu-actions {
   display: flex;
-  flex-direction: row;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px 8px;
+  align-items: center;
+  gap: 3px;
 }
-.context-menu-action-btn {
+.ctxmenu-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.ctxmenu-chip-value {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 1px 6px;
   background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
   color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  font: inherit;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 11px;
-  font-family: inherit;
-  line-height: 1;
-  transition: background 80ms ease;
+  line-height: 1.4;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.context-menu-action-btn:hover {
+.ctxmenu-chip-value:hover {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: var(--accent);
 }
-.context-menu-action-btn:active {
-  transform: translateY(1px);
+.ctxmenu-chip-icon {
+  opacity: 0.55;
+  flex-shrink: 0;
 }
+.ctxmenu-chip-value:hover .ctxmenu-chip-icon {
+  opacity: 1;
+}
+.ctxmenu-chip-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+  opacity: 0.75;
+  transition: background 80ms ease;
+}
+.ctxmenu-chip-action:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  opacity: 1;
+}
+.ctxmenu-chip-action.is-lit {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  opacity: 1;
+}
+.ctxmenu-chip-action.is-lit:hover {
+  /* Subtle dim on hover when already lit signals "click to undo" */
+  filter: brightness(1.15);
+}
+.ctxmenu-chip-sep {
+  opacity: 0.4;
+  user-select: none;
+  padding: 0 2px;
+}
+
 
 .context-menu-group-header {
   padding: 2px 12px;
@@ -2901,36 +2946,55 @@ html, body, #root {
 }
 
 /* Donor row: default-query line that can optionally carry a spoiler
- * arrow revealing extra query variants below. Extends .context-menu-item
- * so we inherit hover/disabled behavior. */
+ * chevron revealing extra query variants below. Chevron sits on the LEFT
+ * (file-tree disclosure pattern). Sized large enough to read clearly — a
+ * tiny chevron is invisible against the donor label. Vertical overflow
+ * is handled by line-height clamping on the parent row. */
 .context-menu-donor-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 4px;
+  padding-left: 6px;
 }
 .context-menu-donor-row-arrow {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
-  align-self: stretch;
-  margin: -4px -12px -4px 0;
-  padding: 0 10px;
-  font-size: 2em;
+  width: 18px;
+  font-size: 1.4em;
+  line-height: 1;
   opacity: 0.7;
   cursor: pointer;
   user-select: none;
+  flex-shrink: 0;
 }
 .context-menu-donor-row-arrow:hover {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.12);
+}
+.context-menu-donor-row-arrow.empty {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0;
+}
+.context-menu-donor-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Indented variant row below a donor-row spoiler. Clickable. */
+/* Variant-group wrapper: continuous vertical hairline visually tying
+ * variants to their donor. The line lives on the wrapper's left edge,
+ * margin-aligned with the donor's chevron centre so it reads as a
+ * continuation of the disclosure. */
+.context-menu-variant-group {
+  margin-left: 14px;
+  border-left: 1px solid var(--border);
+}
 .context-menu-variant-row {
-  padding: 2px 12px 2px 28px;
-  font-size: 12px;
+  padding: 3px 10px 3px 12px;
+  font-size: 11.5px;
 }
 
 .context-menu-submenu-trigger {

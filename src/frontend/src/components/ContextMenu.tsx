@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useSyncExternalStore, useState } from 'react';
-import { IconCopy, IconWorld, IconStack2, IconShieldPlus } from '@tabler/icons-react';
+import { IconCopy, IconWorld, IconPin, IconPinFilled, IconShieldPlus } from '@tabler/icons-react';
 import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
@@ -50,50 +50,16 @@ import { copyText } from '../clipboard';
  *  When changing one body (row format, group structure, badge placement,
  *  spoiler rules, click behavior) update the other so the two right-click
  *  modes stay consistent.
- *    • A muted top-of-menu header (.context-menu-header) shows what
- *      Copy/Search will act on: "<component> · pin <pinId> · net <netName>"
- *      in board mode, or the cursor text in PDF mode. Hidden when the
- *      relevant fields are empty.
- *    • A top-of-menu icon strip (.context-menu-actions) renders quick
- *      actions built from buildQuickActions(state). Board mode = up to
- *      4 buttons (Copy net, Copy part, Search net, Search part). PDF
- *      mode = up to 2 buttons (Copy, Search Web). The strip is hidden
- *      when buildQuickActions returns []. Donor groups render below.
+ *    • The header (.context-menu-header) renders the part / pin / net under
+ *      the cursor as inline chips — each chip carries a copy-on-click value
+ *      plus optional search-on-web and worklist-pin actions. Replaces the
+ *      older separate quick-action strip; everything an action could target
+ *      now lives in one row next to its name.
+ *    • PDF mode header renders the cursor text as a single chip (copy +
+ *      search-on-web). A separate "Hide as watermark" item lives inside
+ *      renderPdfBody above the donor groups.
  * ============================================================================
  */
-
-type QuickActionKind = 'copy' | 'search';
-type QuickActionTarget = 'net' | 'part' | 'text';
-interface QuickAction {
-  kind: QuickActionKind;
-  target: QuickActionTarget;
-  value: string;
-  /** Short label shown next to the icon. Empty string = icon-only (PDF mode). */
-  label: string;
-}
-
-/** Build the icon-strip action list from the current ContextMenu state.
- *  Order: copy-net, copy-part, search-net, search-part (board);
- *         copy, search (pdf). Skips entries with empty values. */
-function buildQuickActions(state: ContextMenuState): QuickAction[] {
-  const out: QuickAction[] = [];
-  if (state.source === 'board') {
-    const compName = state.componentName.trim();
-    const netName = state.netName?.trim() ?? '';
-    if (netName)  out.push({ kind: 'copy',   target: 'net',  value: netName,  label: 'Net'  });
-    if (compName) out.push({ kind: 'copy',   target: 'part', value: compName, label: 'Part' });
-    if (netName)  out.push({ kind: 'search', target: 'net',  value: netName,  label: 'Net'  });
-    if (compName) out.push({ kind: 'search', target: 'part', value: compName, label: 'Part' });
-  } else {
-    const q = state.query.trim();
-    if (q) {
-      // PDF mode has only one target — render icon-only (no label) for compactness.
-      out.push({ kind: 'copy',   target: 'text', value: q, label: '' });
-      out.push({ kind: 'search', target: 'text', value: q, label: '' });
-    }
-  }
-  return out;
-}
 
 let version = 0;
 let lastVer = -1;
@@ -256,6 +222,19 @@ export function ContextMenu() {
   );
   const otherPdfsForPdf = allOpenPdfNames.filter(n => n !== originPdf);
 
+  // Auto-expand donor groups when there are few of them. Mirrors the
+  // file-tree disclosure pattern: small lists default to open. Threshold
+  // chosen so a typical chip with one or two linked PDFs and at most a
+  // sibling board tab pre-expands; anything denser stays collapsed. While
+  // the auto-expand flag is on, `expandedSpoilers` tracks rows the user
+  // has *collapsed*; otherwise it tracks rows the user has *expanded*. The
+  // chevron toggle is a plain add/remove either way.
+  const totalDonorRows =
+    state.source === 'board'
+      ? boundOpen.length + otherPdfNames.length + otherBoardTabs.length
+      : boundBoardTabs.length + otherBoardsForPdf.length + otherPdfsForPdf.length;
+  const autoExpandDonors = totalDonorRows > 0 && totalDonorRows < 5;
+
   // ── Shared click dispatchers ────────────────────────────────────────────
   const doPdfSearch = (e: React.MouseEvent, pdfFileName: string, query: string) => {
     e.stopPropagation();
@@ -286,14 +265,20 @@ export function ContextMenu() {
     contextMenuStore.hide();
   };
 
-  const onCopy = async (action: QuickAction) => {
+  const copyValue = async (value: string) => {
     contextMenuStore.hide();
     try {
-      await copyText(action.value);
-      boardStore.addToast(`Copied '${action.value}'`, 'info');
+      await copyText(value);
+      boardStore.addToast(`Copied '${value}'`, 'info');
     } catch (err) {
       boardStore.addToast(`Copy failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
+  };
+
+  const searchValue = (value: string) => {
+    contextMenuStore.hide();
+    const url = `https://www.google.com/search?q=${encodeURIComponent(value)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   /** Add the right-clicked PDF text as a new watermark-filter term. Forces
@@ -319,38 +304,17 @@ export function ContextMenu() {
     boardStore.addToast(`Added "${term}" to watermark filter — reparsing`, 'info');
   };
 
-  const onSearch = (action: QuickAction) => {
+  /** Toggle a refdes in the active worklist. Mirrors shift-click on canvas:
+   *  present → remove, absent → add (auto-creates a worklist on first use
+   *  via pushRefdesToActive). Hides the menu in either case. */
+  const onToggleWorklist = (refdes: string) => {
     contextMenuStore.hide();
-    const url = `https://www.google.com/search?q=${encodeURIComponent(action.value)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  };
-
-  const renderHeader = (): React.ReactElement | null => {
-    if (state.source === 'board') {
-      const compName = state.componentName.trim();
-      if (!compName) return null;
-      const pinId = state.pinId?.trim() ?? '';
-      const netName = state.netName?.trim() ?? '';
-      const parts: string[] = [compName];
-      if (pinId) parts.push(`pin ${pinId}`);
-      if (netName) parts.push(`net ${netName}`);
-      return (
-        <div className="context-menu-header" data-testid="context-menu-header">
-          {parts.join(' · ')}
-        </div>
-      );
+    const wl = worklistStore.activeWorklist;
+    if (wl?.entries.some(e => e.refdes === refdes)) {
+      worklistStore.removeEntry(wl.id, refdes);
+      boardStore.addToast(`Removed '${refdes}' from ${wl.name}`, 'info');
+      return;
     }
-    const q = state.query.trim();
-    if (!q) return null;
-    return (
-      <div className="context-menu-header" data-testid="context-menu-header">
-        {q}
-      </div>
-    );
-  };
-
-  const onAddToWorklist = (refdes: string) => {
-    contextMenuStore.hide();
     const r = worklistStore.pushRefdesToActive(refdes);
     if (!r) {
       boardStore.addToast(`Could not add '${refdes}' to worklist (no active board?)`, 'error');
@@ -365,46 +329,98 @@ export function ContextMenu() {
     }
   };
 
-  const renderQuickActions = (): React.ReactElement | null => {
-    const actions = buildQuickActions(state);
-    const compName = state.source === 'board' ? state.componentName.trim() : '';
-    if (actions.length === 0 && !compName) return null;
+  /** Render a value chip: the value text + small action icons (copy /
+   *  optional search / optional worklist). Click on the text itself is a
+   *  shortcut for Copy. Compresses the previous three-row Copy/Search/
+   *  Worklist strip into one inline header row. Worklist pin sits FIRST
+   *  inside the chip so its lit/unlit state reads before the value name. */
+  const renderValueChip = (
+    value: string,
+    actions: {
+      search?: boolean;
+      worklist?: boolean;
+      /** When true, the worklist pin renders filled + lit and clicking
+       *  *removes* the entry instead of adding (toggle semantics, mirrors
+       *  shift-click on the canvas). */
+      worklistLit?: boolean;
+      testKind?: 'part' | 'net' | 'text';
+    } = {},
+  ): React.ReactElement => {
+    const kind = actions.testKind ?? 'text';
     return (
-      <div className="context-menu-actions" data-testid="context-menu-actions">
-        {actions.map((a, i) => {
-          const Icon = a.kind === 'copy' ? IconCopy : IconWorld;
-          const verb = a.kind === 'copy' ? 'Copy' : 'Search';
-          const tail = a.kind === 'search' ? ' on the web' : '';
-          const title = `${verb} '${a.value}'${tail}`;
-          const onClick = (e: React.MouseEvent) => {
-            e.stopPropagation();
-            if (a.kind === 'copy') onCopy(a); else onSearch(a);
-          };
-          return (
-            <button
-              key={`${a.kind}:${a.target}:${i}`}
-              className="context-menu-action-btn"
-              title={title}
-              data-testid={`qa-${a.kind}-${a.target}`}
-              onClick={onClick}
-            >
-              <Icon size={14} />
-              {a.label && <span>{a.label}</span>}
-            </button>
-          );
-        })}
-        {compName && (
+      <span className="ctxmenu-chip" key={`chip-${kind}-${value}`}>
+        {actions.worklist && (
           <button
-            key="qa-worklist-part"
-            className="context-menu-action-btn"
-            title={`Add '${compName}' to the active worklist`}
+            className={`ctxmenu-chip-action${actions.worklistLit ? ' is-lit' : ''}`}
+            title={actions.worklistLit
+              ? `'${value}' is in the active worklist — click to remove`
+              : `Add '${value}' to the active worklist`}
             data-testid="qa-worklist-part"
-            onClick={(e) => { e.stopPropagation(); onAddToWorklist(compName); }}
+            data-lit={actions.worklistLit ? '1' : '0'}
+            onClick={(e) => { e.stopPropagation(); onToggleWorklist(value); }}
           >
-            <IconStack2 size={14} />
-            <span>Worklist</span>
+            {actions.worklistLit
+              ? <IconPinFilled size={12} stroke={2} />
+              : <IconPin size={12} stroke={2} />}
           </button>
         )}
+        <button
+          className="ctxmenu-chip-value"
+          title={`Copy '${value}'`}
+          data-testid={`qa-copy-${kind}`}
+          onClick={(e) => { e.stopPropagation(); void copyValue(value); }}
+        >
+          {value}
+          <IconCopy size={11} stroke={2} className="ctxmenu-chip-icon" />
+        </button>
+        {actions.search && (
+          <button
+            className="ctxmenu-chip-action"
+            title={`Search '${value}' on the web`}
+            data-testid={`qa-search-${kind}`}
+            onClick={(e) => { e.stopPropagation(); searchValue(value); }}
+          >
+            <IconWorld size={12} stroke={2} />
+          </button>
+        )}
+      </span>
+    );
+  };
+
+  const renderHeader = (): React.ReactElement | null => {
+    if (state.source === 'board') {
+      const compName = state.componentName.trim();
+      if (!compName) return null;
+      const pinId = state.pinId?.trim() ?? '';
+      const netName = state.netName?.trim() ?? '';
+      // Lit iff the part is already in the active worklist for this board.
+      // Read synchronously at render — menu re-opens always re-evaluate so
+      // the icon state reflects the current store.
+      const isInActiveWorklist =
+        !!worklistStore.activeWorklist?.entries.some(e => e.refdes === compName);
+      return (
+        <div className="context-menu-header" data-testid="context-menu-header">
+          {renderValueChip(compName, { search: true, worklist: true, worklistLit: isInActiveWorklist, testKind: 'part' })}
+          {pinId && (
+            <>
+              <span className="ctxmenu-chip-sep">·</span>
+              {renderValueChip(pinId, { testKind: 'text' })}
+            </>
+          )}
+          {netName && (
+            <>
+              <span className="ctxmenu-chip-sep">·</span>
+              {renderValueChip(netName, { search: true, testKind: 'net' })}
+            </>
+          )}
+        </div>
+      );
+    }
+    const q = state.query.trim();
+    if (!q) return null;
+    return (
+      <div className="context-menu-header" data-testid="context-menu-header">
+        {renderValueChip(q, { search: true, testKind: 'text' })}
       </div>
     );
   };
@@ -431,24 +447,30 @@ export function ContextMenu() {
     extraVariants: React.ReactElement[] = [],
   ): React.ReactElement => {
     const hasVariants = extraVariants.length > 0;
-    const expanded = expandedSpoilers.has(key);
+    // Auto-expand mode: `expandedSpoilers` tracks rows the user has
+    // explicitly *collapsed*. Otherwise it tracks rows explicitly *expanded*.
+    // `toggleSpoiler` is a plain add/remove either way — the user-facing
+    // chevron behaviour stays consistent.
+    const explicit = expandedSpoilers.has(key);
+    const expanded = autoExpandDonors ? !explicit : explicit;
     return (
       <React.Fragment key={key}>
         <div className="context-menu-item context-menu-donor-row" onClick={onDefaultClick}>
-          <span>
+          <span
+            className={hasVariants ? 'context-menu-donor-row-arrow' : 'context-menu-donor-row-arrow empty'}
+            onClick={hasVariants ? (e) => { e.stopPropagation(); toggleSpoiler(key); } : undefined}
+            aria-hidden={!hasVariants}
+          >
+            {hasVariants ? (expanded ? '▾' : '▸') : ''}
+          </span>
+          <span className="context-menu-donor-row-label" title={`${donorLabel} | ${defaultQuery}`}>
             <SearchScopeBadge scope={scope} />
             {' '}{donorLabel} | {defaultQuery} ({defaultCount == null ? '…' : defaultCount})
           </span>
-          {hasVariants && (
-            <span
-              className="context-menu-donor-row-arrow"
-              onClick={(e) => { e.stopPropagation(); toggleSpoiler(key); }}
-            >
-              {expanded ? '▾' : '▸'}
-            </span>
-          )}
         </div>
-        {hasVariants && expanded && extraVariants}
+        {hasVariants && expanded && (
+          <div className="context-menu-variant-group">{extraVariants}</div>
+        )}
       </React.Fragment>
     );
   };
@@ -648,7 +670,6 @@ export function ContextMenu() {
   };
 
   const header = renderHeader();
-  const quickActions = renderQuickActions();
   return (
     <div
       className="context-menu"
@@ -658,8 +679,6 @@ export function ContextMenu() {
     >
       {header}
       {header && <div className="context-menu-separator" />}
-      {quickActions}
-      {quickActions && <div className="context-menu-separator" />}
       {state.source === 'board' ? renderBoardBody() : renderPdfBody()}
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { IconReplace, IconSparkles, IconMinus, IconClipboardText, IconDroplet } from '@tabler/icons-react';
+import type { ComponentType } from 'react';
+import { IconReplace, IconSparkles, IconClipboardText, IconDroplet } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
 import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
@@ -14,8 +15,10 @@ import { copyText } from '../clipboard';
 // Icon per mark + hover tooltip with full meaning. Cycling order:
 // none → replaced → reworked → cleaned → none. The same colours are used
 // on the canvas highlight (MARK_COLOR_HEX in worklist-store).
-const MARK_ICON: Record<WorklistMark, typeof IconReplace> = {
-  none: IconMinus,
+/** Icon per mark — null for `none` so the row renders a dim `·` instead.
+ *  IconMinus read as "subtract", not "no mark yet". */
+const MARK_ICON: Record<WorklistMark, ComponentType<{ size?: number; stroke?: number }> | null> = {
+  none: null,
   replaced: IconReplace,
   reworked: IconSolderingIron as typeof IconReplace, // hand-composed (MDI + game-icons), fill-based
   cleaned: IconSparkles,
@@ -406,6 +409,7 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
         >
           {(() => {
             const Icon = MARK_ICON[entry.mark];
+            if (!Icon) return <span style={{ opacity: 0.4 }}>·</span>;
             return <Icon size={14} stroke={2} />;
           })()}
         </button>
