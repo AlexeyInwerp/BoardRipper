@@ -1,5 +1,16 @@
 # BoardRipper changelog
 
+## v0.30.7 — 2026-05-18
+
+PDF watermark wand toggle — fixes a long-standing bug where the user's custom watermark term list was destroyed on every wand-off→reload→wand-on cycle.
+
+### PDF
+
+- **Wand toggle preserves the list across reloads.** Pre-fix: clicking the wand button OFF wrote `pdfWatermarkFilter: []` to localStorage and stashed the previously-active list in a non-persistent `useRef`. On reload the ref reinitialised from `globalSettings.pdfWatermarkFilter` which was now `[]`, then fell through to a hard-coded 5-term fallback. Users who had edited their list (added a vendor watermark via right-click) lost those edits on every off/on cycle; users who toggled off and never toggled back on saw their full list as empty in Settings indefinitely with no auto-recovery path. Fix: split the on/off state into a new persistent `pdfWatermarkFilterEnabled: boolean` field — `pdfWatermarkFilter` now ALWAYS represents the user's list, the wand button only flips the flag. (`e664291`)
+- **Centralised through `getActiveWatermarkFilter(settings)`.** Returns the list when enabled, `[]` when disabled. Routes all four consumers through it: the two `page.render()` call sites in `renderPageToBitmap` and `renderTiledPage`, the operator-list dispatch in `pdfStore.openDoc`, and the click-test in `mapClick`. Eliminates the "is the filter active?" question being answered by `filter.length > 0` four different times. (`e664291`)
+- **Migration recovers users currently stuck with empty lists.** Existing localStorage entries with `pdfWatermarkFilter: []` and no `pdfWatermarkFilterEnabled` key get auto-bumped to `pdfWatermarkFilter: <5 current defaults>` + `pdfWatermarkFilterEnabled: false`. Toggling the wand back on then brings the 5 defaults back. Users with a non-empty list and no flag set get `enabled = true` (matches the pre-fix semantics where non-empty = active). New users get the 5 defaults + enabled = true via `DEFAULTS`. (`e664291`)
+- **Context menu's "Add to watermark filter" now auto-enables the filter.** Adding a term implies the user wants it filtered now, so the right-click action sets `pdfWatermarkFilterEnabled: true` alongside appending the term. Previously, adding a term while the wand was off silently extended the list with no visible effect. (`e664291`)
+
 ## v0.30.6 — 2026-05-18
 
 FZ format — removed the bundled ASUS RC6 decryption key. Users now obtain it themselves through a small in-app dialog (fetch from public GitHub mirror or paste).
