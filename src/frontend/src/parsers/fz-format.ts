@@ -1,5 +1,6 @@
 import type { FormatDescriptor } from './registry';
 import { parseFZ } from './fz-parser';
+import { getFzKey } from '../store/fz-key-store';
 
 /**
  * FZ format detection: first 4 bytes are a header, bytes 4-5 should be
@@ -30,6 +31,9 @@ export const FZFormat: FormatDescriptor = {
   },
 
   parse(buffer) {
-    return parseFZ(buffer);
+    // Key is sourced at parse-time from the user-managed store. Encrypted
+    // files with missing/invalid keys trigger FZKeyError in parseFZ; the
+    // board-store catches it and opens the FZKeyDialog.
+    return parseFZ(buffer, getFzKey() ?? undefined);
   },
 };

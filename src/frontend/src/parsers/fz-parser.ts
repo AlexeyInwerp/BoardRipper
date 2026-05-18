@@ -9,10 +9,13 @@
  *   raw bytes → RC6 decrypt (if encrypted) → split content/description
  *   → zlib inflate both → parse `!`-delimited text → BoardData
  *
- * The RC6 key (44 × uint32) must be provided externally. Without a key,
- * only unencrypted .fz files (raw zlib) can be parsed.
+ * The RC6 key (44 × uint32) is NOT bundled with BoardRipper. The caller must
+ * supply one. Unencrypted .fz files (raw zlib) can be parsed without a key.
+ * If `parseFZ` detects encryption and the key is missing or invalid, it
+ * throws `FZKeyError` — the UI layer catches this and prompts the user to
+ * fetch or paste a key. See `store/fz-key-store.ts`.
  *
- * Reference: OpenBoardView FZFile.cpp
+ * Reference: OpenBoardView FZFile.cpp (parsing logic; OBV itself ships no key).
  */
 
 import { inflate } from 'pako';
@@ -45,20 +48,22 @@ const FZ_PARITY = [
 
 const RC6_ROUNDS = 20;
 
-/** Default FZ decryption key (44 × uint32) */
-const DEFAULT_FZ_KEY = new Uint32Array([
-  0x25d8d248, 0xe1502405, 0x56b5d486, 0x69213fe0,
-  0xa22490ec, 0x01fdd9fa, 0x0681955f, 0x0fac202d,
-  0xdac9eeb4, 0xf6024aba, 0xcd8b4cc6, 0x9f307c8e,
-  0x4ab8fad7, 0x232f967d, 0x5e8666a3, 0xde966d4b,
-  0xc64bfb1c, 0xea7fb092, 0x1a751a7e, 0x37e8f0bc,
-  0x3359c8f3, 0x969ac22b, 0x610f5804, 0xd99d10e6,
-  0xc58d54d6, 0x1f9aea8b, 0x8e388c1a, 0xe4f7d2ed,
-  0x3e5da1f6, 0xedfe818a, 0x7252b016, 0xb503a170,
-  0xc4128fb6, 0x2c93ceeb, 0x53539a6e, 0xdacf7668,
-  0x3ab78e52, 0x8ee9d815, 0x7043f799, 0xc6a05dcf,
-  0x727f1da2, 0x0dfd983b, 0x78c53872, 0x00945692,
-]);
+/**
+ * Thrown when the parser cannot decrypt an encrypted FZ file — either because
+ * no key is configured (`reason: 'missing'`) or the configured key produced
+ * non-zlib output (`reason: 'invalid'`). Caught at the UI boundary
+ * (board-store) which opens the FZ-key dialog so the user can fetch/paste.
+ */
+export class FZKeyError extends Error {
+  reason: 'missing' | 'invalid';
+  constructor(reason: 'missing' | 'invalid') {
+    super(reason === 'missing'
+      ? 'FZ file is encrypted and no decryption key is configured.'
+      : 'FZ decryption failed — the configured key does not decode this file.');
+    this.name = 'FZKeyError';
+    this.reason = reason;
+  }
+}
 
 /** Compute single-bit parity of a 32-bit value (1 if odd number of bits set) */
 function parity32(v: number): number {
@@ -332,8 +337,9 @@ function isZlibAt(data: Uint8Array, offset: number): boolean {
  * Parse an .fz boardview file.
  *
  * @param buffer  Raw file bytes
- * @param key     Optional RC6 key (44 × uint32). Uses the built-in default key
- *                if omitted. Only unencrypted files can be parsed without any key.
+ * @param key     RC6 key (44 × uint32). Required for encrypted files. If the
+ *                file is encrypted and no key is supplied, throws
+ *                `FZKeyError` — the UI catches this to prompt the user.
  */
 export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<BoardData> {
   const data = new Uint8Array(buffer.slice(0)); // working copy
@@ -342,21 +348,17 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
   const needsDecrypt = !isZlibAt(data, 4);
 
   if (needsDecrypt) {
-    const decryptKey = key ?? DEFAULT_FZ_KEY;
-    if (decryptKey.length !== 44) {
-      throw new Error(
-        'FZ file is encrypted but no valid RC6 key was provided. ' +
-        'Key must be exactly 44 uint32 values.'
-      );
+    if (!key) {
+      throw new FZKeyError('missing');
     }
-    rc6Decrypt(data, decryptKey);
+    if (key.length !== 44) {
+      throw new Error('FZ key must be exactly 44 uint32 values.');
+    }
+    rc6Decrypt(data, key);
 
     // Verify decryption produced valid zlib at offset 4
     if (!isZlibAt(data, 4)) {
-      throw new Error(
-        'FZ decryption failed — the provided key appears to be incorrect. ' +
-        'Decrypted data does not contain a valid zlib stream.'
-      );
+      throw new FZKeyError('invalid');
     }
   }
 

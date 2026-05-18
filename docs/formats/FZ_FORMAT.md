@@ -49,7 +49,40 @@ If the file is encrypted, the entire byte stream (after the 4-byte header) is RC
 Detection: if bytes 4–5 are NOT a valid zlib signature, assume encrypted.
 
 The RC6 cipher uses a modified byte-at-a-time stream mode (not standard ECB/CBC block mode).
-A default key is hardcoded; custom keys can be provided and are validated against parity bits.
+
+#### Key sourcing
+
+BoardRipper **does not bundle the RC6 key**. The 44 × uint32 key required to
+decrypt ASUS-produced `.fz` files is third-party material that we neither
+authored nor reverse-engineered ourselves. Upstream OpenBoardView takes the
+same position: `FZFile::getBuiltinKey()` returns an empty array, and the user
+must supply the key at runtime.
+
+When the parser encounters an encrypted file with no configured key (or a key
+that fails to produce a valid zlib stream after decryption), it throws
+`FZKeyError` and the UI opens the **FZ key dialog**. The dialog gives the user
+two options:
+
+1. **Fetch from GitHub** — one-click pull. The store tries each public mirror
+   in `FZ_KEY_SOURCES` until one yields a parity-valid key:
+   - `https://raw.githubusercontent.com/cryptonek/illegal-numbers/main/FZkey.md` (primary, since 2022)
+   - `https://raw.githubusercontent.com/yliu-d/illegal-numbers/main/FZkey.md` (fork mirror)
+
+   Note: `cyrozap/pcbrepair-rs/src/crypto.rs` also publishes a 44-word
+   `FZ_EXPANDED_KEY` constant but its last word (`0x0945692e`) is corrupted
+   — fails the parity fingerprint and won't decrypt — so it is intentionally
+   excluded from the fallback list.
+2. **Paste manually** — the user pastes 44 hex words from any source they
+   trust.
+
+Either path validates the input against the 44-bit parity fingerprint (the
+same fingerprint that upstream OpenBoardView ships in `getKeyParity()`) before
+persisting it to `localStorage` under the key `boardripper-fz-key`. A key that
+fails parity is rejected with an inline error.
+
+This puts the legal posture of distributing the key on the user, not on
+BoardRipper. Users in jurisdictions where retrieving the key is restricted can
+decline and continue using BoardRipper's other ten formats normally.
 
 ### Decompression
 

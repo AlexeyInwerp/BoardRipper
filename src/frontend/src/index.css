@@ -6274,3 +6274,22 @@ html, body, #root {
 @keyframes update-progress-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ---- FZ decryption-key dialog ---------------------------------------- */
+/* Reuses .library-modal-* — only adds a wider variant + textarea styling
+ * matching .library-modal-field input. */
+.library-modal.library-modal-wide { max-width: 520px; }
+.library-modal-field textarea {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-family: 'Courier New', ui-monospace, monospace;
+  font-size: 11px;
+  min-height: 110px;
+  resize: vertical;
+}
+.library-modal-field textarea:focus { outline: none; border-color: var(--accent); }
+.library-modal-message-err { font-size: 11px; color: #fca5a5; }
+.library-modal-message-ok  { font-size: 11px; color: #86efac; }

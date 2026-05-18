@@ -2,6 +2,8 @@ import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
+import { FZKeyError } from '../parsers/fz-parser';
+import { fzKeyStore } from './fz-key-store';
 import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets } from '../parsers/types';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
@@ -771,7 +773,21 @@ class BoardStore extends Emitter {
         this._openFiles.set(file.name, file);
         const t0 = performance.now();
         const buffer = await file.arrayBuffer();
-        const board = await parseBoardFile(buffer, file.name);
+        let board;
+        try {
+          board = await parseBoardFile(buffer, file.name);
+        } catch (e) {
+          // Encrypted FZ files need a user-supplied key. Both "missing" and
+          // "invalid" reasons open the dialog so the user can fetch/paste/replace.
+          if (e instanceof FZKeyError) {
+            if (e.reason === 'invalid') fzKeyStore.clearKey();
+            const ok = await fzKeyStore.ensureFzKey();
+            if (!ok) throw e;
+            board = await parseBoardFile(buffer, file.name);
+          } else {
+            throw e;
+          }
+        }
         const elapsed = (performance.now() - t0).toFixed(0);
         log.parser.log(`Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
 

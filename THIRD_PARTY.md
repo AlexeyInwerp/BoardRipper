@@ -22,7 +22,7 @@ in BoardRipper.
 - **License:** MIT
 - **Upstream:** https://github.com/OpenBoardView/OpenBoardView
 - **Used in:** `src/frontend/src/parsers/` — BVR1, BVR3, BRD, BDV, BDV ASC, FZ, CAD, XZZ parsers
-- **Nature of use:** OpenBoardView's C++ parsers (BVRFile.cpp, BVR3File.cpp, BRDFile.cpp, BDVFile.cpp, FZFile.cpp, GenCADFile.cpp, XZZPCBFile.cpp) were consulted as reference implementations to reverse-engineer format behavior. BoardRipper's TypeScript parsers are independent re-implementations written against the format specifications in `docs/formats/`; no verbatim OpenBoardView code is present.
+- **Nature of use:** OpenBoardView's C++ parsers (BVRFile.cpp, BVR3File.cpp, BRDFile.cpp, BDVFile.cpp, FZFile.cpp, GenCADFile.cpp, XZZPCBFile.cpp) were consulted as reference implementations to reverse-engineer format behavior. BoardRipper's TypeScript parsers are independent re-implementations written against the format specifications in `docs/formats/`; no verbatim OpenBoardView code is present. The FZ decryption key is **not** inherited from OpenBoardView — upstream OBV deliberately omits it (`FZFile::getBuiltinKey()` returns an empty array), and so does BoardRipper. See the *FZ decryption key — not bundled* entry below.
 - **Specs:** `docs/formats/BVR_FORMAT.md`, `docs/formats/BRD_FORMAT.md`, `docs/formats/BDV_FORMAT.md`, `docs/formats/BDV_ASC_FORMAT.md`, `docs/formats/FZ_FORMAT.md`, `docs/formats/CAD_FORMAT.md`, `docs/formats/XZZ_FORMAT.md`
 
 ### piernov — Honhan BDV decoder gist
@@ -54,6 +54,12 @@ in BoardRipper.
 
 ### Cryptographic standards
 - **RC6 stream cipher** (used in `src/frontend/src/parsers/fz-parser.ts`): RC6 algorithm by Rivest, Robshaw, Sidney, and Yin. Public algorithm, implementation written from the published design.
+
+### FZ decryption key — *not bundled*
+- **What is it:** 44 × uint32 constant required to decrypt ASUS-produced `.fz` boardview files via the RC6 cipher above.
+- **Why it isn't here:** BoardRipper does not author, host, or redistribute this key. We make no claim to it and take no position on its legal provenance. Upstream OpenBoardView takes the same position (`FZFile::getBuiltinKey()` returns an empty array — see `src/openboardview/FileFormats/FZFile.cpp` upstream).
+- **How users obtain it:** At first encounter with an encrypted `.fz`, BoardRipper opens an in-app dialog with two options — fetch from a public mirror (the cryptonek/illegal-numbers GitHub repo) or paste manually from any source the user trusts. The supplied bytes are validated against the 44-bit parity fingerprint that upstream OpenBoardView ships, then stored in the user's browser `localStorage`. See `docs/formats/FZ_FORMAT.md` § *Key sourcing* and `src/frontend/src/store/fz-key-store.ts`.
+- **Effect:** This puts both the choice and the legal posture of obtaining the key entirely on the end user. Users in jurisdictions where retrieving the key is restricted can decline and continue using BoardRipper's other ten formats normally.
 - **DES (FIPS PUB 46-3)** (used in `src/frontend/src/parsers/xzz-parser.ts`): standard FIPS lookup tables (IP, FP, S-boxes, P-box, expansion, PC-1, PC-2) are reproductions of the public specification; key schedule and round function written from the standard.
 - **GenCAD 1.4 specification** (used in `src/frontend/src/parsers/cad-parser.ts`): public interchange format specification.
 

@@ -18,6 +18,7 @@ import { WorklistPanel } from './panels/WorklistPanel';
 import { BoardTab } from './components/BoardTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
+import { FZKeyDialog } from './components/FZKeyDialog';
 import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
@@ -253,6 +254,7 @@ function App() {
         </div>
       )}
       <UpdateProgressOverlay />
+      <FZKeyDialog />
     </div>
   );
 }
