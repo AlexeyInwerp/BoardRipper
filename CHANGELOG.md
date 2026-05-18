@@ -1,5 +1,20 @@
 # BoardRipper changelog
 
+## v0.30.6 — 2026-05-18
+
+FZ format — removed the bundled ASUS RC6 decryption key. Users now obtain it themselves through a small in-app dialog (fetch from public GitHub mirror or paste).
+
+### FZ
+
+- **`DEFAULT_FZ_KEY` deleted from `fz-parser.ts`.** The 44 × uint32 key required to decrypt encrypted ASUS .fz boardview files is third-party material BoardRipper did not author and has no license to redistribute. Upstream OpenBoardView takes the same position — `FZFile::getBuiltinKey()` returns an empty array — and we now match. The parser still ships the parity-check fingerprint (also from OBV) so any user-supplied key is validated before use. Distributing the key alongside the binary raised exposure under anti-circumvention statutes (DMCA §1201 in the US, InfoSoc Directive Art. 6 / CDSM in the EU) even though the parsing logic itself is MIT-derived; cleaner posture is to have the user fetch it themselves. (`b09c777`)
+- **Typed `FZKeyError` with `'missing' | 'invalid'` reason.** Encrypted file + no configured key → `'missing'`; configured key produces non-zlib output after RC6 → `'invalid'`. The board-store catches both and opens the FZ-key dialog; the `'invalid'` path additionally clears the bad stored key so the next fetch/paste replaces it without manual cleanup. (`b09c777`)
+- **In-app FZ-key dialog (`components/FZKeyDialog.tsx`).** Opens automatically the first time a user drops an encrypted .fz file. Two paths: **Fetch** pulls from the public mirrors at `github.com/cryptonek/illegal-numbers` (primary) and `github.com/yliu-d/illegal-numbers` (fallback) in order until one yields a parity-valid key; **Paste** accepts any text containing 44 hex tokens. Both run through `validateFZKey()` before persisting to `localStorage` (`boardripper-fz-key`). A `cyrozap/pcbrepair-rs` GitHub mirror is intentionally excluded from the fallback list — its `FZ_EXPANDED_KEY[43] = 0x0945692e` is corrupted (the trailing `e` was appended to fix Rust syntax around the truncated `0x0945692` in upstream cryptonek; the canonical zero-padded value is `0x00945692`, the only one that passes parity). A collapsible "Why isn't the key bundled?" section in the dialog explains the legal reasoning in plain language. (`b09c777`)
+- **`store/fz-key-store.ts`.** New singleton store extending `Emitter` for `useSyncExternalStore` integration. Exposes `getFzKey()`, `setKeyFromText()`, `clearKey()`, `fetchAndApply()`, plus a promise-based `ensureFzKey()` gate the board-store awaits before retrying an encrypted-FZ parse. `parseFzKeyText()` is regex-based (`0x[0-9a-fA-F]{1,8}|[0-9a-fA-F]{8}`), so the same parser handles cryptonek's markdown table, raw hex pastes, and Rust array literals indifferently. (`b09c777`)
+- **No new CSS systems.** The dialog reuses the existing `.library-modal-*` chrome (backdrop, modal box, field rows, action row, primary-save button). Net CSS addition: `~15 lines` for a wider modal variant, a textarea that matches `.library-modal-field input`, and two inline-message colours. (`b09c777`)
+- **Docs.** `docs/formats/FZ_FORMAT.md` and `THIRD_PARTY.md` updated. `THIRD_PARTY.md` now carries a dedicated *FZ decryption key — not bundled* entry that documents the posture and points users at the in-app dialog. The OpenBoardView attribution clarifies that the key is **not** part of what we inherit from upstream. (`b09c777`)
+
+**Migration note for existing users.** After updating, the first time you open an encrypted .fz file you'll see the new dialog. One click on **Fetch** restores the previous behaviour. Unencrypted .fz files (the rare case where the raw zlib stream is already at offset 4) continue to open without prompting.
+
 ## v0.30.5 — 2026-05-17
 
 PDF tile render path — single perf change with measurable settle-time win on fresh-tile renders.
