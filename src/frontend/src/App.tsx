@@ -57,13 +57,32 @@ function isSupportedFile(name: string): 'board' | 'pdf' | null {
 }
 
 /** Match update bundles created by scripts/release.sh:
- *    boardripper-update-vX.Y.Z.tar       (canonical)
- *    boardripper-update-vX.Y.Z.brupdate  (alias for clarity)
+ *    boardripper-update-vX.Y.Z.tar       (canonical versioned)
+ *    boardripper-update-vX.Y.Z.brupdate  (alias extension)
+ *    latest-update.tar                   (stable-alias on ripperdoc.de)
+ *    latest-update.brupdate              (stable-alias, brupdate ext)
+ *    *.brupdate                          (our own extension — strong signal
+ *                                         even after a rename)
  *  The signature inside is what grants trust — the filename is just a
- *  routing hint for the drop dispatcher. */
+ *  routing hint for the drop dispatcher. Reject only on names that can't
+ *  plausibly be ours; let `applyBundle` reject the bytes if the signature
+ *  doesn't verify. */
 function isUpdateBundle(name: string): boolean {
   const lower = name.toLowerCase();
-  return /^boardripper-update-v[0-9]/.test(lower) && (lower.endsWith('.tar') || lower.endsWith('.brupdate'));
+  if (lower.endsWith('.brupdate')) return true;
+  if (!lower.endsWith('.tar')) return false;
+  return /^boardripper-update-v[0-9]/.test(lower) || lower === 'latest-update.tar';
+}
+
+/** The Docker image tarball — same releases directory as the update bundle,
+ *  but for `docker load`, NOT for drop-to-update. Users hit "boardripper-
+ *  v0.30.8.tar.gz" first alphabetically and drop it expecting an update.
+ *  Detect and redirect them to the right file instead of silently ignoring. */
+function isDockerImageTarball(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower === 'latest.tar.gz') return true;
+  // boardripper-vX.Y.Z.tar.gz — note no 'update-' between 'boardripper-' and 'v'
+  return /^boardripper-v[0-9][^/]*\.tar\.gz$/.test(lower);
 }
 
 function App() {
@@ -133,6 +152,17 @@ function App() {
           `apply the update, and restart. The browser will reload after ~30 s.`
         );
         if (ok) await updateStore.applyBundle(file);
+        return;
+      }
+      if (isDockerImageTarball(file.name)) {
+        // Friendly redirect — same directory ships both files and the
+        // alphabetised listing puts the image first.
+        boardStore.addToast(
+          `'${file.name}' is the Docker image tarball, not the drop-to-update bundle. ` +
+          `Download 'boardripper-update-v*.tar' (or the 'latest-update.tar' alias) from the ` +
+          `releases directory and drop that instead.`,
+          'error',
+        );
         return;
       }
     }
@@ -249,7 +279,10 @@ function App() {
       {dragOver && (
         <div className="drop-overlay">
           <div className="drop-overlay-content">
-            Drop board or PDF files here
+            Drop board files, PDFs, or an update bundle
+            <div className="drop-overlay-hint">
+              boards · pdfs · boardripper-update-v*.tar · latest-update.tar · *.brupdate
+            </div>
           </div>
         </div>
       )}

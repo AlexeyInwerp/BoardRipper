@@ -68,6 +68,7 @@ const SCOPE_COLORS: Record<LogScope, string> = {
   update: '#22d3ee',
   obd:    '#86efac',
   cloud:  '#a5b4fc',
+  contribdb: '#fb7185',
 };
 
 export function DebugPanel() {
