@@ -1,11 +1,9 @@
 # Deploying `ripperdoc-devicedb` to ripperdoc.de
 
-The PHP implementation under `php/` is what actually ships. Everything
-runs **directly on the ripperdoc.de host** (Linevast shared LiteSpeed) —
-no NAS, no reverse-proxy, no Cloudflare tunnel. The Go reference under
-`cmd/`, `internal/`, `Dockerfile`, `docker-compose.yml` stays in the tree
-as a **local-dev fixture** so you can run an identical wire surface
-locally without setting up the PHP host.
+`ripperdoc-devicedb` is its own thing. It deploys **independently** of the
+RipperDocWeb static-site project — its own staging step, its own FTP
+push, its own credentials. The two services share the same FTP host but
+nothing in this directory depends on RipperDocWeb being checked out.
 
 ```
                           ┌─────────────────────────────────┐
@@ -17,24 +15,26 @@ locally without setting up the PHP host.
                           └─────────────────────────────────┘
 ```
 
-## What ripperdoc.de provides today (probed)
+The PHP impl under `php/` is what ships. The Go reference under `cmd/`,
+`internal/`, `Dockerfile`, `docker-compose.yml` stays as a local-dev
+fixture (faster iteration, identical wire surface) — never deployed.
 
-Linevast shared LiteSpeed at `lv151.nbg1.linevast.de`. Confirmed in-use
-features by `cform/` and `.htaccess` inspection:
+## What ripperdoc.de provides (probed 2026-05-19)
+
+Linevast shared LiteSpeed at `lv151.nbg1.linevast.de`. Confirmed via
+[`cform/`](https://www.ripperdoc.de/cform/) + live `.htaccess`:
 
 - **PHP 7.4+** with `ext-pdo_sqlite`, `ext-sodium` (Ed25519 signing),
   `ext-phar` (tar.gz), `password_hash(PASSWORD_ARGON2ID)`, `curl`,
   `session`, `fileinfo`. The existing `cform/` deploy is on Composer +
-  Symfony, so the PHP environment is full-featured.
+  Symfony — environment is full-featured.
 - **`mod_rewrite`, `mod_headers`, `mod_deflate`** (used by the live
   `.htaccess`).
-- **`mod_proxy` is NOT enabled.** Doesn't matter — the PHP impl doesn't
-  forward to anything.
+- **No `mod_proxy`** — but the PHP impl forwards to nothing, so it
+  doesn't matter.
 - **Cron jobs** via the hosting control panel (needed for snapshot regen).
-- **SSH** access for the admin CLI (`php admin.php …`).
-- **Filesystem** under `/public_html/devicedb/` is writable by the PHP
-  process. The `data/` subdir holds runtime state and is gated by an
-  `.htaccess` with `Deny from all` (Apache 2.2 + 2.4 syntax both).
+- **SSH** for the admin CLI (`php admin.php …`).
+- **Filesystem** under `/public_html/devicedb/` writable by the PHP user.
 
 ## File layout on the live host
 
@@ -51,86 +51,96 @@ features by `cform/` and `.htaccess` inspection:
 │                                   # RateLimit, Json, Log, Time, Uuid
 └── data/
     ├── .htaccess                   # Deny from all (Apache 2.2 + 2.4)
-    ├── canonical.sqlite            # the DB (created on first request)
+    ├── canonical.sqlite            # the DB (auto-created on first request)
     ├── snapshot.key                # Ed25519 private key (chmod 0600)
-    ├── snapshots/boards-N.tar.gz   # signed tarballs (one per counter)
+    ├── snapshots/boards-N.tar.gz   # signed tarballs
     └── logs/<scope>.log
 ```
 
-The runtime files (`canonical.sqlite`, `snapshot.key`, `snapshots/`,
-`logs/`) are **never** deployed from the dev machine.
-[`scripts/stage-for-ripperdocweb.sh`](scripts/stage-for-ripperdocweb.sh)
-enforces an allowlist (only `data/.htaccess` + `data/.gitkeep`); the
-`.gitignore` mirrors the same allowlist; both refuse to flow anything
-else through.
+`canonical.sqlite`, `snapshot.key`, `snapshots/`, `logs/` are **never**
+pushed from the dev box. [`scripts/stage.sh`](scripts/stage.sh) enforces
+an allowlist (only `data/.htaccess` + `data/.gitkeep` ever flow), and
+the `.gitignore` mirrors the same allowlist for `php/data/`. Belt-and-
+braces leak guards on both ends.
 
-## Deploy pipeline (FTP via RipperDocWeb)
+## First-time setup (you do this once)
 
-The site is FTP-deployed from `~/Desktop/Website/RipperDocWeb/` using
-its existing `deploy.sh` (Hugo build → merge sibling repos → lftp
-mirror). Adding the devicedb is the same merge pattern already used for
-`wiki/` and `boardripper/`:
-
-### One-time setup
-
-Edit `RipperDocWeb/deploy.sh` and add this line near the existing
-"BoardRipper landing" merge step (after the existing `rsync -a "$BOARDRIPPER_DIR/landing/" ./public/boardripper/`):
+### 1. Configure local credentials
 
 ```bash
-# --- devicedb PHP service: stage Boardviewer/ripperdoc-devicedb/php/
-#                           into ./public/devicedb/ -----------------------
-"$BOARDRIPPER_DIR/ripperdoc-devicedb/scripts/stage-for-ripperdocweb.sh" "$SCRIPT_DIR"
+cd ripperdoc-devicedb
+cp .env.example .env
+$EDITOR .env       # fill in DEVICEDB_FTP_HOST / USER / PASS
 ```
 
-That's it. The staging script:
+`.env` is gitignored. `scripts/deploy.sh` auto-loads it.
 
-- Wipes `RipperDocWeb/public/devicedb/` and rebuilds it from `php/`.
-- Excludes everything under `data/` then explicitly allowlists
-  `.htaccess` + `.gitkeep` only.
-- Fails loudly if the `Deny from all` gate is missing or anything else
-  leaks into `data/`.
-- The next `RipperDocWeb/deploy.sh` invocation FTPs the staged tree.
+Install `lftp` if you don't have it:
+```bash
+brew install lftp        # macOS
+sudo apt-get install lftp # Linux
+```
 
-Since RipperDocWeb's `lftp` mirror does **not** pass `--delete` on the
-remote side, the live `data/canonical.sqlite`, `data/snapshot.key`, and
-existing snapshots are preserved across deploys.
+### 2. Push the code
 
-### First-time provisioning on the host
+```bash
+scripts/deploy.sh --dry-run    # confirm staging looks right
+scripts/deploy.sh              # actually push to /public_html/devicedb/
+```
+
+To stage to a non-canonical path first (recommended for the first push):
+```bash
+scripts/deploy.sh --remote /public_html/devicedb-staging
+# verify https://www.ripperdoc.de/devicedb-staging/...
+# then re-deploy without --remote to land at /devicedb/
+```
+
+### 3. Provision the host (one-time, over SSH)
 
 ```bash
 ssh ripperdoc.de
 cd ~/public_html/devicedb
 
-# 1) Generate the real production Ed25519 signing key.
+# Generate the prod Ed25519 signing key.
 php -r '$kp = sodium_crypto_sign_keypair();
-        $sk = sodium_crypto_sign_secretkey($kp);
-        file_put_contents("data/snapshot.key", bin2hex($sk));
+        file_put_contents("data/snapshot.key", bin2hex(sodium_crypto_sign_secretkey($kp)));
         echo "pubkey: " . base64_encode(sodium_crypto_sign_publickey($kp)) . PHP_EOL;'
 chmod 0600 data/snapshot.key
-# Capture the printed pubkey — BoardRipper bakes it in via ldflags
-# (see "BoardRipper side" below).
+# Save the printed pubkey — BoardRipper bakes it in via ldflags.
 
-# 2) Seed the canonical DB once from a v2 boards.db (optional but
-#    recommended — populates 28 brands / 3977 boards in the prototype).
-#    Upload boards.db to data/.seed-from, then hit any endpoint to
-#    trigger the first-boot import:
+# Optional: seed the canonical DB from a v2 boards.db.
 # scp 'Board Database/boards.db' user@ripperdoc.de:~/public_html/devicedb/data/.seed-from
-curl -s https://www.ripperdoc.de/devicedb/api/v1/health
+# curl -s https://www.ripperdoc.de/devicedb/api/v1/health    # triggers seed
 
-# 3) Mint your maintainer reviewer token.
+# Mint your maintainer reviewer token.
 php admin.php token issue \
     --handle "your-handle" --email "your@email" \
     --scopes "contributions:moderate,contributions:submit"
-# Captures the printed plaintext token (shown once) — save it.
-
-# 4) Add a cron job (via Linevast control panel) — every 10 minutes:
-#    cd ~/public_html/devicedb && php cron-snapshot.php
+# Saves the plaintext token (shown ONCE).
 ```
 
-### BoardRipper side
+### 4. Register the cron job
 
-Each install ships with two defaults already wired in
-[`src/backend/main.go`](../src/backend/main.go):
+Via the Linevast control panel — every 10 minutes:
+```
+cd ~/public_html/devicedb && php cron-snapshot.php
+```
+
+## Iterating on code
+
+Every subsequent deploy is just:
+```bash
+cd ripperdoc-devicedb
+scripts/deploy.sh
+```
+
+`lftp mirror` runs WITHOUT `--delete` on the remote side, so the live
+`data/canonical.sqlite`, `data/snapshot.key`, and existing
+`data/snapshots/` on the host **survive every redeploy**.
+
+## BoardRipper-side configuration
+
+Built-in defaults in [`src/backend/main.go`](../src/backend/main.go):
 
 ```
 CONTRIBDB_ENABLED=true                             # default true
@@ -138,60 +148,56 @@ DEVICEDB_BASE_URL=https://www.ripperdoc.de         # default — no edit needed
 ```
 
 To make BoardRipper verify snapshot signatures, bake the pubkey from
-step 1 above into the release build:
+step 3 into the release build:
 
 ```
 go build -ldflags "-X main.DBPubKey=<base64-pubkey>" ./src/backend
 ```
 
-(Already plumbed through `contribdb.ServiceConfig.SnapshotPubKey`; the
+(Already plumbed through `contribdb.ServiceConfig.SnapshotPubKey`. The
 release-pipeline change to inject this from a file is a small follow-up
 in [`scripts/release.sh`](../scripts/release.sh).)
 
 ## Verification once deployed
 
-Public — no auth:
 ```bash
+# Public — no auth
 curl -s https://www.ripperdoc.de/devicedb/api/v1/health
 curl -s https://www.ripperdoc.de/devicedb/api/v1/entities | jq '.brands | length'
 open https://www.ripperdoc.de/devicedb/
-```
 
-Authenticated reads — use the install token from BoardRipper Settings:
-```bash
+# Authenticated read — use the install token from BoardRipper Settings
 TOKEN=$(curl -s http://localhost:1336/api/contribdb/install-token | jq -r .install_token)
 curl -s -H "X-BoardRipper-Install-Token: $TOKEN" \
   https://www.ripperdoc.de/devicedb/api/v1/contributions/mine
-```
 
-End-to-end (point at any host):
-```bash
+# Full e2e suite against any host
 DEVICEDB_BASE=https://www.ripperdoc.de scripts/e2e-scenarios-php.sh
 ```
 
-## Snapshot freshness on release
+## Snapshot freshness on BoardRipper release
 
 Spec §6.5 calls for [`scripts/release.sh`](../scripts/release.sh) to
-bake the current canonical snapshot into every BoardRipper image at
-build time. A one-line addition in `release.sh` to
-`curl https://www.ripperdoc.de/devicedb/api/v1/snapshots/latest` +
-download tarball + verify Ed25519 sig + place at
-`Board Database/boards.db` covers it. Not yet implemented in the
-prototype — until it ships, a fresh BoardRipper install pulls the
-snapshot on its first scheduled sync (default 24 h cadence; manual
-trigger via Settings → Database Contributions → Sync now).
+bake the canonical snapshot into every BoardRipper image at build time
+(`curl /devicedb/api/v1/snapshots/latest` → download + verify → place at
+`Board Database/boards.db`). Not yet implemented; until it ships, a
+fresh BoardRipper install pulls the snapshot on its first scheduled
+sync (default 24 h; manual trigger via Settings → Database
+Contributions → Sync now).
 
 ## Troubleshooting
 
 | Symptom | Likely cause / fix |
 |---|---|
-| 500 on `/devicedb/api/v1/*` | Check `data/logs/` (server.log, api.log). PHP errors there. Confirm `data/` exists and is writable by the PHP user. |
-| 403 on `/devicedb/data/canonical.sqlite` from the browser | Correct — `data/.htaccess` is doing its job. |
-| Snapshot pull never advances `counter` | Cron isn't running. Verify the cron entry in the Linevast panel; manual: `php cron-snapshot.php`. |
+| `deploy.sh` says lftp not installed | `brew install lftp` / `apt-get install lftp` |
+| `deploy.sh` says missing env vars | Copy `.env.example` → `.env`, fill in FTP creds |
+| 500 on `/devicedb/api/v1/*` | Check `data/logs/` (server.log, api.log). PHP errors there. Confirm `data/` is writable. |
+| 403 on `/devicedb/data/canonical.sqlite` from a browser | Correct — `data/.htaccess` doing its job. |
+| Snapshot pull never advances `counter` | Cron isn't running. Verify the cron entry; manual fallback: `php cron-snapshot.php`. |
 | 401 `auth_required` on POST `/v1/contributions` | Install token missing or revoked. Inspect BR Settings → Database Contributions. |
 | BR `outbox_failed` keeps climbing | Network reachability or signature verification. Inspect BR `[contribdb]` log lines. |
-| `Argon2id is not supported` PHP error | PHP 7.2+ required for `PASSWORD_ARGON2ID`. Bump host PHP version. |
-| Static frontend renders but `/api/v1/*` 404s | `mod_rewrite` not active on `/devicedb/`. Confirm the deployed `.htaccess` is present and the rewrite rules look intact. |
+| `Argon2id is not supported` PHP error | Host PHP < 7.2 — upgrade. |
+| Static frontend renders but `/api/v1/*` 404s | `mod_rewrite` not active. Confirm `/devicedb/.htaccess` is present. |
 
 ## Local dev
 
@@ -203,7 +209,7 @@ SEED_DB_PATH="../../Board Database/boards.db" \
   php -S localhost:18092 api.php
 # → http://localhost:18092/devicedb/
 
-# Go reference (faster, identical wire surface) — for hot-iteration:
+# Go reference (faster iteration, identical wire surface):
 cd ripperdoc-devicedb
 SEED_DB_PATH="../Board Database/boards.db" go run ./cmd/server
 # → http://localhost:8090/devicedb/

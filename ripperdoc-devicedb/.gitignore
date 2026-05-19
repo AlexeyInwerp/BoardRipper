@@ -27,6 +27,9 @@
 *.pem
 .snapshot-private-key
 
+# Deploy credentials (FTP host/user/pass for scripts/deploy.sh)
+.env
+
 # IDE
 .idea/
 .vscode/
