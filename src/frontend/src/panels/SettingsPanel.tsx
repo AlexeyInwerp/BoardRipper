@@ -1726,8 +1726,8 @@ export function SettingsPanel() {
           title="Show numbered markers at each board outline vertex. Yellow = unique, orange = duplicate coordinates. Works for all board formats" />
         <Toggle label="[Debug] Label Size Tiers" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft}
           title="Color part labels by their computed font-size tier: blue = small, yellow = medium, green = large. Useful for tuning the Small/Medium/Large size thresholds" />
-        <Toggle label="[Debug] PDF Scroll/Zoom Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateDraft}
-          title="Restore the historical PDF pan/zoom clamps: first/last-page Y hard-clamp, page-fits-screen X centering, zoom range 0.5×–10×. OFF by default — the clamps were occasionally locking users in mid-document scroll/zoom, so the viewer now allows free pan and a wider 0.05×–50× zoom range. Page-flip thresholds still fire as you cross them either way." />
+        <Toggle label="[Debug] PDF Pan Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateDraft}
+          title="Restore the historical PDF pan clamps: first/last-page Y hard-clamp and page-fits-screen X centering. OFF by default — the clamps were occasionally locking users in mid-document scroll. Page-flip thresholds still fire as you cross them either way. Zoom range stays at 0.5×–10× regardless." />
       </CollapsibleSection>
       )}
 

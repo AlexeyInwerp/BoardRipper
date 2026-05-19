@@ -182,12 +182,12 @@ export interface RenderSettings {
    *  - 'always-tile': tile at every zoom. Mostly a debugging escape hatch. */
   pdfRenderMode: 'auto' | 'standard' | 'always-tile';
 
-  /** Enable PDF pan + zoom boundary clamps.
-   *  - false (default): free pan in both axes, zoom range 0.05–50. Page-flip
-   *    thresholds still fire as the user crosses them; nothing stops scroll
-   *    or zoom motion regardless of position.
-   *  - true: hard clamps on first/last page Y, page-fits-screen X centering,
-   *    and zoom range 0.5–10. Old behaviour, retained as a debug toggle. */
+  /** Enable PDF pan boundary clamps.
+   *  - false (default): free pan in both axes. Page-flip thresholds still
+   *    fire as the user crosses them; nothing stops scroll motion regardless
+   *    of position. Zoom range is unaffected (always 0.5–10).
+   *  - true: hard clamps on first/last page Y and page-fits-screen X
+   *    centering. Old behaviour, retained as a debug toggle. */
   pdfEnableBoundaries: boolean;
 
   /** Fraction of screen dimension panned per WSAD keypress. Range 0.02–0.30, default 0.10. */
