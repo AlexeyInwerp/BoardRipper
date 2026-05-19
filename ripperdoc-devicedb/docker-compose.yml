@@ -38,13 +38,32 @@ services:
       retries: 3
       start_period: 10s
 
-  # boardripper:
-  #   image: ghcr.io/alexeyinwerp/boardripper:latest
-  #   container_name: boardripper
-  #   ports:
-  #     - "8080:8080"
-  #   environment:
-  #     # Phase 2 BoardRipper will read snapshots from devicedb:
-  #     DEVICEDB_BASE_URL: "http://devicedb:8090/v1"
-  #   depends_on:
-  #     - devicedb
+  # Bring up BoardRipper alongside devicedb for full-stack manual testing.
+  # Build context is the parent directory (the existing BoardRipper Dockerfile).
+  # Default port 8081 (host) → 8080 (container) matches the project's
+  # top-level docker-compose.yml. Run:
+  #   docker compose -f docker-compose.yml --profile fullstack up --build
+  # Without the `--profile fullstack` flag only the devicedb service comes up.
+  boardripper:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: boardripper/local:dev
+    container_name: boardripper-vs-devicedb
+    user: "0:0"                # match the project's compose convention
+    ports:
+      - "8081:8080"
+    environment:
+      PORT: "8080"
+      DATA_DIR: "/data"
+      LIBRARY_DIR: "/library"
+      CONTRIBDB_ENABLED: "true"
+      DEVICEDB_BASE_URL: "http://devicedb:8090"
+    volumes:
+      - ./br-data:/data
+      - ./br-library:/library
+    depends_on:
+      devicedb:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["fullstack"]
