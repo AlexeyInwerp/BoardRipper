@@ -39,6 +39,13 @@ services:
     volumes:
       - ./data:/data       # Board file upload storage
       - ./library:/library # Board file library (read-only browsing)
+      # Docker socket — required for self-update. The running container
+      # calls the Docker Engine API to pull the new image and swap itself
+      # out. Without this mount, `Update & Restart` will be greyed out and
+      # the drop-to-update fallback won't work either. Combined with the
+      # `user: "0:0"` above, this is what makes in-app updates possible on
+      # a fresh install. Remove only if you don't want self-update.
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
       test: ["NONE"]

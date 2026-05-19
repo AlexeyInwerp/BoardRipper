@@ -1,5 +1,16 @@
 # BoardRipper changelog
 
+## v0.30.9 — 2026-05-19
+
+Two self-update papercuts found while shipping v0.30.8.
+
+### Updater
+
+- **Default `docker-compose.yml` now mounts `/var/run/docker.sock`.** Without this mount, in-app `Update & Restart` is a no-op (the running container can't call the Docker Engine API to pull and swap itself), but nothing in the UI explains why — fresh installs that used the shipped compose ended up silently stuck on whatever version they originally pulled. Combined with the existing `user: "0:0"` line, this makes self-update work out of the box. Pre-existing installs need to add the same line and `docker compose up -d`. (`b8bfcab` follow-up)
+- **Drop-to-update accepts `latest-update.tar` and `*.brupdate`.** The previous `isUpdateBundle` regex required the filename to start with `boardripper-update-v[0-9]`, which silently rejected the stable-alias filename our releases also publish. Loosened to accept the alias plus any file with our own `.brupdate` extension. (`b8bfcab`)
+- **Friendly redirect when the wrong tarball is dropped.** Releases publish `boardripper-v0.30.X.tar.gz` (the Docker image, for `docker load`) and `boardripper-update-v0.30.X.tar` (the signed update bundle, for drag-drop) side-by-side. The image alphabetises first, so it's the easy mistake. Dropping the image now raises a toast pointing at the right filename instead of falling through silently. (`b8bfcab`)
+- **Drop overlay copy mentions update bundles.** Previously read "Drop board or PDF files here" — no hint that the drop-to-update path existed at all. Now lists boards, PDFs, and the expected bundle filenames. (`b8bfcab`)
+
 ## v0.30.8 — 2026-05-18
 
 Right-click context menu redesign and two parser fixes.
