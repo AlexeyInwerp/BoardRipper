@@ -306,8 +306,12 @@
         bNode.children.push(fNode);
         var models = f.models || [];
         models.forEach(function(m){
-          var mLabel = m.name || m.number || "(unnamed model)";
-          if (m.name && m.number && m.name !== m.number) mLabel = m.name + " (" + m.number + ")";
+          // API returns model_number + display_name; legacy aliases kept
+          // for robustness across API versions.
+          var mNumber = m.model_number || m.number || "";
+          var mName   = m.display_name  || m.name   || "";
+          var mLabel = mName || mNumber || "(unnamed model)";
+          if (mName && mNumber && mName !== mNumber) mLabel = mName + " (" + mNumber + ")";
           var mNode = {
             kind: "model", uuid: m.uuid || m.id || ("model-" + nodes.length),
             name: mLabel, raw: m, children: [], parent: fNode, searchText: ""
@@ -316,9 +320,12 @@
           fNode.children.push(mNode);
           var boards = m.boards || [];
           boards.forEach(function(brd){
-            var bLabel = brd.number || brd.name || "(unnamed board)";
-            if (brd.name && brd.number && brd.name !== brd.number) {
-              bLabel = brd.number + "  " + brd.name;
+            // API returns board_number + board_name.
+            var brdNumber = brd.board_number || brd.number || "";
+            var brdName   = brd.board_name   || brd.name   || "";
+            var bLabel = brdNumber || brdName || "(unnamed board)";
+            if (brdName && brdNumber && brdName !== brdNumber) {
+              bLabel = brdNumber + "  " + brdName;
             }
             var brdNode = {
               kind: "board", uuid: brd.uuid || brd.id || ("board-" + nodes.length),
@@ -335,10 +342,14 @@
     function buildSearch(node){
       var parts = [node.name];
       var r = node.raw || {};
-      if (r.number) parts.push(r.number);
-      if (r.odm) parts.push(r.odm);
-      if (r.board_name) parts.push(r.board_name);
-      if (Array.isArray(r.aliases)) parts.push(r.aliases.join(" "));
+      if (r.model_number)   parts.push(r.model_number);
+      if (r.display_name)   parts.push(r.display_name);
+      if (r.board_number)   parts.push(r.board_number);
+      if (r.board_name)     parts.push(r.board_name);
+      if (r.number)         parts.push(r.number);     // legacy
+      if (r.odm)            parts.push(r.odm);
+      if (Array.isArray(r.aliases))       parts.push(r.aliases.join(" "));
+      if (Array.isArray(r.model_aliases)) parts.push(r.model_aliases.join(" "));
       node.children.forEach(function(c){
         parts.push(buildSearch(c));
       });
@@ -451,9 +462,12 @@
     rows.push(["Type", escapeHtml(node.kind)]);
     rows.push(["Name", escapeHtml(node.name)]);
     if (r.uuid) rows.push(["UUID", "<code>" + escapeHtml(r.uuid) + "</code>"]);
-    if (r.number && r.number !== node.name) rows.push(["Number", escapeHtml(r.number)]);
-    if (r.odm) rows.push(["ODM", escapeHtml(r.odm)]);
-    if (r.board_name) rows.push(["Board name", escapeHtml(r.board_name)]);
+    if (r.model_number  && r.model_number  !== node.name) rows.push(["Model number",  escapeHtml(r.model_number)]);
+    if (r.display_name  && r.display_name  !== node.name) rows.push(["Display name",  escapeHtml(r.display_name)]);
+    if (r.board_number  && r.board_number  !== node.name) rows.push(["Board number",  escapeHtml(r.board_number)]);
+    if (r.board_name    && r.board_name    !== node.name) rows.push(["Board name",    escapeHtml(r.board_name)]);
+    if (r.number        && r.number        !== node.name) rows.push(["Number",        escapeHtml(r.number)]);
+    if (r.odm)                                            rows.push(["ODM",           escapeHtml(r.odm)]);
     if (Array.isArray(r.aliases) && r.aliases.length) {
       rows.push(["Aliases", r.aliases.map(function(a){ return "<span class=\"pill\">" + escapeHtml(a) + "</span>"; }).join("")]);
     }
