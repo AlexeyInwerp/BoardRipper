@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="build-stamp" content="2026-05-19T10:02:45Z">
+<meta name="build-stamp" content="2026-05-19T13:15:02Z">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Device Database &mdash; RipperDoc</title>
 <meta name="description" content="Open reference database for PCB repair: brands, families, models, boards.">
@@ -533,19 +533,68 @@
       return " <button type=\"button\" class=\"edit-btn\" data-field=\"" + escapeHtml(field) + "\" title=\"Edit " + escapeHtml(field) + "\">[edit]</button>";
     }
 
+    // Helper: render a field that may be empty, with a "(empty)" hint so
+    // it never looks like a missing column. Adds an [edit] button when
+    // the user is authed and the field is in the writable allowlist.
+    function row(label, value, field, hint) {
+      var disp = (value !== null && value !== undefined && value !== "")
+        ? escapeHtml(String(value))
+        : "<span class=\"small\">(empty)</span>";
+      if (hint) disp += " <span class=\"small\" style=\"margin-left:6px\">" + escapeHtml(hint) + "</span>";
+      return [label, disp + (field ? editBtn(field) : "")];
+    }
+
     rows.push(["Type", escapeHtml(node.kind)]);
-    // Brand/family use `name`; model/board use a per-kind label field (see below).
-    if (node.kind === "brand")  rows.push(["Brand name", escapeHtml(node.name)]);
-    if (node.kind === "family") rows.push(["Family name", escapeHtml(node.name) + editBtn("name")]);
     if (r.uuid) rows.push(["UUID", "<code>" + escapeHtml(r.uuid) + "</code>"]);
-    if (r.model_number  && r.model_number  !== node.name) rows.push(["Model number",  escapeHtml(r.model_number)]);
-    if (node.kind === "model")  rows.push(["Display name", escapeHtml(r.display_name || "") + editBtn("display_name")]);
-    if (r.board_number  && r.board_number  !== node.name) rows.push(["Board number",  escapeHtml(r.board_number)]);
-    if (node.kind === "board")  rows.push(["Board name", escapeHtml(r.board_name || "") + editBtn("board_name")]);
+
+    if (node.kind === "brand") {
+      rows.push(["Brand name", escapeHtml(r.name || node.name)]);
+    }
+    if (node.kind === "family") {
+      rows.push(row("Family name", r.name || node.name, "name"));
+    }
+    if (node.kind === "model") {
+      // Model number is the identifier (stamped on board / used by repair refs).
+      // Display name is the marketing name (e.g. "MacBook Air 13" M1 Late 2020").
+      rows.push(["Model number",  escapeHtml(r.model_number || "")]);
+      rows.push(row("Display name", r.display_name, "display_name",
+                    "— marketing name, e.g. 'MacBook Air 13\" M1 Late 2020'"));
+    }
+    if (node.kind === "board") {
+      // Board number is THE identifier (820-2877 etc.); board_name is an
+      // optional secondary nickname. Codenames belong in aliases.
+      rows.push(["Board number", escapeHtml(r.board_number || "")]);
+      rows.push(row("Board name", r.board_name, "board_name",
+                    "— optional secondary nickname; most boards have none. Codenames like K87 go in 'Codenames' below."));
+      rows.push(row("ODM",       r.odm,        "odm",
+                    "— who actually manufactured this board (Foxconn, Quanta, Compal…)"));
+    }
     if (r.number        && r.number        !== node.name) rows.push(["Number",        escapeHtml(r.number)]);
-    if (node.kind === "board")  rows.push(["ODM", escapeHtml(r.odm || "") + editBtn("odm")]);
+    // Server now returns aliases split by kind: keywords[], codenames[],
+    // and a flat aliases[] for back-compat (names only).
+    var pills = function(arr){
+      return (arr || []).map(function(a){
+        return "<span class=\"pill\">" + escapeHtml(a) + "</span>";
+      }).join("");
+    };
+    if (Array.isArray(r.codenames) && r.codenames.length) {
+      rows.push(["Codenames", pills(r.codenames)]);
+    }
+    if (Array.isArray(r.keywords) && r.keywords.length) {
+      rows.push(["Keywords",  pills(r.keywords)]);
+    }
+    // Legacy aliases (kind='name') — usually empty in the new world.
     if (Array.isArray(r.aliases) && r.aliases.length) {
-      rows.push(["Aliases", r.aliases.map(function(a){ return "<span class=\"pill\">" + escapeHtml(a) + "</span>"; }).join("")]);
+      rows.push(["Aliases", pills(r.aliases)]);
+    }
+    if (Array.isArray(r.photos) && r.photos.length) {
+      var photoHtml = r.photos.map(function(p){
+        var u = escapeHtml(p.url || p.photo_url || "");
+        return "<a href=\"" + u + "\" target=\"_blank\" rel=\"noopener\">" +
+               "<img src=\"" + u + "\" alt=\"\" style=\"max-width:80px;max-height:60px;margin:2px;border:1px solid #2a2e33\">" +
+               "</a>";
+      }).join("");
+      rows.push(["Photos", photoHtml]);
     }
     if (r.color || r.color_hex || r.color_id) {
       var hex = r.color_hex || r.color || "";
