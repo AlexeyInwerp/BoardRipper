@@ -86,6 +86,60 @@ func (db *DB) Close() {
 	}
 }
 
+// Path returns the on-disk path the handle was opened against. Used by the
+// contribdb hot-swap to compare baked-in vs snapshot paths.
+func (db *DB) Path() string {
+	if db == nil {
+		return ""
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.path
+}
+
+// Reopen swaps the underlying SQLite handle to point at newPath, closing the
+// previous one. Held under db.mu (write-locked) so in-flight Resolve()/Hierarchy()
+// calls — all of which RLock — drain before the swap. Returns an error if the
+// new file is missing, fails to open, or fails the schema sanity check; on
+// error the original handle is left intact.
+//
+// Intended for the contribdb snapshot hot-swap: when a freshly-pulled snapshot
+// has a higher counter than the baked-in DB, contribdb calls Reopen against
+// <dataDir>/contribdb/snapshot.db and the next Resolve() call sees the updated
+// data.
+func (db *DB) Reopen(newPath string) error {
+	if db == nil {
+		return fmt.Errorf("boarddb: Reopen called on nil DB")
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		return fmt.Errorf("boarddb: Reopen stat %s: %w", newPath, err)
+	}
+	dsn := fmt.Sprintf("file:%s?mode=ro&immutable=1", newPath)
+	newReader, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return fmt.Errorf("boarddb: Reopen open %s: %w", newPath, err)
+	}
+	newReader.SetMaxOpenConns(2)
+
+	var count int
+	if err := newReader.QueryRow("SELECT count(*) FROM boards").Scan(&count); err != nil {
+		newReader.Close()
+		return fmt.Errorf("boarddb: Reopen schema check %s: %w", newPath, err)
+	}
+
+	db.mu.Lock()
+	old := db.reader
+	db.reader = newReader
+	db.path = newPath
+	db.mu.Unlock()
+
+	if old != nil {
+		old.Close()
+	}
+	log.Printf("[boarddb] hot-swapped to %s (%d boards)", newPath, count)
+	return nil
+}
+
 // HierarchyBrand is a brand node in the Database Editor hierarchy tree.
 type HierarchyBrand struct {
 	UUID     string             `json:"uuid"`

@@ -16,6 +16,7 @@ import { getDockviewApi } from '../store/dockview-api';
 import { log } from '../store/log-store';
 import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection } from './LibrarySyncSection';
+import { ContribDBSection } from './settings/ContribDBSection';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
 
 /** Silently disable the SettingsMockup render preview without removing
@@ -2151,6 +2152,8 @@ function LibraryTab() {
           </div>
         </div>
       </div>
+
+      <ContribDBSection />
     </div>
   );
 }

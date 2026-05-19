@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign up &mdash; Device Database</title>
+<meta name="description" content="Register a contributor handle and get a user token for the RipperDoc device database.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0f1113;
+    color: #d6dadd;
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 620px;
+    margin: 0 auto;
+    padding: 22px clamp(14px, 4vw, 28px) 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e8ecef; }
+  h2 { font-size: 16px; margin: 22px 0 8px; color: #e8ecef; }
+  h3 { font-size: 13px; margin: 12px 0 4px; color: #e8ecef; }
+  a { color: #6ab4ff; }
+  a:visited { color: #b88cff; }
+  .tagline { color: #8a9197; font-size: 12px; margin: 0; }
+  nav { margin: 8px 0 18px; font-size: 13px; color: #8a9197; }
+  nav a { margin: 0 2px; }
+  hr.stars { border: none; text-align: center; color: #555; margin: 22px 0 16px; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  code, pre, .mono {
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 13px;
+  }
+  pre {
+    background: #181b1e;
+    border: 1px solid #2a2e33;
+    padding: 10px 12px;
+    overflow-x: auto;
+    color: #d6dadd;
+  }
+  .small { color: #8a9197; font-size: 12px; }
+  .panel {
+    background: #14171a;
+    border: 1px solid #2a2e33;
+    padding: 14px 16px;
+    margin: 12px 0;
+  }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; color: #b6bbc0; }
+  input[type="text"], input[type="email"] {
+    width: 100%;
+    background: #181b1e;
+    border: 1px solid #2a2e33;
+    color: #e8ecef;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 14px;
+  }
+  input:focus { outline: none; border-color: #4d7cb2; }
+  .help { color: #8a9197; font-size: 12px; margin: 2px 0 0; }
+  .field-error { color: #ff9a6a; font-size: 12px; margin: 4px 0 0; min-height: 1em; }
+  button.primary {
+    background: #1d3a5c; border: 1px solid #4d7cb2; color: #e8ecef;
+    padding: 10px 18px; font: inherit; font-size: 14px; cursor: pointer;
+    margin-top: 12px;
+  }
+  button.primary:hover { background: #244871; }
+  button.primary:disabled { background: #1d2125; border-color: #2a2e33; color: #6a6f74; cursor: not-allowed; }
+  button.ghost {
+    background: #1d2125; border: 1px solid #2a2e33; color: #d6dadd;
+    padding: 6px 12px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  button.ghost:hover { background: #262b30; }
+  .error {
+    color: #ffb27a; background: #2a1f15; border: 1px solid #5a3a1d;
+    padding: 8px 12px; margin: 8px 0;
+  }
+  .success {
+    color: #b8e8b0; background: #142918; border: 1px solid #2d5a3a;
+    padding: 8px 12px; margin: 8px 0;
+  }
+  .warn {
+    color: #ffd27a; background: #2a2415; border: 1px solid #5a481d;
+    padding: 10px 12px; margin: 8px 0; font-weight: bold;
+  }
+  .token-box {
+    background: #0a0c0e;
+    border: 1px solid #4d7cb2;
+    padding: 12px;
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 13px;
+    word-break: break-all;
+    user-select: all;
+    color: #6ab4ff;
+    margin: 8px 0;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Sign up to contribute</h1>
+  <p class="tagline">Get a user token to push field-level edits into the device database.</p>
+  <nav>
+    [<a href="./index.html">Browse the database</a>] |
+    [<a href="./recent.html">Recent edits</a>] |
+    [<a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>]
+  </nav>
+</header>
+
+<div id="error-banner" class="error" style="display:none"></div>
+
+<section id="form-section" class="panel">
+  <h2>Choose a handle</h2>
+  <p class="small">Your handle will be shown next to the edits you submit. Email is optional and used only for moderator contact about your contributions &mdash; it is not displayed publicly and never shared.</p>
+
+  <form id="register-form" novalidate>
+    <label for="handle">Handle <span class="small">(3&ndash;32 chars, letters, digits, dashes)</span></label>
+    <input id="handle" name="handle" type="text" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9\-]{2,31}">
+    <div class="field-error" id="handle-err"></div>
+
+    <label for="email">Email <span class="small">(optional)</span></label>
+    <input id="email" name="email" type="email" autocomplete="email">
+    <div class="field-error" id="email-err"></div>
+
+    <button type="submit" class="primary" id="submit">Create account</button>
+  </form>
+</section>
+
+<section id="result-section" class="panel" style="display:none">
+  <div class="success">Account created. Welcome, <b id="result-handle"></b>.</div>
+
+  <h2>Your user token</h2>
+  <div class="warn">Save this token now. You will not be able to retrieve it later. If you lose it, you can sign up again with a new handle.</div>
+
+  <div class="token-box mono" id="token-box" aria-label="Your user token"></div>
+  <button type="button" class="ghost" id="copy-token">Copy token</button>
+  <span id="copy-status" class="small" style="margin-left:8px"></span>
+
+  <h3>Paste it into BoardRipper</h3>
+  <ol class="small" style="margin-top:4px">
+    <li>Open BoardRipper.</li>
+    <li>Settings &rarr; <b>Database Contributions</b>.</li>
+    <li>Paste the token into the <b>User token</b> field.</li>
+    <li>Click <b>Save</b>. Your next edit in the Database Editor panel will be attributed to your handle.</li>
+  </ol>
+
+  <p class="small">Your account UUID: <code id="result-uuid">&mdash;</code></p>
+  <p style="margin-top:14px"><a href="./index.html">&larr; Back to the database browser</a></p>
+</section>
+
+<hr class="stars">
+
+<footer>
+  <p class="small">Device Database is part of <a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>, free software under AGPL-3.0.</p>
+</footer>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  var API_BASE = "/devicedb/api/v1";
+
+  function $(id){ return document.getElementById(id); }
+
+  function escapeHtml(s){
+    if (s === null || s === undefined) return "";
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function showError(msg){
+    var b = $("error-banner");
+    b.textContent = msg;
+    b.style.display = "block";
+  }
+  function clearError(){ $("error-banner").style.display = "none"; }
+
+  function validateHandle(v){
+    if (!v) return "Handle is required.";
+    if (v.length < 3 || v.length > 32) return "Handle must be 3 to 32 characters.";
+    if (!/^[A-Za-z0-9][A-Za-z0-9\-]{2,31}$/.test(v)) return "Use only letters, digits, and dashes; must start with a letter or digit.";
+    return "";
+  }
+  function validateEmail(v){
+    if (!v) return ""; // optional
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "Email looks invalid.";
+    return "";
+  }
+
+  function onSubmit(ev){
+    ev.preventDefault();
+    clearError();
+    var handle = $("handle").value.trim();
+    var email = $("email").value.trim();
+    var hErr = validateHandle(handle);
+    var eErr = validateEmail(email);
+    $("handle-err").textContent = hErr;
+    $("email-err").textContent = eErr;
+    if (hErr || eErr) return;
+
+    var btn = $("submit");
+    btn.disabled = true;
+    btn.textContent = "Creating account…";
+
+    var body = { handle: handle };
+    if (email) body.email = email;
+
+    fetch(API_BASE + "/users/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().catch(function(){ return null; }).then(function(data){
+        if (!r.ok) {
+          var msg = (data && data.message) || ("Registration failed (HTTP " + r.status + ").");
+          if (r.status >= 500) msg = "Service temporarily unavailable, try again later.";
+          if (r.status === 409 && data && /handle/i.test(data.message || data.error || "")) {
+            $("handle-err").textContent = "That handle is taken. Try another.";
+            return;
+          }
+          throw new Error(msg);
+        }
+        if (!data || !data.token || !data.user_uuid) {
+          throw new Error("Unexpected response from server.");
+        }
+        showResult(handle, data.token, data.user_uuid);
+      });
+    }).catch(function(err){
+      showError(err && err.message ? err.message : "Registration failed.");
+    }).then(function(){
+      btn.disabled = false;
+      btn.textContent = "Create account";
+    });
+  }
+
+  function showResult(handle, token, uuid){
+    $("form-section").style.display = "none";
+    $("result-section").style.display = "";
+    $("result-handle").textContent = handle;
+    $("result-uuid").textContent = uuid;
+    $("token-box").textContent = token;
+    window.scrollTo(0, 0);
+  }
+
+  function copyToken(){
+    var token = $("token-box").textContent;
+    var status = $("copy-status");
+    var done = function(ok){
+      status.textContent = ok ? "Copied to clipboard." : "Copy failed — select and copy manually.";
+      setTimeout(function(){ status.textContent = ""; }, 3000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(token).then(function(){ done(true); }, function(){ done(false); });
+    } else {
+      try {
+        var range = document.createRange();
+        range.selectNode($("token-box"));
+        var sel = window.getSelection();
+        sel.removeAllRanges(); sel.addRange(range);
+        var ok = document.execCommand("copy");
+        sel.removeAllRanges();
+        done(ok);
+      } catch(e) { done(false); }
+    }
+  }
+
+  function boot(){
+    $("register-form").addEventListener("submit", onSubmit);
+    $("copy-token").addEventListener("click", copyToken);
+    $("handle").addEventListener("blur", function(){
+      $("handle-err").textContent = validateHandle($("handle").value.trim());
+    });
+    $("email").addEventListener("blur", function(){
+      $("email-err").textContent = validateEmail($("email").value.trim());
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

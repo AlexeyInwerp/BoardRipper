@@ -1,6 +1,12 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { log } from '../store/log-store';
+import {
+  contribdbStore,
+  useContribDBPendingForField,
+  type SubmissionRow,
+} from '../store/contribdb-store';
+import { useBoardStore } from '../hooks/useBoardStore';
 
 // ---------- Types (mirror Go shape from /api/boards/hierarchy) ----------
 
@@ -56,6 +62,23 @@ interface Selection {
   uuid: string;
 }
 
+// ---------- Contribution allowlist ----------
+
+/** Field allowlist — must mirror the server-side allowlist in contribdb. Any
+ *  field NOT in this map stays read-only in the detail pane. */
+export const WRITABLE_FIELDS: Record<TargetType, readonly string[]> = {
+  board:  ['odm', 'board_name', 'notes', 'source', 'source_url'],
+  model:  ['display_name', 'notes'],
+  family: ['name', 'notes'],
+  brand:  ['notes'],
+};
+
+type TargetType = 'board' | 'model' | 'family' | 'brand';
+
+function isWritable(t: TargetType, field: string): boolean {
+  return WRITABLE_FIELDS[t].includes(field);
+}
+
 // ---------- Helpers ----------
 
 function countBoardsInFamily(f: HierarchyFamily): number {
@@ -70,6 +93,21 @@ function countBoardsInBrand(b: HierarchyBrand): number {
   return n;
 }
 
+function fmtRelative(iso?: string): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const diff = Math.max(0, Date.now() - t);
+  const s = Math.round(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return `${d}d ago`;
+}
+
 // ---------- Panel ----------
 
 export function DatabaseEditorPanel(_props: IDockviewPanelProps) {
@@ -77,6 +115,15 @@ export function DatabaseEditorPanel(_props: IDockviewPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Selection | null>(null);
+
+  // Reference-counted contribdb polling — Settings panel and Editor each hold
+  // one slot. The store dedupes the timer; this only matters for the start /
+  // stop balance.
+  useEffect(() => {
+    contribdbStore.startPolling(30_000);
+    void contribdbStore.refreshUserToken();
+    return () => { contribdbStore.stopPolling(); };
+  }, []);
 
   // Fetch on mount.
   useEffect(() => {
@@ -355,7 +402,10 @@ function BrandDetail({ brand }: { brand: HierarchyBrand }) {
     <>
       <div style={styles.detailTitle}>{brand.name}</div>
       <Field label="UUID" value={<code style={styles.uuid}>{brand.uuid}</code>} />
-      <Field label="Notes" value={brand.notes} />
+      <EditableOrField
+        label="Notes" targetType="brand" targetUuid={brand.uuid}
+        field="notes" value={brand.notes}
+      />
       <Field label="Families" value={families.length} />
       <Field label="Boards" value={boards} />
     </>
@@ -370,7 +420,14 @@ function FamilyDetail({ brand, family }: { brand: HierarchyBrand; family: Hierar
       <div style={styles.detailTitle}>{family.name}</div>
       <div style={styles.detailCrumb}>{brand.name}</div>
       <Field label="UUID" value={<code style={styles.uuid}>{family.uuid}</code>} />
-      <Field label="Notes" value={family.notes} />
+      <EditableOrField
+        label="Name" targetType="family" targetUuid={family.uuid}
+        field="name" value={family.name}
+      />
+      <EditableOrField
+        label="Notes" targetType="family" targetUuid={family.uuid}
+        field="notes" value={family.notes}
+      />
       <Field label="Models" value={models.length} />
       <Field label="Boards" value={boards} />
     </>
@@ -383,9 +440,15 @@ function ModelDetail({ brand, family, model }: { brand: HierarchyBrand; family: 
     <>
       <div style={styles.detailTitle}>{model.model_number}</div>
       <div style={styles.detailCrumb}>{brand.name} › {family.name}</div>
-      {model.display_name && <Field label="Display Name" value={model.display_name} />}
+      <EditableOrField
+        label="Display Name" targetType="model" targetUuid={model.uuid}
+        field="display_name" value={model.display_name}
+      />
       <Field label="UUID" value={<code style={styles.uuid}>{model.uuid}</code>} />
-      <Field label="Notes" value={model.notes} />
+      <EditableOrField
+        label="Notes" targetType="model" targetUuid={model.uuid}
+        field="notes" value={model.notes}
+      />
       <Field label="Boards" value={boards.length} />
       <AliasList aliases={model.aliases} />
     </>
@@ -398,19 +461,395 @@ function BoardDetail({ brand, family, model, board }: { brand: HierarchyBrand; f
       <div style={styles.detailTitle}>{board.board_number}</div>
       <div style={styles.detailCrumb}>{brand.name} › {family.name} › {model.model_number}</div>
       <Field label="UUID" value={<code style={styles.uuid}>{board.uuid}</code>} />
-      <Field label="Board Name" value={board.board_name} />
-      <Field label="ODM" value={board.odm} />
+      <EditableOrField
+        label="Board Name" targetType="board" targetUuid={board.uuid}
+        field="board_name" value={board.board_name}
+      />
+      <EditableOrField
+        label="ODM" targetType="board" targetUuid={board.uuid}
+        field="odm" value={board.odm}
+      />
       <Field label="Number Type" value={board.board_number_type} />
-      <Field label="Source" value={board.source} />
-      <Field
-        label="Source URL"
-        value={board.source_url
-          ? <a href={board.source_url} target="_blank" rel="noreferrer">{board.source_url}</a>
+      <EditableOrField
+        label="Source" targetType="board" targetUuid={board.uuid}
+        field="source" value={board.source}
+      />
+      <EditableOrField
+        label="Source URL" targetType="board" targetUuid={board.uuid}
+        field="source_url"
+        value={board.source_url}
+        renderValue={(v) => v
+          ? <a href={v} target="_blank" rel="noreferrer">{v}</a>
           : null}
       />
-      <Field label="Notes" value={board.notes} />
+      <EditableOrField
+        label="Notes" targetType="board" targetUuid={board.uuid}
+        field="notes" value={board.notes}
+        multiline
+      />
       <AliasList aliases={board.aliases} />
     </>
+  );
+}
+
+// ---------- Editable field ----------
+
+interface EditableFieldProps {
+  label: string;
+  targetType: TargetType;
+  targetUuid: string;
+  field: string;
+  value: string | undefined;
+  /** Optional custom renderer for the read-mode value (e.g. anchor for URLs). */
+  renderValue?: (v: string) => React.ReactNode;
+  /** Use textarea instead of input. */
+  multiline?: boolean;
+}
+
+/** Renders Field (read-only) for non-writable fields, EditableField for writable. */
+function EditableOrField(props: EditableFieldProps) {
+  if (!isWritable(props.targetType, props.field)) {
+    const display = props.renderValue && props.value ? props.renderValue(props.value) : props.value;
+    return <Field label={props.label} value={display} />;
+  }
+  return <EditableField {...props} />;
+}
+
+function EditableField({ label, targetType, targetUuid, field, value, renderValue, multiline }: EditableFieldProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(value ?? '');
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const pending = useContribDBPendingForField(targetType, targetUuid, field);
+
+  // Resync draft when the underlying value changes (e.g. hierarchy reload).
+  useEffect(() => { setDraft(value ?? ''); }, [value]);
+
+  const startEdit = () => { setDraft(value ?? ''); setEditing(true); };
+  const cancelEdit = () => { setEditing(false); setDraft(value ?? ''); };
+
+  const tryOpenEvidence = () => {
+    if (draft === (value ?? '')) {
+      // No change — bail.
+      setEditing(false);
+      return;
+    }
+    setEvidenceOpen(true);
+  };
+
+  const onSubmitted = () => {
+    setEvidenceOpen(false);
+    setEditing(false);
+  };
+
+  return (
+    <div style={styles.field}>
+      <div style={styles.fieldLabel}>
+        {label}
+        {pending && (
+          <PendingBadge pending={pending} />
+        )}
+      </div>
+      {!editing && (
+        <div
+          style={{ ...styles.fieldValue, ...styles.editableValue }}
+          onClick={startEdit}
+          title="Click to edit"
+        >
+          {(value && renderValue) ? renderValue(value) : (value || <span style={styles.emptyValue}>(empty)</span>)}
+          <span style={styles.editHint}> ✎</span>
+        </div>
+      )}
+      {editing && (
+        <div style={styles.editorRow}>
+          {multiline ? (
+            <textarea
+              autoFocus
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); tryOpenEvidence(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+              }}
+              style={styles.editorTextarea}
+              rows={4}
+            />
+          ) : (
+            <input
+              type="text"
+              autoFocus
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); tryOpenEvidence(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+              }}
+              style={styles.editorInput}
+            />
+          )}
+          <div style={styles.editorButtons}>
+            <button onClick={tryOpenEvidence} disabled={draft === (value ?? '')}>Submit…</button>
+            <button onClick={cancelEdit}>Cancel</button>
+          </div>
+          <div style={styles.editorHint}>
+            {multiline ? '⌘/Ctrl+Enter to submit · Esc to cancel' : 'Enter to submit · Esc to cancel'}
+          </div>
+        </div>
+      )}
+      {evidenceOpen && (
+        <EvidenceDialog
+          label={label}
+          targetType={targetType}
+          targetUuid={targetUuid}
+          field={field}
+          valueFrom={value ?? ''}
+          valueTo={draft}
+          onClose={() => setEvidenceOpen(false)}
+          onSubmitted={onSubmitted}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------- Pending badge ----------
+
+function PendingBadge({ pending }: { pending: SubmissionRow }) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+
+  const onClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    setTooltipOpen(o => !o);
+  };
+
+  const onPointerDown = () => {
+    longPressFired.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      void confirmWithdraw();
+    }, 700);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current != null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void confirmWithdraw();
+  };
+
+  // Withdraw is a no-op here because the backend handler isn't part of the
+  // wire surface we were given. We surface a toast-ish hint and log so the
+  // user understands why nothing happened; if/when the backend exposes a
+  // DELETE endpoint, wire it here.
+  const confirmWithdraw = async () => {
+    const ok = typeof window !== 'undefined'
+      ? window.confirm('Withdraw this submission?')
+      : false;
+    if (!ok) return;
+    log.contribdb.warn('withdraw requested but no DELETE endpoint available', pending.local_uuid);
+    if (typeof window !== 'undefined') {
+      window.alert('Withdraw is not yet supported by the backend. The submission stays in the outbox until reviewed.');
+    }
+  };
+
+  const labelByStatus = {
+    pending_send: 'Pending (queued)',
+    submitted:    'Pending review',
+    failed:       'Failed',
+    accepted:     'Accepted',
+    rejected:     'Rejected',
+    withdrawn:    'Withdrawn',
+    superseded:   'Superseded',
+  } as const;
+  const text = labelByStatus[pending.status] ?? pending.status;
+  const color = pending.status === 'failed' ? '#c33' : '#c80';
+
+  return (
+    <span style={{ position: 'relative', display: 'inline-block' }}>
+      <span
+        style={{ ...styles.pendingBadge, color }}
+        onClick={onClick}
+        onPointerDown={onPointerDown}
+        onPointerUp={cancelLongPress}
+        onPointerLeave={cancelLongPress}
+        onContextMenu={onContextMenu}
+        title="Click for details · Long-press / right-click to withdraw"
+      >
+        ⏳ {text} {fmtRelative(pending.created_at) && `· ${fmtRelative(pending.created_at)}`}
+      </span>
+      {tooltipOpen && (
+        <div style={styles.pendingTooltip} onClick={(e) => e.stopPropagation()}>
+          <div><strong>Status:</strong> {pending.status}</div>
+          <div><strong>Proposed:</strong> <code>{pending.value_to}</code></div>
+          <div><strong>Previous:</strong> <code>{pending.value_from || '(empty)'}</code></div>
+          <div><strong>Submitted:</strong> {pending.created_at}</div>
+          {pending.server_uuid && <div><strong>Server UUID:</strong> <code>{pending.server_uuid}</code></div>}
+          {pending.last_error && <div style={{ color: '#c33' }}><strong>Error:</strong> {pending.last_error}</div>}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ---------- Evidence dialog ----------
+
+interface EvidenceDialogProps {
+  label: string;
+  targetType: TargetType;
+  targetUuid: string;
+  field: string;
+  valueFrom: string;
+  valueTo: string;
+  onClose: () => void;
+  onSubmitted: () => void;
+}
+
+function EvidenceDialog({ label, targetType, targetUuid, field, valueFrom, valueTo, onClose, onSubmitted }: EvidenceDialogProps) {
+  const { fileName } = useBoardStore();
+  const hasActiveBoard = !!fileName;
+
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [boardInHand, setBoardInHand] = useState(false);
+  const [rationale, setRationale] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const valid =
+    sourceUrl.trim().length > 0 ||
+    boardInHand ||
+    rationale.trim().length > 0;
+
+  const onSubmit = async () => {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const evidence: {
+        source_url?: string;
+        board_in_hand?: boolean;
+        board_in_hand_ctx?: Record<string, unknown>;
+        rationale?: string;
+      } = {};
+      if (sourceUrl.trim()) evidence.source_url = sourceUrl.trim();
+      if (boardInHand) {
+        evidence.board_in_hand = true;
+        evidence.board_in_hand_ctx = {
+          file_name: fileName,
+          opened_at: new Date().toISOString(),
+        };
+      }
+      if (rationale.trim()) evidence.rationale = rationale.trim();
+
+      const r = await contribdbStore.submit({
+        target_type: targetType,
+        target_uuid: targetUuid,
+        target_field: field,
+        value_to: valueTo,
+        value_from: valueFrom,
+        evidence,
+      });
+      if (!r.ok) {
+        setError(r.error ?? 'Submission failed');
+      } else {
+        log.contribdb.log('submitted', targetType, field, '→', valueTo);
+        onSubmitted();
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={styles.modalBackdrop} onClick={onClose}>
+      <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalTitle}>Contribute a change</div>
+        <div style={styles.modalSubtitle}>
+          {targetType} · {label}
+        </div>
+        <div style={styles.modalDiff}>
+          <div><span style={styles.modalDiffLabel}>From:</span> <code>{valueFrom || '(empty)'}</code></div>
+          <div><span style={styles.modalDiffLabel}>To:</span> <code>{valueTo || '(empty)'}</code></div>
+        </div>
+
+        <div style={styles.modalSection}>
+          <div style={styles.modalSectionTitle}>Evidence</div>
+          <div style={styles.modalHint}>
+            At least one of source URL, "board in hand", or rationale is required.
+          </div>
+
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>Source URL</label>
+            <input
+              type="url"
+              placeholder="https://example.com/datasheet.pdf"
+              value={sourceUrl}
+              onChange={e => setSourceUrl(e.target.value)}
+              style={styles.modalInput}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>
+              <input
+                type="checkbox"
+                checked={boardInHand}
+                onChange={e => setBoardInHand(e.target.checked)}
+                disabled={!hasActiveBoard}
+              />
+              {' '}I have this board in hand
+              {!hasActiveBoard && (
+                <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-secondary)' }}>
+                  (open a board file to enable)
+                </span>
+              )}
+            </label>
+            {hasActiveBoard && boardInHand && (
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                Will attach: <code>{fileName}</code>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.modalField}>
+            <label style={styles.modalLabel}>Rationale</label>
+            <textarea
+              placeholder="Explain why this change is correct…"
+              value={rationale}
+              onChange={e => setRationale(e.target.value)}
+              style={styles.modalTextarea}
+              rows={4}
+            />
+          </div>
+        </div>
+
+        {error && <div style={styles.modalError}>{error}</div>}
+
+        <div style={styles.modalButtons}>
+          <button onClick={onClose} disabled={submitting}>Cancel</button>
+          <button onClick={onSubmit} disabled={!valid || submitting}>
+            {submitting ? 'Submitting…' : 'Submit contribution'}
+          </button>
+        </div>
+        {!valid && (
+          <div style={styles.modalHint}>
+            Fill in at least one evidence slot to enable submission.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -540,10 +979,63 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     color: 'var(--text-secondary)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
   },
   fieldValue: {
     fontSize: 13,
     wordBreak: 'break-word',
+  },
+  editableValue: {
+    cursor: 'pointer',
+    padding: '2px 4px',
+    margin: '-2px -4px',
+    borderRadius: 3,
+    border: '1px dashed transparent',
+  },
+  editHint: {
+    marginLeft: 6,
+    fontSize: 10,
+    color: 'var(--text-secondary)',
+    opacity: 0.5,
+  },
+  emptyValue: {
+    color: 'var(--text-secondary)',
+    fontStyle: 'italic',
+  },
+  editorRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    padding: '4px 0',
+  },
+  editorInput: {
+    fontSize: 13,
+    padding: '4px 6px',
+    background: 'var(--bg-primary, #0a0a0a)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border, #333)',
+    borderRadius: 3,
+    fontFamily: 'inherit',
+  },
+  editorTextarea: {
+    fontSize: 13,
+    padding: '4px 6px',
+    background: 'var(--bg-primary, #0a0a0a)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border, #333)',
+    borderRadius: 3,
+    fontFamily: 'inherit',
+    resize: 'vertical',
+  },
+  editorButtons: {
+    display: 'flex',
+    gap: 6,
+  },
+  editorHint: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
   },
   uuid: {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -573,5 +1065,141 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-secondary, rgba(255,255,255,0.05))',
     padding: '0 4px',
     borderRadius: 2,
+  },
+  // ---- Pending badge ----
+  pendingBadge: {
+    display: 'inline-block',
+    fontSize: 10,
+    fontWeight: 500,
+    padding: '1px 6px',
+    borderRadius: 3,
+    border: '1px solid currentColor',
+    cursor: 'pointer',
+    textTransform: 'none',
+    letterSpacing: 0,
+    userSelect: 'none',
+  },
+  pendingTooltip: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    zIndex: 10,
+    marginTop: 4,
+    padding: 8,
+    background: 'var(--bg-primary, #1a1a1a)',
+    border: '1px solid var(--border, #333)',
+    borderRadius: 4,
+    fontSize: 11,
+    color: 'var(--text-primary)',
+    minWidth: 220,
+    maxWidth: 360,
+    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+    textTransform: 'none',
+    letterSpacing: 0,
+    fontWeight: 400,
+    lineHeight: 1.5,
+  },
+  // ---- Modal ----
+  modalBackdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  modalCard: {
+    background: 'var(--bg-primary, #121212)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border, #333)',
+    borderRadius: 6,
+    padding: 20,
+    minWidth: 420,
+    maxWidth: 560,
+    maxHeight: '85vh',
+    overflow: 'auto',
+    fontSize: 13,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+    marginBottom: 12,
+    textTransform: 'capitalize',
+  },
+  modalDiff: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 11,
+    background: 'var(--bg-secondary, rgba(255,255,255,0.04))',
+    padding: 8,
+    borderRadius: 3,
+    marginBottom: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    wordBreak: 'break-all',
+  },
+  modalDiffLabel: {
+    color: 'var(--text-secondary)',
+    marginRight: 4,
+  },
+  modalSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  modalSectionTitle: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: 'var(--text-secondary)',
+  },
+  modalHint: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+    lineHeight: 1.4,
+  },
+  modalField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  modalLabel: {
+    fontSize: 12,
+  },
+  modalInput: {
+    fontSize: 13,
+    padding: '4px 6px',
+    background: 'var(--bg-primary, #0a0a0a)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border, #333)',
+    borderRadius: 3,
+    fontFamily: 'inherit',
+  },
+  modalTextarea: {
+    fontSize: 13,
+    padding: '4px 6px',
+    background: 'var(--bg-primary, #0a0a0a)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border, #333)',
+    borderRadius: 3,
+    fontFamily: 'inherit',
+    resize: 'vertical',
+  },
+  modalError: {
+    color: '#c33',
+    fontSize: 12,
+    marginTop: 10,
+  },
+  modalButtons: {
+    display: 'flex',
+    gap: 8,
+    justifyContent: 'flex-end',
+    marginTop: 16,
   },
 };

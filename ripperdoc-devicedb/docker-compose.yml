@@ -1,0 +1,50 @@
+# Local prototype compose for ripperdoc-devicedb.
+#
+# `docker compose up` brings the service up on host port 8090 with the
+# bundled BoardRipper boards.db mounted read-only at /seed so the canonical
+# SQLite is auto-seeded on first boot. Subsequent boots are no-ops on the
+# seed step (seed_state.seeded=1 in the local DB).
+#
+# A `boardripper` service is sketched below (commented) — wiring is owned
+# by a later agent.
+
+services:
+  devicedb:
+    build:
+      context: .
+      args:
+        APP_VERSION: dev
+    image: ripperdoc/devicedb:dev
+    container_name: ripperdoc-devicedb
+    ports:
+      - "8090:8090"
+    environment:
+      LISTEN_ADDR: ":8090"
+      DATA_DIR: "/data"
+      SEED_DB_PATH: "/seed/boards.db"
+      WEB_DIR: "/app/web"
+      CORS_ALLOWED_ORIGINS: "*"
+      SNAPSHOT_TARBALL_BASE_URL: "http://localhost:8090/v1/snapshots"
+      # Mount a 64-byte Ed25519 private key here in production:
+      # SNAPSHOT_PRIVATE_KEY_PATH: "/run/secrets/snapshot.key"
+    volumes:
+      - ./data:/data
+      - ../Board Database:/seed:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # boardripper:
+  #   image: ghcr.io/alexeyinwerp/boardripper:latest
+  #   container_name: boardripper
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     # Phase 2 BoardRipper will read snapshots from devicedb:
+  #     DEVICEDB_BASE_URL: "http://devicedb:8090/v1"
+  #   depends_on:
+  #     - devicedb

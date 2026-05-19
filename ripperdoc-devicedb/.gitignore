@@ -1,0 +1,23 @@
+# Build output
+/bin/
+*.exe
+
+# Runtime data
+/data/
+/data-*/
+/snapshots/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tar.gz
+
+# Local secrets (Ed25519 private keys etc.)
+*.key
+*.pem
+.snapshot-private-key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

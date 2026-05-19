@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"boardripper/boarddb"
+	"boardripper/contribdb"
 	"boardripper/databank"
 	"boardripper/handlers"
 	"boardripper/librarysync"
@@ -187,6 +188,48 @@ func main() {
 	mux.HandleFunc("GET /api/sync/status", read(syncHandler.Status))
 	mux.HandleFunc("GET /api/sync/check-target", read(syncHandler.CheckTarget))
 	go librarysync.Run(syncRootCtx, syncEngine, db)
+
+	// Online boards-DB contribution pipeline — opt-in via CONTRIBDB_ENABLED
+	// (default true). Mints an install token on first boot, retries
+	// registration in the background, pulls signed snapshots, pushes
+	// outboxed submissions. See docs/superpowers/specs/2026-05-18-online-
+	// boards-db-design.md for the full architecture.
+	contribEnabled := true
+	if v := os.Getenv("CONTRIBDB_ENABLED"); v != "" {
+		contribEnabled = v == "1" || v == "true" || v == "TRUE"
+	}
+	contribBaseURL := os.Getenv("DEVICEDB_BASE_URL")
+	if contribBaseURL == "" {
+		// Allow per-install override via databank config.
+		contribBaseURL, _ = db.GetConfig("contribdb_base_url")
+	}
+	contribCtx, contribCancel := context.WithCancel(context.Background())
+	defer contribCancel()
+	contribSvc, err := contribdb.Open(contribCtx, db, bdb, contribdb.ServiceConfig{
+		Enabled: contribEnabled,
+		DataDir: dataDir,
+		BaseURL: contribBaseURL,
+		Version: updater.Version,
+		// SnapshotPubKey will be wired in via -ldflags in a follow-up
+		// release-pipeline change (separate Ed25519 keypair from the
+		// updater, per spec §6.4). Empty disables snapshot pulls; pushes
+		// still work.
+		SnapshotPubKey: "",
+	})
+	if err != nil {
+		log.Fatalf("contribdb: %v", err)
+	}
+	if contribSvc != nil {
+		defer contribSvc.Close()
+	}
+	contribHandler := handlers.NewContribDBHandler(contribSvc, db)
+	mux.HandleFunc("GET /api/contribdb/status", read(contribHandler.Status))
+	mux.HandleFunc("POST /api/contribdb/submit", write(contribHandler.Submit))
+	mux.HandleFunc("GET /api/contribdb/mine", read(contribHandler.Mine))
+	mux.HandleFunc("POST /api/contribdb/sync", contribHandler.Sync) // long-running — no wrap
+	mux.HandleFunc("GET /api/contribdb/install-token", read(contribHandler.InstallToken))
+	mux.HandleFunc("POST /api/contribdb/user-token", write(contribHandler.UserToken))
+	mux.HandleFunc("GET /api/contribdb/user-token-status", read(contribHandler.UserTokenStatus))
 
 	// OpenBoardData (OBD) API routes — independent filesystem-backed data layer
 	// rooted at <dataDir>/obd/. /data is always writable across container updates;
