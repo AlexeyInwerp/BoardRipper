@@ -1,29 +1,608 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width">
-<title>RipperDoc DeviceDB</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Device Database &mdash; RipperDoc</title>
+<meta name="description" content="Open reference database for PCB repair: brands, families, models, boards.">
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 3em auto; padding: 0 1em; line-height: 1.5; }
-  code { background:#f3f3f3; padding:.1em .3em; border-radius:3px; }
-  h1 { margin-bottom:.2em }
-  .muted { color:#666 }
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    margin: 0;
+    background: #0f1113;
+    color: #d6dadd;
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 22px clamp(14px, 4vw, 28px) 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e8ecef; }
+  h2 { font-size: 16px; margin: 24px 0 8px; font-weight: bold; color: #e8ecef; }
+  h3 { font-size: 13px; margin: 12px 0 4px; font-weight: bold; color: #e8ecef; }
+  a { color: #6ab4ff; text-decoration: underline; }
+  a:visited { color: #b88cff; }
+  a:hover { color: #9fcdff; }
+  header { margin-bottom: 14px; }
+  .tagline { color: #8a9197; font-size: 12px; margin: 0; }
+  nav { margin: 8px 0 18px; font-size: 13px; line-height: 1.9; color: #8a9197; }
+  nav a { margin: 0 2px; }
+  hr.stars { border: none; text-align: center; color: #555; margin: 22px 0 16px; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  code, pre {
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 13px;
+  }
+  pre {
+    background: #181b1e;
+    border: 1px solid #2a2e33;
+    padding: 10px 12px;
+    overflow-x: auto;
+    color: #d6dadd;
+  }
+  .small { color: #8a9197; font-size: 12px; }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 20px;
+    margin-top: 14px;
+  }
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: #14171a;
+    border: 1px solid #2a2e33;
+    padding: 12px 14px;
+    min-height: 240px;
+  }
+  .panel h2:first-child { margin-top: 0; }
+  /* Search */
+  .search-row { display: flex; gap: 8px; margin: 10px 0 12px; }
+  .search-row input {
+    flex: 1;
+    background: #181b1e;
+    border: 1px solid #2a2e33;
+    color: #e8ecef;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+  }
+  .search-row input:focus { outline: none; border-color: #4d7cb2; }
+  .search-row button {
+    background: #1d2125; border: 1px solid #2a2e33; color: #d6dadd;
+    padding: 8px 12px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .search-row button:hover { background: #262b30; }
+  /* Tree */
+  .tree { font-family: 'Courier New', ui-monospace, monospace; font-size: 13px; line-height: 1.6; }
+  .tree ul { list-style: none; margin: 0; padding-left: 14px; }
+  .tree > ul { padding-left: 0; }
+  .tree li { margin: 0; }
+  .tree .toggle {
+    cursor: pointer; user-select: none; display: inline-block;
+    width: 12px; color: #8a9197;
+  }
+  .tree .leaf-marker { display: inline-block; width: 12px; color: #555; }
+  .tree .name { cursor: pointer; }
+  .tree .name:hover { color: #9fcdff; }
+  .tree .selected > .name { background: #2a3340; color: #e8ecef; }
+  .tree .kind-brand > .row > .name { color: #e8ecef; font-weight: bold; }
+  .tree .kind-family > .row > .name { color: #d6dadd; }
+  .tree .kind-model > .row > .name { color: #c0c5c9; }
+  .tree .kind-board > .row > .name { color: #6ab4ff; }
+  .tree .badge {
+    color: #8a9197; font-size: 11px; margin-left: 6px;
+  }
+  .tree .hidden { display: none; }
+  .tree .match > .row > .name { background: #3a3618; }
+  /* Detail */
+  .detail dl { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; margin: 0; }
+  .detail dt { color: #8a9197; font-size: 12px; padding-top: 2px; }
+  .detail dd { margin: 0; word-break: break-word; }
+  .chip {
+    display: inline-block; width: 14px; height: 14px;
+    border: 1px solid #2a2e33; vertical-align: middle; margin-right: 4px;
+  }
+  .pill {
+    display: inline-block; padding: 1px 6px; background: #1d2125;
+    border: 1px solid #2a2e33; color: #d6dadd; font-size: 11px; margin: 2px 4px 2px 0;
+  }
+  .edits-list { list-style: none; padding: 0; margin: 6px 0 0; }
+  .edits-list li {
+    border-top: 1px dotted #2a2e33; padding: 6px 0; font-size: 12px; color: #b6bbc0;
+  }
+  .edits-list li:first-child { border-top: none; }
+  .edits-list .ts { color: #8a9197; font-size: 11px; }
+  /* Footer / stats */
+  .stats {
+    margin-top: 18px; padding: 10px 12px;
+    background: #14171a; border: 1px solid #2a2e33;
+    display: flex; flex-wrap: wrap; gap: 18px; font-size: 12px; color: #b6bbc0;
+  }
+  .stats b { color: #e8ecef; }
+  .stats .grow { flex: 1; }
+  .stats .cta { color: #6ab4ff; }
+  .empty {
+    color: #8a9197; padding: 20px 4px; text-align: center;
+  }
+  .empty b { color: #e8ecef; }
+  .error {
+    color: #ffb27a; background: #2a1f15; border: 1px solid #5a3a1d;
+    padding: 8px 12px; margin: 8px 0;
+  }
+  /* Mobile: detail becomes modal */
+  @media (max-width: 760px) {
+    .detail.is-mobile-open {
+      position: fixed; inset: 0; z-index: 50;
+      background: #0f1113; padding: 18px;
+      overflow-y: auto;
+    }
+    .detail .close-mobile { display: inline-block; }
+    .panel.detail:not(.is-mobile-open) .close-mobile { display: none; }
+  }
+  .detail .close-mobile {
+    display: none;
+    float: right; background: #1d2125; border: 1px solid #2a2e33;
+    color: #d6dadd; font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
-<h1>RipperDoc DeviceDB</h1>
-<p class="muted">Canonical online boards database — read + contribute.</p>
-<ul>
-  <li><a href="/devicedb/api/v1/health">/api/v1/health</a></li>
-  <li><a href="/devicedb/api/v1/entities">/api/v1/entities</a></li>
-  <li><a href="/devicedb/api/v1/snapshots/latest">/api/v1/snapshots/latest</a></li>
-  <li><a href="/devicedb/api/v1/openapi.json">/api/v1/openapi.json</a></li>
-  <li><a href="register.html">register an install token</a></li>
-  <li><a href="recent.html">recent contributions</a></li>
-</ul>
-<p>This API powers <a href="https://github.com/AlexeyInwerp/BoardRipper">BoardRipper</a>'s
-inline DB editor. See the
-<a href="/devicedb/api/v1/openapi.json">OpenAPI document</a> for the wire contract.</p>
+<main>
+
+<header>
+  <h1>Device Database</h1>
+  <p class="tagline">Open reference for PCB repair &mdash; brands, families, models, boards.</p>
+  <nav>
+    [<a href="https://www.ripperdoc.de/">RipperDoc</a>] |
+    [<a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>] |
+    [<a href="./recent.html">Recent edits</a>] |
+    [<a href="./register.html">Sign up to contribute</a>]
+  </nav>
+</header>
+
+<div id="error-banner" class="error" style="display:none"></div>
+
+<section class="search-row" id="search-row">
+  <input id="search" type="search" placeholder="Search brands, families, models, boards, aliases&hellip;" autocomplete="off" spellcheck="false">
+  <button type="button" id="clear-search">Clear</button>
+  <button type="button" id="expand-all">Expand all</button>
+  <button type="button" id="collapse-all">Collapse all</button>
+</section>
+
+<div class="layout">
+  <section class="panel tree" aria-label="Database tree" id="tree-panel">
+    <div id="tree-status" class="empty">Loading database&hellip;</div>
+    <div id="tree" class="tree" style="display:none"></div>
+  </section>
+
+  <section class="panel detail" id="detail-panel" aria-label="Entity details">
+    <button type="button" class="close-mobile" id="close-detail">Close</button>
+    <div id="detail-content" class="empty">
+      <p><b>Select a board, model, family, or brand on the left.</b></p>
+      <p class="small">Click any entry to see its full record &mdash; ODM, aliases, color, source, recent accepted contributions.</p>
+    </div>
+  </section>
+</div>
+
+<div class="stats" id="stats">
+  <div><b id="stat-brands">&mdash;</b> brands</div>
+  <div><b id="stat-families">&mdash;</b> families</div>
+  <div><b id="stat-models">&mdash;</b> models</div>
+  <div><b id="stat-boards">&mdash;</b> boards</div>
+  <div class="grow"><span class="small">Last DB update:</span> <b id="stat-snapshot">&mdash;</b></div>
+  <div><a class="cta" href="./register.html">Sign up to contribute &rarr;</a></div>
+</div>
+
+<hr class="stars">
+
+<footer>
+  <p class="small">Device Database is part of <a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>, free software under AGPL-3.0. Built by <a href="https://www.ripperdoc.de">RipperDoc Munich</a>.</p>
+</footer>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  var API_BASE = "/devicedb/api/v1";
+
+  // --- helpers ---------------------------------------------------------------
+
+  function $(id){ return document.getElementById(id); }
+
+  function escapeHtml(s){
+    if (s === null || s === undefined) return "";
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function showError(msg){
+    var b = $("error-banner");
+    b.textContent = msg;
+    b.style.display = "block";
+  }
+
+  function clearError(){ $("error-banner").style.display = "none"; }
+
+  function fetchJSON(path){
+    return fetch(API_BASE + path, { headers: { "Accept": "application/json" } })
+      .then(function(r){
+        if (!r.ok) {
+          return r.json().catch(function(){ return null; }).then(function(body){
+            var msg = (body && body.message) || ("HTTP " + r.status);
+            var err = new Error(msg);
+            err.status = r.status;
+            err.body = body;
+            throw err;
+          });
+        }
+        return r.json();
+      });
+  }
+
+  function fmtTs(ts){
+    if (!ts) return "—";
+    try {
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toISOString().slice(0, 16).replace("T", " ") + "Z";
+    } catch(e) { return String(ts); }
+  }
+
+  // --- state -----------------------------------------------------------------
+
+  var state = {
+    tree: null,             // raw entities response
+    nodes: [],              // flat array of {kind, uuid, name, path, parent, children}
+    byKey: {},              // "kind:uuid" -> node
+    selected: null,
+    expanded: {},           // key -> bool (default brands expanded)
+  };
+
+  // --- tree loading ----------------------------------------------------------
+
+  // The /v1/entities response shape is documented loosely in the spec
+  // ("Full hierarchy tree"). We support a flexible shape:
+  //   { brands: [ { uuid, name, families: [ { uuid, name, models: [ { uuid, name, number, boards: [ { uuid, name, number, ... } ] } ] } ] } ] }
+  // Any missing arrays are treated as empty.
+  function normaliseTree(raw){
+    var nodes = [];
+    var byKey = {};
+    var brands = (raw && (raw.brands || raw.entities || raw)) || [];
+    if (!Array.isArray(brands)) brands = [];
+
+    function add(node){
+      var key = node.kind + ":" + node.uuid;
+      node.key = key;
+      byKey[key] = node;
+      nodes.push(node);
+    }
+
+    brands.forEach(function(b){
+      var bNode = {
+        kind: "brand", uuid: b.uuid || b.id || ("brand-" + nodes.length),
+        name: b.name || "(unnamed brand)",
+        raw: b, children: [], parent: null,
+        searchText: ""
+      };
+      add(bNode);
+      var families = b.families || [];
+      families.forEach(function(f){
+        var fNode = {
+          kind: "family", uuid: f.uuid || f.id || ("family-" + nodes.length),
+          name: f.name || "(unnamed family)",
+          raw: f, children: [], parent: bNode, searchText: ""
+        };
+        add(fNode);
+        bNode.children.push(fNode);
+        var models = f.models || [];
+        models.forEach(function(m){
+          var mLabel = m.name || m.number || "(unnamed model)";
+          if (m.name && m.number && m.name !== m.number) mLabel = m.name + " (" + m.number + ")";
+          var mNode = {
+            kind: "model", uuid: m.uuid || m.id || ("model-" + nodes.length),
+            name: mLabel, raw: m, children: [], parent: fNode, searchText: ""
+          };
+          add(mNode);
+          fNode.children.push(mNode);
+          var boards = m.boards || [];
+          boards.forEach(function(brd){
+            var bLabel = brd.number || brd.name || "(unnamed board)";
+            if (brd.name && brd.number && brd.name !== brd.number) {
+              bLabel = brd.number + "  " + brd.name;
+            }
+            var brdNode = {
+              kind: "board", uuid: brd.uuid || brd.id || ("board-" + nodes.length),
+              name: bLabel, raw: brd, children: [], parent: mNode, searchText: ""
+            };
+            add(brdNode);
+            mNode.children.push(brdNode);
+          });
+        });
+      });
+    });
+
+    // Precompute search text per node (includes own + descendant aliases).
+    function buildSearch(node){
+      var parts = [node.name];
+      var r = node.raw || {};
+      if (r.number) parts.push(r.number);
+      if (r.odm) parts.push(r.odm);
+      if (r.board_name) parts.push(r.board_name);
+      if (Array.isArray(r.aliases)) parts.push(r.aliases.join(" "));
+      node.children.forEach(function(c){
+        parts.push(buildSearch(c));
+      });
+      node.searchText = parts.join(" ").toLowerCase();
+      return node.searchText;
+    }
+    nodes.filter(function(n){ return n.kind === "brand"; }).forEach(buildSearch);
+
+    return { nodes: nodes, byKey: byKey, brands: nodes.filter(function(n){ return n.kind === "brand"; }) };
+  }
+
+  function countByKind(nodes, kind){
+    var n = 0;
+    for (var i = 0; i < nodes.length; i++) if (nodes[i].kind === kind) n++;
+    return n;
+  }
+
+  // --- rendering -------------------------------------------------------------
+
+  function renderTree(filter){
+    var root = $("tree");
+    var status = $("tree-status");
+    if (!state.tree) return;
+
+    var brands = state.tree.brands;
+    if (!brands.length) {
+      status.innerHTML = "<p><b>No data yet.</b></p>" +
+        "<p class=\"small\">The database is empty or the API is unreachable. If you are running locally, ensure the devicedb server is up. " +
+        "Otherwise this is genuinely a fresh database &mdash; <a href=\"./register.html\">sign up to contribute</a>.</p>";
+      status.style.display = "";
+      root.style.display = "none";
+      return;
+    }
+    status.style.display = "none";
+    root.style.display = "";
+
+    var html = ["<ul>"];
+    brands.forEach(function(b){ renderNode(html, b, filter); });
+    html.push("</ul>");
+    root.innerHTML = html.join("");
+
+    // wire toggles
+    root.querySelectorAll(".toggle").forEach(function(el){
+      el.addEventListener("click", function(){
+        var key = el.getAttribute("data-key");
+        state.expanded[key] = !state.expanded[key];
+        renderTree(filter);
+      });
+    });
+    root.querySelectorAll(".name").forEach(function(el){
+      el.addEventListener("click", function(){
+        var key = el.getAttribute("data-key");
+        selectNode(key);
+      });
+    });
+  }
+
+  function renderNode(html, node, filter){
+    var hasChildren = node.children.length > 0;
+    var visible = !filter || node.searchText.indexOf(filter) !== -1;
+    if (!visible) return;
+    var isMatch = filter && (node.name.toLowerCase().indexOf(filter) !== -1 ||
+      ((node.raw && node.raw.number || "").toString().toLowerCase().indexOf(filter) !== -1));
+    var expanded = !!state.expanded[node.key] || !!filter; // auto-expand on filter
+    var isSelected = state.selected === node.key;
+
+    html.push("<li class=\"kind-" + node.kind + (isSelected ? " selected" : "") +
+      (isMatch ? " match" : "") + "\">");
+    html.push("<span class=\"row\">");
+    if (hasChildren) {
+      html.push("<span class=\"toggle\" data-key=\"" + escapeHtml(node.key) + "\">" + (expanded ? "[-]" : "[+]") + "</span>");
+    } else {
+      html.push("<span class=\"leaf-marker\">[·]</span>");
+    }
+    html.push(" <span class=\"name\" data-key=\"" + escapeHtml(node.key) + "\">" + escapeHtml(node.name) + "</span>");
+    if (hasChildren) {
+      html.push("<span class=\"badge\">(" + node.children.length + ")</span>");
+    }
+    html.push("</span>");
+    if (hasChildren && expanded) {
+      html.push("<ul>");
+      node.children.forEach(function(c){ renderNode(html, c, filter); });
+      html.push("</ul>");
+    }
+    html.push("</li>");
+  }
+
+  function selectNode(key){
+    state.selected = key;
+    // also expand ancestors
+    var node = state.tree.byKey[key];
+    var n = node;
+    while (n && n.parent) { state.expanded[n.parent.key] = true; n = n.parent; }
+    renderTree(currentFilter());
+    renderDetail(node);
+    // on mobile, slide in
+    if (window.matchMedia("(max-width: 760px)").matches) {
+      $("detail-panel").classList.add("is-mobile-open");
+    }
+  }
+
+  function renderDetail(node){
+    var pane = $("detail-content");
+    if (!node) {
+      pane.innerHTML = "<p><b>Select an entity on the left.</b></p>";
+      return;
+    }
+    var r = node.raw || {};
+    var rows = [];
+    rows.push(["Type", escapeHtml(node.kind)]);
+    rows.push(["Name", escapeHtml(node.name)]);
+    if (r.uuid) rows.push(["UUID", "<code>" + escapeHtml(r.uuid) + "</code>"]);
+    if (r.number && r.number !== node.name) rows.push(["Number", escapeHtml(r.number)]);
+    if (r.odm) rows.push(["ODM", escapeHtml(r.odm)]);
+    if (r.board_name) rows.push(["Board name", escapeHtml(r.board_name)]);
+    if (Array.isArray(r.aliases) && r.aliases.length) {
+      rows.push(["Aliases", r.aliases.map(function(a){ return "<span class=\"pill\">" + escapeHtml(a) + "</span>"; }).join("")]);
+    }
+    if (r.color || r.color_hex || r.color_id) {
+      var hex = r.color_hex || r.color || "";
+      var label = r.color_name || hex || ("color #" + r.color_id);
+      var chip = hex ? ("<span class=\"chip\" style=\"background:" + escapeHtml(hex) + "\"></span>") : "";
+      rows.push(["Color", chip + escapeHtml(label)]);
+    }
+    if (r.source) {
+      var src = r.source_url
+        ? "<a href=\"" + escapeHtml(r.source_url) + "\" rel=\"noopener\" target=\"_blank\">" + escapeHtml(r.source) + "</a>"
+        : escapeHtml(r.source);
+      rows.push(["Source", src]);
+    } else if (r.source_url) {
+      rows.push(["Source", "<a href=\"" + escapeHtml(r.source_url) + "\" rel=\"noopener\" target=\"_blank\">" + escapeHtml(r.source_url) + "</a>"]);
+    }
+    if (r.notes) rows.push(["Notes", escapeHtml(r.notes)]);
+
+    var dl = "<dl>" + rows.map(function(p){ return "<dt>" + p[0] + "</dt><dd>" + p[1] + "</dd>"; }).join("") + "</dl>";
+
+    pane.innerHTML =
+      "<h2>" + escapeHtml(node.name) + " <span class=\"small\">&mdash; " + escapeHtml(node.kind) + "</span></h2>" +
+      dl +
+      "<h3>Recent edits</h3>" +
+      "<div id=\"edits-list\" class=\"small\">Loading&hellip;</div>";
+
+    loadEdits(node);
+  }
+
+  function loadEdits(node){
+    if (!node || !node.raw || !node.raw.uuid) {
+      $("edits-list").innerHTML = "<span class=\"small\">No history available.</span>";
+      return;
+    }
+    var path = "/entities/" + encodeURIComponent(node.kind) + "/" + encodeURIComponent(node.raw.uuid) + "/contributions?status=accepted";
+    fetchJSON(path).then(function(data){
+      var items = (data && (data.contributions || data.items || data)) || [];
+      if (!Array.isArray(items) || !items.length) {
+        $("edits-list").innerHTML = "<span class=\"small\">No accepted edits yet.</span>";
+        return;
+      }
+      var html = "<ul class=\"edits-list\">";
+      items.slice(0, 5).forEach(function(c){
+        var ts = c.reviewed_at || c.submitted_at || c.client_ts || "";
+        var who = c.contributor_handle || (c.install_uuid ? ("install " + String(c.install_uuid).slice(0, 8)) : "anonymous");
+        var field = c.target_field || c.field || "?";
+        var from = (c.value_from !== undefined && c.value_from !== null) ? c.value_from : "∅";
+        var to = (c.value_to !== undefined && c.value_to !== null) ? c.value_to : "∅";
+        html += "<li>" +
+          "<span class=\"ts\">" + escapeHtml(fmtTs(ts)) + "</span> &middot; " +
+          escapeHtml(who) + " &middot; " +
+          "<code>" + escapeHtml(field) + "</code>: " +
+          escapeHtml(String(from)) + " &rarr; " + escapeHtml(String(to)) +
+          "</li>";
+      });
+      html += "</ul>";
+      $("edits-list").innerHTML = html;
+    }).catch(function(err){
+      $("edits-list").innerHTML = "<span class=\"small\">History unavailable" +
+        (err && err.message ? (": " + escapeHtml(err.message)) : "") + ".</span>";
+    });
+  }
+
+  // --- search ----------------------------------------------------------------
+
+  function currentFilter(){
+    return ($("search").value || "").trim().toLowerCase();
+  }
+
+  function onSearchInput(){
+    renderTree(currentFilter());
+  }
+
+  // --- stats -----------------------------------------------------------------
+
+  function renderStats(){
+    if (!state.tree) return;
+    $("stat-brands").textContent = countByKind(state.tree.nodes, "brand");
+    $("stat-families").textContent = countByKind(state.tree.nodes, "family");
+    $("stat-models").textContent = countByKind(state.tree.nodes, "model");
+    $("stat-boards").textContent = countByKind(state.tree.nodes, "board");
+  }
+
+  function loadSnapshotTime(){
+    fetchJSON("/snapshots/latest").then(function(m){
+      var ts = (m && (m.released_at || m.generated_at)) || "";
+      $("stat-snapshot").textContent = fmtTs(ts);
+    }).catch(function(){
+      $("stat-snapshot").textContent = "unavailable";
+    });
+  }
+
+  // --- boot ------------------------------------------------------------------
+
+  function showFatal(err){
+    var msg = "Service temporarily unavailable, try again later.";
+    if (err && err.status && err.status < 500) {
+      msg = (err.message || "Request failed") + " (HTTP " + err.status + ")";
+    } else if (err && err.message && /Failed to fetch|NetworkError/i.test(err.message)) {
+      msg = "Could not reach the database service. The page will work read-only if the API comes back online.";
+    }
+    showError(msg);
+    var status = $("tree-status");
+    status.innerHTML = "<p><b>Database unavailable.</b></p>" +
+      "<p class=\"small\">" + escapeHtml(msg) + "</p>";
+    status.style.display = "";
+    $("tree").style.display = "none";
+    $("stat-brands").textContent = "?";
+    $("stat-families").textContent = "?";
+    $("stat-models").textContent = "?";
+    $("stat-boards").textContent = "?";
+    $("stat-snapshot").textContent = "unavailable";
+  }
+
+  function boot(){
+    $("search").addEventListener("input", onSearchInput);
+    $("clear-search").addEventListener("click", function(){ $("search").value = ""; renderTree(""); });
+    $("expand-all").addEventListener("click", function(){
+      if (!state.tree) return;
+      state.tree.nodes.forEach(function(n){ state.expanded[n.key] = true; });
+      renderTree(currentFilter());
+    });
+    $("collapse-all").addEventListener("click", function(){
+      state.expanded = {};
+      renderTree(currentFilter());
+    });
+    $("close-detail").addEventListener("click", function(){
+      $("detail-panel").classList.remove("is-mobile-open");
+    });
+
+    fetchJSON("/entities").then(function(raw){
+      clearError();
+      state.tree = normaliseTree(raw);
+      // default-expand brands
+      state.tree.brands.forEach(function(b){ state.expanded[b.key] = true; });
+      renderTree("");
+      renderStats();
+    }).catch(showFatal);
+
+    loadSnapshotTime();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
 </body>
 </html>

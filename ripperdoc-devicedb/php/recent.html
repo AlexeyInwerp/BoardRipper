@@ -1,40 +1,201 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width">
-<title>Recent contributions — RipperDoc DeviceDB</title>
-<style>body{font-family:system-ui,sans-serif;max-width:960px;margin:2em auto;padding:0 1em;line-height:1.4}table{width:100%;border-collapse:collapse;margin-top:1em}td,th{padding:.4em .5em;border-bottom:1px solid #eee;text-align:left;font-size:.92em}th{background:#f8f8f8}.muted{color:#777}</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recent edits &mdash; Device Database</title>
+<meta name="description" content="Latest accepted contributions to the RipperDoc device database.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0f1113;
+    color: #d6dadd;
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 22px clamp(14px, 4vw, 28px) 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e8ecef; }
+  h2 { font-size: 16px; margin: 22px 0 8px; color: #e8ecef; }
+  a { color: #6ab4ff; }
+  a:visited { color: #b88cff; }
+  .tagline { color: #8a9197; font-size: 12px; margin: 0; }
+  nav { margin: 8px 0 18px; font-size: 13px; color: #8a9197; }
+  nav a { margin: 0 2px; }
+  hr.stars { border: none; text-align: center; color: #555; margin: 22px 0 16px; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  code { font-family: 'Courier New', ui-monospace, monospace; font-size: 13px; }
+  .small { color: #8a9197; font-size: 12px; }
+  .panel {
+    background: #14171a;
+    border: 1px solid #2a2e33;
+    padding: 12px 14px;
+    margin: 12px 0;
+  }
+  .feed { list-style: none; padding: 0; margin: 0; }
+  .feed li {
+    border-top: 1px dotted #2a2e33;
+    padding: 8px 4px;
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 4px 14px;
+    font-size: 13px;
+  }
+  .feed li:first-child { border-top: none; }
+  .feed .ts { color: #8a9197; font-size: 12px; font-family: 'Courier New', ui-monospace, monospace; }
+  .feed .who { color: #b6bbc0; }
+  .feed .entity { color: #d6dadd; }
+  .feed .field { color: #6ab4ff; }
+  .feed .from { color: #c08070; }
+  .feed .to { color: #a0c080; }
+  .empty { color: #8a9197; padding: 14px 4px; }
+  .error {
+    color: #ffb27a; background: #2a1f15; border: 1px solid #5a3a1d;
+    padding: 8px 12px; margin: 8px 0;
+  }
+  @media (max-width: 540px) {
+    .feed li { grid-template-columns: 1fr; gap: 2px; }
+  }
+</style>
 </head>
 <body>
-<h1>Recent accepted contributions</h1>
-<p class="muted">Public edit history. Phase 2: shows accepted patches only.</p>
-<div id="root">Loading…</div>
+<main>
+
+<header>
+  <h1>Recent edits</h1>
+  <p class="tagline">Latest accepted contributions across the whole device database.</p>
+  <nav>
+    [<a href="./index.html">Browse the database</a>] |
+    [<a href="./register.html">Sign up to contribute</a>] |
+    [<a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>]
+  </nav>
+</header>
+
+<div id="error-banner" class="error" style="display:none"></div>
+
+<section class="panel">
+  <div id="recent-status" class="empty">Loading recent edits&hellip;</div>
+  <ul id="feed" class="feed" style="display:none"></ul>
+</section>
+
+<hr class="stars">
+
+<footer>
+  <p class="small">Device Database is part of <a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>, free software under AGPL-3.0.</p>
+</footer>
+
+</main>
+
 <script>
-(async () => {
-  // Walk the tree, then ask for accepted contributions per target. Phase 2
-  // doesn't have a global feed endpoint — this is a stopgap until /v1/feed lands.
-  const r = await fetch('/devicedb/api/v1/entities');
-  const root = await r.json();
-  const out = [];
-  for (const br of (root.brands || [])) {
-    for (const f of (br.families || [])) {
-      for (const m of (f.models || [])) {
-        for (const b of (m.boards || [])) {
-          const r2 = await fetch(`/devicedb/api/v1/entities/board/${b.uuid}/contributions?status=accepted`);
-          const j = await r2.json();
-          for (const c of (j.contributions || [])) out.push({ ...c, brand: br.name, family: f.name, model: m.display_name, board: b.board_number });
-        }
-      }
+(function(){
+  "use strict";
+
+  var API_BASE = "/devicedb/api/v1";
+
+  function $(id){ return document.getElementById(id); }
+  function escapeHtml(s){
+    if (s === null || s === undefined) return "";
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function showError(msg){
+    var b = $("error-banner"); b.textContent = msg; b.style.display = "block";
+  }
+  function fmtTs(ts){
+    if (!ts) return "—";
+    try {
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toISOString().slice(0, 16).replace("T", " ") + "Z";
+    } catch(e) { return String(ts); }
+  }
+
+  function render(items){
+    var feed = $("feed");
+    var status = $("recent-status");
+    if (!items || !items.length) {
+      status.innerHTML = "<p><b>No recent edits yet.</b></p><p class=\"small\">Once contributions are accepted, they will appear here.</p>";
+      status.style.display = "";
+      feed.style.display = "none";
+      return;
     }
+    status.style.display = "none";
+    feed.style.display = "";
+    var html = "";
+    items.forEach(function(c){
+      var ts = c.reviewed_at || c.submitted_at || c.client_ts || "";
+      var who = c.contributor_handle || (c.install_uuid ? ("install " + String(c.install_uuid).slice(0, 8)) : "anonymous");
+      var entityType = c.target_type || "?";
+      var entityName = c.target_name || c.target_uuid || "";
+      var entityHref = (c.target_type && c.target_uuid)
+        ? ("./index.html#" + encodeURIComponent(entityType) + ":" + encodeURIComponent(c.target_uuid))
+        : null;
+      var field = c.target_field || c.field || "?";
+      var from = (c.value_from !== undefined && c.value_from !== null && c.value_from !== "") ? c.value_from : "∅";
+      var to = (c.value_to !== undefined && c.value_to !== null && c.value_to !== "") ? c.value_to : "∅";
+      var entityHtml = entityHref
+        ? "<a href=\"" + escapeHtml(entityHref) + "\">" + escapeHtml(entityType + " · " + entityName) + "</a>"
+        : escapeHtml(entityType + " · " + entityName);
+      html += "<li>" +
+        "<span class=\"ts\">" + escapeHtml(fmtTs(ts)) + "</span>" +
+        "<span>" +
+          "<span class=\"who\">" + escapeHtml(who) + "</span> &middot; " +
+          "<span class=\"entity\">" + entityHtml + "</span><br>" +
+          "<span class=\"field\">" + escapeHtml(field) + "</span>: " +
+          "<span class=\"from\">" + escapeHtml(String(from)) + "</span> &rarr; " +
+          "<span class=\"to\">" + escapeHtml(String(to)) + "</span>" +
+        "</span>" +
+        "</li>";
+    });
+    feed.innerHTML = html;
   }
-  out.sort((a, b) => (b.reviewed_at || '').localeCompare(a.reviewed_at || ''));
-  if (!out.length) {
-    document.getElementById('root').textContent = '(no accepted contributions yet)';
-    return;
+
+  function boot(){
+    fetch(API_BASE + "/contributions/recent?status=accepted&limit=50", {
+      headers: { "Accept": "application/json" }
+    }).then(function(r){
+      if (!r.ok) {
+        if (r.status === 404) {
+          // Endpoint not implemented — graceful fallback per spec.
+          $("recent-status").innerHTML = "<p><b>Recent activity coming soon.</b></p>" +
+            "<p class=\"small\">This endpoint is not enabled on the server yet. " +
+            "You can still see per-entity history on the <a href=\"./index.html\">database browser</a>.</p>";
+          return;
+        }
+        return r.json().catch(function(){ return null; }).then(function(body){
+          var msg = (body && body.message) || ("HTTP " + r.status);
+          if (r.status >= 500) msg = "Service temporarily unavailable, try again later.";
+          throw new Error(msg);
+        });
+      }
+      return r.json().then(function(data){
+        var items = (data && (data.contributions || data.items || data)) || [];
+        if (!Array.isArray(items)) items = [];
+        render(items);
+      });
+    }).catch(function(err){
+      var msg = (err && err.message) || "Failed to load recent edits.";
+      if (/Failed to fetch|NetworkError/i.test(msg)) {
+        msg = "Could not reach the database service.";
+      }
+      showError(msg);
+      $("recent-status").innerHTML = "<p><b>Recent activity unavailable.</b></p>" +
+        "<p class=\"small\">" + escapeHtml(msg) + "</p>";
+    });
   }
-  const rows = out.slice(0, 100).map(c => `<tr><td>${c.reviewed_at || ''}</td><td>${c.brand} / ${c.family} / ${c.model} / <code>${c.board}</code></td><td>${c.target_field}</td><td>${c.value_from || ''} → ${c.value_to || ''}</td></tr>`).join('');
-  document.getElementById('root').innerHTML = `<table><thead><tr><th>When</th><th>Where</th><th>Field</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
 })();
 </script>
 </body>

@@ -23,19 +23,52 @@ use DeviceDB\Log;
 use DeviceDB\Snapshot;
 use DeviceDB\Users;
 
-// php -S router mode: when REQUEST_URI maps to an existing static file,
-// return false to let the built-in server serve it.
+// php -S router mode. The deployed `.htaccess` serves static assets
+// directly and only routes /api/v1/* through PHP, but `php -S` runs
+// this script for every request. Reconstruct that behavior locally:
+//   - strip the /devicedb/ URL prefix (live site mounts php/ there)
+//   - serve real static files ourselves (return false won't help because
+//     the resolved local path differs from REQUEST_URI)
+//   - 403 anything under /data/
+//   - /devicedb/ root → serve index.html (DirectoryIndex)
+//   - all remaining traffic falls through to the API router below
 if (PHP_SAPI === 'cli-server') {
     $reqPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-    $abs = __DIR__ . $reqPath;
-    if ($reqPath !== '/' && $reqPath !== '/api.php' && is_file($abs)) {
-        return false;
-    }
-    // Block direct /data/ even in dev.
-    if (strpos($reqPath, '/data/') === 0) {
+    if (strpos($reqPath, '/data/') === 0 || strpos($reqPath, '/devicedb/data/') === 0) {
         http_response_code(403);
+        header('Content-Type: text/plain');
         echo "Forbidden";
         exit;
+    }
+    $localPath = preg_replace('#^/devicedb(/|$)#', '/', $reqPath) ?? $reqPath;
+    if ($localPath === '/' || $localPath === '') {
+        // /devicedb/ → directory index
+        if (is_file(__DIR__ . '/index.html')) {
+            header('Content-Type: text/html; charset=utf-8');
+            readfile(__DIR__ . '/index.html');
+            exit;
+        }
+    }
+    // Forbid escapes; only flat files directly under php/ may be served.
+    if ($localPath !== '/api.php' && strpos($localPath, '..') === false) {
+        $abs = __DIR__ . $localPath;
+        if (is_file($abs)) {
+            $mime = [
+                'html' => 'text/html; charset=utf-8',
+                'htm'  => 'text/html; charset=utf-8',
+                'css'  => 'text/css',
+                'js'   => 'application/javascript',
+                'svg'  => 'image/svg+xml',
+                'png'  => 'image/png',
+                'jpg'  => 'image/jpeg',
+                'jpeg' => 'image/jpeg',
+                'ico'  => 'image/x-icon',
+                'json' => 'application/json',
+            ][strtolower(pathinfo($abs, PATHINFO_EXTENSION))] ?? 'application/octet-stream';
+            header('Content-Type: ' . $mime);
+            readfile($abs);
+            exit;
+        }
     }
 }
 
@@ -143,6 +176,14 @@ try {
 
         case $parts === ['contributions', 'mine'] && $method === 'GET':
             Contribs::mine(Auth::requireAuth());
+            $matched = true;
+            break;
+
+        case $parts === ['contributions', 'recent'] && $method === 'GET':
+            // Public feed — no auth. Must come before the generic
+            // /contributions/{uuid} pattern below or "recent" would be
+            // mistaken for a UUID and 401 on the auth gate.
+            Contribs::recent();
             $matched = true;
             break;
 

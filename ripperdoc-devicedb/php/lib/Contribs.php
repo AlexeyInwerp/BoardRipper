@@ -191,6 +191,61 @@ final class Contribs
         Json::ok(200, ['contributions' => $rows ?: null]);
     }
 
+    /**
+     * GET /v1/contributions/recent — public feed of recently-accepted edits
+     * across the whole DB. No auth. Powers /devicedb/recent.html.
+     *
+     * Query params:
+     *   status (only `accepted` is exposed publicly — other values 400)
+     *   limit  (capped at 100)
+     */
+    public static function recent(): void
+    {
+        $status = isset($_GET['status']) ? (string) $_GET['status'] : 'accepted';
+        if ($status !== 'accepted') {
+            Json::err(400, 'bad_status', 'public feed only exposes status=accepted');
+            return;
+        }
+        $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 50;
+        if ($limit < 1) $limit = 50;
+        if ($limit > 100) $limit = 100;
+
+        $pdo = Db::pdo();
+        $stmt = $pdo->prepare(
+            "SELECT c.uuid, c.target_type, c.target_uuid, c.target_field,
+                    c.value_to, c.value_from, c.submitted_at, c.reviewed_at,
+                    ctb.handle AS contributor_handle, ctb.kind AS contributor_kind,
+                    c.install_uuid
+             FROM contributions c
+             LEFT JOIN contributors ctb ON ctb.uuid = c.contributor_uuid
+             WHERE c.status = 'accepted'
+             ORDER BY COALESCE(c.reviewed_at, c.submitted_at) DESC
+             LIMIT :lim"
+        );
+        $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = [];
+        foreach ($stmt->fetchAll() as $r) {
+            // Public attribution: show user handle if present; otherwise
+            // a short fingerprint of the install UUID.
+            $attribution = $r['contributor_handle'] !== null && $r['contributor_handle'] !== ''
+                ? (string) $r['contributor_handle']
+                : 'install:' . substr((string) $r['install_uuid'], 0, 8);
+            $rows[] = [
+                'uuid'          => (string) $r['uuid'],
+                'target_type'   => (string) $r['target_type'],
+                'target_uuid'   => (string) $r['target_uuid'],
+                'target_field'  => (string) $r['target_field'],
+                'value_to'      => $r['value_to'],
+                'value_from'    => $r['value_from'],
+                'submitted_at'  => (string) $r['submitted_at'],
+                'reviewed_at'   => (string) ($r['reviewed_at'] ?? ''),
+                'attribution'   => $attribution,
+            ];
+        }
+        Json::ok(200, ['contributions' => $rows]);
+    }
+
     /** GET /v1/contributions/{uuid} — single, owner-restricted. */
     public static function getOne(array $authCtx, string $uuid): void
     {
