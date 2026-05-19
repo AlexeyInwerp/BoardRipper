@@ -1,28 +1,50 @@
 # RipperDoc DeviceDB — PHP frontend routing
 #
-# Layout:
-#   /                              static index.html, register.html, recent.html
-#   /v1/*                          → api.php (canonical path)
-#   /devicedb/api/v1/*             → api.php (alias used when hosted under /devicedb/)
-#   /devicedb/v1/*                 → api.php (also accepted)
-#   /data/*                        denied (see data/.htaccess too)
+# Lives inside /public_html/devicedb/ (or /devicedb-staging/, etc.) so
+# mod_rewrite sees paths RELATIVE to that directory. From the public
+# URL https://www.ripperdoc.de/devicedb/api/v1/health, the URL-Path
+# that arrives at this .htaccess is `api/v1/health` — the /devicedb/
+# prefix has already been stripped by the filesystem walk.
+#
+# Routing handled here:
+#   (root)                         → DirectoryIndex serves index.html
+#   /api/v1/*  /v1/*               → api.php (via PATH_INFO)
+#   /devicedb/api/v1/*             → api.php  (when accessed without the strip,
+#                                              e.g. local php -S routing)
+#   /devicedb/v1/*                 → api.php  (ditto)
+#   /data/*                        denied (data/.htaccess also denies)
+#   anything else that is a real file → served directly
 
 DirectoryIndex index.html index.php
 
-<IfModule mod_rewrite.c>
-  RewriteEngine On
+# Set the base so RewriteRule patterns are stable regardless of which
+# subdirectory the app is mounted under (/devicedb/, /devicedb-staging/,
+# etc.). LiteSpeed/Apache both honor RewriteBase relative to the
+# document root.
+RewriteEngine On
+RewriteBase /
 
-  # Belt-and-braces — block /data/ at the parent level too.
+<IfModule mod_rewrite.c>
+  # Belt-and-braces — block /data/ at the directory level too.
   RewriteRule ^data(/|$) - [F,L]
+  RewriteRule ^devicedb(-[^/]+)?/data(/|$) - [F,L]
 
   # If the request maps to a real file or directory, serve it.
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
 
-  # All API roots → api.php, preserving path via PATH_INFO (QSA keeps the query).
-  RewriteRule ^(devicedb/api/v1|devicedb/v1|v1)/(.*)$ api.php/$1/$2 [QSA,L]
-  RewriteRule ^(devicedb/api/v1|devicedb/v1|v1)$    api.php/$1 [QSA,L]
+  # API roots → api.php (preserve query string + path via PATH_INFO).
+  #
+  # The first alternation `api/v1` matches the typical case where the
+  # .htaccess sits inside /devicedb/ and the URL-Path is already
+  # relative (api/v1/health).
+  # The other alternations are kept for cases where the full path
+  # leaks through unstripped (local php -S routing tests).
+  RewriteRule ^(api/v1|v1)/(.*)$                              api.php/$1/$2 [QSA,L]
+  RewriteRule ^(api/v1|v1)$                                   api.php/$1    [QSA,L]
+  RewriteRule ^(devicedb(-[^/]+)?/api/v1|devicedb(-[^/]+)?/v1)/(.*)$  api.php/$1/$4 [QSA,L]
+  RewriteRule ^(devicedb(-[^/]+)?/api/v1|devicedb(-[^/]+)?/v1)$       api.php/$1    [QSA,L]
 </IfModule>
 
 # CORS — read endpoints are public; mirror what the Go reference emits.

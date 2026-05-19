@@ -49,17 +49,31 @@ final class Config
 
     public static function seedDbPath(): ?string
     {
-        // Env wins; fallback to the .seed-from pointer file.
+        // Env wins.
         $env = self::get('SEED_DB_PATH', '');
         if ($env !== '' && is_file($env)) {
             return $env;
         }
+        // Fall back to data/.seed-from. Two supported shapes:
+        //   a) the file IS the SQLite v3 database itself (uploaded
+        //      directly via `scp boards.db ...:.../data/.seed-from`).
+        //      Most ergonomic; what DEPLOY.md documents.
+        //   b) the file is a short text pointer holding the path to a
+        //      SQLite DB stored elsewhere on disk.
+        // SQLite v3 files start with the exact 16-byte string
+        //   "SQLite format 3\0"  — unambiguous magic for shape (a).
         $pointer = self::dataDir() . '/.seed-from';
-        if (is_file($pointer)) {
-            $p = trim((string) file_get_contents($pointer));
-            if ($p !== '' && is_file($p)) {
-                return $p;
-            }
+        if (!is_file($pointer)) {
+            return null;
+        }
+        $magic = @file_get_contents($pointer, false, null, 0, 16);
+        if ($magic === "SQLite format 3\0") {
+            return $pointer;
+        }
+        // Treat as pointer text.
+        $p = trim((string) file_get_contents($pointer));
+        if ($p !== '' && is_file($p)) {
+            return $p;
         }
         return null;
     }

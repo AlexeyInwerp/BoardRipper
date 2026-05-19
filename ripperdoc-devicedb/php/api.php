@@ -82,18 +82,23 @@ if ($method === 'OPTIONS') {
     exit;
 }
 
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-// Strip the optional /devicedb/api/v1 or /devicedb/v1 or /v1 prefix.
-$prefixes = ['/devicedb/api/v1', '/devicedb/v1', '/v1'];
+// Resolve the API sub-path. The deployed .htaccess rewrites
+//   /devicedb/api/v1/<rest>  →  api.php/api/v1/<rest>
+// so PATH_INFO arrives as `/api/v1/<rest>` regardless of which
+// directory we're mounted under (/devicedb/, /devicedb-staging/, …).
+// Fall back to REQUEST_URI when PATH_INFO isn't set (php -S mode).
+$pathInfo = $_SERVER['PATH_INFO'] ?? '';
+$path = $pathInfo !== ''
+    ? $pathInfo
+    : (parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
+
 $rest = null;
-foreach ($prefixes as $p) {
-    if ($path === $p) { $rest = ''; break; }
-    if (strpos($path, $p . '/') === 0) {
-        $rest = substr($path, strlen($p) + 1);
-        break;
-    }
-}
-if ($rest === null) {
+// Match the LAST occurrence of /v1 or /api/v1 in the path so deep paths
+// like /devicedb-staging/api/v1/entities resolve cleanly. Anchored at
+// end of string; everything after /v1/ is the sub-path.
+if (preg_match('#(?:^|/)(?:api/)?v1(?:/(.*))?$#', $path, $m)) {
+    $rest = $m[1] ?? '';
+} else {
     // Not an API path — let static handlers / index.html take over.
     http_response_code(404);
     header('Content-Type: text/plain; charset=utf-8');
