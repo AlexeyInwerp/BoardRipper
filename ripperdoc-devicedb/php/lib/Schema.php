@@ -24,6 +24,20 @@ final class Schema
         foreach (self::statements() as $stmt) {
             $pdo->exec($stmt);
         }
+        // Idempotent ALTER TABLE migrations — SQLite has no
+        // "ADD COLUMN IF NOT EXISTS"; we catch the duplicate-column
+        // error per statement and continue.
+        foreach (self::idempotentAlters() as $stmt) {
+            try {
+                $pdo->exec($stmt);
+            } catch (\PDOException $e) {
+                $m = (string) $e->getMessage();
+                // SQLite emits "duplicate column name: X" on re-add.
+                if (stripos($m, 'duplicate column') === false) {
+                    throw $e;
+                }
+            }
+        }
         Log::info('schema', 'applied');
     }
 
@@ -221,6 +235,54 @@ final class Schema
                 PRIMARY KEY (key, window_start)
             )",
             "CREATE INDEX IF NOT EXISTS idx_rate_limit_window ON rate_limit_buckets(window_start)",
+
+            // Forward-compat: photo tables (URL-only). Mirror board_photos /
+            // model_photos. Always created idempotently; included in the
+            // entity-only snapshot tarball allowlist (Snapshot::ALLOWED_TABLES).
+            "CREATE TABLE IF NOT EXISTS board_photos (
+                uuid             TEXT PRIMARY KEY,
+                board_uuid       TEXT NOT NULL REFERENCES boards(uuid) ON DELETE CASCADE,
+                photo_url        TEXT NOT NULL,
+                caption          TEXT,
+                contributor_uuid TEXT REFERENCES contributors(uuid),
+                accepted_at      TEXT NOT NULL
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_board_photos_board ON board_photos(board_uuid)",
+
+            "CREATE TABLE IF NOT EXISTS model_photos (
+                uuid             TEXT PRIMARY KEY,
+                model_uuid       TEXT NOT NULL REFERENCES models(uuid) ON DELETE CASCADE,
+                photo_url        TEXT NOT NULL,
+                caption          TEXT,
+                contributor_uuid TEXT REFERENCES contributors(uuid),
+                accepted_at      TEXT NOT NULL
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_model_photos_model ON model_photos(model_uuid)",
+        ];
+    }
+
+    /**
+     * Idempotent ALTER TABLE statements applied after the CREATE TABLE pass.
+     * Each is wrapped in try/catch in ensure(): "duplicate column" → ignored.
+     *
+     * Migrations:
+     *   - contributors.password_hash + password_set_at (password-based login)
+     *   - board_aliases.kind / model_aliases.kind  (name | keyword | codename)
+     *
+     * @return string[]
+     */
+    private static function idempotentAlters(): array
+    {
+        return [
+            // 1) Password-based auth.
+            "ALTER TABLE contributors ADD COLUMN password_hash TEXT",
+            "ALTER TABLE contributors ADD COLUMN password_set_at TEXT",
+
+            // 2) Alias kind — backfills via DEFAULT 'name' on add.
+            "ALTER TABLE board_aliases ADD COLUMN kind TEXT NOT NULL DEFAULT 'name'",
+            "ALTER TABLE model_aliases ADD COLUMN kind TEXT NOT NULL DEFAULT 'name'",
+            "CREATE INDEX IF NOT EXISTS idx_board_aliases_kind ON board_aliases(kind, alias)",
+            "CREATE INDEX IF NOT EXISTS idx_model_aliases_kind ON model_aliases(kind, alias)",
         ];
     }
 
@@ -257,6 +319,8 @@ final class Schema
                 ['entity_color',        'scope_type, scope_uuid, color_id'],
                 ['colors',              'id, name, hex, sort_order'],
                 ['board_openboarddata', 'board_uuid, external_id, notes'],
+                ['board_photos',        'uuid, board_uuid, photo_url, caption, contributor_uuid, accepted_at'],
+                ['model_photos',        'uuid, model_uuid, photo_url, caption, contributor_uuid, accepted_at'],
             ];
             foreach ($tables as [$t, $cols]) {
                 // Check the seed actually has that table before attempting INSERT,

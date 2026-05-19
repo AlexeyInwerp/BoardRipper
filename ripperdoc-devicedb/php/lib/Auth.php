@@ -44,7 +44,13 @@ final class Auth
         if ($authz !== '' && stripos($authz, 'Bearer ') === 0) {
             $bearerPlain = trim(substr($authz, 7));
         }
-        if ($installPlain === '' && $bearerPlain === '') {
+        // Session is the third auth mechanism. Only attempt to open a
+        // session if the request carried a session cookie — otherwise we
+        // would issue an empty cookie on every read endpoint.
+        AuthSession::bootstrapIfCookiePresent();
+        $sessionUser = AuthSession::current();
+
+        if ($installPlain === '' && $bearerPlain === '' && $sessionUser === null) {
             return null;
         }
 
@@ -68,9 +74,28 @@ final class Auth
             $scopes = array_values(array_unique(array_merge($scopes, $userScopes)));
         }
 
+        // Session-based identity (rank #2 in the precedence table: it wins
+        // over an install token but yields to a bearer token).
+        if ($userUuid === null && $sessionUser !== null) {
+            // Double-check the contributor row exists and isn't blocked —
+            // otherwise stale sessions could survive a block action.
+            $pdo  = Db::pdo();
+            $stmt = $pdo->prepare("SELECT uuid, blocked FROM contributors WHERE uuid=? AND kind='user' LIMIT 1");
+            $stmt->execute([$sessionUser['contributor_uuid']]);
+            $row = $stmt->fetch();
+            if ($row && (int) ($row['blocked'] ?? 0) === 0) {
+                $userUuid = (string) $row['uuid'];
+                $scopes = array_values(array_unique(array_merge($scopes, [self::SCOPE_SUBMIT])));
+            }
+        }
+
         // Attribution rule from §4.3: when user token is present, the user is
-        // the contributor; install acts only as a fingerprint.
+        // the contributor; install acts only as a fingerprint. Session-auth
+        // user is treated identically to a bearer-token user here.
         $contributor = $userUuid ?? $installUuid;
+        if ($contributor === null) {
+            return null;
+        }
         $kind        = $userUuid !== null ? 'user' : 'install';
         return [
             'contributor_uuid' => $contributor,

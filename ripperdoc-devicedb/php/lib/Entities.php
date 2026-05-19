@@ -84,6 +84,51 @@ final class Entities
             Json::err(404, 'not_found', '');
             return;
         }
+
+        // Attach aliases + keywords + photos for board / model. Backwards
+        // compat: `aliases` stays a flat list of names (kind='name'). New
+        // arrays `aliases_typed`, `keywords`, `photos` are added beside it.
+        if ($type === 'board' || $type === 'model') {
+            $aliasTable = $type === 'board' ? 'board_aliases' : 'model_aliases';
+            $photoTable = $type === 'board' ? 'board_photos'  : 'model_photos';
+            $parentCol  = $type === 'board' ? 'board_uuid'    : 'model_uuid';
+
+            $aStmt = $pdo->prepare("SELECT alias, COALESCE(alias_type,'') AS alias_type, kind FROM $aliasTable WHERE $parentCol=? ORDER BY alias");
+            $aStmt->execute([$uuid]);
+            $names = [];
+            $typed = [];
+            $keywords = [];
+            $codenames = [];
+            foreach ($aStmt->fetchAll() as $a) {
+                $kind = (string) ($a['kind'] ?? 'name');
+                $typed[] = [
+                    'alias'      => (string) $a['alias'],
+                    'kind'       => $kind,
+                    'alias_type' => (string) ($a['alias_type'] ?? ''),
+                ];
+                if ($kind === 'keyword')      $keywords[]  = (string) $a['alias'];
+                elseif ($kind === 'codename') $codenames[] = (string) $a['alias'];
+                else                          $names[]     = (string) $a['alias'];
+            }
+            $row['aliases']       = $names;       // backwards-compat flat names list
+            $row['aliases_typed'] = $typed;
+            $row['keywords']      = $keywords;
+            $row['codenames']     = $codenames;
+
+            $pStmt = $pdo->prepare("SELECT uuid, photo_url, COALESCE(caption,'') AS caption, accepted_at FROM $photoTable WHERE $parentCol=? ORDER BY accepted_at");
+            $pStmt->execute([$uuid]);
+            $photos = [];
+            foreach ($pStmt->fetchAll() as $p) {
+                $photos[] = [
+                    'uuid'        => (string) $p['uuid'],
+                    'url'         => (string) $p['photo_url'],
+                    'caption'     => (string) $p['caption'],
+                    'accepted_at' => (string) $p['accepted_at'],
+                ];
+            }
+            $row['photos'] = $photos;
+        }
+
         Json::ok(200, $row);
     }
 
@@ -125,8 +170,7 @@ final class Entities
             return;
         }
         $pdo = Db::pdo();
-        // Match the Go reference: exact-board-number first (returns `match`),
-        // otherwise `{query: q}` with no match.
+        // 1) Exact board_number — keeps the existing wire contract.
         $sql = "SELECT b.uuid AS board_uuid, b.board_number, COALESCE(b.board_name,'') AS board_name,
                        br.name AS brand, f.name AS family,
                        COALESCE(m.display_name,'') AS model,
@@ -145,6 +189,29 @@ final class Entities
             Json::ok(200, ['query' => $q, 'match' => $row]);
             return;
         }
+
+        // 2) Board aliases (any kind — name/keyword/codename).
+        $aliasSql = "SELECT b.uuid AS board_uuid, b.board_number, COALESCE(b.board_name,'') AS board_name,
+                            br.name AS brand, f.name AS family,
+                            COALESCE(m.display_name,'') AS model,
+                            m.model_number AS model_number,
+                            COALESCE(b.source,'') AS source,
+                            ba.kind AS matched_via
+                     FROM board_aliases ba
+                     JOIN boards b ON b.uuid = ba.board_uuid
+                     JOIN models m ON b.model_uuid = m.uuid
+                     JOIN families f ON m.family_uuid = f.uuid
+                     JOIN brands br ON f.brand_uuid = br.uuid
+                     WHERE ba.alias = ?
+                     LIMIT 1";
+        $st2 = $pdo->prepare($aliasSql);
+        $st2->execute([$q]);
+        $r2 = $st2->fetch();
+        if ($r2) {
+            Json::ok(200, ['query' => $q, 'match' => $r2]);
+            return;
+        }
+
         Json::ok(200, ['query' => $q]);
     }
 }

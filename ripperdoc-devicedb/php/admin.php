@@ -64,6 +64,12 @@ try {
             $r = Snapshot::regenerate();
             echo "snapshot regenerated counter={$r['counter']} sha256={$r['sha256']} size={$r['size_bytes']}\n";
             break;
+        case 'photo':
+            $sub = array_shift($pos) ?? '';
+            if ($sub === 'delete')      photoDelete($pos[0] ?? '');
+            elseif ($sub === 'list')    photoList($pos[0] ?? '');
+            else { fwrite(STDERR, "unknown photo subcommand: $sub (use delete|list)\n"); exit(1); }
+            break;
         case '--help':
         case '-h':
         case 'help':
@@ -91,6 +97,8 @@ ripperdoc-devicedb admin CLI
   php admin.php block <contributor_uuid> --reason "..." --moderator <contributor_uuid>
   php admin.php token issue --handle H [--email E] [--scopes contributions:moderate]
   php admin.php snapshot regenerate
+  php admin.php photo delete <photo_uuid>
+  php admin.php photo list <board_uuid|model_uuid>
 
 --moderator can be omitted; the CLI then accepts using the first kind='user'
 contributor with the moderator scope.
@@ -253,4 +261,43 @@ function tokenIssue(array $opts): void
     echo "user_uuid=$uuid\n";
     echo "token=$plaintext\n";
     echo "scopes=$scopesJson\n";
+}
+
+function photoDelete(string $photoUuid): void
+{
+    if ($photoUuid === '') { fwrite(STDERR, "photo uuid required\n"); exit(1); }
+    $pdo = Db::pdo();
+    $deleted = 0;
+    foreach (['board_photos', 'model_photos'] as $table) {
+        $stmt = $pdo->prepare("DELETE FROM $table WHERE uuid=?");
+        $stmt->execute([$photoUuid]);
+        $deleted += $stmt->rowCount();
+    }
+    if ($deleted === 0) {
+        fwrite(STDERR, "not_found: no photo with uuid $photoUuid\n");
+        exit(1);
+    }
+    $pdo->exec("UPDATE snapshot_state SET dirty=1 WHERE id=1");
+    echo "deleted $photoUuid (rows=$deleted)\n";
+}
+
+function photoList(string $parentUuid): void
+{
+    if ($parentUuid === '') { fwrite(STDERR, "parent uuid (board or model) required\n"); exit(1); }
+    $pdo = Db::pdo();
+    $rows = [];
+    foreach ([['board_photos', 'board_uuid'], ['model_photos', 'model_uuid']] as [$table, $col]) {
+        $stmt = $pdo->prepare("SELECT '$table' AS table_name, uuid, photo_url, COALESCE(caption,'') AS caption, accepted_at FROM $table WHERE $col=? ORDER BY accepted_at");
+        $stmt->execute([$parentUuid]);
+        foreach ($stmt->fetchAll() as $r) {
+            $rows[] = $r;
+        }
+    }
+    if (empty($rows)) { echo "(no photos)\n"; return; }
+    foreach ($rows as $r) {
+        printf("%s  %s  url=%s  caption=%s  at=%s\n",
+            $r['table_name'], $r['uuid'], $r['photo_url'],
+            $r['caption'] === '' ? '(none)' : $r['caption'],
+            $r['accepted_at']);
+    }
 }

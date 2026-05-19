@@ -29,6 +29,9 @@ final class Snapshot
         'model_aliases',
         'entity_color',
         'board_openboarddata',
+        // Phase 2+: photos are entity-side data and ship in the snapshot.
+        'board_photos',
+        'model_photos',
     ];
 
     /** @return array{counter:int,tarball:string,manifest:string,sha256:string,size_bytes:int} */

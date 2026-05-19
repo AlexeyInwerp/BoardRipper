@@ -15,6 +15,7 @@ declare(strict_types=1);
 require __DIR__ . '/bootstrap.php';
 
 use DeviceDB\Auth;
+use DeviceDB\AuthSession;
 use DeviceDB\Contribs;
 use DeviceDB\Entities;
 use DeviceDB\Installs;
@@ -158,6 +159,21 @@ try {
             $matched = true;
             break;
 
+        case $parts === ['auth', 'login'] && $method === 'POST':
+            AuthSession::login();
+            $matched = true;
+            break;
+
+        case $parts === ['auth', 'logout'] && $method === 'POST':
+            AuthSession::logout();
+            $matched = true;
+            break;
+
+        case $parts === ['auth', 'me'] && $method === 'GET':
+            AuthSession::me();
+            $matched = true;
+            break;
+
         case $parts === ['snapshots', 'latest'] && $method === 'GET':
             Snapshot::latest();
             $matched = true;
@@ -267,6 +283,9 @@ function openapiDoc(): array
             '/resolve'                                => ['get'    => ['summary' => "Best-effort board-number resolver"]],
             '/installs/register'                      => ['post'   => ['summary' => 'Register a new install token']],
             '/users/register'                         => ['post'   => ['summary' => 'Prototype: register a user, mint a token']],
+            '/auth/login'                             => ['post'   => ['summary' => 'Password-based login; sets session cookie']],
+            '/auth/logout'                            => ['post'   => ['summary' => 'Destroy session, clear cookie']],
+            '/auth/me'                                => ['get'    => ['summary' => 'Identity of the session user']],
             '/contributions'                          => [
                 'post' => ['summary' => 'Submit a patch'],
                 'get'  => ['summary' => "List caller's submissions"],

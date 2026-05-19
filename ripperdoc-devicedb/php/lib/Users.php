@@ -22,9 +22,21 @@ final class Users
         $body   = Json::readBody();
         $handle = trim(Json::str($body, 'handle'));
         $email  = trim(Json::str($body, 'email'));
+        // Optional password — when present, store argon2id hash so the user
+        // can log back in via /v1/auth/login. Token is still minted and
+        // returned exactly once; password and token are independent
+        // credentials. Empty string / missing key means "no password set".
+        $password = isset($body['password']) && is_string($body['password']) ? $body['password'] : '';
         if ($handle === '') {
             Json::err(400, 'missing_handle', 'handle is required');
             return;
+        }
+        if ($password !== '') {
+            $plen = strlen($password);
+            if ($plen < 8 || $plen > 1024) {
+                Json::err(400, 'weak_password', 'password must be 8..1024 chars');
+                return;
+            }
         }
 
         $pdo = Db::pdo();
@@ -40,10 +52,17 @@ final class Users
         $now       = Time::nowUtc();
         // Match the Go reference's mintTokenString — 32 base64url chars (≈192 bits).
         $plaintext = self::mintToken();
-        Db::tx(function (\PDO $pdo) use ($uuid, $handle, $email, $now, $plaintext) {
-            $pdo->prepare("INSERT INTO contributors (uuid, kind, handle, email, created_at, last_seen)
-                           VALUES (?, 'user', ?, ?, ?, ?)")
-                ->execute([$uuid, $handle, $email !== '' ? $email : null, $now, $now]);
+        $passHash  = $password !== '' ? password_hash($password, PASSWORD_ARGON2ID) : null;
+        Db::tx(function (\PDO $pdo) use ($uuid, $handle, $email, $now, $plaintext, $passHash) {
+            $pdo->prepare("INSERT INTO contributors (uuid, kind, handle, email, created_at, last_seen, password_hash, password_set_at)
+                           VALUES (?, 'user', ?, ?, ?, ?, ?, ?)")
+                ->execute([
+                    $uuid, $handle,
+                    $email !== '' ? $email : null,
+                    $now, $now,
+                    $passHash,
+                    $passHash !== null ? $now : null,
+                ]);
             $pdo->prepare(
                 "INSERT INTO user_tokens (contributor_uuid, token_hash, token_lookup, name, created_at, scopes)
                  VALUES (?, ?, ?, ?, ?, ?)"

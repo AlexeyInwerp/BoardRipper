@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="build-stamp" content="2026-05-19T09:25:24Z">
+<meta name="build-stamp" content="2026-05-19T10:02:45Z">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign up &mdash; Device Database</title>
 <meta name="description" content="Register a contributor handle and get a user token for the RipperDoc device database.">
@@ -51,7 +51,7 @@
     margin: 12px 0;
   }
   label { display: block; margin: 10px 0 4px; font-size: 13px; color: #b6bbc0; }
-  input[type="text"], input[type="email"] {
+  input[type="text"], input[type="email"], input[type="password"] {
     width: 100%;
     background: #181b1e;
     border: 1px solid #2a2e33;
@@ -124,12 +124,20 @@
     <input id="handle" name="handle" type="text" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9\-]{2,31}">
     <div class="field-error" id="handle-err"></div>
 
+    <label for="password">Password <span class="small">(min 8 chars)</span></label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="1024">
+    <p class="help">Used for signing back in to edit the database from the website. Server stores only an Argon2id hash &mdash; the password itself is never written to disk.</p>
+    <div class="field-error" id="password-err"></div>
+
     <label for="email">Email <span class="small">(optional)</span></label>
     <input id="email" name="email" type="email" autocomplete="email">
+    <p class="help">Optional, only used by moderators to contact you about a flagged contribution. Not displayed publicly.</p>
     <div class="field-error" id="email-err"></div>
 
     <button type="submit" class="primary" id="submit">Create account</button>
   </form>
+
+  <p class="small" style="margin-top:14px">Already have an account? <a href="./login.html">Sign in</a>.</p>
 </section>
 
 <section id="result-section" class="panel" style="display:none">
@@ -142,13 +150,11 @@
   <button type="button" class="ghost" id="copy-token">Copy token</button>
   <span id="copy-status" class="small" style="margin-left:8px"></span>
 
-  <h3>Paste it into BoardRipper</h3>
-  <ol class="small" style="margin-top:4px">
-    <li>Open BoardRipper.</li>
-    <li>Settings &rarr; <b>Database Contributions</b>.</li>
-    <li>Paste the token into the <b>User token</b> field.</li>
-    <li>Click <b>Save</b>. Your next edit in the Database Editor panel will be attributed to your handle.</li>
-  </ol>
+  <h3>Two ways to use this account</h3>
+
+  <p><b>1. Edit from the website</b> &mdash; <a href="./login.html">Sign in</a> with your handle and password. You'll see a pencil icon on every editable field in the database browser.</p>
+
+  <p><b>2. Edit from BoardRipper</b> &mdash; paste the token below into Settings &rarr; <b>Database Contributions</b> &rarr; <b>User token</b>. Your BoardRipper edits will be attributed to your handle alongside your install fingerprint.</p>
 
   <p class="small">Your account UUID: <code id="result-uuid">&mdash;</code></p>
   <p style="margin-top:14px"><a href="./index.html">&larr; Back to the database browser</a></p>
@@ -190,6 +196,12 @@
     if (!/^[A-Za-z0-9][A-Za-z0-9\-]{2,31}$/.test(v)) return "Use only letters, digits, and dashes; must start with a letter or digit.";
     return "";
   }
+  function validatePassword(v){
+    if (!v) return "Password is required.";
+    if (v.length < 8) return "Password must be at least 8 characters.";
+    if (v.length > 1024) return "Password too long (max 1024).";
+    return "";
+  }
   function validateEmail(v){
     if (!v) return ""; // optional
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "Email looks invalid.";
@@ -200,18 +212,21 @@
     ev.preventDefault();
     clearError();
     var handle = $("handle").value.trim();
+    var password = $("password").value;
     var email = $("email").value.trim();
     var hErr = validateHandle(handle);
+    var pErr = validatePassword(password);
     var eErr = validateEmail(email);
     $("handle-err").textContent = hErr;
+    $("password-err").textContent = pErr;
     $("email-err").textContent = eErr;
-    if (hErr || eErr) return;
+    if (hErr || pErr || eErr) return;
 
     var btn = $("submit");
     btn.disabled = true;
     btn.textContent = "Creating account…";
 
-    var body = { handle: handle };
+    var body = { handle: handle, password: password };
     if (email) body.email = email;
 
     fetch(API_BASE + "/users/register", {
@@ -278,6 +293,9 @@
     $("copy-token").addEventListener("click", copyToken);
     $("handle").addEventListener("blur", function(){
       $("handle-err").textContent = validateHandle($("handle").value.trim());
+    });
+    $("password").addEventListener("blur", function(){
+      $("password-err").textContent = validatePassword($("password").value);
     });
     $("email").addEventListener("blur", function(){
       $("email-err").textContent = validateEmail($("email").value.trim());

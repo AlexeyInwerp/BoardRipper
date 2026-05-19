@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="build-stamp" content="2026-05-19T10:02:45Z">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in &mdash; Device Database</title>
+<meta name="description" content="Sign in to the RipperDoc device database to edit entries from the web.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0f1113;
+    color: #d6dadd;
+    font-family: Verdana, Geneva, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  main {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 22px clamp(14px, 4vw, 28px) 60px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e8ecef; }
+  h2 { font-size: 16px; margin: 18px 0 8px; color: #e8ecef; }
+  a { color: #6ab4ff; }
+  a:visited { color: #b88cff; }
+  .tagline { color: #8a9197; font-size: 12px; margin: 0; }
+  nav { margin: 8px 0 18px; font-size: 13px; color: #8a9197; }
+  nav a { margin: 0 2px; }
+  hr.stars { border: none; text-align: center; color: #555; margin: 22px 0 16px; letter-spacing: 6px; height: 1em; }
+  hr.stars::before { content: "* * *"; }
+  .small { color: #8a9197; font-size: 12px; }
+  .panel {
+    background: #14171a;
+    border: 1px solid #2a2e33;
+    padding: 14px 16px;
+    margin: 12px 0;
+  }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; color: #b6bbc0; }
+  input[type="text"], input[type="password"] {
+    width: 100%;
+    background: #181b1e;
+    border: 1px solid #2a2e33;
+    color: #e8ecef;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 14px;
+  }
+  input:focus { outline: none; border-color: #4d7cb2; }
+  .help { color: #8a9197; font-size: 12px; margin: 2px 0 0; }
+  .field-error { color: #ff9a6a; font-size: 12px; margin: 4px 0 0; min-height: 1em; }
+  button.primary {
+    background: #1d3a5c; border: 1px solid #4d7cb2; color: #e8ecef;
+    padding: 10px 18px; font: inherit; font-size: 14px; cursor: pointer;
+    margin-top: 12px;
+  }
+  button.primary:hover { background: #244871; }
+  button.primary:disabled { background: #1d2125; border-color: #2a2e33; color: #6a6f74; cursor: not-allowed; }
+  .error {
+    color: #ffb27a; background: #2a1f15; border: 1px solid #5a3a1d;
+    padding: 8px 12px; margin: 8px 0;
+  }
+  .success {
+    color: #b4e07a; background: #1a2a15; border: 1px solid #3a5a1d;
+    padding: 8px 12px; margin: 8px 0;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Sign in</h1>
+  <p class="tagline">Sign in to edit the device database from the web.</p>
+  <nav>
+    [<a href="./index.html">Browse</a>] |
+    [<a href="./recent.html">Recent edits</a>] |
+    [<a href="./register.html">Sign up</a>] |
+    [<a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>]
+  </nav>
+</header>
+
+<div id="error-banner" class="error" style="display:none"></div>
+<div id="ok-banner"    class="success" style="display:none"></div>
+
+<section id="form-section" class="panel">
+  <form id="login-form" novalidate>
+    <label for="handle">Handle</label>
+    <input id="handle" name="handle" type="text" autocomplete="username" required>
+    <div class="field-error" id="handle-err"></div>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <div class="field-error" id="password-err"></div>
+
+    <button type="submit" class="primary" id="submit">Sign in</button>
+  </form>
+
+  <p class="small" style="margin-top:14px">No account? <a href="./register.html">Sign up</a>.</p>
+</section>
+
+<hr class="stars">
+
+<footer>
+  <p class="small">Device Database is part of <a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>, free software under AGPL-3.0.</p>
+</footer>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  var API_BASE = "/devicedb/api/v1";
+
+  function $(id){ return document.getElementById(id); }
+
+  function showError(msg){
+    var b = $("error-banner");
+    b.textContent = msg;
+    b.style.display = "block";
+    $("ok-banner").style.display = "none";
+  }
+  function clearError(){ $("error-banner").style.display = "none"; }
+  function showOk(msg){
+    var b = $("ok-banner");
+    b.textContent = msg;
+    b.style.display = "block";
+  }
+
+  // If already signed in, bounce to the browser.
+  function probeAuth(){
+    fetch(API_BASE + "/auth/me", { credentials: "include" })
+      .then(function(r){
+        if (r.ok) {
+          return r.json().then(function(d){
+            showOk("Already signed in as " + (d.handle || d.user_uuid) + ". Redirecting to the database…");
+            setTimeout(function(){ window.location.href = "./index.html"; }, 800);
+          });
+        }
+      })
+      .catch(function(){ /* ignore */ });
+  }
+
+  function onSubmit(ev){
+    ev.preventDefault();
+    clearError();
+    var handle = $("handle").value.trim();
+    var password = $("password").value;
+    $("handle-err").textContent = handle ? "" : "Handle is required.";
+    $("password-err").textContent = password ? "" : "Password is required.";
+    if (!handle || !password) return;
+
+    var btn = $("submit");
+    btn.disabled = true;
+    btn.textContent = "Signing in…";
+
+    fetch(API_BASE + "/auth/login", {
+      method: "POST",
+      credentials: "include",     // critical — keep + send the session cookie
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ handle: handle, password: password })
+    }).then(function(r){
+      return r.json().catch(function(){ return null; }).then(function(data){
+        if (!r.ok) {
+          // Avoid leaking which of handle/password was wrong.
+          if (r.status === 401) throw new Error("Wrong handle or password.");
+          if (r.status === 429) throw new Error("Too many attempts. Try again in a few minutes.");
+          throw new Error((data && data.message) || ("Login failed (HTTP " + r.status + ")."));
+        }
+        showOk("Signed in. Redirecting to the database…");
+        setTimeout(function(){ window.location.href = "./index.html"; }, 600);
+      });
+    }).catch(function(err){
+      showError(err && err.message ? err.message : "Login failed.");
+    }).then(function(){
+      btn.disabled = false;
+      btn.textContent = "Sign in";
+    });
+  }
+
+  function boot(){
+    $("login-form").addEventListener("submit", onSubmit);
+    probeAuth();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

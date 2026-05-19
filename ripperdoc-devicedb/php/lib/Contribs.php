@@ -86,6 +86,22 @@ final class Contribs
         $valTo   = array_key_exists('to', $body)   ? self::scalarOrNull($body['to'])   : null;
         $valFrom = array_key_exists('from', $body) ? self::scalarOrNull($body['from']) : '';
 
+        // Pseudo-field validation: keyword/codename require a non-empty `to`;
+        // photo_url additionally requires an https:// URL ≤ 2048 chars.
+        if (Allowlist::isPseudo($type, $field)) {
+            $kind = Allowlist::pseudoKind($field);
+            if ($valTo === null || $valTo === '') {
+                Json::err(400, 'bad_submission', "$field requires a non-empty 'to' value");
+                return;
+            }
+            if ($kind === 'photo') {
+                if (strlen($valTo) > 2048 || stripos($valTo, 'https://') !== 0) {
+                    Json::err(400, 'bad_photo_url', 'photo_url must be https:// and ≤ 2048 chars');
+                    return;
+                }
+            }
+        }
+
         $uuid = Uuid::v4();
         $now  = Time::nowUtc();
 
@@ -368,7 +384,7 @@ final class Contribs
             }
 
             // Apply the patch.
-            self::applyPatch($pdo, $type, $tuuid, $field, $valTo);
+            self::applyPatch($pdo, $type, $tuuid, $field, $valTo, $valFrom, $authCtx['contributor_uuid'] ?? '', $now);
             $pdo->prepare("UPDATE contributions SET status='accepted', reviewer_uuid=?, reviewed_at=? WHERE uuid=?")
                 ->execute([$authCtx['contributor_uuid'], $now, $uuid]);
             $pdo->prepare(
@@ -439,7 +455,7 @@ final class Contribs
     /**
      * Apply a single field patch — matches what the Go reference does on accept.
      */
-    private static function applyPatch(\PDO $pdo, string $type, string $tuuid, string $field, ?string $value): void
+    private static function applyPatch(\PDO $pdo, string $type, string $tuuid, string $field, ?string $value, ?string $valueFrom, string $contributorUuid, string $now): void
     {
         if ($type === 'entity_color') {
             $parts = explode(':', $tuuid, 2);
@@ -457,6 +473,11 @@ final class Contribs
             )->execute([$parts[0], $parts[1], (int) $value]);
             return;
         }
+        // Pseudo-fields: keyword/codename → *_aliases insert; photo_url → *_photos insert/update.
+        if (Allowlist::isPseudo($type, $field)) {
+            self::applyPseudoPatch($pdo, $type, $tuuid, $field, $value, $valueFrom, $contributorUuid, $now);
+            return;
+        }
         $table = Allowlist::tableFor($type);
         if ($table === null) {
             throw new \RuntimeException('unhandled target_type: ' . $type);
@@ -464,6 +485,74 @@ final class Contribs
         // Build UPDATE with whitelisted field name.
         $pdo->prepare("UPDATE \"$table\" SET $field=? WHERE uuid=?")
             ->execute([$value, $tuuid]);
+    }
+
+    /**
+     * Pseudo-field patches: keyword/codename insert into *_aliases with the
+     * matching kind; photo_url inserts into *_photos. `valueFrom` semantics:
+     *   - empty   → INSERT new row (no prior value).
+     *   - filled  → REPLACE the row matching that prior value.
+     *
+     * For aliases the match is by (alias=valueFrom, kind). For photos the
+     * match is by photo uuid OR by URL.
+     */
+    private static function applyPseudoPatch(\PDO $pdo, string $type, string $tuuid, string $field, ?string $value, ?string $valueFrom, string $contributorUuid, string $now): void
+    {
+        $kind = Allowlist::pseudoKind($field);
+        if ($value === null || $value === '') {
+            throw new \RuntimeException("$field requires a non-empty value");
+        }
+
+        if ($kind === 'alias:keyword' || $kind === 'alias:codename') {
+            $aliasKind = $kind === 'alias:keyword' ? 'keyword' : 'codename';
+            $aliasTable = $type === 'board' ? 'board_aliases' : 'model_aliases';
+            $parentCol  = $type === 'board' ? 'board_uuid'    : 'model_uuid';
+
+            // REPLACE semantics: if valueFrom is set, find that alias row of
+            // matching kind on the parent and rewrite it.
+            if ($valueFrom !== null && $valueFrom !== '') {
+                $sel = $pdo->prepare("SELECT uuid FROM $aliasTable WHERE $parentCol=? AND kind=? AND alias=? LIMIT 1");
+                $sel->execute([$tuuid, $aliasKind, $valueFrom]);
+                $row = $sel->fetch();
+                if ($row) {
+                    $pdo->prepare("UPDATE $aliasTable SET alias=? WHERE uuid=?")
+                        ->execute([$value, $row['uuid']]);
+                    return;
+                }
+                // No prior row matched — fall through to insert as a fresh alias.
+            }
+            // INSERT new alias. UNIQUE(alias, alias_type) means duplicates
+            // raise; that surfaces as a 500 to the moderator, which is fine
+            // for a prototype — the alternative (silent INSERT OR IGNORE)
+            // would mask data-quality issues.
+            $pdo->prepare(
+                "INSERT INTO $aliasTable (uuid, $parentCol, alias, alias_type, kind) VALUES (?, ?, ?, ?, ?)"
+            )->execute([Uuid::v4(), $tuuid, $value, null, $aliasKind]);
+            return;
+        }
+
+        if ($kind === 'photo') {
+            $photoTable = $type === 'board' ? 'board_photos' : 'model_photos';
+            $parentCol  = $type === 'board' ? 'board_uuid'   : 'model_uuid';
+            // valueFrom carries the photo UUID OR URL to replace.
+            if ($valueFrom !== null && $valueFrom !== '') {
+                $sel = $pdo->prepare("SELECT uuid FROM $photoTable WHERE $parentCol=? AND (uuid=? OR photo_url=?) LIMIT 1");
+                $sel->execute([$tuuid, $valueFrom, $valueFrom]);
+                $row = $sel->fetch();
+                if ($row) {
+                    $pdo->prepare("UPDATE $photoTable SET photo_url=?, contributor_uuid=?, accepted_at=? WHERE uuid=?")
+                        ->execute([$value, $contributorUuid, $now, $row['uuid']]);
+                    return;
+                }
+            }
+            $pdo->prepare(
+                "INSERT INTO $photoTable (uuid, $parentCol, photo_url, caption, contributor_uuid, accepted_at)
+                 VALUES (?, ?, ?, NULL, ?, ?)"
+            )->execute([Uuid::v4(), $tuuid, $value, $contributorUuid, $now]);
+            return;
+        }
+
+        throw new \RuntimeException("unhandled pseudo-kind: $kind");
     }
 
     private static function currentValue(\PDO $pdo, string $type, string $tuuid, string $field)
@@ -475,6 +564,13 @@ final class Contribs
             $stmt->execute($parts);
             $r = $stmt->fetch();
             return $r['color_id'] ?? null;
+        }
+        // Pseudo-fields don't have a single "current value" on the parent
+        // row — they're multi-valued lists. Skip the optimistic-concurrency
+        // check by returning null; the original valueFrom is still threaded
+        // through to applyPseudoPatch so REPLACE-by-prior-value still works.
+        if (Allowlist::isPseudo($type, $field)) {
+            return null;
         }
         $table = Allowlist::tableFor($type);
         if ($table === null) return null;

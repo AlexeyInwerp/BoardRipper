@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="build-stamp" content="2026-05-19T09:25:24Z">
+<meta name="build-stamp" content="2026-05-19T10:02:45Z">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Device Database &mdash; RipperDoc</title>
 <meta name="description" content="Open reference database for PCB repair: brands, families, models, boards.">
@@ -137,6 +137,57 @@
     color: #ffb27a; background: #2a1f15; border: 1px solid #5a3a1d;
     padding: 8px 12px; margin: 8px 0;
   }
+  .toast {
+    position: fixed; right: 16px; bottom: 16px; z-index: 100;
+    background: #1a2a15; color: #b4e07a; border: 1px solid #3a5a1d;
+    padding: 10px 14px; font-size: 13px; max-width: 360px;
+  }
+  .toast.error { background: #2a1f15; color: #ffb27a; border-color: #5a3a1d; }
+  /* edit pencil + modal */
+  .edit-btn {
+    background: transparent; border: none; color: #6ab4ff; cursor: pointer;
+    font-size: 12px; padding: 0 4px; margin-left: 6px; opacity: 0.6;
+  }
+  .edit-btn:hover { opacity: 1; text-decoration: underline; }
+  .edit-modal-backdrop {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .edit-modal {
+    background: #14171a; border: 1px solid #2a2e33;
+    max-width: 540px; width: 100%; padding: 18px 20px;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .edit-modal h2 { margin: 0 0 12px; font-size: 18px; color: #e8ecef; }
+  .edit-modal dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 12px; font-size: 13px; }
+  .edit-modal dt { color: #8a9197; }
+  .edit-modal dd { margin: 0; color: #e8ecef; word-break: break-word; }
+  .edit-modal label { display: block; margin: 10px 0 4px; font-size: 13px; color: #b6bbc0; }
+  .edit-modal input[type="text"], .edit-modal input[type="url"], .edit-modal textarea {
+    width: 100%; background: #181b1e; border: 1px solid #2a2e33; color: #e8ecef;
+    padding: 8px 10px; font: inherit; font-size: 14px; box-sizing: border-box;
+  }
+  .edit-modal textarea { resize: vertical; min-height: 60px; }
+  .edit-modal .help { color: #8a9197; font-size: 12px; margin: 2px 0 0; }
+  .edit-modal .row-conf { display: flex; gap: 16px; margin-top: 6px; font-size: 13px; color: #d6dadd; }
+  .edit-modal .row-conf label { display: inline; margin: 0; color: #d6dadd; }
+  .edit-modal .actions { display: flex; gap: 10px; margin-top: 14px; }
+  .edit-modal .primary {
+    background: #1d3a5c; border: 1px solid #4d7cb2; color: #e8ecef;
+    padding: 8px 16px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .edit-modal .primary:hover { background: #244871; }
+  .edit-modal .primary:disabled { background: #1d2125; border-color: #2a2e33; color: #6a6f74; cursor: not-allowed; }
+  .edit-modal .ghost {
+    background: #1d2125; border: 1px solid #2a2e33; color: #d6dadd;
+    padding: 8px 16px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .edit-modal .ghost:hover { background: #262b30; }
+  .edit-modal .field-error {
+    color: #ff9a6a; font-size: 12px; margin: 6px 0 0; min-height: 1em;
+  }
   /* Mobile: detail becomes modal */
   @media (max-width: 760px) {
     .detail.is-mobile-open {
@@ -160,11 +211,11 @@
 <header>
   <h1>Device Database</h1>
   <p class="tagline">Open reference for PCB repair &mdash; brands, families, models, boards.</p>
-  <nav>
+  <nav id="main-nav">
     [<a href="https://www.ripperdoc.de/">RipperDoc</a>] |
     [<a href="https://www.ripperdoc.de/boardripper/">BoardRipper</a>] |
     [<a href="./recent.html">Recent edits</a>] |
-    [<a href="./register.html">Sign up to contribute</a>]
+    <span id="auth-nav">[<a href="./login.html">Sign in</a>] | [<a href="./register.html">Sign up</a>]</span>
   </nav>
 </header>
 
@@ -267,6 +318,20 @@
     byKey: {},              // "kind:uuid" -> node
     selected: null,
     expanded: {},           // key -> bool (default brands expanded)
+    auth: null,             // null = not logged in; {user_uuid, handle} when signed in
+  };
+
+  // Writable-field allowlist per entity kind. Mirrors the server's
+  // hard-coded allowlist (spec §5.5). Adding a field here without
+  // updating the server's allowlist will surface a 400 on submit.
+  // Schema-additive fields (keyword, photo_url) are added once the
+  // server announces them via /v1/openapi.json — for now they're
+  // hardcoded to match.
+  var WRITABLE_FIELDS = {
+    brand:  ["notes"],
+    family: ["name", "notes"],
+    model:  ["display_name", "notes"],
+    board:  ["odm", "board_name", "notes", "source", "source_url"]
   };
 
   // --- tree loading ----------------------------------------------------------
@@ -460,15 +525,25 @@
     }
     var r = node.raw || {};
     var rows = [];
+    var writable = fieldsForKind(node.kind);
+    var canEdit = !!state.auth;
+    function editBtn(field){
+      if (!canEdit) return "";
+      if (writable.indexOf(field) < 0) return "";
+      return " <button type=\"button\" class=\"edit-btn\" data-field=\"" + escapeHtml(field) + "\" title=\"Edit " + escapeHtml(field) + "\">[edit]</button>";
+    }
+
     rows.push(["Type", escapeHtml(node.kind)]);
-    rows.push(["Name", escapeHtml(node.name)]);
+    // Brand/family use `name`; model/board use a per-kind label field (see below).
+    if (node.kind === "brand")  rows.push(["Brand name", escapeHtml(node.name)]);
+    if (node.kind === "family") rows.push(["Family name", escapeHtml(node.name) + editBtn("name")]);
     if (r.uuid) rows.push(["UUID", "<code>" + escapeHtml(r.uuid) + "</code>"]);
     if (r.model_number  && r.model_number  !== node.name) rows.push(["Model number",  escapeHtml(r.model_number)]);
-    if (r.display_name  && r.display_name  !== node.name) rows.push(["Display name",  escapeHtml(r.display_name)]);
+    if (node.kind === "model")  rows.push(["Display name", escapeHtml(r.display_name || "") + editBtn("display_name")]);
     if (r.board_number  && r.board_number  !== node.name) rows.push(["Board number",  escapeHtml(r.board_number)]);
-    if (r.board_name    && r.board_name    !== node.name) rows.push(["Board name",    escapeHtml(r.board_name)]);
+    if (node.kind === "board")  rows.push(["Board name", escapeHtml(r.board_name || "") + editBtn("board_name")]);
     if (r.number        && r.number        !== node.name) rows.push(["Number",        escapeHtml(r.number)]);
-    if (r.odm)                                            rows.push(["ODM",           escapeHtml(r.odm)]);
+    if (node.kind === "board")  rows.push(["ODM", escapeHtml(r.odm || "") + editBtn("odm")]);
     if (Array.isArray(r.aliases) && r.aliases.length) {
       rows.push(["Aliases", r.aliases.map(function(a){ return "<span class=\"pill\">" + escapeHtml(a) + "</span>"; }).join("")]);
     }
@@ -584,6 +659,205 @@
     $("stat-snapshot").textContent = "unavailable";
   }
 
+  // --- auth ------------------------------------------------------------------
+
+  function loadAuth(){
+    return fetch(API_BASE + "/auth/me", { credentials: "include" })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .catch(function(){ return null; })
+      .then(function(d){
+        state.auth = (d && d.user_uuid) ? d : null;
+        renderAuthNav();
+        // If a detail is currently shown, re-render to add/remove pencils.
+        if (state.selected) {
+          var n = state.tree && state.tree.byKey[state.selected];
+          if (n) renderDetail(n);
+        }
+      });
+  }
+
+  function renderAuthNav(){
+    var el = $("auth-nav");
+    if (!el) return;
+    if (state.auth) {
+      el.innerHTML =
+        "[<a href=\"#\" id=\"signout-link\" title=\"Sign out\">" + escapeHtml(state.auth.handle || "signed in") + " &middot; Sign out</a>]";
+      var lk = document.getElementById("signout-link");
+      if (lk) lk.addEventListener("click", function(ev){ ev.preventDefault(); signOut(); });
+    } else {
+      el.innerHTML = "[<a href=\"./login.html\">Sign in</a>] | [<a href=\"./register.html\">Sign up</a>]";
+    }
+  }
+
+  function signOut(){
+    fetch(API_BASE + "/auth/logout", { method: "POST", credentials: "include" })
+      .then(function(){
+        state.auth = null;
+        renderAuthNav();
+        if (state.selected) {
+          var n = state.tree && state.tree.byKey[state.selected];
+          if (n) renderDetail(n);
+        }
+        toast("Signed out.", false);
+      })
+      .catch(function(){ toast("Sign-out failed (you may already be signed out).", true); });
+  }
+
+  // --- edit modal ------------------------------------------------------------
+
+  // Map the rendered detail-row label (left column) back to the canonical
+  // API field name. The renderDetail function uses friendly labels — the
+  // submit call needs the underlying column name.
+  var FIELD_LABELS = {
+    brand:  { notes: "Notes" },
+    family: { name: "Family name", notes: "Notes" },
+    model:  { display_name: "Display name", notes: "Notes" },
+    board:  { odm: "ODM", board_name: "Board name", notes: "Notes",
+              source: "Source", source_url: "Source URL" }
+  };
+
+  function fieldsForKind(kind){ return WRITABLE_FIELDS[kind] || []; }
+
+  function currentValueOf(node, field){
+    var r = node.raw || {};
+    var v = r[field];
+    if (v === undefined || v === null) return "";
+    return String(v);
+  }
+
+  function openEditModal(node, field){
+    if (!state.auth) {
+      window.location.href = "./login.html";
+      return;
+    }
+    var labelMap = FIELD_LABELS[node.kind] || {};
+    var nice = labelMap[field] || field;
+    var fromVal = currentValueOf(node, field);
+
+    // Build modal DOM
+    var backdrop = document.createElement("div");
+    backdrop.className = "edit-modal-backdrop";
+    backdrop.innerHTML =
+      "<div class=\"edit-modal\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"em-h\">" +
+        "<h2 id=\"em-h\">Edit " + escapeHtml(nice) + "</h2>" +
+        "<dl>" +
+          "<dt>Entity</dt><dd>" + escapeHtml(node.kind) + ": " + escapeHtml(node.name) + "</dd>" +
+          "<dt>Field</dt><dd><code>" + escapeHtml(field) + "</code></dd>" +
+          "<dt>Current</dt><dd id=\"em-cur\">" + (fromVal ? escapeHtml(fromVal) : "<span class=\"small\">(empty)</span>") + "</dd>" +
+        "</dl>" +
+        "<label for=\"em-to\">New value</label>" +
+        "<input id=\"em-to\" type=\"text\" autocomplete=\"off\">" +
+        "<p class=\"help\">Leave blank to clear the field.</p>" +
+        "<div class=\"field-error\" id=\"em-to-err\"></div>" +
+
+        "<label for=\"em-src\">Source URL <span class=\"small\">(repair forum, schematic, eBay listing…)</span></label>" +
+        "<input id=\"em-src\" type=\"url\" placeholder=\"https://&hellip;\" autocomplete=\"off\">" +
+        "<label for=\"em-rat\">Rationale <span class=\"small\">(why you know this is correct &mdash; at least 4 chars if no source URL)</span></label>" +
+        "<textarea id=\"em-rat\" rows=\"2\"></textarea>" +
+        "<div class=\"field-error\" id=\"em-ev-err\"></div>" +
+
+        "<div class=\"row-conf\">" +
+          "<span>Confidence:</span>" +
+          "<label><input type=\"radio\" name=\"em-conf\" value=\"low\"> low</label>" +
+          "<label><input type=\"radio\" name=\"em-conf\" value=\"medium\" checked> medium</label>" +
+          "<label><input type=\"radio\" name=\"em-conf\" value=\"high\"> high</label>" +
+        "</div>" +
+
+        "<div class=\"actions\">" +
+          "<button type=\"button\" class=\"primary\" id=\"em-submit\">Submit for review</button>" +
+          "<button type=\"button\" class=\"ghost\" id=\"em-cancel\">Cancel</button>" +
+        "</div>" +
+        "<p class=\"small\" style=\"margin-top:8px\">Submissions enter a moderation queue. You'll see them in your account once they're accepted.</p>" +
+      "</div>";
+    document.body.appendChild(backdrop);
+    $("em-to").focus();
+
+    function close(){ document.body.removeChild(backdrop); }
+    function onKey(ev){ if (ev.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } }
+    document.addEventListener("keydown", onKey);
+
+    backdrop.addEventListener("click", function(ev){
+      if (ev.target === backdrop) close();
+    });
+    backdrop.querySelector("#em-cancel").addEventListener("click", close);
+
+    backdrop.querySelector("#em-submit").addEventListener("click", function(){
+      var toVal  = backdrop.querySelector("#em-to").value;
+      var srcVal = backdrop.querySelector("#em-src").value.trim();
+      var ratVal = backdrop.querySelector("#em-rat").value.trim();
+      var conf   = (backdrop.querySelector("input[name='em-conf']:checked") || {}).value || "medium";
+
+      backdrop.querySelector("#em-to-err").textContent = "";
+      backdrop.querySelector("#em-ev-err").textContent = "";
+
+      if (toVal === fromVal) {
+        backdrop.querySelector("#em-to-err").textContent = "Value unchanged.";
+        return;
+      }
+      if (!srcVal && ratVal.length < 4) {
+        backdrop.querySelector("#em-ev-err").textContent =
+          "Either provide a source URL or a rationale of at least 4 characters.";
+        return;
+      }
+      if (srcVal && !/^https?:\/\//i.test(srcVal)) {
+        backdrop.querySelector("#em-ev-err").textContent = "Source URL must start with http(s)://";
+        return;
+      }
+
+      var btn = backdrop.querySelector("#em-submit");
+      btn.disabled = true; btn.textContent = "Submitting…";
+
+      var body = {
+        target: { type: node.kind, uuid: node.raw.uuid, field: field },
+        to:   toVal,
+        from: fromVal,
+        evidence: {
+          source_url: srcVal || undefined,
+          rationale:  ratVal || undefined
+        },
+        confidence: conf,
+        client_ts: new Date().toISOString()
+      };
+
+      fetch(API_BASE + "/contributions", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify(body)
+      }).then(function(r){
+        return r.json().catch(function(){ return null; }).then(function(d){
+          if (!r.ok) {
+            var msg = (d && d.message) || ("Submission failed (HTTP " + r.status + ").");
+            if (r.status === 409) msg = "Conflict: the canonical value already changed. Refresh and try again.";
+            if (r.status === 401) msg = "Not signed in. Sign in and try again.";
+            throw new Error(msg);
+          }
+          close();
+          toast("Submitted — pending review (id " + (d && d.uuid ? String(d.uuid).slice(0,8) : "?") + ").", false);
+          // Refresh the edits list so the entry shows up (it'll appear once accepted).
+          var n = state.tree && state.tree.byKey[state.selected];
+          if (n) loadEdits(n);
+        });
+      }).catch(function(err){
+        btn.disabled = false; btn.textContent = "Submit for review";
+        backdrop.querySelector("#em-ev-err").textContent =
+          err && err.message ? err.message : "Submission failed.";
+      });
+    });
+  }
+
+  function toast(msg, isError){
+    var el = document.createElement("div");
+    el.className = "toast" + (isError ? " error" : "");
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function(){
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 5000);
+  }
+
+  // --- boot ------------------------------------------------------------------
+
   function boot(){
     $("search").addEventListener("input", onSearchInput);
     $("clear-search").addEventListener("click", function(){ $("search").value = ""; renderTree(""); });
@@ -600,6 +874,18 @@
       $("detail-panel").classList.remove("is-mobile-open");
     });
 
+    // Delegate edit-button clicks (the buttons are re-rendered on every
+    // detail change, so individual listeners would leak).
+    document.addEventListener("click", function(ev){
+      var btn = ev.target.closest && ev.target.closest(".edit-btn");
+      if (!btn) return;
+      ev.preventDefault();
+      var field = btn.getAttribute("data-field");
+      if (!field || !state.selected) return;
+      var node = state.tree && state.tree.byKey[state.selected];
+      if (node) openEditModal(node, field);
+    });
+
     fetchJSON("/entities").then(function(raw){
       clearError();
       state.tree = normaliseTree(raw);
@@ -610,6 +896,7 @@
     }).catch(showFatal);
 
     loadSnapshotTime();
+    loadAuth();
   }
 
   if (document.readyState === "loading") {

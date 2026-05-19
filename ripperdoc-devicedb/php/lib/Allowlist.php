@@ -13,14 +13,43 @@ final class Allowlist
     private const FIELDS = [
         'brand'        => ['notes'],
         'family'       => ['name', 'notes'],
-        'model'        => ['display_name', 'notes'],
-        'board'        => ['board_name', 'odm', 'source', 'source_url', 'notes'],
+        // Pseudo-fields (keyword/codename/photo_url) are NOT UPDATE targets
+        // on the parent table; on accept they INSERT into the relevant
+        // *_aliases / *_photos table. See Contribs::applyPatch.
+        'model'        => ['display_name', 'notes', 'keyword', 'codename', 'photo_url'],
+        'board'        => ['board_name', 'odm', 'source', 'source_url', 'notes', 'keyword', 'codename', 'photo_url'],
         'entity_color' => ['color_id'],
         // board_alias / model_alias have no writable fields in Phase 2 — they
         // are created/removed as whole rows by reviewer accept, not edited.
         'board_alias'  => [],
         'model_alias'  => [],
     ];
+
+    /**
+     * Pseudo-fields that do not UPDATE a column on the parent table on accept.
+     * Instead they INSERT into a child table. Drives Contribs::applyPatch and
+     * Contribs::currentValue branching.
+     *
+     * @var array<string,string>  field → child kind ('alias:kind' or 'photo')
+     */
+    private const PSEUDO_FIELDS = [
+        'keyword'   => 'alias:keyword',
+        'codename'  => 'alias:codename',
+        'photo_url' => 'photo',
+    ];
+
+    public static function isPseudo(string $type, string $field): bool
+    {
+        if (!self::isWritable($type, $field)) return false;
+        if ($type !== 'board' && $type !== 'model') return false;
+        return array_key_exists($field, self::PSEUDO_FIELDS);
+    }
+
+    /** Returns 'alias:keyword' | 'alias:codename' | 'photo' | null. */
+    public static function pseudoKind(string $field): ?string
+    {
+        return self::PSEUDO_FIELDS[$field] ?? null;
+    }
 
     public static function isWritable(string $type, string $field): bool
     {
