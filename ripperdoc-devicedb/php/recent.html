@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Recent contributions — RipperDoc DeviceDB</title>
+<style>body{font-family:system-ui,sans-serif;max-width:960px;margin:2em auto;padding:0 1em;line-height:1.4}table{width:100%;border-collapse:collapse;margin-top:1em}td,th{padding:.4em .5em;border-bottom:1px solid #eee;text-align:left;font-size:.92em}th{background:#f8f8f8}.muted{color:#777}</style>
+</head>
+<body>
+<h1>Recent accepted contributions</h1>
+<p class="muted">Public edit history. Phase 2: shows accepted patches only.</p>
+<div id="root">Loading…</div>
+<script>
+(async () => {
+  // Walk the tree, then ask for accepted contributions per target. Phase 2
+  // doesn't have a global feed endpoint — this is a stopgap until /v1/feed lands.
+  const r = await fetch('/devicedb/api/v1/entities');
+  const root = await r.json();
+  const out = [];
+  for (const br of (root.brands || [])) {
+    for (const f of (br.families || [])) {
+      for (const m of (f.models || [])) {
+        for (const b of (m.boards || [])) {
+          const r2 = await fetch(`/devicedb/api/v1/entities/board/${b.uuid}/contributions?status=accepted`);
+          const j = await r2.json();
+          for (const c of (j.contributions || [])) out.push({ ...c, brand: br.name, family: f.name, model: m.display_name, board: b.board_number });
+        }
+      }
+    }
+  }
+  out.sort((a, b) => (b.reviewed_at || '').localeCompare(a.reviewed_at || ''));
+  if (!out.length) {
+    document.getElementById('root').textContent = '(no accepted contributions yet)';
+    return;
+  }
+  const rows = out.slice(0, 100).map(c => `<tr><td>${c.reviewed_at || ''}</td><td>${c.brand} / ${c.family} / ${c.model} / <code>${c.board}</code></td><td>${c.target_field}</td><td>${c.value_from || ''} → ${c.value_to || ''}</td></tr>`).join('');
+  document.getElementById('root').innerHTML = `<table><thead><tr><th>When</th><th>Where</th><th>Field</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table>`;
+})();
+</script>
+</body>
+</html>

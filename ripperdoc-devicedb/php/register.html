@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Register — RipperDoc DeviceDB</title>
+<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:3em auto;padding:0 1em;line-height:1.5}label{display:block;margin:.6em 0 .2em}input{width:100%;padding:.5em}button{margin-top:1em;padding:.5em 1em}pre{background:#f3f3f3;padding:.6em;border-radius:4px;overflow-x:auto}</style>
+</head>
+<body>
+<h1>Register a user account</h1>
+<p>Mint a user token to attribute contributions. The plaintext token is shown
+exactly once — copy it now.</p>
+<form id="f">
+  <label>Handle <input name="handle" required></label>
+  <label>Email (optional) <input name="email" type="email"></label>
+  <button type="submit">Register</button>
+</form>
+<pre id="out" hidden></pre>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const res = await fetch('/devicedb/api/v1/users/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ handle: fd.get('handle'), email: fd.get('email') }),
+  });
+  const out = document.getElementById('out');
+  out.hidden = false;
+  out.textContent = JSON.stringify(await res.json(), null, 2);
+});
+</script>
+</body>
+</html>

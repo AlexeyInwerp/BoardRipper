@@ -1,0 +1,33 @@
+# RipperDoc DeviceDB — PHP frontend routing
+#
+# Layout:
+#   /                              static index.html, register.html, recent.html
+#   /v1/*                          → api.php (canonical path)
+#   /devicedb/api/v1/*             → api.php (alias used when hosted under /devicedb/)
+#   /devicedb/v1/*                 → api.php (also accepted)
+#   /data/*                        denied (see data/.htaccess too)
+
+DirectoryIndex index.html index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Belt-and-braces — block /data/ at the parent level too.
+  RewriteRule ^data(/|$) - [F,L]
+
+  # If the request maps to a real file or directory, serve it.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # All API roots → api.php, preserving path via PATH_INFO (QSA keeps the query).
+  RewriteRule ^(devicedb/api/v1|devicedb/v1|v1)/(.*)$ api.php/$1/$2 [QSA,L]
+  RewriteRule ^(devicedb/api/v1|devicedb/v1|v1)$    api.php/$1 [QSA,L]
+</IfModule>
+
+# CORS — read endpoints are public; mirror what the Go reference emits.
+<IfModule mod_headers.c>
+  Header always set Access-Control-Allow-Origin "*"
+  Header always set Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS"
+  Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-BoardRipper-Install-Token"
+</IfModule>
