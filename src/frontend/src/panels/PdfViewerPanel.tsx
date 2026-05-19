@@ -31,6 +31,16 @@ const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
 const TRACKPAD_PINCH_SPEED = 0.01;  // trackpad pinch sensitivity (10× faster than mouse wheel)
 const MOUSE_WHEEL_SPEED = 0.001;    // mouse wheel zoom sensitivity
+
+/** Min/max zoom for the active boundary mode. When boundaries are enabled
+ *  (debug toggle ON), uses the historical 0.5–10× range. When disabled
+ *  (default), uses a very wide range so the user is never artificially
+ *  stuck — 0.05× (page tiny) to 50× (well past readable). Wider than 50
+ *  isn't really useful and risks GPU/canvas allocation surprises. */
+function pdfZoomRange(): { min: number; max: number } {
+  const enabled = renderSettingsStore.settings.pdfEnableBoundaries;
+  return enabled ? { min: 0.5, max: 10 } : { min: 0.05, max: 50 };
+}
 const LINE_HEIGHT_RATIO = 1.2;
 const NIGHT_MODE_KEY = 'boardripper-pdf-nightmode';
 const CLEAN_CONTRAST_KEY = 'boardripper-pdf-clean-contrast';
@@ -922,8 +932,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
    *  Single-page PDFs use *loose* clamps with a margin overshoot on both axes
    *  so the user can pull the page slightly off-screen to zoom-anchor near the
    *  edges. Multi-page first/last keep hard clamps because the page-flip
-   *  threshold at `containerH/2` depends on them. */
+   *  threshold at `containerH/2` depends on them.
+   *
+   *  Gated by `pdfEnableBoundaries` (Settings ▸ Performance & Debug). When the
+   *  toggle is off (default), the function returns immediately — pan is fully
+   *  unrestricted. Page-flip thresholds in the wheel handler still fire as the
+   *  user crosses them; this only removes the position clamp that was
+   *  occasionally locking users at first/last-page Y or page-fits-X. */
   const clampPan = useCallback(() => {
+    if (!renderSettingsStore.settings.pdfEnableBoundaries) return;
+
     const container = containerRef.current;
     if (!container) return;
     const containerW = container.clientWidth;
@@ -2406,13 +2424,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         // zoom-out-to-see-adjacent-pages workflow without going so far out
         // that the boundary-bounce glitch the lock was masking re-surfaces.
         const cssH = pageCssHRef.current;
-        const minZoom = 0.5;
+        const { min: minZoom, max: maxZoom } = pdfZoomRange();
 
         // Trackpad pinch has small deltaY values — use higher sensitivity
         const speed = isTrackpadPinch ? TRACKPAD_PINCH_SPEED : MOUSE_WHEEL_SPEED;
         const zoomFactor = Math.exp(-e.deltaY * speed);
         const oldZoom = zoomRef.current;
-        const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, 10));
+        const newZoom = Math.max(minZoom, Math.min(oldZoom * zoomFactor, maxZoom));
         const ratio = newZoom / oldZoom;
         const oldPan = panRef.current;
         const newPanY = mouseY - ratio * (mouseY - oldPan.y);
@@ -2576,8 +2594,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
 
     const onGestureChange = (e: GestureEvent) => {
-      const minZoom = 0.5;
-      const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, 10));
+      const { min: minZoom, max: maxZoom } = pdfZoomRange();
+      const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, maxZoom));
       const ratio = newZoom / zoomRef.current;
       panRef.current = {
         x: mid.x - ratio * (mid.x - panRef.current.x),
@@ -2660,8 +2678,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const rawScale = dist / pinchStartDistRef.current;
         const scale = 1 + (rawScale - 1) * TOUCH_PINCH_FACTOR;
         const oldZoom = zoomRef.current;
-        const minZoom = 0.5;
-        const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 10));
+        const { min: minZoom, max: maxZoom } = pdfZoomRange();
+        const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, maxZoom));
         const ratio = newZoom / oldZoom;
         const mid = pinchMidRef.current;
         panRef.current = {
@@ -2995,9 +3013,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const factor = Math.pow(2, 1.3 * (rawDelta / 500));
       const effFactor = detail.direction === 'in' ? factor : 1 / factor;
       const mid = { x: containerEl.clientWidth / 2, y: containerEl.clientHeight / 2 };
-      const minZoom = 0.5;
+      const { min: minZoom, max: maxZoom } = pdfZoomRange();
       const oldZ = zoomRef.current;
-      const newZ = Math.max(minZoom, Math.min(oldZ * effFactor, 10));
+      const newZ = Math.max(minZoom, Math.min(oldZ * effFactor, maxZoom));
       const ratio = newZ / oldZ;
       // Pan correction: anchor the zoom on the container centre so the visible
       // mid-point stays put when the scale changes. Same formula as wheel-zoom.
