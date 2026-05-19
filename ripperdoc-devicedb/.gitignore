@@ -2,14 +2,25 @@
 /bin/
 *.exe
 
-# Runtime data
+# Runtime data — Go reference impl
 /data/
 /data-*/
 /snapshots/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
 *.tar.gz
+
+# Runtime data — PHP impl. Allowlist mirrors stage-for-ripperdocweb.sh:
+# only the Deny-from-all .htaccess and .gitkeep are tracked. Everything
+# else (SQLite, signing keys, snapshots, logs, e2e leftovers) stays
+# local-only.
+/php/data/*
+!/php/data/.htaccess
+!/php/data/.gitkeep
 
 # Local secrets (Ed25519 private keys etc.)
 *.key

@@ -56,18 +56,24 @@ echo ">>> Staging ripperdoc-devicedb/php → $DEST"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
+# Whitelist /data/: NOTHING under data/ flows through rsync. Everything
+# allowed under data/ is copied explicitly below. This guards against
+# new local-only file types (test SQLite, dev signing keys, snapshots
+# the agent created during e2e) slipping into a deploy without anyone
+# noticing.
 rsync -a \
-  --exclude='/data/canonical.sqlite' \
-  --exclude='/data/canonical.sqlite-shm' \
-  --exclude='/data/canonical.sqlite-wal' \
-  --exclude='/data/snapshots/' \
-  --exclude='/data/snapshot.key' \
-  --exclude='/data/.seed-from' \
-  --exclude='/data/logs/' \
+  --exclude='/data/***' \
   --exclude='/tests/' \
   --exclude='.DS_Store' \
   --exclude='*.bak' \
   "$SRC_DIR/php/" "$DEST/"
+
+# Allowlisted under data/: only the Deny-from-all .htaccess and an
+# optional .gitkeep. Live SQLite, dev signing keys, snapshot tarballs,
+# logs, seed sentinels are NEVER copied.
+mkdir -p "$DEST/data"
+cp "$SRC_DIR/php/data/.htaccess" "$DEST/data/.htaccess"
+[ -f "$SRC_DIR/php/data/.gitkeep" ] && cp "$SRC_DIR/php/data/.gitkeep" "$DEST/data/.gitkeep"
 
 # Sanity-check the data-dir gate that protects the runtime files. Without
 # it, anyone could GET https://ripperdoc.de/devicedb/data/canonical.sqlite
@@ -77,10 +83,20 @@ if [[ ! -f "$DEST/data/.htaccess" ]]; then
   echo "This file gates the SQLite + token files from direct HTTP GET." >&2
   exit 1
 fi
-if ! grep -qE '^(Deny from all|Require all denied)' "$DEST/data/.htaccess"; then
+if ! grep -qE '(Deny from all|Require all denied)' "$DEST/data/.htaccess"; then
   echo "ERROR: $DEST/data/.htaccess does not deny direct access." >&2
   echo "Contents:" >&2
   cat "$DEST/data/.htaccess" >&2
+  exit 1
+fi
+
+# Belt-and-braces leak check: nothing under data/ except the allowlist.
+unexpected=$(find "$DEST/data" -mindepth 1 \
+  ! -name '.htaccess' ! -name '.gitkeep' 2>/dev/null)
+if [[ -n "$unexpected" ]]; then
+  echo "ERROR: unexpected files staged under data/:" >&2
+  echo "$unexpected" >&2
+  echo "Refusing to deploy — fix stage-for-ripperdocweb.sh's allowlist." >&2
   exit 1
 fi
 
