@@ -38,6 +38,9 @@ export interface DatabankFile {
   board_uuid?: string;
   board_color?: string;
   board_color_hex?: string;
+  /** Hex content hash shared by byte-identical duplicates. Omitted/absent for
+   *  unique-size singletons (the dedup pass only hashes size-collisions). */
+  content_hash?: string;
 }
 
 /** Live progress of a "Find duplicates" content-hash pass. */
@@ -55,6 +58,30 @@ export interface DedupStats {
   groups: number;
   duplicate_files: number;
   bytes_dedupable: number;
+}
+
+/**
+ * Collapse a flat file list so each byte-identical content group is
+ * represented once (the canonical, lowest-id member), with a `copyCount` of
+ * the redundant copies dropped. Files with no `content_hash` (unique-size
+ * singletons) pass through untouched with `copyCount: 0`.
+ *
+ * Used by content-oriented views (Board#/Model) — NOT the Folder views, which
+ * must keep listing every file at its real path.
+ */
+export function collapseByContent<T extends { id: number; content_hash?: string | null }>(files: T[]): Array<T & { copyCount: number }> {
+  const byHash = new Map<string, T[]>();
+  const singles: T[] = [];
+  for (const f of files) {
+    if (f.content_hash) { const a = byHash.get(f.content_hash) ?? []; a.push(f); byHash.set(f.content_hash, a); }
+    else singles.push(f);
+  }
+  const out: Array<T & { copyCount: number }> = singles.map(f => ({ ...f, copyCount: 0 }));
+  for (const group of byHash.values()) {
+    group.sort((a, b) => a.id - b.id);
+    out.push({ ...group[0], copyCount: group.length - 1 });
+  }
+  return out;
 }
 
 export interface DatabankBinding {
@@ -102,6 +129,9 @@ export interface SearchResult {
   snippet: string;
   /** True when the PDF file is in the donor pool (backend v2 field). */
   is_donor?: boolean;
+  /** Paths of OTHER byte-identical files in the same content group. Empty
+   *  array (or absent) when this result has no duplicates. */
+  copies?: string[];
   board_bindings: {
     board_file_id: number;
     board_filename: string;

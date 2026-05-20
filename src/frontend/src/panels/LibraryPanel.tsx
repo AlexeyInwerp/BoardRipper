@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
-import { databankStore } from '../store/databank-store';
+import { databankStore, collapseByContent } from '../store/databank-store';
 import type { DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
@@ -1567,6 +1567,21 @@ function SearchResultsView({ results, onOpenFile }: {
               {renderSnippet(r.snippet)}
             </div>
           )}
+          {r.copies && r.copies.length > 0 && (
+            <details
+              className="library-copies-spoiler"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <summary>
+                +{r.copies.length} cop{r.copies.length === 1 ? 'y' : 'ies'}
+              </summary>
+              {r.copies.map((p) => (
+                <div key={p} className="library-copies-path" title={p}>
+                  {tailTruncate(p)}
+                </div>
+              ))}
+            </details>
+          )}
           {r.board_bindings && r.board_bindings.length > 0 && (
             <div className="library-search-result-boards">
               {r.board_bindings.map(bb => (
@@ -1594,13 +1609,16 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-metadata');
 
+  // Collapse byte-identical duplicates AFTER filtering so each content group
+  // shows once (canonical row + ×N chip). This is a content view, so unlike
+  // the Folder views it must not list every physical copy.
   const filteredGroups = useMemo(() => groups.map(g => ({
     ...g,
     boardNumbers: g.boardNumbers.map(bn => ({
       ...bn,
-      files: bn.files.filter(filterFile),
+      files: collapseByContent(bn.files.filter(filterFile)),
     })).filter(bn => bn.files.length > 0),
-    ungrouped: g.ungrouped.filter(filterFile),
+    ungrouped: collapseByContent(g.ungrouped.filter(filterFile)),
   })).filter(g => g.boardNumbers.length > 0 || g.ungrouped.length > 0), [groups, filterFile]);
 
   return (
@@ -1638,6 +1656,7 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
                             <FileRow
                               key={f.id}
                               file={f}
+                              copyCount={f.copyCount}
                               selected={f.id === selectedFileId}
                               indent={2}
                               showPreview={f.file_type === 'pdf'}
@@ -1654,6 +1673,7 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
                   <FileRow
                     key={f.id}
                     file={f}
+                    copyCount={f.copyCount}
                     selected={f.id === selectedFileId}
                     indent={1}
                     showPreview={f.file_type === 'pdf'}
@@ -1681,13 +1701,14 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-model');
 
+  // Collapse byte-identical duplicates after filtering — see MetadataView note.
   const filteredGroups = useMemo(() => groups.map(g => ({
     ...g,
     variants: g.variants.map(v => ({
       ...v,
-      files: v.files.filter(filterFile),
+      files: collapseByContent(v.files.filter(filterFile)),
     })).filter(v => v.files.length > 0),
-    unresolved: g.unresolved.filter(filterFile),
+    unresolved: collapseByContent(g.unresolved.filter(filterFile)),
   })).filter(g => g.variants.length > 0 || g.unresolved.length > 0), [groups, filterFile]);
 
   return (
@@ -1730,6 +1751,7 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
                             <FileRow
                               key={f.id}
                               file={f}
+                              copyCount={f.copyCount}
                               selected={f.id === selectedFileId}
                               indent={2}
                               showPreview={f.file_type === 'pdf'}
@@ -1746,6 +1768,7 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
                   <FileRow
                     key={f.id}
                     file={f}
+                    copyCount={f.copyCount}
                     selected={f.id === selectedFileId}
                     indent={1}
                     showPreview={f.file_type === 'pdf'}
@@ -1895,11 +1918,14 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
 
 // --- File Row ---
 
-function FileRow({ file, selected, indent, showPreview, onSelect, onOpen }: {
+function FileRow({ file, selected, indent, showPreview, copyCount = 0, onSelect, onOpen }: {
   file: DatabankFile;
   selected: boolean;
   indent: number;
   showPreview?: boolean;
+  /** When > 0, this row stands in for a byte-identical content group and the
+   *  badge reports how many redundant copies were collapsed away. */
+  copyCount?: number;
   onSelect?: (f: DatabankFile) => void;
   onOpen: (f: DatabankFile) => void;
 }) {
@@ -1924,6 +1950,11 @@ function FileRow({ file, selected, indent, showPreview, onSelect, onOpen }: {
         <IconStack2 size={14} className="library-multilayer-icon" />
       )}
       <span className="library-file-name">{file.filename}</span>
+      {copyCount > 0 && (
+        <span className="library-copies-chip" title={`${copyCount} byte-identical copy/copies collapsed`}>
+          ×{copyCount + 1}
+        </span>
+      )}
       {file.part_count != null && (
         <span className="library-file-meta">{file.part_count}p</span>
       )}
