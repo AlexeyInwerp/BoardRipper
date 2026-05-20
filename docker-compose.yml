@@ -56,8 +56,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M  # pdfium/wazero pool; tune PDFINDEX_POOL_MAX down on small NAS
     environment:
       - PORT=8080
+      - PDFINDEX_POOL_MAX=2  # max concurrent pdfium/wazero workers; reduce to 1 on NAS with <1 GB free RAM
       # GITHUB_TOKEN is no longer needed — updates use offline-signed manifests
       # from ripperdoc.de and ghcr.io (see docs/RELEASE_RUNBOOK.md).
