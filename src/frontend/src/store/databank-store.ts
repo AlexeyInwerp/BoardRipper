@@ -40,6 +40,23 @@ export interface DatabankFile {
   board_color_hex?: string;
 }
 
+/** Live progress of a "Find duplicates" content-hash pass. */
+export interface DedupProgress {
+  running: boolean;
+  total: number;
+  done: number;
+  errors: number;
+  current_file: string;
+  started_at: number;
+}
+
+/** Summary counts after a dedup pass. */
+export interface DedupStats {
+  groups: number;
+  duplicate_files: number;
+  bytes_dedupable: number;
+}
+
 export interface DatabankBinding {
   id: number;
   board_file_id: number;
@@ -792,6 +809,71 @@ class DatabankStore extends Emitter {
     this.notify();
     // If already running at startup, start polling
     if (progress?.running) this.startPdfIndexPolling();
+  }
+
+  // ── Dedup (content-hash) polling ────────────────────────────────────
+  private _dedupTimer: ReturnType<typeof setInterval> | null = null;
+  _dedupProgress: DedupProgress | null = null;
+  _dedupStats: DedupStats | null = null;
+
+  /** Start (or restart) the "Find duplicates" content-hash pass and begin
+   *  polling progress + stats. Mirrors the PDF-index run/poll pattern. */
+  async runDedup(): Promise<void> {
+    const progress = await this.apiFetch<DedupProgress>('/api/databank/dedup/run', { method: 'POST' });
+    if (progress) {
+      this._dedupProgress = progress;
+      this.notify();
+    }
+    this._startDedupPolling();
+  }
+
+  /** Cancel an in-flight dedup pass. Polling tears itself down once the
+   *  backend reports running === false on the next tick. */
+  async stopDedup(): Promise<void> {
+    await this.apiFetch('/api/databank/dedup/stop', { method: 'POST' });
+  }
+
+  /** One-shot refresh of dedup progress + stats. Resumes polling if a pass is
+   *  already running (e.g. the panel was reopened mid-pass). Mirrors
+   *  fetchPdfIndexStats. */
+  async fetchDedupStats(): Promise<void> {
+    const [progress, stats] = await Promise.all([
+      this.apiFetch<DedupProgress>('/api/databank/dedup/progress'),
+      this.apiFetch<DedupStats>('/api/databank/dedup/stats'),
+    ]);
+    this._dedupProgress = progress;
+    this._dedupStats = stats;
+    this.notify();
+    if (progress?.running) this._startDedupPolling();
+  }
+
+  private _startDedupPolling() {
+    this._stopDedupPolling();
+    const tick = async () => {
+      const [progress, stats] = await Promise.all([
+        this.apiFetch<DedupProgress>('/api/databank/dedup/progress'),
+        this.apiFetch<DedupStats>('/api/databank/dedup/stats'),
+      ]);
+      this._dedupProgress = progress;
+      this._dedupStats = stats;
+      this.notify();
+      if (this._dedupProgress && !this._dedupProgress.running) {
+        this._stopDedupPolling();
+        // One more stats fetch after the pass ends so the final counts show
+        // even if the last tick raced the completion.
+        const final = await this.apiFetch<DedupStats>('/api/databank/dedup/stats');
+        if (final) { this._dedupStats = final; this.notify(); }
+      }
+    };
+    void tick();
+    this._dedupTimer = setInterval(tick, 1500);
+  }
+
+  private _stopDedupPolling() {
+    if (this._dedupTimer) {
+      clearInterval(this._dedupTimer);
+      this._dedupTimer = null;
+    }
   }
 
   async triggerFileScan(): Promise<void> {

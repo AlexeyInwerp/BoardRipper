@@ -547,7 +547,7 @@ function AutoScanToggle() {
 // ---- Database info section ----
 
 function DatabaseInfoSection() {
-  const { stats, scanStatus, backendAvailable, electronMode, pdfIndexStats, pdfIndexProgress } = useDatabank();
+  const { stats, scanStatus, backendAvailable, electronMode, pdfIndexStats, pdfIndexProgress, dedupProgress, dedupStats } = useDatabank();
   const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
@@ -557,6 +557,9 @@ function DatabaseInfoSection() {
       // stale otherwise). fetchPdfIndexStats also starts the 1.5s poll if a
       // bulk index is currently running, so the indicator stays live.
       databankStore.fetchPdfIndexStats();
+      // Same for dedup: refresh stats on open and resume polling if a pass is
+      // already running so the panel re-attaches to live progress.
+      databankStore.fetchDedupStats();
     }
   }, [backendAvailable, electronMode]);
 
@@ -637,6 +640,17 @@ function DatabaseInfoSection() {
             </div>
           )}
           <div className="settings-row settings-toggle-row">
+            <label className="settings-label">Duplicate content</label>
+            <span>
+              {dedupProgress?.running
+                ? `Finding duplicates ${dedupProgress.done}/${dedupProgress.total}`
+                  + (dedupProgress.errors > 0 ? ` (${dedupProgress.errors} err)` : '')
+                : dedupStats
+                  ? `${dedupStats.groups} duplicate group${dedupStats.groups === 1 ? '' : 's'} · ${dedupStats.duplicate_files} redundant cop${dedupStats.duplicate_files === 1 ? 'y' : 'ies'}`
+                  : '—'}
+            </span>
+          </div>
+          <div className="settings-row settings-toggle-row">
             <label className="settings-label">Database size</label>
             <span>{formatBytes(stats.db_size_bytes)}</span>
           </div>
@@ -654,6 +668,24 @@ function DatabaseInfoSection() {
         >
           Open Database Editor
         </button>
+        {dedupProgress?.running ? (
+          <button
+            className="settings-action-btn"
+            onClick={() => databankStore.stopDedup()}
+            title="Stop the duplicate-finding pass"
+          >
+            Stop ({dedupProgress.done}/{dedupProgress.total})
+          </button>
+        ) : (
+          <button
+            className="settings-action-btn"
+            onClick={() => databankStore.runDedup()}
+            disabled={!!isRunning}
+            title="Hash size-colliding files and group byte-identical duplicates"
+          >
+            Find duplicates
+          </button>
+        )}
         <button
           className="settings-action-btn"
           onClick={handleResetPdf}
