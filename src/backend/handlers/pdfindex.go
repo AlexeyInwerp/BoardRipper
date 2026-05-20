@@ -4,6 +4,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -211,6 +212,23 @@ func (h *PdfIndexHandler) Failed(w http.ResponseWriter, r *http.Request) {
 		rows = []pdfindex.StatusRow{}
 	}
 	writeJSON(w, rows)
+}
+
+// POST /api/pdfindex/index-folder  body: {"path": "some/prefix"}
+func (h *PdfIndexHandler) IndexFolder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := h.ix.RunFolder(body.Path); err != nil {
+		if errors.Is(err, pdfindex.ErrAlreadyRunning) {
+			http.Error(w, "index already running", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, h.ix.Progress())
 }
 
 // DELETE /api/pdfindex/files/{id}

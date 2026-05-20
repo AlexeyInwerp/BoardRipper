@@ -197,6 +197,26 @@ func (db *DB) ResetForReindex(scope string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// DoneOrActiveFileIDs returns file_ids whose status is terminal-or-active
+// (indexed|empty|indexing) — the set the sweep should SKIP. Used to pre-filter
+// the work list so Progress.Total reflects only pending work.
+func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
+	rows, err := db.reader.Query(`SELECT file_id FROM pdf_index_status WHERE status IN ('indexed','empty','indexing')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // ReclaimStale flips 'indexing' rows whose last heartbeat (attempted_at) is
 // older than maxAgeSeconds back to 'pending'. Returns count reclaimed.
 func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {

@@ -252,6 +252,7 @@ func main() {
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/fail", write(pdfIdxHandler.FailEndpoint))
 			mux.HandleFunc("GET /api/pdfindex/failed", read(pdfIdxHandler.Failed))
 			mux.HandleFunc("DELETE /api/pdfindex/files/{id}", write(pdfIdxHandler.Delete))
+			mux.HandleFunc("POST /api/pdfindex/index-folder", write(pdfIdxHandler.IndexFolder))
 			mux.HandleFunc("GET /api/databank/search", read(pdfIdxHandler.Search))
 
 			if v, _ := db.GetConfig("pdf_index_auto_run"); v == "true" {

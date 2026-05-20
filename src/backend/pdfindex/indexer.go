@@ -2,10 +2,15 @@ package pdfindex
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"time"
 )
+
+// ErrAlreadyRunning is returned by RunFolder (and startScoped) when a sweep is
+// already in progress. Run() swallows it to stay idempotent.
+var ErrAlreadyRunning = errors.New("pdfindex: already running")
 
 // PdfFile identifies a PDF in the source.
 type PdfFile struct {
@@ -17,6 +22,9 @@ type PdfFile struct {
 // (e.g. a databank-backed adapter). Kept minimal so tests can use fakes.
 type Source interface {
 	ListPDFs() ([]PdfFile, error)
+	// ListPDFsUnder returns only PDFs whose Path equals prefix or begins with
+	// prefix+"/". An empty prefix returns all files (same as ListPDFs).
+	ListPDFsUnder(prefix string) ([]PdfFile, error)
 	ReadFile(relPath string) ([]byte, error)
 }
 
@@ -91,25 +99,68 @@ func (ix *Indexer) Stop() {
 	ix.mu.Unlock()
 }
 
-// Run starts a sweep over all files returned by Source.ListPDFs. It is a no-op
-// if a sweep is already in progress. The sweep runs in the background; call
-// Progress() to observe it and wait for Running == false.
+// Run starts a sweep over all files returned by Source.ListPDFs, pre-filtered
+// to only pending (not yet done/active) files so Progress.Total reflects real
+// remaining work. It is a no-op if a sweep is already in progress.
+// The sweep runs in the background; call Progress() to observe it and wait for
+// Running == false.
 func (ix *Indexer) Run() error {
-	files, err := ix.src.ListPDFs()
-	if err != nil {
-		return err
+	err := ix.startScoped(ix.src.ListPDFs)
+	if errors.Is(err, ErrAlreadyRunning) {
+		return nil // bulk Run stays idempotent
 	}
+	return err
+}
+
+// RunFolder starts a sweep limited to PDFs under the given library-relative
+// path prefix. Returns ErrAlreadyRunning if a sweep is already in progress
+// (the caller should offer to stop-and-index).
+func (ix *Indexer) RunFolder(prefix string) error {
+	return ix.startScoped(func() ([]PdfFile, error) {
+		return ix.src.ListPDFsUnder(prefix)
+	})
+}
+
+// startScoped is the shared sweep-start helper. It:
+//  1. Does a speculative (pre-IO) running check.
+//  2. Calls list() to enumerate candidates.
+//  3. Queries the store for already-done/active IDs and filters them out.
+//  4. Re-checks running (double-checked lock after IO) and starts the sweep.
+func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
 	ix.mu.Lock()
 	if ix.running {
 		ix.mu.Unlock()
-		return nil
+		return ErrAlreadyRunning
+	}
+	ix.mu.Unlock()
+
+	files, err := list()
+	if err != nil {
+		return err
+	}
+	skip, err := ix.store.DoneOrActiveFileIDs()
+	if err != nil {
+		return err
+	}
+	pending := make([]PdfFile, 0, len(files))
+	for _, f := range files {
+		if !skip[f.ID] {
+			pending = append(pending, f)
+		}
+	}
+
+	ix.mu.Lock()
+	if ix.running {
+		ix.mu.Unlock()
+		return ErrAlreadyRunning // re-check after IO above
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ix.cancel = cancel
 	ix.running = true
-	ix.prog = Progress{Running: true, Total: int64(len(files)), StartedAt: time.Now().Unix()}
+	ix.prog = Progress{Running: true, Total: int64(len(pending)), StartedAt: time.Now().Unix()}
 	ix.mu.Unlock()
-	go ix.sweep(ctx, files)
+
+	go ix.sweep(ctx, pending)
 	return nil
 }
 
