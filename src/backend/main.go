@@ -146,7 +146,8 @@ func main() {
 	mux.HandleFunc("POST /api/databank/bindings", write(dbHandler.CreateBinding))
 	mux.HandleFunc("PATCH /api/databank/bindings/{id}", write(dbHandler.UpdateBinding))
 	mux.HandleFunc("DELETE /api/databank/bindings/{id}", write(dbHandler.DeleteBinding))
-	mux.HandleFunc("GET /api/databank/search", read(dbHandler.Search))
+	// GET /api/databank/search is registered below inside the pdfIndex block.
+	// When pdfIndex is nil (degraded boot), search is unavailable — no route.
 	mux.HandleFunc("POST /api/databank/scan/pdf", dbHandler.ScanPdf)        // returns immediately, extraction runs in workers
 	mux.HandleFunc("GET /api/databank/stats", read(dbHandler.Stats))
 	mux.HandleFunc("POST /api/databank/reset", write(dbHandler.Reset))
@@ -244,7 +245,7 @@ func main() {
 			indexer := pdfindex.NewIndexer(pdfIndex, engine, source, termsFn, poolMax)
 			defer close(indexer.StartWatchdog(5*time.Minute, 600))
 
-			pdfIdxHandler := handlers.NewPdfIndexHandler(pdfIndex, indexer)
+			pdfIdxHandler := handlers.NewPdfIndexHandler(pdfIndex, indexer, db)
 			mux.HandleFunc("GET /api/pdfindex/status/{id}", read(pdfIdxHandler.Status))
 			mux.HandleFunc("GET /api/pdfindex/stats", read(pdfIdxHandler.Stats))
 			mux.HandleFunc("POST /api/pdfindex/run", pdfIdxHandler.Run)
@@ -258,6 +259,7 @@ func main() {
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/fail", write(pdfIdxHandler.FailEndpoint))
 			mux.HandleFunc("GET /api/pdfindex/failed", read(pdfIdxHandler.Failed))
 			mux.HandleFunc("DELETE /api/pdfindex/files/{id}", write(pdfIdxHandler.Delete))
+			mux.HandleFunc("GET /api/databank/search", read(pdfIdxHandler.Search))
 
 			if v, _ := db.GetConfig("pdf_index_auto_run"); v == "true" {
 				go func() {

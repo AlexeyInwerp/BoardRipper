@@ -1227,6 +1227,78 @@ func (db *DB) MigratePdfIndexV1() error {
 	return nil
 }
 
+// SearchMetaRow is the per-file enrichment payload returned by SearchMeta.
+type SearchMetaRow struct {
+	Filename string         `json:"filename"`
+	Path     string         `json:"path"`
+	IsDonor  bool           `json:"is_donor"`
+	Bindings []BoardBinding `json:"board_bindings"`
+}
+
+// SearchMeta returns filename/path/is_donor/bindings for the given file_ids in
+// one files+donor query plus one bindings query — no per-result N+1.
+func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
+	out := make(map[int64]SearchMetaRow, len(fileIDs))
+	if len(fileIDs) == 0 {
+		return out, nil
+	}
+	ph := make([]string, len(fileIDs))
+	args := make([]interface{}, len(fileIDs))
+	for i, id := range fileIDs {
+		ph[i] = "?"
+		args[i] = id
+	}
+	in := strings.Join(ph, ",")
+
+	rows, err := db.reader.Query(
+		`SELECT f.id, f.filename, f.path,
+		        CASE WHEN d.file_id IS NULL THEN 0 ELSE 1 END AS is_donor
+		 FROM files f LEFT JOIN pdf_donors d ON d.file_id = f.id
+		 WHERE f.id IN (`+in+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id int64
+		var m SearchMetaRow
+		var donor int
+		if err := rows.Scan(&id, &m.Filename, &m.Path, &donor); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		m.IsDonor = donor != 0
+		m.Bindings = []BoardBinding{}
+		out[id] = m
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	brows, err := db.reader.Query(
+		`SELECT b.pdf_file_id, b.board_file_id, f.filename, f.donor_pool
+		 FROM bindings b JOIN files f ON f.id = b.board_file_id
+		 WHERE b.pdf_file_id IN (`+in+`)`, args...)
+	if err != nil {
+		return out, nil
+	}
+	defer brows.Close()
+	for brows.Next() {
+		var pdfID int64
+		var b BoardBinding
+		var donor int
+		if err := brows.Scan(&pdfID, &b.BoardFileID, &b.BoardFilename, &donor); err != nil {
+			return out, nil
+		}
+		b.DonorPool = donor != 0
+		if m, ok := out[pdfID]; ok {
+			m.Bindings = append(m.Bindings, b)
+			out[pdfID] = m
+		}
+	}
+	return out, nil
+}
+
 // --- Donor list ---
 
 // DonorEntry is a donor-list row joined to its file.

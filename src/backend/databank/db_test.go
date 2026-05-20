@@ -206,6 +206,35 @@ func TestDonorCRUD(t *testing.T) {
 	}
 }
 
+func TestSearchMeta(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	if err := db.MigratePdfIndexV1(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	f1, _ := db.InsertFile(&FileRecord{Path: "a.pdf", Filename: "a.pdf", Extension: ".pdf", FileType: "pdf"})
+	f2, _ := db.InsertFile(&FileRecord{Path: "b.pdf", Filename: "b.pdf", Extension: ".pdf", FileType: "pdf"})
+	db.AddDonor(f2)
+
+	meta, err := db.SearchMeta([]int64{f1, f2})
+	if err != nil {
+		t.Fatalf("SearchMeta: %v", err)
+	}
+	if meta[f1].IsDonor {
+		t.Errorf("f1 should not be donor")
+	}
+	if !meta[f2].IsDonor {
+		t.Errorf("f2 should be donor")
+	}
+	if meta[f1].Filename != "a.pdf" {
+		t.Errorf("f1 filename = %q", meta[f1].Filename)
+	}
+}
+
 func TestMigratePdfIndexV1(t *testing.T) {
 	// Open takes a dataDir (not a full db path), so pass TempDir directly.
 	dir := t.TempDir()

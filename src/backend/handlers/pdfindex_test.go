@@ -18,7 +18,7 @@ func newPdfIndexTestHandler(t *testing.T) *PdfIndexHandler {
 	}
 	t.Cleanup(func() { db.Close() })
 	ix := pdfindex.NewIndexer(db, nil, nil, func() []string { return nil }, 1)
-	return NewPdfIndexHandler(db, ix)
+	return NewPdfIndexHandler(db, ix, nil)
 }
 
 func TestStatusEndpoint404ThenClaim(t *testing.T) {

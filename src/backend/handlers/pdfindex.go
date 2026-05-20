@@ -6,17 +6,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"boardripper/databank"
 	"boardripper/pdfindex"
 )
 
 type PdfIndexHandler struct {
-	db *pdfindex.DB
-	ix *pdfindex.Indexer
+	db   *pdfindex.DB
+	ix   *pdfindex.Indexer
+	bank *databank.DB
 }
 
-func NewPdfIndexHandler(db *pdfindex.DB, ix *pdfindex.Indexer) *PdfIndexHandler {
-	return &PdfIndexHandler{db: db, ix: ix}
+func NewPdfIndexHandler(db *pdfindex.DB, ix *pdfindex.Indexer, bank *databank.DB) *PdfIndexHandler {
+	return &PdfIndexHandler{db: db, ix: ix, bank: bank}
 }
 
 func pathID(r *http.Request) (int64, error) {
@@ -210,4 +213,64 @@ func (h *PdfIndexHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"status": "deleted"})
+}
+
+// GET /api/databank/search?q=...&scope=all|donor
+func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	scope := r.URL.Query().Get("scope")
+	if q == "" {
+		writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": q})
+		return
+	}
+	var restrict []int64
+	if scope == "donor" {
+		ids, err := h.bank.DonorFileIDs()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(ids) == 0 {
+			writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": q})
+			return
+		}
+		restrict = ids
+	}
+	hits, err := h.db.SearchPages(q, restrict, 1000)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	seen := map[int64]bool{}
+	var ids []int64
+	for _, hh := range hits {
+		if !seen[hh.FileID] {
+			seen[hh.FileID] = true
+			ids = append(ids, hh.FileID)
+		}
+	}
+	meta, err := h.bank.SearchMeta(ids)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type result struct {
+		pdfindex.SearchHit
+		Filename      string                  `json:"filename"`
+		Path          string                  `json:"path"`
+		IsDonor       bool                    `json:"is_donor"`
+		BoardBindings []databank.BoardBinding `json:"board_bindings"`
+	}
+	results := make([]result, 0, len(hits))
+	for _, hh := range hits {
+		m := meta[hh.FileID]
+		results = append(results, result{
+			SearchHit:     hh,
+			Filename:      m.Filename,
+			Path:          m.Path,
+			IsDonor:       m.IsDonor,
+			BoardBindings: m.Bindings,
+		})
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "total": len(results), "query": q})
 }
