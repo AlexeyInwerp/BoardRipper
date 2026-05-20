@@ -1,0 +1,213 @@
+// Wire-format contract: see docs/PDF_VIEWER.md#api
+// State machine: see docs/PDF_VIEWER.md#state-machine
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"boardripper/pdfindex"
+)
+
+type PdfIndexHandler struct {
+	db *pdfindex.DB
+	ix *pdfindex.Indexer
+}
+
+func NewPdfIndexHandler(db *pdfindex.DB, ix *pdfindex.Indexer) *PdfIndexHandler {
+	return &PdfIndexHandler{db: db, ix: ix}
+}
+
+func pathID(r *http.Request) (int64, error) {
+	return strconv.ParseInt(r.PathValue("id"), 10, 64)
+}
+
+// GET /api/pdfindex/status/{id}
+func (h *PdfIndexHandler) Status(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	st, err := h.db.Status(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if st.Status == "" {
+		http.Error(w, "not indexed", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, st)
+}
+
+// GET /api/pdfindex/stats
+func (h *PdfIndexHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	s, err := h.db.Stats()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, s)
+}
+
+// POST /api/pdfindex/run
+func (h *PdfIndexHandler) Run(w http.ResponseWriter, r *http.Request) {
+	if err := h.ix.Run(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, h.ix.Progress())
+}
+
+// POST /api/pdfindex/stop
+func (h *PdfIndexHandler) Stop(w http.ResponseWriter, r *http.Request) {
+	h.ix.Stop()
+	writeJSON(w, h.ix.Progress())
+}
+
+// GET /api/pdfindex/progress
+func (h *PdfIndexHandler) ProgressEndpoint(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, h.ix.Progress())
+}
+
+// POST /api/pdfindex/reindex
+func (h *PdfIndexHandler) Reindex(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope string `json:"scope"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	n, err := h.db.ResetForReindex(body.Scope)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = h.ix.Run()
+	writeJSON(w, map[string]interface{}{"reset": n, "running": true})
+}
+
+// POST /api/pdfindex/files/{id}/index — priority enqueue (backend fallback path)
+func (h *PdfIndexHandler) PriorityIndex(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	st, _ := h.db.Status(id)
+	if st.Status == "indexing" {
+		http.Error(w, "already indexing", http.StatusConflict)
+		return
+	}
+	_ = h.ix.Run()
+	h.ix.Enqueue(id)
+	writeJSON(w, map[string]string{"status": "queued"})
+}
+
+// POST /api/pdfindex/files/{id}/begin — fast-path claim
+func (h *PdfIndexHandler) Begin(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	won, err := h.db.Claim(id, "pdfjs")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !won {
+		http.Error(w, "already claimed", http.StatusConflict)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "indexing"})
+}
+
+// PUT /api/pdfindex/files/{id}/pages — fast-path batch upload
+func (h *PdfIndexHandler) Pages(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	var body struct {
+		Pages []struct {
+			N    int    `json:"n"`
+			Text string `json:"text"`
+		} `json:"pages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	pages := make([]pdfindex.Page, 0, len(body.Pages))
+	for _, p := range body.Pages {
+		pages = append(pages, pdfindex.Page{Num: p.N, Text: p.Text})
+	}
+	if err := h.db.UpsertPages(id, pages); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]int{"accepted": len(pages)})
+}
+
+// POST /api/pdfindex/files/{id}/finalize
+func (h *PdfIndexHandler) Finalize(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	st, err := h.db.Finalize(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, st)
+}
+
+// POST /api/pdfindex/files/{id}/fail
+func (h *PdfIndexHandler) FailEndpoint(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := h.db.Fail(id, body.Error); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "failed"})
+}
+
+// GET /api/pdfindex/failed
+func (h *PdfIndexHandler) Failed(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.ListFailed()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []pdfindex.StatusRow{}
+	}
+	writeJSON(w, rows)
+}
+
+// DELETE /api/pdfindex/files/{id}
+func (h *PdfIndexHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if err := h.db.DeleteFile(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "deleted"})
+}
