@@ -1,0 +1,148 @@
+package pdfindex
+
+import (
+	"errors"
+	"database/sql"
+	"time"
+)
+
+// StatusRow mirrors pdf_index_status.
+type StatusRow struct {
+	FileID      int64  `json:"file_id"`
+	Status      string `json:"status"` // pending|indexing|indexed|empty|failed
+	Source      string `json:"source"`
+	PageCount   int    `json:"page_count"`
+	AttemptedAt int64  `json:"attempted_at"`
+	IndexedAt   int64  `json:"indexed_at"`
+	Error       string `json:"error"`
+}
+
+// Page is one extracted page (text > 0 chars only).
+type Page struct {
+	Num  int
+	Text string
+}
+
+// Claim atomically transitions a file to 'indexing' iff it has no row or is
+// pending/failed. Returns true if THIS caller won the claim.
+// Uses RowsAffected() from the same Exec — never a separate SELECT changes().
+func (db *DB) Claim(fileID int64, source string) (bool, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	now := time.Now().Unix()
+	res, err := db.writer.Exec(
+		`INSERT INTO pdf_index_status(file_id, status, source, attempted_at)
+		 VALUES(?, 'indexing', ?, ?)
+		 ON CONFLICT(file_id) DO UPDATE SET
+		   status='indexing', source=excluded.source, attempted_at=excluded.attempted_at
+		 WHERE pdf_index_status.status IN ('pending','failed')`,
+		fileID, source, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// Heartbeat refreshes attempted_at so the watchdog won't reclaim a live job.
+func (db *DB) Heartbeat(fileID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(
+		`UPDATE pdf_index_status SET attempted_at = ? WHERE file_id = ?`,
+		time.Now().Unix(), fileID)
+	return err
+}
+
+// UpsertPages inserts/updates page text. ON CONFLICT DO UPDATE (NOT REPLACE) so
+// the FTS5 _au trigger runs, never _ad+_ai (which can desync external content).
+func (db *DB) UpsertPages(fileID int64, pages []Page) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, p := range pages {
+		if p.Text == "" {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO pdf_pages(file_id, page_num, text_content)
+			 VALUES(?, ?, ?)
+			 ON CONFLICT(file_id, page_num) DO UPDATE SET text_content = excluded.text_content`,
+			fileID, p.Num, p.Text); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(
+		`UPDATE pdf_index_status SET attempted_at = ? WHERE file_id = ?`,
+		time.Now().Unix(), fileID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Finalize sets terminal status by counting stored pages.
+func (db *DB) Finalize(fileID int64) (StatusRow, error) {
+	db.mu.Lock()
+	var n int
+	_ = db.writer.QueryRow(
+		`SELECT COUNT(*) FROM pdf_pages WHERE file_id = ?`, fileID).Scan(&n)
+	status := "indexed"
+	if n == 0 {
+		status = "empty"
+	}
+	_, err := db.writer.Exec(
+		`UPDATE pdf_index_status SET status = ?, page_count = ?, indexed_at = ? WHERE file_id = ?`,
+		status, n, time.Now().Unix(), fileID)
+	db.mu.Unlock()
+	if err != nil {
+		return StatusRow{}, err
+	}
+	return db.Status(fileID)
+}
+
+// Fail marks the file failed with an error message (retryable on next claim).
+func (db *DB) Fail(fileID int64, msg string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(
+		`UPDATE pdf_index_status SET status='failed', error=?, attempted_at=? WHERE file_id=?`,
+		msg, time.Now().Unix(), fileID)
+	return err
+}
+
+// Status returns the row, or a zero row with Status="" if absent.
+func (db *DB) Status(fileID int64) (StatusRow, error) {
+	var s StatusRow
+	var indexedAt, attemptedAt *int64
+	var source, errMsg *string
+	err := db.reader.QueryRow(
+		`SELECT file_id, status, source, page_count, attempted_at, indexed_at, error
+		 FROM pdf_index_status WHERE file_id = ?`, fileID).
+		Scan(&s.FileID, &s.Status, &source, &s.PageCount, &attemptedAt, &indexedAt, &errMsg)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return StatusRow{FileID: fileID}, nil
+		}
+		return StatusRow{}, err
+	}
+	if source != nil {
+		s.Source = *source
+	}
+	if attemptedAt != nil {
+		s.AttemptedAt = *attemptedAt
+	}
+	if indexedAt != nil {
+		s.IndexedAt = *indexedAt
+	}
+	if errMsg != nil {
+		s.Error = *errMsg
+	}
+	return s, nil
+}
