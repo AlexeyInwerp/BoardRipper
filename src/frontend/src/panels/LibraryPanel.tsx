@@ -397,6 +397,22 @@ export function LibraryPanel() {
     if (selectedFileId) databankStore.fetchFileDetail(selectedFileId);
   }, [selectedFileId]);
 
+  const handleIndexFolder = useCallback(async (folderPath: string) => {
+    const res = await pdfIndexClient.indexFolder(folderPath);
+    if (res.status === 409) {
+      if (confirm('An index is already running. Stop it and index this folder instead?')) {
+        await pdfIndexClient.stop();
+        await new Promise(r => setTimeout(r, 600));
+        await pdfIndexClient.indexFolder(folderPath);
+        databankStore.startPdfIndexPolling();
+      }
+      return;
+    }
+    if (res.ok) {
+      databankStore.startPdfIndexPolling();
+    }
+  }, []);
+
   const scanning = scanStatus?.running ?? false;
   const { boardCount, pdfCount } = useMemo(() => {
     // Stats are authoritative — they reflect the full database even when we
@@ -745,7 +761,7 @@ export function LibraryPanel() {
             onOpenFile={handleOpenFile}
           />
         ) : viewMode === 'folders' && browseMode === 'live' ? (
-          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} />
+          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} onIndexFolder={handleIndexFolder} />
         ) : (
           <FolderView
             tree={folderTree}
@@ -779,10 +795,11 @@ export function LibraryPanel() {
 
 // --- Live Browser ---
 
-function LiveBrowser({ browseResult, browsing, searchFilter }: {
+function LiveBrowser({ browseResult, browsing, searchFilter, onIndexFolder }: {
   browseResult: import('../store/databank-store').BrowseResult | null;
   browsing: boolean;
   searchFilter: string;
+  onIndexFolder?: (folderPath: string) => void;
 }) {
   const [currentPath, setCurrentPath] = useState('');
 
@@ -862,18 +879,41 @@ function LiveBrowser({ browseResult, browsing, searchFilter }: {
 
   return (
     <div className="library-tree">
+      {onIndexFolder && (
+        <div className="library-live-index-header">
+          <button
+            className="library-scan-btn"
+            title={currentPath ? `Index PDFs in "${currentPath}"` : 'Index all PDFs in library root'}
+            onClick={() => onIndexFolder(currentPath)}
+          >
+            {currentPath ? `Index "${currentPath.split('/').pop()}"` : 'Index root'}
+          </button>
+        </div>
+      )}
       {currentPath && (
         <div className="library-tree-node" onClick={navigateUp} style={{ cursor: 'pointer' }}>
           <span className="library-tree-arrow">▶</span>
           <span className="library-tree-folder">..</span>
         </div>
       )}
-      {dirs.map(d => (
-        <div key={d.name} className="library-tree-node" onClick={() => navigateTo(d.name)} style={{ cursor: 'pointer' }}>
-          <span className="library-tree-arrow">▶</span>
-          <span className="library-tree-folder">{d.name}</span>
-        </div>
-      ))}
+      {dirs.map(d => {
+        const dirPath = currentPath ? currentPath + '/' + d.name : d.name;
+        return (
+          <div key={d.name} className="library-tree-node" onClick={() => navigateTo(d.name)} style={{ cursor: 'pointer' }}>
+            <span className="library-tree-arrow">▶</span>
+            <span className="library-tree-folder">{d.name}</span>
+            {onIndexFolder && (
+              <button
+                className="library-live-index-btn"
+                title={`Index PDFs in "${d.name}"`}
+                onClick={(e) => { e.stopPropagation(); onIndexFolder(dirPath); }}
+              >
+                idx
+              </button>
+            )}
+          </div>
+        );
+      })}
       {files.map(f => {
         const icon = f.file_type === 'pdf' ? 'P' : 'B';
         const iconClass = f.file_type === 'pdf' ? 'library-icon-pdf' : 'library-icon-board';

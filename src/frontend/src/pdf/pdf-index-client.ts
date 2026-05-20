@@ -65,6 +65,12 @@ export const pdfIndexClient = {
   failed: () => jfetch<PdfIndexFailedEntry[]>(`/api/pdfindex/failed`),
   priorityIndex: (fileId: number) =>
     jfetch(`/api/pdfindex/files/${fileId}/index`, { method: 'POST' }),
+  indexFolder: (path: string) =>
+    fetch(`/api/pdfindex/index-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    }),
 };
 
 // In-flight dedup so two panels opening the same PDF kick off only one extract.
