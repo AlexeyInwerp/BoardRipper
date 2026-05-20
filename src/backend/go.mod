@@ -7,7 +7,6 @@ require (
 	github.com/klippa-app/go-pdfium v1.19.3
 	github.com/tetratelabs/wazero v1.11.0
 	modernc.org/sqlite v1.34.5
-	rsc.io/pdf v0.1.1
 )
 
 require (

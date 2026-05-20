@@ -70,15 +70,11 @@ func main() {
 		defer bdb.Close()
 	}
 
-	// Create scanner and PDF extractor
+	// Create scanner
 	// LIBRARY_DIR env sets the default scan root (Docker: /library, dev: unset)
 	libraryDir := os.Getenv("LIBRARY_DIR")
 	scanner := databank.NewScanner(db, dataDir, libraryDir)
 	scanner.SetBoardDB(bdb)
-	extractor := databank.NewPdfExtractor(db, dataDir)
-	extractor.SetScanner(scanner)
-
-	scanner.SetExtractor(extractor)
 
 	// PDF-index migration (v0→v1) runs against databank.db before opening the
 	// separate index DB. Migration failure is fatal (data integrity). A failure
@@ -135,7 +131,7 @@ func main() {
 	mux.HandleFunc("GET /api/files/probe", read(fileHandler.Probe))         // diagnostic: cloud-placeholder triage
 
 	// Databank API routes
-	dbHandler := handlers.NewDatabankHandler(db, scanner, extractor, dataDir)
+	dbHandler := handlers.NewDatabankHandler(db, scanner, dataDir)
 	mux.HandleFunc("POST /api/databank/scan", dbHandler.Scan)               // returns immediately, scan runs in goroutine
 	mux.HandleFunc("POST /api/databank/scan/stop", write(dbHandler.ScanStop))
 	mux.HandleFunc("GET /api/databank/scan/status", read(dbHandler.ScanStatus))
@@ -148,15 +144,9 @@ func main() {
 	mux.HandleFunc("DELETE /api/databank/bindings/{id}", write(dbHandler.DeleteBinding))
 	// GET /api/databank/search is registered below inside the pdfIndex block.
 	// When pdfIndex is nil (degraded boot), search is unavailable — no route.
-	mux.HandleFunc("POST /api/databank/scan/pdf", dbHandler.ScanPdf)        // returns immediately, extraction runs in workers
 	mux.HandleFunc("GET /api/databank/stats", read(dbHandler.Stats))
 	mux.HandleFunc("POST /api/databank/reset", write(dbHandler.Reset))
-	mux.HandleFunc("POST /api/databank/reset-pdf", write(dbHandler.ResetPdf))
 	mux.HandleFunc("GET /api/databank/browse", read(dbHandler.Browse))
-	mux.HandleFunc("GET /api/databank/pdf-errors", read(dbHandler.PdfScanErrors))
-	mux.HandleFunc("DELETE /api/databank/pdf-errors", write(dbHandler.PdfScanErrorsClear))
-	mux.HandleFunc("GET /api/databank/files/{id}/dump", read(dbHandler.DumpText))
-	mux.HandleFunc("PUT /api/databank/files/{id}/text", write(dbHandler.UploadText))
 	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)  // streaming PNG — no wrap
 	mux.HandleFunc("PUT /api/databank/preview/{id}", write(dbHandler.PreviewPut))
 	mux.HandleFunc("GET /api/databank/donors", read(dbHandler.ListDonors))

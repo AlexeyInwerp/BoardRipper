@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"os"
@@ -38,31 +37,19 @@ var allowedConfigKeys = map[string]bool{
 
 // DatabankHandler serves all /api/databank/* endpoints.
 type DatabankHandler struct {
-	db        *databank.DB
-	scanner   *databank.Scanner
-	extractor *databank.PdfExtractor
-	dataDir   string
+	db      *databank.DB
+	scanner *databank.Scanner
+	dataDir string
 }
 
-// NewDatabankHandler creates a new handler with the given database, scanner, and extractor.
-func NewDatabankHandler(db *databank.DB, scanner *databank.Scanner, extractor *databank.PdfExtractor, dataDir string) *DatabankHandler {
-	return &DatabankHandler{db: db, scanner: scanner, extractor: extractor, dataDir: dataDir}
+// NewDatabankHandler creates a new handler with the given database, scanner, and data directory.
+func NewDatabankHandler(db *databank.DB, scanner *databank.Scanner, dataDir string) *DatabankHandler {
+	return &DatabankHandler{db: db, scanner: scanner, dataDir: dataDir}
 }
 
 // Scan triggers a background file scan and returns immediately.
 func (h *DatabankHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	status, err := h.scanner.ScanAsync()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
-}
-
-// ScanPdf triggers PDF text extraction only.
-func (h *DatabankHandler) ScanPdf(w http.ResponseWriter, r *http.Request) {
-	status, err := h.scanner.ScanPdfAsync()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -86,20 +73,6 @@ func (h *DatabankHandler) Stats(w http.ResponseWriter, r *http.Request) {
 func (h *DatabankHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	if err := h.scanner.ResetAll(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
-}
-
-// ResetPdf wipes PDF text data only.
-func (h *DatabankHandler) ResetPdf(w http.ResponseWriter, r *http.Request) {
-	if op := h.scanner.ActiveOp(); op != "" {
-		http.Error(w, "Cannot reset while "+op+" scan is running", http.StatusConflict)
-		return
-	}
-	if err := h.db.ResetPdfText(); err != nil {
-		http.Error(w, "Reset failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -482,66 +455,6 @@ func (h *DatabankHandler) PreviewPut(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// Search performs full-text search across all indexed PDF pages.
-// Query params: q (search terms), donor (1 = donor pool only)
-func (h *DatabankHandler) Search(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	donorOnly := r.URL.Query().Get("donor") == "1"
-
-	results, err := h.db.Search(r.Context(), query, donorOnly)
-	if err != nil {
-		http.Error(w, "Search failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
-}
-
-// DumpText returns an HTML page with the extracted text for a PDF file.
-// GET /api/databank/files/{id}/dump — opens in new tab for debugging.
-func (h *DatabankHandler) DumpText(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
-		return
-	}
-
-	file, err := h.db.GetFileByID(r.Context(), id)
-	if err != nil {
-		http.Error(w, "File not found", http.StatusNotFound)
-		return
-	}
-
-	pages, err := h.db.GetPdfPages(id)
-	if err != nil {
-		http.Error(w, "Failed to read text: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	safeName := html.EscapeString(file.Filename)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Text Dump: %s</title>
-<style>
-body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; margin: 20px; }
-h1 { color: #00d4ff; }
-h2 { color: #ff6b9d; border-bottom: 1px solid #333; padding-bottom: 4px; margin-top: 32px; }
-.text { background: #16213e; padding: 8px 12px; margin: 4px 0; border-left: 3px solid #0f3460; white-space: pre-wrap; word-break: break-all; }
-.meta { color: #888; font-size: 0.85em; }
-.stats { background: #2d2d44; padding: 8px 12px; border-radius: 4px; margin-bottom: 16px; }
-</style></head><body>`, safeName)
-	fmt.Fprintf(w, `<h1>Text Dump: %s</h1>`, safeName)
-	fmt.Fprintf(w, `<div class="stats">File ID: %d | Pages with text: %d</div>`, id, len(pages))
-
-	for _, p := range pages {
-		fmt.Fprintf(w, `<h2>Page %d <span class="meta">(source: %s, %d chars)</span></h2>`, p.PageNum, p.Source, len(p.Text))
-		fmt.Fprintf(w, `<div class="text">%s</div>`, html.EscapeString(p.Text))
-	}
-
-	fmt.Fprint(w, `</body></html>`)
-}
-
 // GetConfig returns all config values, enriched with runtime info.
 // GET /api/config — returns config as JSON object.
 // Includes "_scan_root" (effective scan directory) for the frontend.
@@ -590,32 +503,6 @@ func (h *DatabankHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-// PdfScanErrors returns all logged PDF scan errors for review.
-// GET /api/databank/pdf-errors
-func (h *DatabankHandler) PdfScanErrors(w http.ResponseWriter, r *http.Request) {
-	errors, err := h.db.ListPdfScanErrors()
-	if err != nil {
-		http.Error(w, "Failed to list errors: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if errors == nil {
-		errors = []databank.PdfScanError{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(errors)
-}
-
-// PdfScanErrorsClear deletes all logged PDF scan errors.
-// DELETE /api/databank/pdf-errors
-func (h *DatabankHandler) PdfScanErrorsClear(w http.ResponseWriter, r *http.Request) {
-	if err := h.db.ClearPdfScanErrors(); err != nil {
-		http.Error(w, "Failed to clear errors: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
 }
 
 // ListDonors returns all entries in the donor list with their file metadata.
@@ -679,57 +566,3 @@ func (h *DatabankHandler) RemoveDonor(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
-// UploadText accepts client-extracted (pdfjs) text to replace Go-extracted text.
-// Body: { "pages": { "1": "page 1 text", "2": "page 2 text", ... } }
-func (h *DatabankHandler) UploadText(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid file ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify file exists and is a PDF
-	file, err := h.db.GetFileByID(r.Context(), id)
-	if err != nil {
-		http.Error(w, "File not found", http.StatusNotFound)
-		return
-	}
-	if file.FileType != "pdf" {
-		http.Error(w, "File is not a PDF", http.StatusBadRequest)
-		return
-	}
-
-	var body struct {
-		Pages map[string]string `json:"pages"`
-	}
-	// PDF page-text payloads are bounded by the upload cap (50 MiB); allow
-	// up to 64 MiB headroom for JSON overhead.
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Convert string keys to int
-	pages := make(map[int]string, len(body.Pages))
-	for k, v := range body.Pages {
-		num, err := strconv.Atoi(k)
-		if err != nil {
-			http.Error(w, "Invalid page number: "+k, http.StatusBadRequest)
-			return
-		}
-		pages[num] = v
-	}
-
-	if err := h.extractor.ReplaceText(id, pages); err != nil {
-		http.Error(w, "Failed to update text: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"pages":  len(pages),
-	})
-}

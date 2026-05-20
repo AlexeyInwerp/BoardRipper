@@ -507,87 +507,26 @@ func (db *DB) migrateV7() error {
 	return tx.Commit()
 }
 
-// PdfScanError represents a row in the pdf_scan_errors table.
-type PdfScanError struct {
-	ID          int64  `json:"id"`
-	FileID      int64  `json:"file_id"`
-	FilePath    string `json:"file_path"`
-	ErrorMsg    string `json:"error_msg"`
-	ErrorDetail string `json:"error_detail,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-}
-
-// InsertPdfScanError logs a PDF extraction error, skipping duplicates (same file + same error message).
-func (db *DB) InsertPdfScanError(fileID int64, filePath, errorMsg, errorDetail string) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	_, err := db.writer.Exec(
-		`INSERT OR IGNORE INTO pdf_scan_errors (file_id, file_path, error_msg, error_detail, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		fileID, filePath, errorMsg, errorDetail, time.Now().Unix(),
-	)
-	return err
-}
-
-// ListPdfScanErrors returns all logged PDF scan errors, newest first.
-func (db *DB) ListPdfScanErrors() ([]PdfScanError, error) {
-	rows, err := db.reader.Query(
-		`SELECT id, file_id, file_path, error_msg, COALESCE(error_detail, ''), created_at
-		 FROM pdf_scan_errors ORDER BY created_at DESC`,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var errors []PdfScanError
-	for rows.Next() {
-		var e PdfScanError
-		if err := rows.Scan(&e.ID, &e.FileID, &e.FilePath, &e.ErrorMsg, &e.ErrorDetail, &e.CreatedAt); err != nil {
-			return nil, err
-		}
-		errors = append(errors, e)
-	}
-	return errors, rows.Err()
-}
-
-// ClearPdfScanErrors deletes all logged PDF scan errors.
-func (db *DB) ClearPdfScanErrors() error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	_, err := db.writer.Exec(`DELETE FROM pdf_scan_errors`)
-	return err
-}
-
 // DatabankStats holds aggregate database info.
 type DatabankStats struct {
 	Boards         int   `json:"boards"`
 	Pdfs           int   `json:"pdfs"`
 	Bindings       int   `json:"bindings"`
-	PdfPages       int   `json:"pdf_pages"`
-	PdfErrors      int   `json:"pdf_errors"`
 	DbSizeBytes    int64 `json:"db_size_bytes"`
 	LastFileScanAt int64 `json:"last_file_scan_at"`
-	LastPdfScanAt  int64 `json:"last_pdf_scan_at"`
 }
 
 // Stats returns aggregate database statistics.
 func (db *DB) Stats(dataDir string) (*DatabankStats, error) {
 	s := &DatabankStats{}
 
-	// Single-query aggregation across files + bindings + pdf_pages + errors.
-	// Five separate COUNT(*)s used to round-trip the SQLite driver five times
-	// per /api/databank/stats request — visible at 100k rows.
 	row := db.reader.QueryRow(`
 		SELECT
 			(SELECT COUNT(*) FROM files WHERE file_type='board'),
 			(SELECT COUNT(*) FROM files WHERE file_type='pdf'),
-			(SELECT COUNT(*) FROM bindings),
-			(SELECT COUNT(*) FROM pdf_pages WHERE page_num > 0),
-			(SELECT COUNT(*) FROM pdf_scan_errors)
+			(SELECT COUNT(*) FROM bindings)
 	`)
-	if err := row.Scan(&s.Boards, &s.Pdfs, &s.Bindings, &s.PdfPages, &s.PdfErrors); err != nil {
+	if err := row.Scan(&s.Boards, &s.Pdfs, &s.Bindings); err != nil {
 		return nil, err
 	}
 
@@ -601,9 +540,6 @@ func (db *DB) Stats(dataDir string) (*DatabankStats, error) {
 
 	if v, err := db.GetConfig("last_file_scan_at"); err == nil && v != "" {
 		fmt.Sscanf(v, "%d", &s.LastFileScanAt)
-	}
-	if v, err := db.GetConfig("last_pdf_scan_at"); err == nil && v != "" {
-		fmt.Sscanf(v, "%d", &s.LastPdfScanAt)
 	}
 
 	return s, nil
@@ -634,9 +570,6 @@ func (db *DB) ResetAll(dataDir string) error {
 	defer db.mu.Unlock()
 
 	stmts := []string{
-		`DELETE FROM pdf_text`,
-		`DELETE FROM pdf_pages`,
-		`DELETE FROM pdf_scan_errors`,
 		`DELETE FROM bindings`,
 		`DELETE FROM files`,
 	}
@@ -646,33 +579,13 @@ func (db *DB) ResetAll(dataDir string) error {
 		}
 	}
 
-	for _, key := range []string{"last_scan_status", "last_file_scan_at", "last_pdf_scan_at"} {
+	for _, key := range []string{"last_scan_status", "last_file_scan_at"} {
 		db.writer.Exec(`DELETE FROM config WHERE key = ?`, key)
 	}
 
 	previewDir := filepath.Join(dataDir, ".previews")
 	os.RemoveAll(previewDir)
 
-	return nil
-}
-
-// ResetPdfText wipes PDF text and error data only.
-func (db *DB) ResetPdfText() error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	stmts := []string{
-		`DELETE FROM pdf_text`,
-		`DELETE FROM pdf_pages`,
-		`DELETE FROM pdf_scan_errors`,
-	}
-	for _, stmt := range stmts {
-		if _, err := db.writer.Exec(stmt); err != nil {
-			return fmt.Errorf("reset-pdf %s: %w", stmt, err)
-		}
-	}
-
-	db.writer.Exec(`DELETE FROM config WHERE key = ?`, "last_pdf_scan_at")
 	return nil
 }
 
@@ -1225,6 +1138,13 @@ func (db *DB) MigratePdfIndexV1() error {
 	log.Printf("[migrate] pdf-index schema v0→v1: dropped pdf_pages (%d rows), pdf_text (%d rows); created pdf_donors",
 		droppedPages, droppedText)
 	return nil
+}
+
+// BoardBinding is a board file linked to a PDF search result.
+type BoardBinding struct {
+	BoardFileID   int64  `json:"board_file_id"`
+	BoardFilename string `json:"board_filename"`
+	DonorPool     bool   `json:"donor_pool"`
 }
 
 // SearchMetaRow is the per-file enrichment payload returned by SearchMeta.

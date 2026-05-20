@@ -37,14 +37,6 @@ type ScanStatus struct {
 	Phase       string `json:"phase,omitempty"`        // current phase description
 	LastFile    string `json:"last_file,omitempty"`    // last processed file (for verbose display)
 	CompletedAt int64  `json:"completed_at,omitempty"` // unix timestamp of last scan completion
-
-	// Phase 2: PDF text extraction (runs after file scan)
-	PdfRunning   bool   `json:"pdf_running"`
-	PdfExtracted int64  `json:"pdf_extracted"`
-	PdfTotal     int64  `json:"pdf_total"`
-	PdfErrors    int64  `json:"pdf_errors"`
-	PdfCurrent     string `json:"pdf_current,omitempty"`
-	PdfCompletedAt int64  `json:"pdf_completed_at,omitempty"`
 }
 
 // Scanner walks DATA_DIR and syncs findings with the database.
@@ -54,12 +46,11 @@ type Scanner struct {
 	libraryDir string // optional separate library directory
 	boardDB    *boarddb.DB // optional board reference database
 
-	mu        sync.Mutex
-	status    ScanStatus
-	cancelFn  func()          // cancel the current scan/pdf goroutine
-	cancelCh  chan struct{}    // closed on cancel
-	activeOp  string          // "", "file", or "pdf"
-	extractor *PdfExtractor   // set via SetExtractor
+	mu       sync.Mutex
+	status   ScanStatus
+	cancelFn func()       // cancel the current scan goroutine
+	cancelCh chan struct{} // closed on cancel
+	activeOp string       // "", "file"
 }
 
 // SetBoardDB registers the board reference database for ODM-aware metadata extraction.
@@ -67,13 +58,6 @@ func (s *Scanner) SetBoardDB(bdb *boarddb.DB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.boardDB = bdb
-}
-
-// SetExtractor registers the PDF extractor for ScanPdfAsync.
-func (s *Scanner) SetExtractor(e *PdfExtractor) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.extractor = e
 }
 
 // ActiveOp returns the currently running operation ("", "file", or "pdf").
@@ -134,7 +118,6 @@ func (s *Scanner) loadPersistedStatus() {
 		return
 	}
 	st.Running = false // never start in running state
-	st.PdfRunning = false
 	s.mu.Lock()
 	s.status = st
 	s.mu.Unlock()
@@ -187,20 +170,6 @@ func (s *Scanner) Status() ScanStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.status
-}
-
-// SetPdfStatus updates the PDF extraction progress fields.
-func (s *Scanner) SetPdfStatus(running bool, extracted, total, errors int64, current string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status.PdfRunning = running
-	s.status.PdfExtracted = extracted
-	s.status.PdfTotal = total
-	s.status.PdfErrors = errors
-	s.status.PdfCurrent = current
-	if running {
-		s.status.Phase = fmt.Sprintf("PDF text extraction (%d/%d)", extracted, total)
-	}
 }
 
 // ScanAsync starts a background scan. Returns immediately with current status.
@@ -631,41 +600,6 @@ func (s *Scanner) autoMatchBindings() {
 				return ""
 			}())
 	}
-}
-
-// ScanPdfAsync starts background PDF text extraction. Returns error if another op is running.
-func (s *Scanner) ScanPdfAsync() (ScanStatus, error) {
-	s.mu.Lock()
-	if s.activeOp != "" {
-		st := s.status
-		s.mu.Unlock()
-		return st, fmt.Errorf("operation %q already running", s.activeOp)
-	}
-	if s.extractor == nil {
-		s.mu.Unlock()
-		return ScanStatus{}, fmt.Errorf("no extractor configured")
-	}
-	s.activeOp = "pdf"
-	done := make(chan struct{})
-	s.cancelCh = done
-	s.cancelFn = func() { close(done) }
-	s.mu.Unlock()
-
-	go func() {
-		log.Println("PDF extraction: starting...")
-		extracted, errors := s.extractor.ExtractAllCancellable(2, done)
-		log.Printf("PDF extraction: done — %d extracted, %d errors", extracted, errors)
-
-		s.mu.Lock()
-		s.status.PdfCompletedAt = time.Now().Unix()
-		s.activeOp = ""
-		s.cancelFn = nil
-		s.cancelCh = nil
-		s.mu.Unlock()
-		_ = s.db.SetConfig("last_pdf_scan_at", fmt.Sprintf("%d", time.Now().Unix()))
-		s.persistStatus()
-	}()
-	return s.Status(), nil
 }
 
 // ResetAll clears the entire databank (files, bindings, PDF text, previews).
