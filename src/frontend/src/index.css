@@ -6077,6 +6077,37 @@ html, body, #root {
   /* inherits .settings-btn-option styling */
   flex: 0 0 auto;
 }
+.pdf-watermark-reindex-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+.pdf-watermark-reindex-hint {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+}
+.pdf-watermark-reindex-btn {
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-secondary));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.pdf-watermark-reindex-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg-secondary));
+}
+.pdf-watermark-reindex-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.pdf-watermark-reindex-dismiss {
+  flex: 0 0 auto;
+}
 
 /* Settings panel tab strip — reuses LibraryPanel tab visuals; tighten the
  * surrounding spacing so the strip sits flush above CollapsibleSection content. */

@@ -17,6 +17,8 @@ import { log } from '../store/log-store';
 import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection } from './LibrarySyncSection';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
+import { pdfIndexClient } from '../pdf/pdf-index-client';
+import { isElectron } from '../store/databank-store';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -934,9 +936,26 @@ function parseWatermarkFilter(raw: string): string[] {
   return raw.split(/[\n,]/).map(t => t.trim()).filter(t => t.length > 0);
 }
 
+/** Push the current watermark term list to the backend config endpoint.
+ *  No-op in Electron mode (no backend available). Fire-and-forget — errors
+ *  are silently dropped (the backend key is advisory for the pdfium indexer). */
+function pushWatermarkTermsToBackend(terms: string[]): void {
+  if (isElectron()) return;
+  void fetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'pdf_watermark_terms', value: JSON.stringify(terms) }),
+  }).catch(() => { /* best-effort */ });
+}
+
 function PdfWatermarkFilterEditor() {
   const storedTerms = renderSettingsStore.globalSettings.pdfWatermarkFilter;
   const [value, setValue] = useState(() => formatWatermarkFilter(storedTerms));
+  // Track the terms that were committed while this editor instance was mounted.
+  // Used to detect when the list changed so we can surface the reindex prompt.
+  const committedRef = useRef<string[]>(storedTerms);
+  const [showReindex, setShowReindex] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
 
   // Dirty when the textarea would commit to a different terms list than what's stored.
   const pendingTerms = parseWatermarkFilter(value);
@@ -950,11 +969,34 @@ function PdfWatermarkFilterEditor() {
     renderSettingsStore.applyGlobal({ ...current, pdfWatermarkFilter: next });
     // Normalise the textarea to the canonical form so the dirty flag clears.
     setValue(formatWatermarkFilter(next));
+
+    // Push to backend so the pdfium indexer uses the same terms.
+    pushWatermarkTermsToBackend(next);
+
+    // Detect whether the committed terms changed vs the last commit.
+    const prev = committedRef.current;
+    const changed = next.length !== prev.length || next.some((t, i) => t !== prev[i]);
+    committedRef.current = next;
+    if (changed) setShowReindex(true);
   }, [value]);
 
   const revert = useCallback(() => {
     setValue(formatWatermarkFilter(storedTerms));
   }, [storedTerms]);
+
+  const handleReindex = useCallback(async () => {
+    setReindexing(true);
+    try {
+      await pdfIndexClient.reindexWatermark();
+      databankStore.startPdfIndexPolling();
+      boardStore.addToast('Re-indexing PDFs with updated watermark terms…', 'info');
+    } catch {
+      boardStore.addToast('Failed to start reindex — check backend connection.', 'error');
+    } finally {
+      setReindexing(false);
+      setShowReindex(false);
+    }
+  }, []);
 
   return (
     <div className="pdf-watermark-filter">
@@ -994,6 +1036,30 @@ function PdfWatermarkFilterEditor() {
           </button>
         )}
       </div>
+      {showReindex && !isElectron() && (
+        <div className="pdf-watermark-reindex-prompt">
+          <span className="pdf-watermark-reindex-hint">
+            Watermark terms changed — reindex PDFs to apply?
+          </span>
+          <button
+            type="button"
+            className="settings-btn-option pdf-watermark-reindex-btn"
+            onClick={handleReindex}
+            disabled={reindexing}
+            title="Reset and re-run PDF text indexing with the new watermark terms"
+          >
+            {reindexing ? 'Starting…' : 'Reindex PDFs'}
+          </button>
+          <button
+            type="button"
+            className="settings-btn-option pdf-watermark-reindex-dismiss"
+            onClick={() => setShowReindex(false)}
+            title="Dismiss — reindex later"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <p className="settings-hint">
         One term per line (or comma-separated). Matches ignore case and whitespace,
         so "www.chinafix.com" catches "w w w . c h i n a f i x . c o m". Matching
