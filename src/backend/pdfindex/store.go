@@ -91,8 +91,11 @@ func (db *DB) UpsertPages(fileID int64, pages []Page) error {
 func (db *DB) Finalize(fileID int64) (StatusRow, error) {
 	db.mu.Lock()
 	var n int
-	_ = db.writer.QueryRow(
-		`SELECT COUNT(*) FROM pdf_pages WHERE file_id = ?`, fileID).Scan(&n)
+	if err := db.writer.QueryRow(
+		`SELECT COUNT(*) FROM pdf_pages WHERE file_id = ?`, fileID).Scan(&n); err != nil {
+		db.mu.Unlock()
+		return StatusRow{}, err
+	}
 	status := "indexed"
 	if n == 0 {
 		status = "empty"
