@@ -367,6 +367,12 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
+  /** Return the full donor list. Does NOT mutate store state. */
+  async listDonors(): Promise<DonorEntry[]> {
+    const list = await this.apiFetch<DonorEntry[]>('/api/databank/donors');
+    return list ?? [];
+  }
+
   get metadataTree(): MetadataGroup[] {
     if (this._metadataCache && this._metadataCache.version === this._filesVersion) {
       return this._metadataCache.tree;

@@ -19,6 +19,7 @@ import { LibrarySyncSection } from './LibrarySyncSection';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { isElectron } from '../store/databank-store';
+import { fmtIndexEta } from './LibraryPanel';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -612,7 +613,7 @@ function DatabaseInfoSection() {
             <label className="settings-label">PDF index status</label>
             <span>
               {pdfIndexProgress?.running
-                ? `Indexing ${pdfIndexProgress.done}/${pdfIndexProgress.total}${pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}`
+                ? `Indexing ${pdfIndexProgress.done}/${pdfIndexProgress.total}${pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}${fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}`
                 : pdfIndexStats
                   ? `Idle — ${pdfIndexStats.indexed} indexed, ${pdfIndexStats.pending} pending`
                   : '—'}

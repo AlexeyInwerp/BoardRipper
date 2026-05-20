@@ -100,6 +100,22 @@ export function setLibrarySearch(query: string): void {
   _externalSearchSetter?.(query);
 }
 
+/** Compute a "rate/min · ETA Xh Ym" string for index progress bars.
+ *  started_at is an ISO-8601 string (from the backend wire format). */
+export function fmtIndexEta(p: { running: boolean; total: number; done: number; started_at: string }): string {
+  if (!p.running || !p.started_at || p.done <= 0) return '';
+  const startSec = Math.floor(new Date(p.started_at).getTime() / 1000);
+  if (!startSec) return '';
+  const elapsed = Math.max(1, Math.floor(Date.now() / 1000) - startSec);
+  const rate = p.done / elapsed; // files/sec
+  if (rate <= 0) return '';
+  const remain = Math.max(0, p.total - p.done);
+  const etaSec = Math.round(remain / rate);
+  const h = Math.floor(etaSec / 3600), m = Math.floor((etaSec % 3600) / 60);
+  const eta = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return `${(rate * 60).toFixed(1)}/min · ETA ${eta}`;
+}
+
 export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
@@ -165,6 +181,14 @@ export function LibraryPanel() {
   }, [pdfQuery, pdfScope]);
   const donorResults = useMemo(() => pdfResults.filter(r => r.is_donor), [pdfResults]);
   const otherResults = useMemo(() => pdfResults.filter(r => !r.is_donor), [pdfResults]);
+
+  // Donor list for manage mode: shown when scope=donor and no query entered
+  const [donorList, setDonorList] = useState<{ file_id: number; filename: string; path?: string }[]>([]);
+  const isDonorManageMode = viewMode === 'search' && pdfScope === 'donor' && !pdfQuery.trim();
+  useEffect(() => {
+    if (!isDonorManageMode) return;
+    databankStore.listDonors().then(setDonorList);
+  }, [isDonorManageMode]);
 
   // Pick up a pending PDF search set by ContextMenu "Search all donors".
   // Runs once when the search tab becomes active or on mount if already active.
@@ -416,6 +440,7 @@ export function LibraryPanel() {
               <span className="library-indexing" style={{ marginLeft: 8 }}>
                 Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
                 {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
+                {fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}
               </span>
             )}
             {pdfIndexProgress?.running && pdfIndexProgress.current_file && (
@@ -648,20 +673,39 @@ export function LibraryPanel() {
                 >x</button>
               )}
             </div>
-            {donorResults.length > 0 && (
-              <details className="library-donor-spoiler" open>
-                <summary>Donors ({donorResults.length})</summary>
-                <SearchResultsView results={donorResults} onOpenFile={handleOpenSearchHit} />
-              </details>
-            )}
-            {otherResults.length > 0 && (
-              <SearchResultsView results={otherResults} onOpenFile={handleOpenSearchHit} />
-            )}
-            {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
-              <div className="library-empty">No results for "{pdfQuery}"</div>
-            )}
-            {pdfResults.length === 0 && !pdfQuery.trim() && (
-              <div className="library-empty">Enter a query and press Search or Enter</div>
+            {isDonorManageMode ? (
+              <div className="library-donor-list">
+                {donorList.length === 0
+                  ? <div className="library-empty">No donor PDFs yet. Mark PDFs as donors to build this list.</div>
+                  : donorList.map(d => (
+                      <div key={d.file_id} className="library-donor-row">
+                        <span className="library-donor-name" title={d.path || d.filename}>{d.filename}</span>
+                        <button
+                          className="library-donor-remove"
+                          title="Remove from donor list"
+                          onClick={async () => { await databankStore.removeDonor(d.file_id); setDonorList(await databankStore.listDonors()); }}
+                        >×</button>
+                      </div>
+                    ))}
+              </div>
+            ) : (
+              <>
+                {donorResults.length > 0 && (
+                  <details className="library-donor-spoiler" open>
+                    <summary>Donors ({donorResults.length})</summary>
+                    <SearchResultsView results={donorResults} onOpenFile={handleOpenSearchHit} />
+                  </details>
+                )}
+                {otherResults.length > 0 && (
+                  <SearchResultsView results={otherResults} onOpenFile={handleOpenSearchHit} />
+                )}
+                {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
+                  <div className="library-empty">No results for "{pdfQuery}"</div>
+                )}
+                {pdfResults.length === 0 && !pdfQuery.trim() && (
+                  <div className="library-empty">Enter a query and press Search or Enter</div>
+                )}
+              </>
             )}
           </div>
         ) : loadStatus === 'loading' && files.length === 0 ? (
