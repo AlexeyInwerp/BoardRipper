@@ -46,6 +46,8 @@ func (db *DB) Close() error {
 	return db.writer.Close()
 }
 
+// createSchema is safe to call without holding db.mu because it runs only
+// during Open, before the DB handle escapes to callers.
 func (db *DB) createSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS pdf_index_status (
@@ -84,10 +86,15 @@ func (db *DB) createSchema() error {
 			INSERT INTO pdf_text(rowid, content) VALUES (new.rowid, new.text_content);
 		END`,
 	}
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, s := range stmts {
-		if _, err := db.writer.Exec(s); err != nil {
+		if _, err := tx.Exec(s); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
