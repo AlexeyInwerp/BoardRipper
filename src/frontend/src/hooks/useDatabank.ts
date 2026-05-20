@@ -1,6 +1,6 @@
 import { databankStore } from '../store/databank-store';
 import { createStoreHook } from './createStoreHook';
-import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, DatabankStats, BrowseResult, RecentItem, LoadStatus } from '../store/databank-store';
+import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, ViewMode, DatabankStats, BrowseResult, RecentItem, LoadStatus, PdfIndexProgress, PdfIndexStats } from '../store/databank-store';
 
 // `metadataTree`/`modelTree` are deliberately NOT in the snapshot. Including
 // them would call the (O(N)) groupby getters on every store notify — even
@@ -34,6 +34,8 @@ interface DatabankSnapshot {
   historyDepth: number;
   favoritePaths: Set<string>;
   donorIds: ReadonlySet<number>;
+  pdfIndexProgress: PdfIndexProgress | null;
+  pdfIndexStats: PdfIndexStats | null;
 }
 
 export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () => ({
@@ -63,4 +65,6 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   historyDepth: databankStore.historyDepth,
   favoritePaths: databankStore.favoritePaths,
   donorIds: databankStore.donorIds,
+  pdfIndexProgress: databankStore._pdfIndexProgress,
+  pdfIndexStats: databankStore._pdfIndexStats,
 }));

@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import type { DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
+import { pdfIndexClient } from '../pdf/pdf-index-client';
+import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
@@ -107,6 +109,7 @@ export function LibraryPanel() {
     browseMode, browseResult, browsing,
     stats, filesComplete,
     donorIds,
+    pdfIndexProgress, pdfIndexStats,
   } = useDatabank();
   void donorIds; // consumed by FileDetailPane and ContextMenu via databankStore.isDonor
 
@@ -122,6 +125,24 @@ export function LibraryPanel() {
     [viewMode, files],
   );
   const [localSearch, setLocalSearch] = useState('');
+  const [failedList, setFailedList] = useState<PdfIndexFailedEntry[] | null>(null);
+  const [failedListLoading, setFailedListLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  const showFailedList = useCallback(async () => {
+    setFailedListLoading(true);
+    const list = await pdfIndexClient.failed();
+    setFailedList(list ?? []);
+    setFailedListLoading(false);
+  }, []);
+
+  const handleRetryFailed = useCallback(async () => {
+    setRetrying(true);
+    await pdfIndexClient.reindex('failed');
+    databankStore.startPdfIndexPolling();
+    setFailedList(null);
+    setRetrying(false);
+  }, []);
 
   // Register external setter
   useEffect(() => {
@@ -404,16 +425,32 @@ export function LibraryPanel() {
                 {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
               </span>
             )}
-            {scanStatus?.pdf_running && (
+            {pdfIndexProgress?.running && (
               <span className="library-indexing" style={{ marginLeft: 8 }}>
-                PDF indexing {scanStatus.pdf_extracted}/{scanStatus.pdf_total}
-                {(scanStatus.pdf_errors ?? 0) > 0 && ` (${scanStatus.pdf_errors} err)`}
+                Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
+                {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
               </span>
             )}
-            {scanStatus?.pdf_running && scanStatus?.pdf_current && (
-              <div className="library-indexing-file" title={scanStatus.pdf_current}>
-                {tailTruncate(scanStatus.pdf_current)}
+            {pdfIndexProgress?.running && pdfIndexProgress.current_file && (
+              <div className="library-indexing-file" title={pdfIndexProgress.current_file}>
+                {tailTruncate(pdfIndexProgress.current_file)}
               </div>
+            )}
+            {!pdfIndexProgress?.running && pdfIndexStats && (
+              <span className="library-scan-result" style={{ marginLeft: 8 }}>
+                {pdfIndexStats.indexed} indexed · {pdfIndexStats.pages} pages
+                {pdfIndexStats.failed > 0 && (
+                  <button
+                    className="library-scan-btn"
+                    style={{ marginLeft: 6, padding: '0 5px', fontSize: 10 }}
+                    onClick={failedListLoading ? undefined : showFailedList}
+                    disabled={failedListLoading}
+                    title="Show failed PDF files"
+                  >
+                    {failedListLoading ? '…' : `${pdfIndexStats.failed} failed`}
+                  </button>
+                )}
+              </span>
             )}
           </>
         )}
@@ -421,15 +458,23 @@ export function LibraryPanel() {
       <div className="library-statsbar-actions">
         {scanStatus?.running ? (
           <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
-        ) : scanStatus?.pdf_running ? (
-          <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop PDF extraction">Stop</button>
         ) : (
           <>
+            {pdfIndexProgress?.running ? (
+              <>
+                <button className="library-scan-btn library-scan-stop" onClick={() => pdfIndexClient.stop()} title="Stop PDF indexing">Stop</button>
+              </>
+            ) : (
+              <button
+                className="library-scan-btn library-scan-icon"
+                onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+                title="Index all PDFs for text search"
+              >
+                <IconFileText size={14} />
+              </button>
+            )}
             <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
               <IconFolderSearch size={14} />
-            </button>
-            <button className="library-scan-btn library-scan-icon" onClick={() => databankStore.triggerPdfScan()} title="Extract text from PDFs for search">
-              <IconFileText size={14} />
             </button>
           </>
         )}
@@ -437,8 +482,41 @@ export function LibraryPanel() {
     </div>
   );
 
+  const failedModal = failedList !== null && (
+    <div className="library-modal-backdrop" onClick={() => setFailedList(null)}>
+      <div className="library-modal library-modal-wide" onClick={e => e.stopPropagation()}>
+        <div className="library-modal-title">Failed PDF Indexing ({failedList.length})</div>
+        {failedList.length === 0 ? (
+          <div className="library-modal-filename">No failed files.</div>
+        ) : (
+          <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {failedList.map(f => (
+              <div key={f.file_id} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 5 }}>
+                <div className="library-modal-filename" style={{ marginBottom: 2 }}>
+                  ID {f.file_id} — {f.status}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-secondary)', wordBreak: 'break-all', opacity: 0.8 }}>
+                  {f.error || '(no error message)'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="library-modal-actions">
+          {failedList.length > 0 && (
+            <button className="library-scan-btn" onClick={handleRetryFailed} disabled={retrying}>
+              {retrying ? 'Retrying…' : 'Retry failed'}
+            </button>
+          )}
+          <button className="library-scan-btn" onClick={() => setFailedList(null)}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="library-panel">
+      {failedModal}
       {/* Tabs + inline DB/Live pill (row 1) */}
       <div className="library-tabs-row">
         <div className="library-tabs">

@@ -5,6 +5,10 @@ import { libraryCache } from './library-cache';
 import { updateStore } from './update-store';
 import { boardStore } from './board-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from './fetch-with-cloud-retry';
+import { pdfIndexClient } from '../pdf/pdf-index-client';
+import type { PdfIndexProgress, PdfIndexStats } from '../pdf/pdf-index-client';
+
+export type { PdfIndexProgress, PdfIndexStats };
 
 /** Are we running inside Electron with library APIs available? */
 export function isElectron(): boolean {
@@ -584,6 +588,7 @@ class DatabankStore extends Emitter {
       // (which this method is replacing).
       await this.loadConfig();
       this.checkScanStatus();
+      void this.fetchPdfIndexStats();
 
       const recentIds = this._recentItems
         .map(r => r.fileId)
@@ -750,6 +755,48 @@ class DatabankStore extends Emitter {
 
   private _scanPollTimer: ReturnType<typeof setInterval> | null = null;
 
+  // ── PDF index polling ───────────────────────────────────────────────
+  private _pdfIndexTimer: ReturnType<typeof setInterval> | null = null;
+  _pdfIndexProgress: PdfIndexProgress | null = null;
+  _pdfIndexStats: PdfIndexStats | null = null;
+
+  startPdfIndexPolling() {
+    this._stopPdfIndexPolling();
+    const tick = async () => {
+      const [progress, stats] = await Promise.all([
+        pdfIndexClient.progress(),
+        pdfIndexClient.stats(),
+      ]);
+      this._pdfIndexProgress = progress;
+      this._pdfIndexStats = stats;
+      this.notify();
+      if (this._pdfIndexProgress && !this._pdfIndexProgress.running) {
+        this._stopPdfIndexPolling();
+      }
+    };
+    void tick();
+    this._pdfIndexTimer = setInterval(tick, 1500);
+  }
+
+  _stopPdfIndexPolling() {
+    if (this._pdfIndexTimer) {
+      clearInterval(this._pdfIndexTimer);
+      this._pdfIndexTimer = null;
+    }
+  }
+
+  async fetchPdfIndexStats(): Promise<void> {
+    const [progress, stats] = await Promise.all([
+      pdfIndexClient.progress(),
+      pdfIndexClient.stats(),
+    ]);
+    this._pdfIndexProgress = progress;
+    this._pdfIndexStats = stats;
+    this.notify();
+    // If already running at startup, start polling
+    if (progress?.running) this.startPdfIndexPolling();
+  }
+
   async triggerFileScan(): Promise<void> {
     log.scan.log('File scan: starting...');
     this._scanStatus = { running: true, scanned: 0, total: 0, added: 0, updated: 0, deleted: 0, errors: 0, duration_ms: 0 };
@@ -770,12 +817,6 @@ class DatabankStore extends Emitter {
       await this.apiFetch<ScanStatus>('/api/databank/scan', { method: 'POST' });
       this._startScanPolling();
     }
-  }
-
-  async triggerPdfScan(): Promise<void> {
-    log.scan.log('PDF extraction: starting...');
-    await this.apiFetch<ScanStatus>('/api/databank/scan/pdf', { method: 'POST' });
-    this._startScanPolling();
   }
 
   async stopScan(): Promise<void> {

@@ -13,6 +13,30 @@ export interface IndexStatus {
   page_count?: number;
 }
 
+export interface PdfIndexProgress {
+  running: boolean;
+  total: number;
+  done: number;
+  errors: number;
+  current_file: string;
+  started_at: string;
+}
+
+export interface PdfIndexStats {
+  indexed: number;
+  empty: number;
+  failed: number;
+  pending: number;
+  indexing: number;
+  pages: number;
+}
+
+export interface PdfIndexFailedEntry {
+  file_id: number;
+  status: string;
+  error: string;
+}
+
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T | null> {
   try {
     const res = await fetch(url, init);
@@ -29,7 +53,8 @@ export const pdfIndexClient = {
   status: (fileId: number) => jfetch<IndexStatus>(`/api/pdfindex/status/${fileId}`),
   run: () => jfetch(`/api/pdfindex/run`, { method: 'POST' }),
   stop: () => jfetch(`/api/pdfindex/stop`, { method: 'POST' }),
-  progress: () => jfetch(`/api/pdfindex/progress`),
+  progress: () => jfetch<PdfIndexProgress>(`/api/pdfindex/progress`),
+  stats: () => jfetch<PdfIndexStats>(`/api/pdfindex/stats`),
   reindex: (scope = 'all') =>
     jfetch(`/api/pdfindex/reindex`, {
       method: 'POST',
@@ -37,7 +62,7 @@ export const pdfIndexClient = {
       body: JSON.stringify({ scope }),
     }),
   reindexWatermark: () => jfetch(`/api/pdfindex/reindex-watermark`, { method: 'POST' }),
-  failed: () => jfetch<{ file_id: number; error: string }[]>(`/api/pdfindex/failed`),
+  failed: () => jfetch<PdfIndexFailedEntry[]>(`/api/pdfindex/failed`),
   priorityIndex: (fileId: number) =>
     jfetch(`/api/pdfindex/files/${fileId}/index`, { method: 'POST' }),
 };
