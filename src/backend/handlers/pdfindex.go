@@ -90,6 +90,18 @@ func (h *PdfIndexHandler) Reindex(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"reset": n, "running": true})
 }
 
+// POST /api/pdfindex/reindex-watermark — reset all terminal rows to pending +
+// run so newly-added watermark terms are applied to previously-indexed files.
+func (h *PdfIndexHandler) ReindexWatermark(w http.ResponseWriter, r *http.Request) {
+	n, err := h.db.ResetForReindex("all")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = h.ix.Run()
+	writeJSON(w, map[string]interface{}{"reset": n, "running": true})
+}
+
 // POST /api/pdfindex/files/{id}/index — priority enqueue (backend fallback path)
 func (h *PdfIndexHandler) PriorityIndex(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)

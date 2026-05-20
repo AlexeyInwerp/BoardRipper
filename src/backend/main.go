@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/json"
+
 	"boardripper/boarddb"
 	"boardripper/databank"
 	"boardripper/handlers"
@@ -242,6 +244,7 @@ func main() {
 			mux.HandleFunc("POST /api/pdfindex/stop", write(pdfIdxHandler.Stop))
 			mux.HandleFunc("GET /api/pdfindex/progress", read(pdfIdxHandler.ProgressEndpoint))
 			mux.HandleFunc("POST /api/pdfindex/reindex", write(pdfIdxHandler.Reindex))
+				mux.HandleFunc("POST /api/pdfindex/reindex-watermark", write(pdfIdxHandler.ReindexWatermark))
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/index", write(pdfIdxHandler.PriorityIndex))
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/begin", write(pdfIdxHandler.Begin))
 			mux.HandleFunc("PUT /api/pdfindex/files/{id}/pages", pdfIdxHandler.Pages)
@@ -360,5 +363,17 @@ func main() {
 	}
 }
 
-// loadWatermarkTerms is replaced by a real implementation in a later task.
-func loadWatermarkTerms(db *databank.DB) []string { return nil }
+// loadWatermarkTerms reads the pdf_watermark_terms config key (a JSON array of
+// strings) and returns the parsed slice. Returns nil when the key is absent,
+// empty, or unparseable — the indexer treats nil as "no filtering".
+func loadWatermarkTerms(db *databank.DB) []string {
+	raw, err := db.GetConfig("pdf_watermark_terms")
+	if err != nil || raw == "" {
+		return nil
+	}
+	var terms []string
+	if err := json.Unmarshal([]byte(raw), &terms); err != nil {
+		return nil
+	}
+	return terms
+}

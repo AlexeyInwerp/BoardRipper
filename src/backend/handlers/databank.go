@@ -33,6 +33,7 @@ var allowedConfigKeys = map[string]bool{
 	"sync_last_run_bytes":   true,
 	"sync_last_run_exit":    true,
 	"sync_last_run_message": true,
+	"pdf_watermark_terms":   true,
 }
 
 // DatabankHandler serves all /api/databank/* endpoints.
