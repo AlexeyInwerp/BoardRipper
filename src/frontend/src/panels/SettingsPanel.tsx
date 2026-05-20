@@ -546,12 +546,16 @@ function AutoScanToggle() {
 // ---- Database info section ----
 
 function DatabaseInfoSection() {
-  const { stats, scanStatus, backendAvailable, electronMode, pdfIndexStats } = useDatabank();
+  const { stats, scanStatus, backendAvailable, electronMode, pdfIndexStats, pdfIndexProgress } = useDatabank();
   const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (!electronMode && backendAvailable) {
       databankStore.fetchStats();
+      // Refresh PDF-index stats + progress on open (one-shot stats at boot go
+      // stale otherwise). fetchPdfIndexStats also starts the 1.5s poll if a
+      // bulk index is currently running, so the indicator stays live.
+      databankStore.fetchPdfIndexStats();
     }
   }, [backendAvailable, electronMode]);
 
@@ -603,6 +607,16 @@ function DatabaseInfoSection() {
           <div className="settings-row settings-toggle-row">
             <label className="settings-label">PDF pages indexed</label>
             <span>{pdfIndexStats?.pages ?? 0}</span>
+          </div>
+          <div className="settings-row settings-toggle-row">
+            <label className="settings-label">PDF index status</label>
+            <span>
+              {pdfIndexProgress?.running
+                ? `Indexing ${pdfIndexProgress.done}/${pdfIndexProgress.total}${pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}`
+                : pdfIndexStats
+                  ? `Idle — ${pdfIndexStats.indexed} indexed, ${pdfIndexStats.pending} pending`
+                  : '—'}
+            </span>
           </div>
           {(pdfIndexStats?.failed ?? 0) > 0 && (
             <div className="settings-row settings-toggle-row">
