@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var (
@@ -29,6 +31,7 @@ func IsWatermark(s string, terms []string) bool {
 }
 
 func stripSpace(s string) string {
+	s = norm.NFKC.String(s)
 	var b strings.Builder
 	for _, r := range s {
 		if !unicode.IsSpace(r) {

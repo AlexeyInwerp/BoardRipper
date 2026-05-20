@@ -419,7 +419,7 @@ function SyncErrorsCard() {
 function IndexingStatusCard() {
   const { scanStatus } = useDatabank();
   if (!scanStatus) return null;
-  const running = scanStatus.running || scanStatus.pdf_running;
+  const running = scanStatus.running;
 
   return (
     <div className="settings-section">
@@ -437,12 +437,6 @@ function IndexingStatusCard() {
             <DetailRow label="updated" value={fmtNum(scanStatus.updated)} />
             <DetailRow label="errors" value={fmtNum(scanStatus.errors)} />
             {scanStatus.last_file && <DetailRow label="current" value={scanStatus.last_file} />}
-            {scanStatus.pdf_running && (
-              <>
-                <DetailRow label="pdf phase" value={`${fmtNum(scanStatus.pdf_extracted)} / ${fmtNum(scanStatus.pdf_total)}`} />
-                {scanStatus.pdf_current && <DetailRow label="pdf current" value={scanStatus.pdf_current} />}
-              </>
-            )}
           </>
         )}
         {!running && scanStatus.completed_at && (

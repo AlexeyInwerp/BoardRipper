@@ -867,7 +867,7 @@ function compactNumber(n: number): string {
 }
 
 function LibraryStats() {
-  const { stats, scanStatus, libraryPath, backendAvailable } = useDatabank();
+  const { stats, scanStatus, libraryPath, backendAvailable, pdfIndexStats } = useDatabank();
   if (!backendAvailable) {
     return (
       <p className="home-card-empty">
@@ -882,14 +882,14 @@ function LibraryStats() {
       </p>
     );
   }
-  const scanning = scanStatus?.running || scanStatus?.pdf_running;
+  const scanning = scanStatus?.running;
   return (
     <div className="home-stats">
       <div className="home-stats-row">
         <span><strong>{compactNumber(stats.boards)}</strong> boards</span>
         <span><strong>{compactNumber(stats.pdfs)}</strong> PDFs</span>
         <span><strong>{compactNumber(stats.bindings)}</strong> bindings</span>
-        <span><strong>{compactNumber(stats.pdf_pages)}</strong> PDF pages indexed</span>
+        <span><strong>{compactNumber(pdfIndexStats?.pages ?? 0)}</strong> PDF pages indexed</span>
       </div>
       {libraryPath && (
         <div className="home-stats-path" title={libraryPath}>

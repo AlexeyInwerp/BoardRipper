@@ -546,7 +546,7 @@ function AutoScanToggle() {
 // ---- Database info section ----
 
 function DatabaseInfoSection() {
-  const { stats, scanStatus, backendAvailable, electronMode } = useDatabank();
+  const { stats, scanStatus, backendAvailable, electronMode, pdfIndexStats } = useDatabank();
   const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
@@ -557,7 +557,7 @@ function DatabaseInfoSection() {
 
   if (electronMode || !backendAvailable) return null;
 
-  const isRunning = scanStatus?.running || scanStatus?.pdf_running;
+  const isRunning = scanStatus?.running;
 
   const formatDate = (ts: number) => {
     if (!ts) return 'Never';
@@ -602,12 +602,12 @@ function DatabaseInfoSection() {
           </div>
           <div className="settings-row settings-toggle-row">
             <label className="settings-label">PDF pages indexed</label>
-            <span>{stats.pdf_pages}</span>
+            <span>{pdfIndexStats?.pages ?? 0}</span>
           </div>
-          {stats.pdf_errors > 0 && (
+          {(pdfIndexStats?.failed ?? 0) > 0 && (
             <div className="settings-row settings-toggle-row">
-              <label className="settings-label">PDF scan errors</label>
-              <span>{stats.pdf_errors}</span>
+              <label className="settings-label">PDF index errors</label>
+              <span>{pdfIndexStats!.failed}</span>
             </div>
           )}
           <div className="settings-row settings-toggle-row">
@@ -617,10 +617,6 @@ function DatabaseInfoSection() {
           <div className="settings-row settings-toggle-row">
             <label className="settings-label">Last file scan</label>
             <span>{formatDate(stats.last_file_scan_at)}</span>
-          </div>
-          <div className="settings-row settings-toggle-row">
-            <label className="settings-label">Last PDF scan</label>
-            <span>{formatDate(stats.last_pdf_scan_at)}</span>
           </div>
         </>
       )}

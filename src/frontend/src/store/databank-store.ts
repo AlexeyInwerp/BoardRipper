@@ -105,23 +105,14 @@ export interface ScanStatus {
   last_file?: string;
   completed_at?: number;
   pdf_completed_at?: number;
-  // Phase 2: PDF text extraction
-  pdf_running?: boolean;
-  pdf_extracted?: number;
-  pdf_total?: number;
-  pdf_errors?: number;
-  pdf_current?: string;
 }
 
 export interface DatabankStats {
   boards: number;
   pdfs: number;
   bindings: number;
-  pdf_pages: number;
-  pdf_errors: number;
   db_size_bytes: number;
   last_file_scan_at: number;
-  last_pdf_scan_at: number;
 }
 
 export interface BrowseEntry {
@@ -546,7 +537,7 @@ class DatabankStore extends Emitter {
       this._scanStatus = status;
       this._persistScanStatus();
       this.notify();
-      if (status.running || status.pdf_running) {
+      if (status.running) {
         log.scan.log('Resuming scan polling — scan still in progress');
         this._startScanPolling();
       }
@@ -847,13 +838,12 @@ class DatabankStore extends Emitter {
         const prev = this._scanStatus;
         const changed = !prev
           || prev.scanned !== status.scanned || prev.running !== status.running
-          || prev.pdf_running !== status.pdf_running || prev.pdf_extracted !== status.pdf_extracted
           || prev.phase !== status.phase;
         this._scanStatus = status;
         this._persistScanStatus();
         if (changed) this.notify();
 
-        // File scan done — fetch files once (even if PDF extraction still running)
+        // File scan done — fetch files once
         if (!status.running && !this._filesFetchedAfterScan) {
           this._filesFetchedAfterScan = true;
           await this.fetchFiles();
@@ -861,10 +851,9 @@ class DatabankStore extends Emitter {
           this.notify();
         }
 
-        // Stop polling only when both file scan and PDF extraction are done
-        if (!status.running && !status.pdf_running) {
+        // Stop polling when file scan is done
+        if (!status.running) {
           this._stopScanPolling();
-          // Final refresh in case PDF extraction changed something
           if (this._filesFetchedAfterScan) {
             this.notify();
           }

@@ -12,6 +12,9 @@ func TestIsWatermark(t *testing.T) {
 		{"WWW.ChinaFix.com", true},
 		{"STM32F407", false},
 		{"see vinafix forum", true},
+		// NFKC: ligature ﬁ (U+FB01) must decompose to "fi" before matching
+		{"vinaﬁx", true},
+		{"VINAFIX", true},
 	}
 	for _, c := range cases {
 		if got := IsWatermark(c.in, terms); got != c.want {

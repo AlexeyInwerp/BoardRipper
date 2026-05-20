@@ -1525,13 +1525,6 @@ function SearchResultsView({ results, onOpenFile }: {
             <span className="library-file-icon library-icon-pdf">P</span>
             <span className="library-search-result-file">{r.filename}</span>
             <span className="library-search-result-page">p{r.page_num}</span>
-            <button
-              className="library-dump-btn"
-              onClick={(e) => { e.stopPropagation(); window.open(`/api/databank/files/${r.file_id}/dump`, '_blank'); }}
-              title="Dump extracted text (debug)"
-            >
-              dump
-            </button>
           </div>
           {r.snippet && (
             <div className="library-search-result-snippet">
