@@ -16,7 +16,7 @@
 import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
-import { FmtVer, LayerClass } from './allegro-types';
+import { BoardUnits, FmtVer, LayerClass } from './allegro-types';
 import type {
   Blk0x04NetAssign,
   Blk0x05Track,
@@ -40,11 +40,31 @@ import { log } from '../../store/log-store';
 
 const dbg = log.parser;
 
+/** Mils per one board unit, for converting raw Allegro coords to internal mils. */
+function milsPerUnit(units: BoardUnits): number {
+  switch (units) {
+    case BoardUnits.MILS:        return 1;
+    case BoardUnits.INCHES:      return 1000;
+    case BoardUnits.MILLIMETERS: return 1 / 0.0254;     // 39.3700787…
+    case BoardUnits.CENTIMETERS: return 10 / 0.0254;    // 393.700787…
+    case BoardUnits.MICROMETERS: return 0.001 / 0.0254; // 0.0393700787…
+    default:                     return 1;
+  }
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export function assembleBoard(db: AllegroDb): BoardData {
   const ver = db.header.fmtVer;
-  const div = db.header.unitsDivisor || 1;
+  // Every coordinate/dimension downstream is converted to internal mils via
+  // `value / div`. Allegro stores raw integers in (boardUnit / unitsDivisor)
+  // steps, so the divisor that lands us in mils is `unitsDivisor / milsPerUnit`.
+  // For MILS files (the common case) milsPerUnit=1, so div == unitsDivisor and
+  // nothing changes. Metric files (mm/µm) and inch files need the unit scale or
+  // the whole board comes out wrong-sized (e.g. a mm board read as mils is
+  // 39.37× too small). Verified: Nvidia_5000M_Dell.brd ships UNITS=mm.
+  const rawDiv = db.header.unitsDivisor || 1;
+  const div = rawDiv / milsPerUnit(db.header.boardUnits);
 
   // Build net assignment map first — needed by pins, traces, vias
   const netAssignMap = buildNetAssignMap(db);
