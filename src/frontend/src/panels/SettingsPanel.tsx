@@ -613,12 +613,23 @@ function DatabaseInfoSection() {
             <label className="settings-label">PDF index status</label>
             <span>
               {pdfIndexProgress?.running
-                ? `Indexing ${pdfIndexProgress.done}/${pdfIndexProgress.total}${pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}${fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}`
+                ? `Indexing ${pdfIndexProgress.done}/${pdfIndexProgress.total}`
+                  + (pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : '')
+                  + (pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : '')
+                  + (fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : '')
                 : pdfIndexStats
                   ? `Idle — ${pdfIndexStats.indexed} indexed, ${pdfIndexStats.pending} pending`
                   : '—'}
             </span>
           </div>
+          {pdfIndexProgress?.running && pdfIndexProgress.current_file && (
+            <div className="settings-row settings-toggle-row">
+              <label className="settings-label">Current file</label>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%', direction: 'rtl' }} title={pdfIndexProgress.current_file}>
+                {pdfIndexProgress.current_file}
+              </span>
+            </div>
+          )}
           {(pdfIndexStats?.failed ?? 0) > 0 && (
             <div className="settings-row settings-toggle-row">
               <label className="settings-label">PDF index errors</label>

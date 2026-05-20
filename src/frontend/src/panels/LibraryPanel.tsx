@@ -454,6 +454,7 @@ export function LibraryPanel() {
             {pdfIndexProgress?.running && (
               <span className="library-indexing" style={{ marginLeft: 8 }}>
                 Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
+                {pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : ''}
                 {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
                 {fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}
               </span>

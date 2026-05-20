@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,12 +36,14 @@ type Extractor interface {
 
 // Progress is a snapshot of the current sweep's progress.
 type Progress struct {
-	Running     bool   `json:"running"`
-	Total       int64  `json:"total"`
-	Done        int64  `json:"done"`
-	Errors      int64  `json:"errors"`
-	CurrentFile string `json:"current_file"`
-	StartedAt   int64  `json:"started_at"`
+	Running       bool   `json:"running"`
+	Total         int64  `json:"total"`
+	Done          int64  `json:"done"`
+	Errors        int64  `json:"errors"`
+	CurrentFile   string `json:"current_file"`
+	StartedAt     int64  `json:"started_at"`
+	Workers       int    `json:"workers"`        // configured pool size (max parallel extractors)
+	ActiveWorkers int    `json:"active_workers"` // workers currently extracting (live)
 }
 
 // Indexer runs autonomous bulk indexing with a priority queue for on-demand
@@ -57,6 +60,7 @@ type Indexer struct {
 	cancel   context.CancelFunc
 	prog     Progress
 	priority chan int64
+	active   atomic.Int64 // workers currently inside the extract+store path
 }
 
 // NewIndexer creates a new Indexer. workers ≥ 1.
@@ -87,7 +91,10 @@ func (ix *Indexer) Enqueue(fileID int64) {
 func (ix *Indexer) Progress() Progress {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
-	return ix.prog
+	p := ix.prog
+	p.Workers = ix.workers
+	p.ActiveWorkers = int(ix.active.Load())
+	return p
 }
 
 // Stop cancels the running sweep. No-op if not running.
@@ -237,7 +244,10 @@ func (ix *Indexer) process(f PdfFile) {
 	}
 	// No per-file heartbeat needed: the engine enforces a 2-minute per-file kill,
 	// well under the 10-minute watchdog reclaim window.
+	// Count this worker as actively extracting (live thread-count for the UI).
+	ix.active.Add(1)
 	defer func() {
+		ix.active.Add(-1)
 		ix.mu.Lock()
 		ix.prog.Done++
 		ix.mu.Unlock()

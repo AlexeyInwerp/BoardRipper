@@ -20,6 +20,8 @@ export interface PdfIndexProgress {
   errors: number;
   current_file: string;
   started_at: number; // unix seconds (backend time.Now().Unix())
+  workers: number; // configured pool size (max parallel extractors)
+  active_workers: number; // workers currently extracting (live)
 }
 
 export interface PdfIndexStats {
