@@ -68,7 +68,7 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
-const schemaVersion = 9
+const schemaVersion = 10
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -129,6 +129,11 @@ func (db *DB) migrate() error {
 			return fmt.Errorf("v9: %w", err)
 		}
 	}
+	if ver < 10 {
+		if err := db.migrateV10(); err != nil {
+			return fmt.Errorf("v10: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -157,7 +162,8 @@ func (db *DB) migrateV1() error {
 			part_count    INTEGER,
 			net_count     INTEGER,
 			donor_pool    INTEGER NOT NULL DEFAULT 0,
-			has_preview   INTEGER NOT NULL DEFAULT 0
+			has_preview   INTEGER NOT NULL DEFAULT 0,
+			content_hash  BLOB
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS bindings (
@@ -187,6 +193,7 @@ func (db *DB) migrateV1() error {
 		`CREATE INDEX IF NOT EXISTS idx_files_board_number ON files(board_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_manufacturer ON files(manufacturer)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_donor ON files(donor_pool)`,
+		`CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash) WHERE content_hash IS NOT NULL`,
 	}
 
 	for _, stmt := range stmts {
@@ -480,6 +487,37 @@ func (db *DB) migrateV9() error {
 		return err
 	}
 
+	return tx.Commit()
+}
+
+func (db *DB) migrateV10() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// content_hash is already present on fresh installs (added to V1 CREATE TABLE).
+	// Only ALTER on upgrade paths where the column doesn't exist yet.
+	var colCount int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('files') WHERE name='content_hash'`).Scan(&colCount); err != nil {
+		return fmt.Errorf("check content_hash column: %w", err)
+	}
+	if colCount == 0 {
+		if _, err := tx.Exec(`ALTER TABLE files ADD COLUMN content_hash BLOB`); err != nil {
+			return fmt.Errorf("exec %q: %w", "ALTER TABLE files ADD COLUMN content_hash BLOB"[:40], err)
+		}
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash) WHERE content_hash IS NOT NULL`); err != nil {
+		return fmt.Errorf("exec %q: %w", "CREATE INDEX IF NOT EXISTS idx_files_content_hash ON"[:40], err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 10); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

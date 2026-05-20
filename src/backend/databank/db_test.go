@@ -235,6 +235,28 @@ func TestSearchMeta(t *testing.T) {
 	}
 }
 
+func TestMigrateV10ContentHash(t *testing.T) {
+	db, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	var cnt int
+	err = db.writer.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('files') WHERE name='content_hash'`).Scan(&cnt)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	if cnt != 1 {
+		t.Errorf("files.content_hash column missing")
+	}
+	var ver int
+	db.writer.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&ver)
+	if ver < 10 {
+		t.Errorf("schema version = %d, want >= 10", ver)
+	}
+}
+
 func TestMigratePdfIndexV1(t *testing.T) {
 	// Open takes a dataDir (not a full db path), so pass TempDir directly.
 	dir := t.TempDir()
