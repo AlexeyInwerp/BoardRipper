@@ -62,6 +62,19 @@ function footprintSide(db: AllegroDb, fpInst: Blk0x2DFootprintInst): 'top' | 'bo
   return fpInst.layer === 0 ? 'top' : 'bottom';
 }
 
+/**
+ * True if `key` references a 0x2B footprint definition.
+ *
+ * Placed board copper (vias, tracks) carries a `netPtr`/`netAssignment` that
+ * resolves to a 0x04 NET_ASSIGN (or 0 when unconnected). Footprint-library
+ * via-in-pad and copper templates instead point at their parent 0x2B footprint
+ * definition and store footprint-LOCAL coords, so they render as a phantom
+ * grid at the board origin. Use this to drop those template records.
+ */
+function pointsToFootprintDef(db: AllegroDb, key: number): boolean {
+  return key !== 0 && !!db.getBlockAs<Blk0x2BFootprintDef>(key, 0x2B);
+}
+
 /** Mils per one board unit, for converting raw Allegro coords to internal mils. */
 function milsPerUnit(units: BoardUnits): number {
   switch (units) {
@@ -662,6 +675,11 @@ function extractTraces(
     // Only ETCH-class tracks (actual copper traces)
     if (track.layer.classCode !== LayerClass.ETCH) continue;
 
+    // Skip footprint-definition copper templates (see pointsToFootprintDef) —
+    // local-coord segments that otherwise render as a phantom cluster at the
+    // origin (340 such tracks on Nvidia_5000M_Dell.brd).
+    if (pointsToFootprintDef(db, track.netAssignment)) continue;
+
     // Resolve net name via netAssignment → net assign map
     const net = netAssignMap.get(track.netAssignment) ?? '';
 
@@ -1007,14 +1025,10 @@ function extractVias(
     if (blk.blockType !== 0x33) continue;
     const via = blk as Blk0x33Via;
 
-    // Skip footprint-definition via-in-pad templates. These library records
-    // store footprint-LOCAL coords (so they land on a 0.8mm grid at the board
-    // origin, off-board) and their netPtr references the parent footprint
-    // definition (0x2B) instead of a 0x04 net assignment. Placed routing vias
-    // point at a 0x04 (or 0). Rendering the templates dumps a phantom BGA-style
-    // via grid at the origin — e.g. ~2.8k vias (16 GDDR chips × 170 balls) on
-    // Nvidia_5000M_Dell.brd, and smaller clusters on Compal LA-H271P / Dell XPS.
-    if (via.netPtr !== 0 && db.getBlockAs<Blk0x2BFootprintDef>(via.netPtr, 0x2B)) continue;
+    // Skip footprint-definition via-in-pad templates (see pointsToFootprintDef).
+    // On Nvidia_5000M_Dell.brd these are ~2.8k vias (16 GDDR chips × 170 balls)
+    // dumped as a phantom BGA grid at the origin; also Compal LA-H271P / Dell XPS.
+    if (pointsToFootprintDef(db, via.netPtr)) continue;
 
     const x = via.coordsX / div;
     const y = via.coordsY / div;
