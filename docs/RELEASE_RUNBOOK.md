@@ -159,6 +159,79 @@ The bridge is complete. From v0.19.1 onward, only the new pipeline is used:
 2. github.com → repo Settings → Secrets and variables → Actions → remove old `GH_TOKEN`/`GITHUB_PAT` secrets.
 3. **Delete the legacy maintainer PAT after the public flip.** github.com → Developer settings → Personal access tokens → revoke any fine-grained token still scoped to `BoardRipper` (it was previously needed to fetch updates from a private repo; once the repo is public, no token is required for cloning or pulling images). The deploy scripts no longer read `github_token:` from `deploy.conf`.
 
+## Schema migrations
+
+### PDF index schema v0→v1 (pdf-index branch → v0.31.0)
+
+This migration ships the embedded pdfium-based text extraction engine and
+replaces the old in-databank PDF text storage with a dedicated side-car
+database. It is a **forward-only, breaking schema change** — old images cannot
+read `pdfindex.db` and new images no longer write to the old
+`pdf_pages`/`pdf_text` columns in `databank.db`.
+
+#### Before upgrading
+
+1. Stop the running container:
+   ```bash
+   docker compose stop boardripper
+   ```
+2. Back up `databank.db` (contains the existing library index):
+   ```bash
+   cp -a /volume1/data/boardripper/databank.db \
+         /volume1/data/boardripper/databank.db.bak-v0.30.x
+   ```
+   Replace `/volume1/data/boardripper/` with your actual `DATA_DIR` bind-mount
+   path. The backup is read-only and survives the upgrade; keep it for at least
+   one week in case you need to roll back.
+
+#### What the migration does on first boot
+
+- **`databank.db`:** drops the legacy `pdf_pages` and `pdf_text` tables (if
+  present) and creates the new `pdf_donors` table used for PDF↔board binding
+  promotion. Existing board and file metadata rows are untouched.
+- **`pdfindex.db`:** a NEW separate SQLite database is created at
+  `/data/pdfindex.db`. All PDF files are initially in `pending` state and will
+  be re-indexed by the client-side fast-path (pdf.js extraction) or the
+  backend wazero/pdfium engine as users open PDFs.
+
+No data is migrated from the old columns — re-indexing happens automatically
+and progressively. The Settings → Library panel shows indexing progress.
+
+#### Image size and memory impact
+
+- **Image size:** +~5 MB. The pdfium.wasm binary is embedded in the Go binary
+  via `go:embed`; no external download required at runtime.
+- **Docker base image:** `golang:1.25-alpine` (bumped from 1.24). The scratch
+  final stage is unchanged; the bump only affects build time.
+- **Memory:** the wazero pdfium pool keeps one warm instance per worker. The
+  default pool size is controlled by `PDFINDEX_POOL_MAX` (default: `2`).
+  Raise the container memory limit from 512 M to **1024 M** (`mem_limit` in
+  `docker-compose.yml`) before upgrading. On a NAS with limited RAM, set
+  `PDFINDEX_POOL_MAX=1` in the compose `environment:` block to halve the
+  extraction memory footprint:
+  ```yaml
+  environment:
+    - PDFINDEX_POOL_MAX=1
+  mem_limit: 1024m
+  ```
+
+#### Rollback
+
+The old image does not know about `pdfindex.db` and will simply ignore it.
+`databank.db.bak-v0.30.x` can be renamed back if the dropped
+`pdf_pages`/`pdf_text` columns are needed for forensics. From the user's
+perspective, rolling back means PDF search returns 0 results until the next
+upgrade — `pdfindex.db` is untouched and will be picked up again when
+upgrading forward.
+
+#### Version note
+
+The new `pdfindex.db` constitutes a schema change that warrants a **minor
+version bump** (e.g. v0.30.x → **v0.31.0**). Do NOT ship this as a patch
+release. Bump the version in the release step as normal; `release.sh` handles
+the `package.json` + counter sync. Do not perform the bump here — it belongs
+in the release step.
+
 ## Recovery
 
 - **Bad release shipped:** the in-container updater auto-rolls-back if `/api/health` fails for 60s. For irreversible damage, cut `vX.Y.Z+1` immediately with the fix.
