@@ -211,7 +211,7 @@ export function LibraryPanel() {
                 const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
                 boardStore.addPdf(pdfObj);
                 boardStore.addPdfBinding(boardStore.activeTabId!, pdfObj.name);
-                await pdfStore.loadFile(pdfObj);
+                await pdfStore.loadFile(pdfObj, pdfFile.id);
                 ensurePdfPanel(pdfObj.name);
               } catch (err) {
                 log.ui.error('Failed to load bound PDF:', err);
@@ -269,7 +269,7 @@ export function LibraryPanel() {
             log.ui.error('Failed to promote match to DB binding:', err);
           }
         }
-        await pdfStore.loadFile(fileObj);
+        await pdfStore.loadFile(fileObj, file.id);
         ensurePdfPanel(fileObj.name);
         pdfStore.switchTo(fileObj.name);
         // Pre-populate PDF viewer search with library search query

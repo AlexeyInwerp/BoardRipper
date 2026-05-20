@@ -5,6 +5,7 @@ import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, 
 import { boardCache } from './board-cache';
 import { Emitter } from './emitter';
 import { log } from './log-store';
+import { ensureIndexed } from '../pdf/pdf-index-client';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
 // TS lib doesn't ship the Stage-3 prototype additions yet; declare them for the typechecker.
@@ -431,6 +432,9 @@ interface PdfDocument {
   searchSource: 'user' | 'lookup' | null;
   /** Component name pending double-click confirmation — shown as tooltip when user search would be overwritten. */
   lookupHint: string | null;
+  /** Databank file ID when the PDF was opened from the library. Undefined for
+   *  ad-hoc opens (drag-drop). Used to trigger the fast-path backend index. */
+  fileId?: number;
 }
 
 /** Follow target: a location to zoom to without highlighting */
@@ -540,8 +544,10 @@ class PdfStore extends Emitter {
     this.notify();
   }
 
-  /** Load a PDF into memory (or switch to it if already loaded). */
-  async loadFile(file: File) {
+  /** Load a PDF into memory (or switch to it if already loaded).
+   *  Pass `fileId` when the PDF originates from the databank library so the
+   *  backend full-text index can be updated via the fast-path after extraction. */
+  async loadFile(file: File, fileId?: number) {
     // Already loaded? Just switch.
     if (this._documents.has(file.name)) {
       this._activeFileName = file.name;
@@ -583,6 +589,7 @@ class PdfStore extends Emitter {
         activeMatchIndicesCache: new Set(),
         matchesByPage: new Map(),
         bookmarks: loadBookmarks(file.name),
+        fileId,
       };
       this._documents.set(file.name, pdfDoc);
       this._activeFileName = file.name;
@@ -620,6 +627,13 @@ class PdfStore extends Emitter {
             }))
         );
         this.notify();
+        // Fast-path index even on a cache hit: ensureIndexed checks status
+        // first and is a no-op if the backend already has this file indexed.
+        if (pdfDoc.fileId != null) {
+          void ensureIndexed(pdfDoc.fileId, () =>
+            pdfDoc.textPages.map((page) => page.map((item) => item.str)),
+          );
+        }
         return;
       }
     } catch { /* cache miss — fall through to extraction */ }
@@ -680,6 +694,15 @@ class PdfStore extends Emitter {
     // Persist to IndexedDB for next time.
     if (pdfDoc.textPages.length === pdfDoc.pageCount) {
       boardCache.putPdfText(pdfDoc.fileName, pdfDoc.fileSize, pdfDoc.fileLastModified, pdfDoc.textPages).catch(() => {});
+
+      // Trigger fast-path backend indexing when the doc has a databank file ID
+      // (i.e. it was opened from the library). Ad-hoc opens (drag-drop) have no
+      // fileId and are skipped — the backend never gets those files anyway.
+      if (pdfDoc.fileId != null) {
+        void ensureIndexed(pdfDoc.fileId, () =>
+          pdfDoc.textPages.map((page) => page.map((item) => item.str)),
+        );
+      }
     }
 
     // Watermark sizes are computed lazily per page on first render — the
@@ -790,6 +813,8 @@ class PdfStore extends Emitter {
     this.notify();
   }
 
+  // INVARIANT: in-document search runs entirely on in-memory textPages and must
+  // NEVER depend on the backend pdfindex state. See docs/PDF_VIEWER.md#ctrl-f.
   searchText(query: string, source: 'user' | 'lookup' = 'user') {
     const active = this._active;
     if (!active) return;
