@@ -79,6 +79,8 @@ export interface SearchResult {
   path: string;
   page_num: number;
   snippet: string;
+  /** True when the PDF file is in the donor pool (backend v2 field). */
+  is_donor?: boolean;
   board_bindings: {
     board_file_id: number;
     board_filename: string;
@@ -132,7 +134,7 @@ export interface BrowseResult {
 }
 
 export type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
-export type ViewMode = 'history' | 'metadata' | 'folders' | 'model';
+export type ViewMode = 'history' | 'metadata' | 'folders' | 'model' | 'search';
 
 /** Entry in the recently-opened history */
 export interface RecentItem {
@@ -848,6 +850,16 @@ class DatabankStore extends Emitter {
     const data = await this.apiFetch<{ results: SearchResult[] }>(`/api/databank/search?${params}`);
     this._searchResults = data?.results || [];
     this.notify();
+  }
+
+  /** Full-text PDF search with optional scope filter.
+   *  Returns raw results — caller manages state. Does NOT mutate store
+   *  `_searchResults` so the old pdfSearchMode flow is unaffected. */
+  async searchPdfs(query: string, scope: 'all' | 'donor' = 'all'): Promise<SearchResult[]> {
+    if (!query.trim()) return [];
+    const params = new URLSearchParams({ q: query, scope });
+    const data = await this.apiFetch<{ results: SearchResult[] }>(`/api/databank/search?${params}`);
+    return data?.results ?? [];
   }
 
   async createBinding(

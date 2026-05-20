@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
-import type { DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, ViewMode } from '../store/databank-store';
+import type { DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
@@ -127,6 +127,22 @@ export function LibraryPanel() {
     return () => { if (_externalSearchSetter === setLocalSearch) _externalSearchSetter = null; };
   }, []);
   const [pdfSearchMode, setPdfSearchMode] = useState(false);
+
+  // PDF Search tab state
+  const [pdfQuery, setPdfQuery] = useState('');
+  const [pdfResults, setPdfResults] = useState<SearchResult[]>([]);
+  const [pdfSearching, setPdfSearching] = useState(false);
+  const runPdfSearch = useCallback(async () => {
+    if (!pdfQuery.trim()) return;
+    setPdfSearching(true);
+    try {
+      setPdfResults(await databankStore.searchPdfs(pdfQuery, 'all'));
+    } finally {
+      setPdfSearching(false);
+    }
+  }, [pdfQuery]);
+  const donorResults = useMemo(() => pdfResults.filter(r => r.is_donor), [pdfResults]);
+  const otherResults = useMemo(() => pdfResults.filter(r => !r.is_donor), [pdfResults]);
 
   // Debounced mirror of `localSearch` driving the actual filter pipeline. The
   // input itself uses `localSearch` so typing stays responsive; everything
@@ -290,6 +306,20 @@ export function LibraryPanel() {
     // more than the current binding-resolution Map lookup saves.
   }, [autoPdf, pdfSearchMode, searchQuery]);
 
+  /** Opens a PDF Search hit at its page, then fires in-document search
+   *  so the matching text is highlighted. Mirrors ContextMenu.doPdfSearch
+   *  timing: pdfStore.searchText is called synchronously after loadFile/switchTo
+   *  because pdf-store's searchText runs against already-loaded text pages. */
+  const handleOpenSearchHit = useCallback(async (file: DatabankFile, pageNum?: number) => {
+    await handleOpenFile(file, pageNum);
+    // Give the PDF panel a moment to activate before pushing the search query.
+    // 0 ms is enough for same-panel switches; 300 ms covers first-load latency.
+    const query = pdfQuery;
+    if (query.trim()) {
+      setTimeout(() => pdfStore.searchText(query, 'lookup'), 300);
+    }
+  }, [handleOpenFile, pdfQuery]);
+
   const handleSelectFile = useCallback((file: DatabankFile) => {
     databankStore.selectFile(file.id);
     databankStore.fetchFileDetail(file.id);
@@ -420,6 +450,13 @@ export function LibraryPanel() {
           >
             <IconFolder size={14} />
           </button>
+          <button
+            className={`library-tab ${viewMode === 'search' ? 'active' : ''}`}
+            onClick={() => handleSetViewMode('search')}
+            title="Search PDF text content"
+          >
+            PDF ⌕
+          </button>
         </div>
         {viewMode === 'folders' && (
           <div className="library-browse-pill" role="tablist" aria-label="Folder source">
@@ -526,7 +563,48 @@ export function LibraryPanel() {
 
       {/* Content */}
       <div className="library-content">
-        {pdfSearchMode && searchResults.length > 0 ? (
+        {viewMode === 'search' ? (
+          <div className="library-pdf-search">
+            <div className="library-search" style={{ borderBottom: 'none', padding: '6px 8px 4px' }}>
+              <input
+                className="library-search-input"
+                placeholder="Search PDF text (e.g. 10UF 25V)…"
+                value={pdfQuery}
+                onChange={e => setPdfQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') runPdfSearch(); }}
+              />
+              <button
+                className="library-search-btn"
+                onClick={runPdfSearch}
+                disabled={pdfSearching}
+              >
+                {pdfSearching ? '…' : 'Search'}
+              </button>
+              {pdfResults.length > 0 && (
+                <button
+                  className="library-search-clear"
+                  onClick={() => { setPdfResults([]); setPdfQuery(''); }}
+                  title="Clear"
+                >x</button>
+              )}
+            </div>
+            {donorResults.length > 0 && (
+              <details className="library-donor-spoiler" open>
+                <summary>Donors ({donorResults.length})</summary>
+                <SearchResultsView results={donorResults} onOpenFile={handleOpenSearchHit} />
+              </details>
+            )}
+            {otherResults.length > 0 && (
+              <SearchResultsView results={otherResults} onOpenFile={handleOpenSearchHit} />
+            )}
+            {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
+              <div className="library-empty">No results for "{pdfQuery}"</div>
+            )}
+            {pdfResults.length === 0 && !pdfQuery.trim() && (
+              <div className="library-empty">Enter a query and press Search or Enter</div>
+            )}
+          </div>
+        ) : pdfSearchMode && searchResults.length > 0 ? (
           <SearchResultsView results={searchResults} onOpenFile={handleOpenFile} />
         ) : loadStatus === 'loading' && files.length === 0 ? (
           <div className="library-empty">Loading library…</div>

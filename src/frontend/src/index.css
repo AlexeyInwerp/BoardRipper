@@ -4524,6 +4524,16 @@ html, body, #root {
   font-size: 10px;
 }
 
+/* PDF Search tab */
+.library-pdf-search { display: flex; flex-direction: column; min-height: 0; }
+.library-donor-spoiler { border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+.library-donor-spoiler > summary {
+  cursor: pointer; padding: 3px 8px; font-size: 11px;
+  color: var(--text-secondary); user-select: none; list-style: none;
+}
+.library-donor-spoiler > summary::before { content: '▶ '; font-size: 9px; }
+.library-donor-spoiler[open] > summary::before { content: '▼ '; }
+
 /* Preview Thumbnails */
 .library-preview-thumb {
   width: 28px;
