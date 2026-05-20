@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeFile(t *testing.T, dir, name string, data []byte) string {
@@ -46,5 +47,36 @@ func TestContentKeyLargeSampled(t *testing.T) {
 	hb, _ := ContentKey(b, int64(len(big)))
 	if bytes.Equal(ha, hb) {
 		t.Errorf("files differing in the head must have different keys")
+	}
+}
+
+func TestDedupRunnerAssignsHashes(t *testing.T) {
+	dir := t.TempDir()
+	db, _ := Open(dir)
+	defer db.Close()
+	same := []byte("hello duplicate content")
+	writeFile(t, dir, "x.pdf", same)
+	writeFile(t, dir, "y.pdf", same)
+	writeFile(t, dir, "z.pdf", []byte("unique-size-different"))
+	f1, _ := db.InsertFile(&FileRecord{Path: "x.pdf", Filename: "x.pdf", Extension: ".pdf", FileType: "pdf", Size: int64(len(same)), ModTime: 1})
+	f2, _ := db.InsertFile(&FileRecord{Path: "y.pdf", Filename: "y.pdf", Extension: ".pdf", FileType: "pdf", Size: int64(len(same)), ModTime: 1})
+	db.InsertFile(&FileRecord{Path: "z.pdf", Filename: "z.pdf", Extension: ".pdf", FileType: "pdf", Size: 21, ModTime: 1})
+
+	r := NewDedupRunner(db, func() string { return dir })
+	if err := r.Run(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && r.Progress().Running {
+		time.Sleep(20 * time.Millisecond)
+	}
+	h1, _ := db.ContentHashOf(f1)
+	h2, _ := db.ContentHashOf(f2)
+	if h1 == nil || !bytes.Equal(h1, h2) {
+		t.Errorf("identical files x,y must get equal content_hash")
+	}
+	s, _ := db.DedupStats()
+	if s.Groups != 1 || s.DuplicateFiles != 1 {
+		t.Errorf("stats = %+v, want 1 group / 1 duplicate", s)
 	}
 }

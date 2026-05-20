@@ -1,9 +1,15 @@
 package databank
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"log"
 	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // sampleChunk is the size of each sampled window (head/middle/tail).
@@ -74,4 +80,100 @@ func readFullAt(f *os.File, buf []byte, off int64) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// DedupProgress is the observable state of an in-progress DedupRunner sweep.
+type DedupProgress struct {
+	Running     bool   `json:"running"`
+	Total       int64  `json:"total"`
+	Done        int64  `json:"done"`
+	CurrentFile string `json:"current_file"`
+	StartedAt   int64  `json:"started_at"`
+}
+
+// DedupRunner executes an on-demand dedup pass: it hashes all size-colliding
+// files and writes their content_hash into the DB so duplicates can be surfaced.
+type DedupRunner struct {
+	db         *DB
+	scanRootFn func() string
+	mu         sync.Mutex
+	running    bool
+	cancel     context.CancelFunc
+	prog       DedupProgress
+}
+
+// NewDedupRunner creates a DedupRunner backed by db. scanRootFn returns the
+// library root used to resolve relative file paths from the DB.
+func NewDedupRunner(db *DB, scanRootFn func() string) *DedupRunner {
+	return &DedupRunner{db: db, scanRootFn: scanRootFn}
+}
+
+// Progress returns a snapshot of the current sweep state (safe for concurrent use).
+func (r *DedupRunner) Progress() DedupProgress {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prog
+}
+
+// Stop cancels a running sweep. It is a no-op if no sweep is in progress.
+func (r *DedupRunner) Stop() {
+	r.mu.Lock()
+	if r.cancel != nil {
+		r.cancel()
+	}
+	r.mu.Unlock()
+}
+
+// Run starts an async dedup sweep. If a sweep is already running it returns
+// immediately without starting a second one.
+func (r *DedupRunner) Run() error {
+	r.mu.Lock()
+	if r.running {
+		r.mu.Unlock()
+		return nil
+	}
+	files, err := r.db.SizeCollisionFiles()
+	if err != nil {
+		r.mu.Unlock()
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	r.running = true
+	r.prog = DedupProgress{Running: true, Total: int64(len(files)), StartedAt: time.Now().Unix()}
+	r.mu.Unlock()
+	go r.sweep(ctx, files)
+	return nil
+}
+
+func (r *DedupRunner) sweep(ctx context.Context, files []CollisionFile) {
+	root := r.scanRootFn()
+	var done atomic.Int64
+	for _, f := range files {
+		select {
+		case <-ctx.Done():
+			goto finish
+		default:
+		}
+		r.mu.Lock()
+		r.prog.CurrentFile = f.Path
+		r.prog.Done = done.Load()
+		r.mu.Unlock()
+		if !f.Hashed {
+			key, err := ContentKey(filepath.Join(root, f.Path), f.Size)
+			if err != nil {
+				log.Printf("dedup: hash %s: %v (left unhashed)", f.Path, err)
+			} else if err := r.db.SetContentHash(f.ID, key); err != nil {
+				log.Printf("dedup: store hash %s: %v", f.Path, err)
+			}
+		}
+		done.Add(1)
+	}
+finish:
+	r.mu.Lock()
+	r.prog.Done = done.Load()
+	r.prog.Running = false
+	r.running = false
+	r.cancel = nil
+	r.mu.Unlock()
 }

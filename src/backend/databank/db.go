@@ -726,12 +726,13 @@ func InsertFileTx(tx *sql.Tx, f *FileRecord) (int64, error) {
 }
 
 // UpdateFileScan updates the scan-related fields of an existing file.
+// content_hash is reset to NULL so the next dedup pass re-hashes the changed file.
 func (db *DB) UpdateFileScan(id int64, size, modTime, scanTime int64) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
 	_, err := db.writer.Exec(
-		`UPDATE files SET size = ?, mod_time = ?, scan_time = ? WHERE id = ?`,
+		`UPDATE files SET size = ?, mod_time = ?, scan_time = ?, content_hash = NULL WHERE id = ?`,
 		size, modTime, scanTime, id,
 	)
 	return err
