@@ -1181,6 +1181,62 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// MigratePdfIndexV1 performs the v0→v1 PDF-index migration on databank.db:
+// drop the legacy pdf_pages/pdf_text/pdf_scan_errors tables (their content
+// moves to the new pdfindex.db), create the pdf_donors membership table, and
+// stamp the version. Idempotent: a re-run with version already "1" is a no-op.
+func (db *DB) MigratePdfIndexV1() error {
+	if v, _ := db.GetConfig("pdf_index_schema_version"); v == "1" {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var droppedPages, droppedText int
+	_ = tx.QueryRow(`SELECT COUNT(*) FROM pdf_pages`).Scan(&droppedPages)
+	_ = tx.QueryRow(`SELECT COUNT(*) FROM pdf_text`).Scan(&droppedText)
+
+	for _, s := range []string{
+		`DROP TABLE IF EXISTS pdf_text`,
+		`DROP TABLE IF EXISTS pdf_pages`,
+		`DROP TABLE IF EXISTS pdf_scan_errors`,
+		`CREATE TABLE IF NOT EXISTS pdf_donors (
+			file_id  INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+			added_at INTEGER NOT NULL
+		)`,
+		`DELETE FROM config WHERE key = 'last_pdf_scan_at'`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if err := db.setConfigLocked("pdf_index_schema_version", "1"); err != nil {
+		return err
+	}
+	log.Printf("[migrate] pdf-index schema v0→v1: dropped pdf_pages (%d rows), pdf_text (%d rows); created pdf_donors",
+		droppedPages, droppedText)
+	return nil
+}
+
+// setConfigLocked writes a config key-value pair without acquiring db.mu.
+// Only call this when db.mu is already held by the caller.
+func (db *DB) setConfigLocked(key, value string) error {
+	_, err := db.writer.Exec(
+		`INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	return err
+}
+
 // --- Config key-value store ---
 
 // GetConfig returns a config value by key, or empty string if not set.
