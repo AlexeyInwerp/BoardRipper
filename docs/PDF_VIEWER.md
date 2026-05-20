@@ -286,3 +286,148 @@ reporting ≤ 2 GB RAM.
   a non-empty set. If empty, either the filter is empty or no text items on
   the page match (check text extraction succeeded and the page actually has a
   text layer, not just a raster image).
+
+---
+
+## PDF text index
+
+Backend-driven full-text index for all PDFs in the library. Pdfium (compiled to
+WASM, run via wazero) extracts text from each file and stores it in a separate
+`pdfindex.db` (SQLite FTS5 external-content table, porter + prefix tokenizer).
+A pdf.js on-open fast-path (`ensureIndexed` in `pdf-index-client.ts`) uploads
+the text extracted client-side for the currently-open file so that file is
+searchable immediately, before the background indexer reaches it. The PDF Search
+tab queries the index; results include donor-scoped filtering via the
+`pdf_donors` membership table in `databank.db`.
+
+### Engine
+
+Pdfium compiled to WASM, embedded as a ~5 MB blob in the server binary and
+executed via wazero (pure-Go, `CGO_ENABLED=0`). The pool is configured at
+startup via `PDFINDEX_POOL_MAX` (default: 2). Each pool instance has a
+**2-minute per-file kill** enforced via a `context.WithTimeout` and
+`wazero.NewRuntimeConfig().WithCloseOnContextDone(true)` — a hostile or
+looping PDF cannot permanently wedge a worker. Container memory floor: **1 GB**
+(wazero JIT + pdfium heap; the default 512 MB scratch image is too tight for
+larger corpora).
+
+### Migration
+
+v0→v1 migration drops the legacy `pdf_pages` and `pdf_text` columns from
+`databank.db`, creates the `pdf_donors` membership table, and opens the
+separate `pdfindex.db`. Migration is forward-only. If `pdfindex.db` cannot be
+opened (e.g. missing write permission), the server degrades gracefully — PDF
+search is unavailable but all other features continue normally.
+
+### API
+
+All `/api/pdfindex/*` routes require the standard auth cookie (same as other
+write endpoints). `GET` routes are read-only and accept the read middleware;
+`POST`/`PUT`/`DELETE` accept the write middleware.
+
+#### Index control
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/pdfindex/stats` | Counts per state (`indexed`, `empty`, `failed`, `pending`, `indexing`) + total pages stored |
+| `GET` | `/api/pdfindex/progress` | Live snapshot of the running sweep (`running`, `total`, `done`, `errors`, `current_file`, `started_at`) |
+| `POST` | `/api/pdfindex/run` | Start (or resume) a background sweep over all pending files; idempotent |
+| `POST` | `/api/pdfindex/stop` | Cancel the running sweep; returns final progress snapshot |
+| `POST` | `/api/pdfindex/reindex` | Reset terminal rows to `pending` (body: `{"scope":"all"\|"failed"\|"empty"}`) then re-run |
+| `POST` | `/api/pdfindex/reindex-watermark` | Same as `reindex` with `scope="all"` — used after watermark-terms change |
+| `GET` | `/api/pdfindex/failed` | List all `StatusRow` records with `status="failed"` |
+
+#### Per-file endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/pdfindex/status/{id}` | Returns `StatusRow` for file `{id}`; 404 if never attempted |
+| `POST` | `/api/pdfindex/files/{id}/index` | Priority-enqueue `{id}` for backend pdfium extraction (fallback path when pdf.js fast-path fails) |
+| `POST` | `/api/pdfindex/files/{id}/begin` | Atomic claim: transitions `{id}` to `indexing` iff currently `pending`/`failed`; 409 if already claimed |
+| `PUT` | `/api/pdfindex/files/{id}/pages` | Batch-upload extracted page texts (body: `{"pages":[{"n":0,"text":"…"},…]}`); 16 MB cap |
+| `POST` | `/api/pdfindex/files/{id}/finalize` | Set terminal state: `indexed` if pages were stored, `empty` if none; returns final `StatusRow` |
+| `POST` | `/api/pdfindex/files/{id}/fail` | Mark `{id}` failed (body: `{"error":"…"}`); retryable on next `run` |
+| `DELETE` | `/api/pdfindex/files/{id}` | Delete all index data for `{id}` (pages + status row) |
+
+#### Donor endpoints (in `databank.db`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/databank/donors` | List all donor file IDs (`pdf_donors` table) |
+| `PUT` | `/api/databank/donors/{id}` | Add file `{id}` to the donor set |
+| `DELETE` | `/api/databank/donors/{id}` | Remove file `{id}` from the donor set |
+
+#### Search
+
+The search endpoint is registered on `PdfIndexHandler` but lives under the
+databank path:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/databank/search?q=…&scope=all\|donor` | FTS5 search over indexed pages; `scope=donor` restricts results to donor files; returns `{results, total, query}` |
+
+### State machine
+
+Five states stored in `pdf_index_status.status`:
+
+```
+pending ──(Claim)──► indexing ──(Finalize, pages>0)──► indexed
+                         │                         └──(Finalize, pages=0)──► empty
+                         └──(Fail)──► failed
+                                          └──(Claim)──► indexing  (retry)
+
+pending ◄──(ReclaimStale)── indexing  (watchdog: attempted_at age > 2 min)
+pending ◄──(ResetForReindex)── indexed | empty | failed
+```
+
+- **`pending`** — file is known to the library but not yet indexed. All newly
+  scanned PDFs start here.
+- **`indexing`** — exclusively claimed by one worker (pdfium pool instance or
+  pdf.js fast-path). The claimant refreshes `attempted_at` via `Heartbeat`
+  during long extractions.
+- **`indexed`** — at least one page of text was stored; file is searchable.
+- **`empty`** — extraction ran to completion but produced no text (image-only
+  PDF, encrypted, or no text layer).
+- **`failed`** — extraction threw an error. Retryable: next `run` will
+  `Claim` it again.
+
+**Watchdog:** `ReclaimStale` is called periodically (every minute) by the
+indexer sweep. Any row stuck in `indexing` with `attempted_at` older than
+2 minutes is reset to `pending`, so a crashed worker doesn't permanently
+block a file.
+
+**Atomic claim:** `Claim` uses a single `INSERT … ON CONFLICT DO UPDATE … WHERE
+status IN ('pending','failed')` and checks `RowsAffected() == 1`. No
+separate `SELECT` + `UPDATE` race.
+
+### Watermark lock-step
+
+The watermark matching rule is shared between two implementations:
+
+- **Frontend:** `isPdfWatermarkText(str, filter)` in
+  `src/frontend/src/store/render-settings.ts` — used by the pdf.js render
+  path and by the fast-path text upload to strip watermarks before indexing.
+- **Backend:** `IsWatermark(s string, terms []string)` in
+  `src/backend/pdfindex/watermark.go` — used by the pdfium extractor to strip
+  watermarks from page text before writing to the FTS5 index.
+
+Both apply the **same rule**: strip all whitespace from the candidate string and
+from each filter term, compare case-insensitively as a substring match. The
+rule is the contract. The two implementations must remain byte-for-byte
+equivalent for matching behaviour. When changing the rule in one, change the
+other in the same commit. Watermark terms are synced from the frontend config
+key `pdf_watermark_terms` to the backend via the settings API; the backend
+`CleanPageText` function applies them to every page before FTS5 insertion.
+
+No claim is made about byte-for-byte identity of extracted text between pdfium
+(backend) and pdf.js (frontend) — text layout, whitespace normalisation, and
+glyph-to-Unicode mapping differ between the two engines.
+
+### Ctrl-F
+
+In-document find (Ctrl-F / Cmd-F) runs entirely on the in-memory pdf.js text
+layer (`textPages` built from `page.getTextContent()` during document load) and
+is **independent of the backend index**. It works on any open PDF regardless of
+its index state (`pending`, `failed`, `empty`, or not yet known to the backend).
+The backend index is used only by the library-wide PDF Search tab. Do not route
+Ctrl-F queries through `/api/pdfindex/*`.
