@@ -1178,26 +1178,33 @@ func (db *DB) ContentHashOf(fileID int64) ([]byte, error) {
 	return h, err
 }
 
-// CanonicalForHash returns MIN(id) among files sharing the hash (the canonical).
+// CanonicalForHash returns MIN(id) among files sharing the hash (the canonical),
+// or (0, nil) when no file carries the hash.
 func (db *DB) CanonicalForHash(hash []byte) (int64, error) {
-	var id int64
+	var id sql.NullInt64
 	err := db.reader.QueryRow(`SELECT MIN(id) FROM files WHERE content_hash = ?`, hash).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	return id.Int64, nil
 }
 
 // DedupStats summarizes content groups (groups with >1 member = duplicates).
+// BytesDedupable is the reclaimable size: per group, (members-1) * file size
+// (all members of a group are byte-identical, so they share one size).
 type DedupStats struct {
-	Groups         int `json:"groups"`
-	DuplicateFiles int `json:"duplicate_files"`
+	Groups         int   `json:"groups"`
+	DuplicateFiles int   `json:"duplicate_files"`
+	BytesDedupable int64 `json:"bytes_dedupable"`
 }
 
 func (db *DB) DedupStats() (DedupStats, error) {
 	var s DedupStats
 	err := db.reader.QueryRow(`
-		SELECT COALESCE(COUNT(*),0), COALESCE(SUM(c-1),0) FROM (
-			SELECT COUNT(*) AS c FROM files WHERE content_hash IS NOT NULL
+		SELECT COALESCE(COUNT(*),0), COALESCE(SUM(c-1),0), COALESCE(SUM((c-1)*sz),0) FROM (
+			SELECT COUNT(*) AS c, MIN(size) AS sz FROM files WHERE content_hash IS NOT NULL
 			GROUP BY content_hash HAVING COUNT(*) > 1
-		)`).Scan(&s.Groups, &s.DuplicateFiles)
+		)`).Scan(&s.Groups, &s.DuplicateFiles, &s.BytesDedupable)
 	return s, err
 }
 

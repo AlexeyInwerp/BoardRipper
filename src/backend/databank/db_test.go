@@ -335,4 +335,19 @@ func TestDedupStoreMethods(t *testing.T) {
 	if !bytes.Equal(got, hash) {
 		t.Errorf("ContentHashOf mismatch")
 	}
+
+	// CanonicalForHash on an unknown hash returns (0, nil), not a scan error.
+	none, err := db.CanonicalForHash([]byte("ffffffffffffffffffffffffffffffff"))
+	if err != nil || none != 0 {
+		t.Errorf("canonical of unknown hash should be (0,nil), got (%d,%v)", none, err)
+	}
+
+	// f1+f2 are a 2-member group of 1000-byte files: 1 reclaimable copy = 1000 bytes.
+	s, err := db.DedupStats()
+	if err != nil {
+		t.Fatalf("DedupStats: %v", err)
+	}
+	if s.Groups != 1 || s.DuplicateFiles != 1 || s.BytesDedupable != 1000 {
+		t.Errorf("stats = %+v, want {Groups:1 DuplicateFiles:1 BytesDedupable:1000}", s)
+	}
 }
