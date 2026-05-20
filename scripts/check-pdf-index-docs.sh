@@ -4,10 +4,11 @@ set -euo pipefail
 # - pdf-index-client.ts: the sole frontend caller — all pdfindex API calls go here
 # - pdfindex.go: the backend handler (route comments)
 # - pdfindex_test.go: handler unit test (constructs test requests against the API)
+# - pdf-index.spec.ts: Playwright E2E (polls the API to assert indexing)
 # - main.go: route registration
 # - PDF_VIEWER.md: canonical API reference doc
 # - docs/superpowers/: agent knowledge-base docs (may reference paths)
-allow='src/frontend/src/pdf/pdf-index-client.ts|src/backend/handlers/pdfindex.go|src/backend/handlers/pdfindex_test.go|src/backend/main.go|docs/PDF_VIEWER.md|docs/superpowers/'
+allow='src/frontend/src/pdf/pdf-index-client.ts|src/frontend/tests/pdf-index.spec.ts|src/backend/handlers/pdfindex.go|src/backend/handlers/pdfindex_test.go|src/backend/main.go|docs/PDF_VIEWER.md|docs/superpowers/'
 hits=$(grep -rln "/api/pdfindex/" --include='*.ts' --include='*.tsx' --include='*.go' --include='*.md' src docs 2>/dev/null | grep -Ev "$allow" || true)
 if [ -n "$hits" ]; then
   echo "ERROR: /api/pdfindex/ referenced outside the allowlist:"; echo "$hits"
