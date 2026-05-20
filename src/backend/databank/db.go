@@ -1132,6 +1132,74 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// CollisionFile is a size-colliding candidate for hashing.
+type CollisionFile struct {
+	ID      int64
+	Path    string
+	Size    int64
+	ModTime int64
+	Hashed  bool // already has a content_hash
+}
+
+// SizeCollisionFiles returns files whose exact size is shared by >= 2 files —
+// the only candidates that can be duplicates. Unique-size files are skipped.
+func (db *DB) SizeCollisionFiles() ([]CollisionFile, error) {
+	rows, err := db.reader.Query(`
+		SELECT id, path, size, mod_time, content_hash IS NOT NULL
+		FROM files
+		WHERE size IN (SELECT size FROM files GROUP BY size HAVING COUNT(*) > 1)
+		ORDER BY size, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CollisionFile
+	for rows.Next() {
+		var c CollisionFile
+		if err := rows.Scan(&c.ID, &c.Path, &c.Size, &c.ModTime, &c.Hashed); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) SetContentHash(fileID int64, hash []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(`UPDATE files SET content_hash = ? WHERE id = ?`, hash, fileID)
+	return err
+}
+
+func (db *DB) ContentHashOf(fileID int64) ([]byte, error) {
+	var h []byte
+	err := db.reader.QueryRow(`SELECT content_hash FROM files WHERE id = ?`, fileID).Scan(&h)
+	return h, err
+}
+
+// CanonicalForHash returns MIN(id) among files sharing the hash (the canonical).
+func (db *DB) CanonicalForHash(hash []byte) (int64, error) {
+	var id int64
+	err := db.reader.QueryRow(`SELECT MIN(id) FROM files WHERE content_hash = ?`, hash).Scan(&id)
+	return id, err
+}
+
+// DedupStats summarizes content groups (groups with >1 member = duplicates).
+type DedupStats struct {
+	Groups         int `json:"groups"`
+	DuplicateFiles int `json:"duplicate_files"`
+}
+
+func (db *DB) DedupStats() (DedupStats, error) {
+	var s DedupStats
+	err := db.reader.QueryRow(`
+		SELECT COALESCE(COUNT(*),0), COALESCE(SUM(c-1),0) FROM (
+			SELECT COUNT(*) AS c FROM files WHERE content_hash IS NOT NULL
+			GROUP BY content_hash HAVING COUNT(*) > 1
+		)`).Scan(&s.Groups, &s.DuplicateFiles)
+	return s, err
+}
+
 // MigratePdfIndexV1 performs the v0→v1 PDF-index migration on databank.db:
 // drop the legacy pdf_pages/pdf_text/pdf_scan_errors tables (their content
 // moves to the new pdfindex.db), create the pdf_donors membership table, and

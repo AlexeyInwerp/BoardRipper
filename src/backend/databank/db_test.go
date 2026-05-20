@@ -1,6 +1,7 @@
 package databank
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -302,4 +303,36 @@ func TestMigratePdfIndexV1(t *testing.T) {
 	}
 
 	db.Close()
+}
+
+func TestDedupStoreMethods(t *testing.T) {
+	db, _ := Open(t.TempDir())
+	defer db.Close()
+	f1, _ := db.InsertFile(&FileRecord{Path: "a.pdf", Filename: "a.pdf", Extension: ".pdf", FileType: "pdf", Size: 1000, ModTime: 1})
+	f2, _ := db.InsertFile(&FileRecord{Path: "b.pdf", Filename: "b.pdf", Extension: ".pdf", FileType: "pdf", Size: 1000, ModTime: 1})
+	f3, _ := db.InsertFile(&FileRecord{Path: "c.pdf", Filename: "c.pdf", Extension: ".pdf", FileType: "pdf", Size: 2000, ModTime: 1})
+
+	coll, err := db.SizeCollisionFiles()
+	if err != nil {
+		t.Fatalf("SizeCollisionFiles: %v", err)
+	}
+	ids := map[int64]bool{}
+	for _, c := range coll {
+		ids[c.ID] = true
+	}
+	if !ids[f1] || !ids[f2] || ids[f3] {
+		t.Errorf("collision set should be {f1,f2}, got %v", ids)
+	}
+
+	hash := []byte("0123456789abcdef0123456789abcdef")
+	db.SetContentHash(f1, hash)
+	db.SetContentHash(f2, hash)
+	canon, err := db.CanonicalForHash(hash)
+	if err != nil || canon != f1 {
+		t.Errorf("canonical should be MIN(id)=%d, got %d err=%v", f1, canon, err)
+	}
+	got, _ := db.ContentHashOf(f2)
+	if !bytes.Equal(got, hash) {
+		t.Errorf("ContentHashOf mismatch")
+	}
 }
