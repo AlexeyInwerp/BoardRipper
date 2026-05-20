@@ -288,12 +288,24 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Resolve duplicate copy locations once per distinct file (bounded by the
+	// ≤1000 hit LIMIT). A file with no content hash returns an empty slice.
+	copies := make(map[int64][]string, len(ids))
+	for _, id := range ids {
+		paths, err := h.bank.CopyPathsForFile(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		copies[id] = paths
+	}
 	type result struct {
 		pdfindex.SearchHit
 		Filename      string                  `json:"filename"`
 		Path          string                  `json:"path"`
 		IsDonor       bool                    `json:"is_donor"`
 		BoardBindings []databank.BoardBinding `json:"board_bindings"`
+		Copies        []string                `json:"copies"`
 	}
 	results := make([]result, 0, len(hits))
 	for _, hh := range hits {
@@ -304,6 +316,7 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 			Path:          m.Path,
 			IsDonor:       m.IsDonor,
 			BoardBindings: m.Bindings,
+			Copies:        copies[hh.FileID],
 		})
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "total": len(results), "query": q})

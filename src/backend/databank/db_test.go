@@ -351,3 +351,26 @@ func TestDedupStoreMethods(t *testing.T) {
 		t.Errorf("stats = %+v, want {Groups:1 DuplicateFiles:1 BytesDedupable:1000}", s)
 	}
 }
+
+func TestCopyPathsForFile(t *testing.T) {
+	db, _ := Open(t.TempDir())
+	defer db.Close()
+	h := []byte("hashhashhashhashhashhashhashhash")
+	c, _ := db.InsertFile(&FileRecord{Path: "canon.pdf", Filename: "canon.pdf", Extension: ".pdf", FileType: "pdf", Size: 10, ModTime: 1})
+	d, _ := db.InsertFile(&FileRecord{Path: "copy1.pdf", Filename: "copy1.pdf", Extension: ".pdf", FileType: "pdf", Size: 10, ModTime: 1})
+	db.SetContentHash(c, h)
+	db.SetContentHash(d, h)
+	paths, err := db.CopyPathsForFile(c)
+	if err != nil {
+		t.Fatalf("CopyPathsForFile: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "copy1.pdf" {
+		t.Errorf("copies of canonical = %v, want [copy1.pdf]", paths)
+	}
+	// A file with no hash has no copies (and returns non-nil empty slice).
+	s, _ := db.InsertFile(&FileRecord{Path: "solo.pdf", Filename: "solo.pdf", Extension: ".pdf", FileType: "pdf", Size: 99, ModTime: 1})
+	solo, err := db.CopyPathsForFile(s)
+	if err != nil || solo == nil || len(solo) != 0 {
+		t.Errorf("singleton copies = %v err=%v, want non-nil empty", solo, err)
+	}
+}

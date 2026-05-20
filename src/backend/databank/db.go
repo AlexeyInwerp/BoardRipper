@@ -1208,6 +1208,29 @@ func (db *DB) DedupStats() (DedupStats, error) {
 	return s, err
 }
 
+// CopyPathsForFile returns the paths of OTHER files in the same content group
+// (excludes the given file). Empty if the file has no hash / no duplicates.
+func (db *DB) CopyPathsForFile(fileID int64) ([]string, error) {
+	rows, err := db.reader.Query(`
+		SELECT path FROM files
+		WHERE content_hash = (SELECT content_hash FROM files WHERE id = ?)
+		  AND content_hash IS NOT NULL AND id != ?
+		ORDER BY id`, fileID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // MigratePdfIndexV1 performs the v0→v1 PDF-index migration on databank.db:
 // drop the legacy pdf_pages/pdf_text/pdf_scan_errors tables (their content
 // moves to the new pdfindex.db), create the pdf_donors membership table, and
