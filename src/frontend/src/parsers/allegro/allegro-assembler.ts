@@ -40,6 +40,28 @@ import { log } from '../../store/log-store';
 
 const dbg = log.parser;
 
+/**
+ * Physical side of a placed footprint instance.
+ *
+ * `inst.layer` (0x2D byte +0x02) is the usual signal, but some exporters leave
+ * it 0 for every part regardless of side — e.g. Nvidia_5000M_Dell.brd reports
+ * 838/4 when the board is really ~355 top / ~453 bottom. Allegro also records
+ * the side on the per-footprint PACKAGE_GEOMETRY assembly drawing via the 0x14
+ * graphic's layer subclass (0xF7=top, 0xF6=bottom). That subclass agrees with
+ * inst.layer on every other corpus file where it appears, so prefer it when
+ * present and fall back to inst.layer otherwise.
+ */
+const SUBCLASS_ASSEMBLY_TOP = 0xF7;
+const SUBCLASS_ASSEMBLY_BOTTOM = 0xF6;
+function footprintSide(db: AllegroDb, fpInst: Blk0x2DFootprintInst): 'top' | 'bottom' {
+  const gfx = db.getBlockAs<Blk0x14Graphic>(fpInst.graphicPtr, 0x14);
+  if (gfx) {
+    if (gfx.layer.subclass === SUBCLASS_ASSEMBLY_TOP) return 'top';
+    if (gfx.layer.subclass === SUBCLASS_ASSEMBLY_BOTTOM) return 'bottom';
+  }
+  return fpInst.layer === 0 ? 'top' : 'bottom';
+}
+
 /** Mils per one board unit, for converting raw Allegro coords to internal mils. */
 function milsPerUnit(units: BoardUnits): number {
   switch (units) {
@@ -254,7 +276,7 @@ function extractComponents(
       }
 
       const origin: Point = { x: inst.coordX / div, y: inst.coordY / div };
-      const side: 'top' | 'bottom' = inst.layer === 0 ? 'top' : 'bottom';
+      const side = footprintSide(db, inst);
 
       // Extract pins for this footprint instance
       const pins = extractPins(db, inst, ver, div, netAssignMap);
@@ -557,7 +579,7 @@ function extractPins(
     const rawRadius = Math.min(bw, bh) / 2;
     const radius = Math.max(3, Math.min(30, rawRadius));
 
-    const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+    const side = footprintSide(db, fpInst);
 
     // Resolve pad shape & real copper dims via the padstack so the
     // selection highlight matches the rendered pad rectangle exactly.
@@ -761,9 +783,8 @@ function linearizeArc(
  * and silkscreen drawings. Segments arrive in board coordinates already
  * (pre-rotated, pre-translated), so no transform pass is needed here.
  *
- * Side comes from `fpInst.layer` (0=top, 1=bottom). The 0x14's own subclass
- * also indicates side (0xF7=top, 0xF6=bottom for assembly drawings) but the
- * footprint-instance flag is authoritative and avoids per-shape ambiguity.
+ * Side comes from `footprintSide()` — the 0x14 assembly subclass (0xF7=top,
+ * 0xF6=bottom) when present, else the `fpInst.layer` flag.
  */
 function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
   const out: SilkscreenPath[] = [];
@@ -777,7 +798,7 @@ function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
     const fpInst = fp as Blk0x2DFootprintInst;
     if (!fpInst.graphicPtr) continue;
 
-    const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+    const side = footprintSide(db, fpInst);
 
     let key = fpInst.graphicPtr;
     const visited = new Set<number>();
@@ -886,7 +907,7 @@ function extractPads(
     const fp = db.getBlock(inst.fpInstPtr);
     if (!fp || fp.blockType !== 0x2D) continue;
     const fpInst = fp as Blk0x2DFootprintInst;
-    const fpSide: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+    const fpSide = footprintSide(db, fpInst);
 
     let key = fpInst.firstPadPtr;
     const visited = new Set<number>();
