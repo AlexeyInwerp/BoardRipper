@@ -8,7 +8,7 @@ import {
 } from '../store/render-settings';
 
 export interface IndexStatus {
-  status: 'pending' | 'indexing' | 'indexed' | 'empty' | 'failed' | '';
+  status: 'pending' | 'indexing' | 'indexed' | 'empty' | 'failed' | 'duplicate' | '';
   source?: string;
   page_count?: number;
 }
@@ -90,8 +90,14 @@ export function ensureIndexed(fileId: number, getTextPages: () => string[][]): P
 
   const task = (async () => {
     const st = await pdfIndexClient.status(fileId);
-    if (st && (st.status === 'indexed' || st.status === 'empty' || st.status === 'indexing')) {
-      return;
+    if (
+      st &&
+      (st.status === 'indexed' ||
+        st.status === 'empty' ||
+        st.status === 'indexing' ||
+        st.status === 'duplicate')
+    ) {
+      return; // 'duplicate' is terminal — its text lives under the canonical
     }
     const begin = await fetch(`/api/pdfindex/files/${fileId}/begin`, { method: 'POST' });
     if (begin.status === 409) return;

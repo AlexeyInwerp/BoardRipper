@@ -1298,6 +1298,9 @@ type SearchMetaRow struct {
 	Path     string         `json:"path"`
 	IsDonor  bool           `json:"is_donor"`
 	Bindings []BoardBinding `json:"board_bindings"`
+	// ContentHash is the hex dedup hash (empty for singletons). Used to collapse
+	// byte-identical hits to one result per content group.
+	ContentHash string `json:"-"`
 }
 
 // SearchMeta returns filename/path/is_donor/bindings for the given file_ids in
@@ -1316,7 +1319,7 @@ func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
 	in := strings.Join(ph, ",")
 
 	rows, err := db.reader.Query(
-		`SELECT f.id, f.filename, f.path,
+		`SELECT f.id, f.filename, f.path, f.content_hash,
 		        CASE WHEN d.file_id IS NULL THEN 0 ELSE 1 END AS is_donor
 		 FROM files f LEFT JOIN pdf_donors d ON d.file_id = f.id
 		 WHERE f.id IN (`+in+`)`, args...)
@@ -1327,9 +1330,13 @@ func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
 		var id int64
 		var m SearchMetaRow
 		var donor int
-		if err := rows.Scan(&id, &m.Filename, &m.Path, &donor); err != nil {
+		var contentHash []byte
+		if err := rows.Scan(&id, &m.Filename, &m.Path, &contentHash, &donor); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if len(contentHash) > 0 {
+			m.ContentHash = hex.EncodeToString(contentHash)
 		}
 		m.IsDonor = donor != 0
 		m.Bindings = []BoardBinding{}

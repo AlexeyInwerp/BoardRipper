@@ -127,6 +127,19 @@ func (h *PdfIndexHandler) Begin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
+	// Dedup: if this file is a non-canonical duplicate, never extract it via the
+	// fast-path — mark it and 409 so its pages don't bloat the index. The
+	// canonical carries the searchable text. (No-op until a dedup pass has
+	// assigned content hashes.)
+	if h.bank != nil {
+		if hash, _ := h.bank.ContentHashOf(id); len(hash) > 0 {
+			if canon, err := h.bank.CanonicalForHash(hash); err == nil && canon != 0 && canon != id {
+				_ = h.db.MarkDuplicate(id, canon)
+				http.Error(w, "duplicate", http.StatusConflict)
+				return
+			}
+		}
+	}
 	won, err := h.db.Claim(id, "pdfjs")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -307,8 +320,34 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 		BoardBindings []databank.BoardBinding `json:"board_bindings"`
 		Copies        []string                `json:"copies"`
 	}
-	results := make([]result, 0, len(hits))
+	// Collapse byte-identical hits to one result per content group + page. This
+	// honors the dedup contract even when duplicates were indexed individually
+	// (before a dedup pass) and still hold their own pdf_pages rows. The group
+	// key is the content_hash (or "id:<fileID>" for a singleton) plus page; the
+	// representative is the lowest file_id in the group (deterministic, and the
+	// global canonical when it is itself a match). Copies on each result list
+	// the other paths in the group.
+	groupKey := func(fileID int64, page int) string {
+		if hx := meta[fileID].ContentHash; hx != "" {
+			return hx + "#" + strconv.Itoa(page)
+		}
+		return "id:" + strconv.FormatInt(fileID, 10) + "#" + strconv.Itoa(page)
+	}
+	rep := make(map[string]int64, len(hits)) // group key -> lowest file_id seen
 	for _, hh := range hits {
+		k := groupKey(hh.FileID, hh.PageNum)
+		if cur, ok := rep[k]; !ok || hh.FileID < cur {
+			rep[k] = hh.FileID
+		}
+	}
+	results := make([]result, 0, len(hits))
+	emitted := make(map[string]bool, len(hits))
+	for _, hh := range hits {
+		k := groupKey(hh.FileID, hh.PageNum)
+		if rep[k] != hh.FileID || emitted[k] {
+			continue // not the representative for this group+page, or already shown
+		}
+		emitted[k] = true
 		m := meta[hh.FileID]
 		results = append(results, result{
 			SearchHit:     hh,
