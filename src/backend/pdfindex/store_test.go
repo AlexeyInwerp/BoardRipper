@@ -139,3 +139,52 @@ func TestReclaimStale(t *testing.T) {
 		t.Errorf("fresh row should stay indexing, got %q", st2.Status)
 	}
 }
+
+func TestStatsAndDelete(t *testing.T) {
+	db := openTestDB(t)
+	db.Claim(1, "pdfium")
+	db.UpsertPages(1, []Page{{1, "a"}, {2, "b"}})
+	db.Finalize(1) // indexed, 2 pages
+	db.Claim(2, "pdfium")
+	db.Finalize(2) // empty
+	db.Claim(3, "pdfium")
+	db.Fail(3, "x") // failed
+
+	s, err := db.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if s.Indexed != 1 || s.Empty != 1 || s.Failed != 1 || s.Pages != 2 {
+		t.Errorf("stats = %+v", s)
+	}
+	if err := db.DeleteFile(1); err != nil {
+		t.Fatalf("DeleteFile: %v", err)
+	}
+	st, _ := db.Status(1)
+	if st.Status != "" {
+		t.Errorf("deleted file should have no row, got %q", st.Status)
+	}
+	var pages int
+	db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_pages WHERE file_id=1`).Scan(&pages)
+	if pages != 0 {
+		t.Errorf("pages not cascaded: %d", pages)
+	}
+}
+
+func TestListFailedAndReset(t *testing.T) {
+	db := openTestDB(t)
+	db.Claim(8, "pdfium")
+	db.Fail(8, "kaboom")
+	failed, err := db.ListFailed()
+	if err != nil || len(failed) != 1 || failed[0].Error != "kaboom" {
+		t.Fatalf("ListFailed = %+v err=%v", failed, err)
+	}
+	n, _ := db.ResetForReindex("failed")
+	if n != 1 {
+		t.Errorf("reset failed scope: want 1, got %d", n)
+	}
+	st, _ := db.Status(8)
+	if st.Status != "pending" {
+		t.Errorf("reset → pending, got %q", st.Status)
+	}
+}

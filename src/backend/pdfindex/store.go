@@ -120,6 +120,83 @@ func (db *DB) Fail(fileID int64, msg string) error {
 	return err
 }
 
+type Stats struct {
+	Indexed  int `json:"indexed"`
+	Empty    int `json:"empty"`
+	Failed   int `json:"failed"`
+	Pending  int `json:"pending"`
+	Indexing int `json:"indexing"`
+	Pages    int `json:"pages"`
+}
+
+func (db *DB) Stats() (Stats, error) {
+	var s Stats
+	err := db.reader.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN status='indexed'  THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='empty'    THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='failed'   THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='pending'  THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='indexing' THEN 1 ELSE 0 END),0)
+		FROM pdf_index_status`).
+		Scan(&s.Indexed, &s.Empty, &s.Failed, &s.Pending, &s.Indexing)
+	if err != nil {
+		return s, err
+	}
+	if err := db.reader.QueryRow(`SELECT COUNT(*) FROM pdf_pages`).Scan(&s.Pages); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+func (db *DB) DeleteFile(fileID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if _, err := db.writer.Exec(`DELETE FROM pdf_pages WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+	_, err := db.writer.Exec(`DELETE FROM pdf_index_status WHERE file_id = ?`, fileID)
+	return err
+}
+
+func (db *DB) ListFailed() ([]StatusRow, error) {
+	rows, err := db.reader.Query(
+		`SELECT file_id, status, COALESCE(error,'') FROM pdf_index_status WHERE status='failed'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StatusRow
+	for rows.Next() {
+		var r StatusRow
+		if err := rows.Scan(&r.FileID, &r.Status, &r.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ResetForReindex sets matching rows to 'pending'. scope ∈ {"all","failed","empty"}.
+func (db *DB) ResetForReindex(scope string) (int64, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	q := `UPDATE pdf_index_status SET status='pending'`
+	switch scope {
+	case "failed":
+		q += ` WHERE status='failed'`
+	case "empty":
+		q += ` WHERE status='empty'`
+	case "all", "":
+		q += ` WHERE status IN ('indexed','empty','failed')`
+	}
+	res, err := db.writer.Exec(q)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ReclaimStale flips 'indexing' rows whose last heartbeat (attempted_at) is
 // older than maxAgeSeconds back to 'pending'. Returns count reclaimed.
 func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {
