@@ -841,13 +841,15 @@ class DatabankStore extends Emitter {
     this._scanPollTimer = setInterval(async () => {
       const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
       if (status) {
-        const prev = this._scanStatus;
-        const changed = !prev
-          || prev.scanned !== status.scanned || prev.running !== status.running
-          || prev.phase !== status.phase;
         this._scanStatus = status;
         this._persistScanStatus();
-        if (changed) this.notify();
+        // Notify every tick while polling. The previous `changed` gate only
+        // fired on scanned/running/phase deltas, so during long phases where
+        // those don't change tick-to-tick (e.g. "Walking filesystem" /
+        // "Comparing with database" on an 80k-file library), the UI froze and
+        // only a page reload (which re-runs checkScanStatus) showed the real
+        // state. A 500ms re-render during a scan is negligible.
+        this.notify();
 
         // File scan done — fetch files once
         if (!status.running && !this._filesFetchedAfterScan) {
