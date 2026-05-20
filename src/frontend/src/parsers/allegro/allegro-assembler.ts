@@ -1007,6 +1007,15 @@ function extractVias(
     if (blk.blockType !== 0x33) continue;
     const via = blk as Blk0x33Via;
 
+    // Skip footprint-definition via-in-pad templates. These library records
+    // store footprint-LOCAL coords (so they land on a 0.8mm grid at the board
+    // origin, off-board) and their netPtr references the parent footprint
+    // definition (0x2B) instead of a 0x04 net assignment. Placed routing vias
+    // point at a 0x04 (or 0). Rendering the templates dumps a phantom BGA-style
+    // via grid at the origin — e.g. ~2.8k vias (16 GDDR chips × 170 balls) on
+    // Nvidia_5000M_Dell.brd, and smaller clusters on Compal LA-H271P / Dell XPS.
+    if (via.netPtr !== 0 && db.getBlockAs<Blk0x2BFootprintDef>(via.netPtr, 0x2B)) continue;
+
     const x = via.coordsX / div;
     const y = via.coordsY / div;
 
