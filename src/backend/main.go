@@ -17,6 +17,7 @@ import (
 	"boardripper/handlers"
 	"boardripper/librarysync"
 	"boardripper/obd"
+	"boardripper/pdfindex"
 	"boardripper/updater"
 )
 
@@ -77,6 +78,23 @@ func main() {
 	extractor.SetScanner(scanner)
 
 	scanner.SetExtractor(extractor)
+
+	// PDF-index migration (v0→v1) runs against databank.db before opening the
+	// separate index DB. Migration failure is fatal (data integrity). A failure
+	// to OPEN pdfindex.db must NOT kill boot — degrade to "index unavailable".
+	if err := db.MigratePdfIndexV1(); err != nil {
+		log.Fatalf("pdf-index migration failed: %v", err)
+	}
+	pdfIndexPath := filepath.Join(dataDir, "pdfindex.db")
+	var pdfIndex *pdfindex.DB
+	pdfIndex, err = pdfindex.Open(pdfIndexPath)
+	if err != nil {
+		log.Printf("WARNING: pdfindex.db unavailable (%v) — PDF search disabled this boot", err)
+		pdfIndex = nil
+	} else {
+		defer pdfIndex.Close()
+	}
+	_ = pdfIndex // consumed by route wiring in a later task
 
 	// Conditional auto-scan based on config (default: off)
 	if autoScan, _ := db.GetConfig("auto_scan"); autoScan == "true" {
