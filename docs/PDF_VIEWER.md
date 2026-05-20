@@ -431,3 +431,62 @@ is **independent of the backend index**. It works on any open PDF regardless of
 its index state (`pending`, `failed`, `empty`, or not yet known to the backend).
 The backend index is used only by the library-wide PDF Search tab. Do not route
 Ctrl-F queries through `/api/pdfindex/*`.
+
+## Content deduplication
+
+The library holds many byte-identical duplicate files — the same PDF copied
+under different names/folders. Without dedup, identical content is run through
+pdfium repeatedly (~10 s/file) and its FTS5 text stored N times. The dedup layer
+extracts each unique PDF once and collapses copies in content-oriented views. It
+is **non-destructive** — nothing on disk is touched — and **file-type-agnostic**
+(PDFs and board files use one mechanism).
+
+**Detection — size-bucket + sampled hash** (`databank/dedup.go`): a file with a
+unique byte size cannot have a duplicate, so it's never read (`content_hash`
+stays `NULL`). Files that collide on exact size get a content key:
+`sha256(size ‖ full-file)` when ≤ 192 KiB, else `sha256(size ‖ head 64 KiB ‖
+mid 64 KiB ‖ tail 64 KiB)` — a fixed ~192 KiB read regardless of file size.
+Mixing the size into the digest means two different-sized files can never
+collide. A 50 MB schematic and its copy match by reading 192 KiB each, not
+100 MB. (Accepted: the sampled hash is near-zero, not mathematically zero,
+false-positive for large files differing only in an unsampled region.)
+
+**Data model:** `databank.files.content_hash BLOB` (`NULL` = unique-size
+singleton), with a partial index `WHERE content_hash IS NOT NULL`. A **content
+group** = all files sharing the same non-`NULL` `content_hash`; the **canonical**
+member is `MIN(id)` (stable, deterministic). Groups are derived by `GROUP BY`,
+no separate table. `pdf_index_status` gains `canonical_file_id` and a terminal
+`'duplicate'` status.
+
+**The "Find duplicates" pass** (`databank.DedupRunner`) is on-demand, not a tax
+on every scan. It hashes only size-collision candidates (`SizeCollisionFiles`),
+is idempotent (a file is re-hashed only when its size/mod_time changed — the
+scanner clears `content_hash` to `NULL` on change), and reports live progress.
+Triggered by the "Find duplicates" button in Settings ▸ Database info.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/databank/dedup/run` | start the pass |
+| `POST` | `/api/databank/dedup/stop` | cancel |
+| `GET` | `/api/databank/dedup/progress` | `{running,total,done,errors,current_file,started_at}` |
+| `GET` | `/api/databank/dedup/stats` | `{groups,duplicate_files,bytes_dedupable}` |
+
+**PDF-index integration:** when the indexer claims a file, if it is a
+non-canonical duplicate (`Source.CanonicalFor` resolves a canonical ≠ itself) it
+records `status='duplicate'` + `canonical_file_id` and **skips extraction** — no
+pdfium work, no second copy of text. The canonical (`MIN(id)`) always extracts,
+so exactly one member of each group is indexed regardless of worker order.
+`'duplicate'` is terminal (skipped by `DoneOrActiveFileIDs`, non-claimable).
+
+**Presentation — collapse rule:**
+
+| Surface | Behavior |
+|---|---|
+| **Folder view (DB + Live)** | Show everything — every file at its real path. No collapse. |
+| Board # / Model | Collapse each content group → canonical row + `×N` chip (`collapseByContent`). |
+| PDF Search | One hit per group (canonical) + a `+N copies` spoiler listing the copy paths (`copies[]` on each result). |
+| PDF indexing | Extract the canonical only. |
+
+Collapsing is purely a query/render concern keyed on `content_hash`; a `NULL`
+hash always renders as itself. History view is **not** collapsed — it lists
+distinct user-opened paths, not a content-grouped file list.
