@@ -54,3 +54,17 @@ func (s *dbSource) ListPDFsUnder(prefix string) ([]pdfindex.PdfFile, error) {
 func (s *dbSource) ReadFile(relPath string) ([]byte, error) {
 	return readFileEager(s.scanRoot(), relPath)
 }
+
+// CanonicalFor reports whether fileID is part of a content group and, if so,
+// the canonical (MIN id) member. A file with no content hash is a singleton.
+func (s *dbSource) CanonicalFor(fileID int64) (int64, bool, error) {
+	hash, err := s.db.ContentHashOf(fileID)
+	if err != nil || hash == nil {
+		return 0, false, nil // no hash → singleton, not a duplicate
+	}
+	canon, err := s.db.CanonicalForHash(hash)
+	if err != nil {
+		return 0, false, err
+	}
+	return canon, true, nil
+}

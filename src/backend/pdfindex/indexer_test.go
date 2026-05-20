@@ -30,6 +30,8 @@ func (f *fakeSource) ListPDFsUnder(prefix string) ([]PdfFile, error) {
 
 func (f *fakeSource) ReadFile(p string) ([]byte, error) { return f.data[p], nil }
 
+func (f *fakeSource) CanonicalFor(fileID int64) (int64, bool, error) { return 0, false, nil }
+
 type fakeExtractor struct{}
 
 func (fakeExtractor) ExtractFile(b []byte) ([]string, error) { return []string{string(b)}, nil }
@@ -186,4 +188,44 @@ func TestStartWatchdogStops(t *testing.T) {
 		return st.Status == "pending"
 	})
 	close(stop)
+}
+
+// fakeSourceDedup adds content-group resolution: canonical maps fileID -> the
+// canonical fileID for its group (absent = singleton/no hash).
+type fakeSourceDedup struct {
+	fakeSource
+	canonical map[int64]int64
+}
+
+func (f *fakeSourceDedup) CanonicalFor(fileID int64) (int64, bool, error) {
+	c, ok := f.canonical[fileID]
+	return c, ok, nil
+}
+
+func TestIndexerSkipsDuplicate(t *testing.T) {
+	db := openTestDB(t)
+	src := &fakeSourceDedup{
+		fakeSource: fakeSource{
+			files: []PdfFile{{ID: 10, Path: "canon.pdf"}, {ID: 50, Path: "copy.pdf"}},
+			data:  map[string][]byte{"canon.pdf": []byte("alpha"), "copy.pdf": []byte("alpha")},
+		},
+		canonical: map[int64]int64{10: 10, 50: 10}, // 50 is a dup of canonical 10
+	}
+	ix := NewIndexer(db, fakeExtractor{}, src, func() []string { return nil }, 2)
+	ix.Run()
+	waitFor(t, func() bool { return !ix.Progress().Running })
+
+	st10, _ := db.Status(10)
+	st50, _ := db.Status(50)
+	if st10.Status != "indexed" {
+		t.Errorf("canonical 10 should be indexed, got %q", st10.Status)
+	}
+	if st50.Status != "duplicate" {
+		t.Errorf("copy 50 should be 'duplicate', got %q", st50.Status)
+	}
+	// Progress.Done reached Total even though one file was skipped as a duplicate.
+	p := ix.Progress()
+	if p.Done != p.Total {
+		t.Errorf("Done=%d != Total=%d (duplicate skip should still count)", p.Done, p.Total)
+	}
 }

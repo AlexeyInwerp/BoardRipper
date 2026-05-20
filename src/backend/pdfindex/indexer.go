@@ -27,6 +27,9 @@ type Source interface {
 	// prefix+"/". An empty prefix returns all files (same as ListPDFs).
 	ListPDFsUnder(prefix string) ([]PdfFile, error)
 	ReadFile(relPath string) ([]byte, error)
+	// CanonicalFor returns the canonical file_id for this file's content group
+	// and true, or (0,false) if the file has no content hash (singleton).
+	CanonicalFor(fileID int64) (int64, bool, error)
 }
 
 // Extractor is satisfied by Engine (real pdfium WASM) and by fakes in tests.
@@ -242,16 +245,26 @@ func (ix *Indexer) process(f PdfFile) {
 		// Either DB error or another worker/instance holds the claim — skip.
 		return
 	}
-	// No per-file heartbeat needed: the engine enforces a 2-minute per-file kill,
-	// well under the 10-minute watchdog reclaim window.
-	// Count this worker as actively extracting (live thread-count for the UI).
-	ix.active.Add(1)
+	// A claimed file is counted as processed whether it extracts, fails, or is
+	// skipped as a duplicate — so Progress.Done always reaches Total.
 	defer func() {
-		ix.active.Add(-1)
 		ix.mu.Lock()
 		ix.prog.Done++
 		ix.mu.Unlock()
 	}()
+
+	// Dedup: a non-canonical duplicate is never extracted — mark it and skip.
+	// Its search hits resolve via the canonical (already/about to be indexed).
+	if canonID, hasHash, _ := ix.src.CanonicalFor(f.ID); hasHash && canonID != f.ID {
+		_ = ix.store.MarkDuplicate(f.ID, canonID)
+		return
+	}
+
+	// No per-file heartbeat needed: the engine enforces a 2-minute per-file kill,
+	// well under the 10-minute watchdog reclaim window.
+	// Count this worker as actively extracting (live thread-count for the UI).
+	ix.active.Add(1)
+	defer ix.active.Add(-1)
 
 	data, err := ix.src.ReadFile(f.Path)
 	if err != nil {
