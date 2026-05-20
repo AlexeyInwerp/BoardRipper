@@ -4,6 +4,7 @@ import { contextMenuStore } from '../store/context-menu-store';
 import type { ContextMenuState } from '../store/context-menu-store';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
+import { databankStore } from '../store/databank-store';
 import { renderSettingsStore } from '../store/render-settings';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
@@ -208,6 +209,16 @@ export function ContextMenu() {
   const allOpenPdfNames = pdfStore.loadedFileNames;
   const boundOpen = boundPdfNames.filter(n => allOpenPdfNames.includes(n));
   const otherPdfNames = allOpenPdfNames.filter(n => !boundOpen.includes(n));
+  // Split other open PDFs into donor / non-donor based on pdf_donors membership.
+  // fileByFilename is an O(N) scan but called only at menu-open time.
+  const otherDonorPdfNames = otherPdfNames.filter(n => {
+    const f = databankStore.fileByFilename(n);
+    return f ? databankStore.isDonor(f.id) : false;
+  });
+  const otherNonDonorPdfNames = otherPdfNames.filter(n => {
+    const f = databankStore.fileByFilename(n);
+    return f ? !databankStore.isDonor(f.id) : true; // unknown = keep in non-donor group
+  });
   const otherBoardTabs = boardStore.tabs.filter(
     t => t.id !== boardStore.activeTabId && t.board !== null,
   );
@@ -233,6 +244,16 @@ export function ContextMenu() {
     state.source === 'board'
       ? boundOpen.length + otherPdfNames.length + otherBoardTabs.length
       : boundBoardTabs.length + otherBoardsForPdf.length + otherPdfsForPdf.length;
+
+  /** Open the Library PDF Search tab with a donor-scoped query. */
+  const doSearchAllDonors = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const query = state.source === 'board' ? state.componentName : state.query;
+    if (!query.trim()) return;
+    databankStore.pendingPdfSearch = { query: query.trim(), scope: 'donor' };
+    databankStore.setViewMode('search');
+    contextMenuStore.hide();
+  };
   const autoExpandDonors = totalDonorRows > 0 && totalDonorRows < 5;
 
   // ── Shared click dispatchers ────────────────────────────────────────────
@@ -508,10 +529,25 @@ export function ContextMenu() {
       otherBoardTabs.length === 0;
 
     if (nothingToSearch) {
+      // Still show the "Search all donors" escape hatch when no PDFs are open.
       return (
-        <div className="context-menu-item disabled">
-          Search &apos;{componentName}&apos; in PDF (none linked)
-        </div>
+        <>
+          <div className="context-menu-item disabled">
+            Search &apos;{componentName}&apos; in PDF (none open)
+          </div>
+          {componentName.trim() && (
+            <>
+              <div className="context-menu-separator" />
+              <div
+                className="context-menu-item context-menu-search-donors"
+                onClick={doSearchAllDonors}
+                title={`Search all donor PDFs for '${componentName}'`}
+              >
+                Search all donors for &apos;{componentName}&apos;
+              </div>
+            </>
+          )}
+        </>
       );
     }
 
@@ -573,7 +609,8 @@ export function ContextMenu() {
 
     const groups: Array<[string, string, React.ReactElement[]]> = [
       ['bound-pdfs', 'Bound PDFs', boundOpen.map(name => pdfRowFor(name, 'bound-pdf'))],
-      ['other-pdfs', 'Other PDFs', otherPdfNames.map(name => pdfRowFor(name, 'other-pdf'))],
+      ['donor-pdfs', 'Donor PDFs', otherDonorPdfNames.map(name => pdfRowFor(name, 'donor-pdf'))],
+      ['other-pdfs', 'Other PDFs', otherNonDonorPdfNames.map(name => pdfRowFor(name, 'other-pdf'))],
       ['other-boards', 'Other Boards', otherBoardTabs.map(tab => boardRowFor(tab, 'other-board'))],
     ];
     for (const [key, label, rows] of groups) {
@@ -583,6 +620,22 @@ export function ContextMenu() {
           <div className="context-menu-separator" />
           <div className="context-menu-group-header">{label}</div>
           {rows}
+        </React.Fragment>,
+      );
+    }
+
+    // "Search all donors" escape hatch — opens Library PDF Search with donor scope.
+    if (state.componentName.trim()) {
+      sections.push(
+        <React.Fragment key="search-all-donors">
+          <div className="context-menu-separator" />
+          <div
+            className="context-menu-item context-menu-search-donors"
+            onClick={doSearchAllDonors}
+            title={`Search all donor PDFs for '${state.componentName}'`}
+          >
+            Search all donors for &apos;{state.componentName}&apos;
+          </div>
         </React.Fragment>,
       );
     }
@@ -662,6 +715,22 @@ export function ContextMenu() {
           <div className="context-menu-separator" />
           <div className="context-menu-group-header">{label}</div>
           {rows}
+        </React.Fragment>,
+      );
+    }
+
+    // "Search all donors" escape hatch — opens Library PDF Search with donor scope.
+    if (state.query.trim()) {
+      sections.push(
+        <React.Fragment key="search-all-donors">
+          <div className="context-menu-separator" />
+          <div
+            className="context-menu-item context-menu-search-donors"
+            onClick={doSearchAllDonors}
+            title={`Search all donor PDFs for '${state.query}'`}
+          >
+            Search all donors for &apos;{state.query}&apos;
+          </div>
         </React.Fragment>,
       );
     }

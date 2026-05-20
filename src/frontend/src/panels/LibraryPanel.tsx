@@ -106,7 +106,9 @@ export function LibraryPanel() {
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
     stats, filesComplete,
+    donorIds,
   } = useDatabank();
+  void donorIds; // consumed by FileDetailPane and ContextMenu via databankStore.isDonor
 
   // Tree groupings are O(N) at 100k entries — only compute the one the user
   // is actually looking at. Each is internally version-cached in the store,
@@ -130,19 +132,35 @@ export function LibraryPanel() {
 
   // PDF Search tab state
   const [pdfQuery, setPdfQuery] = useState('');
+  const [pdfScope, setPdfScope] = useState<'all' | 'donor'>('all');
   const [pdfResults, setPdfResults] = useState<SearchResult[]>([]);
   const [pdfSearching, setPdfSearching] = useState(false);
-  const runPdfSearch = useCallback(async () => {
+  const runPdfSearch = useCallback(async (scopeOverride?: 'all' | 'donor') => {
     if (!pdfQuery.trim()) return;
     setPdfSearching(true);
     try {
-      setPdfResults(await databankStore.searchPdfs(pdfQuery, 'all'));
+      setPdfResults(await databankStore.searchPdfs(pdfQuery, scopeOverride ?? pdfScope));
     } finally {
       setPdfSearching(false);
     }
-  }, [pdfQuery]);
+  }, [pdfQuery, pdfScope]);
   const donorResults = useMemo(() => pdfResults.filter(r => r.is_donor), [pdfResults]);
   const otherResults = useMemo(() => pdfResults.filter(r => !r.is_donor), [pdfResults]);
+
+  // Pick up a pending PDF search set by ContextMenu "Search all donors".
+  // Runs once when the search tab becomes active or on mount if already active.
+  useEffect(() => {
+    if (viewMode !== 'search') return;
+    const pending = databankStore.pendingPdfSearch;
+    if (!pending) return;
+    databankStore.pendingPdfSearch = null;
+    setPdfQuery(pending.query);
+    setPdfScope(pending.scope);
+    setPdfSearching(true);
+    databankStore.searchPdfs(pending.query, pending.scope).then(results => {
+      setPdfResults(results);
+    }).finally(() => setPdfSearching(false));
+  }, [viewMode]);
 
   // Debounced mirror of `localSearch` driving the actual filter pipeline. The
   // input itself uses `localSearch` so typing stays responsive; everything
@@ -573,9 +591,17 @@ export function LibraryPanel() {
                 onChange={e => setPdfQuery(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') runPdfSearch(); }}
               />
+              <label className="library-pdf-search-toggle" title="Restrict search to donor PDFs only">
+                <input
+                  type="checkbox"
+                  checked={pdfScope === 'donor'}
+                  onChange={e => setPdfScope(e.target.checked ? 'donor' : 'all')}
+                />
+                Donors only
+              </label>
               <button
                 className="library-search-btn"
-                onClick={runPdfSearch}
+                onClick={() => runPdfSearch()}
                 disabled={pdfSearching}
               >
                 {pdfSearching ? '…' : 'Search'}
@@ -868,6 +894,39 @@ type RenderedBinding =
   | (DatabankBinding & { source: 'binding' })
   | { source: 'derived'; pdf_file_id: number; pdf_filename: string; category: string };
 
+/** Toggle button for adding/removing a PDF from the pdf_donors list. */
+function DonorToggle({ fileId }: { fileId: number }) {
+  const { donorIds } = useDatabank();
+  const isDonor = donorIds.has(fileId);
+  const [busy, setBusy] = useState(false);
+
+  const handleToggle = async () => {
+    setBusy(true);
+    try {
+      if (isDonor) {
+        await databankStore.removeDonor(fileId);
+      } else {
+        await databankStore.addDonor(fileId);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      className={`library-donor-toggle-btn${isDonor ? ' is-donor' : ''}`}
+      onClick={handleToggle}
+      disabled={busy}
+      title={isDonor
+        ? 'Remove this PDF from the donor pool (will no longer appear in donor searches)'
+        : 'Mark this PDF as a donor (makes it appear in donor-scoped searches)'}
+    >
+      {busy ? '…' : isDonor ? 'Remove donor' : 'Mark as donor'}
+    </button>
+  );
+}
+
 function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding }: {
   detail: FileDetail;
   files: DatabankFile[];
@@ -939,6 +998,12 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         {detail.net_count != null && <span>{detail.net_count} nets</span>}
         <span>{formatSize(detail.size)}</span>
       </div>
+
+      {detail.file_type === 'pdf' && (
+        <div className="library-detail-donor-row">
+          <DonorToggle fileId={detail.id} />
+        </div>
+      )}
 
       {showEditModal && (
         <MetadataEditModal detail={detail} onClose={() => setShowEditModal(false)} />

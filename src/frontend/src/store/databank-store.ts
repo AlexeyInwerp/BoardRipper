@@ -171,6 +171,14 @@ export interface ModelGroup {
   unresolved: DatabankFile[];
 }
 
+/** Entry returned by GET /api/databank/donors */
+export interface DonorEntry {
+  file_id: number;
+  filename: string;
+  path: string;
+  added_at: string;
+}
+
 class DatabankStore extends Emitter {
   // ── Load lifecycle (added 2026-05-09) ───────────────────────────────
   /** Tracks the app-startup load orchestrated by ensureLoaded(). */
@@ -290,6 +298,12 @@ class DatabankStore extends Emitter {
   private _backendAvailable = true; // assume yes until first failure
   private _libraryPath: string | null = null;
   private _electronMode = false;
+  /** Set of file IDs currently in the pdf_donors list. Loaded at startup
+   *  and refreshed after every add/remove. */
+  private _donorIds = new Set<number>();
+  /** Pending PDF search request set by ContextMenu "Search all donors" and
+   *  consumed by LibraryPanel's search tab on mount. Cleared after pickup. */
+  pendingPdfSearch: { query: string; scope: 'all' | 'donor' } | null = null;
   // Pinned-to-top entries in History. Keyed by `path` (matches RecentItem
   // identity) so a pin survives databank rescans that change file IDs.
   // Stored separately from history so `clearHistory` doesn't drop pins.
@@ -325,6 +339,7 @@ class DatabankStore extends Emitter {
   get favoritePaths() { return this._favoritePaths; }
   get loadStatus(): LoadStatus { return this._loadStatus; }
   get loadError(): Error | null { return this._loadError; }
+  get donorIds(): ReadonlySet<number> { return this._donorIds; }
 
   isFavorite(path: string): boolean {
     return this._favoritePaths.has(path);
@@ -336,6 +351,24 @@ class DatabankStore extends Emitter {
     else next.add(path);
     this._favoritePaths = next;
     try { localStorage.setItem('boardripper-favorites', JSON.stringify([...next])); } catch { /* ignore */ }
+    this.notify();
+  }
+
+  isDonor(fileId: number): boolean { return this._donorIds.has(fileId); }
+
+  async addDonor(fileId: number): Promise<void> {
+    await this.apiFetch(`/api/databank/donors/${fileId}`, { method: 'PUT' });
+    await this.refreshDonors();
+  }
+
+  async removeDonor(fileId: number): Promise<void> {
+    await this.apiFetch(`/api/databank/donors/${fileId}`, { method: 'DELETE' });
+    await this.refreshDonors();
+  }
+
+  async refreshDonors(): Promise<void> {
+    const list = await this.apiFetch<DonorEntry[]>('/api/databank/donors');
+    this._donorIds = new Set((list ?? []).map(d => d.file_id));
     this.notify();
   }
 
@@ -563,6 +596,7 @@ class DatabankStore extends Emitter {
         await Promise.all([
           this.fetchStats(),
           this.fetchFilesByIds(recentIds),
+          this.refreshDonors(),
         ]);
         const hydrate = () => { void this.fetchFiles(); };
         if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
@@ -573,7 +607,7 @@ class DatabankStore extends Emitter {
         }
       } else {
         // Cold load: full list right away.
-        await Promise.all([this.fetchStats(), this.fetchFiles()]);
+        await Promise.all([this.fetchStats(), this.fetchFiles(), this.refreshDonors()]);
       }
 
       this._loadStatus = 'loaded';
