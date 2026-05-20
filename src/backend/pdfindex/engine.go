@@ -7,6 +7,7 @@ import (
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
+	"github.com/tetratelabs/wazero"
 )
 
 // Engine is a pooled pdfium-via-wazero text extractor. The pool is the
@@ -23,9 +24,10 @@ func NewEngine(maxTotal int) (*Engine, error) {
 		maxTotal = 1
 	}
 	pool, err := webassembly.Init(webassembly.Config{
-		MinIdle:  1,
-		MaxIdle:  maxTotal,
-		MaxTotal: maxTotal,
+		MinIdle:       1,
+		MaxIdle:       maxTotal,
+		MaxTotal:      maxTotal,
+		RuntimeConfig: wazero.NewRuntimeConfig().WithCloseOnContextDone(true),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pdfium init: %w", err)
@@ -55,11 +57,13 @@ func (e *Engine) ExtractFile(data []byte) ([]string, error) {
 		done <- result{p, e2}
 	}()
 
+	timer := time.NewTimer(e.perFileTimeout)
+	defer timer.Stop()
 	select {
 	case r := <-done:
 		instance.Close() //nolint:errcheck — pool handles cleanup
 		return r.pages, r.err
-	case <-time.After(e.perFileTimeout):
+	case <-timer.C:
 		instance.Kill() //nolint:errcheck — best-effort kill
 		return nil, fmt.Errorf("extraction timed out after %v", e.perFileTimeout)
 	}
