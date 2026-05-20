@@ -95,24 +95,19 @@ func (ix *Indexer) Stop() {
 // if a sweep is already in progress. The sweep runs in the background; call
 // Progress() to observe it and wait for Running == false.
 func (ix *Indexer) Run() error {
+	files, err := ix.src.ListPDFs()
+	if err != nil {
+		return err
+	}
 	ix.mu.Lock()
 	if ix.running {
 		ix.mu.Unlock()
 		return nil
 	}
-	files, err := ix.src.ListPDFs()
-	if err != nil {
-		ix.mu.Unlock()
-		return err
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ix.cancel = cancel
 	ix.running = true
-	ix.prog = Progress{
-		Running:   true,
-		Total:     int64(len(files)),
-		StartedAt: time.Now().Unix(),
-	}
+	ix.prog = Progress{Running: true, Total: int64(len(files)), StartedAt: time.Now().Unix()}
 	ix.mu.Unlock()
 	go ix.sweep(ctx, files)
 	return nil
@@ -189,6 +184,8 @@ func (ix *Indexer) process(f PdfFile) {
 		// Either DB error or another worker/instance holds the claim — skip.
 		return
 	}
+	// No per-file heartbeat needed: the engine enforces a 2-minute per-file kill,
+	// well under the 10-minute watchdog reclaim window.
 	defer func() {
 		ix.mu.Lock()
 		ix.prog.Done++
