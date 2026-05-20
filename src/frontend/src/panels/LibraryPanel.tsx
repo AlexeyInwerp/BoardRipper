@@ -104,7 +104,7 @@ export function LibraryPanel() {
   const {
     files, folderTree, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loadStatus, loadError,
-    autoPdf, searchResults, searchQuery, backendAvailable,
+    autoPdf, backendAvailable,
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
     stats, filesComplete,
@@ -149,8 +149,6 @@ export function LibraryPanel() {
     _externalSearchSetter = setLocalSearch;
     return () => { if (_externalSearchSetter === setLocalSearch) _externalSearchSetter = null; };
   }, []);
-  const [pdfSearchMode, setPdfSearchMode] = useState(false);
-
   // PDF Search tab state
   const [pdfQuery, setPdfQuery] = useState('');
   const [pdfScope, setPdfScope] = useState<'all' | 'donor'>('all');
@@ -231,16 +229,9 @@ export function LibraryPanel() {
     databankStore.fetchTree();
   }, [viewMode, browseMode, folderTree, electronMode]);
 
-  // Normalize: entering history while PDF-search mode is active would leave
-  // pdfSearchMode=true without any UI control to turn it off. Handle at the
-  // tab click site instead of in an effect — avoids cascading renders.
   const handleSetViewMode = useCallback((mode: ViewMode) => {
-    if (mode === 'history' && pdfSearchMode) {
-      setPdfSearchMode(false);
-      if (searchQuery) databankStore.search('');
-    }
     databankStore.setViewMode(mode);
-  }, [pdfSearchMode, searchQuery]);
+  }, []);
 
   const handleFileScan = useCallback(() => {
     databankStore.triggerFileScan();
@@ -327,10 +318,6 @@ export function LibraryPanel() {
         await pdfStore.loadFile(fileObj, file.id);
         ensurePdfPanel(fileObj.name);
         pdfStore.switchTo(fileObj.name);
-        // Pre-populate PDF viewer search with library search query
-        if (pdfSearchMode && searchQuery) {
-          pdfStore.searchText(searchQuery);
-        }
         // Navigate to the specific page from the search result
         if (pageNum) {
           pdfStore.goToPage(pageNum);
@@ -343,7 +330,7 @@ export function LibraryPanel() {
     // `databankStore.fileById` (always current). Re-creating this callback
     // on every store notify would invalidate FileRow memoization and cost
     // more than the current binding-resolution Map lookup saves.
-  }, [autoPdf, pdfSearchMode, searchQuery]);
+  }, [autoPdf]);
 
   /** Opens a PDF Search hit at its page, then fires in-document search
    *  so the matching text is highlighted. Mirrors ContextMenu.doPdfSearch
@@ -540,18 +527,18 @@ export function LibraryPanel() {
             Model
           </button>
           <button
-            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => handleSetViewMode('folders')}
-            title="Browse folders"
-          >
-            <IconFolder size={14} />
-          </button>
-          <button
             className={`library-tab ${viewMode === 'search' ? 'active' : ''}`}
             onClick={() => handleSetViewMode('search')}
             title="Search PDF text content"
           >
             PDF ⌕
+          </button>
+          <button
+            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
+            onClick={() => handleSetViewMode('folders')}
+            title="Browse folders"
+          >
+            <IconFolder size={14} />
           </button>
         </div>
         {viewMode === 'folders' && (
@@ -582,49 +569,18 @@ export function LibraryPanel() {
       <div className="library-search">
         <input
           type="text"
-          placeholder={pdfSearchMode ? "Search PDF content (e.g. 10UF 25V)..." : "Filter files..."}
+          placeholder="Filter files..."
           className="library-search-input"
           value={localSearch}
           onChange={(e) => {
             setLocalSearch(e.target.value);
-            // Clear PDF search results when typing in filter mode
-            if (!pdfSearchMode && searchQuery) databankStore.search('');
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && pdfSearchMode && localSearch.trim()) {
-              databankStore.search(localSearch);
-            }
           }}
         />
-        {viewMode !== 'history' && (
-          <label className="library-pdf-search-toggle" title="Toggle PDF content search (searches inside PDF text)">
-            <input
-              type="checkbox"
-              checked={pdfSearchMode}
-              onChange={(e) => {
-                setPdfSearchMode(e.target.checked);
-                if (!e.target.checked && searchQuery) databankStore.search('');
-              }}
-            />
-            PDF
-          </label>
-        )}
-        {pdfSearchMode && (
-          <button
-            className="library-search-btn"
-            onClick={() => {
-              if (localSearch.trim()) databankStore.search(localSearch);
-            }}
-          >
-            Search
-          </button>
-        )}
-        {(localSearch || searchQuery) && (
+        {localSearch && (
           <button
             className="library-search-clear"
             onClick={() => {
               setLocalSearch('');
-              if (searchQuery) databankStore.search('');
             }}
             title="Clear search"
           >
@@ -708,8 +664,6 @@ export function LibraryPanel() {
               <div className="library-empty">Enter a query and press Search or Enter</div>
             )}
           </div>
-        ) : pdfSearchMode && searchResults.length > 0 ? (
-          <SearchResultsView results={searchResults} onOpenFile={handleOpenFile} />
         ) : loadStatus === 'loading' && files.length === 0 ? (
           <div className="library-empty">Loading library…</div>
         ) : loadStatus === 'error' ? (
@@ -724,8 +678,6 @@ export function LibraryPanel() {
           <div className="library-empty">
             No files found. Click Scan to index your data directory.
           </div>
-        ) : pdfSearchMode && searchQuery && searchResults.length === 0 ? (
-          <div className="library-empty">No results for "{searchQuery}"</div>
         ) : viewMode === 'history' ? (
           <HistoryView
             onOpenFile={handleOpenFile}
