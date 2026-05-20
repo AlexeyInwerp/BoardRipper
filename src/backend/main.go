@@ -158,6 +158,9 @@ func main() {
 	mux.HandleFunc("PUT /api/databank/files/{id}/text", write(dbHandler.UploadText))
 	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)  // streaming PNG — no wrap
 	mux.HandleFunc("PUT /api/databank/preview/{id}", write(dbHandler.PreviewPut))
+	mux.HandleFunc("GET /api/databank/donors", read(dbHandler.ListDonors))
+	mux.HandleFunc("PUT /api/databank/donors/{id}", write(dbHandler.AddDonor))
+	mux.HandleFunc("DELETE /api/databank/donors/{id}", write(dbHandler.RemoveDonor))
 
 	// Board reference database API routes
 	boardsHandler := handlers.NewBoardsHandler(bdb)

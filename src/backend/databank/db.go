@@ -1227,6 +1227,76 @@ func (db *DB) MigratePdfIndexV1() error {
 	return nil
 }
 
+// --- Donor list ---
+
+// DonorEntry is a donor-list row joined to its file.
+type DonorEntry struct {
+	FileID   int64  `json:"file_id"`
+	Filename string `json:"filename"`
+	Path     string `json:"path"`
+	AddedAt  int64  `json:"added_at"`
+}
+
+// AddDonor adds a file to the donor list. Idempotent: re-adding the same
+// file_id is silently ignored.
+func (db *DB) AddDonor(fileID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(
+		`INSERT INTO pdf_donors(file_id, added_at) VALUES(?, ?)
+		 ON CONFLICT(file_id) DO NOTHING`, fileID, time.Now().Unix())
+	return err
+}
+
+// RemoveDonor removes a file from the donor list. A no-op if the file was
+// not in the list.
+func (db *DB) RemoveDonor(fileID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(`DELETE FROM pdf_donors WHERE file_id = ?`, fileID)
+	return err
+}
+
+// DonorFileIDs returns the file IDs of all donor-list entries.
+func (db *DB) DonorFileIDs() ([]int64, error) {
+	rows, err := db.reader.Query(`SELECT file_id FROM pdf_donors`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ListDonors returns all donor-list entries joined to their file records,
+// ordered newest-first.
+func (db *DB) ListDonors() ([]DonorEntry, error) {
+	rows, err := db.reader.Query(`
+		SELECT d.file_id, f.filename, f.path, d.added_at
+		FROM pdf_donors d JOIN files f ON f.id = d.file_id
+		ORDER BY d.added_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DonorEntry
+	for rows.Next() {
+		var e DonorEntry
+		if err := rows.Scan(&e.FileID, &e.Filename, &e.Path, &e.AddedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // setConfigLocked writes a config key-value pair without acquiring db.mu.
 // Only call this when db.mu is already held by the caller.
 func (db *DB) setConfigLocked(key, value string) error {

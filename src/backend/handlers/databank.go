@@ -618,6 +618,67 @@ func (h *DatabankHandler) PdfScanErrorsClear(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
 }
 
+// ListDonors returns all entries in the donor list with their file metadata.
+// GET /api/databank/donors — returns []databank.DonorEntry (empty array, never null).
+func (h *DatabankHandler) ListDonors(w http.ResponseWriter, r *http.Request) {
+	donors, err := h.db.ListDonors()
+	if err != nil {
+		http.Error(w, "Failed to list donors: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if donors == nil {
+		donors = []databank.DonorEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(donors)
+}
+
+// AddDonor adds a file to the donor list.
+// PUT /api/databank/donors/{id} — 400 if the file does not exist or is not a PDF.
+func (h *DatabankHandler) AddDonor(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid file ID", http.StatusBadRequest)
+		return
+	}
+
+	file, err := h.db.GetFileByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusBadRequest)
+		return
+	}
+	if file.FileType != "pdf" {
+		http.Error(w, "File is not a PDF", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.AddDonor(id); err != nil {
+		http.Error(w, "Failed to add donor: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// RemoveDonor removes a file from the donor list.
+// DELETE /api/databank/donors/{id}
+func (h *DatabankHandler) RemoveDonor(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid file ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.RemoveDonor(id); err != nil {
+		http.Error(w, "Failed to remove donor: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
 // UploadText accepts client-extracted (pdfjs) text to replace Go-extracted text.
 // Body: { "pages": { "1": "page 1 text", "2": "page 2 text", ... } }
 func (h *DatabankHandler) UploadText(w http.ResponseWriter, r *http.Request) {

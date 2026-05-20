@@ -1,7 +1,6 @@
 package databank
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -172,10 +171,45 @@ func TestOpen_Idempotent(t *testing.T) {
 	}
 }
 
+func TestDonorCRUD(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	if err := db.MigratePdfIndexV1(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	fid, err := db.InsertFile(&FileRecord{Path: "x.pdf", Filename: "x.pdf", Extension: ".pdf", FileType: "pdf"})
+	if err != nil {
+		t.Fatalf("InsertFile: %v", err)
+	}
+
+	if err := db.AddDonor(fid); err != nil {
+		t.Fatalf("AddDonor: %v", err)
+	}
+	if err := db.AddDonor(fid); err != nil {
+		t.Fatalf("AddDonor again: %v", err) // idempotent
+	}
+	ids, _ := db.DonorFileIDs()
+	if len(ids) != 1 || ids[0] != fid {
+		t.Errorf("DonorFileIDs = %v, want [%d]", ids, fid)
+	}
+	if err := db.RemoveDonor(fid); err != nil {
+		t.Fatalf("RemoveDonor: %v", err)
+	}
+	ids2, _ := db.DonorFileIDs()
+	if len(ids2) != 0 {
+		t.Errorf("after remove = %v, want []", ids2)
+	}
+}
+
 func TestMigratePdfIndexV1(t *testing.T) {
 	// Open takes a dataDir (not a full db path), so pass TempDir directly.
 	dir := t.TempDir()
-	db, err := Open(filepath.Join(dir)) // same as dir; explicit for clarity
+	db, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
