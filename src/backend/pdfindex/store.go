@@ -110,6 +110,23 @@ func (db *DB) Finalize(fileID int64) (StatusRow, error) {
 	return db.Status(fileID)
 }
 
+// MarkDuplicate records fileID as a non-canonical duplicate of canonicalID:
+// terminal status 'duplicate', no pages extracted. Search resolves its hits
+// via the canonical. Works whether or not a row already exists.
+func (db *DB) MarkDuplicate(fileID, canonicalID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	now := time.Now().Unix()
+	_, err := db.writer.Exec(
+		`INSERT INTO pdf_index_status(file_id, status, source, page_count, attempted_at, indexed_at, canonical_file_id)
+		 VALUES(?, 'duplicate', 'dedup', 0, ?, ?, ?)
+		 ON CONFLICT(file_id) DO UPDATE SET
+		   status='duplicate', source='dedup', page_count=0,
+		   canonical_file_id=excluded.canonical_file_id, indexed_at=excluded.indexed_at`,
+		fileID, now, now, canonicalID)
+	return err
+}
+
 // Fail marks the file failed with an error message (retryable on next claim).
 func (db *DB) Fail(fileID int64, msg string) error {
 	db.mu.Lock()
@@ -198,10 +215,11 @@ func (db *DB) ResetForReindex(scope string) (int64, error) {
 }
 
 // DoneOrActiveFileIDs returns file_ids whose status is terminal-or-active
-// (indexed|empty|indexing) — the set the sweep should SKIP. Used to pre-filter
-// the work list so Progress.Total reflects only pending work.
+// (indexed|empty|duplicate|indexing) — the set the sweep should SKIP. Used to
+// pre-filter the work list so Progress.Total reflects only pending work.
+// 'duplicate' is terminal (resolved via its canonical), so it is skipped too.
 func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
-	rows, err := db.reader.Query(`SELECT file_id FROM pdf_index_status WHERE status IN ('indexed','empty','indexing')`)
+	rows, err := db.reader.Query(`SELECT file_id FROM pdf_index_status WHERE status IN ('indexed','empty','duplicate','indexing')`)
 	if err != nil {
 		return nil, err
 	}

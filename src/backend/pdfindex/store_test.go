@@ -188,3 +188,24 @@ func TestListFailedAndReset(t *testing.T) {
 		t.Errorf("reset → pending, got %q", st.Status)
 	}
 }
+
+func TestMarkDuplicate(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.MarkDuplicate(50, 10); err != nil {
+		t.Fatalf("MarkDuplicate: %v", err)
+	}
+	st, _ := db.Status(50)
+	if st.Status != "duplicate" {
+		t.Errorf("status = %q, want duplicate", st.Status)
+	}
+	// a 'duplicate' row is terminal — not reclaimable by Claim
+	won, _ := db.Claim(50, "pdfium")
+	if won {
+		t.Errorf("duplicate row should not be claimable")
+	}
+	// terminal rows are pre-filtered out of the work list
+	skip, _ := db.DoneOrActiveFileIDs()
+	if !skip[50] {
+		t.Errorf("duplicate file should be in DoneOrActiveFileIDs skip set")
+	}
+}

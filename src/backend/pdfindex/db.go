@@ -3,6 +3,7 @@ package pdfindex
 import (
 	"database/sql"
 	"log"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -51,13 +52,14 @@ func (db *DB) Close() error {
 func (db *DB) createSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS pdf_index_status (
-			file_id      INTEGER PRIMARY KEY,
-			status       TEXT    NOT NULL,
-			source       TEXT,
-			page_count   INTEGER NOT NULL DEFAULT 0,
-			attempted_at INTEGER NOT NULL,
-			indexed_at   INTEGER,
-			error        TEXT
+			file_id           INTEGER PRIMARY KEY,
+			status            TEXT    NOT NULL,
+			source            TEXT,
+			page_count        INTEGER NOT NULL DEFAULT 0,
+			attempted_at      INTEGER NOT NULL,
+			indexed_at        INTEGER,
+			error             TEXT,
+			canonical_file_id INTEGER
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_status_status ON pdf_index_status(status)`,
 		`CREATE TABLE IF NOT EXISTS pdf_pages (
@@ -96,5 +98,16 @@ func (db *DB) createSchema() error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Additive: a pdfindex.db created before canonical_file_id existed has the
+	// table without that column. ALTER adds it; ignore the duplicate-column
+	// error when the column is already present (fresh DBs via the CREATE above).
+	if _, err := db.writer.Exec(`ALTER TABLE pdf_index_status ADD COLUMN canonical_file_id INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
+	return nil
 }
