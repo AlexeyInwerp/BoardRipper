@@ -117,3 +117,25 @@ func TestUpsertPagesFTS5Searchable(t *testing.T) {
 		t.Errorf("want 1 hit for 'power' after re-upsert, got %d", hits)
 	}
 }
+
+func TestReclaimStale(t *testing.T) {
+	db := openTestDB(t)
+	db.Claim(11, "pdfium")
+	db.writer.Exec(`UPDATE pdf_index_status SET attempted_at = 0 WHERE file_id = 11`)
+	db.Claim(12, "pdfium") // fresh, must NOT be reclaimed
+	n, err := db.ReclaimStale(600)
+	if err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("want 1 stale reclaimed, got %d", n)
+	}
+	st, _ := db.Status(11)
+	if st.Status != "pending" {
+		t.Errorf("stale row should be pending, got %q", st.Status)
+	}
+	st2, _ := db.Status(12)
+	if st2.Status != "indexing" {
+		t.Errorf("fresh row should stay indexing, got %q", st2.Status)
+	}
+}

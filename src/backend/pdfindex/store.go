@@ -120,6 +120,21 @@ func (db *DB) Fail(fileID int64, msg string) error {
 	return err
 }
 
+// ReclaimStale flips 'indexing' rows whose last heartbeat (attempted_at) is
+// older than maxAgeSeconds back to 'pending'. Returns count reclaimed.
+func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	cutoff := time.Now().Unix() - maxAgeSeconds
+	res, err := db.writer.Exec(
+		`UPDATE pdf_index_status SET status='pending'
+		 WHERE status='indexing' AND attempted_at < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // Status returns the row, or a zero row with Status="" if absent.
 func (db *DB) Status(fileID int64) (StatusRow, error) {
 	var s StatusRow
