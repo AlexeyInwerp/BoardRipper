@@ -102,11 +102,10 @@ export function setLibrarySearch(query: string): void {
 
 /** Compute a "rate/min · ETA Xh Ym" string for index progress bars.
  *  started_at is an ISO-8601 string (from the backend wire format). */
-export function fmtIndexEta(p: { running: boolean; total: number; done: number; started_at: string }): string {
+export function fmtIndexEta(p: { running: boolean; total: number; done: number; started_at: number }): string {
   if (!p.running || !p.started_at || p.done <= 0) return '';
-  const startSec = Math.floor(new Date(p.started_at).getTime() / 1000);
-  if (!startSec) return '';
-  const elapsed = Math.max(1, Math.floor(Date.now() / 1000) - startSec);
+  // started_at is unix SECONDS (backend time.Now().Unix()), not an ISO string.
+  const elapsed = Math.max(1, Math.floor(Date.now() / 1000) - p.started_at);
   const rate = p.done / elapsed; // files/sec
   if (rate <= 0) return '';
   const remain = Math.max(0, p.total - p.done);

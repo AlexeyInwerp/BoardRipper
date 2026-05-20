@@ -19,7 +19,7 @@ export interface PdfIndexProgress {
   done: number;
   errors: number;
   current_file: string;
-  started_at: string;
+  started_at: number; // unix seconds (backend time.Now().Unix())
 }
 
 export interface PdfIndexStats {
