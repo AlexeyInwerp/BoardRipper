@@ -1,0 +1,256 @@
+package pdfindex
+
+import (
+	"context"
+	"log"
+	"sync"
+	"time"
+)
+
+// PdfFile identifies a PDF in the source.
+type PdfFile struct {
+	ID   int64
+	Path string
+}
+
+// Source is satisfied by any adapter that can enumerate and read PDF files
+// (e.g. a databank-backed adapter). Kept minimal so tests can use fakes.
+type Source interface {
+	ListPDFs() ([]PdfFile, error)
+	ReadFile(relPath string) ([]byte, error)
+}
+
+// Extractor is satisfied by Engine (real pdfium WASM) and by fakes in tests.
+type Extractor interface {
+	ExtractFile(data []byte) ([]string, error)
+}
+
+// Progress is a snapshot of the current sweep's progress.
+type Progress struct {
+	Running     bool   `json:"running"`
+	Total       int64  `json:"total"`
+	Done        int64  `json:"done"`
+	Errors      int64  `json:"errors"`
+	CurrentFile string `json:"current_file"`
+	StartedAt   int64  `json:"started_at"`
+}
+
+// Indexer runs autonomous bulk indexing with a priority queue for on-demand
+// re-indexing of individual files (e.g. triggered by a file-upload event).
+type Indexer struct {
+	store   *DB
+	extract Extractor
+	src     Source
+	terms   func() []string
+	workers int
+
+	mu       sync.Mutex
+	running  bool
+	cancel   context.CancelFunc
+	prog     Progress
+	priority chan int64
+}
+
+// NewIndexer creates a new Indexer. workers ≥ 1.
+func NewIndexer(store *DB, e Extractor, src Source, terms func() []string, workers int) *Indexer {
+	if workers < 1 {
+		workers = 1
+	}
+	return &Indexer{
+		store:    store,
+		extract:  e,
+		src:      src,
+		terms:    terms,
+		workers:  workers,
+		priority: make(chan int64, 256),
+	}
+}
+
+// Enqueue pushes a single file ID to the front-of-queue priority lane.
+// Non-blocking: drops silently if the 256-slot buffer is full.
+func (ix *Indexer) Enqueue(fileID int64) {
+	select {
+	case ix.priority <- fileID:
+	default:
+	}
+}
+
+// Progress returns a point-in-time snapshot (safe to call from any goroutine).
+func (ix *Indexer) Progress() Progress {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	return ix.prog
+}
+
+// Stop cancels the running sweep. No-op if not running.
+func (ix *Indexer) Stop() {
+	ix.mu.Lock()
+	if ix.cancel != nil {
+		ix.cancel()
+	}
+	ix.mu.Unlock()
+}
+
+// Run starts a sweep over all files returned by Source.ListPDFs. It is a no-op
+// if a sweep is already in progress. The sweep runs in the background; call
+// Progress() to observe it and wait for Running == false.
+func (ix *Indexer) Run() error {
+	ix.mu.Lock()
+	if ix.running {
+		ix.mu.Unlock()
+		return nil
+	}
+	files, err := ix.src.ListPDFs()
+	if err != nil {
+		ix.mu.Unlock()
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ix.cancel = cancel
+	ix.running = true
+	ix.prog = Progress{
+		Running:   true,
+		Total:     int64(len(files)),
+		StartedAt: time.Now().Unix(),
+	}
+	ix.mu.Unlock()
+	go ix.sweep(ctx, files)
+	return nil
+}
+
+func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
+	bulk := make(chan PdfFile)
+	byID := make(map[int64]PdfFile, len(files))
+	for _, f := range files {
+		byID[f.ID] = f
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < ix.workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				// Drain priority queue first (non-blocking check).
+				select {
+				case <-ctx.Done():
+					return
+				case id := <-ix.priority:
+					if f, ok := byID[id]; ok {
+						ix.process(f)
+					}
+					continue
+				default:
+				}
+				// Then block on either priority, bulk work, or cancellation.
+				select {
+				case <-ctx.Done():
+					return
+				case id := <-ix.priority:
+					if f, ok := byID[id]; ok {
+						ix.process(f)
+					}
+				case f, ok := <-bulk:
+					if !ok {
+						return
+					}
+					ix.process(f)
+				}
+			}
+		}()
+	}
+
+	// Feed bulk channel from the file list.
+	for _, f := range files {
+		select {
+		case <-ctx.Done():
+			goto finish
+		case bulk <- f:
+		}
+	}
+finish:
+	close(bulk)
+	wg.Wait()
+
+	ix.mu.Lock()
+	ix.prog.Running = false
+	ix.running = false
+	ix.cancel = nil
+	ix.mu.Unlock()
+}
+
+func (ix *Indexer) process(f PdfFile) {
+	ix.mu.Lock()
+	ix.prog.CurrentFile = f.Path
+	ix.mu.Unlock()
+
+	won, err := ix.store.Claim(f.ID, "pdfium")
+	if err != nil || !won {
+		// Either DB error or another worker/instance holds the claim — skip.
+		return
+	}
+	defer func() {
+		ix.mu.Lock()
+		ix.prog.Done++
+		ix.mu.Unlock()
+	}()
+
+	data, err := ix.src.ReadFile(f.Path)
+	if err != nil {
+		ix.fail(f.ID, "read: "+err.Error())
+		return
+	}
+	rawPages, err := ix.extract.ExtractFile(data)
+	if err != nil {
+		ix.fail(f.ID, "extract: "+err.Error())
+		return
+	}
+	terms := ix.terms()
+	pages := make([]Page, 0, len(rawPages))
+	for i, raw := range rawPages {
+		clean := CleanPageText(raw, terms)
+		if clean == "" {
+			continue
+		}
+		pages = append(pages, Page{Num: i + 1, Text: clean})
+	}
+	if len(pages) > 0 {
+		if err := ix.store.UpsertPages(f.ID, pages); err != nil {
+			ix.fail(f.ID, "store: "+err.Error())
+			return
+		}
+	}
+	if _, err := ix.store.Finalize(f.ID); err != nil {
+		log.Printf("pdfindex: finalize %d: %v", f.ID, err)
+	}
+}
+
+func (ix *Indexer) fail(fileID int64, msg string) {
+	ix.mu.Lock()
+	ix.prog.Errors++
+	ix.mu.Unlock()
+	_ = ix.store.Fail(fileID, msg)
+}
+
+// StartWatchdog runs a ticker that reclaims 'indexing' rows whose last
+// heartbeat (attempted_at) is older than maxAgeSeconds, flipping them back to
+// 'pending' so they are retried on the next sweep. Close the returned channel
+// to stop the watchdog.
+func (ix *Indexer) StartWatchdog(interval time.Duration, maxAgeSeconds int64) chan struct{} {
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if n, err := ix.store.ReclaimStale(maxAgeSeconds); err == nil && n > 0 {
+					log.Printf("pdfindex watchdog: reclaimed %d stale row(s)", n)
+				}
+			}
+		}
+	}()
+	return stop
+}
