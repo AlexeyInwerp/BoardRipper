@@ -2,6 +2,7 @@ package pdfindex
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -65,5 +66,54 @@ func TestReclaimAfterFail(t *testing.T) {
 	won, _ := db.Claim(7, "pdfium")
 	if !won {
 		t.Errorf("failed row should be reclaimable")
+	}
+}
+
+func TestConcurrentClaimExactlyOneWins(t *testing.T) {
+	db := openTestDB(t)
+	const N = 20
+	var wg sync.WaitGroup
+	wins := make(chan bool, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			won, err := db.Claim(99, "pdfium")
+			if err != nil {
+				t.Errorf("claim err: %v", err)
+			}
+			wins <- won
+		}()
+	}
+	wg.Wait()
+	close(wins)
+	count := 0
+	for w := range wins {
+		if w {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("exactly one claim should win, got %d", count)
+	}
+}
+
+func TestUpsertPagesFTS5Searchable(t *testing.T) {
+	db := openTestDB(t)
+	db.Claim(5, "pdfium")
+	if err := db.UpsertPages(5, []Page{{Num: 1, Text: "STM32 connector usb"}}); err != nil {
+		t.Fatalf("UpsertPages: %v", err)
+	}
+	if err := db.UpsertPages(5, []Page{{Num: 1, Text: "STM32 connector usb power"}}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	var hits int
+	err := db.reader.QueryRow(
+		`SELECT COUNT(*) FROM pdf_text WHERE pdf_text MATCH 'power'`).Scan(&hits)
+	if err != nil {
+		t.Fatalf("fts query: %v", err)
+	}
+	if hits != 1 {
+		t.Errorf("want 1 hit for 'power' after re-upsert, got %d", hits)
 	}
 }
