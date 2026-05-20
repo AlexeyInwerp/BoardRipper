@@ -64,8 +64,13 @@ func (db *DB) SearchPages(query string, restrictTo []int64, limit int) ([]Search
 	return out, rows.Err()
 }
 
-// buildFTS5Query converts each whitespace-separated term to a quoted FTS5 term;
-// implicit AND (space-separated quoted terms). Returns "" for blank input.
+// buildFTS5Query converts each whitespace-separated term to a quoted FTS5
+// PREFIX term ("term"*); implicit AND (space-separated). Returns "" for blank
+// input. Prefix matching is essential for partial part numbers: searching
+// "AOZ5332" must match the token "AOZ5332QI" (and every other AOZ5332* variant)
+// — an exact-token query ("AOZ5332") would miss them since FTS5 tokenizes the
+// full alphanumeric run as one token. The schema's prefix='2 3 4' index keeps
+// short prefixes fast; longer prefixes still resolve correctly.
 func buildFTS5Query(query string) string {
 	terms := strings.Fields(query)
 	quoted := make([]string, 0, len(terms))
@@ -75,7 +80,7 @@ func buildFTS5Query(query string) string {
 			continue
 		}
 		t = strings.ReplaceAll(t, `"`, `""`)
-		quoted = append(quoted, `"`+t+`"`)
+		quoted = append(quoted, `"`+t+`"*`)
 	}
 	return strings.Join(quoted, " ")
 }
