@@ -10,8 +10,8 @@ set -euo pipefail
 DEV_NAME="boardripper-dev"
 DEV_TAG="latest"
 DEV_PORT="${DEV_PORT:-1234}"
-DEV_MEM="${DEV_MEM:-1024m}"
-DEV_POOL="${DEV_POOL:-2}"
+DEV_MEM="${DEV_MEM:-2048m}"   # 4 wazero/pdfium workers can spike WASM memory on big schematics
+DEV_POOL="${DEV_POOL:-4}"     # NAS has 4 cores; pool=4 ~saturates them (measured 385% CPU vs 230% at 2)
 NAS_SSH_PORT=22
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
