@@ -155,6 +155,14 @@ func main() {
 	mux.HandleFunc("PUT /api/databank/donors/{id}", write(dbHandler.AddDonor))
 	mux.HandleFunc("DELETE /api/databank/donors/{id}", write(dbHandler.RemoveDonor))
 
+	// Content dedup ("Find duplicates") API routes
+	dedupRunner := databank.NewDedupRunner(db, scanner.ScanRoot)
+	dedupHandler := handlers.NewDedupHandler(dedupRunner, db)
+	mux.HandleFunc("POST /api/databank/dedup/run", dedupHandler.Run)
+	mux.HandleFunc("POST /api/databank/dedup/stop", write(dedupHandler.Stop))
+	mux.HandleFunc("GET /api/databank/dedup/progress", read(dedupHandler.ProgressEndpoint))
+	mux.HandleFunc("GET /api/databank/dedup/stats", read(dedupHandler.Stats))
+
 	// Board reference database API routes
 	boardsHandler := handlers.NewBoardsHandler(bdb)
 	mux.HandleFunc("GET /api/boards/resolve", read(boardsHandler.Resolve))
