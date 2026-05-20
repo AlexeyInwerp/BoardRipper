@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -94,8 +95,6 @@ func main() {
 	} else {
 		defer pdfIndex.Close()
 	}
-	_ = pdfIndex // consumed by route wiring in a later task
-
 	// Conditional auto-scan based on config (default: off)
 	if autoScan, _ := db.GetConfig("auto_scan"); autoScan == "true" {
 		go func() {
@@ -223,6 +222,49 @@ func main() {
 	mux.HandleFunc("POST /api/obd/fetch", obdHandler.Fetch) // 30s upstream timeout — no wrap
 	mux.HandleFunc("DELETE /api/obd/cache", write(obdHandler.CacheDelete))
 
+	// PDF index API routes — only registered when pdfindex.db is available and
+	// the pdfium WASM engine initialises successfully.
+	if pdfIndex != nil {
+		poolMax := 2
+		if v := os.Getenv("PDFINDEX_POOL_MAX"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				poolMax = n
+			}
+		}
+		engine, eerr := pdfindex.NewEngine(poolMax)
+		if eerr != nil {
+			log.Printf("WARNING: pdfium engine init failed (%v) — backend PDF indexing disabled", eerr)
+		} else {
+			defer engine.Close()
+			termsFn := func() []string { return loadWatermarkTerms(db) }
+			source := handlers.NewPdfIndexSource(db, scanner.ScanRoot)
+			indexer := pdfindex.NewIndexer(pdfIndex, engine, source, termsFn, poolMax)
+			defer close(indexer.StartWatchdog(5*time.Minute, 600))
+
+			pdfIdxHandler := handlers.NewPdfIndexHandler(pdfIndex, indexer)
+			mux.HandleFunc("GET /api/pdfindex/status/{id}", read(pdfIdxHandler.Status))
+			mux.HandleFunc("GET /api/pdfindex/stats", read(pdfIdxHandler.Stats))
+			mux.HandleFunc("POST /api/pdfindex/run", pdfIdxHandler.Run)
+			mux.HandleFunc("POST /api/pdfindex/stop", write(pdfIdxHandler.Stop))
+			mux.HandleFunc("GET /api/pdfindex/progress", read(pdfIdxHandler.ProgressEndpoint))
+			mux.HandleFunc("POST /api/pdfindex/reindex", write(pdfIdxHandler.Reindex))
+			mux.HandleFunc("POST /api/pdfindex/files/{id}/index", write(pdfIdxHandler.PriorityIndex))
+			mux.HandleFunc("POST /api/pdfindex/files/{id}/begin", write(pdfIdxHandler.Begin))
+			mux.HandleFunc("PUT /api/pdfindex/files/{id}/pages", pdfIdxHandler.Pages)
+			mux.HandleFunc("POST /api/pdfindex/files/{id}/finalize", write(pdfIdxHandler.Finalize))
+			mux.HandleFunc("POST /api/pdfindex/files/{id}/fail", write(pdfIdxHandler.FailEndpoint))
+			mux.HandleFunc("GET /api/pdfindex/failed", read(pdfIdxHandler.Failed))
+			mux.HandleFunc("DELETE /api/pdfindex/files/{id}", write(pdfIdxHandler.Delete))
+
+			if v, _ := db.GetConfig("pdf_index_auto_run"); v == "true" {
+				go func() {
+					log.Println("pdfindex: auto-run enabled — starting bulk sweep")
+					_ = indexer.Run()
+				}()
+			}
+		}
+	}
+
 	// Serve static frontend files.
 	//
 	// Cache policy:
@@ -322,3 +364,6 @@ func main() {
 		log.Print("Shutdown complete")
 	}
 }
+
+// loadWatermarkTerms is replaced by a real implementation in a later task.
+func loadWatermarkTerms(db *databank.DB) []string { return nil }

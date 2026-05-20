@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -93,6 +95,55 @@ func blocksOrUnknown(info os.FileInfo) string {
 		return strconv.FormatInt(b, 10)
 	}
 	return "?"
+}
+
+// readFileEager reads the file at root/relPath fully into memory and verifies
+// byte count matches stat().Size(). Returns the raw bytes or an error.
+// Cloud-storage-aware: same short-read / deadline / EDEADLK detection as
+// serveFileEager but without any HTTP coupling — suitable for use by internal
+// adapters (e.g. pdfindex Source).
+func readFileEager(root, relPath string) ([]byte, error) {
+	path := filepath.Join(root, relPath)
+	rc, info, err := defaultOpener(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		rc.Close()
+		return nil, &os.PathError{Op: "read", Path: path, Err: os.ErrInvalid}
+	}
+	expectedSize := info.Size()
+	if expectedSize > maxFileBytes {
+		rc.Close()
+		return nil, fmt.Errorf("file too large (%d bytes)", expectedSize)
+	}
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	resultCh := make(chan readResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), readDeadlineForTest)
+	defer cancel()
+
+	go func() {
+		defer rc.Close()
+		data, err := io.ReadAll(rc)
+		resultCh <- readResult{data, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("read deadline exceeded for %s (cloud storage materializing?)", path)
+	case res := <-resultCh:
+		if res.err != nil {
+			return nil, res.err
+		}
+		if int64(len(res.data)) != expectedSize {
+			return nil, fmt.Errorf("short read on %s: got %d bytes, expected %d (cloud placeholder?)", path, len(res.data), expectedSize)
+		}
+		return res.data, nil
+	}
 }
 
 // serveFileEager reads the file at path fully into memory, verifies byte
