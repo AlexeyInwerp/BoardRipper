@@ -69,21 +69,21 @@ func (db *DB) createSchema() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_pages_file ON pdf_pages(file_id)`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS pdf_text USING fts5(
-			content,
+			text_content,
 			content='pdf_pages',
 			content_rowid='rowid',
 			tokenize='porter unicode61',
 			prefix='2 3 4'
 		)`,
 		`CREATE TRIGGER IF NOT EXISTS pdf_pages_ai AFTER INSERT ON pdf_pages BEGIN
-			INSERT INTO pdf_text(rowid, content) VALUES (new.rowid, new.text_content);
+			INSERT INTO pdf_text(rowid, text_content) VALUES (new.rowid, new.text_content);
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS pdf_pages_ad AFTER DELETE ON pdf_pages BEGIN
-			INSERT INTO pdf_text(pdf_text, rowid, content) VALUES('delete', old.rowid, old.text_content);
+			INSERT INTO pdf_text(pdf_text, rowid, text_content) VALUES('delete', old.rowid, old.text_content);
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS pdf_pages_au AFTER UPDATE ON pdf_pages BEGIN
-			INSERT INTO pdf_text(pdf_text, rowid, content) VALUES('delete', old.rowid, old.text_content);
-			INSERT INTO pdf_text(rowid, content) VALUES (new.rowid, new.text_content);
+			INSERT INTO pdf_text(pdf_text, rowid, text_content) VALUES('delete', old.rowid, old.text_content);
+			INSERT INTO pdf_text(rowid, text_content) VALUES (new.rowid, new.text_content);
 		END`,
 	}
 	tx, err := db.writer.Begin()

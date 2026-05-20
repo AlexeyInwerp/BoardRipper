@@ -11,10 +11,6 @@ type SearchHit struct {
 // SearchPages runs the FTS5 query. If restrictTo is non-empty, only those
 // file_ids are considered (donor scope). No ATTACH — enrichment is separate.
 //
-// Note: modernc.org/sqlite's FTS5 snippet() is incompatible with
-// trigger-populated content= tables (SQL logic error at query time). We use a
-// CTE to rank by FTS5 score, then join pdf_pages for metadata and a plain
-// text excerpt as the snippet.
 func (db *DB) SearchPages(query string, restrictTo []int64, limit int) ([]SearchHit, error) {
 	fts := buildFTS5Query(query)
 	if fts == "" {
@@ -38,10 +34,14 @@ func (db *DB) SearchPages(query string, restrictTo []int64, limit int) ([]Search
 	}
 	args = append(args, limit)
 
+	// snippet() must be called in the SELECT that has pdf_text in scope (the
+	// MATCH query). We select it alongside the rowid from the FTS5 table, then
+	// join to pdf_pages for file_id/page_num.
 	q := `WITH ranked AS (
-		SELECT rowid, rank FROM pdf_text WHERE ` + innerWhere + ` ORDER BY rank LIMIT ?
+		SELECT pdf_text.rowid, rank, snippet(pdf_text, 0, '<b>', '</b>', '...', 32) AS snip
+		FROM pdf_text WHERE ` + innerWhere + ` ORDER BY rank LIMIT ?
 	)
-	SELECT p.file_id, p.page_num, substr(p.text_content, 1, 200) AS snippet
+	SELECT p.file_id, p.page_num, r.snip
 	FROM ranked r JOIN pdf_pages p ON p.rowid = r.rowid
 	ORDER BY r.rank`
 

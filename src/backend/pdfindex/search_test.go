@@ -1,6 +1,9 @@
 package pdfindex
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSearchPages(t *testing.T) {
 	db := openTestDB(t)
@@ -17,6 +20,10 @@ func TestSearchPages(t *testing.T) {
 	}
 	if len(hits) != 2 {
 		t.Errorf("want 2 hits for 'usb', got %d", len(hits))
+	}
+
+	if len(hits) > 0 && !strings.Contains(hits[0].Snippet, "<b>") {
+		t.Errorf("snippet should contain <b> highlight, got %q", hits[0].Snippet)
 	}
 
 	hits2, _ := db.SearchPages("usb", []int64{2}, 100)

@@ -217,6 +217,10 @@ func (h *PdfIndexHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/databank/search?q=...&scope=all|donor
 func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
+	if h.bank == nil {
+		writeJSON(w, map[string]interface{}{"results": []interface{}{}, "total": 0, "query": ""})
+		return
+	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	scope := r.URL.Query().Get("scope")
 	if q == "" {

@@ -1280,7 +1280,7 @@ func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
 		 FROM bindings b JOIN files f ON f.id = b.board_file_id
 		 WHERE b.pdf_file_id IN (`+in+`)`, args...)
 	if err != nil {
-		return out, nil
+		return nil, err
 	}
 	defer brows.Close()
 	for brows.Next() {
@@ -1288,7 +1288,7 @@ func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
 		var b BoardBinding
 		var donor int
 		if err := brows.Scan(&pdfID, &b.BoardFileID, &b.BoardFilename, &donor); err != nil {
-			return out, nil
+			return nil, err
 		}
 		b.DonorPool = donor != 0
 		if m, ok := out[pdfID]; ok {
@@ -1296,7 +1296,7 @@ func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
 			out[pdfID] = m
 		}
 	}
-	return out, nil
+	return out, brows.Err()
 }
 
 // --- Donor list ---
