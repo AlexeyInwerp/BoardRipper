@@ -3,6 +3,7 @@ package databank
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -650,6 +651,9 @@ type FileRecord struct {
 	BoardUUID         string `json:"board_uuid,omitempty"`
 	BoardColor        string `json:"board_color,omitempty"`
 	BoardColorHex     string `json:"board_color_hex,omitempty"`
+	// ContentHash is the hex-encoded content-dedup hash, empty for unique-size
+	// singletons. Files sharing a non-empty value are byte-identical copies.
+	ContentHash string `json:"content_hash,omitempty"`
 }
 
 // BindingRecord represents a row in the bindings table.
@@ -777,7 +781,7 @@ func (db *DB) GetFileByPath(path string) (*FileRecord, error) {
 	return db.scanFile(db.reader.QueryRow(
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
-		        board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
+		        board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex, content_hash
 		 FROM files WHERE path = ?`, path,
 	))
 }
@@ -787,7 +791,7 @@ func (db *DB) GetFileByID(ctx context.Context, id int64) (*FileRecord, error) {
 	return db.scanFile(db.reader.QueryRowContext(ctx,
 		`SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 		        board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
-		        board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
+		        board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex, content_hash
 		 FROM files WHERE id = ?`, id,
 	))
 }
@@ -798,7 +802,7 @@ func (db *DB) GetFileByID(ctx context.Context, id int64) (*FileRecord, error) {
 func (db *DB) ListFiles(ctx context.Context, fileType string, manufacturer string, donorOnly bool) ([]FileRecord, error) {
 	query := `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 	                 board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
-	                 board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
+	                 board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex, content_hash
 	          FROM files WHERE 1=1`
 	args := []interface{}{}
 
@@ -847,7 +851,7 @@ func (db *DB) ListFilesByIDs(ctx context.Context, ids []int64) ([]FileRecord, er
 	}
 	query := `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 	                 board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
-	                 board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex
+	                 board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex, content_hash
 	          FROM files WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 
 	rows, err := db.reader.QueryContext(ctx, query, args...)
@@ -1080,14 +1084,18 @@ func (db *DB) scanFile(row scannable) (*FileRecord, error) {
 	var boardNum, mfr, model, fmtID, boardMfr, resStat, boardUUID, boardColor, boardColorHex sql.NullString
 	var partCount, netCount sql.NullInt64
 	var donor, preview int
+	var contentHash []byte
 
 	err := row.Scan(
 		&f.ID, &f.Path, &f.Filename, &f.Extension, &f.FileType, &f.Size, &f.ModTime, &f.ScanTime,
 		&boardNum, &mfr, &model, &fmtID, &partCount, &netCount, &donor, &preview,
-		&boardMfr, &resStat, &boardUUID, &boardColor, &boardColorHex,
+		&boardMfr, &resStat, &boardUUID, &boardColor, &boardColorHex, &contentHash,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if len(contentHash) > 0 {
+		f.ContentHash = hex.EncodeToString(contentHash)
 	}
 
 	f.BoardNumber = boardNum.String
