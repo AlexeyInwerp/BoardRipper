@@ -456,11 +456,15 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			}
 		}
 
-		// Phase 5: Auto-match board-PDF bindings for new files
-		s.mu.Lock()
-		s.status.Phase = "Auto-matching bindings"
-		s.mu.Unlock()
-		s.autoMatchBindings()
+		// Phase 5: Auto-match board-PDF bindings for new files.
+		// OFF by default — on large libraries the O(boards×pdfs) match loop
+		// adds hours to the scan. Opt in via config `auto_bind=true`.
+		if v, _ := s.db.GetConfig("auto_bind"); v == "true" {
+			s.mu.Lock()
+			s.status.Phase = "Auto-matching bindings"
+			s.mu.Unlock()
+			s.autoMatchBindings()
+		}
 	}
 
 	if reresolved > 0 {

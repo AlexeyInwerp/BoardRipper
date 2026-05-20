@@ -21,6 +21,7 @@ import (
 // in the generic /api/config payload.
 var allowedConfigKeys = map[string]bool{
 	"auto_scan":             true,
+	"auto_bind":             true,
 	"library_dir":           true,
 	"sync_enabled":          true,
 	"sync_url":              true,
