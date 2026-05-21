@@ -176,6 +176,30 @@ func (db *DB) DeleteFile(fileID int64) error {
 	return err
 }
 
+// ResetAll wipes ALL extracted PDF text and index status so extraction can be
+// re-run from scratch. The external-content FTS index is realigned with the
+// now-empty content table via a 'rebuild'. Donors/bindings (in databank.db) are
+// untouched — this clears only the PDF text index.
+func (db *DB) ResetAll() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM pdf_pages`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM pdf_index_status`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO pdf_text(pdf_text) VALUES('rebuild')`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (db *DB) ListFailed() ([]StatusRow, error) {
 	rows, err := db.reader.Query(
 		`SELECT file_id, status, COALESCE(error,'') FROM pdf_index_status WHERE status='failed'`)

@@ -1189,6 +1189,7 @@ class DatabankStore extends Emitter {
     if (res) {
       log.scan.log('PDF text reset complete');
       await this.fetchStats();
+      await this.fetchPdfIndexStats(); // reflect the wiped index immediately
       this.notify();
       return true;
     }

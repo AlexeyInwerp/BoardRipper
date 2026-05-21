@@ -77,6 +77,18 @@ func (h *PdfIndexHandler) ProgressEndpoint(w http.ResponseWriter, r *http.Reques
 }
 
 // POST /api/pdfindex/reindex
+// POST /api/databank/reset-pdf — wipe all extracted PDF text + index status so
+// the user can re-run extraction. Stops any running sweep first so workers
+// don't write into a just-cleared DB.
+func (h *PdfIndexHandler) ResetPdf(w http.ResponseWriter, r *http.Request) {
+	h.ix.Stop()
+	if err := h.db.ResetAll(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "reset"})
+}
+
 func (h *PdfIndexHandler) Reindex(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Scope string `json:"scope"`

@@ -189,6 +189,33 @@ func TestListFailedAndReset(t *testing.T) {
 	}
 }
 
+func TestResetAll(t *testing.T) {
+	db := openTestDB(t)
+	db.Claim(1, "pdfium")
+	if err := db.UpsertPages(1, []Page{{Num: 1, Text: "alpha connector"}}); err != nil {
+		t.Fatalf("UpsertPages: %v", err)
+	}
+	db.Finalize(1)
+	if s, _ := db.Stats(); s.Indexed != 1 || s.Pages != 1 {
+		t.Fatalf("precondition: want 1 indexed/1 page, got %+v", s)
+	}
+	if err := db.ResetAll(); err != nil {
+		t.Fatalf("ResetAll: %v", err)
+	}
+	s, _ := db.Stats()
+	if s.Indexed != 0 || s.Pages != 0 || s.Empty != 0 || s.Failed != 0 {
+		t.Errorf("after reset stats = %+v, want all zero", s)
+	}
+	// FTS must be cleared too — the term no longer matches.
+	hits, err := db.SearchPages("connector", nil, 10)
+	if err != nil {
+		t.Fatalf("SearchPages: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Errorf("after reset search returned %d hits, want 0", len(hits))
+	}
+}
+
 func TestMarkDuplicate(t *testing.T) {
 	db := openTestDB(t)
 	if err := db.MarkDuplicate(50, 10); err != nil {
