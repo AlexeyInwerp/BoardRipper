@@ -381,6 +381,75 @@ function parseSignals(lines: string[]): Map<string, string> {
 }
 
 // ---------------------------------------------------------------------------
+// Device catalogue ($DEVICES) — BOM / part descriptions
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the $DEVICES section into a map of device-name → PART description.
+ *
+ * GenCAD device records look like:
+ *   DEVICE Device R2653
+ *   PART RES 200K OHM 1/20W (0201) 5%//TA-I/RM02JTN204
+ *
+ * The PART line carries the human part description plus, after a `//`
+ * separator, the manufacturer + part-number block. Mentor CAMCAD exports
+ * (e.g. Compal/ASUS laptop boards) put all the useful BOM info here while the
+ * COMPONENT's inline DEVICE field is just "Device <refdes>". The component
+ * loop joins on the device name to surface this in ComponentInfo. Device
+ * records with a blank PART line are skipped.
+ */
+function parseDevices(lines: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let current = '';
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.startsWith('DEVICE ')) {
+      current = line.substring(7).trim();
+    } else if (line.startsWith('PART ') && current) {
+      const part = line.substring(5).trim();
+      if (part) map.set(current, part);
+    }
+  }
+  return map;
+}
+
+/**
+ * Split a GenCAD PART description into a human value + manufacturer/code block.
+ * Format: `<description>//<manufacturer block>` (the `//` is the reliable
+ * separator; the description itself can contain single `/`, e.g. "1/20W").
+ * Either side may be empty.
+ */
+function splitPartDescription(part: string): { value?: string; serial?: string } {
+  const sep = part.indexOf('//');
+  if (sep < 0) return { value: part || undefined };
+  const value = part.slice(0, sep).trim();
+  const serial = part.slice(sep + 2).trim();
+  return { value: value || undefined, serial: serial || undefined };
+}
+
+/** Build a part's display meta from its $DEVICES PART line (if any) + shape. */
+function buildPartMeta(
+  comp: Pick<Component, 'name' | 'deviceName' | 'shapeName'>,
+  part: string | undefined,
+): NonNullable<Part['meta']> {
+  const meta: NonNullable<Part['meta']> = {};
+  if (part) {
+    const { value, serial } = splitPartDescription(part);
+    if (value) meta.value = value;
+    if (serial) meta.serial = serial;
+  } else if (comp.deviceName && comp.deviceName !== `Device ${comp.name}`) {
+    // No catalogue PART — keep a meaningful inline device name, but drop the
+    // auto-generated "Device <refdes>" placeholder (carries no information).
+    meta.value = comp.deviceName;
+  }
+  // Shape doubles as the package name in most GenCAD files. Skip it when the
+  // exporter named the shape after the refdes (per-instance shapes), which
+  // would just echo the component name.
+  if (comp.shapeName && comp.shapeName !== comp.name) meta.package = comp.shapeName;
+  return meta;
+}
+
+// ---------------------------------------------------------------------------
 // Track width table ($TRACKS)
 // ---------------------------------------------------------------------------
 
@@ -710,6 +779,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'));
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
+  const devicePartMap = parseDevices(extractSection(lines, 'DEVICES'));
 
   // Some shapes in V382-style exports are left with stale world
   // coordinates leaked from a previous instance (e.g. PDFN8/DFN8 in
@@ -818,10 +888,13 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       // The BOM-cluster heuristic depends on `meta.value` to distinguish
       // shape-suffixed primary devices (e.g. `0.22uh_IND_NONRKO_TH_100X072_B`)
       // from bare-named alternates (e.g. `0.22uh`).
-      meta: {
-        value:   comp.deviceName || undefined,
-        package: comp.shapeName  || undefined,
-      },
+      //
+      // When the $DEVICES catalogue carries a PART description (Mentor CAMCAD
+      // exports), prefer it — value = the human description, serial = the
+      // manufacturer/part-number block. Otherwise fall back to the inline
+      // device name, but drop the auto-generated "Device <refdes>" placeholder
+      // those exports use (it carries no information).
+      meta: buildPartMeta(comp, devicePartMap.get(comp.deviceName)),
     });
   }
 
