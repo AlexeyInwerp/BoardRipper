@@ -177,27 +177,29 @@ func (db *DB) DeleteFile(fileID int64) error {
 }
 
 // ResetAll wipes ALL extracted PDF text and index status so extraction can be
-// re-run from scratch. The external-content FTS index is realigned with the
-// now-empty content table via a 'rebuild'. Donors/bindings (in databank.db) are
-// untouched — this clears only the PDF text index.
+// re-run from scratch. Donors/bindings (in databank.db) are untouched.
+//
+// It DROPs the content + FTS tables and triggers rather than DELETEing rows:
+// the pdf_pages AD trigger re-tokenises every row's text to remove its FTS
+// terms, so a row-by-row DELETE of a large index takes minutes. DROP is O(1).
+// createSchema() then recreates everything empty (idempotent).
 func (db *DB) ResetAll() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	tx, err := db.writer.Begin()
-	if err != nil {
-		return err
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS pdf_pages_ai`,
+		`DROP TRIGGER IF EXISTS pdf_pages_ad`,
+		`DROP TRIGGER IF EXISTS pdf_pages_au`,
+		`DROP TABLE IF EXISTS pdf_text`,
+		`DROP TABLE IF EXISTS pdf_pages`,
+		`DELETE FROM pdf_index_status`,
 	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM pdf_pages`); err != nil {
-		return err
+	for _, s := range stmts {
+		if _, err := db.writer.Exec(s); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.Exec(`DELETE FROM pdf_index_status`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO pdf_text(pdf_text) VALUES('rebuild')`); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return db.createSchema()
 }
 
 func (db *DB) ListFailed() ([]StatusRow, error) {
