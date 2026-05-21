@@ -60,28 +60,47 @@ export interface DedupStats {
   bytes_dedupable: number;
 }
 
+export interface CollapsedFileInfo {
+  /** Number of byte-identical copies folded into this row (group size − 1). */
+  copyCount: number;
+  /** Paths of those folded-away copies (for the ×N badge tooltip). */
+  copyPaths: string[];
+}
+
 /**
- * Collapse a flat file list so each byte-identical content group is
- * represented once (the canonical, lowest-id member), with a `copyCount` of
- * the redundant copies dropped. Files with no `content_hash` (unique-size
- * singletons) pass through untouched with `copyCount: 0`.
+ * Build a plan for collapsing byte-identical files across a WHOLE content view
+ * (Board#/Model), not just within one board#/variant subgroup — a content group
+ * can span board numbers (e.g. 820-00165 vs 820-00165-A). Pass every (filtered)
+ * file in the view.
  *
- * Used by content-oriented views (Board#/Model) — NOT the Folder views, which
- * must keep listing every file at its real path.
+ * `keep` is the set of file ids to render: each unhashed singleton plus the
+ * lowest-id member ("canonical") of each content group. `info` maps a canonical
+ * id to its folded copies. Non-canonical duplicates are absent from `keep`, so
+ * they drop out of whichever subgroup they sit in. Folder views never call this.
  */
-export function collapseByContent<T extends { id: number; content_hash?: string | null }>(files: T[]): Array<T & { copyCount: number }> {
-  const byHash = new Map<string, T[]>();
-  const singles: T[] = [];
+export function contentCollapsePlan(
+  files: Array<{ id: number; content_hash?: string | null; path: string }>,
+): { keep: Set<number>; info: Map<number, CollapsedFileInfo> } {
+  const byHash = new Map<string, Array<{ id: number; path: string }>>();
+  const keep = new Set<number>();
   for (const f of files) {
-    if (f.content_hash) { const a = byHash.get(f.content_hash) ?? []; a.push(f); byHash.set(f.content_hash, a); }
-    else singles.push(f);
+    if (f.content_hash) {
+      const a = byHash.get(f.content_hash) ?? [];
+      a.push({ id: f.id, path: f.path });
+      byHash.set(f.content_hash, a);
+    } else {
+      keep.add(f.id);
+    }
   }
-  const out: Array<T & { copyCount: number }> = singles.map(f => ({ ...f, copyCount: 0 }));
+  const info = new Map<number, CollapsedFileInfo>();
   for (const group of byHash.values()) {
     group.sort((a, b) => a.id - b.id);
-    out.push({ ...group[0], copyCount: group.length - 1 });
+    keep.add(group[0].id);
+    if (group.length > 1) {
+      info.set(group[0].id, { copyCount: group.length - 1, copyPaths: group.slice(1).map(g => g.path) });
+    }
   }
-  return out;
+  return { keep, info };
 }
 
 export interface DatabankBinding {
