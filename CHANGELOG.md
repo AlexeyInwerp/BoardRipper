@@ -1,5 +1,22 @@
 # BoardRipper changelog
 
+## v0.30.10 — 2026-05-20
+
+Allegro parser fixes surfaced by a Dell Nvidia Quadro 5000M board
+(`Nvidia_5000M_Dell.brd`) — the first v17.4, millimetre-units file in the
+corpus — plus the PDF pan-boundary follow-up.
+
+### Allegro parser
+
+- **Honour `boardUnits` when scaling coordinates to mils.** The assembler divided every coordinate and dimension by `unitsDivisor` alone, implicitly assuming MILS. That is correct for the ~10 MILS boards we had, but silently mis-scaled the two metric files: a millimetre-units board (divisor 10000) came out **39.37× too small** — a 5.2″×3.6″ board collapsed into a ~3 mm blob where every part overlapped into one tiny mass. Fold the per-unit mils factor into the divisor at the single source point so all downstream conversions land in mils; MILS files are byte-for-byte unchanged. Also corrects a µm-units file that was silently oversized. (`c3d3157`)
+- **Derive component side from the assembly-graphic subclass.** Some exporters leave the `0x2D` footprint-instance layer byte 0 for every part regardless of side, so the Nvidia board reported 838 top / 4 bottom when it is really ~389 top / ~453 bottom — every bottom-side part rendered on top. Allegro also records side on each footprint's PACKAGE_GEOMETRY assembly drawing via the `0x14` graphic layer subclass (`0xF7`=top, `0xF6`=bottom); that subclass agrees with the instance flag on every other corpus file where it appears, so prefer it when present and fall back to the instance flag otherwise. (`05604fe`)
+- **Skip footprint-definition via-in-pad templates.** `extractVias` walked every `0x33` block, including footprint-library via-in-pad templates whose net pointer references the parent `0x2B` footprint definition (not a `0x04` net) and whose coords are footprint-local. They rendered as a phantom BGA-style via grid at the board origin — ~2.8k vias (16 GDDR chips × 170 balls) on the Nvidia board, plus smaller clusters on Compal LA-H271P and Dell XPS 9560. Templates are now dropped. (`7288903`)
+- **Skip footprint-definition copper-track templates.** Same root cause for traces: `extractTraces` picked up `0x05` ETCH tracks whose `netAssignment` points at a `0x2B` footprint def, dumping ~340 uniform local-coord segments as a phantom cluster at the origin. Both sites now share one `pointsToFootprintDef()` check. (`3f30b7b`)
+
+### PDF viewer
+
+- **Pan boundaries off by default; the panel no longer sticks mid-scroll.** Multiple users reported the PDF panel getting "stuck" on a page mid-document or refusing to scroll in some positions, traced to the pan-clamp logic interacting with the page-flip threshold. `clampPan` now returns immediately unless the new Settings ▸ Performance & Debug ▸ "PDF Pan Boundaries" toggle is on; the page-flip thresholds in the wheel handler still fire as the user crosses them. The zoom range stays at the historical 0.5×–10×. (`878c74d`, `340bee1`)
+
 ## v0.30.9 — 2026-05-19
 
 Two self-update papercuts found while shipping v0.30.8.
