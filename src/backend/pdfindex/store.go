@@ -1,8 +1,9 @@
 package pdfindex
 
 import (
-	"errors"
 	"database/sql"
+	"errors"
+	"os"
 	"time"
 )
 
@@ -179,26 +180,34 @@ func (db *DB) DeleteFile(fileID int64) error {
 // ResetAll wipes ALL extracted PDF text and index status so extraction can be
 // re-run from scratch. Donors/bindings (in databank.db) are untouched.
 //
-// It DROPs the content + FTS tables and triggers rather than DELETEing rows:
-// the pdf_pages AD trigger re-tokenises every row's text to remove its FTS
-// terms, so a row-by-row DELETE of a large index takes minutes. DROP is O(1).
-// createSchema() then recreates everything empty (idempotent).
+// It deletes and recreates the database FILE rather than clearing rows in
+// place: on a multi-GB index on slow (NAS) storage, an in-place DELETE/DROP of
+// hundreds of thousands of rows takes minutes (and DROP of the FTS5 vtable can
+// hang the pure-Go driver). Unlinking the file is O(1) regardless of size.
+//
+// Callers should stop the indexer first. Held under db.mu (serialising
+// writers); the connection pools are closed and reopened on the same path.
 func (db *DB) ResetAll() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	stmts := []string{
-		`DROP TRIGGER IF EXISTS pdf_pages_ai`,
-		`DROP TRIGGER IF EXISTS pdf_pages_ad`,
-		`DROP TRIGGER IF EXISTS pdf_pages_au`,
-		`DROP TABLE IF EXISTS pdf_text`,
-		`DROP TABLE IF EXISTS pdf_pages`,
-		`DELETE FROM pdf_index_status`,
-	}
-	for _, s := range stmts {
-		if _, err := db.writer.Exec(s); err != nil {
+	// Close waits for in-flight queries to finish before returning.
+	db.reader.Close()
+	db.writer.Close()
+	for _, suffix := range []string{"-wal", "-shm", ""} {
+		if err := os.Remove(db.path + suffix); err != nil && !os.IsNotExist(err) {
+			// Best effort: try to get back to a usable DB before reporting.
+			if w, r, oerr := openConns(db.path); oerr == nil {
+				db.writer, db.reader = w, r
+				_ = db.createSchema()
+			}
 			return err
 		}
 	}
+	w, r, err := openConns(db.path)
+	if err != nil {
+		return err
+	}
+	db.writer, db.reader = w, r
 	return db.createSchema()
 }
 

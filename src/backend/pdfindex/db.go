@@ -12,27 +12,35 @@ import (
 // DB owns pdfindex.db. Single-writer discipline mirrors databank.DB:
 // one writer connection guarded by a mutex, a separate reader pool, WAL.
 type DB struct {
+	path   string
 	writer *sql.DB
 	reader *sql.DB
 	mu     sync.Mutex
 }
 
-func Open(path string) (*DB, error) {
+// openConns opens the writer (single conn) + reader (pooled) handles for path.
+func openConns(path string) (writer, reader *sql.DB, err error) {
 	dsn := path + "?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
-	writer, err := sql.Open("sqlite", dsn)
+	writer, err = sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	writer.SetMaxOpenConns(1) // single writer for SQLite
-
-	reader, err := sql.Open("sqlite", dsn)
+	reader, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		writer.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	reader.SetMaxOpenConns(4)
+	return writer, reader, nil
+}
 
-	db := &DB{writer: writer, reader: reader}
+func Open(path string) (*DB, error) {
+	writer, reader, err := openConns(path)
+	if err != nil {
+		return nil, err
+	}
+	db := &DB{path: path, writer: writer, reader: reader}
 	if err := db.createSchema(); err != nil {
 		writer.Close()
 		reader.Close()
