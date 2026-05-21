@@ -18,7 +18,7 @@
  * Reference: OpenBoardView FZFile.cpp (parsing logic; OBV itself ships no key).
  */
 
-import { inflate } from 'pako';
+import { inflate, inflateRaw } from 'pako';
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
 
@@ -385,29 +385,39 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
     contentEnd -= 4;
   }
 
-  // Decompress content section.
-  //
-  // Some converters (e.g. the Vietnamese GOCCANH-XJ tool) write `descrSize` 4 bytes
-  // longer than the standard layout, which chops 4 bytes off the deflate stream and
-  // makes pako fail with "unexpected end of file". When the canonical slice fails,
-  // retry with contentEnd + 4 before reporting failure — symmetrical to the
-  // forward-pointer trim above.
-  let contentText: string;
+  // Decompress content section. Several converter quirks need fallbacks; each
+  // candidate is accepted only if it yields non-empty text, so a method that
+  // silently inflates to nothing (rather than throwing) still falls through.
+  const decode = (bytes: Uint8Array): string | null => {
+    try { const t = decoder.decode(bytes); return t.length > 0 ? t : null; } catch { return null; }
+  };
+  const tryZlib = (start: number, end: number): string | null => {
+    try { return decode(inflate(data.subarray(start, end))); } catch { return null; }
+  };
 
-  try {
-    contentText = decoder.decode(inflate(data.subarray(contentStart, contentEnd)));
-  } catch (e) {
-    const altEnd = contentEnd + 4;
-    if (altEnd <= data.length - 4) {
-      try {
-        contentText = decoder.decode(inflate(data.subarray(contentStart, altEnd)));
-        contentEnd = altEnd;
-      } catch {
-        throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
-      }
-    } else {
-      throw new Error(`FZ content decompression failed: ${e instanceof Error ? e.message : e}`);
-    }
+  let contentText: string | null = tryZlib(contentStart, contentEnd);
+
+  // Variant 1 — GOCCANH-XJ writes `descrSize` 4 bytes long, chopping the deflate
+  // tail ("unexpected end of file"). Retry with contentEnd + 4 (symmetrical to
+  // the forward-pointer trim above).
+  if (contentText === null && contentEnd + 4 <= data.length - 4) {
+    const t = tryZlib(contentStart, contentEnd + 4);
+    if (t !== null) { contentText = t; contentEnd += 4; }
+  }
+
+  // Variant 2 — GOCCANH "GCVN" magic exports prefix a 0x78 0x9c zlib header but
+  // store a body that zlib-mode inflate rejects ("invalid distance too far
+  // back"); the raw DEFLATE stream after the 2-byte header decodes cleanly and
+  // self-terminates at its final block. Canary: ASUS G513R 6050A3348801.
+  if (contentText === null && data[contentStart] === 0x78) {
+    try {
+      const t = decode(inflateRaw(data.subarray(contentStart + 2)));
+      if (t !== null) contentText = t;
+    } catch { /* fall through to error below */ }
+  }
+
+  if (contentText === null) {
+    throw new Error('FZ content decompression failed: no decoder produced board content');
   }
 
   // Parse unit multiplier
