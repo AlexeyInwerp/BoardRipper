@@ -49,14 +49,14 @@ export const BOARD_COLORS = {
   get netHighlight()       { return hexToInt(themeStore.activeTheme().board.selection); },
   get butterflySelection() { return hexToInt(themeStore.activeTheme().board.butterflySelection); },
   get labelPin()           { return hexToInt(themeStore.activeTheme().board.labelText); },
+  get labelPart()          { return hexToInt(themeStore.activeTheme().board.labelPart); },
+  get labelNet()           { return hexToInt(themeStore.activeTheme().board.labelNet); },
   get boardFillDefault()   { return hexToInt(themeStore.activeTheme().board.boardFill); },
   // Palette entries below are not theme slots in v1 — they remain static.
   partBoundsTop:     0x336633,
   partBoundsBottom:  0x663333,
   partSelected:      0xffaa00,
   pin1:              0xcc2222,
-  labelPart:         0xcccccc,
-  labelNet:          0x88ccff,
 };
 
 const LABEL_FONT_FAMILY = 'monospace';
