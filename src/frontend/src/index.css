@@ -4500,6 +4500,16 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+.library-search-result-hits {
+  color: var(--accent);
+  font-size: 10px;
+  flex-shrink: 0;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 4px;
+  opacity: 0.85;
+}
+
 .library-dump-btn {
   font-size: 9px;
   padding: 1px 4px;

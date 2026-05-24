@@ -148,6 +148,8 @@ export interface SearchResult {
   snippet: string;
   /** True when the PDF file is in the donor pool (backend v2 field). */
   is_donor?: boolean;
+  /** Number of pages the term matched in this file (from the backend). */
+  hit_count?: number;
   /** Paths of OTHER byte-identical files in the same content group. Empty
    *  array (or absent) when this result has no duplicates. */
   copies?: string[];

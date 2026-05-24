@@ -607,28 +607,30 @@ export function LibraryPanel() {
       </div>
 
       {/* Search */}
-      <div className="library-search">
-        <input
-          type="text"
-          placeholder="Filter files..."
-          className="library-search-input"
-          value={localSearch}
-          onChange={(e) => {
-            setLocalSearch(e.target.value);
-          }}
-        />
-        {localSearch && (
-          <button
-            className="library-search-clear"
-            onClick={() => {
-              setLocalSearch('');
+      {viewMode !== 'search' && (
+        <div className="library-search">
+          <input
+            type="text"
+            placeholder="Filter files..."
+            className="library-search-input"
+            value={localSearch}
+            onChange={(e) => {
+              setLocalSearch(e.target.value);
             }}
-            title="Clear search"
-          >
-            x
-          </button>
-        )}
-      </div>
+          />
+          {localSearch && (
+            <button
+              className="library-search-clear"
+              onClick={() => {
+                setLocalSearch('');
+              }}
+              title="Clear search"
+            >
+              x
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Electron library folder picker */}
       {electronMode && (
@@ -1550,7 +1552,7 @@ function SearchResultsView({ results, onOpenFile }: {
       </div>
       {results.map((r, i) => (
         <div
-          key={`${r.file_id}-${r.page_num}-${i}`}
+          key={`${r.file_id}-${i}`}
           className="library-search-result"
           onClick={() => {
             const file = databankStore.fileById(r.file_id);
@@ -1560,6 +1562,9 @@ function SearchResultsView({ results, onOpenFile }: {
           <div className="library-search-result-header">
             <span className="library-file-icon library-icon-pdf">P</span>
             <span className="library-search-result-file">{r.filename}</span>
+            <span className="library-search-result-hits">
+              {r.hit_count ?? 1} hit{(r.hit_count ?? 1) === 1 ? '' : 's'}
+            </span>
             <span className="library-search-result-page">p{r.page_num}</span>
           </div>
           {r.snippet && (
