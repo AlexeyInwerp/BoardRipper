@@ -1221,6 +1221,24 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
+  /** Request the PDF-search tab to run a query (used by the context menu's
+   *  "search in donors/PDFs"). Reactive: the request is part of the snapshot
+   *  and notify() forces LibraryPanel to re-render and consume it — even when
+   *  it is ALREADY on the search tab (so setViewMode would be a no-op). */
+  requestPdfSearch(query: string, scope: 'all' | 'donor') {
+    this.pendingPdfSearch = { query, scope };
+    this._viewMode = 'search';
+    this.notify();
+  }
+
+  /** Consume the pending request (called by LibraryPanel after it runs). */
+  clearPendingPdfSearch() {
+    if (this.pendingPdfSearch) {
+      this.pendingPdfSearch = null;
+      this.notify();
+    }
+  }
+
   setAutoPdf(v: boolean) {
     this._autoPdf = v;
     try { localStorage.setItem('boardripper-library-autopdf', v ? '1' : '0'); } catch { /* ignore */ }

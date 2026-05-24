@@ -38,6 +38,7 @@ interface DatabankSnapshot {
   pdfIndexStats: PdfIndexStats | null;
   dedupProgress: DedupProgress | null;
   dedupStats: DedupStats | null;
+  pendingPdfSearch: { query: string; scope: 'all' | 'donor' } | null;
 }
 
 export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () => ({
@@ -71,4 +72,5 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   pdfIndexStats: databankStore._pdfIndexStats,
   dedupProgress: databankStore._dedupProgress,
   dedupStats: databankStore._dedupStats,
+  pendingPdfSearch: databankStore.pendingPdfSearch,
 }));

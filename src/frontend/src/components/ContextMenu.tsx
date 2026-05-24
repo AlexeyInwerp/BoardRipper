@@ -251,12 +251,11 @@ export function ContextMenu() {
     e.stopPropagation();
     const query = state.source === 'board' ? state.componentName : state.query;
     if (!query.trim()) return;
-    databankStore.pendingPdfSearch = { query: query.trim(), scope: 'donor' };
-    databankStore.setViewMode('search');
-    // The Library lives in the Sidebar, not a Dockview panel. If the sidebar
-    // is collapsed or showing a different tab, LibraryPanel isn't mounted and
-    // the effect that consumes pendingPdfSearch never runs. Force the Library
-    // tab open + visible so the pending search is reliably picked up.
+    // requestPdfSearch sets the pending request + switches to the search view
+    // reactively (notify), so LibraryPanel consumes it even when it is already
+    // on the PDF tab (where setViewMode would be a no-op). showSidebarTab
+    // ensures the sidebar is open + on the Library tab.
+    databankStore.requestPdfSearch(query.trim(), 'donor');
     showSidebarTab('library');
     contextMenuStore.hide();
   };

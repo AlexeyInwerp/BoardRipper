@@ -125,6 +125,7 @@ export function LibraryPanel() {
     stats, filesComplete,
     donorIds,
     pdfIndexProgress, pdfIndexStats,
+    pendingPdfSearch,
   } = useDatabank();
   void donorIds; // consumed by FileDetailPane and ContextMenu via databankStore.isDonor
 
@@ -189,20 +190,22 @@ export function LibraryPanel() {
     databankStore.listDonors().then(setDonorList);
   }, [isDonorManageMode]);
 
-  // Pick up a pending PDF search set by ContextMenu "Search all donors".
-  // Runs once when the search tab becomes active or on mount if already active.
+  // Pick up a pending PDF search set by ContextMenu "Search in donors/PDFs".
+  // Keyed on the reactive `pendingPdfSearch` snapshot value (not viewMode), so
+  // it fires even when the Library is already on the search tab — the sidebar
+  // keeps LibraryPanel mounted (display:none), so a viewMode no-op wouldn't
+  // re-run an effect keyed on viewMode.
   useEffect(() => {
-    if (viewMode !== 'search') return;
-    const pending = databankStore.pendingPdfSearch;
-    if (!pending) return;
-    databankStore.pendingPdfSearch = null;
-    setPdfQuery(pending.query);
-    setPdfScope(pending.scope);
+    if (!pendingPdfSearch) return;
+    const { query, scope } = pendingPdfSearch;
+    databankStore.clearPendingPdfSearch();
+    setPdfQuery(query);
+    setPdfScope(scope);
     setPdfSearching(true);
-    databankStore.searchPdfs(pending.query, pending.scope).then(results => {
+    databankStore.searchPdfs(query, scope).then(results => {
       setPdfResults(results);
     }).finally(() => setPdfSearching(false));
-  }, [viewMode]);
+  }, [pendingPdfSearch]);
 
   // Debounced mirror of `localSearch` driving the actual filter pipeline. The
   // input itself uses `localSearch` so typing stays responsive; everything
@@ -601,7 +604,7 @@ export function LibraryPanel() {
             onClick={() => handleSetViewMode('search')}
             title="Search PDF text content"
           >
-            PDF ⌕
+            PDF
           </button>
           <button
             className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
