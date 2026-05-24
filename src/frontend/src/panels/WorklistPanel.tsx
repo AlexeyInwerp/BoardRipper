@@ -70,6 +70,9 @@ export function WorklistPanel() {
 
   const onClearSelection = () => {
     if (activeTabId != null) selectionSetStore.clear(activeTabId);
+    // Clearing the cyan set also leaves "highlight connections" with nothing
+    // to glow — turn the toggle off so its button state stays honest.
+    boardStore.setConnectionHighlight(false);
   };
 
   const onCreateWorklist = () => {
@@ -135,10 +138,10 @@ export function WorklistPanel() {
           <div style={bandHeaderStyle}>
             <span style={{ fontWeight: 600 }}>Cyan selection</span>
             <span style={countPillStyle}>{sel.count}</span>
-            <button style={{ ...subtleBtnStyle, marginLeft: 'auto' }} onClick={onClearSelection} title="Clear the cyan canvas highlight (parts stay on the board, worklist untouched)">Clear</button>
+            <button style={{ ...subtleBtnStyle, marginLeft: 'auto' }} onClick={onClearSelection} title="Clear the cyan canvas highlight + connection glow (parts stay on the board, worklist untouched)">Clear</button>
           </div>
           <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-            Loaded by <b>Highlight</b> on a worklist below. Visual only — has no effect on the worklist contents.
+            Loaded by <b>Connections</b> on a worklist below. Visual only — has no effect on the worklist contents.
           </div>
         </section>
       )}
@@ -188,6 +191,7 @@ export function WorklistPanel() {
 
 function ActiveWorklistView() {
   const { activeWorklist } = useWorklist();
+  const { connectionHighlight } = useBoardStore();
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
@@ -246,9 +250,17 @@ function ActiveWorklistView() {
     worklistStore.setWorklistNote(activeWorklist.id, ticketDraft);
   };
 
-  const onSelectAll = () => {
+  // "Connections" toggle: ON selects every worklist part on the canvas (cyan)
+  // and glows the nets they share; OFF clears both. Single button so there's
+  // an obvious un-highlight (the previous one-way "Highlight" had none here).
+  const onToggleConnections = () => {
     const tabId = boardStore.activeTabId;
     if (tabId == null) return;
+    if (boardStore.connectionHighlight) {
+      selectionSetStore.clear(tabId);
+      boardStore.setConnectionHighlight(false);
+      return;
+    }
     const board = boardStore.board;
     if (!board) return;
     // Re-resolve refdes → partIndex against the *current* derived board so
@@ -260,7 +272,8 @@ function ActiveWorklistView() {
       if (idx >= 0) indices.push(idx);
     }
     selectionSetStore.replaceWith(tabId, indices);
-    boardStore.addToast(`Selected ${indices.length} part${indices.length === 1 ? '' : 's'} on canvas`, 'info');
+    boardStore.setConnectionHighlight(true);
+    boardStore.addToast(`Highlighting ${indices.length} part${indices.length === 1 ? '' : 's'} + shared nets`, 'info');
   };
 
   return (
@@ -287,7 +300,17 @@ function ActiveWorklistView() {
             {activeWorklist.name}
           </span>
         )}
-        <button style={subtleBtnStyle} onClick={onSelectAll} disabled={activeWorklist.entries.length === 0} title="Highlight every part in this worklist on the canvas (cyan outline)">Highlight</button>
+        <button
+          style={connectionHighlight ? activeToggleBtnStyle : subtleBtnStyle}
+          onClick={onToggleConnections}
+          disabled={activeWorklist.entries.length === 0}
+          aria-pressed={connectionHighlight}
+          title={connectionHighlight
+            ? 'Connections ON — click to clear the cyan highlight and shared-net glow'
+            : 'Highlight every part in this worklist (cyan) and glow the nets they share. No connecting lines are drawn.'}
+        >
+          Connections
+        </button>
         <button style={subtleBtnStyle} onClick={onCopyAll} disabled={activeWorklist.entries.length === 0} title="Copy all rows to clipboard">Copy</button>
         <button style={subtleBtnStyle} onClick={onWipe} disabled={activeWorklist.entries.length === 0} title="Wipe all entries (keeps the worklist)">Wipe</button>
         <button style={dangerBtnStyle} onClick={onDeleteWorklist} title="Delete this worklist entirely">✕</button>
@@ -513,6 +536,14 @@ const dangerBtnStyle: React.CSSProperties = {
   ...subtleBtnStyle,
   color: '#ff5566',
   borderColor: '#553034',
+};
+
+const activeToggleBtnStyle: React.CSSProperties = {
+  ...subtleBtnStyle,
+  background: 'var(--accent-dim, #2a3a3f)',
+  borderColor: 'var(--accent, #00e5ff)',
+  color: 'var(--accent, #00e5ff)',
+  fontWeight: 600,
 };
 
 const tabsRowStyle: React.CSSProperties = {

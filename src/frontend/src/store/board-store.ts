@@ -53,6 +53,11 @@ export interface BoardTab {
   mirrorY: boolean;
   flipAxis: 'x' | 'y';
   netLineMode: NetLineMode;
+  /** When true, nets shared by ≥2 multi-selected parts (the cyan selection
+   *  set, typically loaded from a worklist) are highlighted on the canvas.
+   *  Connecting net-lines are NOT drawn for these — only an explicitly
+   *  selected net gets lines. Toggled from the Worklist "Connections" button. */
+  connectionHighlight: boolean;
   dimMode: 'off' | 'dim' | 'darklight';
   showHoverInfo: boolean;
   followPdf: boolean;
@@ -501,6 +506,7 @@ class BoardStore extends Emitter {
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get flipAxis(): 'x' | 'y' { return this.activeTab?.flipAxis ?? 'x'; }
   get netLineMode(): NetLineMode { return this.activeTab?.netLineMode ?? 'off'; }
+  get connectionHighlight(): boolean { return this.activeTab?.connectionHighlight ?? false; }
   get showTraces(): boolean { return this.activeTab?.showTraces ?? true; }
   get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
   get showVias(): boolean { return this.activeTab?.showVias ?? false; }
@@ -698,6 +704,7 @@ class BoardStore extends Emitter {
         mirrorY: false,
         flipAxis: 'x',
         netLineMode: vp.netLineMode,
+        connectionHighlight: false,
         dimMode: vp.dimMode,
         showHoverInfo: vp.showHoverInfo,
         followPdf: vp.followPdf,
@@ -886,6 +893,7 @@ class BoardStore extends Emitter {
       mirrorY: false,
       flipAxis: flipAxisForRotation(rotation),
       netLineMode: vp.netLineMode,
+      connectionHighlight: false,
       dimMode: vp.dimMode,
       showHoverInfo: vp.showHoverInfo,
       followPdf: vp.followPdf,
@@ -968,8 +976,20 @@ class BoardStore extends Emitter {
   }
 
   selectPart(partIndex: number | null) {
+    // Hierarchical net-lines (chain-adjacent): selecting a 2-pin component by
+    // its body — which otherwise highlights no net — seeds the highlight from
+    // one pin's net so the one-hop adjacency lights up the *other* pin's net
+    // too, drawing chains for BOTH pins. Other modes / pin counts keep the
+    // plain part-only selection (no net highlighted).
+    let highlightedNet: string | null = null;
+    if (partIndex !== null && this.activeTab?.netLineMode === 'chain-adjacent') {
+      const part = this.activeTab.board?.parts[partIndex];
+      if (part && part.pins.length === 2) {
+        highlightedNet = part.pins.find(p => p.net)?.net ?? null;
+      }
+    }
     this.updateActiveTab({
-      selection: { partIndex, pinIndex: null, highlightedNet: null, adjacentNets: new Set<string>() },
+      selection: { partIndex, pinIndex: null, highlightedNet, adjacentNets: this._resolveAdjacentNets(highlightedNet) },
       searchSelectionActive: false,
     });
     this.notify();
@@ -1401,6 +1421,17 @@ class BoardStore extends Emitter {
       selection: { ...tab.selection, adjacentNets },
     });
     this._saveCurrentViewPrefs();
+    this.notify();
+  }
+
+  /** Toggle/set "highlight connections" — glow nets shared by ≥2 parts in the
+   *  cyan selection set. Visual only; net-lines are unaffected. Per-tab, not
+   *  persisted (it's tied to an ephemeral selection that doesn't survive
+   *  reload). */
+  setConnectionHighlight(on: boolean) {
+    const tab = this.activeTab;
+    if (!tab || tab.connectionHighlight === on) return;
+    this.updateActiveTab({ connectionHighlight: on });
     this.notify();
   }
 
