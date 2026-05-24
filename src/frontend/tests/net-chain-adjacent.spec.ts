@@ -373,4 +373,69 @@ test.describe('chain-adjacent net mode', () => {
 
     expect(adj).toEqual([]);
   });
+
+  // Helper: a 3-resistor series chain A–R1–B–R2–C–R3–D (all bridging).
+  const openResistorChain = async (page: import('@playwright/test').Page, fileName: string) => {
+    await page.evaluate(async (name) => {
+      const { buildNets } = await import('/src/parsers/types.ts');
+      const mk = (refdes: string, x: number, na: string, nb: string) => ({
+        name: refdes, side: 'top' as const, type: 'smd' as const, origin: { x, y: 0 },
+        pins: [
+          { name: '1', number: '1', position: { x: x - 3, y: 0 }, radius: 5, side: 'top' as const, net: na },
+          { name: '2', number: '2', position: { x: x + 3, y: 0 }, radius: 5, side: 'top' as const, net: nb },
+        ],
+        bounds: { minX: x - 5, minY: -5, maxX: x + 5, maxY: 5 },
+      });
+      const parts = [
+        mk('R1', 0, 'TRACE_A', 'TRACE_B'),
+        mk('R2', 30, 'TRACE_B', 'TRACE_C'),
+        mk('R3', 60, 'TRACE_C', 'TRACE_D'),
+      ];
+      const board = {
+        format: 'TEST', outline: [], parts, nails: [], nets: buildNets(parts),
+        bounds: { minX: -10, minY: -10, maxX: 70, maxY: 10 },
+      };
+      (window as unknown as { __boardStore: { openBoardFromData: (n: string, b: unknown) => void } })
+        .__boardStore.openBoardFromData(name, board);
+    }, fileName);
+    await page.evaluate(() => {
+      const s = (window as unknown as { __boardStore: { netLineMode: string; cycleNetLineMode: () => void } }).__boardStore;
+      let guard = 0;
+      while (s.netLineMode !== 'chain-adjacent' && guard++ < 5) s.cycleNetLineMode();
+    });
+  };
+
+  test('hierarchyDepth default (2) follows two hops down a resistor chain', async ({ page }) => {
+    await page.goto('/');
+    await openResistorChain(page, 'synth-chain-d2.bvr');
+    await page.evaluate(() => {
+      (window as unknown as { __boardStore: { highlightNet: (n: string) => void } }).__boardStore.highlightNet('TRACE_A');
+    });
+    const adj = await page.evaluate(() =>
+      [...((window as unknown as {
+        __boardStore: { activeTab?: { selection?: { adjacentNets?: Iterable<string> } } };
+      }).__boardStore.activeTab?.selection?.adjacentNets ?? [])],
+    );
+    // 2 hops: A→B (R1), B→C (R2). D is a third hop, out of reach.
+    expect(adj.sort()).toEqual(['TRACE_B', 'TRACE_C']);
+  });
+
+  test('hierarchyDepth is honored — depth 1 reaches only the first hop', async ({ page }) => {
+    await page.goto('/');
+    await openResistorChain(page, 'synth-chain-d1.bvr');
+    // Set the depth setting to 1 before highlighting.
+    await page.evaluate(() => {
+      const m = (window as unknown as { __renderSettings: { settings: Record<string, unknown>; applyGlobal: (s: unknown) => void } }).__renderSettings;
+      m.applyGlobal({ ...m.settings, hierarchyDepth: 1 });
+    });
+    await page.evaluate(() => {
+      (window as unknown as { __boardStore: { highlightNet: (n: string) => void } }).__boardStore.highlightNet('TRACE_A');
+    });
+    const adj = await page.evaluate(() =>
+      [...((window as unknown as {
+        __boardStore: { activeTab?: { selection?: { adjacentNets?: Iterable<string> } } };
+      }).__boardStore.activeTab?.selection?.adjacentNets ?? [])],
+    );
+    expect(adj.sort()).toEqual(['TRACE_B']);
+  });
 });

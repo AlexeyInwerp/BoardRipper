@@ -255,6 +255,11 @@ export interface RenderSettings {
   /** Part Types — ordered list of component categories with prefix rules. */
   partTypes: PartType[];
 
+  /** How many hops the hierarchical (chain-adjacent) net-line mode propagates
+   *  through bridging parts. 1 = immediate neighbours only; higher follows the
+   *  signal further down series chains. Clamped to 1–4 by the UI. */
+  hierarchyDepth: number;
+
   /** BoardViewer overlay row — ordered slot list, persisted globally. */
   overlayLayout: OverlaySlot[];
   /** Action when picking a part from the Parts dropdown. */
@@ -398,8 +403,8 @@ export const DEFAULTS: RenderSettings = {
   partTypes: [
     { id: 'resistor',  label: 'Resistor',   prefixes: ['R', 'PR', 'PH'],       color: '#222222', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: true },
     { id: 'capacitor', label: 'Capacitor',  prefixes: ['C', 'PC'],             color: '#9a5a35', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
-    { id: 'inductor',  label: 'Inductor',   prefixes: ['L', 'PL', 'B'],        color: '#7a7a7a', padShape: 'natural', bodyShape: 'square',  hidden: false, hierarchyBridge: false },
-    { id: 'diode',     label: 'Diode',      prefixes: ['D', 'PD', 'Z', 'PZ'],  color: '#2255aa', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'inductor',  label: 'Inductor',   prefixes: ['L', 'PL', 'B'],        color: '#7a7a7a', padShape: 'natural', bodyShape: 'square',  hidden: false, hierarchyBridge: true },
+    { id: 'diode',     label: 'Diode',      prefixes: ['D', 'PD', 'Z', 'PZ'],  color: '#2255aa', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: true },
     { id: 'crystal',   label: 'Crystal',    prefixes: ['Y', 'X'],              color: '#e2ee00', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
     { id: 'transistor', label: 'Transistor', prefixes: ['Q', 'PQ'],             color: '#0d6b55', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
     { id: 'ic',        label: 'IC',         prefixes: ['U', 'PU'],             color: '#5a2090', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
@@ -408,6 +413,7 @@ export const DEFAULTS: RenderSettings = {
     { id: 'testpoint', label: 'Test Point', prefixes: ['TP'],                  color: '#4a9060', padShape: 'round',   bodyShape: 'natural', hidden: false, hierarchyBridge: false },
     { id: 'shield',    label: 'Shield',     prefixes: ['SH'],                  color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
   ],
+  hierarchyDepth: 2,
 
   overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
   overlayPartsOnSelect: 'panZoomFit',
@@ -929,6 +935,14 @@ function loadFromStorage(): RenderSettings {
       } else {
         // Legacy format — migrate prefix-keyed overrides into types.
         result.partTypes = migrateLegacyPartTypes(parsed.partTypeOverrides);
+      }
+      // Clamp hierarchyDepth into the supported 1–4 range (the slider enforces
+      // it, but guard hand-edited / corrupt persisted values). A missing key is
+      // already backfilled by the DEFAULTS spread above.
+      if (typeof result.hierarchyDepth !== 'number' || !Number.isFinite(result.hierarchyDepth)) {
+        result.hierarchyDepth = DEFAULTS.hierarchyDepth;
+      } else {
+        result.hierarchyDepth = Math.max(1, Math.min(4, Math.round(result.hierarchyDepth)));
       }
       // Migration: small-size default dropped from 4 → 3. Users still on the
       // previous default get bumped automatically; explicit customizations

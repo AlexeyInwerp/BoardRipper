@@ -1577,8 +1577,10 @@ export function SettingsPanel() {
       )}
 
       {activeTab === SECTION_TO_TAB.partTypeOverrides && (
-      <CollapsibleSection id="partTypeOverrides" title="Part Types" isOpen={openSections.has('partTypeOverrides')}
+      <CollapsibleSection id="partTypeOverrides" title="Part properties" isOpen={openSections.has('partTypeOverrides')}
         onToggle={toggleSection} sectionRef={partTypeOverridesRef} isFocused={focusedSection === 'partTypeOverrides'}>
+        <Slider label="Hierarchy Depth" value={draft.hierarchyDepth} min={1} max={4} step={1} field="hierarchyDepth" onUpdate={updateDraft}
+          title="How many hops the hierarchical (chain + adjacent) net-line mode follows through bridging parts. 1 = immediate neighbours; up to 4 follows longer series chains." />
         <PartTypesSection types={draft.partTypes} actions={partTypeActions} />
       </CollapsibleSection>
       )}

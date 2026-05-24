@@ -1015,15 +1015,15 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  /** Returns `computeAdjacentNets(board, netName, 1)` when the current
-   *  `netLineMode` is `'chain-adjacent'` and the board is loaded; otherwise
-   *  returns an empty Set.  Centralises the "should we populate adjacency?"
-   *  decision so every call-site stays a one-liner. */
+  /** Returns `computeAdjacentNets(board, netName, hierarchyDepth)` when the
+   *  current `netLineMode` is `'chain-adjacent'` and the board is loaded;
+   *  otherwise returns an empty Set.  Centralises the "should we populate
+   *  adjacency?" decision so every call-site stays a one-liner. */
   private _resolveAdjacentNets(netName: string | null): Set<string> {
     const tab = this.activeTab;
     if (!tab?.board || !netName) return new Set<string>();
     if (tab.netLineMode !== 'chain-adjacent') return new Set<string>();
-    return computeAdjacentNets(tab.board, netName, 1, this._hierarchyBridgePred());
+    return computeAdjacentNets(tab.board, netName, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred());
   }
 
   /** Predicate for `computeAdjacentNets` — marks parts whose PartType opted
@@ -1043,7 +1043,7 @@ class BoardStore extends Emitter {
     if (!tab?.board || tab.netLineMode !== 'chain-adjacent') return;
     const net = tab.selection.highlightedNet;
     if (!net) return;
-    const next = computeAdjacentNets(tab.board, net, 1, this._hierarchyBridgePred());
+    const next = computeAdjacentNets(tab.board, net, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred());
     const cur = tab.selection.adjacentNets;
     if (next.size === cur.size) {
       let same = true;
@@ -1450,7 +1450,7 @@ class BoardStore extends Emitter {
     // highlighted net.  When leaving chain-adjacent: clear the set.
     const net = tab.selection.highlightedNet;
     const adjacentNets = (next === 'chain-adjacent' && tab.board && net)
-      ? computeAdjacentNets(tab.board, net, 1, this._hierarchyBridgePred())
+      ? computeAdjacentNets(tab.board, net, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred())
       : new Set<string>();
 
     this.updateActiveTab({
