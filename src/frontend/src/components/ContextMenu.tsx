@@ -677,15 +677,9 @@ export function ContextMenu() {
       </div>
     );
 
-    const nothingToSearch =
-      boundBoardTabs.length === 0 &&
-      otherBoardsForPdf.length === 0 &&
-      otherPdfsForPdf.length === 0;
-
-    if (nothingToSearch) {
-      return <>{wmItem}<div className="context-menu-separator" /><div className="context-menu-item disabled">Nowhere to search</div></>;
-    }
-
+    // Note: even with no boards/PDFs open to search locally, we still fall
+    // through to the "Search all donors" escape hatch below — donor search is
+    // a library-wide action, independent of what's currently open.
     const sections: React.ReactNode[] = [wmItem];
 
     // PDF mode has exactly one query per right-click, so donor rows are
