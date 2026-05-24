@@ -170,15 +170,82 @@ export function LibraryPanel() {
   const [pdfScope, setPdfScope] = useState<'all' | 'donor'>('all');
   const [pdfResults, setPdfResults] = useState<SearchResult[]>([]);
   const [pdfSearching, setPdfSearching] = useState(false);
-  const runPdfSearch = useCallback(async (scopeOverride?: 'all' | 'donor') => {
-    if (!pdfQuery.trim()) return;
+  // Tracks the in-flight stream so a new search can abort the previous one.
+  const pdfSearchAbort = useRef<AbortController | null>(null);
+  // Buffer + flush plumbing: incoming results accumulate here and are flushed
+  // to React state on a ~80ms interval so a query yielding hundreds of rows
+  // re-renders the list a handful of times instead of once per line.
+  const pdfBufferRef = useRef<SearchResult[]>([]);
+  const pdfFlushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Shared streaming runner used by both the manual Search button and the
+  // context-menu "Search in donors/PDFs" pending-search path.
+  const streamPdfSearch = useCallback((query: string, scope: 'all' | 'donor') => {
+    if (!query.trim()) return;
+    // Abort any in-flight stream; the new run takes ownership of pdfSearching.
+    pdfSearchAbort.current?.abort();
+    const controller = new AbortController();
+    pdfSearchAbort.current = controller;
+
+    pdfBufferRef.current = [];
+    setPdfResults([]);
     setPdfSearching(true);
-    try {
-      setPdfResults(await databankStore.searchPdfs(pdfQuery, scopeOverride ?? pdfScope));
-    } finally {
-      setPdfSearching(false);
-    }
-  }, [pdfQuery, pdfScope]);
+
+    const flush = () => {
+      if (pdfBufferRef.current.length === 0) return;
+      const batch = pdfBufferRef.current;
+      pdfBufferRef.current = [];
+      setPdfResults(prev => [...prev, ...batch]);
+    };
+    if (pdfFlushTimer.current) clearInterval(pdfFlushTimer.current);
+    pdfFlushTimer.current = setInterval(flush, 80);
+
+    const stopFlush = () => {
+      if (pdfFlushTimer.current) { clearInterval(pdfFlushTimer.current); pdfFlushTimer.current = null; }
+      flush();
+    };
+
+    databankStore.searchPdfsStream(
+      query,
+      scope,
+      {
+        onResult: (r) => { pdfBufferRef.current.push(r); },
+        onCounts: (counts) => {
+          // Patch hit_count for already-rendered + still-buffered results.
+          pdfBufferRef.current = pdfBufferRef.current.map(r =>
+            counts[r.file_id] != null ? { ...r, hit_count: counts[r.file_id] } : r);
+          setPdfResults(prev => prev.map(r =>
+            counts[r.file_id] != null ? { ...r, hit_count: counts[r.file_id] } : r));
+        },
+        onDone: () => {
+          stopFlush();
+          if (pdfSearchAbort.current === controller) {
+            pdfSearchAbort.current = null;
+            setPdfSearching(false);
+          }
+        },
+      },
+      controller.signal,
+    ).finally(() => {
+      stopFlush();
+      // Only the run that still owns the controller clears searching — a
+      // superseded run (whose controller was replaced) leaves it to the new run.
+      if (pdfSearchAbort.current === controller) {
+        pdfSearchAbort.current = null;
+        setPdfSearching(false);
+      }
+    });
+  }, []);
+
+  const runPdfSearch = useCallback((scopeOverride?: 'all' | 'donor') => {
+    streamPdfSearch(pdfQuery, scopeOverride ?? pdfScope);
+  }, [pdfQuery, pdfScope, streamPdfSearch]);
+
+  // Clean up the flush interval + abort the stream on unmount.
+  useEffect(() => () => {
+    pdfSearchAbort.current?.abort();
+    if (pdfFlushTimer.current) clearInterval(pdfFlushTimer.current);
+  }, []);
   const donorResults = useMemo(() => pdfResults.filter(r => r.is_donor), [pdfResults]);
   const otherResults = useMemo(() => pdfResults.filter(r => !r.is_donor), [pdfResults]);
 
@@ -199,13 +266,14 @@ export function LibraryPanel() {
     if (!pendingPdfSearch) return;
     const { query, scope } = pendingPdfSearch;
     databankStore.clearPendingPdfSearch();
-    setPdfQuery(query);
-    setPdfScope(scope);
-    setPdfSearching(true);
-    databankStore.searchPdfs(query, scope).then(results => {
-      setPdfResults(results);
-    }).finally(() => setPdfSearching(false));
-  }, [pendingPdfSearch]);
+    // Defer the state updates off the synchronous effect pass (avoids the
+    // cascading-render lint and keeps the store mutation cleanly separated).
+    queueMicrotask(() => {
+      setPdfQuery(query);
+      setPdfScope(scope);
+      streamPdfSearch(query, scope);
+    });
+  }, [pendingPdfSearch, streamPdfSearch]);
 
   // Debounced mirror of `localSearch` driving the actual filter pipeline. The
   // input itself uses `localSearch` so typing stays responsive; everything
@@ -748,6 +816,7 @@ export function LibraryPanel() {
                       selectedFileId={selectedFileId}
                       onSelectResult={handleSelectResult}
                       onOpenResult={handleOpenSearchHit}
+                      searching={pdfSearching}
                     />
                   </details>
                 )}
@@ -757,7 +826,13 @@ export function LibraryPanel() {
                     selectedFileId={selectedFileId}
                     onSelectResult={handleSelectResult}
                     onOpenResult={handleOpenSearchHit}
+                    searching={pdfSearching}
                   />
+                )}
+                {pdfResults.length === 0 && pdfSearching && (
+                  <div className="library-search-results-header">
+                    Searching… <span className="library-search-spinner" aria-hidden />
+                  </div>
                 )}
                 {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
                   <div className="library-empty">No results for "{pdfQuery}"</div>
@@ -1583,16 +1658,19 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
 
 // --- Search Results View ---
 
-function SearchResultsView({ results, selectedFileId, onSelectResult, onOpenResult }: {
+function SearchResultsView({ results, selectedFileId, onSelectResult, onOpenResult, searching }: {
   results: import('../store/databank-store').SearchResult[];
   selectedFileId: number | null;
   onSelectResult: (fileId: number) => void;
   onOpenResult: (r: SearchResult) => void;
+  searching: boolean;
 }) {
   return (
     <div className="library-search-results">
       <div className="library-search-results-header">
-        {results.length} result{results.length !== 1 ? 's' : ''}
+        {searching
+          ? <>Searching… {results.length} found <span className="library-search-spinner" aria-hidden /></>
+          : `${results.length} result${results.length !== 1 ? 's' : ''}`}
       </div>
       {results.map((r, i) => (
         <div

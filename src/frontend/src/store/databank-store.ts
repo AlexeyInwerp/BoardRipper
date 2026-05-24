@@ -1067,6 +1067,49 @@ class DatabankStore extends Emitter {
     return data?.results ?? [];
   }
 
+  /** Streaming variant of {@link searchPdfs}. Consumes the backend NDJSON
+   *  stream and dispatches each parsed message to the caller's callbacks so
+   *  results render progressively. Pass an AbortSignal to cancel a superseded
+   *  search; a cancelled fetch throwing is expected and swallowed silently. */
+  async searchPdfsStream(
+    query: string,
+    scope: 'all' | 'donor',
+    cb: { onResult: (r: SearchResult) => void; onCounts?: (counts: Record<string, number>) => void; onDone?: (total: number) => void },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!query.trim()) return;
+    const params = new URLSearchParams({ q: query, scope });
+    try {
+      const res = await fetch(`/api/databank/search/stream?${params}`, { signal });
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let msg: { type?: string; counts?: Record<string, number>; total?: number; error?: string };
+          try { msg = JSON.parse(line); } catch { continue; }
+          if (msg.type === 'result') cb.onResult(msg as unknown as SearchResult);
+          else if (msg.type === 'counts') cb.onCounts?.(msg.counts ?? {});
+          else if (msg.type === 'done') cb.onDone?.(msg.total ?? 0);
+          else if (msg.type === 'error') log.scan.warn(`PDF search stream error: ${msg.error}`);
+        }
+      }
+    } catch (err) {
+      // A cancelled fetch (superseded search) throws AbortError — expected, stay quiet.
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (signal?.aborted) return;
+      log.scan.warn('PDF search stream failed:', err);
+    }
+  }
+
   async createBinding(
     boardFileId: number,
     pdfFileId: number,

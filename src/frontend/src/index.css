@@ -4627,6 +4627,17 @@ html, body, #root {
   to { transform: rotate(360deg); }
 }
 
+.library-search-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: library-spin 0.8s linear infinite;
+}
+
 .library-preview-placeholder {
   font-size: 10px;
   font-weight: 700;
