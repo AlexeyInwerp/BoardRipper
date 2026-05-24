@@ -8,6 +8,7 @@ import { databankStore } from '../store/databank-store';
 import { renderSettingsStore } from '../store/render-settings';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
+import { showSidebarTab } from './Sidebar';
 import { worklistStore } from '../store/worklist-store';
 import { fileInputRefs } from '../store/file-inputs';
 import { findInBoardTab, countInBoardTab, findInPdf } from '../store/cross-target-search';
@@ -252,6 +253,11 @@ export function ContextMenu() {
     if (!query.trim()) return;
     databankStore.pendingPdfSearch = { query: query.trim(), scope: 'donor' };
     databankStore.setViewMode('search');
+    // The Library lives in the Sidebar, not a Dockview panel. If the sidebar
+    // is collapsed or showing a different tab, LibraryPanel isn't mounted and
+    // the effect that consumes pendingPdfSearch never runs. Force the Library
+    // tab open + visible so the pending search is reliably picked up.
+    showSidebarTab('library');
     contextMenuStore.hide();
   };
   const autoExpandDonors = totalDonorRows > 0 && totalDonorRows < 5;
