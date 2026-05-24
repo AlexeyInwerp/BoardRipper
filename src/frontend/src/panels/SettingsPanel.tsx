@@ -411,6 +411,11 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
           onChange={e => actions.update(t.id, { hidden: e.target.checked })}
         />
       </span>
+      <span className="pt-col-bridge" title="Bridge nets through this type in hierarchical (chain + adjacent) net lines, even with more than 2 pins — e.g. 4-pin current-sense resistors, transistors.">
+        <input type="checkbox" checked={t.hierarchyBridge}
+          onChange={e => actions.update(t.id, { hierarchyBridge: e.target.checked })}
+        />
+      </span>
     </div>
   );
 }
@@ -425,11 +430,13 @@ function PartTypesSection({ types, actions }: { types: PartType[]; actions: Part
         <span>Body</span>
         <span>Fill</span>
         <span>Hide</span>
+        <span title="Bridge nets through this type in hierarchical net lines, even with >2 pins.">Bridge</span>
       </div>
       {types.map(t => (
         <PartTypeRow key={t.id} type={t} actions={actions} />
       ))}
       <div className="color-rule-hint">Longest prefix wins across all types (e.g. FB beats F for FB1).</div>
+      <div className="color-rule-hint">Bridge: carry hierarchical (chain + adjacent) net lines through &gt;2-pin parts of this type (e.g. current-sense resistors, transistors).</div>
     </div>
   );
 }

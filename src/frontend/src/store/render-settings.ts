@@ -48,6 +48,11 @@ export interface PartType {
   padShape: PadShape;
   bodyShape: BodyShape;
   hidden: boolean;
+  /** When true, the hierarchical (chain-adjacent) net-line mode bridges nets
+   *  through parts of this type regardless of pin count — beyond the universal
+   *  2-pin rule. Lets 4-pin current-sense resistors, 3-pin transistors, etc.
+   *  carry the propagation one hop. Default: resistors on, everything else off. */
+  hierarchyBridge: boolean;
 }
 
 export interface NetColorRule {
@@ -391,17 +396,17 @@ export const DEFAULTS: RenderSettings = {
   ncNetPatterns: ['NC', 'NC_*', 'N/C', 'NO CONNECT'],
 
   partTypes: [
-    { id: 'resistor',  label: 'Resistor',   prefixes: ['R', 'PR', 'PH'],       color: '#222222', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'capacitor', label: 'Capacitor',  prefixes: ['C', 'PC'],             color: '#9a5a35', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'inductor',  label: 'Inductor',   prefixes: ['L', 'PL', 'B'],        color: '#7a7a7a', padShape: 'natural', bodyShape: 'square',  hidden: false },
-    { id: 'diode',     label: 'Diode',      prefixes: ['D', 'PD', 'Z', 'PZ'],  color: '#2255aa', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'crystal',   label: 'Crystal',    prefixes: ['Y', 'X'],              color: '#e2ee00', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'transistor', label: 'Transistor', prefixes: ['Q', 'PQ'],             color: '#0d6b55', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'ic',        label: 'IC',         prefixes: ['U', 'PU'],             color: '#5a2090', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'connector', label: 'Connector',  prefixes: ['J', 'SW'],             color: '#2a5080', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'fuse',      label: 'Fuse',       prefixes: ['F'],                   color: '#efefef', padShape: 'natural', bodyShape: 'natural', hidden: false },
-    { id: 'testpoint', label: 'Test Point', prefixes: ['TP'],                  color: '#4a9060', padShape: 'round',   bodyShape: 'natural', hidden: false },
-    { id: 'shield',    label: 'Shield',     prefixes: ['SH'],                  color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false },
+    { id: 'resistor',  label: 'Resistor',   prefixes: ['R', 'PR', 'PH'],       color: '#222222', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: true },
+    { id: 'capacitor', label: 'Capacitor',  prefixes: ['C', 'PC'],             color: '#9a5a35', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'inductor',  label: 'Inductor',   prefixes: ['L', 'PL', 'B'],        color: '#7a7a7a', padShape: 'natural', bodyShape: 'square',  hidden: false, hierarchyBridge: false },
+    { id: 'diode',     label: 'Diode',      prefixes: ['D', 'PD', 'Z', 'PZ'],  color: '#2255aa', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'crystal',   label: 'Crystal',    prefixes: ['Y', 'X'],              color: '#e2ee00', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'transistor', label: 'Transistor', prefixes: ['Q', 'PQ'],             color: '#0d6b55', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'ic',        label: 'IC',         prefixes: ['U', 'PU'],             color: '#5a2090', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'connector', label: 'Connector',  prefixes: ['J', 'SW'],             color: '#2a5080', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'fuse',      label: 'Fuse',       prefixes: ['F'],                   color: '#efefef', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'testpoint', label: 'Test Point', prefixes: ['TP'],                  color: '#4a9060', padShape: 'round',   bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'shield',    label: 'Shield',     prefixes: ['SH'],                  color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
   ],
 
   overlayLayout: DEFAULT_OVERLAY_LAYOUT.map(s => ({ ...s })),
@@ -747,7 +752,7 @@ export function computePartRenderPoly(
 
 /** Resolve the matching part-type override for a part name by scanning every
  *  prefix in every PartType (longest prefix wins, ties broken by type order). */
-export function resolvePartTypeOverride(partName: string, s: RenderSettings): PartTypeOverride | undefined {
+export function resolvePartType(partName: string, s: RenderSettings): PartType | undefined {
   const upper = partName.toUpperCase();
   let bestType: PartType | undefined;
   let bestLen = 0;
@@ -761,6 +766,11 @@ export function resolvePartTypeOverride(partName: string, s: RenderSettings): Pa
       }
     }
   }
+  return bestType;
+}
+
+export function resolvePartTypeOverride(partName: string, s: RenderSettings): PartTypeOverride | undefined {
+  const bestType = resolvePartType(partName, s);
   if (!bestType) return undefined;
   return {
     padShape: bestType.padShape,
@@ -768,6 +778,13 @@ export function resolvePartTypeOverride(partName: string, s: RenderSettings): Pa
     hidden: bestType.hidden,
     color: bestType.color,
   };
+}
+
+/** True when the hierarchical (chain-adjacent) net-line mode should bridge nets
+ *  through this part regardless of pin count — per its PartType's
+ *  `hierarchyBridge` flag. Unmatched refdes (no type) never bridge. */
+export function partBridgesHierarchy(partName: string, s: RenderSettings): boolean {
+  return resolvePartType(partName, s)?.hierarchyBridge ?? false;
 }
 
 /**
@@ -901,6 +918,12 @@ function loadFromStorage(): RenderSettings {
           if (t.id === 'mosfet') {
             t.id = 'transistor';
             if (t.label === 'MOSFET') t.label = 'Transistor';
+          }
+          // Migration: hierarchyBridge added with the Connections feature.
+          // Backfill from the matching default (resistors on, rest off);
+          // custom user types with no default match stay off.
+          if (typeof (t as Partial<PartType>).hierarchyBridge !== 'boolean') {
+            t.hierarchyBridge = DEFAULTS.partTypes.find(d => d.id === t.id)?.hierarchyBridge ?? false;
           }
         }
       } else {
@@ -1312,7 +1335,7 @@ export function exportSettingsAsDefaults(): string {
   lines.push('  partTypes: [');
   for (const t of s.partTypes) {
     const prefixes = JSON.stringify(t.prefixes);
-    lines.push(`    { id: '${t.id}', label: '${t.label}', prefixes: ${prefixes}, color: '${t.color}', padShape: '${t.padShape}', bodyShape: '${t.bodyShape}', hidden: ${t.hidden} },`);
+    lines.push(`    { id: '${t.id}', label: '${t.label}', prefixes: ${prefixes}, color: '${t.color}', padShape: '${t.padShape}', bodyShape: '${t.bodyShape}', hidden: ${t.hidden}, hierarchyBridge: ${t.hierarchyBridge} },`);
   }
   lines.push('  ],');
   lines.push('};');

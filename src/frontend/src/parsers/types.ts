@@ -541,6 +541,11 @@ export function computeAdjacentNets(
   board: BoardData,
   anchorNet: string,
   depth: number,
+  /** Optional predicate marking parts that bridge nets in the hierarchy even
+   *  when they have more than 2 pins (e.g. 4-pin current-sense resistors,
+   *  3-pin transistors). 2-pin parts always bridge regardless. When omitted
+   *  only the universal 2-pin rule applies. */
+  shouldBridge?: (part: Part, partIndex: number) => boolean,
 ): Set<string> {
   const result = new Set<string>();
   if (depth <= 0) return result;
@@ -557,21 +562,26 @@ export function computeAdjacentNets(
     for (const netName of frontier) {
       const net = board.nets.get(netName);
       if (!net) continue;
-      // Walk every 2-pin part on this net; cross over to the other pin's net.
+      // Walk every bridging part on this net; cross over to its other net(s).
+      // A part bridges if it has exactly 2 pins (universal) or its type opted
+      // in via shouldBridge. 2-pin parts cross to the single other pin's net;
+      // multi-pin bridges cross to every other distinct net they touch.
       const seenParts = new Set<number>();
       for (const ref of net.pinIndices) {
         if (seenParts.has(ref.partIndex)) continue;
         seenParts.add(ref.partIndex);
         const part = board.parts[ref.partIndex];
-        if (!part || part.pins.length !== 2) continue;
-        const otherPin = part.pins[1 - ref.pinIndex];
-        if (!otherPin) continue;
-        const otherNet = otherPin.net;
-        if (!otherNet || otherNet === netName || visited.has(otherNet)) continue;
-        if (isGroundRail(otherNet)) continue;          // skip entirely
-        visited.add(otherNet);
-        result.add(otherNet);
-        if (!isPowerRail(otherNet)) next.push(otherNet); // recurse only signals
+        if (!part) continue;
+        const bridges = part.pins.length === 2 || (shouldBridge?.(part, ref.partIndex) ?? false);
+        if (!bridges) continue;
+        for (const pin of part.pins) {
+          const otherNet = pin.net;
+          if (!otherNet || otherNet === netName || visited.has(otherNet)) continue;
+          if (isGroundRail(otherNet)) continue;          // skip entirely
+          visited.add(otherNet);
+          result.add(otherNet);
+          if (!isPowerRail(otherNet)) next.push(otherNet); // recurse only signals
+        }
       }
     }
     frontier = next;

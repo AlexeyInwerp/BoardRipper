@@ -286,4 +286,91 @@ test.describe('chain-adjacent net mode', () => {
 
     expect(adj).toEqual([]);
   });
+
+  test('chain-adjacent bridges through a 4-pin resistor (hierarchyBridge default on)', async ({ page }) => {
+    await page.goto('/');
+
+    // R1 is a 4-pin (Kelvin / current-sense) resistor touching 4 distinct
+    // signal nets. The default resistor part-type has hierarchyBridge: true,
+    // so the >2-pin limit is bypassed and all other nets are reached.
+    await page.evaluate(async () => {
+      const { buildNets } = await import('/src/parsers/types.ts');
+      const parts = [
+        {
+          name: 'R1', side: 'top' as const, type: 'smd' as const, origin: { x: 0, y: 0 },
+          pins: [
+            { name: '1', number: '1', position: { x: -10, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_A' },
+            { name: '2', number: '2', position: { x: -3, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_B' },
+            { name: '3', number: '3', position: { x: 3, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_C' },
+            { name: '4', number: '4', position: { x: 10, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_D' },
+          ],
+          bounds: { minX: -15, minY: -5, maxX: 15, maxY: 5 },
+        },
+      ];
+      const board = {
+        format: 'TEST', outline: [], parts, nails: [], nets: buildNets(parts),
+        bounds: { minX: -20, minY: -10, maxX: 20, maxY: 10 },
+      };
+      (window as unknown as { __boardStore: { openBoardFromData: (n: string, b: unknown) => void } })
+        .__boardStore.openBoardFromData('synth-4pin-r.bvr', board);
+    });
+
+    await page.evaluate(() => {
+      const s = (window as unknown as { __boardStore: { netLineMode: string; cycleNetLineMode: () => void } }).__boardStore;
+      let guard = 0;
+      while (s.netLineMode !== 'chain-adjacent' && guard++ < 5) s.cycleNetLineMode();
+    });
+
+    await page.evaluate(() => {
+      (window as unknown as { __boardStore: { highlightNet: (n: string) => void } }).__boardStore.highlightNet('TRACE_A');
+    });
+
+    const adj = await page.evaluate(() =>
+      [...((window as unknown as {
+        __boardStore: { activeTab?: { selection?: { adjacentNets?: Iterable<string> } } };
+      }).__boardStore.activeTab?.selection?.adjacentNets ?? [])],
+    );
+
+    expect(adj.sort()).toEqual(['TRACE_B', 'TRACE_C', 'TRACE_D']);
+  });
+
+  test('chain-adjacent does NOT bridge through a 4-pin IC (hierarchyBridge off)', async ({ page }) => {
+    await page.goto('/');
+
+    // Same 4-pin layout but as U1 (IC). The IC part-type keeps hierarchyBridge
+    // off, so the universal 2-pin rule still excludes it — no nets reached.
+    await page.evaluate(async () => {
+      const { buildNets } = await import('/src/parsers/types.ts');
+      const parts = [
+        {
+          name: 'U1', side: 'top' as const, type: 'smd' as const, origin: { x: 0, y: 0 },
+          pins: [
+            { name: '1', number: '1', position: { x: -10, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_A' },
+            { name: '2', number: '2', position: { x: -3, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_B' },
+            { name: '3', number: '3', position: { x: 3, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_C' },
+            { name: '4', number: '4', position: { x: 10, y: 0 }, radius: 5, side: 'top' as const, net: 'TRACE_D' },
+          ],
+          bounds: { minX: -15, minY: -5, maxX: 15, maxY: 5 },
+        },
+      ];
+      const board = {
+        format: 'TEST', outline: [], parts, nails: [], nets: buildNets(parts),
+        bounds: { minX: -20, minY: -10, maxX: 20, maxY: 10 },
+      };
+      (window as unknown as { __boardStore: { openBoardFromData: (n: string, b: unknown) => void } })
+        .__boardStore.openBoardFromData('synth-4pin-u.bvr', board);
+    });
+
+    const adj = await page.evaluate(() => {
+      const s = (window as unknown as {
+        __boardStore: { netLineMode: string; cycleNetLineMode: () => void; highlightNet: (n: string) => void; activeTab?: { selection?: { adjacentNets?: Iterable<string> } } };
+      }).__boardStore;
+      let guard = 0;
+      while (s.netLineMode !== 'chain-adjacent' && guard++ < 5) s.cycleNetLineMode();
+      s.highlightNet('TRACE_A');
+      return [...(s.activeTab?.selection?.adjacentNets ?? [])];
+    });
+
+    expect(adj).toEqual([]);
+  });
 });

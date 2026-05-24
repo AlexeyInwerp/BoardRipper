@@ -5,6 +5,7 @@ import { parseBoardFile, getFormat } from '../parsers';
 import { FZKeyError } from '../parsers/fz-parser';
 import { fzKeyStore } from './fz-key-store';
 import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets } from '../parsers/types';
+import { renderSettingsStore, partBridgesHierarchy } from './render-settings';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
@@ -456,6 +457,14 @@ class BoardStore extends Emitter {
   onTabCreated: ((tabId: number, fileName: string) => void) | null = null;
   /** Callback fired when a board tab is closed (tabId) */
   onTabClosed: ((tabId: number) => void) | null = null;
+
+  constructor() {
+    super();
+    // Live-update chain-adjacent adjacency when the part-type hierarchyBridge
+    // flags change under an active highlight, so Settings ▸ Part Types toggles
+    // take effect without re-selecting the net. Singleton — never unsubscribed.
+    renderSettingsStore.subscribe(() => this.refreshAdjacency());
+  }
 
   get tabs(): BoardTab[] { return this._tabs; }
   get activeTabId(): number | null { return this._activeTabId; }
@@ -1014,7 +1023,35 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab?.board || !netName) return new Set<string>();
     if (tab.netLineMode !== 'chain-adjacent') return new Set<string>();
-    return computeAdjacentNets(tab.board, netName, 1);
+    return computeAdjacentNets(tab.board, netName, 1, this._hierarchyBridgePred());
+  }
+
+  /** Predicate for `computeAdjacentNets` — marks parts whose PartType opted
+   *  into hierarchy bridging (>2-pin pass-through, e.g. current-sense
+   *  resistors). Resolved against the live render settings each call. */
+  private _hierarchyBridgePred(): (part: Part) => boolean {
+    const s = renderSettingsStore.settings;
+    return (part: Part) => partBridgesHierarchy(part.name, s);
+  }
+
+  /** Recompute adjacentNets for the live selection — invoked when the
+   *  hierarchyBridge part-type flags change under an active chain-adjacent
+   *  highlight. No-op (and no notify) when the mode is inactive or the
+   *  resulting set is unchanged, so unrelated settings edits stay quiet. */
+  private refreshAdjacency(): void {
+    const tab = this.activeTab;
+    if (!tab?.board || tab.netLineMode !== 'chain-adjacent') return;
+    const net = tab.selection.highlightedNet;
+    if (!net) return;
+    const next = computeAdjacentNets(tab.board, net, 1, this._hierarchyBridgePred());
+    const cur = tab.selection.adjacentNets;
+    if (next.size === cur.size) {
+      let same = true;
+      for (const n of next) if (!cur.has(n)) { same = false; break; }
+      if (same) return;
+    }
+    this.updateActiveTab({ selection: { ...tab.selection, adjacentNets: next } });
+    this.notify();
   }
 
   highlightNet(netName: string | null) {
@@ -1413,7 +1450,7 @@ class BoardStore extends Emitter {
     // highlighted net.  When leaving chain-adjacent: clear the set.
     const net = tab.selection.highlightedNet;
     const adjacentNets = (next === 'chain-adjacent' && tab.board && net)
-      ? computeAdjacentNets(tab.board, net, 1)
+      ? computeAdjacentNets(tab.board, net, 1, this._hierarchyBridgePred())
       : new Set<string>();
 
     this.updateActiveTab({
