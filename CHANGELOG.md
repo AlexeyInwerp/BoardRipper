@@ -1,5 +1,22 @@
 # BoardRipper changelog
 
+## v0.30.11 — 2026-05-24
+
+Two parser fixes surfaced by ASUS G513R laptop boards (FZ and GenCAD exports
+of the same `6050A3348801/03` design), plus a Landrex theme refinement.
+
+### FZ parser
+
+- **Decode the GOCCANH "GCVN" variant via a raw-deflate fallback.** ASUS boards re-exported by the GOCCANH Vietnamese tool decrypt to a `GCVN` magic and a `0x78 0x9c` zlib header, but the body is a raw DEFLATE stream that zlib-mode inflate rejects ("invalid distance too far back") — and on the bounded content slice it silently inflates to empty rather than throwing, so the file fell through to "no parts or pins" despite a valid key. The content-decompress step is now an ordered set of fallbacks (standard zlib → `descrSize+4` zlib for the GOCCANH-XJ tail chop → raw deflate skipping the zlib header), each accepted only if it yields non-empty text. ASUS G513R `6050A3348801` now parses (4138 parts / 2936 nets); standard Acer N22Q22 FZ unaffected. (`16c4935`)
+
+### CAD (GenCAD) parser
+
+- **Surface the `$DEVICES` PART description as component value + serial.** The parser ignored the `$DEVICES` catalogue, so ComponentInfo showed only the COMPONENT's inline DEVICE field — which on Mentor CAMCAD exports (Compal/ASUS boards, e.g. G513R `6050A3348803`) is just "Device &lt;refdes&gt;". The real BOM data (device type, value, package, manufacturer, MPN) lives in each device's PART line. We now parse `$DEVICES` into a device→PART map and split the PART string on `//`: the left side becomes the value (e.g. "RES 200K OHM 1/20W (0201) 5%"), the right becomes the serial (e.g. "TA-I/RM02JTN204"). Falls back to the inline device name when no PART exists, dropping the placeholder, and skips per-refdes shape names that just echo the component name. (`e6375e0`)
+
+### Theme
+
+- **Landrex is now a board-only high-contrast style.** Switching to Landrex Classic no longer repaints the interface chrome — its `ui` block mirrors the default theme, so the toolbar, panels, accent, text, and library badges stay put. Every board label is forced white: part labels (was gray) and net labels (was blue) were static palette entries that ignored the theme, so they're now theme slots, set white under Landrex for maximum contrast against the black canvas. Pin labels already followed the theme. (`f92c0e5`)
+
 ## v0.30.10 — 2026-05-20
 
 Allegro parser fixes surfaced by a Dell Nvidia Quadro 5000M board
