@@ -171,10 +171,11 @@ y' = x·sin(θ) + y·cos(θ) + place_y
 
 ## Parser Notes
 
-- Board outline: when `$BOARD` carries edge geometry (chained `LINE`/`ARC`
-  segments, as Allegro2CAD emits) it is parsed into the real outline polyline;
-  arcs are tessellated along their minor sweep. Files without `$BOARD` geometry
-  fall back to a synthetic rectangle around the pin bounding box (20-mil margin).
+- Board outline: generated as a synthetic rectangle around the pin bounding
+  box (20-mil margin). The `$BOARD` section is not used as the outline — across
+  exporters it variously holds a clean edge loop, unordered edge soup, or
+  `ARTWORK` silkscreen blocks, with no reliable way to distinguish the board
+  edge, so a robust stitch-and-select pass would be needed before trusting it.
 - `primarySide`: a pin-count majority heuristic (shared with the Allegro/BDV
   parsers) sets `primarySide='bottom'` when >55% of pins sit on the declared
   `bottom` side. Allegro2CAD `.cad` files inherit the same inverted layer

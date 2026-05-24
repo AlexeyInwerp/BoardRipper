@@ -90,22 +90,14 @@ const EXPECTED: Record<string, Record<string, [number, number]>> = {
 
 /**
  * Companion regression for the same investigation: an Allegro2CAD file whose
- * pin majority sits on the declared 'bottom' side must (a) flag
- * primarySide='bottom' so the renderer swaps sides (the .cad otherwise renders
- * top/bottom swapped relative to the source Allegro .brd), and (b) use the real
- * $BOARD edge geometry as the outline rather than a synthetic part-bbox.
+ * pin majority sits on the declared 'bottom' side must flag
+ * primarySide='bottom' so the renderer swaps sides — otherwise the .cad
+ * renders top/bottom swapped relative to its source Allegro .brd.
  */
-const CAD_OUTLINE = `$HEADER
+const CAD_PRIMARY = `$HEADER
 GENCAD 1.4
 UNITS USER 1000
 $ENDHEADER
-$BOARD
-LINE -100 -100 1100 -100
-LINE 1100 -100 1100 1100
-ARC 1100 1100 1000 1200 1000 1100
-LINE 1000 1200 -100 1200
-LINE -100 1200 -100 -100
-$ENDBOARD
 $SHAPES
 SHAPE BIGBOT
 PIN 1 P 0 0 BOTTOM 0.000 0
@@ -142,29 +134,13 @@ $SIGNALS
 $ENDSIGNALS
 `;
 
-const bbox = (pts: { x: number; y: number }[]) => {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
-  return { minX, minY, maxX, maxY };
-};
-
 test.describe('CAD bottom-side mirror (Allegro2CAD MIRRORY)', () => {
-  test('primarySide pin-majority + real $BOARD outline', async () => {
+  test('primarySide pin-majority flips IC-heavy bottom boards', async () => {
     const { parseCAD } = await import('../src/parsers/cad-parser');
-    const board = parseCAD(new TextEncoder().encode(CAD_OUTLINE).buffer as ArrayBuffer);
+    const board = parseCAD(new TextEncoder().encode(CAD_PRIMARY).buffer as ArrayBuffer);
 
     // 10 bottom pins vs 2 top pins => IC-heavy side is 'bottom'.
     expect(board.primarySide).toBe('bottom');
-
-    // Real $BOARD edge used, not the synthetic part-bbox: arc is tessellated
-    // (so more than the 4 literal LINE vertices) and the extent matches the
-    // declared board edge, NOT the parts (which sit near 200..510).
-    expect(board.outline.length).toBeGreaterThan(5);
-    const ob = bbox(board.outline);
-    expect(ob.minX).toBeCloseTo(-100, 0);
-    expect(ob.minY).toBeCloseTo(-100, 0);
-    expect(ob.maxX).toBeCloseTo(1100, 0);
-    expect(ob.maxY).toBeCloseTo(1200, 0);
   });
 
   test('bottom components apply MIRRORY before rotation/translation', async () => {
