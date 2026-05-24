@@ -109,3 +109,67 @@ func TestSearchCollapsesContentGroup(t *testing.T) {
 		t.Errorf("copies = %v, want [b/board.pdf]", r.Copies)
 	}
 }
+
+// TestSearchCollapsesPagesToOneRowWithCount verifies that a single PDF matching
+// the query on multiple pages produces exactly ONE result row (per file, not per
+// page), with hit_count = number of matching pages and page_num = the lowest
+// matching page.
+func TestSearchCollapsesPagesToOneRowWithCount(t *testing.T) {
+	bank, err := databank.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("databank open: %v", err)
+	}
+	t.Cleanup(func() { bank.Close() })
+	if err := bank.MigratePdfIndexV1(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pdb, err := pdfindex.Open(filepath.Join(t.TempDir(), "pdfindex.db"))
+	if err != nil {
+		t.Fatalf("pdfindex open: %v", err)
+	}
+	t.Cleanup(func() { pdb.Close() })
+
+	// One PDF, no content hash (unique-size singleton), matching on three pages.
+	id, _ := bank.InsertFile(&databank.FileRecord{Path: "a/board.pdf", Filename: "board.pdf", Extension: ".pdf", FileType: "pdf", Size: 100, ModTime: 1})
+	if err := pdb.UpsertPages(id, []pdfindex.Page{
+		{Num: 2, Text: "alpha connector beta"},
+		{Num: 5, Text: "gamma connector delta"},
+		{Num: 9, Text: "epsilon connector zeta"},
+	}); err != nil {
+		t.Fatalf("UpsertPages: %v", err)
+	}
+	if _, err := pdb.Finalize(id); err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+
+	ix := pdfindex.NewIndexer(pdb, nil, nil, func() []string { return nil }, 1)
+	h := NewPdfIndexHandler(pdb, ix, bank)
+
+	req := httptest.NewRequest("GET", "/api/databank/search?q=connector", nil)
+	w := httptest.NewRecorder()
+	h.Search(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("search code %d", w.Code)
+	}
+	var resp struct {
+		Results []struct {
+			FileID   int64 `json:"file_id"`
+			PageNum  int   `json:"page_num"`
+			HitCount int   `json:"hit_count"`
+		} `json:"results"`
+		Total int `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result row, got total=%d len=%d", resp.Total, len(resp.Results))
+	}
+	r := resp.Results[0]
+	if r.HitCount != 3 {
+		t.Errorf("hit_count = %d, want 3", r.HitCount)
+	}
+	if r.PageNum != 2 {
+		t.Errorf("page_num = %d, want lowest matching page 2", r.PageNum)
+	}
+}

@@ -326,48 +326,67 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 	type result struct {
 		pdfindex.SearchHit
+		HitCount      int                     `json:"hit_count"`
 		Filename      string                  `json:"filename"`
 		Path          string                  `json:"path"`
 		IsDonor       bool                    `json:"is_donor"`
 		BoardBindings []databank.BoardBinding `json:"board_bindings"`
 		Copies        []string                `json:"copies"`
 	}
-	// Collapse byte-identical hits to one result per content group + page. This
-	// honors the dedup contract even when duplicates were indexed individually
-	// (before a dedup pass) and still hold their own pdf_pages rows. The group
-	// key is the content_hash (or "id:<fileID>" for a singleton) plus page; the
-	// representative is the lowest file_id in the group (deterministic, and the
-	// global canonical when it is itself a match). Copies on each result list
-	// the other paths in the group.
-	groupKey := func(fileID int64, page int) string {
+	// Collapse hits to ONE result per file (content group), regardless of how
+	// many pages matched. A PDF that matches on 36 pages becomes a single row
+	// with hit_count = 36, navigating to the lowest matching page. The group key
+	// is FILE-level (content_hash, or "id:<fileID>" for a unique-size singleton)
+	// so byte-identical duplicates also collapse together; the representative is
+	// the lowest file_id in the group (deterministic, and the global canonical
+	// when it is itself a match). Copies on each result list the other paths in
+	// the group. Groups are emitted in first-seen order, preserving FTS rank.
+	fileKey := func(fileID int64) string {
 		if hx := meta[fileID].ContentHash; hx != "" {
-			return hx + "#" + strconv.Itoa(page)
+			return hx
 		}
-		return "id:" + strconv.FormatInt(fileID, 10) + "#" + strconv.Itoa(page)
+		return "id:" + strconv.FormatInt(fileID, 10)
 	}
-	rep := make(map[string]int64, len(hits)) // group key -> lowest file_id seen
+	type group struct {
+		repFile int64          // lowest file_id seen in the group
+		pages   map[int]string // distinct matching page -> first snippet seen
+		order   int            // first-seen index (FTS rank)
+	}
+	groups := make(map[string]*group, len(hits))
+	var groupOrder []string
 	for _, hh := range hits {
-		k := groupKey(hh.FileID, hh.PageNum)
-		if cur, ok := rep[k]; !ok || hh.FileID < cur {
-			rep[k] = hh.FileID
+		k := fileKey(hh.FileID)
+		g := groups[k]
+		if g == nil {
+			g = &group{repFile: hh.FileID, pages: make(map[int]string), order: len(groupOrder)}
+			groups[k] = g
+			groupOrder = append(groupOrder, k)
+		}
+		if hh.FileID < g.repFile {
+			g.repFile = hh.FileID
+		}
+		if _, ok := g.pages[hh.PageNum]; !ok {
+			g.pages[hh.PageNum] = hh.Snippet // first snippet seen for this page
 		}
 	}
-	results := make([]result, 0, len(hits))
-	emitted := make(map[string]bool, len(hits))
-	for _, hh := range hits {
-		k := groupKey(hh.FileID, hh.PageNum)
-		if rep[k] != hh.FileID || emitted[k] {
-			continue // not the representative for this group+page, or already shown
+	results := make([]result, 0, len(groupOrder))
+	for _, k := range groupOrder {
+		g := groups[k]
+		lowestPage := 0
+		for p := range g.pages {
+			if lowestPage == 0 || p < lowestPage {
+				lowestPage = p
+			}
 		}
-		emitted[k] = true
-		m := meta[hh.FileID]
+		m := meta[g.repFile]
 		results = append(results, result{
-			SearchHit:     hh,
+			SearchHit:     pdfindex.SearchHit{FileID: g.repFile, PageNum: lowestPage, Snippet: g.pages[lowestPage]},
+			HitCount:      len(g.pages),
 			Filename:      m.Filename,
 			Path:          m.Path,
 			IsDonor:       m.IsDonor,
 			BoardBindings: m.Bindings,
-			Copies:        copies[hh.FileID],
+			Copies:        copies[g.repFile],
 		})
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "total": len(results), "query": q})
