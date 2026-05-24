@@ -262,6 +262,10 @@ func main() {
 			mux.HandleFunc("DELETE /api/pdfindex/files/{id}", write(pdfIdxHandler.Delete))
 			mux.HandleFunc("POST /api/pdfindex/index-folder", write(pdfIdxHandler.IndexFolder))
 			mux.HandleFunc("GET /api/databank/search", read(pdfIdxHandler.Search))
+			// Bare (no read() wrapper): read()'s 30s context deadline + the wrapper
+			// chain would interfere with incremental per-row Flush()es. Same pattern
+			// as other no-wrap handlers (e.g. dbHandler.PreviewGet).
+			mux.HandleFunc("GET /api/databank/search/stream", pdfIdxHandler.SearchStream)
 			mux.HandleFunc("POST /api/databank/reset-pdf", write(pdfIdxHandler.ResetPdf))
 
 			if v, _ := db.GetConfig("pdf_index_auto_run"); v == "true" {

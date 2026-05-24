@@ -5,6 +5,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -390,4 +391,117 @@ func (h *PdfIndexHandler) Search(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "total": len(results), "query": q})
+}
+
+// GET /api/databank/search/stream?q=...&scope=all|donor
+//
+// Streaming sibling of Search. Emits NDJSON (one JSON object per line):
+//
+//	{"type":"result", file_id, page_num, snippet, filename, path, is_donor, board_bindings, copies, hit_count}
+//	{"type":"counts", "counts": {"<file_id>": N, ...}}
+//	{"type":"done",   "total": <distinct file count>}
+//
+// One "result" line is emitted per file the moment the FTS cursor first surfaces
+// it (so the frontend builds the list progressively), carrying that file's
+// best-rank page/snippet for navigation. The terminal "counts" line lets the
+// frontend correct each row's hit_count once the full cursor is drained. The
+// copy-paths query is skipped for files with no content hash (unique-size
+// singletons) — that's the cold-start optimization over Search's per-id N+1.
+//
+// Registered WITHOUT the read()/write() timeout wrappers so the http.Flusher is
+// reachable and per-row flushes aren't held back by a 30s context deadline.
+func (h *PdfIndexHandler) SearchStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	f, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	emit := func(obj interface{}) {
+		_ = enc.Encode(obj)
+		if f != nil {
+			f.Flush()
+		}
+	}
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	scope := r.URL.Query().Get("scope")
+	if q == "" || h.bank == nil {
+		emit(map[string]interface{}{"type": "done", "total": 0})
+		return
+	}
+
+	var restrict []int64
+	if scope == "donor" {
+		ids, err := h.bank.DonorFileIDs()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(ids) == 0 {
+			emit(map[string]interface{}{"type": "done", "total": 0})
+			return
+		}
+		restrict = ids
+	}
+
+	seen := map[int64]int{}
+	var order []int64
+
+	err := h.db.SearchPagesStream(q, restrict, 1000, func(hit pdfindex.SearchHit) error {
+		if _, ok := seen[hit.FileID]; ok {
+			seen[hit.FileID]++
+			return nil
+		}
+		// First time this file is surfaced: enrich + emit immediately. The
+		// page_num/snippet captured here are the best-rank hit for the file.
+		seen[hit.FileID] = 1
+		order = append(order, hit.FileID)
+
+		metaMap, merr := h.bank.SearchMeta([]int64{hit.FileID})
+		if merr != nil {
+			// Resilient: don't abort the whole stream on a single enrich hiccup.
+			log.Printf("SearchStream: SearchMeta(%d): %v", hit.FileID, merr)
+		}
+		m := metaMap[hit.FileID]
+
+		var cp []string
+		if m.ContentHash != "" {
+			paths, cerr := h.bank.CopyPathsForFile(hit.FileID)
+			if cerr != nil {
+				log.Printf("SearchStream: CopyPathsForFile(%d): %v", hit.FileID, cerr)
+			} else {
+				cp = paths
+			}
+		}
+		if cp == nil {
+			cp = []string{}
+		}
+
+		emit(map[string]interface{}{
+			"type":           "result",
+			"file_id":        hit.FileID,
+			"page_num":       hit.PageNum,
+			"snippet":        hit.Snippet,
+			"filename":       m.Filename,
+			"path":           m.Path,
+			"is_donor":       m.IsDonor,
+			"board_bindings": m.Bindings,
+			"copies":         cp,
+			"hit_count":      1,
+		})
+		return nil
+	})
+	if err != nil {
+		// Surface a hard cursor error as a trailing line; headers/results may
+		// already be on the wire so we can't switch to a clean 5xx.
+		log.Printf("SearchStream: cursor error: %v", err)
+		emit(map[string]interface{}{"type": "error", "error": err.Error()})
+	}
+
+	counts := make(map[string]int, len(order))
+	for _, id := range order {
+		counts[strconv.FormatInt(id, 10)] = seen[id]
+	}
+	emit(map[string]interface{}{"type": "counts", "counts": counts})
+	emit(map[string]interface{}{"type": "done", "total": len(order)})
 }

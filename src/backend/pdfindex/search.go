@@ -64,6 +64,55 @@ func (db *DB) SearchPages(query string, restrictTo []int64, limit int) ([]Search
 	return out, rows.Err()
 }
 
+// SearchPagesStream runs the identical FTS5 query as SearchPages but invokes fn
+// once per matching row (in rank order) instead of buffering all hits. This lets
+// the caller enrich and emit each newly-discovered file incrementally while the
+// FTS cursor is still open. If fn returns an error, iteration stops and that error
+// is returned. Otherwise rows.Err() is returned at the end.
+func (db *DB) SearchPagesStream(query string, restrictTo []int64, limit int, fn func(SearchHit) error) error {
+	fts := buildFTS5Query(query)
+	if fts == "" {
+		return nil
+	}
+
+	innerWhere := `pdf_text MATCH ?`
+	args := []interface{}{fts}
+	if len(restrictTo) > 0 {
+		ph := make([]string, len(restrictTo))
+		for i, id := range restrictTo {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		innerWhere += ` AND pdf_text.rowid IN (SELECT rowid FROM pdf_pages WHERE file_id IN (` +
+			strings.Join(ph, ",") + `))`
+	}
+	args = append(args, limit)
+
+	q := `WITH ranked AS (
+		SELECT pdf_text.rowid, rank, snippet(pdf_text, 0, '<b>', '</b>', '...', 32) AS snip
+		FROM pdf_text WHERE ` + innerWhere + ` ORDER BY rank LIMIT ?
+	)
+	SELECT p.file_id, p.page_num, r.snip
+	FROM ranked r JOIN pdf_pages p ON p.rowid = r.rowid
+	ORDER BY r.rank`
+
+	rows, err := db.reader.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var h SearchHit
+		if err := rows.Scan(&h.FileID, &h.PageNum, &h.Snippet); err != nil {
+			return err
+		}
+		if err := fn(h); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 // buildFTS5Query converts each whitespace-separated term to a quoted FTS5
 // PREFIX term ("term"*); implicit AND (space-separated). Returns "" for blank
 // input. Prefix matching is essential for partial part numbers: searching

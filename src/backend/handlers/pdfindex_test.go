@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"boardripper/databank"
@@ -107,6 +110,120 @@ func TestSearchCollapsesContentGroup(t *testing.T) {
 	}
 	if len(r.Copies) != 1 || r.Copies[0] != "b/board.pdf" {
 		t.Errorf("copies = %v, want [b/board.pdf]", r.Copies)
+	}
+}
+
+// TestSearchStreamEmitsResultPerFile verifies the NDJSON streaming endpoint emits
+// exactly one "result" line per matching file (not per page), in first-seen FTS
+// rank order, followed by a "counts" line with the final per-file hit counts and a
+// final "done" line carrying the total number of distinct files.
+func TestSearchStreamEmitsResultPerFile(t *testing.T) {
+	bank, err := databank.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("databank open: %v", err)
+	}
+	t.Cleanup(func() { bank.Close() })
+	if err := bank.MigratePdfIndexV1(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	pdb, err := pdfindex.Open(filepath.Join(t.TempDir(), "pdfindex.db"))
+	if err != nil {
+		t.Fatalf("pdfindex open: %v", err)
+	}
+	t.Cleanup(func() { pdb.Close() })
+
+	// File A matches on pages 1 and 3; file B matches on pages 2 and 4.
+	fileA, _ := bank.InsertFile(&databank.FileRecord{Path: "a/boardA.pdf", Filename: "boardA.pdf", Extension: ".pdf", FileType: "pdf", Size: 100, ModTime: 1})
+	fileB, _ := bank.InsertFile(&databank.FileRecord{Path: "b/boardB.pdf", Filename: "boardB.pdf", Extension: ".pdf", FileType: "pdf", Size: 200, ModTime: 1})
+	if err := pdb.UpsertPages(fileA, []pdfindex.Page{
+		{Num: 1, Text: "alpha connector beta"},
+		{Num: 3, Text: "gamma connector delta"},
+	}); err != nil {
+		t.Fatalf("UpsertPages(A): %v", err)
+	}
+	if err := pdb.UpsertPages(fileB, []pdfindex.Page{
+		{Num: 2, Text: "epsilon connector zeta"},
+		{Num: 4, Text: "eta connector theta"},
+	}); err != nil {
+		t.Fatalf("UpsertPages(B): %v", err)
+	}
+	for _, id := range []int64{fileA, fileB} {
+		if _, err := pdb.Finalize(id); err != nil {
+			t.Fatalf("Finalize(%d): %v", id, err)
+		}
+	}
+
+	ix := pdfindex.NewIndexer(pdb, nil, nil, func() []string { return nil }, 1)
+	h := NewPdfIndexHandler(pdb, ix, bank)
+
+	req := httptest.NewRequest("GET", "/api/databank/search/stream?q=connector", nil)
+	w := httptest.NewRecorder()
+	h.SearchStream(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stream code %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("content-type = %q, want application/x-ndjson", ct)
+	}
+
+	var results int
+	resultFiles := map[int64]bool{}
+	var counts map[string]int
+	var doneTotal int
+	sawDone := false
+
+	sc := bufio.NewScanner(bytes.NewReader(w.Body.Bytes()))
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var env struct {
+			Type   string         `json:"type"`
+			FileID int64          `json:"file_id"`
+			Counts map[string]int `json:"counts"`
+			Total  int            `json:"total"`
+		}
+		if err := json.Unmarshal(line, &env); err != nil {
+			t.Fatalf("bad ndjson line %q: %v", line, err)
+		}
+		switch env.Type {
+		case "result":
+			results++
+			resultFiles[env.FileID] = true
+		case "counts":
+			counts = env.Counts
+		case "done":
+			doneTotal = env.Total
+			sawDone = true
+		default:
+			t.Fatalf("unexpected line type %q", env.Type)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	if results != 2 {
+		t.Errorf("result lines = %d, want 2 (one per file)", results)
+	}
+	if !resultFiles[fileA] || !resultFiles[fileB] {
+		t.Errorf("result files = %v, want both %d and %d", resultFiles, fileA, fileB)
+	}
+	if counts == nil {
+		t.Fatalf("no counts line emitted")
+	}
+	for _, id := range []int64{fileA, fileB} {
+		key := strconv.FormatInt(id, 10)
+		if counts[key] != 2 {
+			t.Errorf("counts[%s] = %d, want 2", key, counts[key])
+		}
+	}
+	if !sawDone {
+		t.Fatalf("no done line emitted")
+	}
+	if doneTotal != 2 {
+		t.Errorf("done total = %d, want 2", doneTotal)
 	}
 }
 
