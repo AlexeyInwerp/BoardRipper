@@ -1,5 +1,30 @@
 # BoardRipper changelog
 
+## v0.30.12 — 2026-05-25
+
+Worklist connection-highlighting and a more capable hierarchical net-line mode,
+plus GenCAD bottom-side placement fixes and a clearer error for encrypted
+BRD_V1.0 boardviews.
+
+### Worklist
+
+- **"Connections" highlight — see which nets a group of parts share.** The worklist's old one-way "Highlight" button is now a **Connections** toggle: turning it on selects every part in the active worklist (cyan) and glows every net shared by two or more of them, so the interconnections inside a repair set stand out at a glance. Toggling off clears both — the one-click un-highlight the panel was missing — and the highlight also clears automatically when its source worklist is switched, wiped, or deleted. No connecting lines are drawn for these shared nets; net-lines stay reserved for an explicitly selected net. (`aad93b1`)
+- **Selecting a 2-pin component in hierarchical net-line mode now lights both pins.** Picking a 2-pin part by its body — which previously highlighted nothing — seeds the highlight from one pin's net, so the one-hop adjacency carries it through to the other pin's net and both chains draw. (`aad93b1`)
+
+### Net lines (hierarchical mode)
+
+- **Per-part-type "bridge" override — carry the hierarchy through >2-pin parts.** The chain-adjacent mode previously hopped only through 2-pin parts. A new **Bridge** checkbox in Settings ▸ Part properties lets a whole part type pass the propagation regardless of pin count, so 4-pin Kelvin/current-sense resistors — and, when enabled, 3-pin transistors — carry the trace. Resistors, **inductors, and diodes** bridge by default; every other type is off and toggleable. (`0bd6f0e`, `0836107`)
+- **Editable hierarchy depth.** The propagation depth is no longer hard-coded — a **Hierarchy Depth** slider (1–4, default 2) at the top of Part properties controls how many hops the highlight follows down a series chain, and changing it updates a live highlight immediately. (`0836107`)
+
+### CAD (GenCAD) parser
+
+- **Place bottom-side parts correctly (`SHAPE … MIRRORY`).** Allegro2CAD `.cad` exports store bottom components with a `MIRRORY FLIP` shape flag and shape-local pins; the parser dropped the mirror token, X-flipping every bottom footprint about its placement origin — 1006 of 2900 parts (~35%) misplaced on the Dell XPS 9560 LA-E331P. The mirror is now applied in shape-local space before rotation; verified against an independent world-coordinate export, all 7,579 bottom-side pins match to <1 mil. (`3e475f3`)
+- **Correct top/bottom via pin-majority.** Allegro2CAD `.cad` inherits the same side-labelling quirk as Allegro `.brd`, so the parser now applies the identical pin-majority heuristic (>55% of pins on the declared bottom side ⇒ flip the primary side). The Dell board (62% bottom pins) now matches its source `.brd`. A `$BOARD`-derived real outline was prototyped in the same investigation but reverted — `$BOARD` content is too exporter-specific to stitch reliably — so the synthetic rectangular outline is unchanged for now. (`5308dc4`, `2619e17`)
+
+### BRD parser
+
+- **Clear error for encrypted BRD_V1.0 boardviews.** Opening a `BRD_V1.0` container (e.g. ASUS TURBO-RTX3080) failed with a misleading "BDV file … may be corrupt or empty" — its fully-encrypted body matched no format and the `.brd` fallback handed it to the wrong parser. Detection now recognises the 8-byte `BRD_V1.0` magic and routes to the BRD parser's friendly "proprietary, encoded format — support may be added" message. (`b9ec51e`)
+
 ## v0.30.11 — 2026-05-24
 
 Two parser fixes surfaced by ASUS G513R laptop boards (FZ and GenCAD exports
