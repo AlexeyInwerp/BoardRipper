@@ -88,7 +88,85 @@ const EXPECTED: Record<string, Record<string, [number, number]>> = {
   },
 };
 
+/**
+ * Companion regression for the same investigation: an Allegro2CAD file whose
+ * pin majority sits on the declared 'bottom' side must (a) flag
+ * primarySide='bottom' so the renderer swaps sides (the .cad otherwise renders
+ * top/bottom swapped relative to the source Allegro .brd), and (b) use the real
+ * $BOARD edge geometry as the outline rather than a synthetic part-bbox.
+ */
+const CAD_OUTLINE = `$HEADER
+GENCAD 1.4
+UNITS USER 1000
+$ENDHEADER
+$BOARD
+LINE -100 -100 1100 -100
+LINE 1100 -100 1100 1100
+ARC 1100 1100 1000 1200 1000 1100
+LINE 1000 1200 -100 1200
+LINE -100 1200 -100 -100
+$ENDBOARD
+$SHAPES
+SHAPE BIGBOT
+PIN 1 P 0 0 BOTTOM 0.000 0
+PIN 2 P 10 0 BOTTOM 0.000 0
+PIN 3 P 20 0 BOTTOM 0.000 0
+PIN 4 P 30 0 BOTTOM 0.000 0
+PIN 5 P 40 0 BOTTOM 0.000 0
+PIN 6 P 50 0 BOTTOM 0.000 0
+PIN 7 P 60 0 BOTTOM 0.000 0
+PIN 8 P 70 0 BOTTOM 0.000 0
+PIN 9 P 80 0 BOTTOM 0.000 0
+PIN 10 P 90 0 BOTTOM 0.000 0
+INSERT SMD
+SHAPE SMALLTOP
+PIN 1 P 0 0 TOP 0.000 0
+PIN 2 P 10 0 TOP 0.000 0
+INSERT SMD
+$ENDSHAPES
+$COMPONENTS
+COMPONENT U1
+PLACE 500 500
+LAYER BOTTOM
+ROTATION 0.000
+SHAPE BIGBOT MIRRORY FLIP
+DEVICE U1
+COMPONENT R1
+PLACE 200 200
+LAYER TOP
+ROTATION 0.000
+SHAPE SMALLTOP 0 0
+DEVICE R1
+$ENDCOMPONENTS
+$SIGNALS
+$ENDSIGNALS
+`;
+
+const bbox = (pts: { x: number; y: number }[]) => {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
+  return { minX, minY, maxX, maxY };
+};
+
 test.describe('CAD bottom-side mirror (Allegro2CAD MIRRORY)', () => {
+  test('primarySide pin-majority + real $BOARD outline', async () => {
+    const { parseCAD } = await import('../src/parsers/cad-parser');
+    const board = parseCAD(new TextEncoder().encode(CAD_OUTLINE).buffer as ArrayBuffer);
+
+    // 10 bottom pins vs 2 top pins => IC-heavy side is 'bottom'.
+    expect(board.primarySide).toBe('bottom');
+
+    // Real $BOARD edge used, not the synthetic part-bbox: arc is tessellated
+    // (so more than the 4 literal LINE vertices) and the extent matches the
+    // declared board edge, NOT the parts (which sit near 200..510).
+    expect(board.outline.length).toBeGreaterThan(5);
+    const ob = bbox(board.outline);
+    expect(ob.minX).toBeCloseTo(-100, 0);
+    expect(ob.minY).toBeCloseTo(-100, 0);
+    expect(ob.maxX).toBeCloseTo(1100, 0);
+    expect(ob.maxY).toBeCloseTo(1200, 0);
+  });
+
   test('bottom components apply MIRRORY before rotation/translation', async () => {
     const { parseCAD } = await import('../src/parsers/cad-parser');
     const buf = new TextEncoder().encode(CAD).buffer;

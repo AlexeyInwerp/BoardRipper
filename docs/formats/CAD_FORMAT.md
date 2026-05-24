@@ -171,7 +171,14 @@ y' = x·sin(θ) + y·cos(θ) + place_y
 
 ## Parser Notes
 
-- No explicit board outline in most GenCAD files — generated from pin bounding box with 20-mil margin.
-- No test points/nails — the `$TESTPINS` section is not parsed.
+- Board outline: when `$BOARD` carries edge geometry (chained `LINE`/`ARC`
+  segments, as Allegro2CAD emits) it is parsed into the real outline polyline;
+  arcs are tessellated along their minor sweep. Files without `$BOARD` geometry
+  fall back to a synthetic rectangle around the pin bounding box (20-mil margin).
+- `primarySide`: a pin-count majority heuristic (shared with the Allegro/BDV
+  parsers) sets `primarySide='bottom'` when >55% of pins sit on the declared
+  `bottom` side. Allegro2CAD `.cad` files inherit the same inverted layer
+  labelling the Allegro `.brd` parser corrects, so without this the `.cad`
+  renders top/bottom swapped relative to its source `.brd`.
 - The `flipY` flag is enabled for this format.
 - Pin radius defaults to 6 mils.

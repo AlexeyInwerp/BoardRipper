@@ -770,6 +770,53 @@ function parseMech(lines: string[]): Via[] {
 }
 
 // ---------------------------------------------------------------------------
+// Board outline ($BOARD) — edge-cut geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the $BOARD section's edge geometry into a single outline polyline.
+ *
+ * $BOARD holds the board boundary as a sequence of chained segments:
+ *   LINE <x1> <y1> <x2> <y2>
+ *   ARC  <x1> <y1> <x2> <y2> <cx> <cy>     (start, end, centre)
+ * Consecutive segments share endpoints, so we walk them in order and emit
+ * each segment's start vertex (arcs additionally emit tessellated points).
+ * Arc direction is unspecified in the file, so we take the minor arc (the
+ * shorter sweep) — correct for the rounded corners and connector cutouts
+ * that make up virtually every board edge. Returns [] when $BOARD carries no
+ * geometry, letting the caller fall back to a synthetic bbox outline.
+ */
+function parseBoardOutline(lines: string[]): Point[] {
+  const pts: Point[] = [];
+  const ARC_STEP = Math.PI / 18; // ~10° per tessellation segment
+  for (const raw of lines) {
+    const tok = raw.trim().split(/\s+/);
+    if (tok[0] === 'LINE' && tok.length >= 5) {
+      const sx = parseFloat(tok[1]), sy = parseFloat(tok[2]);
+      if (Number.isFinite(sx) && Number.isFinite(sy)) pts.push({ x: sx, y: sy });
+    } else if (tok[0] === 'ARC' && tok.length >= 7) {
+      const sx = +tok[1], sy = +tok[2], ex = +tok[3], ey = +tok[4], cx = +tok[5], cy = +tok[6];
+      if (![sx, sy, ex, ey, cx, cy].every(Number.isFinite)) continue;
+      const r = Math.hypot(sx - cx, sy - cy);
+      const a0 = Math.atan2(sy - cy, sx - cx);
+      const a1 = Math.atan2(ey - cy, ex - cx);
+      let dCCW = a1 - a0;
+      while (dCCW <= 0) dCCW += 2 * Math.PI;      // (0, 2π]
+      const dCW = dCCW - 2 * Math.PI;             // (-2π, 0)
+      const sweep = Math.abs(dCCW) <= Math.abs(dCW) ? dCCW : dCW; // minor arc
+      const n = Math.max(1, Math.ceil(Math.abs(sweep) / ARC_STEP));
+      for (let i = 0; i < n; i++) {               // start vertex .. just before end
+        const a = a0 + sweep * (i / n);
+        pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+      }
+      // The end vertex is emitted as the next segment's start (segments are
+      // chained); for the final segment it closes back onto the first point.
+    }
+  }
+  return pts;
+}
+
+// ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
 
@@ -796,6 +843,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
   const devicePartMap = parseDevices(extractSection(lines, 'DEVICES'));
+  const boardOutline  = parseBoardOutline(extractSection(lines, 'BOARD'));
 
   // Some shapes in V382-style exports are left with stale world
   // coordinates leaked from a previous instance (e.g. PDFN8/DFN8 in
@@ -950,7 +998,8 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     }
   }
   if (mirrorVerdict.mirrored) {
-    applyXMirrorInPlace(allParts, nails, routes.traces, [...routes.vias, ...mechHoles]);
+    // boardOutline shares the parts' world frame, so un-mirror it too.
+    applyXMirrorInPlace(allParts, nails, routes.traces, [...routes.vias, ...mechHoles], boardOutline);
   }
 
   // Butterfly unfold: some CAMCAD exports (e.g. Apple 820-02841) place
@@ -962,6 +1011,29 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // pattern and fold the bottom half back onto the top so both sides share
   // the same world coordinate frame.
   const butterflyFold = unfoldButterflyIfPresent(partsByPass, nails, routes.traces, routes.vias);
+
+  // primarySide pin-majority heuristic (matches Allegro/BDV/BDV-ASC): when the
+  // IC-heavy side ends up tagged 'bottom', flag the board so the renderer swaps
+  // scene layers on open. Allegro2CAD-derived files inherit the same inst.layer
+  // labelling the Allegro parser corrects, so the .cad must apply the identical
+  // correction or it renders top/bottom swapped relative to the source .brd.
+  // >55% of pins on 'bottom' is the trigger.
+  const pinsOnTop = allParts.reduce((n, p) => n + (p.side === 'top' ? p.pins.length : 0), 0);
+  const pinsOnBottom = allParts.reduce((n, p) => n + (p.side === 'bottom' ? p.pins.length : 0), 0);
+  const totalPins = pinsOnTop + pinsOnBottom;
+  const primarySide: 'top' | 'bottom' | undefined =
+    totalPins > 0 && pinsOnBottom / totalPins > 0.55 ? 'bottom' : undefined;
+  if (primarySide === 'bottom') {
+    log.parser.log(
+      `CAD side inversion: pin majority on 'bottom' (${pinsOnBottom}) vs 'top' (${pinsOnTop}); ` +
+      `setting primarySide='bottom' so renderer swaps scene layers.`,
+    );
+  }
+
+  // Use the real $BOARD edge outline when the file carries one. A butterfly
+  // fold only mirrors the bottom half, so the full-board outline would be
+  // misaligned afterwards — fall back to the synthetic bbox in that case.
+  const useRealOutline = boardOutline.length >= 3 && !butterflyFold;
 
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
   const hasTraces = routes.traces.length > 0;
@@ -1001,7 +1073,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
   const revisions: BoardRevision[] = partsByPass.map((parts, idx) => {
     const allPoints: Point[] = parts.flatMap(p => p.pins.map(pin => pin.position));
-    const outline = generateSyntheticOutline(allPoints);
+    const outline = useRealOutline ? boardOutline : generateSyntheticOutline(allPoints);
     const bounds = computeBBox([...outline, ...allPoints]);
     const nets = buildNets(parts);
     const ghosts = detectGhostComponents(parts);
@@ -1067,6 +1139,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     bounds:  active.bounds,
   };
   if (formatVersion) board.formatVersion = formatVersion;
+  if (primarySide) board.primarySide = primarySide;
   if (active.ghosts.length > 0) board.ghosts = active.ghosts;
   if (active.bomClusters && active.bomClusters.length > 0) board.bomClusters = active.bomClusters;
   if (mirrorVerdict.mirrored) {
