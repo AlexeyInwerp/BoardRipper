@@ -4480,6 +4480,11 @@ html, body, #root {
   border-left-color: var(--accent);
 }
 
+.library-search-result.selected {
+  background: var(--bg-tertiary);
+  border-left-color: var(--accent);
+}
+
 .library-search-result-header {
   display: flex;
   align-items: center;

@@ -536,6 +536,38 @@ class PdfStore extends Emitter {
     return d.textPages.length / d.pageCount;
   }
 
+  /** Resolve once the named document's text is searchable for the given page.
+   *
+   *  searchText() runs synchronously against the in-memory `textPages` array,
+   *  which `_extractText` fills page-by-page in the background (or in one shot
+   *  on an IndexedDB cache hit). A fixed timeout after loadFile() therefore
+   *  races extraction and often searches an empty `textPages` on large PDFs.
+   *
+   *  Readiness predicate: the requested 1-based page's text slot exists
+   *  (`textPages.length >= pageNum`), OR full extraction has completed
+   *  (`textPages.length >= pageCount`). We poll because `_extractText` only
+   *  notify()s every few pages, so subscribing to notify wouldn't be reliably
+   *  finer-grained than a short poll — and polling also covers the
+   *  cache-hit fast path. Resolves `false` if the doc unloads or the cap
+   *  (~10 s) elapses; `true` once text is ready. */
+  whenTextReady(fileName: string, pageNum = 1, timeoutMs = 10000): Promise<boolean> {
+    const ready = (d: PdfDocument): boolean =>
+      d.textPages.length >= pageNum || d.textPages.length >= d.pageCount;
+    const d0 = this._documents.get(fileName);
+    if (d0 && ready(d0)) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const start = Date.now();
+      const tick = () => {
+        const d = this._documents.get(fileName);
+        if (!d) { resolve(false); return; }          // doc closed/unloaded
+        if (ready(d)) { resolve(true); return; }
+        if (Date.now() - start >= timeoutMs) { resolve(false); return; }
+        setTimeout(tick, 100);
+      };
+      setTimeout(tick, 100);
+    });
+  }
+
   /** Switch to an already-loaded PDF instantly (no I/O). */
   switchTo(fileName: string | null) {
     if (fileName === this._activeFileName) return;

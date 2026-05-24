@@ -355,19 +355,48 @@ export function LibraryPanel() {
     // more than the current binding-resolution Map lookup saves.
   }, [autoPdf]);
 
-  /** Opens a PDF Search hit at its page, then fires in-document search
-   *  so the matching text is highlighted. Mirrors ContextMenu.doPdfSearch
-   *  timing: pdfStore.searchText is called synchronously after loadFile/switchTo
-   *  because pdf-store's searchText runs against already-loaded text pages. */
-  const handleOpenSearchHit = useCallback(async (file: DatabankFile, pageNum?: number) => {
-    await handleOpenFile(file, pageNum);
-    // Give the PDF panel a moment to activate before pushing the search query.
-    // 0 ms is enough for same-panel switches; 300 ms covers first-load latency.
+  /** Opens a PDF Search hit at its page, then fires the in-document search so
+   *  the matching text is highlighted.
+   *
+   *  Robust open: we don't depend on `databankStore.fileById(r.file_id)` being
+   *  populated (it isn't when the session jumped straight to the PDF-search
+   *  tab without loading the full file list). A SearchResult already carries
+   *  the only fields the open path reads — `id`, `path`, `filename`, and the
+   *  fact that PDF-search hits are always PDFs — so we synthesize a minimal
+   *  DatabankFile when the cached object is missing.
+   *
+   *  Reliable auto-find: instead of a fixed 300 ms timeout (which raced text
+   *  extraction on large PDFs and found nothing), we await
+   *  pdfStore.whenTextReady(fileName, pageNum) so searchText runs only once the
+   *  target page's text is actually in memory. */
+  const handleOpenSearchHit = useCallback(async (r: SearchResult) => {
+    const file: DatabankFile = databankStore.fileById(r.file_id) ?? ({
+      id: r.file_id,
+      path: r.path,
+      filename: r.filename,
+      file_type: 'pdf',
+      // mod_time gates the File.lastModified fed to pdf.js / cache keys; 0 is
+      // a safe sentinel for a synthesized entry (the real value, if any, is
+      // irrelevant to opening + searching this hit).
+      mod_time: 0,
+    } as DatabankFile);
+    await handleOpenFile(file, r.page_num);
     const query = pdfQuery;
     if (query.trim()) {
-      setTimeout(() => pdfStore.searchText(query, 'lookup'), 300);
+      // The doc is now the active PDF (handleOpenFile switched to it). Wait for
+      // its text pages to be ready (up to ~10 s) before searching.
+      await pdfStore.whenTextReady(file.filename, r.page_num ?? 1);
+      pdfStore.searchText(query, 'lookup');
     }
   }, [handleOpenFile, pdfQuery]);
+
+  /** Single-click a PDF-search result: select it + load its detail so the
+   *  shared FileDetailPane info section appears (same model as the tree
+   *  views' handleSelectFile). */
+  const handleSelectResult = useCallback((fileId: number) => {
+    databankStore.selectFile(fileId);
+    databankStore.fetchFileDetail(fileId);
+  }, []);
 
   const handleSelectFile = useCallback((file: DatabankFile) => {
     databankStore.selectFile(file.id);
@@ -711,11 +740,21 @@ export function LibraryPanel() {
                 {donorResults.length > 0 && (
                   <details className="library-donor-spoiler" open>
                     <summary>Donors ({donorResults.length})</summary>
-                    <SearchResultsView results={donorResults} onOpenFile={handleOpenSearchHit} />
+                    <SearchResultsView
+                      results={donorResults}
+                      selectedFileId={selectedFileId}
+                      onSelectResult={handleSelectResult}
+                      onOpenResult={handleOpenSearchHit}
+                    />
                   </details>
                 )}
                 {otherResults.length > 0 && (
-                  <SearchResultsView results={otherResults} onOpenFile={handleOpenSearchHit} />
+                  <SearchResultsView
+                    results={otherResults}
+                    selectedFileId={selectedFileId}
+                    onSelectResult={handleSelectResult}
+                    onOpenResult={handleOpenSearchHit}
+                  />
                 )}
                 {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
                   <div className="library-empty">No results for "{pdfQuery}"</div>
@@ -1541,9 +1580,11 @@ function HistoryView({ onOpenFile, onSelectFile, selectedFileId, searchFilter }:
 
 // --- Search Results View ---
 
-function SearchResultsView({ results, onOpenFile }: {
+function SearchResultsView({ results, selectedFileId, onSelectResult, onOpenResult }: {
   results: import('../store/databank-store').SearchResult[];
-  onOpenFile: (f: DatabankFile, pageNum?: number) => void;
+  selectedFileId: number | null;
+  onSelectResult: (fileId: number) => void;
+  onOpenResult: (r: SearchResult) => void;
 }) {
   return (
     <div className="library-search-results">
@@ -1553,11 +1594,9 @@ function SearchResultsView({ results, onOpenFile }: {
       {results.map((r, i) => (
         <div
           key={`${r.file_id}-${i}`}
-          className="library-search-result"
-          onClick={() => {
-            const file = databankStore.fileById(r.file_id);
-            if (file) onOpenFile(file, r.page_num);
-          }}
+          className={`library-search-result${r.file_id === selectedFileId ? ' selected' : ''}`}
+          onClick={() => onSelectResult(r.file_id)}
+          onDoubleClick={() => onOpenResult(r)}
         >
           <div className="library-search-result-header">
             <span className="library-file-icon library-icon-pdf">P</span>
