@@ -280,6 +280,16 @@ interface Component {
   rotation: number;
   shapeName: string;
   deviceName: string;
+  /**
+   * Shape mirror flag from the `SHAPE <name> <mirror> <flip>` line. GenCAD
+   * mirrors the shape (in shape-local space, before rotation) when placing
+   * it: 'y' = MIRRORY = reflect across the Y axis = negate local X;
+   * 'x' = MIRRORX = reflect across the X axis = negate local Y. Allegro2CAD
+   * v0.2 tags every bottom-side component `MIRRORY FLIP`; the FLIP token is
+   * the side marker (redundant with LAYER BOTTOM) and needs no extra coord
+   * transform. null = no mirror (top-side `0 0`).
+   */
+  mirror: 'x' | 'y' | null;
 }
 
 interface ParsedComponents {
@@ -304,7 +314,7 @@ function parseComponents(lines: string[]): ParsedComponents {
         name: line.substring(10).trim(),
         placeX: 0, placeY: 0,
         layer: 'top', rotation: 0,
-        shapeName: '', deviceName: '',
+        shapeName: '', deviceName: '', mirror: null,
       };
     } else if (current) {
       if (line.startsWith('PLACE ')) {
@@ -316,8 +326,14 @@ function parseComponents(lines: string[]): ParsedComponents {
       } else if (line.startsWith('ROTATION ')) {
         current.rotation = parseFloat(line.substring(9).trim()) || 0;
       } else if (line.startsWith('SHAPE ')) {
-        // SHAPE <name> <mirrorX> <mirrorY>
-        current.shapeName = line.split(/\s+/)[1] ?? '';
+        // SHAPE <name> [<mirror>] [<flip>] — e.g. "SHAPE QE5 MIRRORY FLIP"
+        // for bottom parts, "SHAPE UE2 0 0" for top. The mirror token must be
+        // applied (in shape-local space, before rotation) or bottom-side
+        // footprints render X-flipped about their placement origin.
+        const tok = line.split(/\s+/);
+        current.shapeName = tok[1] ?? '';
+        const m = (tok[2] ?? '').toUpperCase();
+        current.mirror = m === 'MIRRORY' ? 'y' : m === 'MIRRORX' ? 'x' : null;
       } else if (line.startsWith('DEVICE ')) {
         current.deviceName = line.substring(7).trim();
       }
@@ -850,6 +866,12 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     const pins: Pin[] = [];
     for (const sp of shape.pins) {
       let px = sp.x, py = sp.y;
+      // Transform order is mirror → rotate → translate. The mirror lives in
+      // shape-local space (GenCAD reflects the footprint before rotating it),
+      // so it must precede the rotation. MIRRORY reflects across the Y axis
+      // (negate X); MIRRORX across the X axis (negate Y).
+      if (comp.mirror === 'y') px = -px;
+      else if (comp.mirror === 'x') py = -py;
       if (comp.rotation !== 0) {
         const rad = (comp.rotation * Math.PI) / 180;
         const cos = Math.cos(rad), sin = Math.sin(rad);
