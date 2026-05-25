@@ -6373,11 +6373,12 @@ html, body, #root {
 /* PDF cross-lookup link control */
 .pdf-link-group { position: relative; }
 .pdf-toolbar-btn.pdf-link-btn.stale { opacity: 0.6; }
+.pdf-toolbar-btn.pdf-link-btn.has-active { color: var(--accent); }
 .pdf-link-menu {
   position: absolute;
   top: 100%;
   right: 0;
-  z-index: 20;
+  z-index: 100;
   min-width: 160px;
   max-height: 240px;
   overflow-y: auto;
