@@ -72,6 +72,14 @@ export const shortcuts: Shortcut[] = [
     mod: true,
     description: 'Prefill PDF search with selection (or focus it). Repeat Cmd/Ctrl+F = next, Shift+Cmd/Ctrl+F = previous. Enter = next, Shift+Enter = previous. Up/Down = next/previous.',
   },
+  {
+    id: 'copySelection',
+    label: 'Copy Selection',
+    category: 'file',
+    key: 'c',
+    mod: true,
+    description: 'Copy the selected component, pin, or net name to the clipboard (board panel). Highlighted text still copies normally.',
+  },
 
   // --- View ---
   {

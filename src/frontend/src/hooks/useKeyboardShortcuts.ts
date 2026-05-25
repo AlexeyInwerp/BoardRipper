@@ -8,6 +8,7 @@ import { ensurePdfPanel, getDockviewApi } from '../store/dockview-api';
 import { openBoardSearch } from '../panels/BoardViewerPanel';
 import { focusBoardSearchInput } from '../components/BoardSidebar';
 import { toggleLibrarySidebar } from '../components/Sidebar';
+import { copyText } from '../clipboard';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -23,6 +24,26 @@ function activePanelKind(): 'board' | 'pdf' | null {
 // Track last known cursor position for context-sensitive shortcuts
 let _lastMouseX = 0;
 let _lastMouseY = 0;
+
+/** Text to copy for the active board tab's current selection, mirroring the
+ *  Cmd/Ctrl+F prefill priority: a selected pin yields its net (or, when the
+ *  pin carries no net, a `part-pin` reference); a part-only selection yields
+ *  the component name; a net-only selection yields the net name. Returns null
+ *  when nothing is selected. */
+function copySelectionText(): string | null {
+  const sel = boardStore.selection;
+  const part = boardStore.selectedPart;
+  const pin = boardStore.selectedPin;
+  if (sel.pinIndex != null && sel.pinIndex >= 0 && pin) {
+    if (pin.net) return pin.net;
+    const label = pin.number || pin.name;
+    if (part && label) return `${part.name}-${label}`;
+    return label || part?.name || null;
+  }
+  if (part) return part.name;
+  if (sel.highlightedNet) return sel.highlightedNet;
+  return null;
+}
 
 export function useKeyboardShortcuts() {
   useEffect(() => {
@@ -321,6 +342,24 @@ export function useKeyboardShortcuts() {
             if (kind === null) return;
             e.preventDefault();
             toggleLibrarySidebar();
+            return;
+          }
+
+          case 'copySelection': {
+            // Only act when a board panel is active. Anywhere else, let the
+            // browser's native copy proceed (we never preventDefault).
+            if (activePanelKind() !== 'board') return;
+            // If the user has highlighted text (e.g. in the NetList or Info
+            // panel), don't hijack — let the native copy take it verbatim.
+            if ((window.getSelection?.()?.toString() ?? '').trim()) return;
+            const text = copySelectionText();
+            if (!text) return;
+            e.preventDefault();
+            copyText(text).then(
+              () => boardStore.addToast(`Copied '${text}'`, 'info'),
+              (err) => boardStore.addToast(
+                `Copy failed: ${err instanceof Error ? err.message : String(err)}`, 'error'),
+            );
             return;
           }
         }
