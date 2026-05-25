@@ -578,7 +578,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, linkedDoc, linkedDocOpen } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc, linkedDocOpen } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
@@ -2013,6 +2013,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => clearTimeout(timer);
   }, [lookupHint, pdfFileName]);
 
+  // Auto-clear cross-lookup hint after 4 seconds
+  useEffect(() => {
+    if (!crossProbeHint) return;
+    const timer = setTimeout(() => pdfStore.clearCrossProbeHint(pdfFileName), 4000);
+    return () => clearTimeout(timer);
+  }, [crossProbeHint, pdfFileName]);
+
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
   const prevMatchIndexRef = useRef(-1);
@@ -3234,6 +3241,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             <div className="pdf-lookup-hint">
               Double-click <b>{lookupHint}</b> to search
             </div>
+          )}
+          {crossProbeHint && (
+            <div className="pdf-lookup-hint pdf-crossprobe-hint">{crossProbeHint}</div>
           )}
           {showNavHint && (
             <div className="pdf-nav-hint">Enter / ↑↓ to navigate results</div>

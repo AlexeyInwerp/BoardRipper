@@ -432,6 +432,8 @@ interface PdfDocument {
   searchSource: 'user' | 'lookup' | null;
   /** Component name pending double-click confirmation — shown as tooltip when user search would be overwritten. */
   lookupHint: string | null;
+  /** Transient cross-lookup status shown verbatim on the SOURCE doc (e.g. "No match…"). */
+  crossProbeHint: string | null;
 }
 
 /** Follow target: a location to zoom to without highlighting */
@@ -524,6 +526,7 @@ class PdfStore extends Emitter {
   }
   getDocSearchSource(fileName: string): 'user' | 'lookup' | null { return this._documents.get(fileName)?.searchSource ?? null; }
   getDocLookupHint(fileName: string): string | null { return this._documents.get(fileName)?.lookupHint ?? null; }
+  getDocCrossProbeHint(fileName: string): string | null { return this._documents.get(fileName)?.crossProbeHint ?? null; }
   getDocTextExtracting(fileName: string): boolean {
     const d = this._documents.get(fileName);
     return d != null && d.textPages.length < d.pageCount;
@@ -578,6 +581,7 @@ class PdfStore extends Emitter {
         searchQuery: '',
         searchSource: null,
         lookupHint: null,
+        crossProbeHint: null,
         matches: [],
         activeMatchIndex: -1,
         matchGroups: [],
@@ -815,6 +819,7 @@ class PdfStore extends Emitter {
     doc.searchQuery = query;
     doc.searchSource = query ? source : null;
     doc.lookupHint = null;
+    doc.crossProbeHint = null;
     doc.matches = [];
     doc.matchGroups = [];
     doc.activeMatchIndex = -1;
@@ -1152,7 +1157,7 @@ class PdfStore extends Emitter {
     const targetName = this.getLiveLinkedDoc(sourceFileName);
     if (!targetName) {
       if (source && this._links.get(sourceFileName)) {
-        source.lookupHint = 'Linked PDF not open';
+        source.crossProbeHint = 'Linked PDF not open';
         this.notify();
       }
       return;
@@ -1165,13 +1170,16 @@ class PdfStore extends Emitter {
 
     const sameQuery = target.searchQuery.toUpperCase() === q.toUpperCase();
     if (sameQuery && target.searchSource === 'lookup' && target.matches.length > 0) {
-      this._stepMatchInDoc(target, 1);             // cycle to next occurrence
+      if (source) source.crossProbeHint = null;   // success — clear any stale hint
+      this._stepMatchInDoc(target, 1);             // cycle to next occurrence (notifies)
       return;
     }
 
     this._runSearch(target, q, 'lookup', false);   // fresh search (notifies)
-    if (target.matches.length === 0 && source) {
-      source.lookupHint = `No match for ${q} in ${targetName}`;
+    if (source) {
+      source.crossProbeHint = target.matches.length === 0
+        ? `No match for ${q} in ${targetName}`
+        : null;
       this.notify();
     }
   }
@@ -1383,6 +1391,14 @@ class PdfStore extends Emitter {
     const d = this._documents.get(fileName);
     if (!d || !d.lookupHint) return;
     d.lookupHint = null;
+    this.notify();
+  }
+
+  /** Clear the cross-probe hint (e.g. on timeout). */
+  clearCrossProbeHint(fileName: string): void {
+    const d = this._documents.get(fileName);
+    if (!d || !d.crossProbeHint) return;
+    d.crossProbeHint = null;
     this.notify();
   }
 

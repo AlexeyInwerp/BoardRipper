@@ -86,14 +86,17 @@ test('cross-probe is bidirectional and does not change the active doc', async ({
 
 test('no-match probe sets a hint on the source and leaves target untouched', async ({ page }) => {
   await loadTwoPdfs(page);
+  await page.locator('.dv-tab', { hasText: 'linkA.pdf' }).click(); // make A's panel visible
   const r = await page.evaluate(() => {
     const s = (window as any).__pdfStore;
     const beforePage = s.getDocCurrentPage('linkB.pdf');
     s.crossProbe('linkA.pdf', 'NOSUCHTOKEN');
-    return { hint: s.getDocLookupHint('linkA.pdf'), beforePage, afterPage: s.getDocCurrentPage('linkB.pdf') };
+    return { hint: s.getDocCrossProbeHint('linkA.pdf'), beforePage, afterPage: s.getDocCurrentPage('linkB.pdf') };
   });
   expect(r.hint).toContain('NOSUCHTOKEN');
   expect(r.afterPage).toBe(r.beforePage);
+  // Regression guard: hint renders VERBATIM, not via the "Double-click X to search" template.
+  await expect(page.locator('.pdf-crossprobe-hint')).toHaveText('No match for NOSUCHTOKEN in linkB.pdf');
 });
 
 test('unlink stops cross-probe', async ({ page }) => {

@@ -63,6 +63,7 @@ export interface PdfDocSnapshot {
   cleanMode: boolean;
   searchSource: 'user' | 'lookup' | null;
   lookupHint: string | null;
+  crossProbeHint: string | null;
   linkedDoc: string | null;
   linkedDocOpen: boolean;
 }
@@ -105,6 +106,7 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     cleanMode: pdfStore.isDocClean(fileName),
     searchSource: pdfStore.getDocSearchSource(fileName),
     lookupHint: pdfStore.getDocLookupHint(fileName),
+    crossProbeHint: pdfStore.getDocCrossProbeHint(fileName),
     linkedDoc: pdfStore.getLinkedDoc(fileName),
     linkedDocOpen: pdfStore.getLiveLinkedDoc(fileName) !== null,
   };
