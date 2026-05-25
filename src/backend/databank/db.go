@@ -1197,6 +1197,38 @@ func (db *DB) CanonicalForHash(hash []byte) (int64, error) {
 	return id.Int64, nil
 }
 
+// FileRef is a minimal id+path pair (avoids importing pdfindex into databank).
+type FileRef struct {
+	ID   int64
+	Path string
+}
+
+// CanonicalPDFs returns one row per PDF that the indexer should process:
+// every unique-size singleton (content_hash IS NULL) plus the lowest-id member
+// ("canonical") of each byte-identical content group. Non-canonical duplicates
+// are excluded so the PDF indexer never enumerates them.
+func (db *DB) CanonicalPDFs(ctx context.Context) ([]FileRef, error) {
+	rows, err := db.reader.QueryContext(ctx, `
+		SELECT id, path FROM files
+		WHERE file_type = 'pdf'
+		  AND (content_hash IS NULL
+		       OR id = (SELECT MIN(f2.id) FROM files f2 WHERE f2.content_hash = files.content_hash))
+		ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileRef
+	for rows.Next() {
+		var r FileRef
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // DedupStats summarizes content groups (groups with >1 member = duplicates).
 // BytesDedupable is the reclaimable size: per group, (members-1) * file size
 // (all members of a group are byte-identical, so they share one size).

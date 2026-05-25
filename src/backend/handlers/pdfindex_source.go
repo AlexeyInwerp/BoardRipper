@@ -21,13 +21,16 @@ func NewPdfIndexSource(db *databank.DB, scanRoot func() string) pdfindex.Source 
 }
 
 func (s *dbSource) ListPDFs() ([]pdfindex.PdfFile, error) {
-	files, err := s.db.ListFiles(context.Background(), "pdf", "", false)
+	// Only canonical PDFs reach the indexer's work list: unique-size singletons
+	// plus the lowest-id member of each byte-identical content group. Non-canonical
+	// duplicates are excluded so the indexer never enumerates them.
+	refs, err := s.db.CanonicalPDFs(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	out := make([]pdfindex.PdfFile, 0, len(files))
-	for _, f := range files {
-		out = append(out, pdfindex.PdfFile{ID: f.ID, Path: f.Path})
+	out := make([]pdfindex.PdfFile, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, pdfindex.PdfFile{ID: r.ID, Path: r.Path})
 	}
 	return out, nil
 }

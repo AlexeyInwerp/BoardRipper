@@ -2,6 +2,7 @@ package databank
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 )
@@ -349,6 +350,43 @@ func TestDedupStoreMethods(t *testing.T) {
 	}
 	if s.Groups != 1 || s.DuplicateFiles != 1 || s.BytesDedupable != 1000 {
 		t.Errorf("stats = %+v, want {Groups:1 DuplicateFiles:1 BytesDedupable:1000}", s)
+	}
+}
+
+func TestCanonicalPDFsExcludesDuplicates(t *testing.T) {
+	db, _ := Open(t.TempDir())
+	defer db.Close()
+
+	// c (canon) and d (dup) share the same content_hash; c has the lower id.
+	h := []byte("dedupdedupdedupdedupdedupdedup12")
+	c, _ := db.InsertFile(&FileRecord{Path: "canon.pdf", Filename: "canon.pdf", Extension: ".pdf", FileType: "pdf", Size: 100, ModTime: 1})
+	d, _ := db.InsertFile(&FileRecord{Path: "dup.pdf", Filename: "dup.pdf", Extension: ".pdf", FileType: "pdf", Size: 100, ModTime: 1})
+	db.SetContentHash(c, h)
+	db.SetContentHash(d, h)
+
+	// solo: unique size, NULL hash → singleton, must be included.
+	solo, _ := db.InsertFile(&FileRecord{Path: "solo.pdf", Filename: "solo.pdf", Extension: ".pdf", FileType: "pdf", Size: 999, ModTime: 1})
+
+	// board file: not a pdf → must never appear.
+	board, _ := db.InsertFile(&FileRecord{Path: "board.brd", Filename: "board.brd", Extension: ".brd", FileType: "board", Size: 100, ModTime: 1})
+
+	refs, err := db.CanonicalPDFs(context.Background())
+	if err != nil {
+		t.Fatalf("CanonicalPDFs: %v", err)
+	}
+	got := map[int64]bool{}
+	for _, r := range refs {
+		got[r.ID] = true
+	}
+	want := map[int64]bool{c: true, solo: true}
+	if len(got) != len(want) || !got[c] || !got[solo] {
+		t.Errorf("CanonicalPDFs id set = %v, want {%d:c, %d:solo} (no dup %d, no board %d)", got, c, solo, d, board)
+	}
+	if got[d] {
+		t.Errorf("non-canonical duplicate %d should be excluded", d)
+	}
+	if got[board] {
+		t.Errorf("board file %d should be excluded", board)
 	}
 }
 
