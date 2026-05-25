@@ -30,10 +30,15 @@ export class PdfLinks {
     this.storage = storage;
   }
 
-  /** Pull a persisted link for fileName into the in-memory map (call on open). */
+  /** Pull a persisted link for fileName into the in-memory map (call on open).
+   *  Storage holds both directions, so mirror both to keep the map symmetric
+   *  even if the partner has not opened yet. */
   restore(fileName: string): void {
     const partner = this.storage.get(PDF_LINK_KEY_PREFIX + fileName);
-    if (partner) this.links.set(fileName, partner);
+    if (partner) {
+      this.links.set(fileName, partner);
+      this.links.set(partner, fileName);
+    }
   }
 
   /** The linked partner regardless of whether it is currently open, or null. */
@@ -49,7 +54,7 @@ export class PdfLinks {
 
   /** Link a↔b. Enforces 1:1 by freeing any prior link on either file first. */
   link(a: string, b: string): void {
-    if (a === b) return;
+    if (!a || !b || a === b) return;
     this.unlink(a);
     this.unlink(b);
     this.links.set(a, b);

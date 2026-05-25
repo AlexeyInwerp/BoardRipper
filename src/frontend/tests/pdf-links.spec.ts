@@ -58,6 +58,7 @@ test.describe('PdfLinks', () => {
     expect(fresh.get('a.pdf')).toBeNull();        // not restored yet
     fresh.restore('a.pdf');
     expect(fresh.get('a.pdf')).toBe('b.pdf');
+    expect(fresh.get('b.pdf')).toBe('a.pdf'); // restore mirrors both directions
   });
 
   test('getLive returns the partner only when it is open', async () => {
