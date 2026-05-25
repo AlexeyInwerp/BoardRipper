@@ -4598,6 +4598,15 @@ html, body, #root {
   opacity: 0.6; margin-left: 2px;
 }
 
+/* Same-named files (different source folders) folded under a head row */
+.library-variants-spoiler { padding: 2px 0 0 20px; }
+.library-variants-spoiler > summary {
+  cursor: pointer; font-size: 10px; color: var(--text-secondary);
+  user-select: none; list-style: none;
+}
+.library-variants-spoiler > summary::before { content: '▶ '; font-size: 9px; }
+.library-variants-spoiler[open] > summary::before { content: '▼ '; }
+
 /* Donor list manage mode */
 .library-donor-list { overflow-y: auto; flex: 1 1 0; min-height: 0; padding: 4px 0; }
 .library-donor-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border); gap: 6px; }

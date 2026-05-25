@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore, contentCollapsePlan } from '../store/databank-store';
-import type { DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
+import type { CollapsedFileInfo, DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
@@ -1733,6 +1733,97 @@ function SearchResultsView({ results, selectedFileId, onSelectResult, onOpenResu
 
 // --- Metadata Tree View ---
 
+// View-only cleanup for the Board# tree: within a single leaf list, files that
+// share the same filename (from different source folders, NOT byte-identical —
+// those are already collapsed by contentCollapsePlan) are folded into one head
+// row plus a native <details> spoiler holding the rest. This is purely layout;
+// it never touches the dedup pass, content hashing, or the per-file byte-copy
+// ×N badge (copyCount/copyPaths still flow through to each row independently).
+// Files arrive already content-collapsed: each carries the byte-copy ×N info
+// merged in by MetadataView's `take()`, so we keep that shape here.
+type CollapsedDatabankFile = DatabankFile & CollapsedFileInfo;
+
+function NameGroupedFileRows({ files, indent, selectedFileId, onSelectFile, onOpenFile }: {
+  files: CollapsedDatabankFile[];
+  /** Base indent for the head rows (variants render at indent + 1). */
+  indent: number;
+  selectedFileId: number | null;
+  onSelectFile: (f: DatabankFile) => void;
+  onOpenFile: (f: DatabankFile) => void;
+}) {
+  // Group by lowercased filename, preserving first-seen order.
+  const groups: CollapsedDatabankFile[][] = [];
+  const byName = new Map<string, CollapsedDatabankFile[]>();
+  for (const f of files) {
+    const key = f.filename.toLowerCase();
+    let g = byName.get(key);
+    if (!g) {
+      g = [];
+      byName.set(key, g);
+      groups.push(g);
+    }
+    g.push(f);
+  }
+
+  return (
+    <>
+      {groups.map(group => {
+        const head = group[0];
+        if (group.length === 1) {
+          return (
+            <FileRow
+              key={head.id}
+              file={head}
+              copyCount={head.copyCount}
+              copyPaths={head.copyPaths}
+              selected={head.id === selectedFileId}
+              indent={indent}
+              showPreview={head.file_type === 'pdf'}
+              onSelect={onSelectFile}
+              onOpen={onOpenFile}
+            />
+          );
+        }
+        const extra = group.length - 1;
+        return (
+          <div key={head.id} className="library-name-group">
+            <FileRow
+              file={head}
+              copyCount={head.copyCount}
+              copyPaths={head.copyPaths}
+              selected={head.id === selectedFileId}
+              indent={indent}
+              showPreview={head.file_type === 'pdf'}
+              onSelect={onSelectFile}
+              onOpen={onOpenFile}
+            />
+            <details
+              className="library-variants-spoiler"
+              style={{ paddingLeft: indent * 16 + 20 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <summary>+{extra} same-name {extra === 1 ? 'variant' : 'variants'}</summary>
+              {group.slice(1).map(v => (
+                <FileRow
+                  key={v.id}
+                  file={v}
+                  copyCount={v.copyCount}
+                  copyPaths={v.copyPaths}
+                  selected={v.id === selectedFileId}
+                  indent={indent + 1}
+                  showPreview={v.file_type === 'pdf'}
+                  onSelect={onSelectFile}
+                  onOpen={onOpenFile}
+                />
+              ))}
+            </details>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
   groups: MetadataGroup[];
   selectedFileId: number | null;
@@ -1816,37 +1907,25 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
                                 </div>
                                 {bnExpanded && (
                                   <div className="library-tree-children">
-                                    {bn.files.map(f => (
-                                      <FileRow
-                                        key={f.id}
-                                        file={f}
-                                        copyCount={f.copyCount}
-                                        copyPaths={f.copyPaths}
-                                        selected={f.id === selectedFileId}
-                                        indent={3}
-                                        showPreview={f.file_type === 'pdf'}
-                                        onSelect={onSelectFile}
-                                        onOpen={onOpenFile}
-                                      />
-                                    ))}
+                                    <NameGroupedFileRows
+                                      files={bn.files}
+                                      indent={3}
+                                      selectedFileId={selectedFileId}
+                                      onSelectFile={onSelectFile}
+                                      onOpenFile={onOpenFile}
+                                    />
                                   </div>
                                 )}
                               </div>
                             );
                           })}
-                          {model.ungrouped.map(f => (
-                            <FileRow
-                              key={f.id}
-                              file={f}
-                              copyCount={f.copyCount}
-                              copyPaths={f.copyPaths}
-                              selected={f.id === selectedFileId}
-                              indent={2}
-                              showPreview={f.file_type === 'pdf'}
-                              onSelect={onSelectFile}
-                              onOpen={onOpenFile}
-                            />
-                          ))}
+                          <NameGroupedFileRows
+                            files={model.ungrouped}
+                            indent={2}
+                            selectedFileId={selectedFileId}
+                            onSelectFile={onSelectFile}
+                            onOpenFile={onOpenFile}
+                          />
                         </div>
                       )}
                     </div>
