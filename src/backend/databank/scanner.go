@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -494,31 +495,11 @@ func (s *Scanner) dedupSizeCollisions(cancelled func() bool) {
 		return
 	}
 	root := s.ScanRoot()
-	var hashed int64
-	for _, f := range files {
-		if cancelled() {
-			return
-		}
-		if f.Hashed {
-			continue
-		}
+	HashCollisions(s.db, root, files, 4, cancelled, func(done, total int64) {
 		s.mu.Lock()
-		s.status.LastFile = f.Path
+		s.status.LastFile = "Deduplicating " + strconv.FormatInt(done, 10) + "/" + strconv.FormatInt(total, 10)
 		s.mu.Unlock()
-		key, err := ContentKey(filepath.Join(root, f.Path), f.Size)
-		if err != nil {
-			log.Printf("Scanner: dedup hash %s: %v (left unhashed)", f.Path, err)
-			continue
-		}
-		if err := s.db.SetContentHash(f.ID, key); err != nil {
-			log.Printf("Scanner: dedup store hash %s: %v", f.Path, err)
-			continue
-		}
-		hashed++
-	}
-	if hashed > 0 {
-		log.Printf("Scanner: dedup hashed %d size-collision file(s)", hashed)
-	}
+	})
 }
 
 func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int64, start time.Time, stopped bool) {

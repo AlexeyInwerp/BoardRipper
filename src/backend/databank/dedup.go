@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -82,6 +83,83 @@ func readFullAt(f *os.File, buf []byte, off int64) (int, error) {
 	return n, nil
 }
 
+// HashCollisions hashes all un-hashed size-collision files using a pool of
+// `workers` goroutines. Files sharing the same (size, base-filename) are
+// treated as one cluster: the representative is read+hashed ONCE and its hash
+// applied to every member (1 read instead of N). Files with a unique
+// (size,name) within the collision set are hashed individually — so a
+// byte-identical copy under a different name still hashes to the same value and
+// merges into the same content group. Reads parallelize; SetContentHash
+// serializes via the DB write mutex. cancelled() short-circuits; onProgress
+// (nilable) is called as (done, total) in CLUSTERS.
+func HashCollisions(db *DB, root string, files []CollisionFile, workers int, cancelled func() bool, onProgress func(done, total int64)) {
+	if workers < 1 {
+		workers = 4
+	}
+	type job struct {
+		path string  // representative path to read
+		size int64
+		ids  []int64 // all file ids in the cluster to assign the hash to
+	}
+	// Cluster un-hashed candidates by (size, base name).
+	clusters := make(map[string][]CollisionFile)
+	var order []string
+	for _, f := range files {
+		if f.Hashed {
+			continue
+		}
+		k := strconv.FormatInt(f.Size, 10) + "\x00" + filepath.Base(f.Path)
+		if _, ok := clusters[k]; !ok {
+			order = append(order, k)
+		}
+		clusters[k] = append(clusters[k], f)
+	}
+	jobs := make([]job, 0, len(order))
+	for _, k := range order {
+		cl := clusters[k]
+		ids := make([]int64, len(cl))
+		for i, f := range cl {
+			ids[i] = f.ID
+		}
+		jobs = append(jobs, job{path: cl[0].Path, size: cl[0].Size, ids: ids}) // cl[0] = representative
+	}
+	total := int64(len(jobs))
+	jobCh := make(chan job)
+	var done atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobCh {
+				if !cancelled() {
+					if key, err := ContentKey(filepath.Join(root, j.path), j.size); err != nil {
+						log.Printf("dedup: hash %s: %v (left unhashed)", j.path, err)
+					} else {
+						for _, id := range j.ids {
+							if err := db.SetContentHash(id, key); err != nil {
+								log.Printf("dedup: store hash id=%d: %v", id, err)
+							}
+						}
+					}
+				}
+				n := done.Add(1)
+				if onProgress != nil {
+					onProgress(n, total)
+				}
+			}
+		}()
+	}
+	for _, j := range jobs {
+		if cancelled() {
+			break
+		}
+		jobCh <- j
+	}
+	close(jobCh)
+	wg.Wait()
+}
+
 // DedupProgress is the observable state of an in-progress DedupRunner sweep.
 type DedupProgress struct {
 	Running     bool   `json:"running"`
@@ -148,30 +226,23 @@ func (r *DedupRunner) Run() error {
 
 func (r *DedupRunner) sweep(ctx context.Context, files []CollisionFile) {
 	root := r.scanRootFn()
-	var done atomic.Int64
-	for _, f := range files {
-		select {
-		case <-ctx.Done():
-			goto finish
-		default:
-		}
-		r.mu.Lock()
-		r.prog.CurrentFile = f.Path
-		r.prog.Done = done.Load()
-		r.mu.Unlock()
-		if !f.Hashed {
-			key, err := ContentKey(filepath.Join(root, f.Path), f.Size)
-			if err != nil {
-				log.Printf("dedup: hash %s: %v (left unhashed)", f.Path, err)
-			} else if err := r.db.SetContentHash(f.ID, key); err != nil {
-				log.Printf("dedup: store hash %s: %v", f.Path, err)
+	HashCollisions(r.db, root, files, 4,
+		func() bool {
+			select {
+			case <-ctx.Done():
+				return true
+			default:
+				return false
 			}
-		}
-		done.Add(1)
-	}
-finish:
+		},
+		func(done, total int64) {
+			r.mu.Lock()
+			r.prog.Done = done
+			r.prog.Total = total
+			r.mu.Unlock()
+		},
+	)
 	r.mu.Lock()
-	r.prog.Done = done.Load()
 	r.prog.Running = false
 	r.running = false
 	r.cancel = nil
