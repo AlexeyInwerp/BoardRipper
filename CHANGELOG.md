@@ -1,5 +1,28 @@
 # BoardRipper changelog
 
+## v0.30.13 — 2026-05-25
+
+Cross-lookup between two linked PDFs — for boards that only exist as PDF — plus
+copy-to-clipboard for the current selection, drag-dropped files filed into the
+library, and an FZ unit-detection fix.
+
+### PDF↔PDF cross-lookup
+
+- **Link two open PDFs and cross-probe designators between them.** When a board is only available as PDFs (e.g. a schematic sheet and a layout sheet), open both and link them 1:1 from the PDF's bind (∞) menu — a new **Cross-link PDF** section after the board bindings. Single-clicking a component designator in either PDF jumps the linked PDF to a matching occurrence and highlights it — reusing the existing search → snap-to-match → highlight path — and re-clicking the same token cycles through multiple matches. Fully bidirectional. Text (vector) PDFs only: matching is on the designator string, so no nets or pins are needed. The link is symmetric and persisted across reloads. (`62297b1`, `ecff231`, `6191dca`, `de9c710`)
+- **Cross-lookup feedback as a toast.** "No match for X in Y" and "Linked PDF not open" surface as a toast rather than inline toolbar text, which had collided with the search hint and broken the toolbar layout. (`de9c710`)
+
+### Selection
+
+- **Cmd/Ctrl+C copies the selected component, pin, or net name** to the clipboard, so a designator can be pasted straight into notes or a search. (`c00e1af`)
+
+### Files
+
+- **Drag-dropped boards and PDFs are saved into the library's `incoming/`** instead of living only in the browser session, so a dropped file is kept for later. (`224a00a`)
+
+### FZ parser
+
+- **Don't trust `UNIT:millimeters` on mil-coordinate files.** Some ASUS `.fz` files declare millimetre units while their coordinates are actually in mils; the mislabel scaled the board down ~25×, rendering pins sub-pixel ("opens but no pins/nets"). Unit detection no longer takes the header at face value on such files. (`0a72b40`)
+
 ## v0.30.12 — 2026-05-25
 
 Worklist connection-highlighting and a more capable hierarchical net-line mode,
