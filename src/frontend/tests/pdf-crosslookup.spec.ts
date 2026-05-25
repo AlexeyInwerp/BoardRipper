@@ -95,8 +95,10 @@ test('no-match probe sets a hint on the source and leaves target untouched', asy
   });
   expect(r.hint).toContain('NOSUCHTOKEN');
   expect(r.afterPage).toBe(r.beforePage);
-  // Regression guard: hint renders VERBATIM, not via the "Double-click X to search" template.
-  await expect(page.locator('.pdf-crossprobe-hint')).toHaveText('No match for NOSUCHTOKEN in linkB.pdf');
+  // Feedback surfaces as a toast (inline rendering broke the toolbar layout).
+  await expect(
+    page.locator('.toast').filter({ hasText: 'No match for NOSUCHTOKEN in linkB.pdf' }),
+  ).toBeVisible();
 });
 
 test('unlink stops cross-probe', async ({ page }) => {
@@ -110,7 +112,7 @@ test('unlink stops cross-probe', async ({ page }) => {
   expect(stillLinked.b).toBeNull();
 });
 
-test('header link control links and unlinks via the menu', async ({ page }) => {
+test('bind menu Cross-link PDF section links and unlinks PDFs', async ({ page }) => {
   await loadTwoPdfs(page);
   // loadTwoPdfs already linked the docs programmatically; start clean.
   await page.evaluate(() => (window as any).__pdfStore.unlinkDoc('linkA.pdf'));
@@ -118,17 +120,15 @@ test('header link control links and unlinks via the menu', async ({ page }) => {
   // Select linkA.pdf's panel.
   await page.locator('.dv-tab', { hasText: 'linkA.pdf' }).click();
 
-  // Open the link menu and choose linkB.pdf.
-  await page.getByTestId('pdf-link-btn').first().click();
-  await page.getByTestId('pdf-link-option').filter({ hasText: 'linkB.pdf' }).click();
-
+  // Open the main bind (∞/○○) menu and pick linkB.pdf from the "Cross-link PDF" section.
+  await page.locator('.bind-link-btn').first().click();
+  await page.getByTestId('bind-link-pdf-option').filter({ hasText: 'linkB.pdf' }).click();
   await expect.poll(() =>
     page.evaluate(() => (window as any).__pdfStore.getLinkedDoc('linkA.pdf')),
   ).toBe('linkB.pdf');
 
-  // Re-open menu → unlink.
-  await page.getByTestId('pdf-link-btn').first().click();
-  await page.getByTestId('pdf-unlink-option').first().click();
+  // The dropdown stays open after selecting — unlink via the section's "(none)".
+  await page.getByTestId('bind-link-pdf-clear').first().click();
   await expect.poll(() =>
     page.evaluate(() => (window as any).__pdfStore.getLinkedDoc('linkA.pdf')),
   ).toBeNull();

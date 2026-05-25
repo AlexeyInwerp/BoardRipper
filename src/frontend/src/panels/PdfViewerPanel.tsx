@@ -17,7 +17,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn, IconLink, IconLinkOff } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn } from '@tabler/icons-react';
 import {
   TILE_SIZE, computeTileGrid, tileRenderRequest,
   getTileCached, putTileCached, invalidateTileCache,
@@ -578,7 +578,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc, linkedDocOpen } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
@@ -632,6 +632,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         boardStore.addPdfBinding(target.id, pdfFileName);
       }
     }
+  };
+
+  // Cross-link this PDF to another open PDF (1:1). null or the current partner = unlink.
+  const handleLinkPdf = (name: string | null) => {
+    if (name === null || name === linkedDoc) pdfStore.unlinkDoc(pdfFileName);
+    else pdfStore.linkDocs(pdfFileName, name);
   };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -916,7 +922,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Bumped after zoom settles to trigger adjacent re-render (debounced, not per-render) */
   const [adjTrigger, setAdjTrigger] = useState(0);
   const adjDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [linkMenuOpen, setLinkMenuOpen] = useState(false);
 
   /** Clamp pan so the page stays within view boundaries.
    *
@@ -2013,11 +2018,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => clearTimeout(timer);
   }, [lookupHint, pdfFileName]);
 
-  // Auto-clear cross-lookup hint after 4 seconds
+  // Surface cross-lookup feedback ("no match", "linked PDF not open") as a toast,
+  // then consume it. crossProbeHint is a one-shot message channel from the store.
   useEffect(() => {
     if (!crossProbeHint) return;
-    const timer = setTimeout(() => pdfStore.clearCrossProbeHint(pdfFileName), 4000);
-    return () => clearTimeout(timer);
+    boardStore.addToast(crossProbeHint, 'info');
+    pdfStore.clearCrossProbeHint(pdfFileName);
   }, [crossProbeHint, pdfFileName]);
 
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
@@ -3135,16 +3141,22 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   return (
     <div className="pdf-viewer">
       <div className="pdf-toolbar">
-        {boardTabNames.length > 0 && (
+        {(boardTabNames.length > 0 || pdfStore.loadedFileNames.some(n => n !== pdfFileName)) && (
           <BindLink
             boundNames={boundBoardTabs.map(t => t.fileName)}
             options={boardTabNames}
             onToggle={handleBindBoard}
             title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'No board linked'}
-            headerItem={{
+            headerItem={boardTabNames.length > 0 ? {
               label: 'auto-open boardview',
               checked: autoSwitchLinked,
               onChange: setAutoSwitchLinked,
+            } : undefined}
+            secondary={{
+              label: 'Cross-link PDF',
+              boundNames: linkedDoc ? [linkedDoc] : [],
+              options: pdfStore.loadedFileNames.filter(n => n !== pdfFileName),
+              onToggle: handleLinkPdf,
             }}
           />
         )}
@@ -3242,9 +3254,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
               Double-click <b>{lookupHint}</b> to search
             </div>
           )}
-          {crossProbeHint && (
-            <div className="pdf-lookup-hint pdf-crossprobe-hint">{crossProbeHint}</div>
-          )}
           {showNavHint && (
             <div className="pdf-nav-hint">Enter / ↑↓ to navigate results</div>
           )}
@@ -3311,49 +3320,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </div>
 
         <div className="pdf-toolbar-spacer" />
-
-        <div className="pdf-toolbar-group pdf-link-group">
-          <button
-            data-testid="pdf-link-btn"
-            className={`pdf-toolbar-btn pdf-link-btn${linkedDoc ? ' has-active' : ''}${linkedDoc && !linkedDocOpen ? ' stale' : ''}`}
-            onClick={() => setLinkMenuOpen(v => !v)}
-            title={linkedDoc
-              ? (linkedDocOpen ? `Linked to ${linkedDoc} — click to manage` : `Linked to ${linkedDoc} (not open) — click to manage`)
-              : 'Link this PDF to another open PDF for cross-lookup'}
-          >
-            {linkedDoc ? <IconLink size={14} /> : <IconLinkOff size={14} />}
-          </button>
-          {linkMenuOpen && (
-            <div className="pdf-link-menu">
-              {linkedDoc ? (
-                <button
-                  data-testid="pdf-unlink-option"
-                  className="pdf-link-option"
-                  onClick={() => { pdfStore.unlinkDoc(pdfFileName); setLinkMenuOpen(false); }}
-                >
-                  Unlink from {linkedDoc}
-                </button>
-              ) : (
-                (() => {
-                  const others = pdfStore.loadedFileNames.filter(n => n !== pdfFileName);
-                  if (others.length === 0) {
-                    return <div className="pdf-link-empty">Open another PDF to link</div>;
-                  }
-                  return others.map(n => (
-                    <button
-                      key={n}
-                      data-testid="pdf-link-option"
-                      className="pdf-link-option"
-                      onClick={() => { pdfStore.linkDocs(pdfFileName, n); setLinkMenuOpen(false); }}
-                    >
-                      {n}
-                    </button>
-                  ));
-                })()
-              )}
-            </div>
-          )}
-        </div>
 
         <div className="pdf-toolbar-group">
           <div className="pdf-corrector-wrapper">
