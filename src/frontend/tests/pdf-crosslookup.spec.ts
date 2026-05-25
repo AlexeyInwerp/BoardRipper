@@ -23,6 +23,7 @@ async function loadTwoPdfs(page: any) {
   const a = await makePdf([['U5300'], ['Z1'], ['Z2']]);
   const b = await makePdf([['C100'], ['U5300'], ['U5300']]);
   await page.goto('/');
+  await page.evaluate(() => localStorage.clear());
   await page.getByTestId('file-input').setInputFiles([
     { name: 'linkA.pdf', mimeType: 'application/pdf', buffer: a },
     { name: 'linkB.pdf', mimeType: 'application/pdf', buffer: b },
@@ -47,7 +48,7 @@ async function loadTwoPdfs(page: any) {
   const matchCount = await page.evaluate(() =>
     (window as any).__pdfStore.getDocMatches('linkB.pdf').length
   );
-  if (matchCount < 2) throw new Error(`Expected ≥2 matches for U5300 in linkB.pdf, got ${matchCount}`);
+  expect(matchCount, 'U5300 should appear on both pages of linkB.pdf').toBeGreaterThanOrEqual(2);
 }
 
 test('cross-probe navigates the linked doc and cycles matches', async ({ page }) => {
