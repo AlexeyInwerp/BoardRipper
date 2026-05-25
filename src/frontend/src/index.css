@@ -4023,6 +4023,16 @@ html, body, #root {
   padding-left: 24px;
 }
 
+.library-tree-indent-2 {
+  padding-left: 44px;
+}
+
+.library-tree-model {
+  color: var(--text-primary);
+  font-style: italic;
+  opacity: 0.92;
+}
+
 .library-tree-arrow {
   font-size: 8px;
   width: 12px;

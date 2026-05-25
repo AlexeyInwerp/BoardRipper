@@ -209,14 +209,17 @@ export interface RecentItem {
   fileId?: number;
 }
 
-/** Metadata tree node for foobar2000-style grouping */
+/** Metadata tree node for foobar2000-style grouping — Brand → Model → Board# */
 export interface MetadataGroup {
-  manufacturer: string;
-  boardNumbers: {
-    boardNumber: string;
-    files: DatabankFile[];
+  manufacturer: string; // brand
+  models: {
+    model: string; // device model; "Unknown model" when unresolved/empty
+    boardNumbers: {
+      boardNumber: string;
+      files: DatabankFile[];
+    }[];
+    ungrouped: DatabankFile[]; // files in this model with no board_number
   }[];
-  ungrouped: DatabankFile[]; // files without board_number
 }
 
 /** Model tree node — groups by resolved Apple model name */
@@ -445,41 +448,55 @@ class DatabankStore extends Emitter {
     if (this._metadataCache && this._metadataCache.version === this._filesVersion) {
       return this._metadataCache.tree;
     }
-    const mfrMap = new Map<string, Map<string, DatabankFile[]>>();
-    const ungroupedMap = new Map<string, DatabankFile[]>();
+    // Brand → Model → (board_number ? boardNumbers[board#] : model.ungrouped)
+    interface ModelAcc {
+      boardMap: Map<string, DatabankFile[]>;
+      ungrouped: DatabankFile[];
+    }
+    const brandMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
-      const mfr = f.manufacturer || 'Unknown';
+      const brand = f.manufacturer || 'Unknown';
+      const model = f.model || 'Unknown model';
+
+      if (!brandMap.has(brand)) brandMap.set(brand, new Map());
+      const modelMap = brandMap.get(brand)!;
+      if (!modelMap.has(model)) modelMap.set(model, { boardMap: new Map(), ungrouped: [] });
+      const acc = modelMap.get(model)!;
 
       if (f.board_number) {
-        if (!mfrMap.has(mfr)) mfrMap.set(mfr, new Map());
-        const boardMap = mfrMap.get(mfr)!;
-        if (!boardMap.has(f.board_number)) boardMap.set(f.board_number, []);
-        boardMap.get(f.board_number)!.push(f);
+        if (!acc.boardMap.has(f.board_number)) acc.boardMap.set(f.board_number, []);
+        acc.boardMap.get(f.board_number)!.push(f);
       } else {
-        if (!ungroupedMap.has(mfr)) ungroupedMap.set(mfr, []);
-        ungroupedMap.get(mfr)!.push(f);
+        acc.ungrouped.push(f);
       }
     }
 
+    // Sort: brands alphabetically with 'Unknown' last; models alphabetically
+    // with 'Unknown model' last; board numbers via localeCompare.
+    const sortBrands = (a: string, b: string) => {
+      if (a === 'Unknown') return b === 'Unknown' ? 0 : 1;
+      if (b === 'Unknown') return -1;
+      return a.localeCompare(b);
+    };
+    const sortModels = (a: string, b: string) => {
+      if (a === 'Unknown model') return b === 'Unknown model' ? 0 : 1;
+      if (b === 'Unknown model') return -1;
+      return a.localeCompare(b);
+    };
+
     const groups: MetadataGroup[] = [];
-    const allMfrs = new Set([...mfrMap.keys(), ...ungroupedMap.keys()]);
-
-    for (const mfr of [...allMfrs].sort()) {
-      const boardMap = mfrMap.get(mfr);
-      const boardNumbers: MetadataGroup['boardNumbers'] = [];
-
-      if (boardMap) {
-        for (const [bn, files] of [...boardMap.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-          boardNumbers.push({ boardNumber: bn, files });
-        }
+    for (const brand of [...brandMap.keys()].sort(sortBrands)) {
+      const modelMap = brandMap.get(brand)!;
+      const models: MetadataGroup['models'] = [];
+      for (const model of [...modelMap.keys()].sort(sortModels)) {
+        const acc = modelMap.get(model)!;
+        const boardNumbers = [...acc.boardMap.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([boardNumber, files]) => ({ boardNumber, files }));
+        models.push({ model, boardNumbers, ungrouped: acc.ungrouped });
       }
-
-      groups.push({
-        manufacturer: mfr,
-        boardNumbers,
-        ungrouped: ungroupedMap.get(mfr) || [],
-      });
+      groups.push({ manufacturer: brand, models });
     }
 
     this._metadataCache = { version: this._filesVersion, tree: groups };

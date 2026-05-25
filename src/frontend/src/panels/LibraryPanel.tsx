@@ -327,6 +327,12 @@ export function LibraryPanel() {
     databankStore.setViewMode(mode);
   }, []);
 
+  // Model tab is hidden (Board# now groups by model). If a user's persisted
+  // viewMode is the now-unreachable 'model', fall back to Board# once on mount
+  // so they aren't stuck on a view with no tab to leave it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (viewMode === 'model') handleSetViewMode('metadata'); }, []);
+
   const handleFileScan = useCallback(() => {
     databankStore.triggerFileScan();
   }, []);
@@ -661,12 +667,14 @@ export function LibraryPanel() {
           >
             Board #
           </button>
+          {/* Model tab hidden — Board# now groups by model. Code kept (ModelView/modelTree) for future re-enable.
           <button
             className={`library-tab ${viewMode === 'model' ? 'active' : ''}`}
             onClick={() => handleSetViewMode('model')}
           >
             Model
           </button>
+          */}
           <button
             className={`library-tab ${viewMode === 'search' ? 'active' : ''}`}
             onClick={() => handleSetViewMode('search')}
@@ -1736,13 +1744,15 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
 
   // Collapse byte-identical duplicates across the WHOLE view (after filtering)
   // so each content group shows once (canonical row + ×N chip), even when the
-  // copies sit under different board numbers (e.g. 820-00165 vs 820-00165-A).
-  // Folder views never collapse — they list every physical copy.
+  // copies sit under different board numbers (e.g. 820-00165 vs 820-00165-A)
+  // or different models. Folder views never collapse — they list every copy.
   const filteredGroups = useMemo(() => {
     const all: DatabankFile[] = [];
     for (const g of groups) {
-      for (const bn of g.boardNumbers) for (const f of bn.files) if (filterFile(f)) all.push(f);
-      for (const f of g.ungrouped) if (filterFile(f)) all.push(f);
+      for (const m of g.models) {
+        for (const bn of m.boardNumbers) for (const f of bn.files) if (filterFile(f)) all.push(f);
+        for (const f of m.ungrouped) if (filterFile(f)) all.push(f);
+      }
     }
     const plan = contentCollapsePlan(all);
     const take = (files: DatabankFile[]) =>
@@ -1751,9 +1761,12 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
         .map(f => ({ ...f, ...(plan.info.get(f.id) ?? { copyCount: 0, copyPaths: [] }) }));
     return groups.map(g => ({
       ...g,
-      boardNumbers: g.boardNumbers.map(bn => ({ ...bn, files: take(bn.files) })).filter(bn => bn.files.length > 0),
-      ungrouped: take(g.ungrouped),
-    })).filter(g => g.boardNumbers.length > 0 || g.ungrouped.length > 0);
+      models: g.models.map(m => ({
+        ...m,
+        boardNumbers: m.boardNumbers.map(bn => ({ ...bn, files: take(bn.files) })).filter(bn => bn.files.length > 0),
+        ungrouped: take(m.ungrouped),
+      })).filter(m => m.boardNumbers.length > 0 || m.ungrouped.length > 0),
+    })).filter(g => g.models.length > 0);
   }, [groups, filterFile]);
 
   return (
@@ -1764,30 +1777,64 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
       {filteredGroups.map(group => {
         const mfrKey = `mfr:${group.manufacturer}`;
         const isExpanded = expanded.has(mfrKey);
-        const totalFiles = group.boardNumbers.reduce((n, bn) => n + bn.files.length, 0) + group.ungrouped.length;
+        const brandTotal = group.models.reduce(
+          (n, m) => n + m.boardNumbers.reduce((bn, b) => bn + b.files.length, 0) + m.ungrouped.length,
+          0,
+        );
 
         return (
           <div key={mfrKey} className="library-tree-group">
             <div className="library-tree-node" onClick={() => toggle(mfrKey)}>
               <span className="library-tree-arrow">{isExpanded ? '▼' : '▶'}</span>
               <span className="library-tree-mfr">{group.manufacturer}</span>
-              <span className="library-tree-count">{totalFiles}</span>
+              <span className="library-tree-count">{brandTotal}</span>
             </div>
             {isExpanded && (
               <div className="library-tree-children">
-                {group.boardNumbers.map(bn => {
-                  const bnKey = `bn:${group.manufacturer}:${bn.boardNumber}`;
-                  const bnExpanded = expanded.has(bnKey);
+                {group.models.map(model => {
+                  const mdlKey = `mdl:${group.manufacturer} ${model.model}`;
+                  const mdlExpanded = expanded.has(mdlKey);
+                  const modelTotal = model.boardNumbers.reduce((n, bn) => n + bn.files.length, 0) + model.ungrouped.length;
                   return (
-                    <div key={bnKey} className="library-tree-group">
-                      <div className="library-tree-node library-tree-indent" onClick={() => toggle(bnKey)}>
-                        <span className="library-tree-arrow">{bnExpanded ? '▼' : '▶'}</span>
-                        <span className="library-tree-board-num">{bn.boardNumber}</span>
-                        <span className="library-tree-count">{bn.files.length}</span>
+                    <div key={mdlKey} className="library-tree-group">
+                      <div className="library-tree-node library-tree-indent" onClick={() => toggle(mdlKey)}>
+                        <span className="library-tree-arrow">{mdlExpanded ? '▼' : '▶'}</span>
+                        <span className="library-tree-model">{model.model}</span>
+                        <span className="library-tree-count">{modelTotal}</span>
                       </div>
-                      {bnExpanded && (
+                      {mdlExpanded && (
                         <div className="library-tree-children">
-                          {bn.files.map(f => (
+                          {model.boardNumbers.map(bn => {
+                            const bnKey = `bn:${group.manufacturer} ${model.model} ${bn.boardNumber}`;
+                            const bnExpanded = expanded.has(bnKey);
+                            return (
+                              <div key={bnKey} className="library-tree-group">
+                                <div className="library-tree-node library-tree-indent-2" onClick={() => toggle(bnKey)}>
+                                  <span className="library-tree-arrow">{bnExpanded ? '▼' : '▶'}</span>
+                                  <span className="library-tree-board-num">{bn.boardNumber}</span>
+                                  <span className="library-tree-count">{bn.files.length}</span>
+                                </div>
+                                {bnExpanded && (
+                                  <div className="library-tree-children">
+                                    {bn.files.map(f => (
+                                      <FileRow
+                                        key={f.id}
+                                        file={f}
+                                        copyCount={f.copyCount}
+                                        copyPaths={f.copyPaths}
+                                        selected={f.id === selectedFileId}
+                                        indent={3}
+                                        showPreview={f.file_type === 'pdf'}
+                                        onSelect={onSelectFile}
+                                        onOpen={onOpenFile}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {model.ungrouped.map(f => (
                             <FileRow
                               key={f.id}
                               file={f}
@@ -1805,19 +1852,6 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
                     </div>
                   );
                 })}
-                {group.ungrouped.map(f => (
-                  <FileRow
-                    key={f.id}
-                    file={f}
-                    copyCount={f.copyCount}
-                    copyPaths={f.copyPaths}
-                    selected={f.id === selectedFileId}
-                    indent={1}
-                    showPreview={f.file_type === 'pdf'}
-                    onSelect={onSelectFile}
-                    onOpen={onOpenFile}
-                  />
-                ))}
               </div>
             )}
           </div>
