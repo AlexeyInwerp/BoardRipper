@@ -791,88 +791,89 @@ class PdfStore extends Emitter {
   }
 
   searchText(query: string, source: 'user' | 'lookup' = 'user') {
-    const active = this._active;
-    if (!active) return;
+    if (!this._active) return;
+    this._runSearch(this._active, query, source, true);
+  }
 
-    // Remember position before wiping state — used to pick a starting match
-    // near the user's current view instead of always jumping to match 0.
-    const prevPage = active.currentPage;
+  /**
+   * Run a search against a specific document (not necessarily the active one).
+   * useClickedLocation: when true, prefer the exact match at the last clicked
+   * (pageIndex,itemIndex) IF that click was in this same doc — used by in-doc
+   * search. Cross-probe passes false (the click was in the *other* doc).
+   */
+  private _runSearch(
+    doc: PdfDocument,
+    query: string,
+    source: 'user' | 'lookup',
+    useClickedLocation: boolean,
+  ) {
+    const prevPage = doc.currentPage;
 
-    active.searchQuery = query;
-    active.searchSource = query ? source : null;
-    active.lookupHint = null; // any new search clears pending hint
-    active.matches = [];
-    active.matchGroups = [];
-    active.activeMatchIndex = -1;
-    active.activeGroupIndex = -1;
+    doc.searchQuery = query;
+    doc.searchSource = query ? source : null;
+    doc.lookupHint = null;
+    doc.matches = [];
+    doc.matchGroups = [];
+    doc.activeMatchIndex = -1;
+    doc.activeGroupIndex = -1;
 
     if (!query) {
-      active.activeMatchIndicesCache = new Set();
-      active.matchesByPage = new Map();
+      doc.activeMatchIndicesCache = new Set();
+      doc.matchesByPage = new Map();
       this.notify();
       return;
     }
 
     if (query.includes('@')) {
-      this._searchAtSyntax(active, query.split('@').map(t => t.trim()).filter(t => t.length > 0));
+      this._searchAtSyntax(doc, query.split('@').map(t => t.trim()).filter(t => t.length > 0));
     } else {
       const terms = query.split(/\s+/).filter(t => t.length > 0);
-      if (terms.length > 1) {
-        this._searchMultiTerm(active, terms);
-      } else {
-        this._searchSingleTerm(active, query);
-      }
+      if (terms.length > 1) this._searchMultiTerm(doc, terms);
+      else this._searchSingleTerm(doc, query);
     }
 
-    // Build per-page index
-    active.matchesByPage = new Map();
-    for (const m of active.matches) {
-      let arr = active.matchesByPage.get(m.pageIndex);
-      if (!arr) { arr = []; active.matchesByPage.set(m.pageIndex, arr); }
+    doc.matchesByPage = new Map();
+    for (const m of doc.matches) {
+      let arr = doc.matchesByPage.get(m.pageIndex);
+      if (!arr) { arr = []; doc.matchesByPage.set(m.pageIndex, arr); }
       arr.push(m);
     }
 
-    if (active.matches.length > 0) {
-      // Exact match pick: if the caller just clicked a word in this PDF, that
-      // word's location IS the target — pick the match at that exact
-      // (pageIndex, itemIndex). No heuristic needed.
+    if (doc.matches.length > 0) {
       let bestIdx = -1;
-      const loc = this._lastClickedLocation;
-      if (loc && loc.fileName === active.fileName) {
-        for (let i = 0; i < active.matches.length; i++) {
-          const m = active.matches[i];
-          if (m.pageIndex === loc.pageIndex && m.itemIndex === loc.itemIndex) {
-            bestIdx = i;
-            break;
+      if (useClickedLocation) {
+        const loc = this._lastClickedLocation;
+        if (loc && loc.fileName === doc.fileName) {
+          for (let i = 0; i < doc.matches.length; i++) {
+            const m = doc.matches[i];
+            if (m.pageIndex === loc.pageIndex && m.itemIndex === loc.itemIndex) { bestIdx = i; break; }
           }
+          this._lastClickedLocation = null; // consume
         }
-        this._lastClickedLocation = null; // consume
       }
 
       if (bestIdx < 0) {
-        // Fallback: pick the match closest to the user's previous page so the
-        // view doesn't snap far away on a typed search.
         const prevPageIdx = prevPage - 1;
         bestIdx = 0;
         let bestDist = Infinity;
-        for (let i = 0; i < active.matches.length; i++) {
-          const dist = Math.abs(active.matches[i].pageIndex - prevPageIdx);
+        for (let i = 0; i < doc.matches.length; i++) {
+          const dist = Math.abs(doc.matches[i].pageIndex - prevPageIdx);
           if (dist < bestDist) { bestDist = dist; bestIdx = i; if (dist === 0) break; }
         }
       }
 
-      if (active.matchGroups.length > 0) {
-        // Remap: find the group containing bestIdx
-        const g = active.matchGroups.findIndex(group => group.includes(bestIdx));
-        active.activeGroupIndex = g >= 0 ? g : 0;
-        active.activeMatchIndex = active.matchGroups[active.activeGroupIndex][0];
+      if (doc.matchGroups.length > 0) {
+        const g = doc.matchGroups.findIndex(group => group.includes(bestIdx));
+        doc.activeGroupIndex = g >= 0 ? g : 0;
+        doc.activeMatchIndex = doc.matchGroups[doc.activeGroupIndex][0];
       } else {
-        active.activeMatchIndex = bestIdx;
-        active.activeGroupIndex = -1;
+        doc.activeMatchIndex = bestIdx;
+        doc.activeGroupIndex = -1;
       }
-      active.currentPage = active.matches[active.activeMatchIndex].pageIndex + 1;
+      doc.currentPage = doc.matches[doc.activeMatchIndex].pageIndex + 1;
     }
-    this._rebuildActiveIndicesCache(active);
+
+    this._rebuildActiveIndicesCache(doc);
     this.notify();
   }
 
@@ -1097,8 +1098,12 @@ class PdfStore extends Emitter {
   }
 
   private _stepMatch(delta: 1 | -1) {
-    const d = this._active;
-    if (!d || d.matches.length === 0) return;
+    if (!this._active) return;
+    this._stepMatchInDoc(this._active, delta);
+  }
+
+  private _stepMatchInDoc(d: PdfDocument, delta: 1 | -1) {
+    if (d.matches.length === 0) return;
     if (d.matchGroups.length > 0) {
       d.activeGroupIndex = (d.activeGroupIndex + delta + d.matchGroups.length) % d.matchGroups.length;
       d.activeMatchIndex = d.matchGroups[d.activeGroupIndex][0];
