@@ -2782,6 +2782,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       else if (isNet) boardStore.focusNet(hit.word);
       if (isPart || isNet) openBoardSearch(hit.word);
     }
+
+    // PDF↔PDF cross-lookup: if this PDF is linked to another, drive the
+    // linked doc's search for the clicked token (crossProbe resolves whether
+    // the partner is open and hints if not).
+    if (pdfStore.getLinkedDoc(pdfFileName)) {
+      pdfStore.crossProbe(pdfFileName, hit.word);
+    }
   }, [hitTestWord, pdfFileName]);
 
   const handleTextDblClick = useCallback((e: React.MouseEvent) => {
