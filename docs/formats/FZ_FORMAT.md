@@ -176,10 +176,35 @@ Tab-delimited text with component descriptions. After decompression:
 ## Units
 
 The content may contain a `UNIT:<value>` directive:
-- `UNIT:MILLIMETERS` — coordinates are in millimeters (multiplied by 25.4 to convert to mils)
-- Default (no directive) — coordinates are in mils
+- `UNIT:MILLIMETERS` — coordinates are *declared* to be in millimeters.
+- Default (no directive) — coordinates are in mils.
 
-Regional variants may use commas as decimal separators; the parser normalizes these to dots.
+Internally BoardRipper works in mils, so a genuine millimetre file is converted
+with **×39.3701** (`1000 / 25.4`, i.e. 1 mm = 39.37 mil). Upstream OpenBoardView
+uses a flat **×25.4** here, which is the inch↔mm factor rather than mm→mil; it
+stays harmless in OBV only because OBV scales the pin radius together with the
+coordinates and auto-fits the view. BoardRipper clamps the *display* pin radius
+to an absolute mil range (`pinMaxRadius`), so the magnitude must be right.
+
+### The `UNIT:millimeters` mislabel guard
+
+Many real ASUS exporters stamp `UNIT:millimeters` onto files whose coordinates
+are nonetheless stored **in mils** — the same board ships elsewhere with no
+directive and byte-identical mil values (canary: `X551MA_1.1_60NB0480-MB1310.fz`
+vs `X551MA_1.1.fz`). In a 189-file corpus sample, **53 of 60** files declaring
+millimetres were actually mil-coordinate files. Blindly trusting the directive
+multiplies every coordinate ~25–39×, pushing the board far past the mil range
+the renderer's pin-radius cap assumes, so every pin and net line renders
+sub-pixel — the board opens but appears to have **no pins or nets**.
+
+The parser therefore honours `UNIT:millimeters` only when the geometry is
+actually millimetre-scale. A real PCB spans ~20–600 mm; the same board in mils
+spans ≥1000. The cutoff (`MM_PLAUSIBLE_MAX_SPAN = 700`) sits in the empty gap
+between the two regimes: a coordinate span over 700 is taken as mislabelled
+mils and left unscaled; a span at or under 700 is converted mm→mils.
+
+Regional variants may use commas as decimal separators; the parser normalizes
+these to dots before parsing.
 
 ---
 

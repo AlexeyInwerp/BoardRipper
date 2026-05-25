@@ -133,11 +133,30 @@ function rc6Decrypt(data: Uint8Array, key: Uint32Array): void {
 // Content parsing (! delimited text)
 // ---------------------------------------------------------------------------
 
-/** FZ coordinate unit multiplier (default: mils — 1.0, millimeters: 25.4) */
-function parseUnitMultiplier(content: string): number {
+/**
+ * Millimetre → mil conversion. 1 mm = 1000/25.4 ≈ 39.37 mil. OBV historically
+ * applied a flat ×25.4 here (the inch↔mm factor, not mm→mil); it stays harmless
+ * in OBV only because OBV scales pin radius together with the coordinates and
+ * auto-fits the view. BoardRipper clamps the *display* pin radius to an absolute
+ * mil range (`pinMaxRadius`), so a board scaled to the wrong magnitude renders
+ * its pins at the wrong relative size — hence the correct factor here.
+ */
+const MM_TO_MILS = 1000 / 25.4;
+
+/**
+ * Largest coordinate span (in the file's own units) we still accept as a genuine
+ * millimetre board. Real PCBs span ~20–600 mm; the same board expressed in mils
+ * spans ≥1000. 700 sits in the empty gap between the two regimes, so it cleanly
+ * separates a true-mm file from one that merely *declares* `UNIT:millimeters`
+ * while still storing mil coordinates. See the unit-resolution block in
+ * `parseContent`.
+ */
+const MM_PLAUSIBLE_MAX_SPAN = 700;
+
+/** True when the content declares millimetre coordinates (`UNIT:millimeters`). */
+function declaresMillimeters(content: string): boolean {
   const match = content.match(/UNIT:(\S+)/i);
-  if (match && match[1].toLowerCase() === 'millimeters') return 25.4;
-  return 1.0;
+  return !!match && match[1].toLowerCase() === 'millimeters';
 }
 
 interface FZPin {
@@ -170,13 +189,17 @@ interface FZPart {
  *   Lines starting with A define block headers.
  *   Lines starting with S contain data records.
  */
-function parseContent(text: string, unitMul: number): { parts: FZPart[]; pins: FZPin[]; nails: FZNail[] } {
+function parseContent(text: string, unitIsMm: boolean): { parts: FZPart[]; pins: FZPin[]; nails: FZNail[] } {
   // Replace comma decimal separators with dots (some regional variants)
   text = text.replace(/,/g, '.');
 
   const parts: FZPart[] = [];
   const pins: FZPin[] = [];
   const nails: FZNail[] = [];
+
+  // Raw coordinate extent (pre-unit-scaling) — used to sanity-check a
+  // `UNIT:millimeters` declaration before we trust it.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
   type Block = 'REFDES' | 'NET_NAME' | 'TESTVIA' | 'OTHER';
   let currentBlock: Block = 'OTHER';
@@ -219,17 +242,18 @@ function parseContent(text: string, unitMul: number): { parts: FZPart[]; pins: F
       const refdes     = fields[2] ?? '';
       const pinNumber  = fields[3] ?? '';
       const pinName    = fields[4] ?? '';
-      const x          = parseFloat(fields[5] ?? '') * unitMul;
-      const y          = parseFloat(fields[6] ?? '') * unitMul;
+      const x          = parseFloat(fields[5] ?? '');
+      const y          = parseFloat(fields[6] ?? '');
       const testPoint  = parseInt(fields[7] ?? '0', 10) || 0;
-      let radius       = parseFloat(fields[8] ?? '0');
 
-      // OBV: radius /= 100, min 0.5, then * unitMul
-      radius = radius / 100;
+      // OBV: radius /= 100, min 0.5. Unit scaling (if any) is applied after the
+      // full pass once we know whether the mm declaration is trustworthy.
+      let radius = parseFloat(fields[8] ?? '0') / 100;
       if (radius < 0.5) radius = 0.5;
-      radius *= unitMul;
 
       if (!isNaN(x) && !isNaN(y)) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
         pins.push({ net, refdes, pinNumber, pinName, x, y, testPoint, radius });
       }
     } else if (currentBlock === 'TESTVIA') {
@@ -237,14 +261,31 @@ function parseContent(text: string, unitMul: number): { parts: FZPart[]; pins: F
       // Note: extra "Y" field after S
       if (fields[1] !== 'Y') continue;
       const net      = fields[2] ?? '';
-      const x        = parseFloat(fields[6] ?? '') * unitMul;
-      const y        = parseFloat(fields[7] ?? '') * unitMul;
+      const x        = parseFloat(fields[6] ?? '');
+      const y        = parseFloat(fields[7] ?? '');
       const location = fields[8] ?? '';
 
       if (!isNaN(x) && !isNaN(y)) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
         nails.push({ net, x, y, side: location.toUpperCase() === 'T' ? 'top' : 'bottom' });
       }
     }
+  }
+
+  // Resolve the coordinate unit. Some ASUS exporters stamp `UNIT:millimeters`
+  // onto files whose coordinates are nonetheless in mils — the very same board
+  // ships elsewhere with no directive and byte-identical mil values. Trust the
+  // declaration only when the geometry is actually millimetre-scale; otherwise
+  // the ×39.37 blow-up pushes the board ~25× past the mil range the renderer's
+  // absolute pin-radius cap (`pinMaxRadius`) assumes, so every pin and net line
+  // renders sub-pixel — the board opens but appears to have no pins or nets.
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
+  const span = Math.max(Number.isFinite(spanX) ? spanX : 0, Number.isFinite(spanY) ? spanY : 0);
+  if (unitIsMm && span > 0 && span <= MM_PLAUSIBLE_MAX_SPAN) {
+    for (const p of pins) { p.x *= MM_TO_MILS; p.y *= MM_TO_MILS; p.radius *= MM_TO_MILS; }
+    for (const n of nails) { n.x *= MM_TO_MILS; n.y *= MM_TO_MILS; }
   }
 
   return { parts, pins, nails };
@@ -420,11 +461,12 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
     throw new Error('FZ content decompression failed: no decoder produced board content');
   }
 
-  // Parse unit multiplier
-  const unitMul = parseUnitMultiplier(contentText);
+  // Detect the declared coordinate unit (mils by default). The millimetre
+  // sanity-check that defends against mislabelled exports lives in parseContent.
+  const unitIsMm = declaresMillimeters(contentText);
 
   // Parse content
-  const { parts: fzParts, pins: fzPins, nails: fzNails } = parseContent(contentText, unitMul);
+  const { parts: fzParts, pins: fzPins, nails: fzNails } = parseContent(contentText, unitIsMm);
 
   if (fzParts.length === 0 && fzPins.length === 0) {
     throw new Error('FZ file parsed but contains no parts or pins — file may be corrupted or empty');
