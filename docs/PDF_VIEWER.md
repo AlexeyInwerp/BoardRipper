@@ -240,6 +240,23 @@ Clicking on PDF text runs `hitTestWord` which:
 Double-click bypasses the part/net check and always stuffs the word into the
 search input, overwriting any existing query.
 
+## PDF↔PDF cross-lookup
+
+Two open text PDFs can be explicitly linked 1:1 (header link button →
+`PdfStore.linkDocs`). The link is symmetric, persisted in `localStorage`
+(`pdf-link:<fileName>`, restored on `loadFile`) by the pure `pdf-links.ts`
+module, and is independent of any board.
+
+When linked, `handleTextClick` calls `PdfStore.crossProbe(sourceFile, word)`,
+which runs the *existing* search machinery against the linked document via
+`_runSearch(targetDoc, word, 'lookup', false)` — so navigation, snap-to-match
+scroll, and highlight all reuse the in-doc search path. Re-clicking the same
+token advances to the next occurrence (`_stepMatchInDoc`, cycling). Matching is
+the same substring search as Ctrl-F, so short designators (`C1`) over-match;
+the visible match count + cycling cover that. `crossProbe` never calls
+`switchTo` (it must not steal the active-doc/keyboard context). No nets, no
+pins, no OCR — text PDFs only.
+
 ## Performance envelope
 
 Rough numbers on a modern laptop with integrated GPU, "high" quality preset:
