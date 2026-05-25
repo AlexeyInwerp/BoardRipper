@@ -182,6 +182,78 @@ func (s *Scanner) ScanRoot() string {
 	return s.dataDir
 }
 
+// IndexFile indexes a single file that already exists on disk under the
+// scan root, without walking the whole library. It mirrors scanWorker's
+// per-file insert/update path so a dropped file shows up in the library
+// immediately (used by the drop-to-incoming upload handler). PDFs are
+// additionally queued for background text extraction. Auto-match bindings
+// are intentionally NOT run here — that pass is O(boards×pdfs) and is left
+// to the next full scan; the frontend already binds the open board↔PDF in
+// memory for the current session.
+func (s *Scanner) IndexFile(relPath string) error {
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+	abs := filepath.Join(s.ScanRoot(), filepath.FromSlash(relPath))
+	info, err := os.Stat(abs)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() || !IsSupportedFile(info.Name()) {
+		return fmt.Errorf("not a supported file: %s", relPath)
+	}
+	size := info.Size()
+	modTime := info.ModTime().Unix()
+
+	s.mu.Lock()
+	bdb := s.boardDB
+	ex := s.extractor
+	s.mu.Unlock()
+
+	// Insert-or-update by path (files.path has a UNIQUE constraint).
+	if existing, err := s.db.GetFileByPath(relPath); err == nil && existing != nil {
+		if existing.Size != size || existing.ModTime != modTime {
+			if err := s.db.UpdateFileScan(existing.ID, size, modTime, time.Now().Unix()); err != nil {
+				return err
+			}
+		}
+		log.Printf("Scanner: indexed (update) %s", relPath)
+		return nil
+	}
+
+	meta := ExtractMetadataWithBoardDB(relPath, bdb)
+	rec := FileRecord{
+		Path:              relPath,
+		Filename:          filepath.Base(relPath),
+		Extension:         strings.ToLower(filepath.Ext(relPath)),
+		FileType:          FileTypeFromExt(relPath),
+		Size:              size,
+		ModTime:           modTime,
+		ScanTime:          time.Now().Unix(),
+		BoardNumber:       meta.BoardNumber,
+		Manufacturer:      meta.Manufacturer,
+		Model:             meta.Model,
+		BoardManufacturer: meta.BoardManufacturer,
+		ResolutionStatus:  meta.ResolutionStatus,
+		BoardUUID:         meta.BoardUUID,
+		BoardColor:        meta.BoardColor,
+		BoardColorHex:     meta.BoardColorHex,
+	}
+	id, err := s.db.InsertFile(&rec)
+	if err != nil {
+		return err
+	}
+	rec.ID = id
+	log.Printf("Scanner: indexed (new) %s [%s] %s", rec.Path, rec.FileType, formatSize(rec.Size))
+
+	if rec.FileType == "pdf" && ex != nil {
+		go func() {
+			if err := ex.ExtractOne(rec); err != nil {
+				log.Printf("Scanner: PDF extract failed for %s: %v", rec.Path, err)
+			}
+		}()
+	}
+	return nil
+}
+
 // Status returns the current scan status.
 func (s *Scanner) Status() ScanStatus {
 	s.mu.Lock()

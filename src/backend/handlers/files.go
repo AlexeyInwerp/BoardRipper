@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,9 +18,24 @@ import (
 // ScanRootFunc returns the current scan root directory.
 type ScanRootFunc func() string
 
+// IndexFileFunc indexes a single file (given as a scan-root-relative,
+// forward-slash path) into the databank so it appears in the library
+// without a full rescan. May be nil (indexing is then skipped).
+type IndexFileFunc func(relPath string) error
+
+// incomingSubdir is the flat folder under the scan root where dropped files
+// are saved. No further substructure is created — every dropped board/PDF
+// lands directly in <scanRoot>/incoming/.
+const incomingSubdir = "incoming"
+
+// maxUploadBytes caps a single drop-to-incoming upload. Matches the eager
+// serve cap (serve.go) so anything we accept we can also serve back.
+const maxUploadBytes = 512 << 20 // 512 MiB
+
 type FileHandler struct {
-	dataDir     string
-	scanRootFn  ScanRootFunc // returns the active scan root (may differ from dataDir if library_dir is set)
+	dataDir    string
+	scanRootFn ScanRootFunc  // returns the active scan root (may differ from dataDir if library_dir is set)
+	indexFn    IndexFileFunc // indexes an uploaded file into the databank (may be nil)
 }
 
 type FileInfo struct {
@@ -28,8 +44,8 @@ type FileInfo struct {
 	Modified time.Time `json:"modified"`
 }
 
-func NewFileHandler(dataDir string, scanRootFn ScanRootFunc) *FileHandler {
-	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn}
+func NewFileHandler(dataDir string, scanRootFn ScanRootFunc, indexFn IndexFileFunc) *FileHandler {
+	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn, indexFn: indexFn}
 }
 
 // resolveWithinRoot rejects paths whose symlink-resolved target escapes
@@ -54,9 +70,15 @@ func resolveWithinRoot(root, relPath string) (string, error) {
 	return resolved, nil
 }
 
+// Upload saves a dropped board or PDF into <scanRoot>/incoming/ and indexes
+// it into the library. The scan root (library_dir if configured, else
+// dataDir) is used — not dataDir directly — so the saved file is reachable
+// by the same scanner that populates the Library panel. Written atomically
+// (temp + rename) so the indexer / a concurrent scan never sees a partial
+// file. Best-effort indexing: a write that succeeds but fails to index
+// still returns 200, since the next full scan reconciles it.
 func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	// Limit upload size to 50MB
-	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -65,33 +87,57 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Validate file extension
-	if !databank.IsBoardFile(header.Filename) {
-		http.Error(w, "Supported formats: "+databank.BoardExtensionList(), http.StatusBadRequest)
+	// Accept any supported board or PDF format.
+	if !databank.IsSupportedFile(header.Filename) {
+		http.Error(w, "Unsupported file type (boards: "+databank.BoardExtensionList()+", or .pdf)", http.StatusBadRequest)
 		return
 	}
 
-	// Sanitize filename
 	safeName := filepath.Base(header.Filename)
-	destPath := filepath.Join(h.dataDir, safeName)
+	incomingDir := filepath.Join(h.scanRootFn(), incomingSubdir)
+	if err := os.MkdirAll(incomingDir, 0o755); err != nil {
+		http.Error(w, "Failed to create incoming folder (library mount read-only?): "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	dst, err := os.Create(destPath)
+	destPath := filepath.Join(incomingDir, safeName)
+	tmpPath := destPath + ".part"
+	dst, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		http.Error(w, "Failed to save file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer dst.Close()
-
 	if _, err := io.Copy(dst, file); err != nil {
 		dst.Close()
-		os.Remove(destPath)
+		os.Remove(tmpPath)
 		http.Error(w, "Failed to write file: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if err := dst.Sync(); err != nil {
+		dst.Close()
+		os.Remove(tmpPath)
+		http.Error(w, "Failed to flush file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dst.Close()
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		os.Remove(tmpPath)
+		http.Error(w, "Failed to finalize file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, safeName))
+	if h.indexFn != nil {
+		if err := h.indexFn(relPath); err != nil {
+			// File is saved; indexing failure is non-fatal (next scan picks it up).
+			log.Printf("Upload: saved %s but indexing failed: %v", relPath, err)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"name":   safeName,
+		"path":   relPath,
 		"status": "ok",
 	})
 }
