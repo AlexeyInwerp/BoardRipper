@@ -280,6 +280,16 @@ interface Component {
   rotation: number;
   shapeName: string;
   deviceName: string;
+  /**
+   * Shape mirror flag from the `SHAPE <name> <mirror> <flip>` line. GenCAD
+   * mirrors the shape (in shape-local space, before rotation) when placing
+   * it: 'y' = MIRRORY = reflect across the Y axis = negate local X;
+   * 'x' = MIRRORX = reflect across the X axis = negate local Y. Allegro2CAD
+   * v0.2 tags every bottom-side component `MIRRORY FLIP`; the FLIP token is
+   * the side marker (redundant with LAYER BOTTOM) and needs no extra coord
+   * transform. null = no mirror (top-side `0 0`).
+   */
+  mirror: 'x' | 'y' | null;
 }
 
 interface ParsedComponents {
@@ -304,7 +314,7 @@ function parseComponents(lines: string[]): ParsedComponents {
         name: line.substring(10).trim(),
         placeX: 0, placeY: 0,
         layer: 'top', rotation: 0,
-        shapeName: '', deviceName: '',
+        shapeName: '', deviceName: '', mirror: null,
       };
     } else if (current) {
       if (line.startsWith('PLACE ')) {
@@ -316,8 +326,14 @@ function parseComponents(lines: string[]): ParsedComponents {
       } else if (line.startsWith('ROTATION ')) {
         current.rotation = parseFloat(line.substring(9).trim()) || 0;
       } else if (line.startsWith('SHAPE ')) {
-        // SHAPE <name> <mirrorX> <mirrorY>
-        current.shapeName = line.split(/\s+/)[1] ?? '';
+        // SHAPE <name> [<mirror>] [<flip>] — e.g. "SHAPE QE5 MIRRORY FLIP"
+        // for bottom parts, "SHAPE UE2 0 0" for top. The mirror token must be
+        // applied (in shape-local space, before rotation) or bottom-side
+        // footprints render X-flipped about their placement origin.
+        const tok = line.split(/\s+/);
+        current.shapeName = tok[1] ?? '';
+        const m = (tok[2] ?? '').toUpperCase();
+        current.mirror = m === 'MIRRORY' ? 'y' : m === 'MIRRORX' ? 'x' : null;
       } else if (line.startsWith('DEVICE ')) {
         current.deviceName = line.substring(7).trim();
       }
@@ -378,6 +394,75 @@ function parseSignals(lines: string[]): Map<string, string> {
   }
 
   return pinNetMap;
+}
+
+// ---------------------------------------------------------------------------
+// Device catalogue ($DEVICES) — BOM / part descriptions
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the $DEVICES section into a map of device-name → PART description.
+ *
+ * GenCAD device records look like:
+ *   DEVICE Device R2653
+ *   PART RES 200K OHM 1/20W (0201) 5%//TA-I/RM02JTN204
+ *
+ * The PART line carries the human part description plus, after a `//`
+ * separator, the manufacturer + part-number block. Mentor CAMCAD exports
+ * (e.g. Compal/ASUS laptop boards) put all the useful BOM info here while the
+ * COMPONENT's inline DEVICE field is just "Device <refdes>". The component
+ * loop joins on the device name to surface this in ComponentInfo. Device
+ * records with a blank PART line are skipped.
+ */
+function parseDevices(lines: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let current = '';
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.startsWith('DEVICE ')) {
+      current = line.substring(7).trim();
+    } else if (line.startsWith('PART ') && current) {
+      const part = line.substring(5).trim();
+      if (part) map.set(current, part);
+    }
+  }
+  return map;
+}
+
+/**
+ * Split a GenCAD PART description into a human value + manufacturer/code block.
+ * Format: `<description>//<manufacturer block>` (the `//` is the reliable
+ * separator; the description itself can contain single `/`, e.g. "1/20W").
+ * Either side may be empty.
+ */
+function splitPartDescription(part: string): { value?: string; serial?: string } {
+  const sep = part.indexOf('//');
+  if (sep < 0) return { value: part || undefined };
+  const value = part.slice(0, sep).trim();
+  const serial = part.slice(sep + 2).trim();
+  return { value: value || undefined, serial: serial || undefined };
+}
+
+/** Build a part's display meta from its $DEVICES PART line (if any) + shape. */
+function buildPartMeta(
+  comp: Pick<Component, 'name' | 'deviceName' | 'shapeName'>,
+  part: string | undefined,
+): NonNullable<Part['meta']> {
+  const meta: NonNullable<Part['meta']> = {};
+  if (part) {
+    const { value, serial } = splitPartDescription(part);
+    if (value) meta.value = value;
+    if (serial) meta.serial = serial;
+  } else if (comp.deviceName && comp.deviceName !== `Device ${comp.name}`) {
+    // No catalogue PART — keep a meaningful inline device name, but drop the
+    // auto-generated "Device <refdes>" placeholder (carries no information).
+    meta.value = comp.deviceName;
+  }
+  // Shape doubles as the package name in most GenCAD files. Skip it when the
+  // exporter named the shape after the refdes (per-instance shapes), which
+  // would just echo the component name.
+  if (comp.shapeName && comp.shapeName !== comp.name) meta.package = comp.shapeName;
+  return meta;
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +795,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'));
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
+  const devicePartMap = parseDevices(extractSection(lines, 'DEVICES'));
 
   // Some shapes in V382-style exports are left with stale world
   // coordinates leaked from a previous instance (e.g. PDFN8/DFN8 in
@@ -780,6 +866,12 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     const pins: Pin[] = [];
     for (const sp of shape.pins) {
       let px = sp.x, py = sp.y;
+      // Transform order is mirror → rotate → translate. The mirror lives in
+      // shape-local space (GenCAD reflects the footprint before rotating it),
+      // so it must precede the rotation. MIRRORY reflects across the Y axis
+      // (negate X); MIRRORX across the X axis (negate Y).
+      if (comp.mirror === 'y') px = -px;
+      else if (comp.mirror === 'x') py = -py;
       if (comp.rotation !== 0) {
         const rad = (comp.rotation * Math.PI) / 180;
         const cos = Math.cos(rad), sin = Math.sin(rad);
@@ -818,10 +910,13 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
       // The BOM-cluster heuristic depends on `meta.value` to distinguish
       // shape-suffixed primary devices (e.g. `0.22uh_IND_NONRKO_TH_100X072_B`)
       // from bare-named alternates (e.g. `0.22uh`).
-      meta: {
-        value:   comp.deviceName || undefined,
-        package: comp.shapeName  || undefined,
-      },
+      //
+      // When the $DEVICES catalogue carries a PART description (Mentor CAMCAD
+      // exports), prefer it — value = the human description, serial = the
+      // manufacturer/part-number block. Otherwise fall back to the inline
+      // device name, but drop the auto-generated "Device <refdes>" placeholder
+      // those exports use (it carries no information).
+      meta: buildPartMeta(comp, devicePartMap.get(comp.deviceName)),
     });
   }
 
@@ -867,6 +962,24 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   // pattern and fold the bottom half back onto the top so both sides share
   // the same world coordinate frame.
   const butterflyFold = unfoldButterflyIfPresent(partsByPass, nails, routes.traces, routes.vias);
+
+  // primarySide pin-majority heuristic (matches Allegro/BDV/BDV-ASC): when the
+  // IC-heavy side ends up tagged 'bottom', flag the board so the renderer swaps
+  // scene layers on open. Allegro2CAD-derived files inherit the same inst.layer
+  // labelling the Allegro parser corrects, so the .cad must apply the identical
+  // correction or it renders top/bottom swapped relative to the source .brd.
+  // >55% of pins on 'bottom' is the trigger.
+  const pinsOnTop = allParts.reduce((n, p) => n + (p.side === 'top' ? p.pins.length : 0), 0);
+  const pinsOnBottom = allParts.reduce((n, p) => n + (p.side === 'bottom' ? p.pins.length : 0), 0);
+  const totalPins = pinsOnTop + pinsOnBottom;
+  const primarySide: 'top' | 'bottom' | undefined =
+    totalPins > 0 && pinsOnBottom / totalPins > 0.55 ? 'bottom' : undefined;
+  if (primarySide === 'bottom') {
+    log.parser.log(
+      `CAD side inversion: pin majority on 'bottom' (${pinsOnBottom}) vs 'top' (${pinsOnTop}); ` +
+      `setting primarySide='bottom' so renderer swaps scene layers.`,
+    );
+  }
 
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
   const hasTraces = routes.traces.length > 0;
@@ -972,6 +1085,7 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     bounds:  active.bounds,
   };
   if (formatVersion) board.formatVersion = formatVersion;
+  if (primarySide) board.primarySide = primarySide;
   if (active.ghosts.length > 0) board.ghosts = active.ghosts;
   if (active.bomClusters && active.bomClusters.length > 0) board.bomClusters = active.bomClusters;
   if (mirrorVerdict.mirrored) {

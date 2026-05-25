@@ -15,17 +15,25 @@ interface BindLinkProps {
     checked: boolean;
     onChange: (checked: boolean) => void;
   };
+  /** Optional second section, rendered after a separator (e.g. "link another PDF"). */
+  secondary?: {
+    label: string;
+    boundNames: string[];
+    options: string[];
+    onToggle: (name: string | null) => void;
+  };
 }
 
 /**
  * Link icon that opens a dropdown to manage board↔PDF associations.
  * Multi-select: boards can link multiple PDFs.
  */
-export function BindLink({ boundNames, options, onToggle, title, headerItem }: BindLinkProps) {
+export function BindLink({ boundNames, options, onToggle, title, headerItem, secondary }: BindLinkProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const linked = boundNames.length > 0;
+  const linked = boundNames.length > 0 || (secondary?.boundNames.length ?? 0) > 0;
+  const showPrimary = options.length > 0 || !!headerItem;
 
   const resetTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -71,6 +79,8 @@ export function BindLink({ boundNames, options, onToggle, title, headerItem }: B
       </button>
       {open && (
         <div className="bind-link-dropdown">
+          {showPrimary && (
+          <>
           {headerItem && (
             <div
               className="bind-link-option bind-link-header"
@@ -99,6 +109,35 @@ export function BindLink({ boundNames, options, onToggle, title, headerItem }: B
               </div>
             );
           })}
+          </>
+          )}
+          {secondary && secondary.options.length > 0 && (
+          <>
+            {showPrimary && <div className="bind-link-separator" />}
+            <div className="bind-link-section-label">{secondary.label}</div>
+            <div
+              className="bind-link-option bind-link-clear"
+              data-testid="bind-link-pdf-clear"
+              onClick={(e) => { e.stopPropagation(); secondary.onToggle(null); resetTimer(); }}
+            >
+              (none)
+            </div>
+            {secondary.options.map(name => {
+              const isBound = secondary.boundNames.includes(name);
+              return (
+                <div
+                  key={`sec-${name}`}
+                  className={`bind-link-option ${isBound ? 'active' : ''}`}
+                  data-testid="bind-link-pdf-option"
+                  onClick={(e) => { e.stopPropagation(); secondary.onToggle(name); resetTimer(); }}
+                >
+                  <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
+                  {name}
+                </div>
+              );
+            })}
+          </>
+          )}
         </div>
       )}
     </div>

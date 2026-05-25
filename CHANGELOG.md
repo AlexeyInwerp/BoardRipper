@@ -1,5 +1,87 @@
 # BoardRipper changelog
 
+## v0.30.13 — 2026-05-25
+
+Cross-lookup between two linked PDFs — for boards that only exist as PDF — plus
+copy-to-clipboard for the current selection, drag-dropped files filed into the
+library, and an FZ unit-detection fix.
+
+### PDF↔PDF cross-lookup
+
+- **Link two open PDFs and cross-probe designators between them.** When a board is only available as PDFs (e.g. a schematic sheet and a layout sheet), open both and link them 1:1 from the PDF's bind (∞) menu — a new **Cross-link PDF** section after the board bindings. Single-clicking a component designator in either PDF jumps the linked PDF to a matching occurrence and highlights it — reusing the existing search → snap-to-match → highlight path — and re-clicking the same token cycles through multiple matches. Fully bidirectional. Text (vector) PDFs only: matching is on the designator string, so no nets or pins are needed. The link is symmetric and persisted across reloads. (`62297b1`, `ecff231`, `6191dca`, `de9c710`)
+- **Cross-lookup feedback as a toast.** "No match for X in Y" and "Linked PDF not open" surface as a toast rather than inline toolbar text, which had collided with the search hint and broken the toolbar layout. (`de9c710`)
+
+### Selection
+
+- **Cmd/Ctrl+C copies the selected component, pin, or net name** to the clipboard, so a designator can be pasted straight into notes or a search. (`c00e1af`)
+
+### Files
+
+- **Drag-dropped boards and PDFs are saved into the library's `incoming/`** instead of living only in the browser session, so a dropped file is kept for later. (`224a00a`)
+
+### FZ parser
+
+- **Don't trust `UNIT:millimeters` on mil-coordinate files.** Some ASUS `.fz` files declare millimetre units while their coordinates are actually in mils; the mislabel scaled the board down ~25×, rendering pins sub-pixel ("opens but no pins/nets"). Unit detection no longer takes the header at face value on such files. (`0a72b40`)
+
+## v0.30.12 — 2026-05-25
+
+Worklist connection-highlighting and a more capable hierarchical net-line mode,
+plus GenCAD bottom-side placement fixes and a clearer error for encrypted
+BRD_V1.0 boardviews.
+
+### Worklist
+
+- **"Connections" highlight — see which nets a group of parts share.** The worklist's old one-way "Highlight" button is now a **Connections** toggle: turning it on selects every part in the active worklist (cyan) and glows every net shared by two or more of them, so the interconnections inside a repair set stand out at a glance. Toggling off clears both — the one-click un-highlight the panel was missing — and the highlight also clears automatically when its source worklist is switched, wiped, or deleted. No connecting lines are drawn for these shared nets; net-lines stay reserved for an explicitly selected net. (`aad93b1`)
+- **Selecting a 2-pin component in hierarchical net-line mode now lights both pins.** Picking a 2-pin part by its body — which previously highlighted nothing — seeds the highlight from one pin's net, so the one-hop adjacency carries it through to the other pin's net and both chains draw. (`aad93b1`)
+
+### Net lines (hierarchical mode)
+
+- **Per-part-type "bridge" override — carry the hierarchy through >2-pin parts.** The chain-adjacent mode previously hopped only through 2-pin parts. A new **Bridge** checkbox in Settings ▸ Part properties lets a whole part type pass the propagation regardless of pin count, so 4-pin Kelvin/current-sense resistors — and, when enabled, 3-pin transistors — carry the trace. Resistors, **inductors, and diodes** bridge by default; every other type is off and toggleable. (`0bd6f0e`, `0836107`)
+- **Editable hierarchy depth.** The propagation depth is no longer hard-coded — a **Hierarchy Depth** slider (1–4, default 2) at the top of Part properties controls how many hops the highlight follows down a series chain, and changing it updates a live highlight immediately. (`0836107`)
+
+### CAD (GenCAD) parser
+
+- **Place bottom-side parts correctly (`SHAPE … MIRRORY`).** Allegro2CAD `.cad` exports store bottom components with a `MIRRORY FLIP` shape flag and shape-local pins; the parser dropped the mirror token, X-flipping every bottom footprint about its placement origin — 1006 of 2900 parts (~35%) misplaced on the Dell XPS 9560 LA-E331P. The mirror is now applied in shape-local space before rotation; verified against an independent world-coordinate export, all 7,579 bottom-side pins match to <1 mil. (`3e475f3`)
+- **Correct top/bottom via pin-majority.** Allegro2CAD `.cad` inherits the same side-labelling quirk as Allegro `.brd`, so the parser now applies the identical pin-majority heuristic (>55% of pins on the declared bottom side ⇒ flip the primary side). The Dell board (62% bottom pins) now matches its source `.brd`. A `$BOARD`-derived real outline was prototyped in the same investigation but reverted — `$BOARD` content is too exporter-specific to stitch reliably — so the synthetic rectangular outline is unchanged for now. (`5308dc4`, `2619e17`)
+
+### BRD parser
+
+- **Clear error for encrypted BRD_V1.0 boardviews.** Opening a `BRD_V1.0` container (e.g. ASUS TURBO-RTX3080) failed with a misleading "BDV file … may be corrupt or empty" — its fully-encrypted body matched no format and the `.brd` fallback handed it to the wrong parser. Detection now recognises the 8-byte `BRD_V1.0` magic and routes to the BRD parser's friendly "proprietary, encoded format — support may be added" message. (`b9ec51e`)
+
+## v0.30.11 — 2026-05-24
+
+Two parser fixes surfaced by ASUS G513R laptop boards (FZ and GenCAD exports
+of the same `6050A3348801/03` design), plus a Landrex theme refinement.
+
+### FZ parser
+
+- **Decode the GOCCANH "GCVN" variant via a raw-deflate fallback.** ASUS boards re-exported by the GOCCANH Vietnamese tool decrypt to a `GCVN` magic and a `0x78 0x9c` zlib header, but the body is a raw DEFLATE stream that zlib-mode inflate rejects ("invalid distance too far back") — and on the bounded content slice it silently inflates to empty rather than throwing, so the file fell through to "no parts or pins" despite a valid key. The content-decompress step is now an ordered set of fallbacks (standard zlib → `descrSize+4` zlib for the GOCCANH-XJ tail chop → raw deflate skipping the zlib header), each accepted only if it yields non-empty text. ASUS G513R `6050A3348801` now parses (4138 parts / 2936 nets); standard Acer N22Q22 FZ unaffected. (`16c4935`)
+
+### CAD (GenCAD) parser
+
+- **Surface the `$DEVICES` PART description as component value + serial.** The parser ignored the `$DEVICES` catalogue, so ComponentInfo showed only the COMPONENT's inline DEVICE field — which on Mentor CAMCAD exports (Compal/ASUS boards, e.g. G513R `6050A3348803`) is just "Device &lt;refdes&gt;". The real BOM data (device type, value, package, manufacturer, MPN) lives in each device's PART line. We now parse `$DEVICES` into a device→PART map and split the PART string on `//`: the left side becomes the value (e.g. "RES 200K OHM 1/20W (0201) 5%"), the right becomes the serial (e.g. "TA-I/RM02JTN204"). Falls back to the inline device name when no PART exists, dropping the placeholder, and skips per-refdes shape names that just echo the component name. (`e6375e0`)
+
+### Theme
+
+- **Landrex is now a board-only high-contrast style.** Switching to Landrex Classic no longer repaints the interface chrome — its `ui` block mirrors the default theme, so the toolbar, panels, accent, text, and library badges stay put. Every board label is forced white: part labels (was gray) and net labels (was blue) were static palette entries that ignored the theme, so they're now theme slots, set white under Landrex for maximum contrast against the black canvas. Pin labels already followed the theme. (`f92c0e5`)
+
+## v0.30.10 — 2026-05-20
+
+Allegro parser fixes surfaced by a Dell Nvidia Quadro 5000M board
+(`Nvidia_5000M_Dell.brd`) — the first v17.4, millimetre-units file in the
+corpus — plus the PDF pan-boundary follow-up.
+
+### Allegro parser
+
+- **Honour `boardUnits` when scaling coordinates to mils.** The assembler divided every coordinate and dimension by `unitsDivisor` alone, implicitly assuming MILS. That is correct for the ~10 MILS boards we had, but silently mis-scaled the two metric files: a millimetre-units board (divisor 10000) came out **39.37× too small** — a 5.2″×3.6″ board collapsed into a ~3 mm blob where every part overlapped into one tiny mass. Fold the per-unit mils factor into the divisor at the single source point so all downstream conversions land in mils; MILS files are byte-for-byte unchanged. Also corrects a µm-units file that was silently oversized. (`c3d3157`)
+- **Derive component side from the assembly-graphic subclass.** Some exporters leave the `0x2D` footprint-instance layer byte 0 for every part regardless of side, so the Nvidia board reported 838 top / 4 bottom when it is really ~389 top / ~453 bottom — every bottom-side part rendered on top. Allegro also records side on each footprint's PACKAGE_GEOMETRY assembly drawing via the `0x14` graphic layer subclass (`0xF7`=top, `0xF6`=bottom); that subclass agrees with the instance flag on every other corpus file where it appears, so prefer it when present and fall back to the instance flag otherwise. (`05604fe`)
+- **Skip footprint-definition via-in-pad templates.** `extractVias` walked every `0x33` block, including footprint-library via-in-pad templates whose net pointer references the parent `0x2B` footprint definition (not a `0x04` net) and whose coords are footprint-local. They rendered as a phantom BGA-style via grid at the board origin — ~2.8k vias (16 GDDR chips × 170 balls) on the Nvidia board, plus smaller clusters on Compal LA-H271P and Dell XPS 9560. Templates are now dropped. (`7288903`)
+- **Skip footprint-definition copper-track templates.** Same root cause for traces: `extractTraces` picked up `0x05` ETCH tracks whose `netAssignment` points at a `0x2B` footprint def, dumping ~340 uniform local-coord segments as a phantom cluster at the origin. Both sites now share one `pointsToFootprintDef()` check. (`3f30b7b`)
+
+### PDF viewer
+
+- **Pan boundaries off by default; the panel no longer sticks mid-scroll.** Multiple users reported the PDF panel getting "stuck" on a page mid-document or refusing to scroll in some positions, traced to the pan-clamp logic interacting with the page-flip threshold. `clampPan` now returns immediately unless the new Settings ▸ Performance & Debug ▸ "PDF Pan Boundaries" toggle is on; the page-flip thresholds in the wheel handler still fire as the user crosses them. The zoom range stays at the historical 0.5×–10×. (`878c74d`, `340bee1`)
+
 ## v0.30.9 — 2026-05-19
 
 Two self-update papercuts found while shipping v0.30.8.

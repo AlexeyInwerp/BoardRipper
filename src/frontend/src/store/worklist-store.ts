@@ -241,6 +241,17 @@ class WorklistStore {
     void this.persist(cur);
   }
 
+  /** Drop the ephemeral cyan selection + "highlight connections" toggle for the
+   *  active tab. Called whenever the worklist that fed the highlight changes
+   *  underneath it (switch / wipe / delete) so the canvas never glows nets for
+   *  parts that are no longer worklisted. The cyan set is index-only and can't
+   *  be re-resolved, so the only honest move is to clear it. */
+  private clearCanvasHighlight(): void {
+    const tabId = boardStore.activeTabId;
+    if (tabId != null) selectionSetStore.clear(tabId);
+    boardStore.setConnectionHighlight(false);
+  }
+
   createWorklist(name?: string): Worklist | null {
     const cur = this.getOrInit();
     if (!cur) return null;
@@ -274,6 +285,8 @@ class WorklistStore {
     if (cur.activeWorklistId === id) {
       cur.activeWorklistId = cur.worklistes[0]?.id ?? null;
     }
+    // Deleting a worklist invalidates any highlight loaded from it.
+    this.clearCanvasHighlight();
     this.save(cur);
   }
 
@@ -283,14 +296,13 @@ class WorklistStore {
     if (cur.activeWorklistId === id) return;
     cur.activeWorklistId = id;
     // The ephemeral cyan selection was loaded from the *previous* active
-    // worklist via its "Select" button (or shift-click stragglers). After
+    // worklist via its "Connections" button (or shift-click stragglers). After
     // a switch those parts no longer match the new worklist's marks, and
     // the cyan overlay would visually swallow the new worklist's
     // mark-coloured ring. Clearing keeps the highlight model honest:
     // cyan = "I asked to look at this set right now", and on switch you
     // weren't asking.
-    const tabId = boardStore.activeTabId;
-    if (tabId != null) selectionSetStore.clear(tabId);
+    this.clearCanvasHighlight();
     this.save(cur);
   }
 
@@ -300,6 +312,9 @@ class WorklistStore {
     const s = cur.worklistes.find(x => x.id === id);
     if (!s) return;
     s.entries = [];
+    // Wiping the entries leaves the highlight pointing at parts that are no
+    // longer in the worklist — clear it.
+    this.clearCanvasHighlight();
     this.save(cur);
   }
 

@@ -63,6 +63,8 @@ export interface PdfDocSnapshot {
   cleanMode: boolean;
   searchSource: 'user' | 'lookup' | null;
   lookupHint: string | null;
+  crossProbeHint: string | null;
+  linkedDoc: string | null;
 }
 
 // Per-document snapshot cache: fileName → { version, snapshot }
@@ -103,6 +105,8 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     cleanMode: pdfStore.isDocClean(fileName),
     searchSource: pdfStore.getDocSearchSource(fileName),
     lookupHint: pdfStore.getDocLookupHint(fileName),
+    crossProbeHint: pdfStore.getDocCrossProbeHint(fileName),
+    linkedDoc: pdfStore.getLinkedDoc(fileName),
   };
   docSnapshots.set(fileName, { version: docSnapshotVersion, snapshot });
   return snapshot;

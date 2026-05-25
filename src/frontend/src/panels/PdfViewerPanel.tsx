@@ -578,7 +578,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
@@ -632,6 +632,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         boardStore.addPdfBinding(target.id, pdfFileName);
       }
     }
+  };
+
+  // Cross-link this PDF to another open PDF (1:1). null or the current partner = unlink.
+  const handleLinkPdf = (name: string | null) => {
+    if (name === null || name === linkedDoc) pdfStore.unlinkDoc(pdfFileName);
+    else pdfStore.linkDocs(pdfFileName, name);
   };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -2012,6 +2018,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => clearTimeout(timer);
   }, [lookupHint, pdfFileName]);
 
+  // Surface cross-lookup feedback ("no match", "linked PDF not open") as a toast,
+  // then consume it. crossProbeHint is a one-shot message channel from the store.
+  useEffect(() => {
+    if (!crossProbeHint) return;
+    boardStore.addToast(crossProbeHint, 'info');
+    pdfStore.clearCrossProbeHint(pdfFileName);
+  }, [crossProbeHint, pdfFileName]);
+
   const pendingMatchRef = useRef<{ index: number; id: number }>({ index: -1, id: 0 });
 
   const prevMatchIndexRef = useRef(-1);
@@ -2782,6 +2796,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       else if (isNet) boardStore.focusNet(hit.word);
       if (isPart || isNet) openBoardSearch(hit.word);
     }
+
+    // PDF↔PDF cross-lookup: if this PDF is linked to another, drive the
+    // linked doc's search for the clicked token (crossProbe resolves whether
+    // the partner is open and hints if not).
+    if (pdfStore.getLinkedDoc(pdfFileName)) {
+      pdfStore.crossProbe(pdfFileName, hit.word);
+    }
   }, [hitTestWord, pdfFileName]);
 
   const handleTextDblClick = useCallback((e: React.MouseEvent) => {
@@ -3120,16 +3141,22 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   return (
     <div className="pdf-viewer">
       <div className="pdf-toolbar">
-        {boardTabNames.length > 0 && (
+        {(boardTabNames.length > 0 || pdfStore.loadedFileNames.some(n => n !== pdfFileName)) && (
           <BindLink
             boundNames={boundBoardTabs.map(t => t.fileName)}
             options={boardTabNames}
             onToggle={handleBindBoard}
             title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'No board linked'}
-            headerItem={{
+            headerItem={boardTabNames.length > 0 ? {
               label: 'auto-open boardview',
               checked: autoSwitchLinked,
               onChange: setAutoSwitchLinked,
+            } : undefined}
+            secondary={{
+              label: 'Cross-link PDF',
+              boundNames: linkedDoc ? [linkedDoc] : [],
+              options: pdfStore.loadedFileNames.filter(n => n !== pdfFileName),
+              onToggle: handleLinkPdf,
             }}
           />
         )}

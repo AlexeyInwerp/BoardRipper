@@ -414,6 +414,11 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
           onChange={e => actions.update(t.id, { hidden: e.target.checked })}
         />
       </span>
+      <span className="pt-col-bridge" title="Bridge nets through this type in hierarchical (chain + adjacent) net lines, even with more than 2 pins — e.g. 4-pin current-sense resistors, transistors.">
+        <input type="checkbox" checked={t.hierarchyBridge}
+          onChange={e => actions.update(t.id, { hierarchyBridge: e.target.checked })}
+        />
+      </span>
     </div>
   );
 }
@@ -428,11 +433,13 @@ function PartTypesSection({ types, actions }: { types: PartType[]; actions: Part
         <span>Body</span>
         <span>Fill</span>
         <span>Hide</span>
+        <span title="Bridge nets through this type in hierarchical net lines, even with >2 pins.">Bridge</span>
       </div>
       {types.map(t => (
         <PartTypeRow key={t.id} type={t} actions={actions} />
       ))}
       <div className="color-rule-hint">Longest prefix wins across all types (e.g. FB beats F for FB1).</div>
+      <div className="color-rule-hint">Bridge: carry hierarchical (chain + adjacent) net lines through &gt;2-pin parts of this type (e.g. current-sense resistors, transistors).</div>
     </div>
   );
 }
@@ -1690,8 +1697,10 @@ export function SettingsPanel() {
       )}
 
       {activeTab === SECTION_TO_TAB.partTypeOverrides && (
-      <CollapsibleSection id="partTypeOverrides" title="Part Types" isOpen={openSections.has('partTypeOverrides')}
+      <CollapsibleSection id="partTypeOverrides" title="Part properties" isOpen={openSections.has('partTypeOverrides')}
         onToggle={toggleSection} sectionRef={partTypeOverridesRef} isFocused={focusedSection === 'partTypeOverrides'}>
+        <Slider label="Hierarchy Depth" value={draft.hierarchyDepth} min={1} max={4} step={1} field="hierarchyDepth" onUpdate={updateDraft}
+          title="How many hops the hierarchical (chain + adjacent) net-line mode follows through bridging parts. 1 = immediate neighbours; up to 4 follows longer series chains." />
         <PartTypesSection types={draft.partTypes} actions={partTypeActions} />
       </CollapsibleSection>
       )}

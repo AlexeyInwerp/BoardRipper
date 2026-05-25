@@ -4,6 +4,7 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
 import { Emitter } from './emitter';
+import { PdfLinks } from './pdf-links';
 import { log } from './log-store';
 import { ensureIndexed } from '../pdf/pdf-index-client';
 
@@ -435,6 +436,8 @@ interface PdfDocument {
   /** Databank file ID when the PDF was opened from the library. Undefined for
    *  ad-hoc opens (drag-drop). Used to trigger the fast-path backend index. */
   fileId?: number;
+  /** Transient cross-lookup status shown verbatim on the SOURCE doc (e.g. "No match…"). */
+  crossProbeHint: string | null;
 }
 
 /** Follow target: a location to zoom to without highlighting */
@@ -445,6 +448,7 @@ export interface FollowTarget {
 
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
+  private _links = new PdfLinks();
   private _activeFileName: string | null = null;
   /** Vertical distance multiplier for multi-term search (fontSize × this) */
   private _multiTermYGap = 4;
@@ -526,6 +530,7 @@ class PdfStore extends Emitter {
   }
   getDocSearchSource(fileName: string): 'user' | 'lookup' | null { return this._documents.get(fileName)?.searchSource ?? null; }
   getDocLookupHint(fileName: string): string | null { return this._documents.get(fileName)?.lookupHint ?? null; }
+  getDocCrossProbeHint(fileName: string): string | null { return this._documents.get(fileName)?.crossProbeHint ?? null; }
   getDocTextExtracting(fileName: string): boolean {
     const d = this._documents.get(fileName);
     return d != null && d.textPages.length < d.pageCount;
@@ -614,6 +619,7 @@ class PdfStore extends Emitter {
         searchQuery: '',
         searchSource: null,
         lookupHint: null,
+        crossProbeHint: null,
         matches: [],
         activeMatchIndex: -1,
         matchGroups: [],
@@ -624,6 +630,7 @@ class PdfStore extends Emitter {
         fileId,
       };
       this._documents.set(file.name, pdfDoc);
+      this._links.restore(file.name);
       this._activeFileName = file.name;
       this._loading = false;
       this.notify();
@@ -848,88 +855,90 @@ class PdfStore extends Emitter {
   // INVARIANT: in-document search runs entirely on in-memory textPages and must
   // NEVER depend on the backend pdfindex state. See docs/PDF_VIEWER.md#ctrl-f.
   searchText(query: string, source: 'user' | 'lookup' = 'user') {
-    const active = this._active;
-    if (!active) return;
+    if (!this._active) return;
+    this._runSearch(this._active, query, source, true);
+  }
 
-    // Remember position before wiping state — used to pick a starting match
-    // near the user's current view instead of always jumping to match 0.
-    const prevPage = active.currentPage;
+  /**
+   * Run a search against a specific document (not necessarily the active one).
+   * useClickedLocation: when true, prefer the exact match at the last clicked
+   * (pageIndex,itemIndex) IF that click was in this same doc — used by in-doc
+   * search. Cross-probe passes false (the click was in the *other* doc).
+   */
+  private _runSearch(
+    doc: PdfDocument,
+    query: string,
+    source: 'user' | 'lookup',
+    useClickedLocation: boolean,
+  ) {
+    const prevPage = doc.currentPage;
 
-    active.searchQuery = query;
-    active.searchSource = query ? source : null;
-    active.lookupHint = null; // any new search clears pending hint
-    active.matches = [];
-    active.matchGroups = [];
-    active.activeMatchIndex = -1;
-    active.activeGroupIndex = -1;
+    doc.searchQuery = query;
+    doc.searchSource = query ? source : null;
+    doc.lookupHint = null;
+    doc.crossProbeHint = null;
+    doc.matches = [];
+    doc.matchGroups = [];
+    doc.activeMatchIndex = -1;
+    doc.activeGroupIndex = -1;
 
     if (!query) {
-      active.activeMatchIndicesCache = new Set();
-      active.matchesByPage = new Map();
+      doc.activeMatchIndicesCache = new Set();
+      doc.matchesByPage = new Map();
       this.notify();
       return;
     }
 
     if (query.includes('@')) {
-      this._searchAtSyntax(active, query.split('@').map(t => t.trim()).filter(t => t.length > 0));
+      this._searchAtSyntax(doc, query.split('@').map(t => t.trim()).filter(t => t.length > 0));
     } else {
       const terms = query.split(/\s+/).filter(t => t.length > 0);
-      if (terms.length > 1) {
-        this._searchMultiTerm(active, terms);
-      } else {
-        this._searchSingleTerm(active, query);
-      }
+      if (terms.length > 1) this._searchMultiTerm(doc, terms);
+      else this._searchSingleTerm(doc, query);
     }
 
-    // Build per-page index
-    active.matchesByPage = new Map();
-    for (const m of active.matches) {
-      let arr = active.matchesByPage.get(m.pageIndex);
-      if (!arr) { arr = []; active.matchesByPage.set(m.pageIndex, arr); }
+    doc.matchesByPage = new Map();
+    for (const m of doc.matches) {
+      let arr = doc.matchesByPage.get(m.pageIndex);
+      if (!arr) { arr = []; doc.matchesByPage.set(m.pageIndex, arr); }
       arr.push(m);
     }
 
-    if (active.matches.length > 0) {
-      // Exact match pick: if the caller just clicked a word in this PDF, that
-      // word's location IS the target — pick the match at that exact
-      // (pageIndex, itemIndex). No heuristic needed.
+    if (doc.matches.length > 0) {
       let bestIdx = -1;
-      const loc = this._lastClickedLocation;
-      if (loc && loc.fileName === active.fileName) {
-        for (let i = 0; i < active.matches.length; i++) {
-          const m = active.matches[i];
-          if (m.pageIndex === loc.pageIndex && m.itemIndex === loc.itemIndex) {
-            bestIdx = i;
-            break;
+      if (useClickedLocation) {
+        const loc = this._lastClickedLocation;
+        if (loc && loc.fileName === doc.fileName) {
+          for (let i = 0; i < doc.matches.length; i++) {
+            const m = doc.matches[i];
+            if (m.pageIndex === loc.pageIndex && m.itemIndex === loc.itemIndex) { bestIdx = i; break; }
           }
+          this._lastClickedLocation = null; // consume
         }
-        this._lastClickedLocation = null; // consume
       }
 
       if (bestIdx < 0) {
-        // Fallback: pick the match closest to the user's previous page so the
-        // view doesn't snap far away on a typed search.
         const prevPageIdx = prevPage - 1;
         bestIdx = 0;
         let bestDist = Infinity;
-        for (let i = 0; i < active.matches.length; i++) {
-          const dist = Math.abs(active.matches[i].pageIndex - prevPageIdx);
+        for (let i = 0; i < doc.matches.length; i++) {
+          const dist = Math.abs(doc.matches[i].pageIndex - prevPageIdx);
           if (dist < bestDist) { bestDist = dist; bestIdx = i; if (dist === 0) break; }
         }
       }
 
-      if (active.matchGroups.length > 0) {
-        // Remap: find the group containing bestIdx
-        const g = active.matchGroups.findIndex(group => group.includes(bestIdx));
-        active.activeGroupIndex = g >= 0 ? g : 0;
-        active.activeMatchIndex = active.matchGroups[active.activeGroupIndex][0];
+      if (doc.matchGroups.length > 0) {
+        const g = doc.matchGroups.findIndex(group => group.includes(bestIdx));
+        doc.activeGroupIndex = g >= 0 ? g : 0;
+        doc.activeMatchIndex = doc.matchGroups[doc.activeGroupIndex][0];
       } else {
-        active.activeMatchIndex = bestIdx;
-        active.activeGroupIndex = -1;
+        doc.activeMatchIndex = bestIdx;
+        doc.activeGroupIndex = -1;
       }
-      active.currentPage = active.matches[active.activeMatchIndex].pageIndex + 1;
+      doc.currentPage = doc.matches[doc.activeMatchIndex].pageIndex + 1;
     }
-    this._rebuildActiveIndicesCache(active);
+
+    this._rebuildActiveIndicesCache(doc);
     this.notify();
   }
 
@@ -1154,8 +1163,12 @@ class PdfStore extends Emitter {
   }
 
   private _stepMatch(delta: 1 | -1) {
-    const d = this._active;
-    if (!d || d.matches.length === 0) return;
+    if (!this._active) return;
+    this._stepMatchInDoc(this._active, delta);
+  }
+
+  private _stepMatchInDoc(d: PdfDocument, delta: 1 | -1) {
+    if (d.matches.length === 0) return;
     if (d.matchGroups.length > 0) {
       d.activeGroupIndex = (d.activeGroupIndex + delta + d.matchGroups.length) % d.matchGroups.length;
       d.activeMatchIndex = d.matchGroups[d.activeGroupIndex][0];
@@ -1165,6 +1178,67 @@ class PdfStore extends Emitter {
     d.currentPage = d.matches[d.activeMatchIndex].pageIndex + 1;
     this._rebuildActiveIndicesCache(d);
     this.notify();
+  }
+
+  // ── PDF↔PDF cross-lookup ──────────────────────────────────────────────
+  /** The persisted partner for fileName (open or not), or null. */
+  getLinkedDoc(fileName: string): string | null { return this._links.get(fileName); }
+
+  /** The partner only if it is currently open, or null. */
+  getLiveLinkedDoc(fileName: string): string | null {
+    return this._links.getLive(fileName, (f) => this._documents.has(f));
+  }
+
+  /** Establish a symmetric 1:1 link between two open PDFs. */
+  linkDocs(a: string, b: string): void {
+    this._links.link(a, b);
+    this.notify();
+  }
+
+  /** Remove the link on a (and its partner). */
+  unlinkDoc(a: string): void {
+    this._links.unlink(a);
+    this.notify();
+  }
+
+  /**
+   * Drive the linked document's search for `word`:
+   *  - first probe (or a different word): run a fresh search, jump to the match
+   *    nearest the target's current page;
+   *  - re-probing the same word: advance to the next occurrence (cycle).
+   * Sets a hint on the SOURCE doc when the partner is closed or has no match.
+   * Never changes the active document.
+   */
+  crossProbe(sourceFileName: string, word: string): void {
+    const source = this._documents.get(sourceFileName) ?? null;
+    const targetName = this.getLiveLinkedDoc(sourceFileName);
+    if (!targetName) {
+      if (source && this._links.get(sourceFileName)) {
+        source.crossProbeHint = 'Linked PDF not open';
+        this.notify();
+      }
+      return;
+    }
+    const target = this._documents.get(targetName);
+    if (!target) return;
+
+    const q = word.trim();
+    if (!q) return;
+
+    const sameQuery = target.searchQuery.toUpperCase() === q.toUpperCase();
+    if (sameQuery && target.searchSource === 'lookup' && target.matches.length > 0) {
+      if (source) source.crossProbeHint = null;   // success — clear any stale hint
+      this._stepMatchInDoc(target, 1);             // cycle to next occurrence (notifies)
+      return;
+    }
+
+    this._runSearch(target, q, 'lookup', false);   // fresh search (notifies)
+    if (source) {
+      source.crossProbeHint = target.matches.length === 0
+        ? `No match for ${q} in ${targetName}`
+        : null;
+      this.notify();
+    }
   }
 
   setMultiTermYGap(value: number) {
@@ -1377,6 +1451,14 @@ class PdfStore extends Emitter {
     this.notify();
   }
 
+  /** Clear the cross-probe hint (e.g. on timeout). */
+  clearCrossProbeHint(fileName: string): void {
+    const d = this._documents.get(fileName);
+    if (!d || !d.crossProbeHint) return;
+    d.crossProbeHint = null;
+    this.notify();
+  }
+
   /** Consume the follow target (called by PdfViewerPanel after zooming). */
   consumeFollowTarget(): FollowTarget | null {
     const t = this._followTarget;
@@ -1514,7 +1596,7 @@ class PdfStore extends Emitter {
 
 export const pdfStore = new PdfStore();
 
-// Expose for integration tests (Playwright)
+// Expose for integration tests (Playwright) — DEV builds only
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
-  (window as any).__pdfStore = pdfStore;
+  (window as { __pdfStore?: typeof pdfStore }).__pdfStore = pdfStore;
 }

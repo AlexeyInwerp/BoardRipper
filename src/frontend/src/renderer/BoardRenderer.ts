@@ -38,6 +38,10 @@ import { obdNetIndex, extractBoardNumberFromFilename } from '../store/obd-store'
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
 
+/** Glow colour for "highlight connections" — nets shared between ≥2 parts in
+ *  the cyan selection set. Cyan to tie the glow to the cyan selection outline. */
+const SHARED_NET_GLOW = 0x00e5ff;
+
 // Spatial culling: scene-build tags per-grid-cell + per-part containers with
 // `cullable + cullArea` in board-mil coords, but PixiJS v8 culling is opt-in.
 // Without CullerPlugin the culler never runs and every BitmapText is walked
@@ -314,7 +318,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false, connectionHighlight: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -1129,6 +1133,12 @@ export class BoardRenderer {
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
       this.redrawMultiHighlight();
+      // When "highlight connections" is on, the shared-net glow is derived from
+      // the selection set, so a membership change must re-run the net highlight.
+      // Guard on active tab — renderSelection reads active-tab-scoped state.
+      if (boardStore.connectionHighlight && (this.tabId === null || boardStore.activeTabId === this.tabId)) {
+        this.renderSelection();
+      }
       this.needsRender = true;
     });
     this.unsubscribeWorklist = worklistStore.subscribe(() => {
@@ -2176,9 +2186,10 @@ export class BoardRenderer {
         || boardStore.showTop !== lrs.showTop
         || boardStore.showBottom !== lrs.showBottom
         || boardStore.showGhosts !== lrs.showGhosts
-        || boardStore.searchSelectionActive !== lrs.searchSelectionActive) {
+        || boardStore.searchSelectionActive !== lrs.searchSelectionActive
+        || boardStore.connectionHighlight !== lrs.connectionHighlight) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight };
       }
 
       // PDF follow mode: search for selected component
@@ -3062,12 +3073,27 @@ export class BoardRenderer {
     // chain-adjacent, includes both the primary and all adjacents; for
     // other modes only the primary. Empty when nothing is selected.
     const activeNets: Array<{ name: string; glowColor: number }> = [];
+    const activeNetNames = new Set<string>();
     if (primaryNet) {
       activeNets.push({ name: primaryNet, glowColor: COLORS.netHighlight });
+      activeNetNames.add(primaryNet);
       if (boardStore.netLineMode === 'chain-adjacent' && sel.highlightedNet) {
         for (const adj of sel.adjacentNets) {
+          if (activeNetNames.has(adj)) continue;
+          activeNetNames.add(adj);
           activeNets.push({ name: adj, glowColor: renderSettingsStore.settings.adjacentNetLineColor });
         }
+      }
+    }
+    // "Highlight connections": glow nets shared by ≥2 multi-selected parts (the
+    // cyan selection set, typically a worklist). These get the same per-net
+    // highlight treatment below but are deliberately NOT fed into the net-line
+    // recompute — only an explicitly-selected net draws connecting lines.
+    if (boardStore.connectionHighlight) {
+      for (const netName of this.computeSharedSelectionNets()) {
+        if (activeNetNames.has(netName)) continue;
+        activeNetNames.add(netName);
+        activeNets.push({ name: netName, glowColor: SHARED_NET_GLOW });
       }
     }
     // Kept for the dim/spotlight gating which only cares about "any net active".
@@ -3163,9 +3189,14 @@ export class BoardRenderer {
     const affectedTopNames = new Set<string>();
     const affectedBotNames = new Set<string>();
 
-    if (primaryNet) {
+    // The per-net highlight runs for a real selection (primaryNet + adjacents)
+    // AND for shared "connection" nets even when nothing is singly selected.
+    // Dim/spotlight machinery, however, stays tied to a real selection — a
+    // bare multi-select shouldn't dim the whole board.
+    const dimForHighlight = showDim && !!primaryNet;
+    if (activeNets.length > 0) {
       // ── Dim overlay (once per frame, not per-net) ─────────────────────
-      if (showDim) {
+      if (dimForHighlight) {
         const b = this.board.bounds;
         const bw = b.maxX - b.minX;
         const bh = b.maxY - b.minY;
@@ -3233,7 +3264,7 @@ export class BoardRenderer {
           const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
           const pb = pin.padBounds;
           const pushDim = (fn: () => void) => {
-            if (!showDim) return;
+            if (!dimForHighlight) return;
             const map = isBotGfx ? botByColor : topByColor;
             let arr = map.get(pinColor);
             if (!arr) { arr = []; map.set(pinColor, arr); }
@@ -3284,7 +3315,7 @@ export class BoardRenderer {
       }
 
       // Re-clone affected labels above the dim overlay.
-      if (showDim && this.activeScene) {
+      if (dimForHighlight && this.activeScene) {
         const selectedPartName = sel.partIndex !== null ? this.board.parts[sel.partIndex]?.name : null;
         if (this.isTopVisible) {
           for (const srcLabel of this.activeScene.topLabels) {
@@ -3331,7 +3362,7 @@ export class BoardRenderer {
       }
 
       // ── Trace highlight (PRIMARY net only) ───────────────────────────
-      if (this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
+      if (primaryNet && this.board.traces && this.board.traces.length > 0 && boardStore.showTraces) {
         const netName = primaryNet;
         const { layerStates } = boardStore;
         const traceByColor = new Map<number, { sx: number; sy: number; ex: number; ey: number }[]>();
@@ -3355,7 +3386,7 @@ export class BoardRenderer {
       }
 
       // ── Via highlight (PRIMARY net only) ─────────────────────────────
-      if (this.board.vias && this.board.vias.length > 0 && boardStore.showVias && this.activeScene) {
+      if (primaryNet && this.board.vias && this.board.vias.length > 0 && boardStore.showVias && this.activeScene) {
         const netName = primaryNet;
         const { layerStates } = boardStore;
         const connMap = this.activeScene.viaConnectedLayers;
@@ -3629,6 +3660,37 @@ export class BoardRenderer {
 
     this.selectionOverlayEl.textContent = text;
     this.selectionOverlayEl.style.display = '';
+  }
+
+  /** Nets shared by ≥2 parts in the cyan multi-select set — the basis for
+   *  "highlight connections". GND and no-connect nets are excluded (they wire
+   *  to half the board and aren't meaningful connections); power rails are
+   *  kept since "which selected parts share +1V8" is genuinely useful. Returns
+   *  [] when fewer than 2 parts are selected. */
+  private computeSharedSelectionNets(): string[] {
+    if (!this.board) return [];
+    const sel = selectionSetStore.current;
+    if (sel.ordered.length < 2) return [];
+    const s = renderSettingsStore.settings;
+    const count = new Map<string, number>();
+    for (const partIdx of sel.ordered) {
+      const part = this.board.parts[partIdx];
+      if (!part) continue;
+      // Count each net once per part — a part with both pins on the same net
+      // shouldn't satisfy the ≥2 threshold on its own.
+      const seen = new Set<string>();
+      for (const pin of part.pins) {
+        const net = pin.net;
+        if (!net || seen.has(net)) continue;
+        seen.add(net);
+        const up = net.toUpperCase();
+        if (up.includes('GND') || isNcNet(up, s.ncNetPatterns)) continue;
+        count.set(net, (count.get(net) ?? 0) + 1);
+      }
+    }
+    const result: string[] = [];
+    for (const [net, c] of count) if (c >= 2) result.push(net);
+    return result;
   }
 
   // --- Net lines rendering ---

@@ -98,7 +98,7 @@ COMPONENT <refdes>
   PLACE <x> <y>
   LAYER <TOP|BOTTOM>
   ROTATION <degrees>
-  SHAPE <shape_name>
+  SHAPE <shape_name> [<mirror>] [<flip>]
   DEVICE <device_name>
 ```
 
@@ -108,8 +108,29 @@ COMPONENT <refdes>
 | `PLACE x y` | Component origin position |
 | `LAYER` | `TOP` or `BOTTOM` |
 | `ROTATION` | Placement rotation in degrees |
-| `SHAPE` | Reference to a $SHAPES definition |
+| `SHAPE` | Reference to a $SHAPES definition, plus optional mirror/flip tokens (see below) |
 | `DEVICE` | Device type identifier |
+
+#### SHAPE mirror / flip tokens
+
+When the referenced shape is defined in **shape-local** coordinates (pins
+relative to the component origin, as Allegro2CAD v0.2 emits), the placement
+transform is **mirror → rotate (`ROTATION`) → translate (`PLACE`)**. The
+optional 2nd/3rd tokens on the `SHAPE` line carry the mirror:
+
+| Token | Meaning |
+|-------|---------|
+| `0 0` | No mirror (typical top-side part) |
+| `MIRRORY` | Reflect the footprint across the Y axis → **negate local X**, applied before rotation |
+| `MIRRORX` | Reflect the footprint across the X axis → **negate local Y**, applied before rotation |
+| `FLIP` | Side marker for bottom-mounted parts; redundant with `LAYER BOTTOM`, no extra coordinate transform |
+
+Allegro2CAD v0.2 tags every bottom-side component `SHAPE <name> MIRRORY FLIP`.
+**The mirror token must be applied** — dropping it renders all bottom-side
+footprints X-flipped about their placement origin (pins on the wrong side;
+asymmetric parts shift bodily to the wrong location). World-coordinate
+exporters instead bake pins into absolute coords with `PLACE 0 0`,
+`ROTATION 0` and `SHAPE <name> 0 0`, so no mirror is needed there.
 
 ### $SIGNALS (Net Connectivity)
 
@@ -150,7 +171,15 @@ y' = x·sin(θ) + y·cos(θ) + place_y
 
 ## Parser Notes
 
-- No explicit board outline in most GenCAD files — generated from pin bounding box with 20-mil margin.
-- No test points/nails — the `$TESTPINS` section is not parsed.
+- Board outline: generated as a synthetic rectangle around the pin bounding
+  box (20-mil margin). The `$BOARD` section is not used as the outline — across
+  exporters it variously holds a clean edge loop, unordered edge soup, or
+  `ARTWORK` silkscreen blocks, with no reliable way to distinguish the board
+  edge, so a robust stitch-and-select pass would be needed before trusting it.
+- `primarySide`: a pin-count majority heuristic (shared with the Allegro/BDV
+  parsers) sets `primarySide='bottom'` when >55% of pins sit on the declared
+  `bottom` side. Allegro2CAD `.cad` files inherit the same inverted layer
+  labelling the Allegro `.brd` parser corrects, so without this the `.cad`
+  renders top/bottom swapped relative to its source `.brd`.
 - The `flipY` flag is enabled for this format.
 - Pin radius defaults to 6 mils.

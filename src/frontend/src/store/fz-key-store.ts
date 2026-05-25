@@ -92,6 +92,26 @@ function loadFromStorage(): Uint32Array | null {
   }
 }
 
+/**
+ * Dev-only convenience: a gitignored `src/frontend/.env.local` may define
+ * `VITE_FZ_KEY` (44 hex words) so encrypted `.fz` fixtures decrypt without the
+ * key dialog during `vite` dev. Never reaches production — Vite statically
+ * replaces `import.meta.env.DEV` with `false` (this branch tree-shakes away) and
+ * the file is absent from the Docker build context, so `VITE_FZ_KEY` resolves
+ * to `undefined` regardless. The key still passes the parity gate below.
+ */
+function loadDevKey(): Uint32Array | null {
+  try {
+    if (!import.meta.env?.DEV) return null;
+    const raw = import.meta.env.VITE_FZ_KEY as string | undefined;
+    if (!raw) return null;
+    const key = parseFzKeyText(raw);
+    return key && validateFZKey(key) ? key : null;
+  } catch {
+    return null;
+  }
+}
+
 function saveToStorage(key: Uint32Array): void {
   try {
     localStorage.setItem(STORAGE_KEY, formatFzKey(key));
@@ -102,7 +122,7 @@ function saveToStorage(key: Uint32Array): void {
 
 class FZKeyStore extends Emitter {
   /** Cached key (null if unset). Treat as immutable from outside. */
-  key: Uint32Array | null = loadFromStorage();
+  key: Uint32Array | null = loadFromStorage() ?? loadDevKey();
 
   /** True while the FZKeyDialog should be visible. */
   dialogOpen = false;

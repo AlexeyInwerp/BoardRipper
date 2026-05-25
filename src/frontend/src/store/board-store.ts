@@ -5,6 +5,7 @@ import { parseBoardFile, getFormat } from '../parsers';
 import { FZKeyError } from '../parsers/fz-parser';
 import { fzKeyStore } from './fz-key-store';
 import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets } from '../parsers/types';
+import { renderSettingsStore, partBridgesHierarchy } from './render-settings';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
@@ -53,6 +54,11 @@ export interface BoardTab {
   mirrorY: boolean;
   flipAxis: 'x' | 'y';
   netLineMode: NetLineMode;
+  /** When true, nets shared by ≥2 multi-selected parts (the cyan selection
+   *  set, typically loaded from a worklist) are highlighted on the canvas.
+   *  Connecting net-lines are NOT drawn for these — only an explicitly
+   *  selected net gets lines. Toggled from the Worklist "Connections" button. */
+  connectionHighlight: boolean;
   dimMode: 'off' | 'dim' | 'darklight';
   showHoverInfo: boolean;
   followPdf: boolean;
@@ -452,6 +458,14 @@ class BoardStore extends Emitter {
   /** Callback fired when a board tab is closed (tabId) */
   onTabClosed: ((tabId: number) => void) | null = null;
 
+  constructor() {
+    super();
+    // Live-update chain-adjacent adjacency when the part-type hierarchyBridge
+    // flags change under an active highlight, so Settings ▸ Part Types toggles
+    // take effect without re-selecting the net. Singleton — never unsubscribed.
+    renderSettingsStore.subscribe(() => this.refreshAdjacency());
+  }
+
   get tabs(): BoardTab[] { return this._tabs; }
   get activeTabId(): number | null { return this._activeTabId; }
   get pdfFiles(): Map<string, PdfEntry> { return this._pdfFiles; }
@@ -501,6 +515,7 @@ class BoardStore extends Emitter {
   get mirrorY(): boolean { return this.activeTab?.mirrorY ?? false; }
   get flipAxis(): 'x' | 'y' { return this.activeTab?.flipAxis ?? 'x'; }
   get netLineMode(): NetLineMode { return this.activeTab?.netLineMode ?? 'off'; }
+  get connectionHighlight(): boolean { return this.activeTab?.connectionHighlight ?? false; }
   get showTraces(): boolean { return this.activeTab?.showTraces ?? true; }
   get showComponents(): boolean { return this.activeTab?.showComponents ?? true; }
   get showVias(): boolean { return this.activeTab?.showVias ?? false; }
@@ -698,6 +713,7 @@ class BoardStore extends Emitter {
         mirrorY: false,
         flipAxis: 'x',
         netLineMode: vp.netLineMode,
+        connectionHighlight: false,
         dimMode: vp.dimMode,
         showHoverInfo: vp.showHoverInfo,
         followPdf: vp.followPdf,
@@ -886,6 +902,7 @@ class BoardStore extends Emitter {
       mirrorY: false,
       flipAxis: flipAxisForRotation(rotation),
       netLineMode: vp.netLineMode,
+      connectionHighlight: false,
       dimMode: vp.dimMode,
       showHoverInfo: vp.showHoverInfo,
       followPdf: vp.followPdf,
@@ -968,8 +985,20 @@ class BoardStore extends Emitter {
   }
 
   selectPart(partIndex: number | null) {
+    // Hierarchical net-lines (chain-adjacent): selecting a 2-pin component by
+    // its body — which otherwise highlights no net — seeds the highlight from
+    // one pin's net so the one-hop adjacency lights up the *other* pin's net
+    // too, drawing chains for BOTH pins. Other modes / pin counts keep the
+    // plain part-only selection (no net highlighted).
+    let highlightedNet: string | null = null;
+    if (partIndex !== null && this.activeTab?.netLineMode === 'chain-adjacent') {
+      const part = this.activeTab.board?.parts[partIndex];
+      if (part && part.pins.length === 2) {
+        highlightedNet = part.pins.find(p => p.net)?.net ?? null;
+      }
+    }
     this.updateActiveTab({
-      selection: { partIndex, pinIndex: null, highlightedNet: null, adjacentNets: new Set<string>() },
+      selection: { partIndex, pinIndex: null, highlightedNet, adjacentNets: this._resolveAdjacentNets(highlightedNet) },
       searchSelectionActive: false,
     });
     this.notify();
@@ -986,15 +1015,43 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  /** Returns `computeAdjacentNets(board, netName, 1)` when the current
-   *  `netLineMode` is `'chain-adjacent'` and the board is loaded; otherwise
-   *  returns an empty Set.  Centralises the "should we populate adjacency?"
-   *  decision so every call-site stays a one-liner. */
+  /** Returns `computeAdjacentNets(board, netName, hierarchyDepth)` when the
+   *  current `netLineMode` is `'chain-adjacent'` and the board is loaded;
+   *  otherwise returns an empty Set.  Centralises the "should we populate
+   *  adjacency?" decision so every call-site stays a one-liner. */
   private _resolveAdjacentNets(netName: string | null): Set<string> {
     const tab = this.activeTab;
     if (!tab?.board || !netName) return new Set<string>();
     if (tab.netLineMode !== 'chain-adjacent') return new Set<string>();
-    return computeAdjacentNets(tab.board, netName, 1);
+    return computeAdjacentNets(tab.board, netName, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred());
+  }
+
+  /** Predicate for `computeAdjacentNets` — marks parts whose PartType opted
+   *  into hierarchy bridging (>2-pin pass-through, e.g. current-sense
+   *  resistors). Resolved against the live render settings each call. */
+  private _hierarchyBridgePred(): (part: Part) => boolean {
+    const s = renderSettingsStore.settings;
+    return (part: Part) => partBridgesHierarchy(part.name, s);
+  }
+
+  /** Recompute adjacentNets for the live selection — invoked when the
+   *  hierarchyBridge part-type flags change under an active chain-adjacent
+   *  highlight. No-op (and no notify) when the mode is inactive or the
+   *  resulting set is unchanged, so unrelated settings edits stay quiet. */
+  private refreshAdjacency(): void {
+    const tab = this.activeTab;
+    if (!tab?.board || tab.netLineMode !== 'chain-adjacent') return;
+    const net = tab.selection.highlightedNet;
+    if (!net) return;
+    const next = computeAdjacentNets(tab.board, net, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred());
+    const cur = tab.selection.adjacentNets;
+    if (next.size === cur.size) {
+      let same = true;
+      for (const n of next) if (!cur.has(n)) { same = false; break; }
+      if (same) return;
+    }
+    this.updateActiveTab({ selection: { ...tab.selection, adjacentNets: next } });
+    this.notify();
   }
 
   highlightNet(netName: string | null) {
@@ -1393,7 +1450,7 @@ class BoardStore extends Emitter {
     // highlighted net.  When leaving chain-adjacent: clear the set.
     const net = tab.selection.highlightedNet;
     const adjacentNets = (next === 'chain-adjacent' && tab.board && net)
-      ? computeAdjacentNets(tab.board, net, 1)
+      ? computeAdjacentNets(tab.board, net, renderSettingsStore.settings.hierarchyDepth, this._hierarchyBridgePred())
       : new Set<string>();
 
     this.updateActiveTab({
@@ -1401,6 +1458,17 @@ class BoardStore extends Emitter {
       selection: { ...tab.selection, adjacentNets },
     });
     this._saveCurrentViewPrefs();
+    this.notify();
+  }
+
+  /** Toggle/set "highlight connections" — glow nets shared by ≥2 parts in the
+   *  cyan selection set. Visual only; net-lines are unaffected. Per-tab, not
+   *  persisted (it's tied to an ephemeral selection that doesn't survive
+   *  reload). */
+  setConnectionHighlight(on: boolean) {
+    const tab = this.activeTab;
+    if (!tab || tab.connectionHighlight === on) return;
+    this.updateActiveTab({ connectionHighlight: on });
     this.notify();
   }
 

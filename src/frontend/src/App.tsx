@@ -24,6 +24,7 @@ import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
 import { openPdfFiles } from './store/file-actions';
+import { saveDroppedToIncoming } from './store/incoming-upload';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
@@ -193,6 +194,11 @@ function App() {
         }
       }
     }
+
+    // Persist the dropped files into the server library's incoming/ folder so
+    // they survive reload and appear in the Library panel. Rendering above has
+    // already happened; this is best-effort and runs in the background.
+    void saveDroppedToIncoming([...boardFiles, ...pdfFiles]);
   }, []);
 
   const onReady = useCallback((event: DockviewReadyEvent) => {

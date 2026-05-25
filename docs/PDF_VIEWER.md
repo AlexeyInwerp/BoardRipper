@@ -240,6 +240,33 @@ Clicking on PDF text runs `hitTestWord` which:
 Double-click bypasses the part/net check and always stuffs the word into the
 search input, overwriting any existing query.
 
+## PDF↔PDF cross-lookup
+
+Two open text PDFs can be explicitly linked 1:1 from the main bind (∞/○○)
+menu in the PDF toolbar: the `BindLink` dropdown shows board associations on
+top and, after a separator, a **Cross-link PDF** section listing the other open
+PDFs (→ `PdfStore.linkDocs`/`unlinkDoc`). The bind menu renders whenever there
+is a board OR another open PDF to link, so it appears even for board-less
+PDF-only viewing. The link is symmetric, persisted in `localStorage`
+(`pdf-link:<fileName>`, restored on `loadFile`) by the pure `pdf-links.ts`
+module, and is independent of any board.
+
+When linked, `handleTextClick` calls `PdfStore.crossProbe(sourceFile, word)`,
+which runs the *existing* search machinery against the linked document via
+`_runSearch(targetDoc, word, 'lookup', false)` — so navigation, snap-to-match
+scroll, and highlight all reuse the in-doc search path. Re-clicking the same
+token advances to the next occurrence (`_stepMatchInDoc`, cycling). Matching is
+the same substring search as Ctrl-F, so short designators (`C1`) over-match;
+the visible match count + cycling cover that. `crossProbe` never calls
+`switchTo` (it must not steal the active-doc/keyboard context). No nets, no
+pins, no OCR — text PDFs only.
+
+Cross-lookup feedback ("No match for X in Y", "Linked PDF not open") is written
+to the source doc's `crossProbeHint` field, which the source panel consumes
+into a **toast** via `boardStore.addToast` (it is *not* rendered inline — the
+inline path collided with the short `lookupHint` "Double-click X to search"
+template and broke the toolbar layout).
+
 ## Performance envelope
 
 Rough numbers on a modern laptop with integrated GPU, "high" quality preset:

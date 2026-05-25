@@ -4993,7 +4993,7 @@ html, body, #root {
 .part-types-header,
 .part-type-row {
   display: grid;
-  grid-template-columns: 70px 1fr 80px 78px 26px 26px;
+  grid-template-columns: 70px 1fr 80px 78px 26px 26px 40px;
   align-items: center;
   gap: 6px;
   min-height: 26px;
@@ -5043,12 +5043,14 @@ html, body, #root {
   justify-content: center;
 }
 
-.pt-col-hide {
+.pt-col-hide,
+.pt-col-bridge {
   display: flex;
   justify-content: center;
 }
 
-.pt-col-hide input[type="checkbox"] {
+.pt-col-hide input[type="checkbox"],
+.pt-col-bridge input[type="checkbox"] {
   accent-color: var(--accent);
   width: 13px;
   height: 13px;
@@ -6499,3 +6501,17 @@ html, body, #root {
 .library-modal-field textarea:focus { outline: none; border-color: var(--accent); }
 .library-modal-message-err { font-size: 11px; color: #fca5a5; }
 .library-modal-message-ok  { font-size: 11px; color: #86efac; }
+
+/* BindLink secondary section (PDF cross-lookup) */
+.bind-link-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+.bind-link-section-label {
+  padding: 4px 10px 2px;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

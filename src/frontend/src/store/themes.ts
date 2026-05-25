@@ -22,10 +22,8 @@ export interface Theme {
     textSecondary: string;
     accent: string;
     border: string;
-    /** Library file-type badge backgrounds. Default uses green/red for
-     *  at-a-glance type recognition; monochrome themes (Landrex) lean on
-     *  brightness contrast (light vs dark gray) instead so no chromatic
-     *  noise leaks into the supermode aesthetic. */
+    /** Library file-type badge backgrounds — green for boards, red for PDFs,
+     *  for at-a-glance type recognition in the file list. */
     iconBoardBg: string;
     iconPdfBg: string;
   };
@@ -37,7 +35,13 @@ export interface Theme {
     outline: string;
     selection: string;
     butterflySelection: string;
+    /** Pin-number labels (drives BOARD_COLORS.labelPin). */
     labelText: string;
+    /** Part refdes labels. Default is light gray; monochrome themes set
+     *  white for maximum contrast against a black board. */
+    labelPart: string;
+    /** Net-name labels. Default is light blue; monochrome themes set white. */
+    labelNet: string;
   };
 
   /**
@@ -79,37 +83,40 @@ export const THEMES: Record<string, Theme> = {
       selection:          '#ffff44',
       butterflySelection: '#44aaff',
       labelText:          '#ffffff',
+      labelPart:          '#cccccc',
+      labelNet:           '#88ccff',
     },
     // Default theme = no overrides. Whatever the user has configured wins.
   },
   landrex: {
     id: 'landrex',
     label: 'Landrex Classic',
+    // Landrex is a *board* style, not an interface skin — the user wants it to
+    // leave the main interface alone and only restyle the canvas. So `ui` here
+    // mirrors the default theme verbatim: switching to Landrex does not repaint
+    // the chrome. All the Landrex character lives in `board` + `boardOverrides`.
     ui: {
-      bgPrimary:     '#000000',
-      bgSecondary:   '#0a0a0a',
-      bgTertiary:    '#141414',
-      textPrimary:   '#ffffff',
-      textSecondary: '#b0b0b0',
-      // Muted mid-gray accent — bright yellow buttons would defeat the
-      // "no visual clutter" intent (yellow stays reserved for selection).
-      // #888 is dark enough that white button text reads (contrast ~3:1)
-      // but light enough to read as the active-tab indicator on near-black bg.
-      accent:        '#888888',
-      border:        '#262626',
-      // Monochrome icons — light gray for B (black letter), dark gray for P
-      // (white letter). Brightness contrast carries the type distinction
-      // without colour, keeping the supermode aesthetic clean.
-      iconBoardBg:   '#aaaaaa',
-      iconPdfBg:     '#555555',
+      bgPrimary:     '#08080c',
+      bgSecondary:   '#0f0f18',
+      bgTertiary:    '#0c1424',
+      textPrimary:   '#e0e0e0',
+      textSecondary: '#a0a0b0',
+      accent:        '#4a9eff',
+      border:        '#1a1a28',
+      iconBoardBg:   '#44cc44',
+      iconPdfBg:     '#cc4444',
     },
     board: {
+      // High-contrast monochrome canvas: pure black, white outline, and every
+      // label colour forced to white (part/net labels default to gray/blue).
       canvasBackground:   '#000000',
       boardFill:          '#ffffff',
       outline:            '#ffffff',
       selection:          '#ffff44',
       butterflySelection: '#44aaff',
       labelText:          '#ffffff',
+      labelPart:          '#ffffff',
+      labelNet:           '#ffffff',
     },
     // Landrex supermode — strip every source of board-content color.
     // User keeps their saved settings; these layer on top while Landrex is

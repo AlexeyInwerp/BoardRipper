@@ -22,6 +22,7 @@ interface StoreSnapshot {
   mirrorY: boolean;
   flipAxis: 'x' | 'y';
   netLineMode: NetLineMode;
+  connectionHighlight: boolean;
   dimMode: BoardTab['dimMode'];
   showHoverInfo: boolean;
   followPdf: boolean;
@@ -66,6 +67,7 @@ export const useBoardStore = createStoreHook<StoreSnapshot>(boardStore, () => ({
   mirrorY: boardStore.mirrorY,
   flipAxis: boardStore.flipAxis,
   netLineMode: boardStore.netLineMode,
+  connectionHighlight: boardStore.connectionHighlight,
   dimMode: boardStore.dimMode,
   showHoverInfo: boardStore.showHoverInfo,
   followPdf: boardStore.followPdf,

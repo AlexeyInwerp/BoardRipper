@@ -16,7 +16,7 @@
 import type { BoardData, Net, Pad, PadShape, Part, Pin, Point, SilkscreenPath, Trace, Via } from '../types';
 import { computeBBox, buildNets } from '../types';
 import { AllegroDb } from './allegro-db';
-import { FmtVer, LayerClass } from './allegro-types';
+import { BoardUnits, FmtVer, LayerClass } from './allegro-types';
 import type {
   Blk0x04NetAssign,
   Blk0x05Track,
@@ -40,11 +40,66 @@ import { log } from '../../store/log-store';
 
 const dbg = log.parser;
 
+/**
+ * Physical side of a placed footprint instance.
+ *
+ * `inst.layer` (0x2D byte +0x02) is the usual signal, but some exporters leave
+ * it 0 for every part regardless of side — e.g. Nvidia_5000M_Dell.brd reports
+ * 838/4 when the board is really ~355 top / ~453 bottom. Allegro also records
+ * the side on the per-footprint PACKAGE_GEOMETRY assembly drawing via the 0x14
+ * graphic's layer subclass (0xF7=top, 0xF6=bottom). That subclass agrees with
+ * inst.layer on every other corpus file where it appears, so prefer it when
+ * present and fall back to inst.layer otherwise.
+ */
+const SUBCLASS_ASSEMBLY_TOP = 0xF7;
+const SUBCLASS_ASSEMBLY_BOTTOM = 0xF6;
+function footprintSide(db: AllegroDb, fpInst: Blk0x2DFootprintInst): 'top' | 'bottom' {
+  const gfx = db.getBlockAs<Blk0x14Graphic>(fpInst.graphicPtr, 0x14);
+  if (gfx) {
+    if (gfx.layer.subclass === SUBCLASS_ASSEMBLY_TOP) return 'top';
+    if (gfx.layer.subclass === SUBCLASS_ASSEMBLY_BOTTOM) return 'bottom';
+  }
+  return fpInst.layer === 0 ? 'top' : 'bottom';
+}
+
+/**
+ * True if `key` references a 0x2B footprint definition.
+ *
+ * Placed board copper (vias, tracks) carries a `netPtr`/`netAssignment` that
+ * resolves to a 0x04 NET_ASSIGN (or 0 when unconnected). Footprint-library
+ * via-in-pad and copper templates instead point at their parent 0x2B footprint
+ * definition and store footprint-LOCAL coords, so they render as a phantom
+ * grid at the board origin. Use this to drop those template records.
+ */
+function pointsToFootprintDef(db: AllegroDb, key: number): boolean {
+  return key !== 0 && !!db.getBlockAs<Blk0x2BFootprintDef>(key, 0x2B);
+}
+
+/** Mils per one board unit, for converting raw Allegro coords to internal mils. */
+function milsPerUnit(units: BoardUnits): number {
+  switch (units) {
+    case BoardUnits.MILS:        return 1;
+    case BoardUnits.INCHES:      return 1000;
+    case BoardUnits.MILLIMETERS: return 1 / 0.0254;     // 39.3700787…
+    case BoardUnits.CENTIMETERS: return 10 / 0.0254;    // 393.700787…
+    case BoardUnits.MICROMETERS: return 0.001 / 0.0254; // 0.0393700787…
+    default:                     return 1;
+  }
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export function assembleBoard(db: AllegroDb): BoardData {
   const ver = db.header.fmtVer;
-  const div = db.header.unitsDivisor || 1;
+  // Every coordinate/dimension downstream is converted to internal mils via
+  // `value / div`. Allegro stores raw integers in (boardUnit / unitsDivisor)
+  // steps, so the divisor that lands us in mils is `unitsDivisor / milsPerUnit`.
+  // For MILS files (the common case) milsPerUnit=1, so div == unitsDivisor and
+  // nothing changes. Metric files (mm/µm) and inch files need the unit scale or
+  // the whole board comes out wrong-sized (e.g. a mm board read as mils is
+  // 39.37× too small). Verified: Nvidia_5000M_Dell.brd ships UNITS=mm.
+  const rawDiv = db.header.unitsDivisor || 1;
+  const div = rawDiv / milsPerUnit(db.header.boardUnits);
 
   // Build net assignment map first — needed by pins, traces, vias
   const netAssignMap = buildNetAssignMap(db);
@@ -234,7 +289,7 @@ function extractComponents(
       }
 
       const origin: Point = { x: inst.coordX / div, y: inst.coordY / div };
-      const side: 'top' | 'bottom' = inst.layer === 0 ? 'top' : 'bottom';
+      const side = footprintSide(db, inst);
 
       // Extract pins for this footprint instance
       const pins = extractPins(db, inst, ver, div, netAssignMap);
@@ -537,7 +592,7 @@ function extractPins(
     const rawRadius = Math.min(bw, bh) / 2;
     const radius = Math.max(3, Math.min(30, rawRadius));
 
-    const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+    const side = footprintSide(db, fpInst);
 
     // Resolve pad shape & real copper dims via the padstack so the
     // selection highlight matches the rendered pad rectangle exactly.
@@ -619,6 +674,11 @@ function extractTraces(
 
     // Only ETCH-class tracks (actual copper traces)
     if (track.layer.classCode !== LayerClass.ETCH) continue;
+
+    // Skip footprint-definition copper templates (see pointsToFootprintDef) —
+    // local-coord segments that otherwise render as a phantom cluster at the
+    // origin (340 such tracks on Nvidia_5000M_Dell.brd).
+    if (pointsToFootprintDef(db, track.netAssignment)) continue;
 
     // Resolve net name via netAssignment → net assign map
     const net = netAssignMap.get(track.netAssignment) ?? '';
@@ -741,9 +801,8 @@ function linearizeArc(
  * and silkscreen drawings. Segments arrive in board coordinates already
  * (pre-rotated, pre-translated), so no transform pass is needed here.
  *
- * Side comes from `fpInst.layer` (0=top, 1=bottom). The 0x14's own subclass
- * also indicates side (0xF7=top, 0xF6=bottom for assembly drawings) but the
- * footprint-instance flag is authoritative and avoids per-shape ambiguity.
+ * Side comes from `footprintSide()` — the 0x14 assembly subclass (0xF7=top,
+ * 0xF6=bottom) when present, else the `fpInst.layer` flag.
  */
 function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
   const out: SilkscreenPath[] = [];
@@ -757,7 +816,7 @@ function extractSilkscreen(db: AllegroDb, div: number): SilkscreenPath[] {
     const fpInst = fp as Blk0x2DFootprintInst;
     if (!fpInst.graphicPtr) continue;
 
-    const side: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+    const side = footprintSide(db, fpInst);
 
     let key = fpInst.graphicPtr;
     const visited = new Set<number>();
@@ -866,7 +925,7 @@ function extractPads(
     const fp = db.getBlock(inst.fpInstPtr);
     if (!fp || fp.blockType !== 0x2D) continue;
     const fpInst = fp as Blk0x2DFootprintInst;
-    const fpSide: 'top' | 'bottom' = fpInst.layer === 0 ? 'top' : 'bottom';
+    const fpSide = footprintSide(db, fpInst);
 
     let key = fpInst.firstPadPtr;
     const visited = new Set<number>();
@@ -965,6 +1024,11 @@ function extractVias(
   for (const blk of db.blocks.values()) {
     if (blk.blockType !== 0x33) continue;
     const via = blk as Blk0x33Via;
+
+    // Skip footprint-definition via-in-pad templates (see pointsToFootprintDef).
+    // On Nvidia_5000M_Dell.brd these are ~2.8k vias (16 GDDR chips × 170 balls)
+    // dumped as a phantom BGA grid at the origin; also Compal LA-H271P / Dell XPS.
+    if (pointsToFootprintDef(db, via.netPtr)) continue;
 
     const x = via.coordsX / div;
     const y = via.coordsY / div;
