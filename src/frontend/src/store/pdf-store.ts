@@ -4,6 +4,7 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { PDFDocument, PDFName, PDFDict, PDFStream, PDFNumber, PDFRef, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { boardCache } from './board-cache';
 import { Emitter } from './emitter';
+import { PdfLinks } from './pdf-links';
 import { log } from './log-store';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
@@ -441,6 +442,7 @@ export interface FollowTarget {
 
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
+  private _links = new PdfLinks();
   private _activeFileName: string | null = null;
   /** Vertical distance multiplier for multi-term search (fontSize × this) */
   private _multiTermYGap = 4;
@@ -585,6 +587,7 @@ class PdfStore extends Emitter {
         bookmarks: loadBookmarks(file.name),
       };
       this._documents.set(file.name, pdfDoc);
+      this._links.restore(file.name);
       this._activeFileName = file.name;
       this._loading = false;
       this.notify();
@@ -1115,6 +1118,64 @@ class PdfStore extends Emitter {
     this.notify();
   }
 
+  // ── PDF↔PDF cross-lookup ──────────────────────────────────────────────
+  /** The persisted partner for fileName (open or not), or null. */
+  getLinkedDoc(fileName: string): string | null { return this._links.get(fileName); }
+
+  /** The partner only if it is currently open, or null. */
+  getLiveLinkedDoc(fileName: string): string | null {
+    return this._links.getLive(fileName, (f) => this._documents.has(f));
+  }
+
+  /** Establish a symmetric 1:1 link between two open PDFs. */
+  linkDocs(a: string, b: string): void {
+    this._links.link(a, b);
+    this.notify();
+  }
+
+  /** Remove the link on a (and its partner). */
+  unlinkDoc(a: string): void {
+    this._links.unlink(a);
+    this.notify();
+  }
+
+  /**
+   * Drive the linked document's search for `word`:
+   *  - first probe (or a different word): run a fresh search, jump to the match
+   *    nearest the target's current page;
+   *  - re-probing the same word: advance to the next occurrence (cycle).
+   * Sets a hint on the SOURCE doc when the partner is closed or has no match.
+   * Never changes the active document.
+   */
+  crossProbe(sourceFileName: string, word: string): void {
+    const source = this._documents.get(sourceFileName) ?? null;
+    const targetName = this.getLiveLinkedDoc(sourceFileName);
+    if (!targetName) {
+      if (source && this._links.get(sourceFileName)) {
+        source.lookupHint = 'Linked PDF not open';
+        this.notify();
+      }
+      return;
+    }
+    const target = this._documents.get(targetName);
+    if (!target) return;
+
+    const q = word.trim();
+    if (!q) return;
+
+    const sameQuery = target.searchQuery.toUpperCase() === q.toUpperCase();
+    if (sameQuery && target.searchSource === 'lookup' && target.matches.length > 0) {
+      this._stepMatchInDoc(target, 1);             // cycle to next occurrence
+      return;
+    }
+
+    this._runSearch(target, q, 'lookup', false);   // fresh search (notifies)
+    if (target.matches.length === 0 && source) {
+      source.lookupHint = `No match for ${q} in ${targetName}`;
+      this.notify();
+    }
+  }
+
   setMultiTermYGap(value: number) {
     this._multiTermYGap = value;
     this._rerunMultiTerm();
@@ -1462,7 +1523,7 @@ class PdfStore extends Emitter {
 
 export const pdfStore = new PdfStore();
 
-// Expose for integration tests (Playwright)
+// Expose for integration tests (Playwright) — DEV builds only
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
-  (window as any).__pdfStore = pdfStore;
+  (window as { __pdfStore?: typeof pdfStore }).__pdfStore = pdfStore;
 }
