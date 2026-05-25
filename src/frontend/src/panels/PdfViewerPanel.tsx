@@ -17,7 +17,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn, IconLink, IconLinkOff } from '@tabler/icons-react';
 import {
   TILE_SIZE, computeTileGrid, tileRenderRequest,
   getTileCached, putTileCached, invalidateTileCache,
@@ -578,7 +578,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, linkedDoc, linkedDocOpen } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
@@ -916,6 +916,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Bumped after zoom settles to trigger adjacent re-render (debounced, not per-render) */
   const [adjTrigger, setAdjTrigger] = useState(0);
   const adjDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [linkMenuOpen, setLinkMenuOpen] = useState(false);
 
   /** Clamp pan so the page stays within view boundaries.
    *
@@ -3300,6 +3301,49 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         </div>
 
         <div className="pdf-toolbar-spacer" />
+
+        <div className="pdf-toolbar-group pdf-link-group">
+          <button
+            data-testid="pdf-link-btn"
+            className={`pdf-toolbar-btn pdf-link-btn${linkedDoc ? ' has-active' : ''}${linkedDoc && !linkedDocOpen ? ' stale' : ''}`}
+            onClick={() => setLinkMenuOpen(v => !v)}
+            title={linkedDoc
+              ? (linkedDocOpen ? `Linked to ${linkedDoc} — click to manage` : `Linked to ${linkedDoc} (not open) — click to manage`)
+              : 'Link this PDF to another open PDF for cross-lookup'}
+          >
+            {linkedDoc ? <IconLink size={14} /> : <IconLinkOff size={14} />}
+          </button>
+          {linkMenuOpen && (
+            <div className="pdf-link-menu">
+              {linkedDoc ? (
+                <button
+                  data-testid="pdf-unlink-option"
+                  className="pdf-link-option"
+                  onClick={() => { pdfStore.unlinkDoc(pdfFileName); setLinkMenuOpen(false); }}
+                >
+                  Unlink from {linkedDoc}
+                </button>
+              ) : (
+                (() => {
+                  const others = pdfStore.loadedFileNames.filter(n => n !== pdfFileName);
+                  if (others.length === 0) {
+                    return <div className="pdf-link-empty">Open another PDF to link</div>;
+                  }
+                  return others.map(n => (
+                    <button
+                      key={n}
+                      data-testid="pdf-link-option"
+                      className="pdf-link-option"
+                      onClick={() => { pdfStore.linkDocs(pdfFileName, n); setLinkMenuOpen(false); }}
+                    >
+                      {n}
+                    </button>
+                  ));
+                })()
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="pdf-toolbar-group">
           <div className="pdf-corrector-wrapper">

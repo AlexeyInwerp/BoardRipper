@@ -106,3 +106,27 @@ test('unlink stops cross-probe', async ({ page }) => {
   expect(stillLinked.a).toBeNull();
   expect(stillLinked.b).toBeNull();
 });
+
+test('header link control links and unlinks via the menu', async ({ page }) => {
+  await loadTwoPdfs(page);
+  // loadTwoPdfs already linked the docs programmatically; start clean.
+  await page.evaluate(() => (window as any).__pdfStore.unlinkDoc('linkA.pdf'));
+
+  // Select linkA.pdf's panel.
+  await page.locator('.dv-tab', { hasText: 'linkA.pdf' }).click();
+
+  // Open the link menu and choose linkB.pdf.
+  await page.getByTestId('pdf-link-btn').first().click();
+  await page.getByTestId('pdf-link-option').filter({ hasText: 'linkB.pdf' }).click();
+
+  await expect.poll(() =>
+    page.evaluate(() => (window as any).__pdfStore.getLinkedDoc('linkA.pdf')),
+  ).toBe('linkB.pdf');
+
+  // Re-open menu → unlink.
+  await page.getByTestId('pdf-link-btn').first().click();
+  await page.getByTestId('pdf-unlink-option').first().click();
+  await expect.poll(() =>
+    page.evaluate(() => (window as any).__pdfStore.getLinkedDoc('linkA.pdf')),
+  ).toBeNull();
+});
