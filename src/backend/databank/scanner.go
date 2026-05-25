@@ -456,14 +456,25 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			}
 		}
 
-		// Phase 5: Auto-match board-PDF bindings for new files.
+		// Phase 5: Hash size-colliding files so duplicates are marked inline.
+		// Leaves the file list deduplicated after every scan (a clean,
+		// deduped list for the PDF indexer) instead of relying on a separate
+		// on-demand "Find duplicates" pass.
+		s.mu.Lock()
+		s.status.Phase = "Finding duplicates"
+		s.mu.Unlock()
+		s.dedupSizeCollisions(cancelled)
+
+		// Phase 6: Auto-match board-PDF bindings for new files.
 		// OFF by default — on large libraries the O(boards×pdfs) match loop
 		// adds hours to the scan. Opt in via config `auto_bind=true`.
-		if v, _ := s.db.GetConfig("auto_bind"); v == "true" {
-			s.mu.Lock()
-			s.status.Phase = "Auto-matching bindings"
-			s.mu.Unlock()
-			s.autoMatchBindings()
+		if !cancelled() {
+			if v, _ := s.db.GetConfig("auto_bind"); v == "true" {
+				s.mu.Lock()
+				s.status.Phase = "Auto-matching bindings"
+				s.mu.Unlock()
+				s.autoMatchBindings()
+			}
 		}
 	}
 
@@ -471,6 +482,43 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 		log.Printf("Scanner: re-resolved %d unchanged file(s) against current boards.db", reresolved)
 	}
 	s.finishScan(scanned, total, added, updated, deleted, errors, start, cancelled())
+}
+
+// dedupSizeCollisions hashes every size-colliding file that doesn't yet have a
+// content_hash, so duplicates are marked during the scan (a clean, deduped
+// file list for the PDF indexer). Idempotent: already-hashed files are skipped.
+func (s *Scanner) dedupSizeCollisions(cancelled func() bool) {
+	files, err := s.db.SizeCollisionFiles()
+	if err != nil {
+		log.Printf("Scanner: dedup list error: %v", err)
+		return
+	}
+	root := s.ScanRoot()
+	var hashed int64
+	for _, f := range files {
+		if cancelled() {
+			return
+		}
+		if f.Hashed {
+			continue
+		}
+		s.mu.Lock()
+		s.status.LastFile = f.Path
+		s.mu.Unlock()
+		key, err := ContentKey(filepath.Join(root, f.Path), f.Size)
+		if err != nil {
+			log.Printf("Scanner: dedup hash %s: %v (left unhashed)", f.Path, err)
+			continue
+		}
+		if err := s.db.SetContentHash(f.ID, key); err != nil {
+			log.Printf("Scanner: dedup store hash %s: %v", f.Path, err)
+			continue
+		}
+		hashed++
+	}
+	if hashed > 0 {
+		log.Printf("Scanner: dedup hashed %d size-collision file(s)", hashed)
+	}
 }
 
 func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int64, start time.Time, stopped bool) {
