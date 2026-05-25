@@ -689,8 +689,8 @@ function DatabaseInfoSection() {
         <button
           className="settings-action-btn"
           onClick={handleResetPdf}
-          disabled={!!isRunning || resetting}
-          title="Wipe extracted PDF text — keeps file index and bindings"
+          disabled={resetting}
+          title="Wipe extracted PDF text — keeps file index and bindings. Independent of the file scan; the backend stops the indexer before wiping."
         >
           Reset PDF Text
         </button>
