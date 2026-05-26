@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## v0.31.2 — 2026-05-26
+
+The real fix for the v0.31.0 update failure. v0.31.1 turned out to address the
+wrong cause — this release makes the update actually succeed on installs with a
+large existing library. As before, no install was harmed: the orchestrator
+healthcheck rolled every failed update back to the prior working version.
+
+### Fixes
+
+- **Fix update rollback on installs with a large pre-v0.31 PDF index.** The v0→v1 pdf-index migration drops the legacy in-process `pdf_text` (FTS5) / `pdf_pages` tables, whose content moved to the separate `pdfindex.db`. On a populated library that drop (a) opens a SQLite *statement journal* — but the scratch image has no `/tmp` and the runtime CWD `/` isn't writable by UID 65532, so SQLite returned `SQLITE_IOERR_GETTEMPPATH` (`disk I/O error (6410)`); and (b) frees hundreds of thousands of pages, taking ~60 s — which blocked `/api/health` past the updater orchestrator's 60 s healthcheck and got the update rolled back. Two-part fix: point SQLite's temp files at the always-writable data volume (`SQLITE_TMPDIR=/data`), and split the migration so only the fast `pdf_donors` table is created on the boot path while the heavy legacy-table drop runs in a background goroutine after the server is serving. Boot-to-health on a real 1.5 GB database dropped from a rollback-inducing >67 s to 24 s. Verified against a copy of the real failing database on amd64 hardware. (`7da5bc3`)
+- **Note on v0.31.1:** its `modernc.org/sqlite` bump (v1.34.5 → v1.50.1, for Go 1.25) is retained as worthwhile dependency hygiene, but it did **not** fix the boot failure — both v0.31.0 and v0.31.1 failed identically on a large database. The cause was the temp-dir / migration-timing issue fixed here, not the SQLite driver version.
+
 ## v0.31.1 — 2026-05-26
 
 Hotfix for v0.31.0, which failed to boot on `linux/amd64`. No user was left
