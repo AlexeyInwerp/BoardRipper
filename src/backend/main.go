@@ -79,11 +79,22 @@ func main() {
 	scanner.SetBoardDB(bdb)
 
 	// PDF-index migration (v0→v1) runs against databank.db before opening the
-	// separate index DB. Migration failure is fatal (data integrity). A failure
-	// to OPEN pdfindex.db must NOT kill boot — degrade to "index unavailable".
+	// separate index DB. Only the FAST half runs here (create pdf_donors);
+	// failure is fatal (the PDF handlers need that table). Dropping the legacy
+	// FTS5 tables is deferred to a background goroutine (launched below) so a
+	// large legacy index can't block /api/health past the updater's 60s
+	// healthcheck — that was the v0.31.0/v0.31.1 "update failed" rollback.
 	if err := db.MigratePdfIndexV1(); err != nil {
 		log.Fatalf("pdf-index migration failed: %v", err)
 	}
+	// Background, off the boot path: reclaim the legacy in-process PDF-index
+	// tables. Idempotent + self-skipping, so a crash mid-drop just retries next
+	// boot. Errors are logged, never fatal — leftover dead tables are harmless.
+	go func() {
+		if err := db.CleanupLegacyPdfTables(); err != nil {
+			log.Printf("WARNING: legacy PDF-index cleanup failed (%v) — retrying next boot", err)
+		}
+	}()
 	pdfIndexPath := filepath.Join(dataDir, "pdfindex.db")
 	var pdfIndex *pdfindex.DB
 	pdfIndex, err = pdfindex.Open(pdfIndexPath)

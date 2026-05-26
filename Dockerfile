@@ -68,4 +68,16 @@ ENV STATIC_DIR=/static
 ENV DATA_DIR=/data
 ENV LIBRARY_DIR=/library
 ENV PORT=8080
+# SQLite needs a writable temp directory for statement journals, sorters, and
+# VACUUM. The scratch image has no /tmp and the runtime CWD (/) isn't writable
+# by UID 65532, so SQLite's unixTempFileDir() finds nowhere to put a temp file
+# and returns SQLITE_IOERR_GETTEMPPATH (extended code 6410) the moment an
+# operation needs one. This is invisible on a fresh DB but fatal on a populated
+# one: the pdf-index v0→v1 migration drops the large legacy pdf_text/pdf_pages
+# tables, and dropping a multi-hundred-MB table opens a statement journal.
+# Point all temp-file creation at the always-writable, disk-backed data volume.
+# (SQLITE_TMPDIR is the first dir SQLite consults; TMPDIR also covers Go's
+# os.TempDir() for any non-SQLite temp needs.) Shipped broken in v0.31.0/v0.31.1.
+ENV SQLITE_TMPDIR=/data
+ENV TMPDIR=/data
 ENTRYPOINT ["/server"]

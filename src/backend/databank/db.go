@@ -1271,49 +1271,62 @@ func (db *DB) CopyPathsForFile(fileID int64) ([]string, error) {
 	return out, rows.Err()
 }
 
-// MigratePdfIndexV1 performs the v0→v1 PDF-index migration on databank.db:
-// drop the legacy pdf_pages/pdf_text/pdf_scan_errors tables (their content
-// moves to the new pdfindex.db), create the pdf_donors membership table, and
-// stamp the version. Idempotent: a re-run with version already "1" is a no-op.
+// MigratePdfIndexV1 performs the FAST half of the v0→v1 PDF-index migration:
+// it ensures the pdf_donors membership table exists. This must run before the
+// server serves requests because the PDF handlers query pdf_donors.
+//
+// The SLOW half — dropping the legacy pdf_pages/pdf_text/pdf_scan_errors tables
+// (whose content moved to pdfindex.db) — is deliberately NOT done here. On a
+// large pre-v0.31 library pdf_text is a populated FTS5 table; dropping it frees
+// hundreds of thousands of pages and took ~60 s on a real install. Doing that
+// synchronously at boot blocked /api/health past the updater orchestrator's
+// 60 s healthcheck window, so the update was rolled back as "failed" (the
+// v0.31.0/v0.31.1 boot failure). The drop is now handled off the boot path by
+// CleanupLegacyPdfTables. This call is idempotent and cheap.
 func (db *DB) MigratePdfIndexV1() error {
-	if v, _ := db.GetConfig("pdf_index_schema_version"); v == "1" {
-		return nil
-	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	_, err := db.writer.Exec(`CREATE TABLE IF NOT EXISTS pdf_donors (
+		file_id  INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+		added_at INTEGER NOT NULL
+	)`)
+	return err
+}
 
-	tx, err := db.writer.Begin()
-	if err != nil {
-		return err
+// CleanupLegacyPdfTables drops the pre-v0.31 in-process PDF-index tables
+// (the pdf_text FTS5 table + its shadow tables, pdf_pages, pdf_scan_errors)
+// and clears the stale last_pdf_scan_at config key. Their data now lives in the
+// separate pdfindex.db, so they are pure dead weight here.
+//
+// Run this OFF the boot path (a background goroutine after the server is
+// serving) — on a large legacy index the drop can take a minute and must not
+// delay /api/health. Idempotent and self-skipping: once the tables are gone it
+// is a cheap metadata-only no-op, so it is safe to call on every boot. Requires
+// a writable SQLite temp dir (SQLITE_TMPDIR=/data in the image) because
+// dropping a populated FTS5 table opens a statement journal.
+func (db *DB) CleanupLegacyPdfTables() error {
+	var present int
+	_ = db.reader.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type='table' AND name IN ('pdf_text','pdf_pages','pdf_scan_errors')`).Scan(&present)
+	if present == 0 {
+		return nil // already cleaned — nothing to do
 	}
-	defer tx.Rollback()
 
-	var droppedPages, droppedText int
-	_ = tx.QueryRow(`SELECT COUNT(*) FROM pdf_pages`).Scan(&droppedPages)
-	_ = tx.QueryRow(`SELECT COUNT(*) FROM pdf_text`).Scan(&droppedText)
-
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	start := time.Now()
 	for _, s := range []string{
 		`DROP TABLE IF EXISTS pdf_text`,
 		`DROP TABLE IF EXISTS pdf_pages`,
 		`DROP TABLE IF EXISTS pdf_scan_errors`,
-		`CREATE TABLE IF NOT EXISTS pdf_donors (
-			file_id  INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-			added_at INTEGER NOT NULL
-		)`,
 		`DELETE FROM config WHERE key = 'last_pdf_scan_at'`,
 	} {
-		if _, err := tx.Exec(s); err != nil {
+		if _, err := db.writer.Exec(s); err != nil {
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if err := db.setConfigLocked("pdf_index_schema_version", "1"); err != nil {
-		return err
-	}
-	log.Printf("[migrate] pdf-index schema v0→v1: dropped pdf_pages (%d rows), pdf_text (%d rows); created pdf_donors",
-		droppedPages, droppedText)
+	log.Printf("[migrate] dropped legacy in-process PDF-index tables in %dms", time.Since(start).Milliseconds())
 	return nil
 }
 

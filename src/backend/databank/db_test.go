@@ -267,40 +267,50 @@ func TestMigratePdfIndexV1(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	// Simulate a v0 database: legacy pdf tables present, no version key.
-	// pdf_pages and pdf_text already exist from the normal schema migration,
-	// so we just ensure the scan-error table and the version key are absent.
+	// Simulate a v0 database: legacy pdf tables present (pdf_pages and pdf_text
+	// already exist from the normal schema migration). Give pdf_text some rows
+	// so the FTS5 drop has real work to do.
 	db.writer.Exec(`CREATE TABLE IF NOT EXISTS pdf_pages (file_id INTEGER, page_num INTEGER, text_content TEXT, source TEXT)`)
 	db.writer.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS pdf_text USING fts5(file_id, page_num, content)`)
 	db.writer.Exec(`INSERT OR IGNORE INTO pdf_pages(file_id,page_num,text_content,source) VALUES (1,1,'x','go')`)
+	db.writer.Exec(`INSERT INTO pdf_text(file_id,page_num,content) VALUES (1,1,'power ground signal')`)
 
+	// The fast half: pdf_donors created, legacy tables LEFT IN PLACE (the slow
+	// drop is deferred off the boot path).
 	if err := db.MigratePdfIndexV1(); err != nil {
 		t.Fatalf("MigratePdfIndexV1: %v", err)
 	}
-
-	// Legacy tables must be gone.
-	for _, tbl := range []string{"pdf_pages", "pdf_text"} {
-		var name string
-		if err := db.writer.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name); err == nil {
-			t.Errorf("legacy table %q should be dropped", tbl)
-		}
-	}
-
-	// pdf_donors must exist.
 	var dn string
 	if err := db.writer.QueryRow(`SELECT name FROM sqlite_master WHERE name='pdf_donors'`).Scan(&dn); err != nil {
 		t.Errorf("pdf_donors not created: %v", err)
 	}
-
-	// Version key must be "1".
-	v, _ := db.GetConfig("pdf_index_schema_version")
-	if v != "1" {
-		t.Errorf("pdf_index_schema_version = %q, want \"1\"", v)
+	for _, tbl := range []string{"pdf_pages", "pdf_text"} {
+		var name string
+		if err := db.writer.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name); err != nil {
+			t.Errorf("legacy table %q should still exist before cleanup (got %v)", tbl, err)
+		}
 	}
 
-	// Re-run must be a no-op (no error).
+	// Re-run of the fast half must be a no-op (no error).
 	if err := db.MigratePdfIndexV1(); err != nil {
 		t.Errorf("re-run should be no-op, got %v", err)
+	}
+
+	// The slow half: cleanup drops the legacy tables.
+	if err := db.CleanupLegacyPdfTables(); err != nil {
+		t.Fatalf("CleanupLegacyPdfTables: %v", err)
+	}
+	for _, tbl := range []string{"pdf_pages", "pdf_text", "pdf_scan_errors"} {
+		var name string
+		if err := db.writer.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, tbl).Scan(&name); err == nil {
+			t.Errorf("legacy table %q should be dropped after cleanup", tbl)
+		}
+	}
+
+	// Cleanup must be idempotent — a second run with the tables already gone is
+	// a cheap no-op, not an error.
+	if err := db.CleanupLegacyPdfTables(); err != nil {
+		t.Errorf("re-run of cleanup should be no-op, got %v", err)
 	}
 
 	db.Close()
