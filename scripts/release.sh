@@ -20,6 +20,9 @@
 #   --no-desktop           Skip desktop build (skip prompt)
 #   --desktop-only         Desktop + GH release only — skip Docker/FTP/counter
 #   --skip-update-test     Skip the update-test sanity gate (default: run it)
+#   --skip-amd64-boot-test Skip the native-amd64 boot smoke-test on the NAS
+#                          (default: run it; boots the pushed image by digest on
+#                          real amd64 hardware and checks /api/health)
 #   --no-push              Don't push commit/tag to origin
 #   --no-gh-release        Don't create a GitHub Release
 #   --dry-run              Skip GHCR push, FTP, update-test, git push, GH release
@@ -32,6 +35,7 @@ IMPORTANT_FLAG="false"
 IMPORTANT_REASON=""
 DESKTOP_MODE="ask"          # ask | on | off | only
 SKIP_UPDATE_TEST="false"
+SKIP_AMD64_BOOT_TEST="false"
 NO_PUSH="false"
 NO_GH_RELEASE="false"
 
@@ -42,6 +46,7 @@ while [ $# -gt 0 ]; do
     --no-desktop)       DESKTOP_MODE="off"; shift;;
     --desktop-only)     DESKTOP_MODE="only"; shift;;
     --skip-update-test) SKIP_UPDATE_TEST="true"; shift;;
+    --skip-amd64-boot-test) SKIP_AMD64_BOOT_TEST="true"; shift;;
     --no-push)          NO_PUSH="true"; shift;;
     --no-gh-release)    NO_GH_RELEASE="true"; shift;;
     --dry-run)          DRY_RUN=true; shift;;
@@ -59,6 +64,7 @@ usage: ./scripts/release.sh v0.X.Y [flags]
   --no-desktop           skip desktop builds (skip prompt)
   --desktop-only         desktop + GH release only (skip Docker/FTP/counter)
   --skip-update-test     skip the update-test sanity gate
+  --skip-amd64-boot-test skip the native-amd64 boot smoke-test (NAS)
   --no-push              don't push commit/tag
   --no-gh-release        don't create a GitHub Release
   --dry-run              skip external side effects
@@ -275,6 +281,35 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
     echo "    update-test passed ✓"
   elif [ "$SKIP_UPDATE_TEST" = "true" ]; then
     echo "WARN: update-test harness SKIPPED via --skip-update-test"
+  fi
+
+  # --- Native-amd64 boot smoke-test of the PUSHED image ---
+  # update-test (above) builds + runs its image with a host-arch `docker build`,
+  # so on an Apple-Silicon maintainer machine it only validates the arm64 image
+  # — an amd64-only runtime boot failure ships undetected. That is exactly how
+  # v0.31.0 shipped a broken amd64 image. Boot the pushed multi-arch image by
+  # digest on real amd64 hardware (the NAS in deploy.conf) and confirm it serves
+  # /api/health. No signed manifest references this digest yet, so a failure here
+  # is fully recoverable (orphan GHCR tag, no client picks it up).
+  if [ "$SKIP_AMD64_BOOT_TEST" = "false" ] && [ "$DRY_RUN" != "true" ]; then
+    echo ">>> Native-amd64 boot smoke-test of pushed image (on NAS)"
+    SMOKE_RC=0
+    "$REPO_ROOT/scripts/amd64-boot-smoke.sh" "ghcr.io/alexeyinwerp/boardripper@$IMAGE_DIGEST" || SMOKE_RC=$?
+    if [ "$SMOKE_RC" -eq 0 ]; then
+      echo "    amd64 boot smoke-test passed ✓"
+    elif [ "$SMOKE_RC" -eq 2 ]; then
+      # Infra unavailable (no deploy.conf / NAS unreachable / no sshpass). Don't
+      # block a release on a transient outage, but make the gap loud.
+      echo "WARN: amd64 boot smoke-test could NOT run — the pushed amd64 image is UNVERIFIED." >&2
+      echo "      (no deploy.conf, NAS unreachable, or sshpass missing). Continuing." >&2
+    else
+      echo "ERROR: amd64 boot smoke-test FAILED — the pushed image does not boot on amd64." >&2
+      echo "       No signed manifest references this digest yet, so no client picks it up." >&2
+      echo "       Fix the boot failure and re-run (or pass --skip-amd64-boot-test to override)." >&2
+      exit 1
+    fi
+  elif [ "$SKIP_AMD64_BOOT_TEST" = "true" ]; then
+    echo "WARN: amd64 boot smoke-test SKIPPED via --skip-amd64-boot-test"
   fi
 
   # --- Pin orchestrator image (alpine for in-place restart) ---
