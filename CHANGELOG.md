@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## v0.31.1 — 2026-05-26
+
+Hotfix for v0.31.0, which failed to boot on `linux/amd64`. No user was left
+stranded — the orchestrator's healthcheck rolled every failed update back to the
+prior working version — but v0.31.0 could not be installed. This release makes
+the update succeed.
+
+### Fixes
+
+- **Fix boot failure: `Failed to open databank: unable to open database file: out of memory (14)`.** v0.31.0 bumped the Go toolchain to 1.25 (required by the new pdfium/wazero PDF indexer) but left `modernc.org/sqlite` pinned at v1.34.5, whose transpiled libc (v1.55.3) was generated for Go 1.21. Under the Go 1.25 runtime its memory layer failed at the first `mmap`, so SQLite could not open `databank.db` and the server exited before serving `/api/health`. Bumped `modernc.org/sqlite` to v1.50.1 (libc v1.72.3, regenerated for Go 1.25), kept in lock-step with the `golang:1.25` build image. Verified by an isolated `linux/amd64` boot test on real hardware. (`c4e2482`)
+- **Build backend by cross-compiling per `$TARGETARCH` from `$BUILDPLATFORM`** instead of QEMU-emulating the target toolchain during multi-arch buildx — faster and removes an emulation variable from the build. (`c4e2482`)
+
 ## v0.31.0 — 2026-05-26
 
 Library-wide PDF full-text search rebuilt on a real backend index, automatic
