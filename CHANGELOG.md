@@ -1,5 +1,35 @@
 # BoardRipper changelog
 
+## v0.31.0 — 2026-05-26
+
+Library-wide PDF full-text search rebuilt on a real backend index, automatic
+content-deduplication folded into the scan, streaming search results, and a
+Brand → Model → Board# reorganisation of the Board# view.
+
+### PDF text search (new backend index)
+
+- **Backend pdfium/wazero text index with SQLite FTS5 — replaces the old in-process rsc.io/pdf extractor.** PDF text now lives in a separate `pdfindex.db` (FTS5 external-content, porter+prefix tokenizer) built by a pooled pdfium-via-wazero engine with a per-file kill timer; the container stays CGO-free/scratch. Opening a PDF auto-indexes it via a client-side fast-path so it's searchable immediately; an autonomous backend indexer with a priority queue + stale-row watchdog handles the bulk. (`ba6f7c9`, `eb5ef97`, `fe99c03`, `97e6399`, `8846388`, `0076fbc`, `1fd9860`, `9faeed1`, `d8c2445`, `3bb915a`)
+- **Streaming search results with live progress.** `GET /api/databank/search/stream` emits one result per file as the FTS cursor finds it (NDJSON), so the list builds up immediately with a "Searching… N found" indicator instead of an ~8 s freeze. Results are one row per file with a hit count, single-click selects (info pane), double-click opens and jumps to the match. (`37c42a8`, `f9739ec`, `051d5ac`, `4b89a6e`, `182464a`)
+- **Dedicated PDF Search tab** with donor-scoped search, a donor-list management view, folder-scoped indexing ("Index this folder"), and a backend progress UI with ETA/rate and failed-file drill-down. (`f602566`, `a67bf8e`, `1457c11`, `b622427`, `16bd267`, `ca1125d`)
+- **Watermark terms sync to the backend** and offer a reindex of affected files when changed. Container memory floor raised to 1 GB; Go base bumped to 1.25 for the wazero runtime. (`77c1b96`, `f94134c`, `3168ffa`)
+- **Search fix:** prefix-match terms so a partial part number matches its variants (`AOZ5332` → `AOZ5332QI`). (`8bc3ebe`)
+
+### Library content deduplication
+
+- **Duplicates are detected and marked during the filesystem scan**, so each scan yields a clean, deduped file list and the PDF indexer never re-extracts byte-identical copies. Detection is size-bucket + sampled hash (`sha256(size ‖ full-file ≤192 KiB else head/mid/tail 64 KiB)`) — a unique byte size is never read. (`51311e7`, `34920e1`, `86ea2f1`, `58f0094`, `b92d939`)
+- **Parallel hashing + same-(name,size) representative.** The dedup phase hashes with a worker pool and reads one representative per same-named/sized cluster instead of every copy — much faster on large libraries, still byte-exact. (`08f2b6f`)
+- **The PDF indexer enumerates only canonical files** — non-canonical duplicates never reach its work queue. (`815bdeb`, `88c007d`, `3d5df43`)
+- **Content-oriented views collapse duplicates; the Folder view shows everything.** Board#/Model and search results show one canonical row + an "N copies" badge across the whole view (even across board numbers); the on-demand "Find duplicates" pass + stats live in Settings ▸ Library. (`f152df3`, `2be750e`, `b3e6e4b`, `c2c814d`, `8844394`, `2525c13`)
+- **Reset PDF Text** wipes the index by recreating `pdfindex.db` (O(1), not a multi-minute row delete) and is no longer gated on a running file scan. (`61f626d`, `6b8c514`, `10a0c3a`, `9055b75`)
+
+### Library views
+
+- **Board# view regrouped Brand → Model → Board#**, with same-named files under a board number folded into an expandable spoiler so re-saved copies from different sources don't clog the tree. The Model tab is hidden (its grouping is now redundant). (`85c2e03`, `f485694`)
+
+### Scan
+
+- **Auto-binding is off by default** (opt-in via `auto_bind`) — the O(boards×pdfs) match loop was adding hours to large-library scans. Scan status now updates live during the long walk/compare phases. (`a937f2d`, `e296fbc`, `fb828c9`)
+
 ## v0.30.13 — 2026-05-25
 
 Cross-lookup between two linked PDFs — for boards that only exist as PDF — plus
