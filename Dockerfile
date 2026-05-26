@@ -7,7 +7,20 @@ COPY src/frontend/ ./
 RUN npm run build
 
 # Stage 2: Build backend
-FROM golang:1.25-alpine AS backend
+# Run the build stage on the BUILD host's native arch and cross-compile to the
+# target arch (GOARCH=$TARGETARCH). CGO is disabled, so cross-compilation is
+# trivial and skips slow QEMU emulation of the target toolchain during buildx.
+#
+# Go 1.25 is required by go-pdfium (its go.mod declares `go 1.25.0`). The PDF
+# text index pulled that dependency in, which bumped the toolchain 1.22 -> 1.25.
+# modernc.org/sqlite MUST be kept in lock-step with the toolchain: v1.34.5
+# (transpiled libc generated for Go 1.21) crashed at runtime under Go 1.25 with
+# "unable to open database file: out of memory (14)" the instant the databank
+# DB was opened (shipped broken in v0.31.0). v1.50.1 ships libc regenerated for
+# Go 1.25 and boots cleanly. If the golang base image moves again, bump
+# modernc.org/sqlite to a release whose go.mod `go` directive matches.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS backend
+ARG TARGETARCH
 WORKDIR /app/backend
 COPY src/backend/go.* ./
 RUN go mod download
@@ -15,7 +28,7 @@ COPY src/backend/ ./
 ARG APP_VERSION=dev
 ARG PUBKEY=""
 ARG SOURCES="https://ghcr.io/alexeyinwerp/boardripper,https://www.ripperdoc.de/boardripper"
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \
     -ldflags="-s -w \
         -X boardripper/updater.Version=${APP_VERSION} \
         -X boardripper/updater.PubKey=${PUBKEY} \
