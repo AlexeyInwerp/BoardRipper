@@ -1594,9 +1594,10 @@ class BoardStore extends Emitter {
   }
 
   /** Bump a layer's traces to the top of the z-stack (transient). Passing the
-   *  currently-selected index clears it. Selecting a layer reveals it (turns it
-   *  on if hidden). Has no z-order effect while a layer is pinned (see
-   *  fixateLayer) — the pin is what controls order then. */
+   *  currently-selected index clears it. Selecting reveals the layer *while
+   *  selected* (the renderer shows it even if its visibility toggle is off) but
+   *  does NOT mutate the toggle — deselecting reverts it. Has no z-order effect
+   *  while a layer is pinned (see fixateLayer). */
   selectLayer(layerIndex: number | null) {
     const tab = this.activeTab;
     if (!tab) return;
@@ -1604,7 +1605,6 @@ class BoardStore extends Emitter {
     // Toggle off when re-selecting the same layer.
     const next = valid && tab.selectedLayerIndex !== layerIndex ? layerIndex : null;
     tab.selectedLayerIndex = next;
-    if (next != null) this._revealLayer(next);
     this.notify();
   }
 

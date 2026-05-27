@@ -1439,22 +1439,28 @@ export class BoardRenderer {
     const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
-    // Per-layer trace containers
+    // Per-layer trace containers. A *selected* layer is revealed transiently —
+    // shown even if its visibility toggle is off — without mutating its state
+    // (deselecting reverts it). Pinning, by contrast, turns the layer on
+    // permanently in the store, so the pinned layer is already visible here.
+    const { selectedLayerIndex, fixatedLayerIndex } = boardStore;
     for (let i = 0; i < scene.traceLayerContainers.length; i++) {
       const c = scene.traceLayerContainers[i];
-      if (c) c.visible = showTraces && (i < layerStates.length ? layerStates[i].visible : true);
+      if (!c) continue;
+      const stateVisible = i < layerStates.length ? layerStates[i].visible : true;
+      c.visible = showTraces && (stateVisible || i === selectedLayerIndex);
     }
     // Layer emphasis: bump one layer's traces to the top and dim the rest.
-    // A pinned layer wins outright; otherwise the selected layer bumps. The
-    // emphasized layer must be visible, else nothing is emphasized (avoids an
-    // all-dim / nothing-on-top state when the pinned layer is hidden).
+    // A pinned layer wins outright (it's kept visible); otherwise the selected
+    // layer bumps (always revealed above). A pinned layer the user has since
+    // re-hidden drops out of emphasis (avoids an all-dim / nothing-on-top state).
     if (scene.traceLayerContainers.length > 0) {
-      const { selectedLayerIndex, fixatedLayerIndex } = boardStore;
-      const isVisible = (i: number | null): i is number =>
-        i != null && i >= 0 && i < layerStates.length && layerStates[i].visible;
+      const pinnedVisible = fixatedLayerIndex != null
+        && fixatedLayerIndex < layerStates.length
+        && layerStates[fixatedLayerIndex].visible;
       const emphasized: number | null =
-          isVisible(fixatedLayerIndex) ? fixatedLayerIndex
-        : (fixatedLayerIndex == null && isVisible(selectedLayerIndex)) ? selectedLayerIndex
+          pinnedVisible ? fixatedLayerIndex
+        : (fixatedLayerIndex == null && selectedLayerIndex != null) ? selectedLayerIndex
         : null;
       for (let i = 0; i < scene.traceLayerContainers.length; i++) {
         const c = scene.traceLayerContainers[i];

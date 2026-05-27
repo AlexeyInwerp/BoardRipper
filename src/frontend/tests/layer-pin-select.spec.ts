@@ -19,6 +19,7 @@ type StoreWin = {
   __boardStore?: {
     selectedLayerIndex: number | null;
     fixatedLayerIndex: number | null;
+    activeTab?: { layerStates: { visible: boolean }[] };
   };
 };
 
@@ -26,6 +27,8 @@ const selectedIdx = (page: import('@playwright/test').Page) =>
   page.evaluate(() => (window as unknown as StoreWin).__boardStore!.selectedLayerIndex);
 const fixatedIdx = (page: import('@playwright/test').Page) =>
   page.evaluate(() => (window as unknown as StoreWin).__boardStore!.fixatedLayerIndex);
+const layerVisible = (page: import('@playwright/test').Page, i: number) =>
+  page.evaluate((idx) => (window as unknown as StoreWin).__boardStore!.activeTab!.layerStates[idx].visible, i);
 
 async function loadMultilayer(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -84,7 +87,7 @@ test('pin fixates one layer; pinning another moves it; clicking again unpins', a
   expect(await fixatedIdx(page)).toBe(null);
 });
 
-test('selecting or pinning a hidden layer reveals it', async ({ page }) => {
+test('selecting reveals transiently without flipping the toggle; pinning turns it on', async ({ page }) => {
   await loadMultilayer(page);
   const rows = page.locator('.layer-list-container .layer-item');
 
@@ -92,13 +95,21 @@ test('selecting or pinning a hidden layer reveals it', async ({ page }) => {
   await expect(rows.nth(1)).toHaveClass(/layer-hidden/);
   await expect(rows.nth(2)).toHaveClass(/layer-hidden/);
 
-  // Selecting a hidden layer turns it on.
+  // Selecting a hidden layer must NOT mutate its visibility toggle — it stays
+  // "hidden" in state (the reveal is render-only, reverting on deselect).
   await rows.nth(1).locator('.layer-name').click();
-  await expect(rows.nth(1)).not.toHaveClass(/layer-hidden/);
+  await expect(rows.nth(1)).toHaveClass(/layer-selected/);
+  await expect(rows.nth(1)).toHaveClass(/layer-hidden/);
+  expect(await layerVisible(page, 1)).toBe(false);
 
-  // Pinning a hidden layer turns it on.
+  // Deselecting leaves it exactly as it was — still hidden.
+  await rows.nth(1).locator('.layer-name').click();
+  expect(await layerVisible(page, 1)).toBe(false);
+
+  // Pinning a hidden layer turns it on permanently.
   await rows.nth(2).locator('.layer-pin').click();
   await expect(rows.nth(2)).not.toHaveClass(/layer-hidden/);
+  expect(await layerVisible(page, 2)).toBe(true);
 });
 
 test('pin wins: selecting other layers never moves the pin', async ({ page }) => {
