@@ -80,6 +80,12 @@ export interface BoardTab {
   showGhosts: boolean;
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
+  /** Layer whose traces are bumped to the top of the z-stack while nothing is
+   *  pinned (transient — set by clicking a layer row). null = none. */
+  selectedLayerIndex: number | null;
+  /** Pinned layer whose traces stay on top regardless of selection. Exactly
+   *  one at a time; overrides selectedLayerIndex while set. null = none. */
+  fixatedLayerIndex: number | null;
   pdfFileNames: string[];  // references into pdfFiles registry (1:N)
   /** When true, parts flagged in board.ghosts are filtered from the rendered
    *  parts list. Set via toggleHideGhosts(). Persists across revision switches
@@ -533,6 +539,8 @@ class BoardStore extends Emitter {
   get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
+  get selectedLayerIndex(): number | null { return this.activeTab?.selectedLayerIndex ?? null; }
+  get fixatedLayerIndex(): number | null { return this.activeTab?.fixatedLayerIndex ?? null; }
   get dimMode(): 'off' | 'dim' | 'darklight' { return this.activeTab?.dimMode ?? 'dim'; }
   /** @deprecated alias kept for backward compat — callers should migrate to dimMode */
   get showNetDim(): boolean { return this.dimMode === 'dim'; }
@@ -728,6 +736,8 @@ class BoardStore extends Emitter {
         showLabels: true,
         showGhosts: true,
         layerStates: [],
+        selectedLayerIndex: null,
+        fixatedLayerIndex: null,
         pdfFileNames: [],
         cacheKey: '',
         hideGhosts: false,
@@ -917,6 +927,8 @@ class BoardStore extends Emitter {
       showLabels: true,
       showGhosts: true,
       layerStates: [],
+      selectedLayerIndex: null,
+      fixatedLayerIndex: null,
       pdfFileNames: [],
       hideGhosts: false,
       swappedGhostPairs: new Set<string>(),
@@ -1567,6 +1579,30 @@ class BoardStore extends Emitter {
     const states = [...tab.layerStates];
     states[layerIndex] = { ...states[layerIndex], color };
     this.updateActiveTab({ layerStates: states });
+    this.notify();
+  }
+
+  /** Bump a layer's traces to the top of the z-stack (transient). Passing the
+   *  currently-selected index clears it. Has no z-order effect while a layer is
+   *  pinned (see fixateLayer) — the pin is what controls order then. */
+  selectLayer(layerIndex: number | null) {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const next = (layerIndex != null && layerIndex >= 0 && layerIndex < tab.layerStates.length)
+      ? layerIndex : null;
+    tab.selectedLayerIndex = tab.selectedLayerIndex === next ? null : next;
+    this.notify();
+  }
+
+  /** Pin one layer's traces on top (sticky — survives selection changes).
+   *  Passing the currently-pinned index unpins it. Only one layer can be
+   *  pinned; setting a new index replaces any previous pin. */
+  fixateLayer(layerIndex: number | null) {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const next = (layerIndex != null && layerIndex >= 0 && layerIndex < tab.layerStates.length)
+      ? layerIndex : null;
+    tab.fixatedLayerIndex = tab.fixatedLayerIndex === next ? null : next;
     this.notify();
   }
 

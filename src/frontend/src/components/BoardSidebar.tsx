@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { IconPin, IconPinFilled } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
@@ -128,6 +129,8 @@ function LayersTab({ tabId }: { tabId: number }) {
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
   const layerStates = tab?.layerStates ?? [];
+  const selectedLayerIndex = tab?.selectedLayerIndex ?? null;
+  const fixatedLayerIndex = tab?.fixatedLayerIndex ?? null;
   const showComponents = tab?.showComponents ?? true;
   const showVias = tab?.showVias ?? false;
   const showTraces = tab?.showTraces ?? true;
@@ -334,10 +337,17 @@ function LayersTab({ tabId }: { tabId: number }) {
         </div>
       </div>
 
+      {layerStates.length > 1 && (
+        <div className="layer-list-hint">
+          Click a layer to bump it on top · pin one to keep it there
+        </div>
+      )}
       <div className="layer-list-container">
         {layerStates.map((layer, idx) => {
           const hasNet = highlightedLayers.has(idx);
           const blinkHidden = hasNet && !layer.visible;
+          const isSelected = selectedLayerIndex === idx;
+          const isPinned = fixatedLayerIndex === idx;
           return (
             <div
               key={idx}
@@ -346,11 +356,15 @@ function LayersTab({ tabId }: { tabId: number }) {
                 layer.visible ? '' : 'layer-hidden',
                 hasNet ? 'layer-net-active' : '',
                 blinkHidden ? 'layer-blink' : '',
+                isSelected ? 'layer-selected' : '',
+                isPinned ? 'layer-pinned' : '',
               ].join(' ')}
+              onClick={() => boardStore.selectLayer(idx)}
+              title="Click to bump this layer on top"
             >
               <button
                 className={`layer-visibility ${layer.visible ? 'on' : 'off'}`}
-                onClick={() => boardStore.toggleLayer(idx)}
+                onClick={(e) => { e.stopPropagation(); boardStore.toggleLayer(idx); }}
                 title={layer.visible ? 'Hide layer' : 'Show layer'}
               >
                 {layer.visible ? '●' : '○'}
@@ -359,10 +373,19 @@ function LayersTab({ tabId }: { tabId: number }) {
                 type="color"
                 className="layer-color-picker"
                 value={colorToHex(layer.color)}
+                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => boardStore.setLayerColor(idx, hexToColor(e.target.value))}
                 title="Change layer color"
               />
               <span className="layer-name">{layer.name}</span>
+              <button
+                className={`layer-pin ${isPinned ? 'pinned' : ''}`}
+                onClick={(e) => { e.stopPropagation(); boardStore.fixateLayer(idx); }}
+                title={isPinned ? 'Unpin — stop keeping this layer on top' : 'Pin this layer on top'}
+                aria-pressed={isPinned}
+              >
+                {isPinned ? <IconPinFilled size={14} stroke={2} /> : <IconPin size={14} stroke={2} />}
+              </button>
             </div>
           );
         })}

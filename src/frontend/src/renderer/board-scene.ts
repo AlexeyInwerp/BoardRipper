@@ -572,6 +572,9 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
         arr.push(t);
       }
       traceLayer = new Container();
+      // Per-layer containers restack by zIndex so one layer can be bumped to
+      // the top (see BoardRenderer.applyLayerVisibility layer-emphasis pass).
+      traceLayer.sortableChildren = true;
       for (const [layerIdx, layerTraces] of byLayer) {
         const layerContainer = new Container();
         layerContainer.label = `trace-layer-${layerIdx}`;

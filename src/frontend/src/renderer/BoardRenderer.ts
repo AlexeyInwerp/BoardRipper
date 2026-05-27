@@ -42,6 +42,10 @@ const COLORS = BOARD_COLORS;
  *  the cyan selection set. Cyan to tie the glow to the cyan selection outline. */
 const SHARED_NET_GLOW = 0x00e5ff;
 
+/** Container alpha applied to non-emphasized trace layers when one layer is
+ *  bumped/pinned to the top, so the emphasized layer visually stands out. */
+const LAYER_DIM_ALPHA = 0.25;
+
 // Spatial culling: scene-build tags per-grid-cell + per-part containers with
 // `cullable + cullArea` in board-mil coords, but PixiJS v8 culling is opt-in.
 // Without CullerPlugin the culler never runs and every BitmapText is walked
@@ -1439,6 +1443,25 @@ export class BoardRenderer {
     for (let i = 0; i < scene.traceLayerContainers.length; i++) {
       const c = scene.traceLayerContainers[i];
       if (c) c.visible = showTraces && (i < layerStates.length ? layerStates[i].visible : true);
+    }
+    // Layer emphasis: bump one layer's traces to the top and dim the rest.
+    // A pinned layer wins outright; otherwise the selected layer bumps. The
+    // emphasized layer must be visible, else nothing is emphasized (avoids an
+    // all-dim / nothing-on-top state when the pinned layer is hidden).
+    if (scene.traceLayerContainers.length > 0) {
+      const { selectedLayerIndex, fixatedLayerIndex } = boardStore;
+      const isVisible = (i: number | null): i is number =>
+        i != null && i >= 0 && i < layerStates.length && layerStates[i].visible;
+      const emphasized: number | null =
+          isVisible(fixatedLayerIndex) ? fixatedLayerIndex
+        : (fixatedLayerIndex == null && isVisible(selectedLayerIndex)) ? selectedLayerIndex
+        : null;
+      for (let i = 0; i < scene.traceLayerContainers.length; i++) {
+        const c = scene.traceLayerContainers[i];
+        if (!c) continue;
+        c.zIndex = i === emphasized ? 10 : 0;
+        c.alpha = emphasized === null || i === emphasized ? 1 : LAYER_DIM_ALPHA;
+      }
     }
     // Via overlay
     if (scene.viaLayer) scene.viaLayer.visible = showVias;
