@@ -374,8 +374,8 @@ export const DEFAULTS: RenderSettings = {
   ],
   pdfWatermarkFilterEnabled: true,
 
-  pdfRenderMode: 'auto',
-  pdfEnableBoundaries: false,
+  pdfRenderMode: 'standard',
+  pdfEnableBoundaries: true,
 
   showPadVertices: false,
   showVertexNumbers: false,
