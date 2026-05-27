@@ -470,6 +470,23 @@ Test probe definitions with coordinates, sizes, and fixture assignments. Referen
 ### Fixture Registry
 Top/bottom fixture variants with workspace dimensions. Contains probe size defaults (e.g., "100 Mil" = 70.00 mils diameter).
 
+### Probe/fixture skip fragility → parts-section scan recovery
+The probe/fixture/mysterious-block region is **skipped**, not rendered — its only
+job is to advance the cursor to the Parts section. The skip is a long chain of
+fixed-size reads plus a few writer-variant heuristics, and it mis-tracks on some
+files: e.g. the Landrex/Gigabyte GPU board `GIGABYTE P104-100.tvw` has a probe
+whose body declares a garbage `itemCount` (`0x00FF0000`), so the skip devours the
+rest of the file to EOF. The cursor then sits past the Parts section and **every
+component is silently dropped** (0 parts → "board opens but has no pins or nets").
+
+Rather than perfectly parse this skipped region across all variants, the parser
+validates the post-skip cursor with `looksLikePartsHeader` (u32 partCount in
+range, followed by a run of part records with printable ref-designators). If it
+fails, `scanForPartsSection` scans forward from the start of the probe region for
+the first position that satisfies that signature — the same recovery strategy the
+net table uses (`scanForNetTable`) after a layer-parse miss. Working files are
+unaffected: their cursor already lands on a valid header, so no scan runs.
+
 ### Test Accessibility Enum
 ```c
 enum Untestable {

@@ -147,4 +147,31 @@ test.describe('TVW Parser', () => {
     expect(Number.isFinite(board.bounds.minX)).toBe(true);
     expect(Number.isFinite(board.bounds.maxX)).toBe(true);
   });
+
+  test('Landrex/Gigabyte P104-100: parts recovered when probe-skip overshoots', async () => {
+    // Regression: on this board the probe/fixture/mysterious-block skip mis-tracks
+    // (one probe body reads a garbage itemCount), running the cursor to EOF — which
+    // used to drop EVERY component (0 parts / 0 pins, "board has no pins or nets").
+    // The parts-section scan recovery relocates the parts list. Sample lives in
+    // samples/BROKEN/ (local-only), so skip gracefully where it isn't present.
+    const tvwFile = path.resolve(__dirname, '../../../samples/BROKEN/GIGABYTE P104-100.tvw');
+    test.skip(!fs.existsSync(tvwFile), 'sample GIGABYTE P104-100.tvw not present');
+
+    const { parseTVW } = await import('../src/parsers/tvw-parser');
+    const buf = fs.readFileSync(tvwFile);
+    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    const board = parseTVW(ab);
+
+    expect(board.format).toBe('TVW');
+    expect(board.parts.length).toBeGreaterThan(2000); // ~2525 real parts (was 0)
+    const totalPins = board.parts.reduce((s, p) => s + p.pins.length, 0);
+    expect(totalPins).toBeGreaterThan(5000);
+    // Every recovered coordinate must be finite.
+    for (const part of board.parts) {
+      for (const pin of part.pins) {
+        expect(Number.isFinite(pin.position.x)).toBe(true);
+        expect(Number.isFinite(pin.position.y)).toBe(true);
+      }
+    }
+  });
 });

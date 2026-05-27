@@ -1049,6 +1049,66 @@ function scanForNetTable(r: TvwReader): { pos: number; count: number } | null {
   return null;
 }
 
+/** True if `pos` holds a length-prefixed printable-ASCII string of 1..40 chars
+ *  (a plausible part ref-designator). Cheap raw-view check, no allocation. */
+function isPrintablePstrAt(view: DataView, pos: number, size: number): boolean {
+  if (pos >= size) return false;
+  const len = view.getUint8(pos);
+  if (len < 1 || len > 40 || pos + 1 + len > size) return false;
+  for (let i = 0; i < len; i++) {
+    const ch = view.getUint8(pos + 1 + i);
+    if (ch < 0x20 || ch > 0x7E) return false;
+  }
+  return true;
+}
+
+/** Non-destructively verify that `pos` begins a plausible parts section:
+ *  a u32 partCount in range followed by several full part records whose
+ *  ref-designators are printable. Restores the reader position afterwards. */
+function looksLikePartsHeader(r: TvwReader, pos: number): boolean {
+  const save = r.tell();
+  try {
+    r.seek(pos);
+    const partCount = r.readU32();
+    r.readU32(); // skip dword
+    if (partCount < 2 || partCount > 50000) return false;
+    const probe = Math.min(partCount, 16);
+    for (let i = 0; i < probe; i++) {
+      const part = loadPart(r);
+      if (!/^[\x20-\x7E]{1,40}$/.test(part.name)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    r.seek(save);
+  }
+}
+
+/** Scan forward from `from` for the parts-section header. The probe/fixture/
+ *  mysterious-block skip is heuristic and overshoots on some writer variants
+ *  (e.g. Landrex/Gigabyte GPU boards), landing the cursor past the parts list
+ *  — which silently drops every component. This relocates the parts section
+ *  the same way scanForNetTable recovers the net table. Returns the partCount
+ *  offset, or null. */
+function scanForPartsSection(r: TvwReader, from: number): number | null {
+  const view = r.getView();
+  const size = r.size();
+  const end = size - 8;
+  for (let p = from; p < end; p++) {
+    const partCount = view.getUint32(p, true);
+    if (partCount < 2 || partCount > 50000) continue;
+    // cheap gate: first part's ref-des (at p+8) must be a printable pstr
+    if (!isPrintablePstrAt(view, p + 8, size)) continue;
+    // strong gate: a run of full part records parses with printable names
+    if (looksLikePartsHeader(r, p)) {
+      log.parser.log(`parts section scan hit at 0x${p.toString(16)}: partCount=${partCount}`);
+      return p;
+    }
+  }
+  return null;
+}
+
 // ─── Main Parse Function ────────────────────────────────────────────────────
 
 function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
@@ -1137,6 +1197,7 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   log.parser.log(`${nets.length} nets loaded`);
 
   // ─ Probes, fixtures, mysterious block (skip)
+  const probeRegionStart = r.tell();
   try {
     skipProbeRegistry(r);
     skipFixtureRegistry(r);
@@ -1146,6 +1207,22 @@ function parseTvwBinary(buffer: ArrayBuffer): TvwBoard {
   }
 
   // ─ Parts
+  //
+  // The probe/fixture/mysterious-block skip above is heuristic and mis-tracks on
+  // some writer variants, leaving the cursor past the parts list (which would
+  // silently drop every component). If the current position doesn't begin a
+  // plausible parts header, scan forward from the start of the probe region to
+  // relocate it — the same recovery the net table uses after a layer-parse miss.
+  if (!looksLikePartsHeader(r, r.tell())) {
+    const found = scanForPartsSection(r, probeRegionStart);
+    if (found !== null) {
+      log.parser.warn(`parts not at expected offset 0x${r.tell().toString(16)}; recovered parts section at 0x${found.toString(16)}`);
+      r.seek(found);
+    } else {
+      log.parser.warn(`could not locate parts section after probe/fixture skip`);
+    }
+  }
+
   const parts: TvwPart[] = [];
   try {
     const partCount = r.readU32();
