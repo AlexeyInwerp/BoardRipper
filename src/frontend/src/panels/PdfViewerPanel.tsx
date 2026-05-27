@@ -938,6 +938,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const clampPan = useCallback(() => {
     if (!renderSettingsStore.settings.pdfEnableBoundaries) return;
 
+    // Blocking mode locks zoom to ≥ fit-width (100%): a page is never shorter
+    // than the viewport width allows, so the scroll-flip threshold keeps a wide
+    // dead-zone and can't bounce. Snap up here too so a bookmark restore — or
+    // toggling the mode on while already zoomed out — self-corrects on the next
+    // sync rather than leaving the page in the bounce-prone sub-100% range.
+    if (zoomRef.current < 1) zoomRef.current = 1;
+
     const container = containerRef.current;
     if (!container) return;
     const containerW = container.clientWidth;
@@ -2421,14 +2428,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // Min zoom floor: 0.5 (50% of fit-to-width). The fit-to-width-only
-        // lock from a876c74 made multi-page navigation feel "stuck" — at
-        // zoom > 1 each page is taller than the viewport, and the flip
-        // threshold takes many wheel events to reach. 50% restores the
-        // zoom-out-to-see-adjacent-pages workflow without going so far out
-        // that the boundary-bounce glitch the lock was masking re-surfaces.
+        // Min zoom floor: in blocking mode (Pan Boundaries) lock at fit-width
+        // (100%) so the page can't shrink into the scroll-flip bounce zone
+        // (the boundary-bounce glitch a876c74/e5ef926 masked); free mode keeps
+        // the 0.5 floor that restored the zoom-out-to-see-adjacent-pages flow.
         const cssH = pageCssHRef.current;
-        const minZoom = 0.5;
+        const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
 
         // Trackpad pinch has small deltaY values — use higher sensitivity
         const speed = isTrackpadPinch ? TRACKPAD_PINCH_SPEED : MOUSE_WHEEL_SPEED;
@@ -2598,7 +2603,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
 
     const onGestureChange = (e: GestureEvent) => {
-      const minZoom = 0.5;
+      const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
       const newZoom = Math.max(minZoom, Math.min(startZoom * e.scale, 10));
       const ratio = newZoom / zoomRef.current;
       panRef.current = {
@@ -2682,7 +2687,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const rawScale = dist / pinchStartDistRef.current;
         const scale = 1 + (rawScale - 1) * TOUCH_PINCH_FACTOR;
         const oldZoom = zoomRef.current;
-        const minZoom = 0.5;
+        const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
         const newZoom = Math.max(minZoom, Math.min(pinchStartZoomRef.current * scale, 10));
         const ratio = newZoom / oldZoom;
         const mid = pinchMidRef.current;
@@ -3024,7 +3029,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const factor = Math.pow(2, 1.3 * (rawDelta / 500));
       const effFactor = detail.direction === 'in' ? factor : 1 / factor;
       const mid = { x: containerEl.clientWidth / 2, y: containerEl.clientHeight / 2 };
-      const minZoom = 0.5;
+      const minZoom = renderSettingsStore.settings.pdfEnableBoundaries ? 1 : 0.5;
       const oldZ = zoomRef.current;
       const newZ = Math.max(minZoom, Math.min(oldZ * effFactor, 10));
       const ratio = newZ / oldZ;
