@@ -84,6 +84,23 @@ test('pin fixates one layer; pinning another moves it; clicking again unpins', a
   expect(await fixatedIdx(page)).toBe(null);
 });
 
+test('selecting or pinning a hidden layer reveals it', async ({ page }) => {
+  await loadMultilayer(page);
+  const rows = page.locator('.layer-list-container .layer-item');
+
+  // Only the primary (Top) layer is visible by default; inner/bottom are hidden.
+  await expect(rows.nth(1)).toHaveClass(/layer-hidden/);
+  await expect(rows.nth(2)).toHaveClass(/layer-hidden/);
+
+  // Selecting a hidden layer turns it on.
+  await rows.nth(1).locator('.layer-name').click();
+  await expect(rows.nth(1)).not.toHaveClass(/layer-hidden/);
+
+  // Pinning a hidden layer turns it on.
+  await rows.nth(2).locator('.layer-pin').click();
+  await expect(rows.nth(2)).not.toHaveClass(/layer-hidden/);
+});
+
 test('pin wins: selecting other layers never moves the pin', async ({ page }) => {
   await loadMultilayer(page);
   const rows = page.locator('.layer-list-container .layer-item');

@@ -1582,27 +1582,43 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
+  /** Turn a layer on if it's currently hidden — so bumping/pinning it actually
+   *  reveals something. No-op when already visible or index out of range. */
+  private _revealLayer(layerIndex: number) {
+    const tab = this.activeTab;
+    if (!tab || layerIndex < 0 || layerIndex >= tab.layerStates.length) return;
+    if (tab.layerStates[layerIndex].visible) return;
+    const states = [...tab.layerStates];
+    states[layerIndex] = { ...states[layerIndex], visible: true };
+    tab.layerStates = states;
+  }
+
   /** Bump a layer's traces to the top of the z-stack (transient). Passing the
-   *  currently-selected index clears it. Has no z-order effect while a layer is
-   *  pinned (see fixateLayer) — the pin is what controls order then. */
+   *  currently-selected index clears it. Selecting a layer reveals it (turns it
+   *  on if hidden). Has no z-order effect while a layer is pinned (see
+   *  fixateLayer) — the pin is what controls order then. */
   selectLayer(layerIndex: number | null) {
     const tab = this.activeTab;
     if (!tab) return;
-    const next = (layerIndex != null && layerIndex >= 0 && layerIndex < tab.layerStates.length)
-      ? layerIndex : null;
-    tab.selectedLayerIndex = tab.selectedLayerIndex === next ? null : next;
+    const valid = layerIndex != null && layerIndex >= 0 && layerIndex < tab.layerStates.length;
+    // Toggle off when re-selecting the same layer.
+    const next = valid && tab.selectedLayerIndex !== layerIndex ? layerIndex : null;
+    tab.selectedLayerIndex = next;
+    if (next != null) this._revealLayer(next);
     this.notify();
   }
 
   /** Pin one layer's traces on top (sticky — survives selection changes).
-   *  Passing the currently-pinned index unpins it. Only one layer can be
-   *  pinned; setting a new index replaces any previous pin. */
+   *  Passing the currently-pinned index unpins it. Pinning a layer reveals it
+   *  (turns it on if hidden). Only one layer can be pinned; setting a new index
+   *  replaces any previous pin. */
   fixateLayer(layerIndex: number | null) {
     const tab = this.activeTab;
     if (!tab) return;
-    const next = (layerIndex != null && layerIndex >= 0 && layerIndex < tab.layerStates.length)
-      ? layerIndex : null;
-    tab.fixatedLayerIndex = tab.fixatedLayerIndex === next ? null : next;
+    const valid = layerIndex != null && layerIndex >= 0 && layerIndex < tab.layerStates.length;
+    const next = valid && tab.fixatedLayerIndex !== layerIndex ? layerIndex : null;
+    tab.fixatedLayerIndex = next;
+    if (next != null) this._revealLayer(next);
     this.notify();
   }
 
