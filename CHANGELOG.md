@@ -1,5 +1,29 @@
 # BoardRipper changelog
 
+## v0.31.3 — 2026-05-29
+
+A roundup release: new multilayer trace-layer controls, PDF viewer default and
+zoom refinements, two format-robustness fixes (PADS rejection, TVW parts
+recovery), and a batch of audit-driven backend/UI hardening.
+
+### Features
+
+- **Multilayer trace layers — bump/pin a layer to the top, and reveal it on select or pin.** On butterfly/multi-layer boards you can promote a copper layer above the others; selecting or pinning a layer now reveals it (a bare select reveals transiently, only a pin flips its persistent visibility). (`67dcd9c`, `b2a0e09`, `85b2650`)
+- **PDF viewer defaults: Pan Boundaries ON and Standard render mode out of the box**, with zoom locked to fit-width while Pan Boundaries is active so the view can't bounce off the page edge. (`1b50386`, `c965a31`)
+
+### Fixes
+
+- **Mentor PADS Layout binary `.pcb` files are now rejected with a clear message** instead of the cryptic `XZZ: invalid header offsets`. The `.pcb` extension is shared with the supported XZZ boardview format; PADS Layout's native binary database (magic `00 FF 26 20`) is detected and refused up-front. (`43b7d64`)
+- **TVW: recover the parts list when the probe/fixture skip overshoots.** On some Landrex/Gigabyte boards a probe body declared a garbage element count, running the parser cursor to EOF and silently dropping every component (board opened with copper but no parts/pins/nets). A parts-section scan now relocates the list — the same recovery the net table already uses. (`315e0ae`)
+- **Renderer: type-hidden parts are truly hidden, and the MEC shield ref-designator prefix is handled.** (`d0136ec`)
+- **UI hardening: AZERTY keyboard shortcuts, a panel error boundary, and a unified ComponentInfo** across its two render sites. (`ac94e40`)
+- **Backend: update-progress no longer 500s** (gzip Flusher/SSE fix), plus exact-byte content dedup and zero-byte-file skip during scans; BOM reason labels de-duplicated. (`deb43ef`, `42c2d22`)
+
+### Internal
+
+- **DevOps/CI:** `.dockerignore`, CI Go 1.25, release-signature self-verify, and a native-amd64 boot smoke-test gate before publishing. (`271ea48`, `048f33e`)
+- **Tests/docs:** XZZ parser spec with sample-fixture skip-guards; documentation corrections (watermark terms, deps, store names, boards.db). (`da41437`, `657a9cf`)
+
 ## v0.31.2 — 2026-05-26
 
 The real fix for the v0.31.0 update failure. v0.31.1 turned out to address the
