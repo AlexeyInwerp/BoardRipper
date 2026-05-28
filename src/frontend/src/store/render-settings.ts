@@ -411,7 +411,7 @@ export const DEFAULTS: RenderSettings = {
     { id: 'connector', label: 'Connector',  prefixes: ['J', 'SW'],             color: '#2a5080', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
     { id: 'fuse',      label: 'Fuse',       prefixes: ['F'],                   color: '#efefef', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
     { id: 'testpoint', label: 'Test Point', prefixes: ['TP'],                  color: '#4a9060', padShape: 'round',   bodyShape: 'natural', hidden: false, hierarchyBridge: false },
-    { id: 'shield',    label: 'Shield',     prefixes: ['SH'],                  color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
+    { id: 'shield',    label: 'Shield',     prefixes: ['SH', 'MEC'],           color: '#3a3a3a', padShape: 'natural', bodyShape: 'natural', hidden: false, hierarchyBridge: false },
   ],
   hierarchyDepth: 2,
 
@@ -931,6 +931,15 @@ function loadFromStorage(): RenderSettings {
           if (typeof (t as Partial<PartType>).hierarchyBridge !== 'boolean') {
             t.hierarchyBridge = DEFAULTS.partTypes.find(d => d.id === t.id)?.hierarchyBridge ?? false;
           }
+        }
+        // Migration: shield gained the 'MEC' prefix default (MEC* refdes =
+        // mechanical shield can). Users whose shield type still carries
+        // exactly the old ['SH'] default get 'MEC' appended; any customised
+        // prefix list is left untouched.
+        const shield = result.partTypes.find(t => t.id === 'shield');
+        if (shield && Array.isArray(shield.prefixes)
+            && shield.prefixes.length === 1 && shield.prefixes[0] === 'SH') {
+          shield.prefixes = ['SH', 'MEC'];
         }
       } else {
         // Legacy format — migrate prefix-keyed overrides into types.

@@ -19,7 +19,7 @@ import { boardStore } from '../store/board-store';
 import type { SelectionState, NetLineMode } from '../store/board-store';
 import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet, resolvePartType } from '../store/render-settings';
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
@@ -185,12 +185,35 @@ export class BoardRenderer {
   private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
   /** Whether bottom layer should be visible (accounts for butterfly mode) */
   private get isBottomVisible() { return boardStore.showBottom || boardStore.butterfly; }
+  /** Per-name memo of "is this refdes's resolved part-type hidden?". Cleared
+   *  whenever render settings change (the part-type list / hidden flags live
+   *  there). Keyed by refdes so the prefix scan in resolvePartType runs once
+   *  per distinct name, not per frame. */
+  private _typeHiddenMemo = new Map<string, boolean>();
+
+  /** True when the part's resolved part-type is flagged hidden in settings.
+   *  A type-hidden part is fully gone: not built into the scene, not
+   *  hit-tested, not highlighted on net select, and not drawn as a
+   *  cross-side ghost. Empty name → never type-hidden. */
+  private isTypeHidden(name: string | undefined): boolean {
+    if (!name) return false;
+    let v = this._typeHiddenMemo.get(name);
+    if (v === undefined) {
+      v = resolvePartType(name, renderSettingsStore.settings)?.hidden ?? false;
+      this._typeHiddenMemo.set(name, v);
+    }
+    return v;
+  }
+
   /** Whether a part should be visible given its side and current view mode.
    *  'both' parts live in topLayer, so they follow top-side visibility.
    *  Parts flagged `hidden: true` by `deriveBoardView` (outside the selected
-   *  board) are never visible. */
-  private isPartVisible(part: { side: string; hidden?: boolean }): boolean {
+   *  board) are never visible. Parts whose resolved part-type is hidden in
+   *  settings are never visible either — and (unlike cross-side parts) never
+   *  fall back to a ghost: see the ghost branch in renderSelection. */
+  private isPartVisible(part: { name?: string; side: string; hidden?: boolean }): boolean {
     if (part.hidden) return false;
+    if (this.isTypeHidden(part.name)) return false;
     if (part.side === 'bottom') return this.isBottomVisible;
     return this.isTopVisible; // 'top' and 'both'
   }
@@ -2618,6 +2641,9 @@ export class BoardRenderer {
   private onSettingsUpdate() {
     if (!this.board || this.contextLost || this.reinitializing) return;
     // onSettingsUpdate — no logging (fires on every settings change)
+    // Part-type list / hidden flags may have changed — drop the per-name
+    // type-hidden memo so isTypeHidden re-resolves against the new settings.
+    this._typeHiddenMemo.clear();
     try {
       const cur = renderSettingsStore.settings;
       const prev = this.lastSettingsSnapshot;
@@ -3255,7 +3281,10 @@ export class BoardRenderer {
           const part = this.board.parts[ref.partIndex];
           if (!part) continue;
           if (!this.isPartVisible(part)) {
-            if (!butterfly && !skipGhosts && boardStore.showGhosts && !seenGhosts.has(ref.partIndex)) {
+            // Type-hidden parts vanish completely — no ghost. Only cross-side
+            // (other-layer) parts earn a ghost outline on net select.
+            if (!butterfly && !skipGhosts && boardStore.showGhosts
+                && !this.isTypeHidden(part.name) && !seenGhosts.has(ref.partIndex)) {
               seenGhosts.add(ref.partIndex);
               ghostPartIndices.push(ref.partIndex);
             }
