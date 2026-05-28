@@ -146,42 +146,60 @@ dramatically reduces GPU pressure during high-zoom scrolling.
 The adjacent-page effect is debounced (`adjSettleMs` from the quality preset,
 100–300 ms) so we don't keep re-rendering neighbors during active zoom.
 
-## Watermark filter (operator-level)
+## Watermark filter (parse-time worker patch)
 
 Vendor watermarks like `"w w w . c h i n a f i x . c o m"` at 50 pt rotated
-45° are stripped at the pdf.js operator-list level — not by clipping, not by
-post-processing:
+45° are stripped **at parse time inside the patched pdf.js worker** — before
+the watermark `showText` ops ever enter the operator list. They are not
+clipped, post-processed, or filtered via a render callback.
 
-1. `pdfStore.getWatermarkSkipSet(file, pageIndex)` computes a `Set<number>` of
-   pdf.js operator indices corresponding to glyph-drawing operators
-   (`OPS.showText` = 44, `OPS.showSpacedText` = 45, `OPS.nextLineShowText` =
-   46, `OPS.nextLineSetSpacingShowText` = 47) whose effective font size
-   (`|textMatrixScale × fontSize|`) matches any configured watermark text
-   item's font size within 5% relative tolerance. The scanner walks the op
-   list in order, tracking `setFont` and `setTextMatrix` to maintain the
-   effective-size state.
-2. `isPdfWatermarkText(str, filter)` does whitespace-insensitive,
-   case-insensitive substring matching so a filter entry of
-   `"www.chinafix.com"` catches `"w w w . c h i n a f i x . c o m"` as a
-   literal text item on the page (from `page.getTextContent()`).
-3. The computed skip set is cached per `(file, pageIndex, filterSig)` on the
-   document itself (`watermarkSkipSets` array). Changing the filter clears all
-   skip sets and re-triggers background prewarm.
-4. All three render paths (`renderPage`, `renderTiledPage`, `renderPageToBitmap`)
-   pass the skip set to pdf.js via the public `operationsFilter` parameter on
-   `page.render()`. pdf.js's `CanvasGraphics.executeOperatorList` checks the
-   filter before dispatching each operator — watermark glyph draws are
-   **entirely bypassed**, while path/image operators run normally. Schematic
-   content underneath the watermark is preserved pixel-for-pixel.
+The implementation is a `patch-package` diff against `pdfjs-dist`
+(`src/frontend/patches/pdfjs-dist+<version>.patch`), applied by the
+`postinstall` script. See `src/frontend/patches/README.md` for the full
+five-site edit recipe and the re-port procedure on a pdf.js version bump.
 
-### Background prewarm
+1. The active filter terms come from `getActiveWatermarkFilter(settings)` in
+   `src/frontend/src/store/render-settings.ts`. The render layer
+   (`PdfViewerPanel.tsx`) forwards them to `page.render()` through a custom
+   **`watermarkFilter: string[] | null`** option added by the patch — the same
+   option flows through all render paths (full page, tiled, and
+   `renderPageToBitmap`). There is no separate skip-set computation step; the
+   terms themselves are the only payload.
+2. The patched worker forwards `watermarkFilter` through
+   `PDFPageProxy.render → _pumpOperatorList → GetOperatorList →
+   Page.getOperatorList → PartialEvaluator.getOperatorList`. Inside
+   `PartialEvaluator.getOperatorList`, just before `operatorList.addOp(fn,
+   args)`, the patch reconstructs the glyph string for each `showText` op
+   (the worker has already normalised `showSpacedText` / `nextLineShowText` /
+   `nextLineSetSpacingShowText` into plain `OPS.showText` with a glyph array
+   at this point) and substring-matches it against the terms. PDFs that emit
+   one `showText` per glyph are handled by tracking the accumulated string
+   across `beginText … endText` and retroactively zeroing each matched op's
+   glyph array at `ET` (the op still executes so text state advances, but
+   draws nothing).
+3. The matching rule is **NFKC-normalise → strip whitespace → lowercase →
+   substring** (see *Watermark lock-step* below). NFKC matters because vendor
+   watermark fonts emit Latin ligatures (`ﬁ` U+FB01, etc.) — without it
+   `"Vinaﬁx.com"` never matches a `"Vinafix"` term. A filter entry of
+   `"www.chinafix.com"` therefore catches `"w w w . c h i n a f i x . c o m"`.
 
-After text extraction completes, `_prewarmWatermarkSkipSets` computes skip
-sets for every page in the background, one page per `requestIdleCallback`.
-Falls back to `setTimeout(0)` on Safari. Running one page per idle tick
-ensures the prewarm yields to user-interactive renders on the shared pdf.js
-Worker queue — if the user opens a PDF and immediately starts zooming, their
-renders slip in between prewarm pages.
+Net effect: 5–10k watermark glyph runs per page are never tokenised, streamed
+across the postMessage boundary, or allocated into the operator list — and
+there is zero per-op client-side callback overhead. Schematic content
+underneath the watermark is preserved pixel-for-pixel.
+
+The click-test path in `PdfViewerPanel.tsx` reads `textPages` directly and
+runs `isPdfWatermarkText` against the same terms, so watermark text remains
+**unselectable** even though its glyphs are gone from the rendered output.
+
+> **Retired approach (v0.4.2 – v0.30.2):** the earlier design computed a
+> per-page `Set<number>` of operator indices (`getWatermarkSkipSet`, cached in
+> `watermarkSkipSets`, prewarmed by `_prewarmWatermarkSkipSets`) and passed it
+> to pdf.js via the public `operationsFilter` render parameter. Those symbols
+> no longer exist. It was retired because pdf.js's `QueueOptimizer` reorders
+> and merges ops between `getOperatorList` and `render`, so pre-computed
+> indices didn't line up with what `render` actually executed on
+> optimizer-heavy PDFs.
 
 ## Canvas safety rules
 
@@ -309,10 +327,15 @@ reporting ≤ 2 GB RAM.
 - "Mirroring / flipped tiles" → something is pooling a pdf.js-rendered
   canvas. Check canvas pool acquires and make sure we abandon (width/height
   = 1) after `createImageBitmap`, never `releaseCanvas`.
-- Watermark filter not working → check `pdfStore.getWatermarkSkipSet` returned
-  a non-empty set. If empty, either the filter is empty or no text items on
-  the page match (check text extraction succeeded and the page actually has a
-  text layer, not just a raster image).
+- Watermark filter not working → confirm `getActiveWatermarkFilter(settings)`
+  returns a non-empty term list (filter enabled + at least one term) and that
+  the `watermarkFilter` option is actually reaching `page.render()`. If the
+  glyphs render but stay selectable, the patch isn't applied (re-run
+  `npm install` so `patch-package` runs) or the worker is the minified build.
+  If terms exist but nothing is hidden, the page is a raster image with no text
+  layer (nothing for the worker filter to match), or the term doesn't match
+  after NFKC/whitespace/lowercase normalisation — verify with
+  `isPdfWatermarkText` against the on-page text.
 
 ---
 
@@ -429,18 +452,26 @@ separate `SELECT` + `UPDATE` race.
 
 ### Watermark lock-step
 
-The watermark matching rule is shared between two implementations:
+The watermark matching rule is shared between three implementations (the
+frontend matcher, the backend matcher, and the worker patch):
 
-- **Frontend:** `isPdfWatermarkText(str, filter)` in
+- **Frontend:** `isPdfWatermarkText(str, filter)` → `normalizeForWatermark` in
   `src/frontend/src/store/render-settings.ts` — used by the pdf.js render
-  path and by the fast-path text upload to strip watermarks before indexing.
-- **Backend:** `IsWatermark(s string, terms []string)` in
-  `src/backend/pdfindex/watermark.go` — used by the pdfium extractor to strip
-  watermarks from page text before writing to the FTS5 index.
+  path, the click-test/unselectable path, and the fast-path text upload to
+  strip watermarks before indexing.
+- **Backend:** `IsWatermark(s string, terms []string)` →
+  `stripSpace` in `src/backend/pdfindex/watermark.go` — used by the pdfium
+  extractor to strip watermarks from page text before writing to the FTS5
+  index. The backend imports `golang.org/x/text/unicode/norm` precisely for
+  this NFKC step.
+- **Worker patch:** the `showText` filter branch inside the patched
+  `pdf.worker.mjs` (see `src/frontend/patches/README.md`).
 
-Both apply the **same rule**: strip all whitespace from the candidate string and
-from each filter term, compare case-insensitively as a substring match. The
-rule is the contract. The two implementations must remain byte-for-byte
+All apply the **same rule**: **NFKC-normalise**, then strip all whitespace,
+then lowercase, then substring-match the candidate against each term. NFKC is
+load-bearing — vendor watermark fonts emit Latin ligatures (`ﬁ` U+FB01, etc.)
+that must decompose to their constituent letters or `"Vinaﬁx.com"` never
+matches a `"Vinafix"` term. The rule is the contract. The two implementations must remain byte-for-byte
 equivalent for matching behaviour. When changing the rule in one, change the
 other in the same commit. Watermark terms are synced from the frontend config
 key `pdf_watermark_terms` to the backend via the settings API; the backend

@@ -102,8 +102,11 @@ and `src/frontend/package-lock.json`.
 | Package | License | Role |
 |---|---|---|
 | Go standard library (net/http, crypto, encoding, …) | BSD-3-Clause | HTTP server, crypto, encoding primitives |
-| modernc.org/sqlite | BSD-3-Clause | Pure-Go SQLite driver (board reference database) |
-| rsc.io/pdf | BSD-3-Clause | PDF text extraction for the databank indexer |
+| modernc.org/sqlite | BSD-3-Clause | Pure-Go SQLite driver (board reference database, databank, FTS5 PDF index) |
+| github.com/klippa-app/go-pdfium | MIT | PDF text extraction for the FTS5 index (embeds the `pdfium.wasm` blob in the scratch image) |
+| github.com/tetratelabs/wazero | Apache-2.0 | Pure-Go WebAssembly runtime hosting `pdfium.wasm` |
+| aead.dev/minisign | MIT | Ed25519 update-manifest signature verification (secure self-update) |
+| golang.org/x/text | BSD-3-Clause | Unicode NFKC normalisation for watermark matching |
 
 Version-pinned inventory: `src/backend/go.mod`, `src/backend/go.sum`.
 

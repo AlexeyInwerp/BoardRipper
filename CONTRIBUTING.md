@@ -46,7 +46,8 @@ src/frontend/             React + TypeScript + Vite SPA
 
 src/backend/              Go net/http server
   handlers/               HTTP handlers per resource
-  databank/               File scanner, search, PDF text extraction
+  databank/               File scanner, search, dedup, content hashing
+  pdfindex/               PDF text indexing (pdfium/wazero → FTS5)
   boarddb/                Read-only board reference DB (SQLite)
   librarysync/            WebDAV mirror engine + scheduler
   obd/                    OpenBoardData parser + cache
@@ -57,8 +58,11 @@ src/backend/              Go net/http server
 
 1. Create `src/frontend/src/parsers/<name>-parser.ts` exporting
    `parse<NAME>(buffer: ArrayBuffer): BoardData | Promise<BoardData>`.
-2. Register in `src/frontend/src/parsers/registry.ts` with extension(s),
-   sniff function, and parser reference.
+2. Register in `src/frontend/src/parsers/index.ts` with extension(s),
+   sniff function, and parser reference (call `registerFormat(...)`).
+   `registry.ts` only defines the `FormatDescriptor` interface and the
+   `registerFormat`/`detectFormat` helpers — the actual registration calls
+   live in `index.ts`.
 3. Write a format spec at `docs/formats/<NAME>_FORMAT.md`. Cover the
    header, body structure, coordinate system, and any obfuscation /
    encryption.

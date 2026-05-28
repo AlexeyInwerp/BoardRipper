@@ -33,7 +33,7 @@ If you are tempted to write `getSnapshot: () => ({ foo, bar })` — STOP. Cache 
 
 | File | Role |
 |---|---|
-| [pdf-store.ts](pdf-store.ts) | PDF document lifecycle, text extraction, watermark detection, `operationsFilter` skip-set building, page cache. Per-document state via `usePdfDoc(fileName)` hook — multiple PDFs render side-by-side. Singleton tracks "active" doc for mutations. See [docs/PDF_VIEWER.md](../../../../../docs/PDF_VIEWER.md) and CLAUDE.md PDF rules. |
+| [pdf-store.ts](pdf-store.ts) | PDF document lifecycle, text extraction, page cache. Watermarks are filtered at parse time by the patched pdf.js worker via the `watermarkFilter` render option (terms from `render-settings.ts`); there is no client-side skip-set. Per-document state via `usePdfDoc(fileName)` hook — multiple PDFs render side-by-side. Singleton tracks "active" doc for mutations. See [docs/PDF_VIEWER.md](../../../../../docs/PDF_VIEWER.md), `patches/README.md`, and CLAUDE.md PDF rules. |
 
 ### Data sources
 
@@ -52,7 +52,7 @@ If you are tempted to write `getSnapshot: () => ({ foo, bar })` — STOP. Cache 
 | [file-inputs.ts](file-inputs.ts) | Refs to hidden `<input type="file">` elements. Set by Toolbar, read by keyboard shortcuts. No reactive state. |
 | [keyboard-shortcuts.ts](keyboard-shortcuts.ts) | Keyboard shortcut registry, platform detection (`isMac`), label formatting. Consumed by `useKeyboardShortcuts`. |
 | [update-store.ts](update-store.ts) | Polls `/api/update/status` for the self-update system. |
-| [log-store.ts](log-store.ts) | Scoped logger. **Use this — never raw `console.log`.** Scopes: `parser`, `render`, `pdf`, `scan`, `ui`, `cache`, `perf`, `update`. Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move, per-tile-render). |
+| [log-store.ts](log-store.ts) | Scoped logger. **Use this — never raw `console.log`.** Scopes: `parser`, `render`, `pdf`, `scan`, `ui`, `cache`, `perf`, `update`, `obd`, `cloud`. Debug Panel filters by scope. Avoid logging in hot paths (per-frame, per-pointer-move, per-tile-render). |
 
 ## Ownership boundaries
 

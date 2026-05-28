@@ -172,7 +172,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1024M   # pdfium/wazero pool; 512M boot-fails with SQLite OOM at databank open
+    # environment also accepts:
+    #   - PDFINDEX_POOL_MAX=2   # max concurrent pdfium/wazero PDF-index workers;
+    #                           # reduce to 1 on a NAS with <1 GB free RAM
 ```
 
 ### Volume mounting
@@ -313,7 +316,10 @@ BoardRipper exists because of the reverse-engineering work already done by the b
 
 - [Go standard library](https://pkg.go.dev/std) *(BSD-3-Clause)*
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) *(BSD-3-Clause)* — pure-Go SQLite driver
-- [rsc.io/pdf](https://pkg.go.dev/rsc.io/pdf) *(BSD-3-Clause)* — PDF text extraction
+- [github.com/klippa-app/go-pdfium](https://github.com/klippa-app/go-pdfium) *(MIT)* — PDF text extraction for the FTS5 index (embedded `pdfium.wasm`)
+- [github.com/tetratelabs/wazero](https://github.com/tetratelabs/wazero) *(Apache-2.0)* — pure-Go WebAssembly runtime hosting `pdfium.wasm`
+- [aead.dev/minisign](https://github.com/aead/minisign) *(MIT)* — Ed25519 update-manifest signature verification
+- [golang.org/x/text](https://pkg.go.dev/golang.org/x/text) *(BSD-3-Clause)* — Unicode NFKC normalisation for watermark matching
 
 **Desktop**
 
