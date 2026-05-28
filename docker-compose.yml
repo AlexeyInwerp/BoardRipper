@@ -47,12 +47,14 @@ services:
       # a fresh install. Remove only if you don't want self-update.
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+    # No container healthcheck: the scratch image has no shell, curl, or wget,
+    # so it cannot self-healthcheck. `test: ["NONE"]` disables any healthcheck
+    # inherited from the image (the interval/timeout/retries/start_period keys
+    # are no-ops once the test is NONE, so they're omitted). Liveness is polled
+    # externally — the self-update orchestrator hits /api/health after a swap
+    # (see the secure update pipeline in CLAUDE.md / docs/RELEASE_RUNBOOK.md).
     healthcheck:
       test: ["NONE"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     deploy:
       resources:
         limits:

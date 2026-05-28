@@ -384,6 +384,21 @@ EOF
   fi
   # Produces out/manifest.json.minisig
 
+  # --- Self-verify the freshly-signed manifest ---
+  # Every client verifies this signature against the compiled-in PubKey before
+  # touching the manifest body. A bad signature here would publish a manifest
+  # that EVERY install rejects — freezing all updates. Verify locally with the
+  # same public key clients use (release.pub == the build-arg PUBKEY) and abort
+  # the release before upload if it doesn't check out.
+  echo ">>> Self-verifying signature against $MINISIGN_PUB"
+  if ! minisign -V -p "$MINISIGN_PUB" -m out/manifest.json; then
+    echo "ERROR: signature self-verification FAILED — manifest signed with a key" >&2
+    echo "       that does not match $MINISIGN_PUB. Aborting before upload so we" >&2
+    echo "       don't publish a manifest every client rejects." >&2
+    exit 1
+  fi
+  echo "    signature verifies ✓"
+
   # --- Build drop-to-update bundle (recovery escape-hatch) ---
   BUNDLE="out/boardripper-update-$VERSION.tar"
   tar -cf "$BUNDLE" \
@@ -448,6 +463,28 @@ LFTP_EOF
     else
       echo "    manifest live at $VERSION ✓"
     fi
+
+    # --- Post-upload verify: the PUBLISHED manifest+signature still verify ---
+    # Re-fetch exactly what clients will fetch and re-run minisign against it.
+    # Catches a truncated/garbled upload or a stale-signature mismatch that the
+    # local self-verify (pre-upload) could not see. Warn (don't abort) — the
+    # tarball/image are already pushed, and CDN propagation can lag.
+    LIVE_DIR="$(mktemp -d)"
+    if curl -sf -o "$LIVE_DIR/manifest.json"         https://www.ripperdoc.de/boardripper/manifest.json \
+       && curl -sf -o "$LIVE_DIR/manifest.json.minisig" https://www.ripperdoc.de/boardripper/manifest.json.minisig; then
+      if minisign -V -p "$MINISIGN_PUB" -m "$LIVE_DIR/manifest.json" >/dev/null 2>&1; then
+        echo "    published manifest signature verifies ✓"
+      else
+        echo "WARN: the PUBLISHED manifest signature does NOT verify against $MINISIGN_PUB." >&2
+        echo "WARN: upload may be truncated or still propagating. Re-verify shortly:" >&2
+        echo "      curl -sO https://www.ripperdoc.de/boardripper/manifest.json" >&2
+        echo "      curl -sO https://www.ripperdoc.de/boardripper/manifest.json.minisig" >&2
+        echo "      minisign -V -p $MINISIGN_PUB -m manifest.json" >&2
+      fi
+    else
+      echo "WARN: could not re-fetch published manifest/signature for post-upload verify (CDN lag?)." >&2
+    fi
+    rm -rf "$LIVE_DIR"
   else
     echo ">>> [DRY RUN] Would upload manifest, signature, tarball, and site artifacts to ftp.ripperdoc.de"
   fi

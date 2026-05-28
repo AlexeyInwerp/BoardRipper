@@ -1,0 +1,82 @@
+# .dockerignore — keep the build context tiny.
+#
+# Without this file, `docker build .` streams the entire working tree
+# (~5.6 GB: samples/, desktop/out*, out/, release-artifacts/, data/, .git/)
+# to the daemon on every build. The Dockerfile only COPYs:
+#   - src/frontend/  (node stage runs its own `npm ci` — host node_modules
+#                     is never copied and MUST be excluded)
+#   - src/backend/   (backend stage runs its own `go mod download`)
+#   - Board Database/boards.db
+#   - etc-passwd
+# Everything below is safe to exclude. Do NOT add src/, Board Database/, or
+# etc-passwd here — the multi-stage build needs them.
+
+# Version control
+.git/
+.gitignore
+
+# Dependencies — every build stage installs its own; never ship host copies
+**/node_modules/
+
+# Frontend build output (the node stage rebuilds dist/ from source)
+src/frontend/dist/
+src/frontend/dist-ssr/
+src/frontend/.vite/
+src/frontend/test-results/
+src/frontend/playwright-report/
+**/*.tsbuildinfo
+
+# Go build output (the backend stage rebuilds the binary from source)
+src/backend/server
+src/backend/boardripper
+src/backend/boardripper-server
+
+# Release / packaging artifacts
+out/
+release-artifacts/
+*.tar.gz
+tools/update-test/results/
+tools/update-test/playwright/node_modules/
+
+# Electron desktop builds (not part of the container image)
+desktop/out/
+desktop/out-legacy/
+desktop/out-win/
+desktop/webapp/
+desktop/node_modules/
+
+# Local-only data and fixtures (not redistributed, not needed by the image)
+samples/
+data/
+library/
+test-results/
+.worktrees/
+
+# Editor / OS cruft
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.sw?
+
+# SQLite transient files
+*.db-shm
+*.db-wal
+
+# Docs and notes (image is runtime-only; docs/README never enter the image)
+docs/
+*.md
+
+# Deploy credentials must never enter the build context
+deploy.conf
+
+# Local Docker Compose overrides
+compose.*.y*ml
+docker-compose.*.y*ml
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Claude / AI working files
+.claude/
+.claire/
