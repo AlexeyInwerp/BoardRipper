@@ -5,14 +5,21 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 
+// Skip (not fail) when the gitignored, proprietary sample is absent — same
+// idiom as ci-smoke.spec.ts. The looksLikeMouseWheel block below is pure unit
+// logic and runs regardless.
+const haveBvr = fs.existsSync(BVR_FILE);
+
 test.describe('Pan/zoom scroll-mode toggle', () => {
   test('clicking the board toolbar button flips twoFingerPan and inverts PDF bindings', async ({ page }) => {
+    test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
     // Start from a clean slate so defaults apply
     await page.evaluate(() => {
@@ -57,6 +64,7 @@ test.describe('Pan/zoom scroll-mode toggle', () => {
   });
 
   test('toggle preserves meta slot when it is non-default', async ({ page }) => {
+    test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
     await page.evaluate(() => {
       localStorage.setItem('boardripper-pdf-scroll-bindings', JSON.stringify({ bare: 'pan', shift: 'switch', meta: 'zoom' }));

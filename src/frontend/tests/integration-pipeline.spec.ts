@@ -1,10 +1,16 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 
 const SAMPLES = {
   bvr3: 'samples/820-02016.bvr',
   brd:  'samples/820-02935-05.brd',
 };
+
+// Skip (not fail) when the gitignored, proprietary samples/ fixtures are absent
+// — same idiom as ci-smoke.spec.ts. Resolved exactly as loadBoard() resolves
+// them so the guard matches the file the test would actually open.
+const haveSample = (rel: string) => fs.existsSync(path.resolve(rel));
 
 /** Load a board file and wait for stats to appear */
 async function loadBoard(page: import('@playwright/test').Page, filePath: string) {
@@ -16,6 +22,7 @@ async function loadBoard(page: import('@playwright/test').Page, filePath: string
 test.describe('Parser → Store → Renderer Pipeline', () => {
 
   test('BVR3: load → parse → render → search → info panel connected', async ({ page }) => {
+    test.skip(!haveSample(SAMPLES.bvr3), `${SAMPLES.bvr3} not present (proprietary fixture)`);
     await page.goto('/');
     await loadBoard(page, SAMPLES.bvr3);
 
@@ -38,6 +45,7 @@ test.describe('Parser → Store → Renderer Pipeline', () => {
   });
 
   test('BRD: top/bottom layer buttons visible and toggleable', async ({ page }) => {
+    test.skip(!haveSample(SAMPLES.brd), `${SAMPLES.brd} not present (proprietary fixture)`);
     await page.goto('/');
     await loadBoard(page, SAMPLES.brd);
 
@@ -55,6 +63,7 @@ test.describe('Parser → Store → Renderer Pipeline', () => {
   });
 
   test('Multi-tab: opening second board does not break first', async ({ page }) => {
+    test.skip(!haveSample(SAMPLES.bvr3) || !haveSample(SAMPLES.brd), 'proprietary BVR3/BRD fixtures not present');
     await page.goto('/');
 
     // Load first board

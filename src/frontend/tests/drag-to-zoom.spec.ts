@@ -6,13 +6,20 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 
+// Skip (not fail) when the gitignored, proprietary sample is absent — same
+// idiom as ci-smoke.spec.ts. Guarding inside the shared helper covers every
+// test, each of which calls openBoard() first.
+const haveBvr = fs.existsSync(BVR_FILE);
+
 async function openBoard(page: import('@playwright/test').Page) {
+  test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
   await page.goto('/');
   await page.evaluate(() => localStorage.clear());
   await page.reload();

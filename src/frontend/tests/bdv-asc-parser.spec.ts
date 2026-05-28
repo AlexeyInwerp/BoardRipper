@@ -31,6 +31,9 @@ test.describe('BDV ASC (Honhan / Tebo-ICT) Parser', () => {
 
   for (const c of CASES) {
     test(`parses ${c.file}`, async () => {
+      // Skip (not fail) when the gitignored samples/ tree is absent — same
+      // idiom as ci-smoke.spec.ts / tvw-parser.spec.ts.
+      test.skip(!fs.existsSync(path.resolve(SAMPLES_DIR, c.file)), `sample ${c.file} not present`);
       const { parseBDVAsc } = await import('../src/parsers/bdv-asc-parser');
       const buf = fs.readFileSync(path.resolve(SAMPLES_DIR, c.file));
       const board = parseBDVAsc(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));

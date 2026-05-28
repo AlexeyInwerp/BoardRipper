@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -7,8 +8,15 @@ const __dirname = path.dirname(__filename);
 
 const REAL_BVR3 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 
+// Skip (not fail) when the gitignored, proprietary sample is absent — same
+// idiom as ci-smoke.spec.ts. The reconciliation and natural-sort blocks below
+// are pure logic and run regardless; only the board-dependent describes call
+// loadBoard(), where the guard lives.
+const haveBvr = fs.existsSync(REAL_BVR3);
+
 /** Load a sample board into the active panel and wait for the renderer to settle. */
 async function loadBoard(page: Page, filePath: string = REAL_BVR3) {
+  test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await page.getByTestId('file-input').setInputFiles(filePath);

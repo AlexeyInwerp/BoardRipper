@@ -1,9 +1,21 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Skip (not fail) when the gitignored, proprietary top-level samples/ fixtures
+// are absent — same idiom as ci-smoke.spec.ts. Tests that use the tracked
+// ../public/samples/test-board.bvr fixture run regardless.
+const REAL_BVR3 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
+const REAL_BRD = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
+const PDF_A = path.resolve(__dirname, '../../../samples/820-02016.pdf');
+const PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
+const haveBvr3 = fs.existsSync(REAL_BVR3);
+const haveBrd = fs.existsSync(REAL_BRD);
+const havePdfs = fs.existsSync(PDF_A) && fs.existsSync(PDF_B);
 
 test.describe('BoardRipper', () => {
   test('app loads with toolbar, canvas, and statusbar', async ({ page }) => {
@@ -35,6 +47,7 @@ test.describe('BoardRipper', () => {
   });
 
   test('can open real BVR3 file (820-02016.bvr)', async ({ page }) => {
+    test.skip(!haveBvr3, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
 
     const fileInput = page.getByTestId('file-input');
@@ -83,6 +96,7 @@ test.describe('BoardRipper', () => {
   });
 
   test('two boards: switching tabs does not crash either renderer', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd, 'proprietary BVR3/BRD fixtures not present');
     // Collect ALL console output so we can inspect renderer logs
     const allLogs: string[] = [];
     page.on('console', msg => { allLogs.push(`[${msg.type()}] ${msg.text()}`); });
@@ -147,6 +161,7 @@ test.describe('BoardRipper', () => {
   });
 
   test('two boards + two PDFs: switching does not crash renderers', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd || !havePdfs, 'proprietary BVR3/BRD/PDF fixtures not present');
     const allLogs: string[] = [];
     page.on('console', msg => { allLogs.push(`[${msg.type()}] ${msg.text()}`); });
 

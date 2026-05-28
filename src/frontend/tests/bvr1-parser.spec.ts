@@ -8,8 +8,11 @@ const __dirname = path.dirname(__filename);
 
 test.describe('BVR1 Parser', () => {
   test('parses space-delimited BVR1 file (820-01700) with non-empty outline and parts', async () => {
-    const { parseBVR1 } = await import('../src/parsers/bvr1-parser');
     const file = path.resolve(__dirname, '../../../samples/820-01700/820-01700.bvr');
+    // Skip (not fail) when the gitignored samples/ tree is absent — same idiom
+    // as ci-smoke.spec.ts / tvw-parser.spec.ts.
+    test.skip(!fs.existsSync(file), 'sample 820-01700.bvr not present');
+    const { parseBVR1 } = await import('../src/parsers/bvr1-parser');
     const text = fs.readFileSync(file, 'utf8');
     const board = parseBVR1(text);
 

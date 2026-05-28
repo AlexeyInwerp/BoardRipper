@@ -8,8 +8,19 @@ const __dirname = path.dirname(__filename);
 
 const SAMPLES_DIR = path.resolve(__dirname, '../../../samples/allegroBRD');
 
+// Sample-dependent tests skip (not fail) when the gitignored samples/ tree is
+// absent — same idiom as ci-smoke.spec.ts / tvw-parser.spec.ts. Format-detection
+// tests below build their headers in-memory and run regardless.
+const Y0D = path.resolve(SAMPLES_DIR, 'Quanta Y0D DA0Y0DMBAF0 boardview .brd');
+const Z8IA = path.resolve(SAMPLES_DIR, 'Acer_TravelMate_TMP214_41_Quanta_Z8IA_DAZ8IAMBAC0_Rev_C_BoardView.brd');
+const Z8I = path.resolve(SAMPLES_DIR, 'Quanta Z8I DA0Z8IMBAC0 Rev C (BDV) (.BRD).brd');
+const haveY0D = fs.existsSync(Y0D);
+const haveZ8IA = fs.existsSync(Z8IA);
+const haveZ8I = fs.existsSync(Z8I);
+
 test.describe('Allegro BRD Parser', () => {
   test('can parse Quanta Y0D (v16.5) directly', async () => {
+    test.skip(!haveY0D, 'samples/allegroBRD Quanta Y0D not present');
     const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
     const filePath = path.resolve(SAMPLES_DIR, 'Quanta Y0D DA0Y0DMBAF0 boardview .brd');
     const buf = fs.readFileSync(filePath);
@@ -34,6 +45,7 @@ test.describe('Allegro BRD Parser', () => {
   });
 
   test('can parse Acer Z8IA (v17.2) directly', async () => {
+    test.skip(!haveZ8IA, 'samples/allegroBRD Acer Z8IA not present');
     const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
     const filePath = path.resolve(SAMPLES_DIR, 'Acer_TravelMate_TMP214_41_Quanta_Z8IA_DAZ8IAMBAC0_Rev_C_BoardView.brd');
     const buf = fs.readFileSync(filePath);
@@ -50,6 +62,7 @@ test.describe('Allegro BRD Parser', () => {
   });
 
   test('can parse Quanta Z8I (v17.2, largest file) directly', async () => {
+    test.skip(!haveZ8I, 'samples/allegroBRD Quanta Z8I not present');
     const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
     const filePath = path.resolve(SAMPLES_DIR, 'Quanta Z8I DA0Z8IMBAC0 Rev C (BDV) (.BRD).brd');
     const buf = fs.readFileSync(filePath);
@@ -88,6 +101,7 @@ test.describe('Allegro BRD Parser', () => {
   });
 
   test('parts have valid pin data with net assignments', async () => {
+    test.skip(!haveY0D, 'samples/allegroBRD Quanta Y0D not present');
     const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
     const filePath = path.resolve(SAMPLES_DIR, 'Quanta Y0D DA0Y0DMBAF0 boardview .brd');
     const buf = fs.readFileSync(filePath);
@@ -116,6 +130,7 @@ test.describe('Allegro BRD Parser', () => {
   });
 
   test('pin extraction with valid positions and net assignments', async () => {
+    test.skip(!haveY0D, 'samples/allegroBRD Quanta Y0D not present');
     const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
     const filePath = path.resolve(SAMPLES_DIR, 'Quanta Y0D DA0Y0DMBAF0 boardview .brd');
     const buf = fs.readFileSync(filePath);
@@ -143,6 +158,7 @@ test.describe('Allegro BRD Parser', () => {
   });
 
   test('trace extraction with valid geometry', async () => {
+    test.skip(!haveY0D, 'samples/allegroBRD Quanta Y0D not present');
     const { parseAllegroBRD } = await import('../src/parsers/allegro/allegro-brd-parser');
     const filePath = path.resolve(SAMPLES_DIR, 'Quanta Y0D DA0Y0DMBAF0 boardview .brd');
     const buf = fs.readFileSync(filePath);
@@ -183,6 +199,7 @@ test.describe('Allegro BRD Parser', () => {
   });
 
   test('can render Allegro BRD file in browser', async ({ page }) => {
+    test.skip(!haveY0D, 'samples/allegroBRD Quanta Y0D not present');
     await page.goto('/');
 
     const fileInput = page.getByTestId('file-input');

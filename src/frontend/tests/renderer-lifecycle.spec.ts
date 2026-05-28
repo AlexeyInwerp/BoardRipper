@@ -1,9 +1,15 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
+
+// Skip (not fail) when the gitignored, proprietary sample is absent — same
+// idiom as ci-smoke.spec.ts. Resolved exactly as the tests resolve it.
+const haveBvr = fs.existsSync(path.resolve('samples/820-02016.bvr'));
 
 test.describe('Renderer Lifecycle Stability', () => {
 
   test('rapid open/close/reopen does not crash (batchPool corruption)', async ({ page }) => {
+    test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
     // Capture page errors during test
     const pageErrors: string[] = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
@@ -33,6 +39,7 @@ test.describe('Renderer Lifecycle Stability', () => {
   });
 
   test('settings change during render does not crash', async ({ page }) => {
+    test.skip(!haveBvr, 'samples/820-02016.bvr not present (proprietary fixture)');
     const pageErrors: string[] = [];
     page.on('pageerror', (err) => pageErrors.push(err.message));
 

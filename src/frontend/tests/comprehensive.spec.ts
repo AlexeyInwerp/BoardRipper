@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,6 +11,13 @@ const REAL_BVR3 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const REAL_BRD = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
 const REAL_PDF_A = path.resolve(__dirname, '../../../samples/820-02016.pdf');
 const _REAL_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
+
+// Skip (not fail) when the gitignored, proprietary top-level samples/ fixtures
+// are absent — same idiom as ci-smoke.spec.ts. Tests that use the tracked
+// TEST_BVR1 (../public/samples/test-board.bvr) run regardless.
+const haveBvr3 = fs.existsSync(REAL_BVR3);
+const haveBrd = fs.existsSync(REAL_BRD);
+const havePdfA = fs.existsSync(REAL_PDF_A);
 
 /** Helper: load a board and wait for stats to appear */
 async function loadBoard(page: import('@playwright/test').Page, filePath: string, expectedText?: string) {
@@ -85,6 +93,7 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('BVR3: large file loads without console errors', async ({ page }) => {
+    test.skip(!haveBvr3, 'samples/820-02016.bvr not present (proprietary fixture)');
     const errors: string[] = [];
     page.on('console', msg => {
       if (msg.type() === 'error') errors.push(msg.text());
@@ -229,6 +238,7 @@ test.describe('Comprehensive Board Tests', () => {
   });
 
   test('multi-board: stats update correctly on tab switch', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd, 'proprietary BVR3/BRD fixtures not present');
     await page.goto('/');
 
     // Load first board
@@ -250,6 +260,7 @@ test.describe('Comprehensive Board Tests', () => {
   });
 
   test('multi-board: closing a tab works without crash', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd, 'proprietary BVR3/BRD fixtures not present');
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
@@ -374,6 +385,7 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('stress: rapid layer switching does not crash', async ({ page }) => {
+    test.skip(!haveBvr3, 'samples/820-02016.bvr not present (proprietary fixture)');
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
@@ -397,6 +409,7 @@ test.describe('Comprehensive Board Tests', () => {
   });
 
   test('stress: rapid tab switching between two boards', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd, 'proprietary BVR3/BRD fixtures not present');
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
@@ -473,6 +486,7 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('PDF: loading a PDF creates a panel without crash', async ({ page }) => {
+    test.skip(!haveBvr3 || !havePdfA, 'proprietary BVR3/PDF fixtures not present');
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
@@ -591,6 +605,8 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('net lines mode persists across board loads', async ({ page }) => {
+    // Loads TEST_BVR1 (tracked) then a second REAL_BVR3 board to assert carry-over.
+    test.skip(!haveBvr3, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
@@ -628,6 +644,7 @@ test.describe('Comprehensive Board Tests', () => {
   });
 
   test('PDF night mode persists across panel reloads', async ({ page }) => {
+    test.skip(!haveBvr3 || !havePdfA, 'proprietary BVR3/PDF fixtures not present');
     await page.goto('/');
     await loadBoard(page, REAL_BVR3, '3075');
 
@@ -677,6 +694,8 @@ test.describe('Comprehensive Board Tests', () => {
   });
 
   test('search: switching boards clears and updates results', async ({ page }) => {
+    // Loads TEST_BVR1 (tracked) then a second REAL_BVR3 board to test per-tab search.
+    test.skip(!haveBvr3, 'samples/820-02016.bvr not present (proprietary fixture)');
     await page.goto('/');
     await loadBoard(page, TEST_BVR1);
 
@@ -777,6 +796,7 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('stress: search while switching between boards', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd, 'proprietary BVR3/BRD fixtures not present');
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
@@ -831,6 +851,7 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('PDF auto-binds to matching board by 820 code', async ({ page }) => {
+    test.skip(!haveBvr3 || !havePdfA, 'proprietary BVR3/PDF fixtures not present');
     await page.goto('/');
     await loadBoard(page, REAL_BVR3, '3075');
 
@@ -852,6 +873,7 @@ test.describe('Comprehensive Board Tests', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   test('opening 3 boards then closing tabs does not crash', async ({ page }) => {
+    test.skip(!haveBvr3 || !haveBrd, 'proprietary BVR3/BRD fixtures not present');
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 

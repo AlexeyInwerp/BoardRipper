@@ -13,6 +13,10 @@ const __dirname = path.dirname(__filename);
 const PDF_FILE = path.resolve(__dirname, '../../../samples/820-02016.pdf');
 const OUT_DIR = path.resolve(__dirname, '../test-results/page-transition');
 
+// Skip (not fail) when the gitignored, proprietary PDF fixture is absent —
+// same idiom as ci-smoke.spec.ts.
+const havePdf = fs.existsSync(PDF_FILE);
+
 async function dispatchWheel(page: any, x: number, y: number, deltaY: number, ctrlKey = false) {
   await page.evaluate(({ x, y, deltaY, ctrlKey }: any) => {
     const el = document.elementFromPoint(x, y);
@@ -23,6 +27,7 @@ async function dispatchWheel(page: any, x: number, y: number, deltaY: number, ct
 }
 
 test('detect wrong-page flash via in-browser pixel monitoring', async ({ page }) => {
+  test.skip(!havePdf, 'samples/820-02016.pdf not present (proprietary fixture)');
   test.setTimeout(120000);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });

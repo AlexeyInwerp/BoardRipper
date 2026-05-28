@@ -1,11 +1,16 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Sample files — different formats
+// Sample files — different formats. All live under the gitignored, proprietary
+// top-level samples/ tree, so every test here skips (not fails) when its fixture
+// is absent — same idiom as ci-smoke.spec.ts. The skip lives in the shared
+// loadBoard/loadPdf helpers, keyed on the file each test actually requests, so
+// a test only skips when one of its own fixtures is missing.
 const BVR3_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const BRD_FILE = path.resolve(__dirname, '../../../samples/820-02935-05.brd');
 const FZ_FILE = path.resolve(__dirname, '../../../samples/Asus G532LWS 60NR02T0-MB7010 r1.3.fz');
@@ -15,6 +20,7 @@ const PDF_935 = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Re
 
 /** Helper: load a board file and wait for the status bar to show part count */
 async function loadBoard(page: import('@playwright/test').Page, filePath: string, expectedText?: string) {
+  test.skip(!fs.existsSync(filePath), `${path.basename(filePath)} not present (proprietary fixture)`);
   const fileInput = page.getByTestId('file-input');
   await fileInput.setInputFiles(filePath);
   if (expectedText) {
@@ -26,6 +32,7 @@ async function loadBoard(page: import('@playwright/test').Page, filePath: string
 
 /** Helper: load a PDF file */
 async function loadPdf(page: import('@playwright/test').Page, filePath: string) {
+  test.skip(!fs.existsSync(filePath), `${path.basename(filePath)} not present (proprietary fixture)`);
   const pdfInput = page.getByTestId('pdf-input');
   await pdfInput.setInputFiles(filePath);
   await page.waitForTimeout(1000);

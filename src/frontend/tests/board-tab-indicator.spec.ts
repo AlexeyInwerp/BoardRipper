@@ -6,6 +6,7 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,7 +14,12 @@ const __dirname = path.dirname(__filename);
 const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
 const PDF_FILE = path.resolve(__dirname, '../../../samples/820-02016.pdf');
 
+// Skip (not fail) when the gitignored, proprietary samples/ fixtures are absent
+// — same idiom as ci-smoke.spec.ts.
+const haveFixtures = fs.existsSync(BVR_FILE) && fs.existsSync(PDF_FILE);
+
 test('board tab shows ∞ indicator when PDF is linked', async ({ page }) => {
+  test.skip(!haveFixtures, 'samples/820-02016.{bvr,pdf} not present (proprietary fixtures)');
   await page.goto('/');
 
   await page.getByTestId('file-input').setInputFiles(BVR_FILE);

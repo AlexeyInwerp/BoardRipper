@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -11,6 +12,11 @@ const WATERMARKED_PDF_B = path.resolve(__dirname, '../../../samples/820-02935 05
 const WATERMARKED_PDF_C = path.resolve(__dirname, '../../../samples/820-02935 051-08286 Rev 5.0.3.pdf');
 // Clean PDF
 const CLEAN_PDF = path.resolve(__dirname, '../../../samples/820-02016.pdf');
+
+// Skip (not fail) when the gitignored, proprietary PDF fixtures are absent —
+// same idiom as ci-smoke.spec.ts.
+const haveWatermarked = fs.existsSync(WATERMARKED_PDF);
+const haveClean = fs.existsSync(CLEAN_PDF);
 
 interface RenderPerf {
   file: string; page: number; tier: number; clean: boolean;
@@ -88,6 +94,7 @@ function printTable(label: string, perfs: RenderPerf[]) {
 test.describe('PDF Rendering Performance', () => {
 
   test('watermarked PDF: baseline vs clean at multiple zoom tiers', async ({ page }) => {
+    test.skip(!haveWatermarked, 'watermarked PDF fixture not present (proprietary)');
     const perfs = collectRenderPerf(page);
     const strips = collectStripPerf(page);
     await page.goto('/');
@@ -149,6 +156,7 @@ test.describe('PDF Rendering Performance', () => {
   });
 
   test('clean PDF (no watermark) at multiple zoom tiers', async ({ page }) => {
+    test.skip(!haveClean, 'samples/820-02016.pdf not present (proprietary fixture)');
     const perfs = collectRenderPerf(page);
     await page.goto('/');
     await loadPdf(page, CLEAN_PDF);
@@ -167,6 +175,7 @@ test.describe('PDF Rendering Performance', () => {
   });
 
   test('all 3 watermarked PDFs: strip + render benchmark', async ({ page }) => {
+    test.skip(!haveWatermarked, 'watermarked PDF fixture not present (proprietary)');
     const perfs = collectRenderPerf(page);
     const strips = collectStripPerf(page);
     await page.goto('/');
