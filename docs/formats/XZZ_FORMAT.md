@@ -18,6 +18,19 @@ for parts, pins, nets, and board outline geometry. The header may be XOR-obfusca
 | Coordinate unit | Internal units ÷ 10000 = mils |
 | XOR obfuscation key | Byte at offset `0x10` |
 
+### `.pcb` extension collision — Mentor PADS Layout binary
+
+The `.pcb` extension is also used by **Mentor PADS Layout (PowerPCB) native binary
+design files**, which are an entirely different and unsupported format (the PADS
+database, not a boardview). They begin with the 10-byte signature `00 FF 26 20`
+followed by six zero bytes and carry PADS markers in the body (`DOC_PARTTYPES`,
+`DOC_PADS`, `DOC_VIAS`, `STANDARDVIA`). `isPadsBinaryHeader()` recognises them so
+both `XZZFormat.detect()` and `parseXZZ()` reject them up-front with a clear
+"this is a PADS Layout binary, not a boardview" message — otherwise the `.pcb`
+extension fallback would hand them to the XZZ parser, which XOR-mangles the bytes
+(PADS files have a non-zero byte at `0x10`) and dies on "invalid header offsets".
+Even FlexBV does not open these; the binary PADS database is left unsupported.
+
 ---
 
 ## File Structure

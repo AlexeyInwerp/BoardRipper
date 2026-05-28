@@ -1,5 +1,5 @@
 import type { FormatDescriptor } from './registry';
-import { parseXZZ } from './xzz-parser';
+import { parseXZZ, isPadsBinaryHeader } from './xzz-parser';
 
 /** XZZ magic string */
 const XZZ_MAGIC = 'XZZPCB';
@@ -26,6 +26,10 @@ export const XZZFormat: FormatDescriptor = {
       );
       if (decoded === XZZ_MAGIC) return true;
     }
+    // Mentor PADS Layout binary files also use `.pcb`. Claim them here so the
+    // parser can reject them with a clear message (see parseXZZ) instead of the
+    // extension fallback handing them to XZZ and dying on "invalid header offsets".
+    if (isPadsBinaryHeader(header)) return true;
     return false;
   },
 

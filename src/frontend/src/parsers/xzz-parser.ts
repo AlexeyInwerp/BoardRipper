@@ -840,8 +840,35 @@ function findFoldAxis(segments: Segment[], parts: PartData[], testPads: TestPadD
   };
 }
 
+/**
+ * Mentor PADS Layout (PowerPCB) native binary `.pcb` files share the `.pcb`
+ * extension with XZZ but are an entirely different — and unsupported — format:
+ * the native PADS design database, not a boardview. Every observed sample
+ * begins with this 10-byte signature (magic `00 FF 26 20` + six zero bytes);
+ * the body carries PADS database markers (`DOC_PARTTYPES`, `DOC_PADS`,
+ * `DOC_VIAS`, `STANDARDVIA`, …). Recognised so the loader can reject it with a
+ * clear message instead of XOR-mangling it and dying on "invalid header offsets".
+ */
+export function isPadsBinaryHeader(header: Uint8Array): boolean {
+  if (header.length < 10) return false;
+  if (header[0] !== 0x00 || header[1] !== 0xFF || header[2] !== 0x26 || header[3] !== 0x20) return false;
+  for (let i = 4; i < 10; i++) if (header[i] !== 0) return false;
+  return true;
+}
+
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
   let raw = new Uint8Array(buffer);
+
+  // Mentor PADS Layout binary .pcb files reach here via the shared `.pcb`
+  // extension; reject them clearly before the XOR/offset logic mis-fires.
+  if (isPadsBinaryHeader(raw)) {
+    throw new Error(
+      'This .pcb file is a Mentor PADS Layout (PowerPCB) binary design file, ' +
+      "not a boardview — BoardRipper can't open the native PADS database. " +
+      '(The .pcb extension is shared with the supported XZZ "XZZPCB" boardview ' +
+      'format; this file is the unrelated PADS format.)',
+    );
+  }
 
   // XOR decode: if raw[0x10] != 0, XOR all bytes before the "v6v6555v6v6" marker
   if (raw.length > 0x10 && raw[0x10] !== 0) {
