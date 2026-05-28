@@ -2,7 +2,7 @@ package librarysync
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"time"
 
 	"boardripper/databank"
@@ -60,9 +60,9 @@ func checkAndRun(ctx context.Context, engine *Engine, db *databank.DB) {
 		return
 	}
 
-	fmt.Printf("librarysync: scheduled run due (schedule=%s, last=%s)\n", sched, last)
+	log.Printf("librarysync: scheduled run due (schedule=%s, last=%s)", sched, last)
 	if _, err := engine.Start(ctx); err != nil {
-		fmt.Printf("librarysync: scheduled start failed: %v\n", err)
+		log.Printf("librarysync: scheduled start failed: %v", err)
 	}
 }
 

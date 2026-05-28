@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,44 +83,32 @@ func readFullAt(f *os.File, buf []byte, off int64) (int, error) {
 }
 
 // HashCollisions hashes all un-hashed size-collision files using a pool of
-// `workers` goroutines. Files sharing the same (size, base-filename) are
-// treated as one cluster: the representative is read+hashed ONCE and its hash
-// applied to every member (1 read instead of N). Files with a unique
-// (size,name) within the collision set are hashed individually — so a
-// byte-identical copy under a different name still hashes to the same value and
-// merges into the same content group. Reads parallelize; SetContentHash
+// `workers` goroutines. EVERY file is read and hashed individually — there is
+// no per-(size,name) clustering that would share one representative's hash
+// across members. Sharing a representative hash violated the exact-byte-only
+// invariant: two files with the same size AND the same base name but DIFFERENT
+// content would be merged into one content group, dropping one of them from
+// content-collapsed views. Byte-identical files (any names) still converge on
+// the same key because ContentKey is content-derived, so genuine duplicates
+// still merge — just never by assumption. Reads parallelize; SetContentHash
 // serializes via the DB write mutex. cancelled() short-circuits; onProgress
-// (nilable) is called as (done, total) in CLUSTERS.
+// (nilable) is called as (done, total) in FILES.
 func HashCollisions(db *DB, root string, files []CollisionFile, workers int, cancelled func() bool, onProgress func(done, total int64)) {
 	if workers < 1 {
 		workers = 4
 	}
 	type job struct {
-		path string  // representative path to read
+		path string
 		size int64
-		ids  []int64 // all file ids in the cluster to assign the hash to
+		id   int64
 	}
-	// Cluster un-hashed candidates by (size, base name).
-	clusters := make(map[string][]CollisionFile)
-	var order []string
+	// One job per un-hashed candidate — every file is verified by its own bytes.
+	jobs := make([]job, 0, len(files))
 	for _, f := range files {
 		if f.Hashed {
 			continue
 		}
-		k := strconv.FormatInt(f.Size, 10) + "\x00" + filepath.Base(f.Path)
-		if _, ok := clusters[k]; !ok {
-			order = append(order, k)
-		}
-		clusters[k] = append(clusters[k], f)
-	}
-	jobs := make([]job, 0, len(order))
-	for _, k := range order {
-		cl := clusters[k]
-		ids := make([]int64, len(cl))
-		for i, f := range cl {
-			ids[i] = f.ID
-		}
-		jobs = append(jobs, job{path: cl[0].Path, size: cl[0].Size, ids: ids}) // cl[0] = representative
+		jobs = append(jobs, job{path: f.Path, size: f.Size, id: f.ID})
 	}
 	total := int64(len(jobs))
 	jobCh := make(chan job)
@@ -135,12 +122,8 @@ func HashCollisions(db *DB, root string, files []CollisionFile, workers int, can
 				if !cancelled() {
 					if key, err := ContentKey(filepath.Join(root, j.path), j.size); err != nil {
 						log.Printf("dedup: hash %s: %v (left unhashed)", j.path, err)
-					} else {
-						for _, id := range j.ids {
-							if err := db.SetContentHash(id, key); err != nil {
-								log.Printf("dedup: store hash id=%d: %v", id, err)
-							}
-						}
+					} else if err := db.SetContentHash(j.id, key); err != nil {
+						log.Printf("dedup: store hash id=%d: %v", j.id, err)
 					}
 				}
 				n := done.Add(1)

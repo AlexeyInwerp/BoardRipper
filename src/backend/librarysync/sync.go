@@ -3,8 +3,10 @@ package librarysync
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -254,7 +256,7 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 		_ = e.db.SetConfig("sync_last_run_exit", strconv.Itoa(exitCode))
 		_ = e.db.SetConfig("sync_last_run_message", exitMessage)
 
-		fmt.Printf("librarysync: run finished in %s — files=%d bytes=%d exit=%d msg=%q\n",
+		log.Printf("librarysync: run finished in %s — files=%d bytes=%d exit=%d msg=%q",
 			time.Since(startedAt).Round(time.Millisecond), filesDone, bytesDone, exitCode, exitMessage)
 	}()
 
@@ -345,8 +347,13 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 		e.mu.Unlock()
 
 		written, err := e.downloadFile(ctx, cfg, item.path)
+		if errors.Is(err, errSkippedZeroByte) {
+			// Empty source — intentionally skipped, not a failure. Don't count
+			// it as done and don't surface it as an error.
+			continue
+		}
 		if err != nil {
-			fmt.Printf("librarysync: download failed for %s: %v\n", item.path, err)
+			log.Printf("librarysync: download failed for %s: %v", item.path, err)
 			e.recordError(item.path, err)
 			continue
 		}
@@ -367,7 +374,7 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 	if cfg.Strict {
 		e.setPhase("download", "pruning files not in manifest", "")
 		if err := e.prune(ctx, cfg.Target, manifestSet); err != nil {
-			fmt.Printf("librarysync: prune error: %v\n", err)
+			log.Printf("librarysync: prune error: %v", err)
 		}
 	}
 
@@ -454,9 +461,18 @@ func (e *Engine) fetchManifest(ctx context.Context, cfg runConfig) ([]string, er
 	return entries, nil
 }
 
+// errSkippedZeroByte signals that a download was intentionally skipped because
+// the source served an empty body. It is neither a success (no FilesDone bump)
+// nor a real error (not recorded in the error ring), so the caller treats it as
+// a silent skip. Zero-byte mirror entries are placeholders the upstream emits
+// for not-yet-materialised files; writing them would shadow the real content on
+// the next run and pollute the library with empty files.
+var errSkippedZeroByte = fmt.Errorf("skipped zero-byte source")
 
 // downloadFile fetches <cfg.URL>/<entry> and writes it atomically to
 // <cfg.Target>/<entry>. Returns the number of bytes written on success.
+// Zero-byte responses are skipped (no file created) and reported via
+// errSkippedZeroByte so the caller can distinguish them from real failures.
 func (e *Engine) downloadFile(ctx context.Context, cfg runConfig, entry string) (int64, error) {
 	dest := filepath.Join(cfg.Target, filepath.FromSlash(entry))
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -470,6 +486,12 @@ func (e *Engine) downloadFile(ctx context.Context, cfg runConfig, entry string) 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("HTTP %s", resp.Status)
+	}
+	// Fast path: an explicit zero Content-Length means an empty source — skip
+	// without touching the disk. (ContentLength is -1 when unknown/chunked, in
+	// which case we fall through and detect emptiness after the copy below.)
+	if resp.ContentLength == 0 {
+		return 0, errSkippedZeroByte
 	}
 
 	tmp := dest + ".part"
@@ -492,6 +514,12 @@ func (e *Engine) downloadFile(ctx context.Context, cfg runConfig, entry string) 
 	if closeErr != nil {
 		_ = os.Remove(tmp)
 		return 0, closeErr
+	}
+	// Chunked/unknown-length response that turned out empty: skip it too rather
+	// than persist a useless zero-byte placeholder.
+	if written == 0 {
+		_ = os.Remove(tmp)
+		return 0, errSkippedZeroByte
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		_ = os.Remove(tmp)
@@ -543,9 +571,9 @@ func (e *Engine) prune(ctx context.Context, target string, manifest map[string]b
 			return nil
 		}
 		if err := os.Remove(path); err != nil {
-			fmt.Printf("librarysync: prune remove %s: %v\n", rel, err)
+			log.Printf("librarysync: prune remove %s: %v", rel, err)
 		} else {
-			fmt.Printf("librarysync: pruned %s\n", rel)
+			log.Printf("librarysync: pruned %s", rel)
 		}
 		return nil
 	})

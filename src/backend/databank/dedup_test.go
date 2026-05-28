@@ -106,9 +106,10 @@ func TestHashCollisionsParallel(t *testing.T) {
 	if len(hAX) == 0 || len(hBX) == 0 || len(hCY) == 0 || len(hDZ) == 0 {
 		t.Fatalf("all four size-collision files must be hashed: aX=%d bX=%d cY=%d dZ=%d", len(hAX), len(hBX), len(hCY), len(hDZ))
 	}
-	// Cluster merge: a/x and b/x (same name+size) share via representative.
+	// Same name + size + byte-identical content → same hash (every file hashed
+	// by its own bytes; they converge because the bytes match).
 	if !bytes.Equal(hAX, hBX) {
-		t.Errorf("a/x and b/x (same name+size) must share content_hash")
+		t.Errorf("a/x and b/x (identical bytes) must share content_hash")
 	}
 	// Cross-name merge: c/y hashed individually but byte-identical → same hash.
 	if !bytes.Equal(hAX, hCY) {
@@ -117,6 +118,60 @@ func TestHashCollisionsParallel(t *testing.T) {
 	// Different content → different hash.
 	if bytes.Equal(hAX, hDZ) {
 		t.Errorf("d/z (same size, different content) must have a DIFFERENT hash")
+	}
+}
+
+// TestHashCollisionsSameNameDifferentContent is the regression guard for the
+// exact-byte-only invariant: two files with the SAME size AND the SAME base
+// name but DIFFERENT content must end up with DIFFERENT content_hash. The old
+// (size,basename) clustering shared one representative hash across both,
+// wrongly merging them and dropping one from content-collapsed search/views.
+func TestHashCollisionsSameNameDifferentContent(t *testing.T) {
+	dir := t.TempDir()
+	db, _ := Open(dir)
+	defer db.Close()
+
+	// Two payloads of the SAME length but different bytes.
+	const n = 50000 // < 192 KiB full-hash limit → whole file hashed
+	left := bytes.Repeat([]byte("LEFTLEFT"), n/8)
+	right := bytes.Repeat([]byte("RGHTRGHT"), n/8)
+	if len(left) != len(right) {
+		t.Fatalf("test setup: payload sizes differ (%d vs %d)", len(left), len(right))
+	}
+	size := int64(len(left))
+
+	for _, sub := range []string{"alpha", "beta"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", sub, err)
+		}
+	}
+	// Identical base name "schematic.pdf" under two different folders, same size.
+	writeFile(t, dir, filepath.Join("alpha", "schematic.pdf"), left)
+	writeFile(t, dir, filepath.Join("beta", "schematic.pdf"), right)
+
+	idA, _ := db.InsertFile(&FileRecord{Path: "alpha/schematic.pdf", Filename: "schematic.pdf", Extension: ".pdf", FileType: "pdf", Size: size, ModTime: 1})
+	idB, _ := db.InsertFile(&FileRecord{Path: "beta/schematic.pdf", Filename: "schematic.pdf", Extension: ".pdf", FileType: "pdf", Size: size, ModTime: 1})
+
+	files := mustSizeCollisions(t, db)
+	if len(files) != 2 {
+		t.Fatalf("expected 2 size-collision files, got %d", len(files))
+	}
+
+	HashCollisions(db, dir, files, 4, func() bool { return false }, nil)
+
+	hA, _ := db.ContentHashOf(idA)
+	hB, _ := db.ContentHashOf(idB)
+	if len(hA) == 0 || len(hB) == 0 {
+		t.Fatalf("both files must be hashed: A=%d B=%d", len(hA), len(hB))
+	}
+	if bytes.Equal(hA, hB) {
+		t.Fatalf("same-name same-size DIFFERENT-content files must NOT merge (exact-byte-only invariant)")
+	}
+
+	// And dedup stats must report zero duplicate groups for this pair.
+	s, _ := db.DedupStats()
+	if s.Groups != 0 || s.DuplicateFiles != 0 {
+		t.Errorf("no duplicate group expected for different-content files, got %+v", s)
 	}
 }
 
