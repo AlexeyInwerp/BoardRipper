@@ -466,9 +466,26 @@ export const themeStore = new ThemeStore();
 setThemeOverridesProvider(() => themeStore.activeTheme().boardOverrides);
 
 // On theme change, force render-settings to re-merge so the new theme's
-// boardOverrides take effect. We poke setActiveBoard with the current
-// active board to trigger the existing recompute path without changing state.
+// boardOverrides take effect. We poke applyGlobal to trigger the existing
+// recompute path without changing state.
+//
+// IMPORTANT: themeStore.notify() fires on EVERY interface knob change —
+// accent / background / chrome picks too — and those are pure-UI CSS-variable
+// changes that carry no boardOverrides. Poking applyGlobal on each of them
+// forces a full structuredClone + localStorage write + global notify for a
+// cosmetic change. Gate the poke so it only fires when board rendering can
+// actually be affected: the active theme has boardOverrides now, OR the
+// previous active theme had them (so a switch away from an override theme
+// still clears the stale overlay — e.g. leaving Landrex).
+let _prevThemeHadOverrides = !!themeStore.activeTheme().boardOverrides;
 themeStore.subscribe(() => {
+  const hasOverrides = !!themeStore.activeTheme().boardOverrides;
+  if (!hasOverrides && !_prevThemeHadOverrides) {
+    // Pure-UI knob change with no board-override involvement either way —
+    // nothing for render-settings to re-merge.
+    return;
+  }
+  _prevThemeHadOverrides = hasOverrides;
   const cur = renderSettingsStore.activeBoard;
   // setActiveBoard short-circuits when the value is unchanged unless either
   // side has overrides — bypass that by using applyGlobal which always

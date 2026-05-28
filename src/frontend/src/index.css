@@ -827,6 +827,30 @@ html, body, #root {
   padding: 8px;
 }
 
+/* Per-panel error-boundary fallback (PanelErrorBoundary) */
+.panel-error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.panel-error-title { font-weight: 600; color: var(--text-primary); }
+.panel-error-message { font-size: 0.85em; max-width: 36ch; word-break: break-word; }
+.panel-error-reset {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.panel-error-reset:hover { background: var(--accent-hover); }
+
 /* Component Info Panel */
 .info-header {
   padding-bottom: 8px;

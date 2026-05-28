@@ -11,6 +11,7 @@ import { Toolbar } from './components/Toolbar';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { Sidebar, isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide } from './components/Sidebar';
+import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel';
@@ -31,11 +32,30 @@ import { themeStore } from './store/themes';
 import { updateStore } from './store/update-store';
 import { databankStore } from './store/databank-store';
 
+// Every Dockview panel is wrapped in a PanelErrorBoundary so one bad board
+// file / render-time throw in a single panel can't white-screen the whole app
+// (an uncaught exception would otherwise unmount the entire React tree).
 const components: Record<string, React.FC<IDockviewPanelProps>> = {
-  boardViewer: (props) => <BoardViewerPanel {...props} />,
-  pdfViewer: (props) => <PdfViewerPanel {...props} />,
-  databaseEditor: (props) => <DatabaseEditorPanel {...props} />,
-  worklist: () => <WorklistPanel />,
+  boardViewer: (props) => (
+    <PanelErrorBoundary label="Board Viewer">
+      <BoardViewerPanel {...props} />
+    </PanelErrorBoundary>
+  ),
+  pdfViewer: (props) => (
+    <PanelErrorBoundary label="PDF Viewer">
+      <PdfViewerPanel {...props} />
+    </PanelErrorBoundary>
+  ),
+  databaseEditor: (props) => (
+    <PanelErrorBoundary label="Database Editor">
+      <DatabaseEditorPanel {...props} />
+    </PanelErrorBoundary>
+  ),
+  worklist: () => (
+    <PanelErrorBoundary label="Worklist">
+      <WorklistPanel />
+    </PanelErrorBoundary>
+  ),
 };
 
 const tabComponents = {
@@ -259,7 +279,9 @@ function App() {
             {sidebarSide === 'left' ? '▶' : '◀'}
           </button>
         )}
-        <Sidebar />
+        <PanelErrorBoundary label="Sidebar">
+          <Sidebar />
+        </PanelErrorBoundary>
         <div className="dockview-container" style={{ order: sidebarSide === 'left' ? 1 : 0 }}>
           <DockviewReact
             className="dockview-theme-dark"

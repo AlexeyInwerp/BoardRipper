@@ -186,11 +186,17 @@ export const shortcuts: Shortcut[] = [
   },
 
   // --- WSAD Navigation ---
+  // The six positional WSAD/QE shortcuts match by `code` (physical key) so
+  // they keep working on AZERTY/QWERTZ layouts where the labelled key shifts
+  // (e.g. AZERTY has Z/Q/S/D where QWERTY has W/A/S/D). `key` is retained only
+  // for the printed label in Settings (formatKeyName reads it). matchesBinding
+  // prefers `code` whenever it is set.
   {
     id: 'panBoardLeft',
     label: 'Pan Left',
     category: 'wsad',
     key: 'a',
+    code: 'KeyA',
     description: 'Move the view left (board or PDF)',
   },
   {
@@ -198,6 +204,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Pan Right',
     category: 'wsad',
     key: 'd',
+    code: 'KeyD',
     description: 'Move the view right (board or PDF)',
   },
   {
@@ -205,6 +212,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Pan Up',
     category: 'wsad',
     key: 'w',
+    code: 'KeyW',
     description: 'Move the view up (board or PDF)',
   },
   {
@@ -212,6 +220,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Pan Down',
     category: 'wsad',
     key: 's',
+    code: 'KeyS',
     description: 'Move the view down (board or PDF)',
   },
   {
@@ -219,6 +228,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Rotate CCW',
     category: 'wsad',
     key: 'q',
+    code: 'KeyQ',
     description: 'Rotate the board 90° counter-clockwise',
   },
   {
@@ -226,6 +236,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Rotate CW',
     category: 'wsad',
     key: 'e',
+    code: 'KeyE',
     description: 'Rotate the board 90° clockwise',
   },
   {
@@ -233,6 +244,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Zoom In',
     category: 'wsad',
     key: 'w',
+    code: 'KeyW',
     shift: true,
     description: 'Zoom in at the canvas center (board or PDF)',
   },
@@ -241,6 +253,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Zoom Out',
     category: 'wsad',
     key: 's',
+    code: 'KeyS',
     shift: true,
     description: 'Zoom out at the canvas center (board or PDF)',
   },

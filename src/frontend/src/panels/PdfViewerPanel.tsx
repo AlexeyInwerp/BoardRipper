@@ -1101,6 +1101,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     return () => {
       clearTileDom();
       invalidateTileCache(pdfFileName);
+      // Also release the full-page / preview ImageBitmap caches for this doc,
+      // not just the tile cache — otherwise closed docs leak their decoded
+      // page bitmaps for the app's lifetime.
+      invalidatePageCache(pdfFileName);
     };
   }, [pdfFileName, clearTileDom]);
 

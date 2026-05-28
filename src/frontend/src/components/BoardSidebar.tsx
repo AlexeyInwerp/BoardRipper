@@ -2,10 +2,11 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { IconPin, IconPinFilled } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
+import type { SelectionState } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
-import { extractBoardNumberFromFilename, useObdNetLookup, obdStore, type ObdNet } from '../store/obd-store';
-import { DiagnosisNotes } from './DiagnosisNotes';
+import { extractBoardNumberFromFilename } from '../store/obd-store';
+import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
 import type { BoardData } from '../parsers';
 
@@ -13,6 +14,12 @@ type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
 
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set();
 const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map();
+const EMPTY_SELECTION: SelectionState = {
+  partIndex: null,
+  pinIndex: null,
+  highlightedNet: null,
+  adjacentNets: new Set<string>(),
+};
 
 interface BoardSidebarProps {
   visible: boolean;
@@ -395,166 +402,29 @@ function LayersTab({ tabId }: { tabId: number }) {
 }
 
 function InfoTab({ tabId }: { tabId: number }) {
-  // Subscribe to store changes but read from the specific tab
+  // Subscribe to store changes but read from the specific tab. Renders the
+  // SHARED ComponentInfoBody so this Info tab and the floating Component Info
+  // panel stay in lock-step (BOM-alternates switcher, OBD cells + diagnosis).
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
-  const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
-  const selectedPart = board && selection.partIndex !== null ? board.parts[selection.partIndex] : null;
-
-  // OpenBoardData enrichment, scoped to this tab's board number.
+  const selection = tab?.selection ?? EMPTY_SELECTION;
   const tabFileName = tab?.fileName ?? '';
   const boardNumber = extractBoardNumberFromFilename(tabFileName) ?? undefined;
-  const obd = useObdNetLookup(boardNumber);
-  useEffect(() => {
-    if (boardNumber) obdStore.loadMatches(boardNumber);
-  }, [boardNumber]);
+  const showBomAlternates = tab?.showBomAlternates ?? false;
+  const bomClusterSelections: ReadonlyMap<string, string> =
+    tab?.bomClusterSelections ?? EMPTY_BOM_SELECTIONS;
 
   if (!board) return <div className="panel-empty">No board loaded</div>;
 
-  // DIAGNOSIS_DATA notes from openboarddata.org are board-level (not pin-
-  // specific), so render them regardless of whether a component is selected.
-  const obdNotes = obd.loadedVariants
-    .filter(v => v.sections && v.sections.length > 0)
-    .map(v => (
-      <DiagnosisNotes key={v.bpath} sections={v.sections!} board={board} />
-    ));
-
-  if (!selectedPart) {
-    return (
-      <div className="panel-content component-info" data-testid="component-info">
-        <div className="panel-empty">Click a component to inspect</div>
-        {obdNotes}
-      </div>
-    );
-  }
-
-  const meta = selectedPart.meta;
-  const metaRows: Array<[string, string]> = [];
-  if (meta?.partType) metaRows.push(['Type', meta.partType]);
-  if (meta?.value) metaRows.push(['Value', meta.value]);
-  if (meta?.package) metaRows.push(['Package', meta.package]);
-  if (meta?.serial) metaRows.push(['Serial', meta.serial]);
-  if (meta?.heightMils != null) metaRows.push(['Height', `${meta.heightMils.toFixed(2)} mils`]);
-  if (meta?.angleDeg != null) metaRows.push(['Rotation', `${meta.angleDeg}°`]);
-
   return (
-    <div className="panel-content component-info" data-testid="component-info">
-      <div className="info-header">
-        <h3>{selectedPart.name}</h3>
-        <div className="info-meta">
-          <span className={`badge badge-${selectedPart.side}`}>{selectedPart.side}</span>
-          <span className="badge">{selectedPart.type}</span>
-          <span className="badge">{selectedPart.pins.length} pins</span>
-          {obd.hasData && (
-            <span
-              className="badge"
-              data-testid="obd-badge"
-              title={`OpenBoardData loaded: ${obd.variantCount} variant(s)`}
-              style={{ background: '#3a5', color: '#fff' }}
-            >
-              OBD ×{obd.variantCount}
-            </span>
-          )}
-        </div>
-      </div>
-      {metaRows.length > 0 && (
-        <table className="part-meta-table" data-testid="part-meta">
-          <tbody>
-            {metaRows.map(([k, v]) => (
-              <tr key={k}>
-                <th>{k}</th>
-                <td>{v}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      <div className="pin-table-container">
-        <table className="pin-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Name</th>
-              <th>Net</th>
-              {obd.hasData && <th title="diode / V / Ω from OpenBoardData">OBD</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {selectedPart.pins.map((pin, idx) => {
-              const isSelected = selection.pinIndex === idx;
-              const isNetHighlighted = selection.highlightedNet === pin.net && pin.net !== '';
-              const obdNets = obd.hasData ? obd.lookup(pin.net) : [];
-              return (
-                <tr
-                  key={idx}
-                  className={[
-                    isSelected ? 'pin-selected' : '',
-                    isNetHighlighted ? 'pin-net-highlight' : '',
-                  ].join(' ')}
-                  onClick={() => {
-                    if (selection.partIndex !== null) {
-                      boardStore.selectPin(selection.partIndex, idx);
-                    }
-                  }}
-                >
-                  <td>{pin.number}</td>
-                  <td>{pin.name}</td>
-                  <td
-                    className="pin-net"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      boardStore.highlightNet(
-                        selection.highlightedNet === pin.net ? null : pin.net
-                      );
-                    }}
-                  >
-                    {pin.net}
-                  </td>
-                  {obd.hasData && (
-                    <td className="pin-obd" data-testid="pin-obd-cell">
-                      <ObdSidebarCell nets={obdNets} />
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {/* Structured DIAGNOSIS_DATA from openboarddata.org — power
-          sequencing, repair notes, etc. Each variant shown sequentially;
-          most boards only have one variant fetched. */}
-      {obdNotes}
-    </div>
-  );
-}
-
-/** Same shape as ComponentInfoPanel.tsx's ObdCell — kept local to avoid
- *  cross-file coupling for a 20-line render helper. If a third info-pane
- *  appears we should hoist this into a shared component. */
-function ObdSidebarCell({ nets }: { nets: ObdNet[] }) {
-  if (nets.length === 0) return <span style={{ color: '#666' }}>—</span>;
-  const dedupe = (xs: (string | null | undefined)[]) =>
-    Array.from(new Set(xs.filter((v): v is string => typeof v === 'string' && v.length > 0)));
-  const diodes = dedupe(nets.map(n => n.diode));
-  const volts = dedupe(nets.map(n => n.voltage));
-  const ohms = dedupe(nets.map(n => n.resistance));
-  const allComments = Array.from(new Set(
-    nets.flatMap(n => Array.isArray(n.comments) ? n.comments : [])
-        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0),
-  ));
-  const parts: string[] = [];
-  if (diodes.length) parts.push(`d ${diodes.join('/')}`);
-  if (volts.length) parts.push(`${volts.join('/')} V`);
-  if (ohms.length) parts.push(`${ohms.join('/')} Ω`);
-  return (
-    <span style={{ fontSize: 11, fontFamily: 'monospace' }}>
-      {parts.length > 0 ? parts.join(' · ') : <span style={{ color: '#666' }}>—</span>}
-      {allComments.length > 0 && (
-        <span title={allComments.join('\n')} style={{ marginLeft: 4, cursor: 'help' }}>📝</span>
-      )}
-    </span>
+    <ComponentInfoBody
+      board={board}
+      selection={selection}
+      boardNumber={boardNumber}
+      showBomAlternates={showBomAlternates}
+      bomClusterSelections={bomClusterSelections}
+    />
   );
 }
 
