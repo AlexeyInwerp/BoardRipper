@@ -8,7 +8,7 @@ import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { extractBoardNumberFromFilename } from '../store/obd-store';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
-import type { BoardData } from '../parsers';
+import { bomReasonLabel, type BoardData } from '../parsers';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
 
@@ -604,11 +604,7 @@ function RevisionsTab({ tabId }: { tabId: number }) {
             {bomClusters.map((c) => {
               const sig = bomClusterSig(c.memberRefdes);
               const chosen = bomClusterSelections.get(sig) ?? c.defaultPrimaryRefdes;
-              const reasonLabel = c.reason === 'shape-named-device'
-                ? 'named device'
-                : c.reason === 'lowest-refdes'
-                  ? 'lowest refdes'
-                  : 'largest footprint';
+              const reasonLabel = bomReasonLabel(c.reason);
               return (
                 <div key={sig} className="ghost-item bom-cluster-item" style={{ flexWrap: 'wrap', gap: 4 }}>
                   <span style={{ fontSize: 11, color: '#888', minWidth: 60 }} title={`Auto-pick reason: ${reasonLabel}`}>

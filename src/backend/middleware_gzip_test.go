@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"compress/gzip"
 	"io"
 	"net/http"
@@ -67,8 +66,10 @@ func TestGzipSkipsEventStream(t *testing.T) {
 	if enc := rec.Header().Get("Content-Encoding"); enc == "gzip" {
 		t.Fatalf("event-stream must NOT be gzip-encoded, got %q", enc)
 	}
-	if !strings.Contains(rec.Body.String(), "data: hello") {
-		t.Fatalf("SSE body should be passed through verbatim, got %q", rec.Body.String())
+	// Exact equality (not Contains): catches a trailing empty-gzip footer being
+	// appended after the real body when the response isn't compressed.
+	if got := rec.Body.String(); got != "data: hello\n\n" {
+		t.Fatalf("SSE body must pass through verbatim with no trailing bytes, got %q", got)
 	}
 }
 
@@ -95,8 +96,9 @@ func TestGzipSkipsNDJSON(t *testing.T) {
 	if enc := rec.Header().Get("Content-Encoding"); enc == "gzip" {
 		t.Fatalf("NDJSON must NOT be gzip-encoded, got %q", enc)
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`{"n":2}`)) {
-		t.Fatalf("NDJSON body should pass through verbatim, got %q", rec.Body.String())
+	// Exact equality: no trailing empty-gzip footer after the uncompressed body.
+	if got := rec.Body.String(); got != "{\"n\":1}\n{\"n\":2}\n" {
+		t.Fatalf("NDJSON body must pass through verbatim with no trailing bytes, got %q", got)
 	}
 }
 

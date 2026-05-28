@@ -266,6 +266,20 @@ export interface BomAlternateCluster {
   reason: 'shape-named-device' | 'lowest-refdes' | 'largest-footprint';
 }
 
+/** Human-readable label for a BOM cluster's auto-pick reason. Single source
+ *  of truth shared by every surface that renders a cluster (Info tab,
+ *  Component Info panel, Revisions tab) so the wording can't drift. */
+export function bomReasonLabel(reason: BomAlternateCluster['reason']): string {
+  switch (reason) {
+    case 'shape-named-device':
+      return 'named device';
+    case 'lowest-refdes':
+      return 'lowest refdes';
+    case 'largest-footprint':
+      return 'largest footprint';
+  }
+}
+
 export interface GhostComponent {
   /** Index into parts[] of the suspected stale component. */
   partIndex: number;

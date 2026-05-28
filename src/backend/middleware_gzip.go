@@ -145,12 +145,22 @@ func gzipMiddleware(next http.Handler) http.Handler {
 
 		gz := gzipPool.Get().(*gzip.Writer)
 		gz.Reset(w)
+		grw := &gzipResponseWriter{ResponseWriter: w, gz: gz}
 		defer func() {
-			_ = gz.Close()
+			if grw.useGzip {
+				// Body was written through the gzip layer; flush its footer.
+				_ = gz.Close()
+			} else {
+				// Response was NOT compressed (SSE/NDJSON/no-transform/already-
+				// encoded/non-compressible). The gzip.Writer is still pointed at
+				// w from Reset above; closing it here would emit a ~23-byte empty
+				// gzip stream onto the real body. Detach to io.Discard instead so
+				// nothing leaks and the pooled writer is left clean.
+				gz.Reset(io.Discard)
+			}
 			gzipPool.Put(gz)
 		}()
 
-		grw := &gzipResponseWriter{ResponseWriter: w, gz: gz}
 		next.ServeHTTP(grw, r)
 	})
 }

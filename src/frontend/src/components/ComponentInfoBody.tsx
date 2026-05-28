@@ -18,7 +18,7 @@
  *   - A single ObdCell renders the per-pin diode/V/Ω readings in both.
  */
 import { useEffect } from 'react';
-import type { BoardData, BomAlternateCluster } from '../parsers';
+import { bomReasonLabel, type BoardData, type BomAlternateCluster } from '../parsers';
 import type { SelectionState } from '../store/board-store';
 import { boardStore, bomClusterSig } from '../store/board-store';
 import { obdStore, useObdNetLookup, type ObdNet } from '../store/obd-store';
@@ -200,12 +200,7 @@ function BomClusterSection({
 }) {
   const sig = bomClusterSig(cluster.memberRefdes);
   const chosenRefdes = selections.get(sig) ?? cluster.defaultPrimaryRefdes;
-  const reasonLabel =
-    cluster.reason === 'shape-named-device'
-      ? 'named device'
-      : cluster.reason === 'lowest-refdes'
-        ? 'lowest refdes'
-        : 'largest footprint';
+  const reasonLabel = bomReasonLabel(cluster.reason);
 
   return (
     <div className="bom-cluster-section" data-testid="bom-cluster-section">
@@ -240,16 +235,16 @@ function BomClusterSection({
             const isChosen = refdes === chosenRefdes;
             const isSelected = refdes === selectedRefdes;
             const memberIdx = cluster.memberIndices[i];
+            const statusLabel = memberStatusLabel(isChosen, isSelected);
+            let rowBackground: string | undefined;
+            if (isSelected) rowBackground = 'rgba(120,80,200,0.22)';
+            else if (isChosen) rowBackground = 'rgba(120,80,200,0.10)';
             return (
               <tr
                 key={refdes}
                 style={{
                   cursor: showAll ? 'default' : 'pointer',
-                  background: isSelected
-                    ? 'rgba(120,80,200,0.22)'
-                    : isChosen
-                      ? 'rgba(120,80,200,0.10)'
-                      : undefined,
+                  background: rowBackground,
                 }}
                 onClick={() => {
                   if (showAll) {
@@ -266,15 +261,7 @@ function BomClusterSection({
                   {isChosen ? '●' : <span style={{ color: '#666' }}>○</span>}
                 </td>
                 <td style={{ padding: '2px 6px', fontWeight: isSelected ? 700 : 400 }}>{refdes}</td>
-                <td style={{ padding: '2px 6px', color: '#888' }}>
-                  {isChosen && !isSelected
-                    ? '(primary)'
-                    : isSelected && isChosen
-                      ? '(primary, selected)'
-                      : isSelected
-                        ? '(selected)'
-                        : ''}
-                </td>
+                <td style={{ padding: '2px 6px', color: '#888' }}>{statusLabel}</td>
               </tr>
             );
           })}
@@ -282,6 +269,15 @@ function BomClusterSection({
       </table>
     </div>
   );
+}
+
+/** Suffix shown next to a BOM-cluster member: marks the rendered primary, the
+ *  currently-selected member, or both. */
+function memberStatusLabel(isChosen: boolean, isSelected: boolean): string {
+  if (isChosen && isSelected) return '(primary, selected)';
+  if (isChosen) return '(primary)';
+  if (isSelected) return '(selected)';
+  return '';
 }
 
 /** Single shared OBD pin-cell renderer (replaces the former ObdCell /

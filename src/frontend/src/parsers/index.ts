@@ -27,7 +27,7 @@ registerFormat(XZZFormat);
 registerFormat(TVWFormat);
 
 export type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Part, Pin, Net, Point, BBox, Pad, SilkscreenPath, Trace, Via } from './types';
-export { computeBBox, buildNets } from './types';
+export { computeBBox, buildNets, bomReasonLabel } from './types';
 export type { FormatDescriptor, FormatId } from './registry';
 export { getFormat, getAllFormats, getAllExtensions, getFileExtension } from './registry';
 export { exportToBVR3 } from './export-bvr3';
