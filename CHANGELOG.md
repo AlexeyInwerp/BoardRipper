@@ -1,5 +1,26 @@
 # BoardRipper changelog
 
+## v0.31.4 — 2026-05-30
+
+Two new things you can play with: an interactive first-run gesture setup, and a
+disco highlight mode on the ghost-toggle button that pulses every same-net part
+red on both sides.
+
+### Features
+
+- **First-run "Set up by gesture" interactive welcome.** A modal walks you through four bindings (Board Pan/Zoom, PDF Pan/Zoom) by asking you to *demonstrate* the gesture you want in a shared test window — scroll, swipe, pinch, or drag is detected and bound via `recommendSetting`. The opposite action auto-fills, then it advances to the next surface. OS-momentum is detected live so BoardRipper's own glide stays OFF when your trackpad already provides inertia (no compounding). Re-openable from the start page's Quick settings ("Set up by gesture (interactive)"). The Playwright suite isn't affected — auto-show is suppressed under `navigator.webdriver`. (`5c06d4d`)
+- **Disco highlight mode on the ghost button.** The hidden-side ghost toggle is now a three-way cycle: off → ghosts → disco. In disco mode every part on the highlighted net (both sides) heartbeats red — a body-fill flash + outline ring tied to a threshold-clamped sine so ~70% of each second is silent and only the top ~30% blooms. Same-net only; no selected net means no halo. The button hue-rotates while active, and the animation is disabled under `prefers-reduced-motion`. (`76701ce`, `3294553`, `82d3085`, `228a841`, `ee14b99`)
+
+### Fixes
+
+- **Start-page supported-formats list now matches the parser registry.** The list previously claimed `.xzz` (wrong — XZZ PCB is `.pcb`) and omitted `.bv`. Updated with dual-purpose notes for `.brd` / `.cad` / `.bdv`. (`5c06d4d`)
+
+### Internal
+
+- **Verbose Debug-panel gesture recognizer** kept alongside the welcome modal for research: raw event dump, classification reasons, momentum stats, per-gesture confirm-and-apply. `recommendInertia` direction stays in lock-step with the welcome checkbox semantics. (`5c06d4d`)
+- **Renderer refactor:** `expandPoly` / `drawPoly` / `drawPartOutline` are now module-level so cross-side ghost + disco halo share the part-shape primitive instead of open-coding the poly/AABB dichotomy. Introduced a `GhostMode` type alias to replace the inline `'off' | 'ghosts' | 'disco'` union across the seven sites that referenced it. (`aa10364`)
+- **Disco silent-phase short-circuit:** `renderDiscoHalo` skips path building during the ~70% silent window of each cycle and only fires `needsRender` on the transition into silence, tracked via `discoHaloDirty`. The ticker now gates `renderNetLines` on `netLineMode !== 'off' && highlightedNet`, so disco-only frames don't pay for a net-line clear. (`aa10364`)
+
 ## v0.31.3 — 2026-05-29
 
 A roundup release: new multilayer trace-layer controls, PDF viewer default and
