@@ -78,6 +78,10 @@ export interface BoardTab {
   showLabels: boolean;
   /** Show ghost outlines of hidden-side components when a net is selected */
   showGhosts: boolean;
+  /** Disco highlight mode — highlighted/selected parts pulse with a rainbow
+   *  cycle on both the current and back side of the board. Independent of
+   *  net selection. Default OFF. */
+  discoHighlight: boolean;
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
   /** Layer whose traces are bumped to the top of the z-stack while nothing is
@@ -532,6 +536,7 @@ class BoardStore extends Emitter {
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
   get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
+  get discoHighlight(): boolean { return this.activeTab?.discoHighlight ?? false; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
   get swappedGhostPairs(): ReadonlySet<string> { return this.activeTab?.swappedGhostPairs ?? EMPTY_GHOST_SWAPS; }
   get showBomAlternates(): boolean { return this.activeTab?.showBomAlternates ?? false; }
@@ -735,6 +740,7 @@ class BoardStore extends Emitter {
         showOutlines: true,
         showLabels: true,
         showGhosts: true,
+        discoHighlight: false,
         layerStates: [],
         selectedLayerIndex: null,
         fixatedLayerIndex: null,
@@ -926,6 +932,7 @@ class BoardStore extends Emitter {
       showOutlines: true,
       showLabels: true,
       showGhosts: true,
+      discoHighlight: false,
       layerStates: [],
       selectedLayerIndex: null,
       fixatedLayerIndex: null,
@@ -1551,6 +1558,13 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ showGhosts: !tab.showGhosts });
+    this.notify();
+  }
+
+  toggleDiscoHighlight() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ discoHighlight: !tab.discoHighlight });
     this.notify();
   }
 

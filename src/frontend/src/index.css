@@ -2218,6 +2218,16 @@ html, body, #root {
   pointer-events: none;
 }
 
+/* Disco-highlight toggle in active state — animated hue cycle on the icon
+ * itself so the button reads as "on" without any extra DOM. */
+@keyframes disco-toggle-hue {
+  from { filter: hue-rotate(0deg); }
+  to   { filter: hue-rotate(360deg); }
+}
+.board-netlines-toggle.disco-active {
+  animation: disco-toggle-hue 2s linear infinite;
+}
+
 /* Board sidebar (overlays right edge of board panel) */
 .board-sidebar {
   position: absolute;

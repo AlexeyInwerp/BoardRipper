@@ -49,6 +49,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const dimMode = thisTab?.dimMode ?? 'dim';
   const showHoverInfo = thisTab?.showHoverInfo ?? true;
   const showGhosts = thisTab?.showGhosts ?? true;
+  const discoHighlight = thisTab?.discoHighlight ?? false;
   const followPdf = thisTab?.followPdf ?? false;
   const layerStates = thisTab?.layerStates ?? [];
   const bareAction = useBareScrollAction();
@@ -215,6 +216,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       dimMode,
       showHoverInfo,
       showGhosts,
+      discoHighlight,
       followPdf,
       pdfFileNames: linkedPdfs,
       fileName: tabFileName,

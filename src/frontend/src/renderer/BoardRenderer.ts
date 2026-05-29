@@ -180,6 +180,26 @@ interface ViewportState {
   scaleY: number;
 }
 
+/** Convert HSL (hue 0–360, sat/light 0–1) to a 0xRRGGBB integer. Used by
+ *  disco-highlight rainbow cycling. */
+function hslToRgb24(h: number, s: number, l: number): number {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = h / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r1 = 0, g1 = 0, b1 = 0;
+  if      (hp < 1) { r1 = c; g1 = x; }
+  else if (hp < 2) { r1 = x; g1 = c; }
+  else if (hp < 3) { g1 = c; b1 = x; }
+  else if (hp < 4) { g1 = x; b1 = c; }
+  else if (hp < 5) { r1 = x; b1 = c; }
+  else             { r1 = c; b1 = x; }
+  const m = l - c / 2;
+  const r = Math.round((r1 + m) * 255);
+  const g = Math.round((g1 + m) * 255);
+  const b = Math.round((b1 + m) * 255);
+  return (r << 16) | (g << 8) | b;
+}
+
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
   private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
@@ -243,6 +263,11 @@ export class BoardRenderer {
   // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
   // not required; iteration in renderCrossSideGhosts is fine on a Set.
   private crossSideGhostParts: Set<number> = new Set();
+  /** Disco highlight halo — rainbow-cycling outline that pulses around every
+   *  highlighted part when discoHighlight mode is on. Redrawn each tick. */
+  private discoHaloGfx!: Graphics;
+  /** Part indices to paint as disco halos (== highlighted set when disco mode on). */
+  private discoHaloParts: Set<number> = new Set();
   private debugVertexLabels: Text[] = [];
   private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
@@ -345,7 +370,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, searchSelectionActive: false, connectionHighlight: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, discoHighlight: false, searchSelectionActive: false, connectionHighlight: false };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -507,16 +532,18 @@ export class BoardRenderer {
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.size > 0;
+    const hasDisco = boardStore.discoHighlight && this.discoHaloParts.size > 0;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
-    if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts)) {
+    if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts || hasDisco)) {
       const s = renderSettingsStore.settings;
-      const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts;
+      const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts || hasDisco;
       if (needsPulse) {
         this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
         t0 = perf ? performance.now() : 0;
         this.renderNetLines();
         if (hasGhosts) this.renderCrossSideGhosts();
+        if (hasDisco) this.renderDiscoHalo();
         if (perf) this.perfAccum.netLines += performance.now() - t0;
         this.needsRender = true;
       }
@@ -859,6 +886,9 @@ export class BoardRenderer {
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
     this.crossSideGhostGfx.eventMode = 'none';
+    this.discoHaloGfx = new Graphics();
+    this.discoHaloGfx.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
+    this.discoHaloGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
     // multiHighlightGfx is attached to scene.root in activateScene() so the
     // board's rotation/flip/butterfly transforms apply to the outlines too —
@@ -1028,6 +1058,9 @@ export class BoardRenderer {
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below selection (30) and labels (35)
     this.crossSideGhostGfx.eventMode = 'none';
+    this.discoHaloGfx = new Graphics();
+    this.discoHaloGfx.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
+    this.discoHaloGfx.eventMode = 'none';
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
 
     // Elevated labels for selected part/pin — persistent objects reused across
@@ -1713,6 +1746,7 @@ export class BoardRenderer {
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
+    scene.root.addChild(this.discoHaloGfx);
     // Elevated labels must always be last (addChild on existing child moves it to end)
     scene.root.addChild(this.elevatedPinBg!);
     scene.root.addChild(this.elevatedPinLabel!);
@@ -1942,6 +1976,7 @@ export class BoardRenderer {
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
+    scene.root.addChild(this.discoHaloGfx);
     // Multi-select / active-worklist outlines — child of scene.root so the
     // board's rotation/flip transforms apply. Rendered via standard root
     // pass (no RenderLayer) at zIndex 28 — sits above ghosts/dim, below
@@ -2009,6 +2044,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.discoHaloGfx);
       this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
@@ -2020,6 +2056,7 @@ export class BoardRenderer {
     this.netDimGfx.clear();
     this.butterflyDimGfx.clear();
     this.crossSideGhostGfx.clear();
+    this.discoHaloGfx.clear();
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
   }
@@ -2033,6 +2070,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
+      this.activeScene.root.removeChild(this.discoHaloGfx);
       this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
@@ -2238,10 +2276,11 @@ export class BoardRenderer {
         || boardStore.showTop !== lrs.showTop
         || boardStore.showBottom !== lrs.showBottom
         || boardStore.showGhosts !== lrs.showGhosts
+        || boardStore.discoHighlight !== lrs.discoHighlight
         || boardStore.searchSelectionActive !== lrs.searchSelectionActive
         || boardStore.connectionHighlight !== lrs.connectionHighlight) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, discoHighlight: boardStore.discoHighlight, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight };
       }
 
       // PDF follow mode: search for selected component
@@ -2982,6 +3021,8 @@ export class BoardRenderer {
     this.butterflySelectionGfx.clear();
     this.crossSideGhostGfx.clear();
     this.crossSideGhostParts = new Set();
+    this.discoHaloGfx.clear();
+    this.discoHaloParts = new Set();
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
@@ -3490,8 +3531,37 @@ export class BoardRenderer {
       this.crossSideGhostParts = new Set(ghostPartIndices);
     }
 
+    // ── Disco highlight: collect every highlighted part on this side, project
+    //    it onto the back side via crossSideGhostGfx, and stash for halo pulse ──
+    if (boardStore.discoHighlight) {
+      const disco = new Set<number>();
+      if (sel.partIndex !== null) disco.add(sel.partIndex);
+      for (const i of boardStore.searchResultIndices) disco.add(i);
+      for (const i of selectionSetStore.current.set) disco.add(i);
+      const wl = worklistStore.activeWorklist;
+      if (wl) {
+        const byRefdes = new Map<string, number>();
+        for (let i = 0; i < this.board.parts.length; i++) {
+          const n = this.board.parts[i]?.name;
+          if (n) byRefdes.set(n, i);
+        }
+        for (const e of wl.entries) {
+          const idx = byRefdes.get(e.refdes);
+          if (idx != null) disco.add(idx);
+        }
+      }
+      this.discoHaloParts = disco;
+      // Project the same parts as cross-side ghosts so they appear on the
+      // hidden side too. Merge with whatever the net-driven ghost machinery
+      // already collected — both render through the same gfx layer.
+      const merged = new Set(this.crossSideGhostParts);
+      for (const i of disco) merged.add(i);
+      this.crossSideGhostParts = merged;
+    }
+
     // ── Cross-side ghost components (hidden side, pulsing semi-transparent) ──
     this.renderCrossSideGhosts();
+    this.renderDiscoHalo();
 
     // ── Elevated labels for selected part/pin ───────────────────────────────
     this.updateElevatedLabels(sel, s);
@@ -3958,6 +4028,8 @@ export class BoardRenderer {
    * Draw cross-side ghost outlines for net-connected parts on the hidden board side.
    * Called from renderSelection() and the ticker for pulse animation.
    * Ghosts are semi-transparent with a pulsing opacity driven by netLinePulsePhase.
+   * In discoHighlight mode, each highlighted part gets its own rainbow hue
+   * driven by partIndex so the back side reads as a synchronised dance floor.
    */
   private renderCrossSideGhosts() {
     this.crossSideGhostGfx.clear();
@@ -3968,13 +4040,18 @@ export class BoardRenderer {
     const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
     const ghostAlpha = 0.12 + pulse * 0.23;
     const outlineAlpha = 0.25 + pulse * 0.35;
-    const ghostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
+    const baseGhostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
+    const disco = boardStore.discoHighlight;
 
     const gfx = this.crossSideGhostGfx;
 
     for (const partIndex of this.crossSideGhostParts) {
       const part = this.board.parts[partIndex];
       if (!part) continue;
+      // Per-part rainbow hue in disco mode; cyan otherwise.
+      const ghostColor = disco
+        ? hslToRgb24(((this.netLinePulsePhase + partIndex * 0.073) % 1) * 360, 0.95, 0.55)
+        : baseGhostColor;
 
       // Draw part body outline
       const poly = computePartRenderPoly(part, s);
@@ -3998,6 +4075,69 @@ export class BoardRenderer {
       if (part.pins.length > 0) {
         gfx.fill({ color: ghostColor, alpha: ghostAlpha });
       }
+    }
+
+    this.needsRender = true;
+  }
+
+  /**
+   * Disco mode: draw a rainbow-cycling halo ring around every highlighted part
+   * on the visible side. Each part's hue is offset by its partIndex so the
+   * board reads as a swirling dance-floor when multiple parts are selected.
+   * Called from renderSelection() (initial draw) and from the ticker each
+   * frame while disco mode is on (animates hue + pulse width).
+   */
+  private renderDiscoHalo() {
+    this.discoHaloGfx.clear();
+    if (!boardStore.discoHighlight || this.discoHaloParts.size === 0 || !this.board) return;
+
+    const s = renderSettingsStore.settings;
+    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
+    // Halo width pulses ~30% above selection stroke; alpha 0.55–0.95.
+    const widthBase = Math.max(s.selectionWidth * 1.6, 3);
+    const width = widthBase * (0.85 + pulse * 0.5);
+    const alpha = 0.55 + pulse * 0.4;
+    // Pad outward by half-width so the ring sits around the existing
+    // selection rectangle rather than overlapping it.
+    const pad = s.selectionPadding + width * 0.6;
+
+    const gfx = this.discoHaloGfx;
+
+    for (const partIndex of this.discoHaloParts) {
+      const part = this.board.parts[partIndex];
+      if (!part) continue;
+      // Only halo on the visible side here — the back-side projection is
+      // delegated to renderCrossSideGhosts via the shared injection above.
+      if (!this.isPartVisible(part)) continue;
+
+      const hue = ((this.netLinePulsePhase + partIndex * 0.073) % 1) * 360;
+      const color = hslToRgb24(hue, 1.0, 0.6);
+
+      if (part.pins.length === 1) {
+        const pin = part.pins[0];
+        const r = computePinRadius(s, pin.radius) + pad;
+        gfx.circle(pin.position.x, pin.position.y, r);
+      } else {
+        const poly = computePartRenderPoly(part, s);
+        if (poly) {
+          // Expand polygon outward by `pad` along edge normals.
+          const cx = poly.reduce((sum, p) => sum + p[0], 0) / poly.length;
+          const cy = poly.reduce((sum, p) => sum + p[1], 0) / poly.length;
+          const expanded: [number, number][] = poly.map(([px, py]) => {
+            const dx = px - cx, dy = py - cy;
+            const len = Math.hypot(dx, dy);
+            if (len < 1e-6) return [px, py];
+            return [px + dx / len * pad, py + dy / len * pad];
+          });
+          gfx.moveTo(expanded[0][0], expanded[0][1]);
+          for (let i = 1; i < expanded.length; i++) gfx.lineTo(expanded[i][0], expanded[i][1]);
+          gfx.closePath();
+        } else {
+          const rb = computePartRenderBounds(part, s);
+          gfx.rect(rb.px - pad, rb.py - pad, rb.pw + pad * 2, rb.ph + pad * 2);
+        }
+      }
+      gfx.stroke({ width, color, alpha });
     }
 
     this.needsRender = true;

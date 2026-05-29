@@ -14,6 +14,7 @@ export interface SlotCtx {
     dimMode: 'off' | 'dim' | 'darklight';
     showHoverInfo: boolean;
     showGhosts: boolean;
+    discoHighlight: boolean;
     followPdf: boolean;
     pdfFileNames: readonly string[];
     fileName: string;

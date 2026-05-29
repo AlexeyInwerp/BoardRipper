@@ -14,6 +14,7 @@ const stubCtx: SlotCtx = {
     dimMode: 'off',
     showHoverInfo: false,
     showGhosts: false,
+    discoHighlight: false,
     followPdf: false,
     pdfFileNames: [],
     fileName: '',
