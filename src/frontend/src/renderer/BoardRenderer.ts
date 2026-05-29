@@ -263,11 +263,16 @@ export class BoardRenderer {
   // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
   // not required; iteration in renderCrossSideGhosts is fine on a Set.
   private crossSideGhostParts: Set<number> = new Set();
-  /** Disco highlight halo — rainbow-cycling outline that pulses around every
-   *  highlighted part when discoHighlight mode is on. Redrawn each tick. */
-  private discoHaloGfx!: Graphics;
-  /** Part indices to paint as disco halos (== highlighted set when disco mode on). */
-  private discoHaloParts: Set<number> = new Set();
+  /** Disco mode — every part on the board, both sides, pulses rainbow.
+   *  Six tinted Graphics, one per hue bucket. Geometry is built ONCE per
+   *  board into white-stroked outlines (partIndex % 6 picks the bucket);
+   *  the ticker only updates `bucket.tint` + `bucket.alpha`, so animation
+   *  cost is constant regardless of part count. */
+  private discoBuckets: Graphics[] = [];
+  /** Board reference the disco bucket geometry was built for. Null = needs rebuild. */
+  private discoBuiltFor: BoardData | null = null;
+  /** Number of hue buckets for disco mode. Six = clean rainbow split. */
+  private static readonly DISCO_BUCKET_COUNT = 6;
   private debugVertexLabels: Text[] = [];
   private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
@@ -532,7 +537,7 @@ export class BoardRenderer {
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.size > 0;
-    const hasDisco = boardStore.discoHighlight && this.discoHaloParts.size > 0;
+    const hasDisco = boardStore.discoHighlight && this.discoBuiltFor !== null;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
     if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts || hasDisco)) {
@@ -543,7 +548,7 @@ export class BoardRenderer {
         t0 = perf ? performance.now() : 0;
         this.renderNetLines();
         if (hasGhosts) this.renderCrossSideGhosts();
-        if (hasDisco) this.renderDiscoHalo();
+        if (hasDisco) this.animateDiscoBuckets();
         if (perf) this.perfAccum.netLines += performance.now() - t0;
         this.needsRender = true;
       }
@@ -886,9 +891,15 @@ export class BoardRenderer {
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
     this.crossSideGhostGfx.eventMode = 'none';
-    this.discoHaloGfx = new Graphics();
-    this.discoHaloGfx.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
-    this.discoHaloGfx.eventMode = 'none';
+    this.discoBuckets = [];
+    for (let i = 0; i < BoardRenderer.DISCO_BUCKET_COUNT; i++) {
+      const g = new Graphics();
+      g.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
+      g.eventMode = 'none';
+      g.visible = false;
+      this.discoBuckets.push(g);
+    }
+    this.discoBuiltFor = null;
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
     // multiHighlightGfx is attached to scene.root in activateScene() so the
     // board's rotation/flip/butterfly transforms apply to the outlines too —
@@ -1058,9 +1069,15 @@ export class BoardRenderer {
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below selection (30) and labels (35)
     this.crossSideGhostGfx.eventMode = 'none';
-    this.discoHaloGfx = new Graphics();
-    this.discoHaloGfx.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
-    this.discoHaloGfx.eventMode = 'none';
+    this.discoBuckets = [];
+    for (let i = 0; i < BoardRenderer.DISCO_BUCKET_COUNT; i++) {
+      const g = new Graphics();
+      g.zIndex = 31; // just above selectionGfx (30), below netLabelLayer (35)
+      g.eventMode = 'none';
+      g.visible = false;
+      this.discoBuckets.push(g);
+    }
+    this.discoBuiltFor = null;
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
 
     // Elevated labels for selected part/pin — persistent objects reused across
@@ -1746,7 +1763,7 @@ export class BoardRenderer {
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
-    scene.root.addChild(this.discoHaloGfx);
+    for (const g of this.discoBuckets) scene.root.addChild(g);
     // Elevated labels must always be last (addChild on existing child moves it to end)
     scene.root.addChild(this.elevatedPinBg!);
     scene.root.addChild(this.elevatedPinLabel!);
@@ -1976,7 +1993,7 @@ export class BoardRenderer {
     scene.root.addChild(this.crossSideGhostGfx);
     scene.root.addChild(this.netLabelLayer);
     scene.root.addChild(this.selectionGfx);
-    scene.root.addChild(this.discoHaloGfx);
+    for (const g of this.discoBuckets) scene.root.addChild(g);
     // Multi-select / active-worklist outlines — child of scene.root so the
     // board's rotation/flip transforms apply. Rendered via standard root
     // pass (no RenderLayer) at zIndex 28 — sits above ghosts/dim, below
@@ -2044,7 +2061,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
-      this.activeScene.root.removeChild(this.discoHaloGfx);
+      for (const g of this.discoBuckets) this.activeScene.root.removeChild(g);
       this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
@@ -2056,7 +2073,8 @@ export class BoardRenderer {
     this.netDimGfx.clear();
     this.butterflyDimGfx.clear();
     this.crossSideGhostGfx.clear();
-    this.discoHaloGfx.clear();
+    for (const g of this.discoBuckets) g.clear();
+    this.discoBuiltFor = null;
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
   }
@@ -2070,7 +2088,7 @@ export class BoardRenderer {
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
       this.activeScene.root.removeChild(this.selectionGfx);
-      this.activeScene.root.removeChild(this.discoHaloGfx);
+      for (const g of this.discoBuckets) this.activeScene.root.removeChild(g);
       this.activeScene.root.removeChild(this.multiHighlightGfx);
       this.activeScene.root.removeChild(this.elevatedPartBg!);
       this.activeScene.root.removeChild(this.elevatedPartLabel!);
@@ -3021,8 +3039,6 @@ export class BoardRenderer {
     this.butterflySelectionGfx.clear();
     this.crossSideGhostGfx.clear();
     this.crossSideGhostParts = new Set();
-    this.discoHaloGfx.clear();
-    this.discoHaloParts = new Set();
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
@@ -3531,37 +3547,13 @@ export class BoardRenderer {
       this.crossSideGhostParts = new Set(ghostPartIndices);
     }
 
-    // ── Disco highlight: collect every highlighted part on this side, project
-    //    it onto the back side via crossSideGhostGfx, and stash for halo pulse ──
-    if (boardStore.discoHighlight) {
-      const disco = new Set<number>();
-      if (sel.partIndex !== null) disco.add(sel.partIndex);
-      for (const i of boardStore.searchResultIndices) disco.add(i);
-      for (const i of selectionSetStore.current.set) disco.add(i);
-      const wl = worklistStore.activeWorklist;
-      if (wl) {
-        const byRefdes = new Map<string, number>();
-        for (let i = 0; i < this.board.parts.length; i++) {
-          const n = this.board.parts[i]?.name;
-          if (n) byRefdes.set(n, i);
-        }
-        for (const e of wl.entries) {
-          const idx = byRefdes.get(e.refdes);
-          if (idx != null) disco.add(idx);
-        }
-      }
-      this.discoHaloParts = disco;
-      // Project the same parts as cross-side ghosts so they appear on the
-      // hidden side too. Merge with whatever the net-driven ghost machinery
-      // already collected — both render through the same gfx layer.
-      const merged = new Set(this.crossSideGhostParts);
-      for (const i of disco) merged.add(i);
-      this.crossSideGhostParts = merged;
-    }
+    // ── Disco mode: every part on the board pulses rainbow on both sides.
+    //    Geometry is bucket-cached (built once per board), so the only
+    //    per-frame work is tint + alpha updates in the ticker. ─────────────
+    this.ensureDiscoBuckets();
 
     // ── Cross-side ghost components (hidden side, pulsing semi-transparent) ──
     this.renderCrossSideGhosts();
-    this.renderDiscoHalo();
 
     // ── Elevated labels for selected part/pin ───────────────────────────────
     this.updateElevatedLabels(sel, s);
@@ -4025,11 +4017,12 @@ export class BoardRenderer {
   }
 
   /**
-   * Draw cross-side ghost outlines for net-connected parts on the hidden board side.
-   * Called from renderSelection() and the ticker for pulse animation.
-   * Ghosts are semi-transparent with a pulsing opacity driven by netLinePulsePhase.
-   * In discoHighlight mode, each highlighted part gets its own rainbow hue
-   * driven by partIndex so the back side reads as a synchronised dance floor.
+   * Draw cross-side ghost outlines for net-connected parts on the hidden
+   * board side. Called from renderSelection() and the ticker for pulse
+   * animation. Ghosts are semi-transparent with a pulsing opacity driven by
+   * netLinePulsePhase. Disco mode owns its own bucket layer (see
+   * ensureDiscoBuckets) so this method always renders the net-driven cyan
+   * ghost variety.
    */
   private renderCrossSideGhosts() {
     this.crossSideGhostGfx.clear();
@@ -4040,18 +4033,13 @@ export class BoardRenderer {
     const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
     const ghostAlpha = 0.12 + pulse * 0.23;
     const outlineAlpha = 0.25 + pulse * 0.35;
-    const baseGhostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
-    const disco = boardStore.discoHighlight;
+    const ghostColor = 0x44ccff; // cyan tint to distinguish from normal highlights
 
     const gfx = this.crossSideGhostGfx;
 
     for (const partIndex of this.crossSideGhostParts) {
       const part = this.board.parts[partIndex];
       if (!part) continue;
-      // Per-part rainbow hue in disco mode; cyan otherwise.
-      const ghostColor = disco
-        ? hslToRgb24(((this.netLinePulsePhase + partIndex * 0.073) % 1) * 360, 0.95, 0.55)
-        : baseGhostColor;
 
       // Draw part body outline
       const poly = computePartRenderPoly(part, s);
@@ -4081,65 +4069,73 @@ export class BoardRenderer {
   }
 
   /**
-   * Disco mode: draw a rainbow-cycling halo ring around every highlighted part
-   * on the visible side. Each part's hue is offset by its partIndex so the
-   * board reads as a swirling dance-floor when multiple parts are selected.
-   * Called from renderSelection() (initial draw) and from the ticker each
-   * frame while disco mode is on (animates hue + pulse width).
+   * Disco mode: build (or rebuild) the six hue-bucket Graphics that contain
+   * every part on the board, both sides. Geometry is white-stroked rectangles
+   * so the per-frame tint sets a single hue per bucket. Built once per board;
+   * the ticker only re-tints + alpha-pulses.
+   *
+   * When disco mode is off, all buckets are hidden (and emptied — keeps GPU
+   * memory low while the user is in a non-disco workflow).
    */
-  private renderDiscoHalo() {
-    this.discoHaloGfx.clear();
-    if (!boardStore.discoHighlight || this.discoHaloParts.size === 0 || !this.board) return;
-
-    const s = renderSettingsStore.settings;
-    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
-    // Halo width pulses ~30% above selection stroke; alpha 0.55–0.95.
-    const widthBase = Math.max(s.selectionWidth * 1.6, 3);
-    const width = widthBase * (0.85 + pulse * 0.5);
-    const alpha = 0.55 + pulse * 0.4;
-    // Pad outward by half-width so the ring sits around the existing
-    // selection rectangle rather than overlapping it.
-    const pad = s.selectionPadding + width * 0.6;
-
-    const gfx = this.discoHaloGfx;
-
-    for (const partIndex of this.discoHaloParts) {
-      const part = this.board.parts[partIndex];
-      if (!part) continue;
-      // Only halo on the visible side here — the back-side projection is
-      // delegated to renderCrossSideGhosts via the shared injection above.
-      if (!this.isPartVisible(part)) continue;
-
-      const hue = ((this.netLinePulsePhase + partIndex * 0.073) % 1) * 360;
-      const color = hslToRgb24(hue, 1.0, 0.6);
-
-      if (part.pins.length === 1) {
-        const pin = part.pins[0];
-        const r = computePinRadius(s, pin.radius) + pad;
-        gfx.circle(pin.position.x, pin.position.y, r);
-      } else {
-        const poly = computePartRenderPoly(part, s);
-        if (poly) {
-          // Expand polygon outward by `pad` along edge normals.
-          const cx = poly.reduce((sum, p) => sum + p[0], 0) / poly.length;
-          const cy = poly.reduce((sum, p) => sum + p[1], 0) / poly.length;
-          const expanded: [number, number][] = poly.map(([px, py]) => {
-            const dx = px - cx, dy = py - cy;
-            const len = Math.hypot(dx, dy);
-            if (len < 1e-6) return [px, py];
-            return [px + dx / len * pad, py + dy / len * pad];
-          });
-          gfx.moveTo(expanded[0][0], expanded[0][1]);
-          for (let i = 1; i < expanded.length; i++) gfx.lineTo(expanded[i][0], expanded[i][1]);
-          gfx.closePath();
-        } else {
-          const rb = computePartRenderBounds(part, s);
-          gfx.rect(rb.px - pad, rb.py - pad, rb.pw + pad * 2, rb.ph + pad * 2);
-        }
+  private ensureDiscoBuckets() {
+    if (!boardStore.discoHighlight) {
+      for (const g of this.discoBuckets) {
+        if (g.visible) g.visible = false;
       }
-      gfx.stroke({ width, color, alpha });
+      // Drop cached geometry too — small win; rebuild is cheap.
+      if (this.discoBuiltFor !== null) {
+        for (const g of this.discoBuckets) g.clear();
+        this.discoBuiltFor = null;
+      }
+      return;
     }
+    if (!this.board) return;
+    // Show buckets whenever disco mode is on, even if the build is current —
+    // a previous off→on toggle without a board change just needs visibility.
+    for (const g of this.discoBuckets) g.visible = true;
+    if (this.discoBuiltFor === this.board) return;
 
+    for (const g of this.discoBuckets) g.clear();
+    const s = renderSettingsStore.settings;
+    const pad = Math.max(s.selectionPadding, 6);
+    const parts = this.board.parts;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (!part || part.pins.length === 0) continue;
+      const bucket = this.discoBuckets[i % BoardRenderer.DISCO_BUCKET_COUNT];
+      const rb = computePartRenderBounds(part, s);
+      bucket.rect(rb.px - pad, rb.py - pad, rb.pw + pad * 2, rb.ph + pad * 2);
+    }
+    // White stroke + alpha=1 so the per-bucket tint and alpha fully control
+    // the visible colour each frame. Stroke width is aggressive: 2× the
+    // selection width with a 4-px floor so disco actually feels disco.
+    const width = Math.max(s.selectionWidth * 2.2, 4);
+    for (const g of this.discoBuckets) {
+      g.stroke({ width, color: 0xffffff, alpha: 1 });
+    }
+    this.discoBuiltFor = this.board;
+    this.needsRender = true;
+  }
+
+  /**
+   * Per-tick disco animation: update each bucket's tint and alpha. Cost is
+   * O(buckets) — independent of part count. Phase advances ~3× faster than
+   * the standard net-line pulse for an actual disco cadence.
+   */
+  private animateDiscoBuckets() {
+    if (!boardStore.discoHighlight) return;
+    // Sharper pulse curve than a vanilla sin — sin² gives strobe-ier blink.
+    const sin = Math.sin(this.netLinePulsePhase * Math.PI * 2 * 3);
+    const pulse = sin * sin;            // 0…1, peaks twice per cycle
+    const alpha = 0.45 + pulse * 0.55;  // 0.45–1.0
+    const huePhase = (this.netLinePulsePhase * 3) % 1;
+    const n = this.discoBuckets.length;
+    for (let b = 0; b < n; b++) {
+      const hue = ((huePhase + b / n) % 1) * 360;
+      const bucket = this.discoBuckets[b];
+      bucket.tint = hslToRgb24(hue, 1.0, 0.55);
+      bucket.alpha = alpha;
+    }
     this.needsRender = true;
   }
 

@@ -13,8 +13,7 @@ export interface SlotCtx {
     netLineMode: NetLineMode;
     dimMode: 'off' | 'dim' | 'darklight';
     showHoverInfo: boolean;
-    showGhosts: boolean;
-    discoHighlight: boolean;
+    ghostMode: 'off' | 'ghosts' | 'disco';
     followPdf: boolean;
     pdfFileNames: readonly string[];
     fileName: string;

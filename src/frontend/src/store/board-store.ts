@@ -76,12 +76,14 @@ export interface BoardTab {
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
-  /** Show ghost outlines of hidden-side components when a net is selected */
-  showGhosts: boolean;
-  /** Disco highlight mode — highlighted/selected parts pulse with a rainbow
-   *  cycle on both the current and back side of the board. Independent of
-   *  net selection. Default OFF. */
-  discoHighlight: boolean;
+  /** Tri-state ghost button:
+   *   'off'    — no cross-side hint
+   *   'ghosts' — hidden-side components show as ghost outlines on net select
+   *   'disco'  — EVERY part pulses with rainbow hue on both sides, ignores
+   *              net selection. Aggressive party mode.
+   *  Default: 'ghosts'. Persisted per-tab.
+   *  `showGhosts` / `discoHighlight` getters are derived from this. */
+  ghostMode: 'off' | 'ghosts' | 'disco';
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
   /** Layer whose traces are bumped to the top of the z-stack while nothing is
@@ -535,8 +537,9 @@ class BoardStore extends Emitter {
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
-  get showGhosts(): boolean { return this.activeTab?.showGhosts ?? true; }
-  get discoHighlight(): boolean { return this.activeTab?.discoHighlight ?? false; }
+  get ghostMode(): 'off' | 'ghosts' | 'disco' { return this.activeTab?.ghostMode ?? 'ghosts'; }
+  get showGhosts(): boolean { return this.ghostMode !== 'off'; }
+  get discoHighlight(): boolean { return this.ghostMode === 'disco'; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
   get swappedGhostPairs(): ReadonlySet<string> { return this.activeTab?.swappedGhostPairs ?? EMPTY_GHOST_SWAPS; }
   get showBomAlternates(): boolean { return this.activeTab?.showBomAlternates ?? false; }
@@ -739,8 +742,7 @@ class BoardStore extends Emitter {
         showPins: true,
         showOutlines: true,
         showLabels: true,
-        showGhosts: true,
-        discoHighlight: false,
+        ghostMode: 'ghosts',
         layerStates: [],
         selectedLayerIndex: null,
         fixatedLayerIndex: null,
@@ -931,8 +933,7 @@ class BoardStore extends Emitter {
       showPins: true,
       showOutlines: true,
       showLabels: true,
-      showGhosts: true,
-      discoHighlight: false,
+      ghostMode: 'ghosts',
       layerStates: [],
       selectedLayerIndex: null,
       fixatedLayerIndex: null,
@@ -1554,17 +1555,14 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  toggleGhosts() {
+  /** Cycle off → ghosts → disco → off. */
+  cycleGhostMode() {
     const tab = this.activeTab;
     if (!tab) return;
-    this.updateActiveTab({ showGhosts: !tab.showGhosts });
-    this.notify();
-  }
-
-  toggleDiscoHighlight() {
-    const tab = this.activeTab;
-    if (!tab) return;
-    this.updateActiveTab({ discoHighlight: !tab.discoHighlight });
+    const next: 'off' | 'ghosts' | 'disco' =
+      tab.ghostMode === 'off'    ? 'ghosts' :
+      tab.ghostMode === 'ghosts' ? 'disco'  : 'off';
+    this.updateActiveTab({ ghostMode: next });
     this.notify();
   }
 
