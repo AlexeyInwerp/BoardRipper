@@ -263,14 +263,16 @@ export class BoardRenderer {
   // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
   // not required; iteration in renderCrossSideGhosts is fine on a Set.
   private crossSideGhostParts: Set<number> = new Set();
-  /** Disco mode — every part on the board, both sides, pulses rainbow.
-   *  Six tinted Graphics, one per hue bucket. Geometry is built ONCE per
-   *  board into white-stroked outlines (partIndex % 6 picks the bucket);
-   *  the ticker only updates `bucket.tint` + `bucket.alpha`, so animation
-   *  cost is constant regardless of part count. */
+  /** Disco mode — every part connected to the currently selected net (both
+   *  sides) pulses rainbow. Six tinted Graphics, one per hue bucket; the
+   *  ticker only updates `bucket.tint` + `bucket.alpha`, so animation cost
+   *  is constant regardless of part count.
+   *  Geometry is rebuilt whenever (board, highlightedNet) changes. */
   private discoBuckets: Graphics[] = [];
-  /** Board reference the disco bucket geometry was built for. Null = needs rebuild. */
-  private discoBuiltFor: BoardData | null = null;
+  /** Board the disco geometry was built for. `null` = empty / needs rebuild. */
+  private discoBuiltBoard: BoardData | null = null;
+  /** Net the disco geometry was built for. `null` = none. */
+  private discoBuiltNet: string | null = null;
   /** Number of hue buckets for disco mode. Six = clean rainbow split. */
   private static readonly DISCO_BUCKET_COUNT = 6;
   private debugVertexLabels: Text[] = [];
@@ -537,7 +539,7 @@ export class BoardRenderer {
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.size > 0;
-    const hasDisco = boardStore.discoHighlight && this.discoBuiltFor !== null;
+    const hasDisco = boardStore.discoHighlight && this.discoBuiltBoard !== null;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
     if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts || hasDisco)) {
@@ -899,7 +901,7 @@ export class BoardRenderer {
       g.visible = false;
       this.discoBuckets.push(g);
     }
-    this.discoBuiltFor = null;
+    this.discoBuiltBoard = null; this.discoBuiltNet = null;
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
     // multiHighlightGfx is attached to scene.root in activateScene() so the
     // board's rotation/flip/butterfly transforms apply to the outlines too —
@@ -1077,7 +1079,7 @@ export class BoardRenderer {
       g.visible = false;
       this.discoBuckets.push(g);
     }
-    this.discoBuiltFor = null;
+    this.discoBuiltBoard = null; this.discoBuiltNet = null;
     this.selectionLabelLayer = new RenderLayer({ sortableChildren: true });
 
     // Elevated labels for selected part/pin — persistent objects reused across
@@ -2074,7 +2076,7 @@ export class BoardRenderer {
     this.butterflyDimGfx.clear();
     this.crossSideGhostGfx.clear();
     for (const g of this.discoBuckets) g.clear();
-    this.discoBuiltFor = null;
+    this.discoBuiltBoard = null; this.discoBuiltNet = null;
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
   }
@@ -4069,37 +4071,47 @@ export class BoardRenderer {
   }
 
   /**
-   * Disco mode: build (or rebuild) the six hue-bucket Graphics that contain
-   * every part on the board, both sides. Geometry is white-stroked rectangles
-   * so the per-frame tint sets a single hue per bucket. Built once per board;
-   * the ticker only re-tints + alpha-pulses.
+   * Disco mode: build (or rebuild) the six hue-bucket Graphics covering only
+   * parts that share the currently selected net. Both sides included — the
+   * gfx live in scene.root, so back-side parts render at their world coords
+   * and stay visible to the user. Geometry is white-stroked rectangles so
+   * the per-frame tint controls hue; the ticker only re-tints + alpha-pulses.
    *
-   * When disco mode is off, all buckets are hidden (and emptied — keeps GPU
-   * memory low while the user is in a non-disco workflow).
+   * When disco mode is off, or no net is highlighted, all buckets are hidden.
    */
   private ensureDiscoBuckets() {
-    if (!boardStore.discoHighlight) {
+    const net = boardStore.selection.highlightedNet;
+
+    if (!boardStore.discoHighlight || !this.board || !net) {
       for (const g of this.discoBuckets) {
         if (g.visible) g.visible = false;
       }
-      // Drop cached geometry too — small win; rebuild is cheap.
-      if (this.discoBuiltFor !== null) {
+      if (this.discoBuiltBoard !== null) {
         for (const g of this.discoBuckets) g.clear();
-        this.discoBuiltFor = null;
+        this.discoBuiltBoard = null;
+        this.discoBuiltNet = null;
       }
       return;
     }
-    if (!this.board) return;
-    // Show buckets whenever disco mode is on, even if the build is current —
-    // a previous off→on toggle without a board change just needs visibility.
+
     for (const g of this.discoBuckets) g.visible = true;
-    if (this.discoBuiltFor === this.board) return;
+    if (this.discoBuiltBoard === this.board && this.discoBuiltNet === net) return;
 
     for (const g of this.discoBuckets) g.clear();
     const s = renderSettingsStore.settings;
-    const pad = Math.max(s.selectionPadding, 6);
+    const pad = Math.max(s.selectionPadding, 4);
     const parts = this.board.parts;
-    for (let i = 0; i < parts.length; i++) {
+    const netEntry = this.board.nets.get(net);
+    this.discoBuiltBoard = this.board;
+    this.discoBuiltNet = net;
+    if (!netEntry) return;
+
+    // Collect unique partIndices on this net (a single net can hit many pins
+    // of the same part — dedupe so each part contributes one outline).
+    const partIndices = new Set<number>();
+    for (const ref of netEntry.pinIndices) partIndices.add(ref.partIndex);
+
+    for (const i of partIndices) {
       const part = parts[i];
       if (!part || part.pins.length === 0) continue;
       const bucket = this.discoBuckets[i % BoardRenderer.DISCO_BUCKET_COUNT];
@@ -4107,33 +4119,31 @@ export class BoardRenderer {
       bucket.rect(rb.px - pad, rb.py - pad, rb.pw + pad * 2, rb.ph + pad * 2);
     }
     // White stroke + alpha=1 so the per-bucket tint and alpha fully control
-    // the visible colour each frame. Stroke width is aggressive: 2× the
-    // selection width with a 4-px floor so disco actually feels disco.
-    const width = Math.max(s.selectionWidth * 2.2, 4);
+    // the visible colour each frame. Stroke width is a touch above the
+    // selection — present, not screaming.
+    const width = Math.max(s.selectionWidth * 1.3, 2.5);
     for (const g of this.discoBuckets) {
       g.stroke({ width, color: 0xffffff, alpha: 1 });
     }
-    this.discoBuiltFor = this.board;
     this.needsRender = true;
   }
 
   /**
    * Per-tick disco animation: update each bucket's tint and alpha. Cost is
-   * O(buckets) — independent of part count. Phase advances ~3× faster than
-   * the standard net-line pulse for an actual disco cadence.
+   * O(buckets) — independent of part count. Phase rides the standard
+   * netLinePulsePhase (1 cycle/sec) with a soft sine curve so the pulse
+   * reads as a steady rainbow breath, not a strobe.
    */
   private animateDiscoBuckets() {
     if (!boardStore.discoHighlight) return;
-    // Sharper pulse curve than a vanilla sin — sin² gives strobe-ier blink.
-    const sin = Math.sin(this.netLinePulsePhase * Math.PI * 2 * 3);
-    const pulse = sin * sin;            // 0…1, peaks twice per cycle
-    const alpha = 0.45 + pulse * 0.55;  // 0.45–1.0
-    const huePhase = (this.netLinePulsePhase * 3) % 1;
+    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2; // 0…1 smooth
+    const alpha = 0.35 + pulse * 0.4;  // 0.35–0.75 — visible but not loud
+    const huePhase = this.netLinePulsePhase;
     const n = this.discoBuckets.length;
     for (let b = 0; b < n; b++) {
       const hue = ((huePhase + b / n) % 1) * 360;
       const bucket = this.discoBuckets[b];
-      bucket.tint = hslToRgb24(hue, 1.0, 0.55);
+      bucket.tint = hslToRgb24(hue, 0.85, 0.6);
       bucket.alpha = alpha;
     }
     this.needsRender = true;
