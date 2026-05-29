@@ -4055,19 +4055,49 @@ export class BoardRenderer {
     if (!boardStore.discoHighlight || this.discoHaloParts.size === 0 || !this.board) return;
 
     const s = renderSettingsStore.settings;
-    // Soft sine in/out — outline fades into red then back to invisible.
-    const pulse = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2; // 0…1
-    const alpha = 0.15 + pulse * 0.7;                                       // 0.15…0.85
+    // Duty-cycle pulse: ~70% of the cycle is silent, ~30% breathes the
+    // red in and back out. Threshold-clamp the standard sine so values
+    // below the threshold map to zero and only the top of the curve
+    // contributes to alpha — gives a heartbeat-like blink instead of a
+    // constant breath.
+    const sine = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2; // 0…1
+    const SILENT = 0.62;                                                   // sin > 0.62 ≈ 30% of cycle
+    const pulse = sine > SILENT ? (sine - SILENT) / (1 - SILENT) : 0;      // 0…1, only active top-of-curve
+    const fillAlpha   = pulse * 0.32;                                      // body wash
+    const strokeAlpha = pulse * 0.9;                                       // crisp outline at the peak
     const width = Math.max(s.selectionWidth * 1.2, 2);
     const pad = Math.max(s.selectionPadding * 0.5, 1);
     const RED = 0xff2a2a;
 
     const gfx = this.discoHaloGfx;
 
+    // Pass 1 — body fills (no padding, sits exactly on the part shape).
     for (const partIndex of this.discoHaloParts) {
       const part = this.board.parts[partIndex];
       if (!part) continue;
+      if (part.pins.length === 1) {
+        const pin = part.pins[0];
+        const r = computePinRadius(s, pin.radius);
+        gfx.circle(pin.position.x, pin.position.y, r);
+      } else {
+        const poly = computePartRenderPoly(part, s);
+        if (poly) {
+          gfx.moveTo(poly[0][0], poly[0][1]);
+          for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
+          gfx.closePath();
+        } else {
+          const rb = computePartRenderBounds(part, s);
+          gfx.rect(rb.px, rb.py, rb.pw, rb.ph);
+        }
+      }
+    }
+    if (fillAlpha > 0) gfx.fill({ color: RED, alpha: fillAlpha });
 
+    // Pass 2 — outlines, expanded outward by `pad` so they sit just outside
+    // the part's existing border rather than fighting it for the same pixels.
+    for (const partIndex of this.discoHaloParts) {
+      const part = this.board.parts[partIndex];
+      if (!part) continue;
       if (part.pins.length === 1) {
         const pin = part.pins[0];
         const r = computePinRadius(s, pin.radius) + pad;
@@ -4075,12 +4105,8 @@ export class BoardRenderer {
       } else {
         const poly = computePartRenderPoly(part, s);
         if (poly) {
-          // Expand polygon outward by `pad` so the halo sits around (not on)
-          // the part's existing border instead of fighting it for the same
-          // pixels.
           const cx = poly.reduce((sum, p) => sum + p[0], 0) / poly.length;
           const cy = poly.reduce((sum, p) => sum + p[1], 0) / poly.length;
-          gfx.moveTo(poly[0][0], poly[0][1]);
           let first = true;
           for (const [px, py] of poly) {
             const dx = px - cx, dy = py - cy;
@@ -4097,7 +4123,7 @@ export class BoardRenderer {
         }
       }
     }
-    gfx.stroke({ width, color: RED, alpha });
+    if (strokeAlpha > 0) gfx.stroke({ width, color: RED, alpha: strokeAlpha });
 
     this.needsRender = true;
   }
