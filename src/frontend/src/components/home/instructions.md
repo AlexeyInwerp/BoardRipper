@@ -16,7 +16,7 @@ Running from source locally also works, but the auto-scan library is the killer 
 
 ## Open a file
 
-- Drop a board file (`.bvr`, `.brd`, `.bdv` — both plain-text and Honhan/Tebo-ICT obfuscated, `.fz`, `.cad` — GenCAD or Mentor Boardstation Neutral, `.xzz`, `.tvw`, or Allegro `.brd`) anywhere on this window.
+- Drop a board file anywhere on this window: `.bvr` / `.bv`, `.brd` (OpenBoardView *or* Cadence Allegro binary), `.bdv` (plain-text *or* Honhan / Tebo-ICT obfuscated), `.fz`, `.cad` (GenCAD *or* Mentor Boardstation Neutral), `.pcb` (XZZ PCB), or `.tvw`.
 - Or drop a PDF schematic next to it — PDFs open in a side panel and stay linked to the board.
 - **⌘O** / **⌘P** open the same unified file picker (boards + PDFs are routed by extension).
 - In Docker mode: open the **Library** tab in the sidebar and pick any board from the auto-scanned folder.
@@ -58,7 +58,7 @@ Second row — overlay toggles:
 
 ## Navigate the board
 
-- **Drag** or **scroll** to pan and zoom — change the assignment in *Quick settings* below.
+- **Drag** or **scroll** to pan and zoom — change the assignment in *Quick settings* below, or click **Set up by gesture** there to just demonstrate the gesture you want and have it configured for you.
 - **Pinch-to-zoom** works on any trackpad and always zooms, regardless of the scroll-wheel settings.
 - **Two-finger scroll** on a trackpad is the same event as a mouse wheel — whatever you bind the scroll wheel to, two-finger scroll does the same.
 - **Space** flips between top and bottom layers.

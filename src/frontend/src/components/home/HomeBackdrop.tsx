@@ -14,6 +14,7 @@ import {
   getDockviewApi,
 } from '../../store/dockview-api';
 import { showSidebarTab } from '../Sidebar';
+import { welcomeStore } from '../../store/welcome-store';
 import { shortcuts, formatShortcut } from '../../store/keyboard-shortcuts';
 import type { Shortcut } from '../../store/keyboard-shortcuts';
 import {
@@ -967,6 +968,14 @@ function QuickSettings() {
             Trackpad: two-finger scroll = mouse wheel · <strong>pinch always zooms</strong>
           </div>
         </div>
+        <button
+          type="button"
+          className="home-settings-link"
+          onClick={() => welcomeStore.show()}
+          title="Open the interactive setup — demonstrate the gesture you want for each action and it sets the binding."
+        >
+          Set up by gesture (interactive) →
+        </button>
       </div>
 
       <div className="home-quick-section">

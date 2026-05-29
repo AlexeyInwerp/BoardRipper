@@ -4,6 +4,23 @@ import { boardCache } from '../store/board-cache';
 import { boardStore } from '../store/board-store';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { debugRenderTvwLayersToPng } from '../parsers/tvw-parser';
+import { renderSettingsStore } from '../store/render-settings';
+import { SCROLL_BINDINGS_KEY, loadScrollBindings, PDF_INERTIA_KEY } from './PdfViewerPanel';
+import {
+  WheelGestureClassifier,
+  InertiaDetector,
+  classifyPointerDrag,
+  recommendSetting,
+  recommendInertia,
+  type InputSample,
+  type GestureVerdict,
+  type Recommendation,
+  type InertiaState,
+  type InertiaRecommendation,
+  type Surface,
+  type Action,
+  type PointerSample,
+} from '../store/input-recognizer';
 
 const LS_SCOPES_KEY = 'boardripper-log-scopes';
 const LS_PERSIST_KEY = 'boardripper-log-persist';
@@ -69,6 +86,262 @@ const SCOPE_COLORS: Record<LogScope, string> = {
   obd:    '#86efac',
   cloud:  '#a5b4fc',
 };
+
+interface SampleRow {
+  id: number;
+  sample: InputSample;
+  verdict: GestureVerdict;
+}
+
+function flags(s: { ctrlKey: boolean; shiftKey: boolean; metaKey: boolean; altKey: boolean }): string {
+  const f: string[] = [];
+  if (s.ctrlKey) f.push('ctrl');
+  if (s.shiftKey) f.push('shift');
+  if (s.metaKey) f.push('meta');
+  if (s.altKey) f.push('alt');
+  return f.length ? f.join('+') : '—';
+}
+
+function describeSample(s: InputSample): string {
+  if (s.kind === 'wheel') {
+    return `wheel  dY=${s.deltaY.toFixed(1)} dX=${s.deltaX.toFixed(1)} mode=${s.deltaModeLabel} gap=${s.gapMs}ms  [${flags(s)}]`;
+  }
+  return `drag   ${s.pointerType} btn=${s.button} dist=${s.distance.toFixed(0)}px dt=${Math.round(s.durationMs)}ms moves=${s.moveCount}  [${flags(s)}]`;
+}
+
+/** Verbose first-run input-calibration prototype. Captures real wheel/pointer
+ *  events, classifies the gesture, and applies the matching pan/zoom setting on
+ *  confirm. Foundation for the polished first-start setup popup. */
+function GestureRecognizer() {
+  const [open, setOpen] = useState(true);
+  const [surface, setSurface] = useState<Surface>('board');
+  const [action, setAction] = useState<Action>('pan');
+  const [rows, setRows] = useState<SampleRow[]>([]);
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [appliedSummary, setAppliedSummary] = useState<string | null>(null);
+  const [inertia, setInertia] = useState<InertiaState | null>(null);
+  const [inertiaApplied, setInertiaApplied] = useState<string | null>(null);
+
+  const boxRef = useRef<HTMLDivElement>(null);
+  const classifierRef = useRef(new WheelGestureClassifier());
+  const inertiaRef = useRef(new InertiaDetector());
+  const idRef = useRef(0);
+
+  const record = useCallback((sample: InputSample, verdict: GestureVerdict) => {
+    const rec = verdict.confident
+      ? recommendSetting({ surface, action, verdict, currentPdf: loadScrollBindings() })
+      : null;
+    setRecommendation(rec);
+    setAppliedSummary(null);
+    setRows(prev => [{ id: ++idRef.current, sample, verdict }, ...prev].slice(0, 14));
+  }, [surface, action]);
+
+  // Wheel must be captured natively with passive:false so we can preventDefault
+  // (otherwise Ctrl+wheel pinch zooms the whole page).
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const { sample, verdict } = classifierRef.current.feed(e);
+      record(sample, verdict);
+      setInertia(inertiaRef.current.feed(e));
+      setInertiaApplied(null);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [record]);
+
+  // Pointer drag — listen on window so moves outside the box still count.
+  // An AbortController tears down both listeners on pointerup.
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    const drag = {
+      startX: e.clientX, startY: e.clientY, startT: performance.now(),
+      button: e.button, pointerType: e.pointerType,
+      lastX: e.clientX, lastY: e.clientY, moveCount: 0,
+      shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey,
+    };
+    const ctrl = new AbortController();
+    const { signal } = ctrl;
+    window.addEventListener('pointermove', (ev: PointerEvent) => {
+      drag.moveCount++;
+      drag.lastX = ev.clientX;
+      drag.lastY = ev.clientY;
+    }, { signal });
+    window.addEventListener('pointerup', () => {
+      ctrl.abort();
+      const dx = drag.lastX - drag.startX;
+      const dy = drag.lastY - drag.startY;
+      const sample: PointerSample = {
+        kind: 'pointer',
+        pointerType: drag.pointerType,
+        button: drag.button,
+        buttons: 0,
+        totalDx: dx,
+        totalDy: dy,
+        distance: Math.hypot(dx, dy),
+        durationMs: performance.now() - drag.startT,
+        moveCount: drag.moveCount,
+        shiftKey: drag.shiftKey,
+        metaKey: drag.metaKey,
+        ctrlKey: drag.ctrlKey,
+        altKey: drag.altKey,
+      };
+      record(sample, classifyPointerDrag(sample));
+    }, { signal });
+  }, [record]);
+
+  const apply = useCallback(() => {
+    const rec = recommendation;
+    if (!rec || !rec.ok) return;
+    if (rec.board) {
+      const cur = renderSettingsStore.globalSnapshot();
+      renderSettingsStore.applyGlobal({ ...cur, ...rec.board });
+    }
+    if (rec.pdf) {
+      localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(rec.pdf));
+      window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: rec.pdf }));
+    }
+    setAppliedSummary(rec.summary);
+    log.ui.log(`[gesture-recognizer] applied (${surface}/${action}): ${rec.summary}`);
+  }, [recommendation, surface, action]);
+
+  const inertiaReco: InertiaRecommendation | null = inertia
+    ? recommendInertia({ surface, hasInertia: inertia.hasInertia })
+    : null;
+
+  const applyInertia = useCallback(() => {
+    const rec = inertiaReco;
+    if (!rec || !rec.applicable) return;
+    if (rec.board) {
+      const cur = renderSettingsStore.globalSnapshot();
+      renderSettingsStore.applyGlobal({ ...cur, ...rec.board });
+    }
+    if (rec.pdfInertia !== undefined) {
+      localStorage.setItem(PDF_INERTIA_KEY, String(rec.pdfInertia));
+    }
+    setInertiaApplied(rec.summary);
+    log.ui.log(`[gesture-recognizer] inertia applied (${surface}): ${rec.summary}`);
+  }, [inertiaReco, surface]);
+
+  const latest = rows[0];
+
+  return (
+    <div className="gesture-rec">
+      <div className="gesture-rec-head" onClick={() => setOpen(o => !o)}>
+        <span className="gesture-rec-caret">{open ? '▾' : '▸'}</span>
+        <span className="gesture-rec-title">Input Gesture Recognizer</span>
+        <span className="gesture-rec-sub">verbose calibration prototype</span>
+      </div>
+
+      {open && (
+        <div className="gesture-rec-body">
+          <div className="gesture-rec-controls">
+            <div className="gesture-rec-seg">
+              <span className="gesture-rec-seg-label">Surface</span>
+              {(['board', 'pdf'] as Surface[]).map(s => (
+                <button
+                  key={s}
+                  className={`gesture-rec-segbtn${surface === s ? ' is-active' : ''}`}
+                  onClick={() => setSurface(s)}
+                >{s === 'board' ? 'Board' : 'PDF'}</button>
+              ))}
+            </div>
+            <div className="gesture-rec-seg">
+              <span className="gesture-rec-seg-label">Action</span>
+              {(['pan', 'zoom'] as Action[]).map(a => (
+                <button
+                  key={a}
+                  className={`gesture-rec-segbtn${action === a ? ' is-active' : ''}`}
+                  onClick={() => setAction(a)}
+                >{a === 'pan' ? 'Pan' : 'Zoom'}</button>
+              ))}
+            </div>
+          </div>
+
+          <div
+            ref={boxRef}
+            className="gesture-rec-capture"
+            onPointerDown={onPointerDown}
+          >
+            <div className="gesture-rec-capture-prompt">
+              Demonstrate how you want to <b>{action.toUpperCase()}</b> the <b>{surface === 'board' ? 'BOARD' : 'PDF'}</b>
+              <br />scroll · swipe · pinch · drag here
+            </div>
+            {latest && (
+              <div className={`gesture-rec-verdict${latest.verdict.confident ? '' : ' is-weak'}`}>
+                <span className="gesture-rec-verdict-label">{latest.verdict.label}</span>
+                <span className="gesture-rec-verdict-meta">
+                  device={latest.verdict.device} · modifier={latest.verdict.modifier}
+                  {latest.verdict.confident ? '' : ' · low confidence'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {recommendation && (
+            <div className={`gesture-rec-reco${recommendation.ok ? '' : ' is-blocked'}`}>
+              <div className="gesture-rec-reco-summary">{recommendation.summary}</div>
+              <button
+                className="gesture-rec-apply"
+                disabled={!recommendation.ok || appliedSummary === recommendation.summary}
+                onClick={apply}
+              >
+                {appliedSummary === recommendation.summary ? 'Applied ✓' : 'Confirm & Apply'}
+              </button>
+            </div>
+          )}
+
+          {latest && latest.verdict.reasons.length > 0 && (
+            <ul className="gesture-rec-reasons">
+              {latest.verdict.reasons.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
+          )}
+
+          {inertia && (
+            <div className={`gesture-rec-inertia${inertia.hasInertia ? ' is-on' : ''}`}>
+              <div className="gesture-rec-inertia-head">
+                <span className="gesture-rec-inertia-title">Inertia</span>
+                <span className="gesture-rec-inertia-verdict">
+                  {inertia.hasInertia ? 'MOMENTUM DETECTED · trackpad' : 'no momentum (discrete / mouse-like)'}
+                </span>
+              </div>
+              <div className="gesture-rec-inertia-stats">
+                events={inertia.eventCount} · peak={inertia.peakAbs.toFixed(1)} · cur={inertia.currentAbs.toFixed(1)} · decay-run={inertia.decayRun} · avg-gap={inertia.avgGapMs.toFixed(0)}ms
+              </div>
+              <ul className="gesture-rec-reasons">
+                {inertia.reasons.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+              {inertiaReco?.applicable && (
+                <div className="gesture-rec-reco">
+                  <div className="gesture-rec-reco-summary">{inertiaReco.summary}</div>
+                  <button
+                    className="gesture-rec-apply"
+                    disabled={inertiaApplied === inertiaReco.summary}
+                    onClick={applyInertia}
+                  >
+                    {inertiaApplied === inertiaReco.summary ? 'Applied ✓' : 'Confirm & Apply'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="gesture-rec-log">
+            {rows.length === 0
+              ? <div className="gesture-rec-log-empty">No events captured yet.</div>
+              : rows.map(r => (
+                  <div key={r.id} className="gesture-rec-log-row">
+                    <span className="gesture-rec-log-verdict">{r.verdict.label}</span>
+                    <span className="gesture-rec-log-raw">{describeSample(r.sample)}</span>
+                  </div>
+                ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function DebugPanel() {
   const entries = useSyncExternalStore(
@@ -164,6 +437,8 @@ export function DebugPanel() {
           Clear Log
         </button>
       </div>
+
+      <GestureRecognizer />
 
       <div className="debug-filter-bar">
         <label className="debug-filter-toggle" title="Global logging kill switch">

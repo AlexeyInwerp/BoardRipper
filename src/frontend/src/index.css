@@ -3620,6 +3620,151 @@ html, body, #root {
   color: var(--text-primary);
 }
 
+/* ── Input Gesture Recognizer (verbose first-run calibration prototype) ── */
+.gesture-rec {
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.gesture-rec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.gesture-rec-caret { color: var(--text-secondary); width: 10px; }
+.gesture-rec-title { font-weight: 600; color: var(--text-primary); }
+.gesture-rec-sub { color: var(--text-secondary); font-size: 10px; }
+
+.gesture-rec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 8px 10px;
+}
+
+.gesture-rec-controls { display: flex; gap: 16px; flex-wrap: wrap; }
+.gesture-rec-seg { display: flex; align-items: center; gap: 4px; }
+.gesture-rec-seg-label { color: var(--text-secondary); font-size: 10px; text-transform: uppercase; margin-right: 2px; }
+
+.gesture-rec-segbtn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 2px 10px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: inherit;
+}
+.gesture-rec-segbtn.is-active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent-hover);
+}
+
+.gesture-rec-capture {
+  position: relative;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--accent);
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  text-align: center;
+  padding: 10px;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.gesture-rec-capture-prompt { color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.gesture-rec-capture-prompt b { color: var(--text-primary); }
+
+.gesture-rec-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gesture-rec-verdict.is-weak { opacity: 0.6; }
+.gesture-rec-verdict-label { font-weight: 700; color: var(--accent); font-size: 14px; }
+.gesture-rec-verdict-meta { color: var(--text-secondary); font-size: 10px; }
+
+.gesture-rec-reco {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+.gesture-rec-reco.is-blocked { border-color: var(--orange); }
+.gesture-rec-reco-summary { flex-grow: 1; color: var(--text-primary); font-size: 11px; }
+
+.gesture-rec-apply {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 1px solid var(--accent-hover);
+  padding: 4px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.gesture-rec-apply:disabled { opacity: 0.5; cursor: default; }
+
+.gesture-rec-reasons {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.gesture-rec-reasons li::before { content: '· '; }
+
+.gesture-rec-log {
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+}
+.gesture-rec-log-empty { padding: 8px; color: var(--text-secondary); font-size: 10px; }
+.gesture-rec-log-row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+.gesture-rec-log-row:last-child { border-bottom: none; }
+.gesture-rec-log-verdict { color: var(--accent); min-width: 150px; flex-shrink: 0; }
+.gesture-rec-log-raw { color: var(--text-secondary); white-space: pre; }
+
+.gesture-rec-inertia {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+.gesture-rec-inertia.is-on { border-color: var(--green); }
+.gesture-rec-inertia-head { display: flex; align-items: baseline; gap: 8px; }
+.gesture-rec-inertia-title { font-weight: 600; color: var(--text-primary); }
+.gesture-rec-inertia-verdict { font-size: 11px; color: var(--text-secondary); }
+.gesture-rec-inertia.is-on .gesture-rec-inertia-verdict { color: var(--green); font-weight: 600; }
+.gesture-rec-inertia-stats { color: var(--text-secondary); font-size: 10px; white-space: pre-wrap; }
+
 .debug-panel-log {
   flex: 1;
   overflow-y: auto;
@@ -6556,6 +6701,79 @@ html, body, #root {
 @keyframes update-progress-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ---- First-run welcome / input setup --------------------------------- */
+/* Reuses .library-modal-* shell; adds the test box, segmented toggles, and
+ * momentum checkbox for the WelcomeSetup modal. */
+.welcome-modal { gap: 12px; }
+
+.welcome-test {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 84px;
+  padding: 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  text-align: center;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.welcome-test-prompt { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.welcome-test-prompt b { color: var(--text-primary); }
+.welcome-test-detected { font-size: 11px; color: var(--text-secondary); opacity: 0.7; }
+.welcome-test-detected.is-set { color: var(--accent); opacity: 1; font-weight: 600; }
+.welcome-test-detected.is-err { color: var(--orange); }
+
+.welcome-chiprow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.welcome-chiprow-label {
+  display: flex;
+  align-items: center;
+  width: 48px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.welcome-chip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.welcome-chip.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.welcome-chip.is-set { background: color-mix(in srgb, var(--accent) 12%, var(--bg-tertiary)); }
+.welcome-chip-name { font-size: 13px; color: var(--text-primary); font-weight: 600; }
+.welcome-chip-gesture { font-size: 10px; color: var(--text-secondary); }
+
+.welcome-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  padding-top: 4px;
+}
+.welcome-check input { margin-top: 2px; flex-shrink: 0; }
+.welcome-check-text { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+.welcome-check-text b { color: var(--text-primary); }
+.welcome-check-note { color: var(--accent); }
 
 /* ---- FZ decryption-key dialog ---------------------------------------- */
 /* Reuses .library-modal-* — only adds a wider variant + textarea styling
