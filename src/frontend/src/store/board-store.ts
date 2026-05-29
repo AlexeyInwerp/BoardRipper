@@ -38,6 +38,13 @@ export interface SelectionState {
  */
 export type NetLineMode = 'off' | 'star' | 'chain' | 'chain-adjacent';
 
+/** Tri-state ghost-button mode (cycled by GhostsButton):
+ *   - 'off'    — no cross-side hint at all
+ *   - 'ghosts' — when a net is highlighted, hidden-side parts on that net
+ *                draw as cyan ghost outlines
+ *   - 'disco'  — same-net parts (both sides) get a red heartbeat halo */
+export type GhostMode = 'off' | 'ghosts' | 'disco';
+
 export interface BoardTab {
   id: number;
   fileName: string;
@@ -76,14 +83,9 @@ export interface BoardTab {
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
-  /** Tri-state ghost button:
-   *   'off'    — no cross-side hint
-   *   'ghosts' — hidden-side components show as ghost outlines on net select
-   *   'disco'  — EVERY part pulses with rainbow hue on both sides, ignores
-   *              net selection. Aggressive party mode.
-   *  Default: 'ghosts'. Persisted per-tab.
-   *  `showGhosts` / `discoHighlight` getters are derived from this. */
-  ghostMode: 'off' | 'ghosts' | 'disco';
+  /** See [[GhostMode]]. Default `'ghosts'`, persisted per-tab. The boolean
+   *  getters `showGhosts` / `discoHighlight` are derived from this. */
+  ghostMode: GhostMode;
   /** Per-layer visibility and color state (multi-layer boards only) */
   layerStates: LayerState[];
   /** Layer whose traces are bumped to the top of the z-stack while nothing is
@@ -537,7 +539,7 @@ class BoardStore extends Emitter {
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
-  get ghostMode(): 'off' | 'ghosts' | 'disco' { return this.activeTab?.ghostMode ?? 'ghosts'; }
+  get ghostMode(): GhostMode { return this.activeTab?.ghostMode ?? 'ghosts'; }
   get showGhosts(): boolean { return this.ghostMode !== 'off'; }
   get discoHighlight(): boolean { return this.ghostMode === 'disco'; }
   get hideGhosts(): boolean { return this.activeTab?.hideGhosts ?? false; }
@@ -1559,7 +1561,7 @@ class BoardStore extends Emitter {
   cycleGhostMode() {
     const tab = this.activeTab;
     if (!tab) return;
-    const next: 'off' | 'ghosts' | 'disco' =
+    const next: GhostMode =
       tab.ghostMode === 'off'    ? 'ghosts' :
       tab.ghostMode === 'ghosts' ? 'disco'  : 'off';
     this.updateActiveTab({ ghostMode: next });

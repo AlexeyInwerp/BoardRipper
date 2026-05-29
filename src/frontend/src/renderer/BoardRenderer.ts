@@ -180,6 +180,45 @@ interface ViewportState {
   scaleY: number;
 }
 
+/** Expand a convex polygon outward by `sp` mils along edge normals from the
+ *  polygon centroid. Used by selection, cross-side ghost, and disco halo to
+ *  draw an outline ring around (rather than on top of) a part's actual edge. */
+function expandPoly(poly: ReadonlyArray<readonly [number, number]>, sp: number): [number, number][] {
+  const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
+  const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
+  return poly.map(([px, py]) => {
+    const dx = px - cx, dy = py - cy;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return [px, py] as [number, number];
+    return [px + dx / len * sp, py + dy / len * sp] as [number, number];
+  });
+}
+
+/** Emit a closed polygon path into `gfx` (does not stroke or fill). */
+function drawPoly(gfx: Graphics, poly: ReadonlyArray<readonly [number, number]>): void {
+  gfx.moveTo(poly[0][0], poly[0][1]);
+  for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
+  gfx.closePath();
+}
+
+/** Emit a part's outline path into `gfx` — OBB polygon when available, AABB
+ *  rect fallback otherwise — padded outward by `sp`. The caller decides
+ *  whether to fill, stroke, or both. */
+function drawPartOutline(
+  gfx: Graphics,
+  part: Part,
+  s: import('../store/render-settings').RenderSettings,
+  sp: number,
+): void {
+  const poly = computePartRenderPoly(part, s);
+  if (poly) {
+    drawPoly(gfx, sp === 0 ? poly : expandPoly(poly, sp));
+  } else {
+    const rb = computePartRenderBounds(part, s);
+    gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
+  }
+}
+
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
   private get isTopVisible() { return boardStore.showTop || boardStore.butterfly; }
@@ -243,14 +282,16 @@ export class BoardRenderer {
   // chain-mode net-line builder (R-4 in 2026-05-07-renderer.md). Ordering is
   // not required; iteration in renderCrossSideGhosts is fine on a Set.
   private crossSideGhostParts: Set<number> = new Set();
-  /** Disco mode — every part connected to the currently selected net (both
-   *  sides) pulses rainbow. Single Graphics rebuilt each tick; per-part
-   *  polygon-expanded outline (matches the part's actual shape, OBB for
-   *  rotated parts) with per-pin circles for 1-pin parts. */
+  /** Disco mode — same-net parts heartbeat red on both sides. Single
+   *  Graphics, two-pass build (fill + outline) when the pulse is active;
+   *  short-circuited entirely during the silent ~70% of each cycle. */
   private discoHaloGfx!: Graphics;
   /** Part indices on the currently highlighted net (cached so the ticker
    *  doesn't re-traverse board.nets each frame). */
   private discoHaloParts: Set<number> = new Set();
+  /** Whether the disco gfx layer currently holds non-empty geometry. Used
+   *  by the silent-phase fast-path to know when a `clear()` is still owed. */
+  private discoHaloDirty = false;
   private debugVertexLabels: Text[] = [];
   private debugVertexPositions: Array<{x: number; y: number}> = [];
   private board: BoardData | null = null;
@@ -516,19 +557,20 @@ export class BoardRenderer {
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.size > 0;
     const hasDisco = boardStore.discoHighlight && this.discoHaloParts.size > 0;
+    const hasNetLines = boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet !== null;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
-    if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && ((boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet) || hasGhosts || hasDisco)) {
+    if (pageVisible && viewportIdle && !this.netLinesHiddenForZoom && (hasNetLines || hasGhosts || hasDisco)) {
       const s = renderSettingsStore.settings;
       const needsPulse = s.netLineDashed || s.netLinePulse || hasGhosts || hasDisco;
       if (needsPulse) {
         this.netLinePulsePhase = (this.netLinePulsePhase + ticker.deltaMS / 1000) % 1;
         t0 = perf ? performance.now() : 0;
-        this.renderNetLines();
+        if (hasNetLines) this.renderNetLines();
         if (hasGhosts) this.renderCrossSideGhosts();
         if (hasDisco) this.renderDiscoHalo();
         if (perf) this.perfAccum.netLines += performance.now() - t0;
-        this.needsRender = true;
+        // `needsRender` is now flipped by each renderer that actually drew.
       }
     }
 
@@ -2041,6 +2083,7 @@ export class BoardRenderer {
     this.crossSideGhostGfx.clear();
     this.discoHaloGfx.clear();
     this.discoHaloParts = new Set();
+    this.discoHaloDirty = false;
     this.netLabelLayer.removeChildren();
     this.selectionGfx.clear();
   }
@@ -3007,6 +3050,7 @@ export class BoardRenderer {
     this.crossSideGhostParts = new Set();
     this.discoHaloGfx.clear();
     this.discoHaloParts = new Set();
+    this.discoHaloDirty = false;
     if (!this.board) return;
 
     const s = renderSettingsStore.settings;
@@ -3036,35 +3080,6 @@ export class BoardRenderer {
     const gfxFor = (part: { side: string }) =>
       butterfly && part.side === 'bottom' ? this.butterflySelectionGfx : this.selectionGfx;
 
-    // Draw part outline as OBB polygon (diagonal) or AABB rect, with selection padding
-    /** Expand a convex polygon outward by `sp` mils along edge normals. */
-    const expandPoly = (poly: [number, number][], sp: number): [number, number][] => {
-      const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
-      const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
-      return poly.map(([px, py]) => {
-        const dx = px - cx, dy = py - cy;
-        const len = Math.hypot(dx, dy);
-        if (len < 1e-6) return [px, py] as [number, number];
-        return [px + dx / len * sp, py + dy / len * sp] as [number, number];
-      });
-    };
-
-    const drawPoly = (gfx: Graphics, poly: [number, number][]) => {
-      gfx.moveTo(poly[0][0], poly[0][1]);
-      for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
-      gfx.closePath();
-    };
-
-    const drawPartOutline = (gfx: Graphics, part: typeof this.board.parts[0], sp: number) => {
-      const poly = computePartRenderPoly(part, s);
-      if (poly) {
-        drawPoly(gfx, expandPoly(poly, sp));
-      } else {
-        const rb = computePartRenderBounds(part, s);
-        gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
-      }
-    };
-
     // ── Highlight all search results ──
     const searchIndices = boardStore.searchResultIndices;
     if (searchIndices.size > 0) {
@@ -3081,7 +3096,7 @@ export class BoardRenderer {
           const r = computePinRadius(s, pin.radius) + s.selectionPadding;
           outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
         } else {
-          outlines.push(() => drawPartOutline(gfx, part, s.selectionPadding));
+          outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
         }
       }
       for (const fn of topSearchOutlines) fn();
@@ -3105,7 +3120,7 @@ export class BoardRenderer {
           const r = computePinRadius(s, pin.radius) + s.selectionPadding;
           gfx.circle(pin.position.x, pin.position.y, r);
         } else {
-          drawPartOutline(gfx, part, s.selectionPadding);
+          drawPartOutline(gfx, part, s, s.selectionPadding);
         }
         gfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
         // Blink red on odd phases, orange on even (0 = no blink = normal orange)
@@ -3323,7 +3338,7 @@ export class BoardRenderer {
             const r = computePinRadius(s, pin.radius) + s.selectionPadding;
             outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
           } else {
-            outlines.push(() => drawPartOutline(gfx, part, s.selectionPadding));
+            outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
           }
         }
 
@@ -4014,16 +4029,7 @@ export class BoardRenderer {
       const part = this.board.parts[partIndex];
       if (!part) continue;
 
-      // Draw part body outline
-      const poly = computePartRenderPoly(part, s);
-      if (poly) {
-        gfx.moveTo(poly[0][0], poly[0][1]);
-        for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
-        gfx.closePath();
-      } else {
-        const rb = computePartRenderBounds(part, s);
-        gfx.rect(rb.px, rb.py, rb.pw, rb.ph);
-      }
+      drawPartOutline(gfx, part, s, 0);
       gfx.fill({ color: ghostColor, alpha: ghostAlpha * 0.5 });
       gfx.stroke({ width: s.selectionWidth, color: ghostColor, alpha: outlineAlpha });
 
@@ -4042,89 +4048,76 @@ export class BoardRenderer {
   }
 
   /**
-   * Disco mode: build (or rebuild) the six hue-bucket Graphics covering only
-   * parts that share the currently selected net (both sides). Each part is
-   * outlined with its own polygon (OBB-aware via `computePartRenderPoly`),
-   * stroked red, alpha pulsing in/out via `netLinePulsePhase` so the outline
-   * appears to breathe into red and back out. Single Graphics rebuilt each
-   * tick — same-net sets are small (typically <50 parts) so per-frame
-   * rebuild cost is negligible.
+   * Disco mode — same-net parts heartbeat red on both sides. Two batched
+   * passes into a single Graphics: an unpadded fill over each part's body
+   * shape, then an outline expanded by `pad` to sit just outside the
+   * existing border. Alpha rides a threshold-clamped sine so the cycle
+   * reads as a blink (~70% silent / ~30% active), not a constant glow.
+   *
+   * Silent-phase fast-path: while `pulse === 0` we skip path building
+   * entirely. One `clear()` runs on the transition into silence to drop
+   * the previous frame's red; afterwards the gfx layer is already empty
+   * and `needsRender` stays false so the GPU isn't re-submitted for nothing.
    */
   private renderDiscoHalo() {
-    this.discoHaloGfx.clear();
-    if (!boardStore.discoHighlight || this.discoHaloParts.size === 0 || !this.board) return;
+    if (!boardStore.discoHighlight || this.discoHaloParts.size === 0 || !this.board) {
+      if (this.discoHaloDirty) {
+        this.discoHaloGfx.clear();
+        this.discoHaloDirty = false;
+        this.needsRender = true;
+      }
+      return;
+    }
+
+    // Threshold-clamped sine — duty cycle ≈ arccos(2·SILENT − 1)/π active.
+    // SILENT = 0.79 ⇒ active ≈ 29% of every 1-second cycle.
+    const sine = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
+    const SILENT = 0.79;
+    const pulse = sine > SILENT ? (sine - SILENT) / (1 - SILENT) : 0;
+    if (pulse === 0) {
+      if (this.discoHaloDirty) {
+        this.discoHaloGfx.clear();
+        this.discoHaloDirty = false;
+        this.needsRender = true;
+      }
+      return;
+    }
 
     const s = renderSettingsStore.settings;
-    // Duty-cycle pulse: ~70% of the cycle is silent, ~30% breathes the
-    // red in and back out. Threshold-clamp the standard sine so values
-    // below the threshold map to zero and only the top of the curve
-    // contributes to alpha — gives a heartbeat-like blink instead of a
-    // constant breath.
-    const sine = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2; // 0…1
-    const SILENT = 0.62;                                                   // sin > 0.62 ≈ 30% of cycle
-    const pulse = sine > SILENT ? (sine - SILENT) / (1 - SILENT) : 0;      // 0…1, only active top-of-curve
-    const fillAlpha   = pulse * 0.32;                                      // body wash
-    const strokeAlpha = pulse * 0.9;                                       // crisp outline at the peak
+    const fillAlpha   = pulse * 0.32;
+    const strokeAlpha = pulse * 0.9;
     const width = Math.max(s.selectionWidth * 1.2, 2);
     const pad = Math.max(s.selectionPadding * 0.5, 1);
     const RED = 0xff2a2a;
-
     const gfx = this.discoHaloGfx;
 
+    /** Single-pin parts have no polygon outline — emit a pin-shaped circle
+     *  instead. Everything else delegates to the shared `drawPartOutline`. */
+    const emitShape = (part: Part, sp: number) => {
+      if (part.pins.length === 1) {
+        const pin = part.pins[0];
+        gfx.circle(pin.position.x, pin.position.y, computePinRadius(s, pin.radius) + sp);
+      } else {
+        drawPartOutline(gfx, part, s, sp);
+      }
+    };
+
+    gfx.clear();
     // Pass 1 — body fills (no padding, sits exactly on the part shape).
     for (const partIndex of this.discoHaloParts) {
       const part = this.board.parts[partIndex];
-      if (!part) continue;
-      if (part.pins.length === 1) {
-        const pin = part.pins[0];
-        const r = computePinRadius(s, pin.radius);
-        gfx.circle(pin.position.x, pin.position.y, r);
-      } else {
-        const poly = computePartRenderPoly(part, s);
-        if (poly) {
-          gfx.moveTo(poly[0][0], poly[0][1]);
-          for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
-          gfx.closePath();
-        } else {
-          const rb = computePartRenderBounds(part, s);
-          gfx.rect(rb.px, rb.py, rb.pw, rb.ph);
-        }
-      }
+      if (part) emitShape(part, 0);
     }
-    if (fillAlpha > 0) gfx.fill({ color: RED, alpha: fillAlpha });
+    gfx.fill({ color: RED, alpha: fillAlpha });
 
-    // Pass 2 — outlines, expanded outward by `pad` so they sit just outside
-    // the part's existing border rather than fighting it for the same pixels.
+    // Pass 2 — outlines, padded so they ring (not overlay) the part border.
     for (const partIndex of this.discoHaloParts) {
       const part = this.board.parts[partIndex];
-      if (!part) continue;
-      if (part.pins.length === 1) {
-        const pin = part.pins[0];
-        const r = computePinRadius(s, pin.radius) + pad;
-        gfx.circle(pin.position.x, pin.position.y, r);
-      } else {
-        const poly = computePartRenderPoly(part, s);
-        if (poly) {
-          const cx = poly.reduce((sum, p) => sum + p[0], 0) / poly.length;
-          const cy = poly.reduce((sum, p) => sum + p[1], 0) / poly.length;
-          let first = true;
-          for (const [px, py] of poly) {
-            const dx = px - cx, dy = py - cy;
-            const len = Math.hypot(dx, dy);
-            const ex = len > 1e-6 ? px + dx / len * pad : px;
-            const ey = len > 1e-6 ? py + dy / len * pad : py;
-            if (first) { gfx.moveTo(ex, ey); first = false; }
-            else       { gfx.lineTo(ex, ey); }
-          }
-          gfx.closePath();
-        } else {
-          const rb = computePartRenderBounds(part, s);
-          gfx.rect(rb.px - pad, rb.py - pad, rb.pw + pad * 2, rb.ph + pad * 2);
-        }
-      }
+      if (part) emitShape(part, pad);
     }
-    if (strokeAlpha > 0) gfx.stroke({ width, color: RED, alpha: strokeAlpha });
+    gfx.stroke({ width, color: RED, alpha: strokeAlpha });
 
+    this.discoHaloDirty = true;
     this.needsRender = true;
   }
 

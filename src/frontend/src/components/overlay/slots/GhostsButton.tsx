@@ -1,30 +1,26 @@
 import { IconGhost2, IconGhost3, IconBallVolleyball } from '@tabler/icons-react';
-import { boardStore } from '../../../store/board-store';
+import { boardStore, type GhostMode } from '../../../store/board-store';
 import type { SlotCtx } from '../slot-ctx';
+
+const MODE_INFO: Record<GhostMode, {
+  icon: typeof IconGhost2;
+  title: string;
+}> = {
+  off:    { icon: IconGhost3,          title: 'Hidden-side ghosts: off (click for ghosts)' },
+  ghosts: { icon: IconGhost2,          title: 'Hidden-side ghosts: ON (click for disco)' },
+  disco:  { icon: IconBallVolleyball,  title: 'Disco: same-net parts pulse red on both sides (click to turn off)' },
+};
 
 export function GhostsButton({ ctx }: { ctx: SlotCtx }) {
   const { ghostMode } = ctx.thisTab;
-  const active = ghostMode !== 'off';
-  const disco = ghostMode === 'disco';
+  const { icon: Icon, title } = MODE_INFO[ghostMode];
   return (
     <button
-      className={`board-netlines-toggle ${active ? 'active' : ''} ${disco ? 'disco-active' : ''}`}
+      className={`board-netlines-toggle ${ghostMode !== 'off' ? 'active' : ''} ${ghostMode === 'disco' ? 'disco-active' : ''}`}
       onClick={() => boardStore.cycleGhostMode()}
-      title={
-        ghostMode === 'off'
-          ? 'Hidden-side ghosts: off (click for ghosts)'
-          : ghostMode === 'ghosts'
-          ? 'Hidden-side ghosts: ON (click for disco)'
-          : 'Disco: every part on the board pulses rainbow, both sides (click to turn off)'
-      }
+      title={title}
     >
-      {ghostMode === 'off' ? (
-        <IconGhost3 size={16} />
-      ) : ghostMode === 'ghosts' ? (
-        <IconGhost2 size={16} />
-      ) : (
-        <IconBallVolleyball size={16} />
-      )}
+      <Icon size={16} />
     </button>
   );
 }

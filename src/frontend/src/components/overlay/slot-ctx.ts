@@ -1,7 +1,7 @@
 // src/frontend/src/components/overlay/slot-ctx.ts
 import type React from 'react';
 import type { BoardRenderer } from '../../renderer/BoardRenderer';
-import type { NetLineMode } from '../../store/board-store';
+import type { NetLineMode, GhostMode } from '../../store/board-store';
 
 /**
  * Context handed to every overlay slot renderer. Keep this minimal — slots
@@ -13,7 +13,7 @@ export interface SlotCtx {
     netLineMode: NetLineMode;
     dimMode: 'off' | 'dim' | 'darklight';
     showHoverInfo: boolean;
-    ghostMode: 'off' | 'ghosts' | 'disco';
+    ghostMode: GhostMode;
     followPdf: boolean;
     pdfFileNames: readonly string[];
     fileName: string;

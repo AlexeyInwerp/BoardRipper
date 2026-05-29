@@ -2227,6 +2227,9 @@ html, body, #root {
 .board-netlines-toggle.disco-active {
   animation: disco-toggle-hue 2s linear infinite;
 }
+@media (prefers-reduced-motion: reduce) {
+  .board-netlines-toggle.disco-active { animation: none; }
+}
 
 /* Board sidebar (overlays right edge of board panel) */
 .board-sidebar {
