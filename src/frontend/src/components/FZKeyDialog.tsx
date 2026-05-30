@@ -12,7 +12,7 @@
  * Styling reuses the existing .library-modal-* classes — see index.css.
  */
 
-import { useSyncExternalStore, useState, useEffect } from 'react';
+import { useSyncExternalStore, useState } from 'react';
 import { fzKeyStore, FZ_KEY_SOURCES } from '../store/fz-key-store';
 
 function subscribe(cb: () => void) {
@@ -31,8 +31,6 @@ function FZKeyDialogBody() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-
-  useEffect(() => { setPasted(''); setError(null); setInfo(null); setBusy(false); }, []);
 
   const onFetch = async () => {
     setError(null); setInfo(null); setBusy(true);

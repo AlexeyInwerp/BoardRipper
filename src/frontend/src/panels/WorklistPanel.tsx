@@ -205,6 +205,10 @@ function ActiveWorklistView() {
     if (!activeWorklist) return;
     if (lastSeenWorklistIdRef.current !== activeWorklist.id) {
       lastSeenWorklistIdRef.current = activeWorklist.id;
+      // Sync the draft / popover state to the new worklist's stored note —
+      // legitimate "subscribe to external prop change" pattern that the new
+      // React Compiler rule (react-hooks/set-state-in-effect) over-flags.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTicketDraft(activeWorklist.note ?? '');
       setTicketOpen(false);
     }
