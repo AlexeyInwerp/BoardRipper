@@ -978,11 +978,11 @@ html, body, #root {
 .part-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
+  gap: 6px;
+  padding: 2px 8px;
   cursor: pointer;
   border-radius: 3px;
-  min-height: 28px;
+  min-height: 22px;
   box-sizing: border-box;
 }
 
@@ -993,6 +993,18 @@ html, body, #root {
 
 /* Push the count chip to the right edge so the row still reads like a list. */
 .net-item .net-count { margin-left: auto; }
+
+/* When a part/net row is expanded, pin its header row just below the
+   already-sticky section header so the user can collapse it without
+   scrolling back up. */
+.search-spoiler-open > .part-item,
+.search-spoiler-open > .net-item {
+  position: sticky;
+  top: var(--search-section-header-h, 28px);
+  z-index: 2;
+  background: var(--bg-secondary, #1d1d1d);
+  box-shadow: 0 1px 0 var(--border, rgba(255, 255, 255, 0.08));
+}
 
 .net-highlighted {
   background: rgba(255, 255, 68, 0.15) !important;
@@ -1121,6 +1133,10 @@ html, body, #root {
 
 .search-section {
   border-bottom: 1px solid var(--border);
+  /* Section header height — exposed as a var so expanded rows can stick
+     just below the header without overlapping it. Keep in sync with the
+     header's padding + line-height. */
+  --search-section-header-h: 28px;
 }
 
 .search-section-header {
@@ -1129,13 +1145,20 @@ html, body, #root {
   gap: 6px;
   width: 100%;
   padding: 6px 8px;
-  background: none;
+  background: var(--bg-secondary, #1d1d1d);
   border: none;
   color: var(--text-primary);
   font-size: 0.85em;
   font-weight: 600;
   cursor: pointer;
   text-align: left;
+  /* Stick to the top of the scrolling search results so the user can
+     collapse the section without scrolling back. Each section's header
+     replaces the previous one as the next section scrolls into view. */
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-shadow: 0 1px 0 var(--border, rgba(255, 255, 255, 0.08));
 }
 
 .search-section-header:hover {
@@ -1175,11 +1198,11 @@ html, body, #root {
 .search-result-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
+  gap: 6px;
+  padding: 2px 8px;
   cursor: pointer;
   border-radius: 3px;
-  min-height: 28px;
+  min-height: 22px;
   box-sizing: border-box;
 }
 
@@ -1222,8 +1245,8 @@ html, body, #root {
 }
 
 .net-components-sublist .search-result-sub {
-  padding: 3px 6px;
-  min-height: 24px;
+  padding: 1px 6px;
+  min-height: 20px;
   font-size: 0.92em;
 }
 

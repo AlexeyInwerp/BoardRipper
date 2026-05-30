@@ -671,15 +671,31 @@ interface NetComponentsSublistProps {
  *  Pin count = pins of that part touching THIS net (not the part's total). */
 function NetComponentsSublist({ board, pinIndices }: NetComponentsSublistProps) {
   const components = useMemo(() => {
-    const pinsByPart = new Map<number, number>();
-    for (const { partIndex } of pinIndices) {
-      pinsByPart.set(partIndex, (pinsByPart.get(partIndex) ?? 0) + 1);
-    }
-    const rows: { name: string; side: string; netPinCount: number }[] = [];
-    for (const [partIndex, netPinCount] of pinsByPart) {
+    const byPart = new Map<number, { firstPinIdx: number; firstPinId: string; count: number }>();
+    for (const { partIndex, pinIndex } of pinIndices) {
       const part = board.parts[partIndex];
       if (!part) continue;
-      rows.push({ name: part.name, side: part.side, netPinCount });
+      const existing = byPart.get(partIndex);
+      if (existing) {
+        existing.count++;
+        if (pinIndex < existing.firstPinIdx) {
+          existing.firstPinIdx = pinIndex;
+          existing.firstPinId = pinDisplayId(part.pins[pinIndex], pinIndex);
+        }
+      } else {
+        const pin = part.pins[pinIndex];
+        byPart.set(partIndex, {
+          firstPinIdx: pinIndex,
+          firstPinId: pin ? pinDisplayId(pin, pinIndex) : String(pinIndex + 1),
+          count: 1,
+        });
+      }
+    }
+    const rows: { name: string; side: string; firstPinId: string; count: number }[] = [];
+    for (const [partIndex, v] of byPart) {
+      const part = board.parts[partIndex];
+      if (!part) continue;
+      rows.push({ name: part.name, side: part.side, firstPinId: v.firstPinId, count: v.count });
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name));
   }, [board, pinIndices]);
@@ -692,9 +708,10 @@ function NetComponentsSublist({ board, pinIndices }: NetComponentsSublistProps) 
           className="search-result-item search-result-sub"
           onClick={() => boardStore.focusPart(c.name)}
         >
+          <span className="result-pin-id">{c.firstPinId}</span>
           <span className="result-name">{c.name}</span>
           <span className={`badge badge-${c.side}`}>{c.side}</span>
-          <span className="result-pins">{c.netPinCount} pin{c.netPinCount === 1 ? '' : 's'}</span>
+          <span className="result-pins">{c.count} pin{c.count === 1 ? '' : 's'}</span>
         </div>
       ))}
     </div>
@@ -759,6 +776,14 @@ function SearchTab({ tabId }: { tabId: number }) {
   }
   const [componentsOpen, setComponentsOpen] = useState(true);
   const [netsOpen, setNetsOpen] = useState(true);
+  // Which part name (if any) has its net sublist expanded. Decoupled from
+  // boardStore.selection so clicking a net *inside* the sublist (which clears
+  // the part selection) doesn't collapse the spoiler.
+  const [expandedPart, setExpandedPart] = useState<string | null>(null);
+  // Which net (if any) has its component sublist expanded. Decoupled from
+  // selection for the same reason — clicking a component below focuses the
+  // part and would otherwise drop the net highlight + close the spoiler.
+  const [expandedNet, setExpandedNet] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
@@ -890,19 +915,22 @@ function SearchTab({ tabId }: { tabId: number }) {
               <div className="search-section-body">
                 {matchedParts.length === 0 && <div className="search-section-empty">No matching components</div>}
                 {matchedParts.map((part) => {
-                  const isSelected = board ? board.parts[selection.partIndex ?? -1]?.name === part.name : false;
+                  const isExpanded = expandedPart === part.name;
                   return (
-                    <div key={part.name}>
+                    <div key={part.name} className={isExpanded ? 'search-spoiler-open' : ''}>
                       <div
-                        className={`part-item ${isSelected ? 'net-highlighted' : ''}`}
-                        onClick={() => boardStore.focusPart(part.name)}
+                        className={`part-item ${isExpanded ? 'net-highlighted' : ''}`}
+                        onClick={() => {
+                          setExpandedPart(isExpanded ? null : part.name);
+                          boardStore.focusPart(part.name);
+                        }}
                       >
-                        <span className="net-item-arrow">{isSelected ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}</span>
+                        <span className="net-item-arrow">{isExpanded ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}</span>
                         <span className="result-name">{part.name}</span>
                         <span className={`badge badge-${part.side}`}>{part.side}</span>
                         <span className="result-pins">{part.pins.length} pins</span>
                       </div>
-                      {isSelected && <PartNetsSublist part={part} />}
+                      {isExpanded && <PartNetsSublist part={part} />}
                     </div>
                   );
                 })}
@@ -921,23 +949,31 @@ function SearchTab({ tabId }: { tabId: number }) {
               <div className="search-section-body">
                 {matchedNets.length === 0 && <div className="search-section-empty">No matching nets</div>}
                 {matchedNets.map(([name, net]) => {
-                  const isHighlighted = selection.highlightedNet === name;
                   const upper = name.toUpperCase();
                   const skipExpand = upper.includes('GND') || isNcNet(upper, renderSettingsStore.settings.ncNetPatterns);
-                  const expanded = isHighlighted && !skipExpand;
+                  const isExpanded = expandedNet === name && !skipExpand;
+                  const isHighlighted = selection.highlightedNet === name || isExpanded;
                   return (
-                    <div key={name}>
+                    <div key={name} className={isExpanded ? 'search-spoiler-open' : ''}>
                       <div
                         className={`net-item ${isHighlighted ? 'net-highlighted' : ''}`}
-                        onClick={() => isHighlighted ? boardStore.highlightNet(null) : boardStore.focusNet(name)}
+                        onClick={() => {
+                          if (isExpanded) {
+                            setExpandedNet(null);
+                            boardStore.highlightNet(null);
+                          } else {
+                            if (!skipExpand) setExpandedNet(name);
+                            boardStore.focusNet(name);
+                          }
+                        }}
                       >
                         <span className="net-item-arrow">
-                          {skipExpand ? null : expanded ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}
+                          {skipExpand ? null : isExpanded ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}
                         </span>
                         <span className="net-name">{name}</span>
                         <span className="net-count">{net.pinIndices.length}</span>
                       </div>
-                      {expanded && board && (
+                      {isExpanded && board && (
                         <NetComponentsSublist board={board} pinIndices={net.pinIndices} />
                       )}
                     </div>
