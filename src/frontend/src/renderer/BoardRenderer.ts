@@ -2322,9 +2322,15 @@ export class BoardRenderer {
       if (focus) {
         const focusPart = focus.partIndex != null ? this.board?.parts[focus.partIndex] : undefined;
         const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
-        // Net-only focus: zoom to show all pins, use larger view fraction
-        const viewFrac = focus.partIndex != null ? 0.25 : 0.6;
-        this.zoomToBounds(focus.bounds, focusRoot, viewFrac);
+        if (focus.partIndex != null) {
+          // Part focus — respects user's navTargetSize + navAutoZoom.
+          const s = renderSettingsStore.settings;
+          this.zoomToBounds(focus.bounds, focusRoot, s.navTargetSize, { autoZoom: s.navAutoZoom });
+        } else {
+          // Net focus — always zoom; nets span enough area that "keep zoom"
+          // typically leaves pins off-screen.
+          this.zoomToBounds(focus.bounds, focusRoot, 0.6);
+        }
         this.startSelectionBlink();
       }
     } catch (err) {
@@ -2332,7 +2338,12 @@ export class BoardRenderer {
     }
   }
 
-  private zoomToBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }, root?: Container, viewFraction = 0.25) {
+  private zoomToBounds(
+    bounds: { minX: number; minY: number; maxX: number; maxY: number },
+    root?: Container,
+    viewFraction = 0.25,
+    options: { autoZoom?: boolean } = {},
+  ) {
     const bw = bounds.maxX - bounds.minX;
     const bh = bounds.maxY - bounds.minY;
     const sw = this.containerEl.clientWidth;
@@ -2347,10 +2358,25 @@ export class BoardRenderer {
     //     zooming to a 0402-sized passive. If fit-to-board scale is unknown
     //     (board not loaded yet), the relative cap is skipped.
     const maxDim = Math.max(bw, bh, 1);
-    const naturalMag = (Math.min(sw, sh) * viewFraction) / maxDim;
+    const screenMin = Math.min(sw, sh);
+    const naturalMag = (screenMin * viewFraction) / maxDim;
     const fitScale = this.computeFitToBoardScale();
     const relCap = fitScale > 0 ? 3 * fitScale : Infinity;
-    const targetMag = Math.min(naturalMag, relCap, 6);
+    let targetMag = Math.min(naturalMag, relCap, 6);
+
+    // Auto mode — preserve the current zoom when the bbox already lands in
+    // the comfortable band on screen. Caller signals this with
+    // `options.autoZoom = true`; net focus omits the flag so it always
+    // snaps (nets need the zoom to keep their pins on-screen).
+    if (options.autoZoom) {
+      const currentMag = Math.abs(this.viewport.scale.x);
+      if (currentMag > 0) {
+        const screenFrac = (maxDim * currentMag) / screenMin;
+        const TOO_SMALL = 0.05;
+        const TOO_BIG = 0.70;
+        if (screenFrac >= TOO_SMALL && screenFrac <= TOO_BIG) targetMag = currentMag;
+      }
+    }
 
     // Preserve sign of current scale (negative = flipped)
     const signX = this.viewport.scale.x < 0 ? -1 : 1;

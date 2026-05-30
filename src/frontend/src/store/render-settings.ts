@@ -95,6 +95,14 @@ export interface RenderSettings {
   selectionWidth: number;
   selectionPadding: number;
   selectionFillAlpha: number;
+  /** Target component size after navigating to a search result, as a fraction
+   *  of the smaller viewport dimension. Higher = part fills more of the screen. */
+  navTargetSize: number;
+  /** When true, navigating to a component only re-zooms if its on-screen size
+   *  is outside the comfortable band (~5%–70% of the smaller viewport dim);
+   *  otherwise the current zoom is preserved and the viewport just pans.
+   *  When false, every navigation snaps to `navTargetSize`. */
+  navAutoZoom: boolean;
   netHighlightGrow: number;
   netHighlightAlpha: number;
   /** Opacity of the black dim overlay (0 = no dim, 1 = fully black) */
@@ -333,6 +341,8 @@ export const DEFAULTS: RenderSettings = {
   selectionWidth: 2,
   selectionPadding: 4,
   selectionFillAlpha: 0.07,
+  navTargetSize: 0.25,
+  navAutoZoom: true,
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
   dimOverlayAlpha: 0.5,
