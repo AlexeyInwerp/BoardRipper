@@ -1,5 +1,36 @@
 # BoardRipper changelog
 
+## v0.31.5 — 2026-05-30
+
+Sidebar Search tab redesign, configurable navigate-to-component zoom, disco
+mode polish, and a green-CI cleanup that knocked 91 lint warnings off the
+codebase. Same-day follow-on to v0.31.4.
+
+### Features
+
+- **Sidebar Search tab is now usable as a navigation panel.** Sections (Components / Nets) and expanded spoilers stay sticky at the top of the scroll container so you can collapse them from anywhere in the list. Component rows expand to show every net the part touches, sorted by the first pin that hits it (mirrors the existing net→components sublist). Both sublists now show the connecting pin id as a compact monospace chip. Net rows in the Nets section now navigate (zoom/pan) on click; previously they only highlighted. Row spacing tightened (28→22 px). Chevrons upgraded to Tabler icons at 18 px so the expand affordance is actually visible. Expansion is decoupled from `boardStore.selection` so clicking a net inside an expanded component (or vice-versa) no longer collapses the spoiler. (`2893d19`, `9e9145c`)
+- **New Settings ▸ Navigation ▸ Navigate-to-component controls.** Two new knobs that affect every navigation entry point (sidebar Search, standalone Search panel, Worklist, NetList, NetsDropdown/PartsDropdown, PDF cross-target click): (`845b0a0`, `e483f6b`, `44b3a0b`)
+  - **Component Size** (0.05–0.90, default 0.25) — fraction of the smaller viewport dimension the component should fill after navigating.
+  - **Zoom Mode**: *Auto* (default) keeps the current zoom when the part lands in the 1.5%–70% comfortable band and snaps only when extreme; *Keep* never changes zoom, just pans; *Always* snaps to Component Size on every click.
+- **Disco mode peak alpha is now 1.0** — at the top of each heartbeat the part is solid red, then fades back out over the silent 70% of the cycle. Reads as an actual blink instead of a faint tint. (`e134f4b`)
+
+### Fixes
+
+- **Removed the 3× fit-to-board relative cap inside `zoomToBounds`** that silently clipped `navTargetSize` on small boards. Caught by a new Playwright test (`tests/nav-target-size.spec.ts`) which failed on first run with `scaleSmall === scaleLarge` even with the target doubled in *Always* mode — the cap was masking the setting. Kept only the 6× absolute ceiling. (`e483f6b`)
+- **Ghost button icon set is now consistent across all three states.** Previously the *off* state used `IconGhost3` (a stripped-down ghost with no smile), which read as a different shape vs the *on* state's `IconGhost2`. Now uses `IconGhost2` for off/ghosts (off conveyed purely by the absence of `.active` — no slash/strikethrough variant) and `IconGhost2Filled` for disco (the existing `.disco-active` hue-rotate animation gives it the flashing-ghost feel). (`e135e11`, `7b0e420`)
+- **autoZoom too-small threshold lowered from 5% to 1.5%** of the smaller viewport dim. At fit-to-board zoom on a typical 100 mm board, even mid-sized ICs land below 5% of screen — so the old threshold caused *Auto* mode to fall through to the *Always*-snap branch for almost every click, defeating the point. New threshold means only sub-pixel passives trigger a zoom-in; mid-board ICs stay at the user's current zoom and just pan. (`44b3a0b`)
+
+### Internal
+
+- **CI is green again** for the first time since v0.31.0. Two `react-hooks/set-state-in-effect` errors (in `FZKeyDialog.tsx` and `WorklistPanel.tsx`) and an orphan `computeFitToBoardScale` had been silently failing `lint-and-typecheck` for ~7 days. Releases worked because the release pipeline doesn't depend on CI; user testing surfaced it. (`b9ffb09`, `7b0e420`)
+- **Lint warning sweep: 103 → 12** via four parallel agent passes covering non-overlapping scopes (test specs / PDF subsystem / sidebar+toolbar / panels+renderer). Highlights:
+  - 4 real React 19 *"ref accessed during render"* bugs fixed in `SettingsMockup` and `SettingsPanel/PartTypeRow` — the ref pattern was rewritten using React's official "previous-render state" pattern (`useState` + render-time comparison + `setState`).
+  - 9 stale-closure dep bugs in `PdfViewerPanel` callbacks (`syncTransform`, `rescaleWrapperChildren` missing from `useCallback`/`useEffect` arrays — real correctness issues, not just lint noise).
+  - 3 new sibling files extracted from oversized components: `Sidebar.utils.ts`, `BoardSidebar.utils.ts`, `panels/board-viewer-bridge.ts`.
+  - All `any` casts at pdf.js boundaries replaced with structural `as unknown as { ... }` casts; pdf.js / type-decl mismatch documented inline.
+  - 12 remaining warnings are all `react-refresh/only-export-components` (helpers exported alongside React components in three panel files) — pre-existing structural refactor, out of this round's scope. (`2016512`)
+- **New Playwright test** `tests/nav-target-size.spec.ts` exercises (a) `Always` mode + `navTargetSize` change → proportional viewport scale change, and (b) `Keep` mode preserves scale across navigate. Exposes a `__renderSettings` window hook in DEV builds alongside the existing `__boardStore` / `__boardRenderer`. (`e483f6b`)
+
 ## v0.31.4 — 2026-05-30
 
 Two new things you can play with: an interactive first-run gesture setup, and a
