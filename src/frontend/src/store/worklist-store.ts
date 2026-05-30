@@ -42,11 +42,31 @@ export interface WorklistEntry {
   unresolved?: boolean;
 }
 
+/** A net pinned to a worklist. Carries the same {mark, note} shape as a part
+ *  entry so the row UI can reuse most of the rendering. `surge` replaces
+ *  `waterdamage` — the analogue for a signal is "this net saw an over-current
+ *  / ESD event", flagged with the lightning-bolt icon. Per-board key is the
+ *  net name (case-preserved). */
+export interface NetWorklistEntry {
+  netName: string;
+  mark: WorklistMark;
+  note: string;
+  /** True if the netName couldn't be found in the current board on hydration.
+   *  Row is rendered greyed-out, same as the part-entry counterpart. */
+  unresolved?: boolean;
+  /** Lightning-bolt surge / over-current flag. Omitted when false. */
+  surge?: boolean;
+}
+
 export interface Worklist {
   id: string;
   name: string;
   createdAt: number;
   entries: WorklistEntry[];
+  /** Pinned nets — independent from `entries` so the existing part API and
+   *  persisted format stay byte-stable. Defaults to `[]` on hydration of
+   *  records persisted before v0.31.6. */
+  netEntries: NetWorklistEntry[];
   /** Free-form ticket / list note, shown under a spoiler at the top of the
    *  active worklist. Roundtrips through clipboard via `> `-prefixed lines
    *  immediately after the `-[name]-` header. */
@@ -128,12 +148,20 @@ class WorklistStore {
     }
   }
 
-  /** Re-resolve partIndex from refdes for the freshly-loaded board.
-   *  Rows whose refdes is gone are flagged unresolved. */
+  /** Re-resolve partIndex from refdes (and existence of net names) for the
+   *  freshly-loaded board. Rows whose refdes / netName is gone are flagged
+   *  unresolved. Also back-fills `netEntries: []` for records persisted
+   *  before nets-in-worklist was added. */
   private resolveEntries(worklistes: Worklist[]): void {
     const board = boardStore.board;
+    for (const s of worklistes) {
+      if (!Array.isArray(s.netEntries)) s.netEntries = [];
+    }
     if (!board) {
-      for (const s of worklistes) for (const e of s.entries) e.unresolved = true;
+      for (const s of worklistes) {
+        for (const e of s.entries) e.unresolved = true;
+        for (const e of s.netEntries) e.unresolved = true;
+      }
       return;
     }
     const byRefdes = new Map<string, number>();
@@ -150,6 +178,10 @@ class WorklistStore {
           e.partIndex = idx;
           delete e.unresolved;
         }
+      }
+      for (const e of s.netEntries) {
+        if (board.nets.has(e.netName)) delete e.unresolved;
+        else e.unresolved = true;
       }
     }
   }
@@ -262,6 +294,7 @@ class WorklistStore {
       name: trimmed || `Worklist ${cur.worklistes.length + 1}`,
       createdAt: Date.now(),
       entries: [],
+      netEntries: [],
     };
     cur.worklistes.push(worklist);
     cur.activeWorklistId = id;
@@ -442,6 +475,119 @@ class WorklistStore {
     this.save(cur);
   }
 
+  // ── Net entries ────────────────────────────────────────────────────────
+
+  /** Push net names into worklistId, creating the worklist if needed. Skips
+   *  duplicates. Returns the count actually added. */
+  pushNets(worklistId: string | null, netNames: readonly string[]): number {
+    const cur = this.getOrInit();
+    if (!cur) return 0;
+    const board = boardStore.board;
+    if (!board) return 0;
+    let worklist: Worklist | null = null;
+    if (worklistId) {
+      worklist = cur.worklistes.find(s => s.id === worklistId) ?? null;
+    }
+    if (!worklist) {
+      worklist = this.createWorklist() ?? null;
+      if (!worklist) return 0;
+    }
+    if (!Array.isArray(worklist.netEntries)) worklist.netEntries = [];
+    const seen = new Set(worklist.netEntries.map(e => e.netName));
+    let added = 0;
+    for (const name of netNames) {
+      if (!name || seen.has(name)) continue;
+      // Case-insensitive resolve to the board's canonical net name so the
+      // entry stays in sync with the board's casing.
+      let canonical = name;
+      if (!board.nets.has(name)) {
+        const upper = name.toUpperCase();
+        for (const k of board.nets.keys()) {
+          if (k.toUpperCase() === upper) { canonical = k; break; }
+        }
+      }
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      worklist.netEntries.push({ netName: canonical, mark: 'none', note: '' });
+      added++;
+    }
+    if (added > 0) this.save(cur);
+    return added;
+  }
+
+  /** Push a single net into the active worklist (auto-creating one if none).
+   *  Returns the worklist id + how many entries were added (0 if duplicate). */
+  pushNetToActive(netName: string): { worklistId: string; added: number } | null {
+    const board = boardStore.board;
+    if (!board) return null;
+    const cur = this.current ?? this.getOrInit();
+    if (!cur) return null;
+    const worklistId = cur.activeWorklistId ?? (this.createWorklist()?.id ?? null);
+    if (!worklistId) return null;
+    const added = this.pushNets(worklistId, [netName]);
+    return { worklistId, added };
+  }
+
+  removeNetEntry(worklistId: string, netName: string): void {
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const before = s.netEntries.length;
+    s.netEntries = s.netEntries.filter(e => e.netName !== netName);
+    if (s.netEntries.length !== before) this.save(cur);
+  }
+
+  setNetMark(worklistId: string, netName: string, mark: WorklistMark): void {
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const e = s.netEntries.find(x => x.netName === netName);
+    if (!e || e.mark === mark) return;
+    e.mark = mark;
+    this.save(cur);
+  }
+
+  setNetNote(worklistId: string, netName: string, note: string): void {
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const e = s.netEntries.find(x => x.netName === netName);
+    if (!e || e.note === note) return;
+    e.note = note;
+    this.save(cur);
+  }
+
+  /** Lightning-bolt analogue of `toggleWaterdamage` — for nets. */
+  toggleSurge(worklistId: string, netName: string): void {
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const e = s.netEntries.find(x => x.netName === netName);
+    if (!e) return;
+    if (e.surge) delete e.surge;
+    else e.surge = true;
+    this.save(cur);
+  }
+
+  /** Cycle the per-row mark for a net entry. */
+  cycleNetMark(worklistId: string, netName: string, reverse = false): void {
+    const order: WorklistMark[] = ['none', 'replaced', 'reworked', 'cleaned'];
+    const cur = this.current;
+    if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId);
+    if (!s) return;
+    const e = s.netEntries.find(x => x.netName === netName);
+    if (!e) return;
+    const i = order.indexOf(e.mark);
+    const next = reverse ? (i - 1 + order.length) % order.length : (i + 1) % order.length;
+    e.mark = order[next];
+    this.save(cur);
+  }
+
   /** Format a worklist for clipboard. First line is the marker
    *    `-[<name>]-`
    *  optionally followed by one or more `> note` lines (the worklist-level
@@ -580,6 +726,7 @@ class WorklistStore {
       name: parsed.name,
       createdAt: Date.now(),
       entries: [],
+      netEntries: [],
     };
     if (parsed.note) worklist.note = parsed.note;
     let resolved = 0;

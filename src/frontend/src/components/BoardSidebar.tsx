@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { IconPin, IconPinFilled, IconChevronRight, IconChevronDown } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useWorklist } from '../hooks/useWorklist';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
+import { worklistStore } from '../store/worklist-store';
 import type { SelectionState } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
@@ -749,10 +751,16 @@ function PartNetsSublist({ part }: { part: Part }) {
 
 function SearchTab({ tabId }: { tabId: number }) {
   const { tabs } = useBoardStore();
+  const { activeWorklist } = useWorklist();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
   const storeQuery = tab?.searchQuery ?? '';
+
+  // Active-worklist membership sets so each row knows whether to render its
+  // pin button as filled (already in the list) vs outline (click to add).
+  const pinnedRefdes = new Set(activeWorklist?.entries.map(e => e.refdes) ?? []);
+  const pinnedNets = new Set(activeWorklist?.netEntries?.map(e => e.netName) ?? []);
 
   const [query, setQuery] = useState(storeQuery || '');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -904,6 +912,7 @@ function SearchTab({ tabId }: { tabId: number }) {
                 {matchedParts.length === 0 && <div className="search-section-empty">No matching components</div>}
                 {matchedParts.map((part) => {
                   const isExpanded = expandedPart === part.name;
+                  const isPinned = pinnedRefdes.has(part.name);
                   return (
                     <div key={part.name} className={isExpanded ? 'search-spoiler-open' : ''}>
                       <div
@@ -917,6 +926,16 @@ function SearchTab({ tabId }: { tabId: number }) {
                         <span className="result-name">{part.name}</span>
                         <span className={`badge badge-${part.side}`}>{part.side}</span>
                         <span className="result-pins">{part.pins.length} pins</span>
+                        <button
+                          className={`search-pin-btn ${isPinned ? 'pinned' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            worklistStore.pushRefdesToActive(part.name);
+                          }}
+                          title={isPinned ? 'Already in the active worklist' : 'Add to current worklist'}
+                        >
+                          {isPinned ? <IconPinFilled size={14} /> : <IconPin size={14} />}
+                        </button>
                       </div>
                       {isExpanded && <PartNetsSublist part={part} />}
                     </div>
@@ -941,6 +960,7 @@ function SearchTab({ tabId }: { tabId: number }) {
                   const skipExpand = upper.includes('GND') || isNcNet(upper, renderSettingsStore.settings.ncNetPatterns);
                   const isExpanded = expandedNet === name && !skipExpand;
                   const isHighlighted = selection.highlightedNet === name || isExpanded;
+                  const isPinned = pinnedNets.has(name);
                   return (
                     <div key={name} className={isExpanded ? 'search-spoiler-open' : ''}>
                       <div
@@ -960,6 +980,16 @@ function SearchTab({ tabId }: { tabId: number }) {
                         </span>
                         <span className="net-name">{name}</span>
                         <span className="net-count">{net.pinIndices.length}</span>
+                        <button
+                          className={`search-pin-btn ${isPinned ? 'pinned' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            worklistStore.pushNetToActive(name);
+                          }}
+                          title={isPinned ? 'Already in the active worklist' : 'Add to current worklist'}
+                        >
+                          {isPinned ? <IconPinFilled size={14} /> : <IconPin size={14} />}
+                        </button>
                       </div>
                       {isExpanded && board && (
                         <NetComponentsSublist board={board} pinIndices={net.pinIndices} />

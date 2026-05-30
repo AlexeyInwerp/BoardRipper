@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
-import { IconReplace, IconSparkles, IconClipboardText, IconDroplet } from '@tabler/icons-react';
+import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
 import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
-import type { WorklistEntry, WorklistMark } from '../store/worklist-store';
+import type { WorklistEntry, WorklistMark, NetWorklistEntry } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
 import { useWorklist } from '../hooks/useWorklist';
@@ -350,13 +350,19 @@ function ActiveWorklistView() {
         )}
       </div>
       <div style={listStyle}>
-        {activeWorklist.entries.length === 0 && (
+        {activeWorklist.entries.length === 0 && (activeWorklist.netEntries?.length ?? 0) === 0 && (
           <div style={emptyStyle}>
-            <div style={{ opacity: 0.55 }}>Empty. Shift-click parts on the board to add them.</div>
+            <div style={{ opacity: 0.55 }}>Empty. Shift-click parts on the board, or hit the pin button in the Search tab.</div>
           </div>
         )}
         {activeWorklist.entries.map(entry => (
           <WorklistRow key={entry.refdes} worklistId={activeWorklist.id} entry={entry} />
+        ))}
+        {(activeWorklist.netEntries?.length ?? 0) > 0 && activeWorklist.entries.length > 0 && (
+          <div style={netsHeadingStyle}>Nets</div>
+        )}
+        {activeWorklist.netEntries?.map(entry => (
+          <WorklistNetRow key={'net:' + entry.netName} worklistId={activeWorklist.id} entry={entry} />
         ))}
       </div>
     </>
@@ -465,6 +471,126 @@ function WorklistRow({ worklistId, entry }: WorklistRowProps) {
         </button>
         <span style={{ fontFamily: 'monospace', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {entry.refdes}
+          {entry.unresolved && <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 11 }}>(missing)</span>}
+        </span>
+        <button
+          style={chevronBtnStyle}
+          onClick={e => { e.stopPropagation(); setExpanded(x => !x); }}
+          title={expanded ? 'Collapse note' : 'Expand note'}
+        >
+          {expanded ? '▾' : '▸'}
+          {entry.note && !expanded && <span style={notePeekStyle}>{entry.note.length > 14 ? entry.note.slice(0, 14) + '…' : entry.note}</span>}
+        </button>
+        <button style={removeBtnStyle} onClick={onRemove} title="Remove from worklist">✕</button>
+      </div>
+      {expanded && (
+        <textarea
+          style={noteAreaStyle}
+          value={noteDraft}
+          placeholder="Note (saved when you click out)"
+          onChange={e => setNoteDraft(e.target.value)}
+          onBlur={onCommitNote}
+        />
+      )}
+    </div>
+  );
+}
+
+interface WorklistNetRowProps {
+  worklistId: string;
+  entry: NetWorklistEntry;
+}
+
+/** Net-entry analogue of WorklistRow. Same mark-cycle + note machinery; the
+ *  water-damage drop is swapped for a lightning bolt (`surge` flag) since the
+ *  failure mode for a signal isn't "got wet" but "saw an over-current event". */
+function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(entry.note);
+  const [flash, setFlash] = useState<{ mark: WorklistMark; x: number; y: number } | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+  }, []);
+
+  const onFocus = () => {
+    if (entry.unresolved) return;
+    boardStore.focusNet(entry.netName);
+  };
+
+  const onCycleMark = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    worklistStore.cycleNetMark(worklistId, entry.netName, e.shiftKey);
+    const updated = worklistStore.activeWorklist?.netEntries?.find(x => x.netName === entry.netName);
+    if (updated) {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setFlash({
+        mark: updated.mark,
+        x: rect.left + rect.width / 2,
+        y: rect.bottom + 4,
+      });
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlash(null), 1600);
+    }
+  };
+
+  const onToggleSurge = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    worklistStore.toggleSurge(worklistId, entry.netName);
+  };
+
+  const onRemove = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    worklistStore.removeNetEntry(worklistId, entry.netName);
+  };
+
+  const onCommitNote = () => {
+    if (noteDraft !== entry.note) worklistStore.setNetNote(worklistId, entry.netName, noteDraft);
+  };
+
+  return (
+    <div style={{ ...rowStyle, opacity: entry.unresolved ? 0.45 : 1 }}>
+      <div style={rowMainStyle} onClick={onFocus}>
+        <button
+          style={{
+            ...markBtnStyle,
+            color: MARK_BTN_COLOR[entry.mark],
+            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
+          }}
+          onClick={onCycleMark}
+          title={MARK_TITLE[entry.mark]}
+        >
+          {(() => {
+            const Icon = MARK_ICON[entry.mark];
+            if (!Icon) return <span style={{ opacity: 0.4 }}>·</span>;
+            return <Icon size={14} stroke={2} />;
+          })()}
+        </button>
+        {flash && createPortal(
+          <div
+            style={{
+              ...flashTooltipStyle,
+              left: flash.x,
+              top: flash.y,
+              background: flash.mark === 'none' ? 'var(--panel-bg, #222)' : MARK_BTN_COLOR[flash.mark],
+              color: flash.mark === 'none' ? 'var(--text, #ddd)' : '#0a0a0a',
+            }}
+            role="status"
+          >
+            {MARK_SHORT_LABEL[flash.mark]}
+          </div>,
+          document.body,
+        )}
+        <button
+          style={surgeBtnStyle(entry.surge === true)}
+          onClick={onToggleSurge}
+          title={entry.surge ? 'Surge / over-current flagged. Click to clear.' : 'Mark as surge / over-current.'}
+          aria-pressed={entry.surge === true}
+        >
+          <IconBolt size={14} stroke={2} />
+        </button>
+        <span style={{ fontFamily: 'monospace', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {entry.netName}
           {entry.unresolved && <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 11 }}>(missing)</span>}
         </span>
         <button
@@ -690,6 +816,7 @@ const markBtnStyle: React.CSSProperties = {
 };
 
 const WATER_COLOR = '#5fb6ff';
+const SURGE_COLOR = '#ffcf3a';
 
 function waterBtnStyle(on: boolean): React.CSSProperties {
   return {
@@ -708,6 +835,23 @@ function waterBtnStyle(on: boolean): React.CSSProperties {
     opacity: on ? 1 : 0.35,
   };
 }
+
+function surgeBtnStyle(on: boolean): React.CSSProperties {
+  return {
+    ...waterBtnStyle(on),
+    color: on ? SURGE_COLOR : 'var(--muted, #888)',
+  };
+}
+
+const netsHeadingStyle: React.CSSProperties = {
+  padding: '8px 4px 4px',
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: 0.5,
+  textTransform: 'uppercase',
+  color: 'var(--muted, #888)',
+  opacity: 0.7,
+};
 
 const flashTooltipStyle: React.CSSProperties = {
   // position:fixed so the chip escapes ancestor overflow:auto (sidebar
