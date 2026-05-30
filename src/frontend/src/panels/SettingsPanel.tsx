@@ -1828,8 +1828,29 @@ export function SettingsPanel() {
         <div className="settings-subsection-label">Navigate-to-component</div>
         <Slider label="Component Size" value={draft.navTargetSize} min={0.05} max={0.90} step={0.05} field="navTargetSize" onUpdate={updateDraft}
           title="Target on-screen size of a component after navigating to it from search / NetList / Worklist. Expressed as a fraction of the smaller viewport dimension. Default 0.25 (~25%)." />
-        <Toggle label="Auto-adjust Zoom" value={draft.navAutoZoom} field="navAutoZoom" onUpdate={updateDraft}
-          title="When ON, navigation only changes zoom if the component would be invisible (<1.5% of screen) or oversized (>70%) at the current zoom — otherwise the viewport just pans. When OFF, every navigation snaps to Component Size. Default: ON." />
+        <div className="settings-row" data-test="nav-zoom-mode" title="How navigation should treat zoom level.">
+          <label className="settings-label">Zoom Mode</label>
+          <div className="settings-btn-group" style={{ marginLeft: 'auto' }}>
+            <button
+              className={`settings-btn-option${draft.navZoomMode === 'auto' ? ' active' : ''}`}
+              onClick={() => updateDraft({ navZoomMode: 'auto' })}
+              title="Auto — keep current zoom when the part is in the comfortable band (1.5%–70% of screen). Snap to Component Size only when extreme."
+              data-test="nav-zoom-auto"
+            >Auto</button>
+            <button
+              className={`settings-btn-option${draft.navZoomMode === 'keep' ? ' active' : ''}`}
+              onClick={() => updateDraft({ navZoomMode: 'keep' })}
+              title="Keep — never change zoom, just pan to the part. Component Size is ignored."
+              data-test="nav-zoom-keep"
+            >Keep</button>
+            <button
+              className={`settings-btn-option${draft.navZoomMode === 'always' ? ' active' : ''}`}
+              onClick={() => updateDraft({ navZoomMode: 'always' })}
+              title="Always — every navigation snaps to Component Size. Pre-v0.31.4 behavior."
+              data-test="nav-zoom-always"
+            >Always</button>
+          </div>
+        </div>
 
         <div className="settings-subsection-label">Pan</div>
         <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing a drag gesture. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">

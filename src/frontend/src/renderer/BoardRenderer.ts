@@ -2328,7 +2328,7 @@ export class BoardRenderer {
         // visually and feel under-zoomed.
         const s = renderSettingsStore.settings;
         const target = focus.partIndex != null ? s.navTargetSize : 0.6;
-        this.zoomToBounds(focus.bounds, focusRoot, target, { autoZoom: s.navAutoZoom });
+        this.zoomToBounds(focus.bounds, focusRoot, target, { zoomMode: s.navZoomMode });
         this.startSelectionBlink();
       }
     } catch (err) {
@@ -2340,7 +2340,7 @@ export class BoardRenderer {
     bounds: { minX: number; minY: number; maxX: number; maxY: number },
     root?: Container,
     viewFraction = 0.25,
-    options: { autoZoom?: boolean } = {},
+    options: { zoomMode?: 'auto' | 'keep' | 'always' } = {},
   ) {
     const bw = bounds.maxX - bounds.minX;
     const bh = bounds.maxY - bounds.minY;
@@ -2349,35 +2349,32 @@ export class BoardRenderer {
     if (sw === 0 || sh === 0) return;
 
     // Target scale magnitude — part should fill ~viewFraction of the smaller
-    // screen dimension. Two caps:
-    //   • absolute 6× (= 600%): hard ceiling — sub-pixel pan jitter past this
-    //     makes pin-picking unreliable on tiny components.
-    //   • relative 3× fit-to-board: keeps surrounding context visible when
-    //     zooming to a 0402-sized passive. If fit-to-board scale is unknown
-    //     (board not loaded yet), the relative cap is skipped.
+    // screen dimension. Single absolute cap at 6× (= 600%): a hard ceiling
+    // that keeps sub-pixel pan jitter on tiny components manageable. The
+    // previous "3× fit-to-board" relative cap silently clipped user-chosen
+    // navTargetSize on small boards (e.g. test fixtures and 50 mm modules)
+    // so navTargetSize visibly stopped mattering — removed in v0.31.5.
     const maxDim = Math.max(bw, bh, 1);
     const screenMin = Math.min(sw, sh);
     const naturalMag = (screenMin * viewFraction) / maxDim;
-    const fitScale = this.computeFitToBoardScale();
-    const relCap = fitScale > 0 ? 3 * fitScale : Infinity;
-    let targetMag = Math.min(naturalMag, relCap, 6);
+    let targetMag = Math.min(naturalMag, 6);
 
-    // Auto mode — preserve the current zoom when the bbox already lands in
-    // the comfortable band on screen. The lower bound is intentionally tight
-    // (~1.5%): in practice every passive on a 100 mm board falls below 2%
-    // at fit-to-board zoom, and "keep zoom" should be the dominant behavior
-    // so the user's clicks read as "navigate to" rather than "zoom-and-pan".
-    // Only truly sub-pixel parts (sub-1.5% on the smaller viewport dim) and
-    // already-overshot parts (>70% of the screen) trigger a re-zoom.
-    if (options.autoZoom) {
-      const currentMag = Math.abs(this.viewport.scale.x);
-      if (currentMag > 0) {
-        const screenFrac = (maxDim * currentMag) / screenMin;
-        const TOO_SMALL = 0.015;
-        const TOO_BIG = 0.70;
-        if (screenFrac >= TOO_SMALL && screenFrac <= TOO_BIG) targetMag = currentMag;
-        log.render.log(`autoZoom: screenFrac=${screenFrac.toFixed(3)} target=${targetMag === currentMag ? 'keep' : 'snap'} natural=${naturalMag.toFixed(3)} cur=${currentMag.toFixed(3)}`);
-      }
+    const mode = options.zoomMode ?? 'always';
+    const currentMag = Math.abs(this.viewport.scale.x);
+    if (mode === 'keep' && currentMag > 0) {
+      // Never change zoom — just pan to the part's center.
+      targetMag = currentMag;
+    } else if (mode === 'auto' && currentMag > 0) {
+      // Preserve the current zoom when the bbox already lands in the
+      // comfortable band on screen (1.5%–70% of the smaller viewport dim).
+      // Only truly invisible (<1.5%) or oversized (>70%) parts trigger a snap.
+      const screenFrac = (maxDim * currentMag) / screenMin;
+      const TOO_SMALL = 0.015;
+      const TOO_BIG = 0.70;
+      if (screenFrac >= TOO_SMALL && screenFrac <= TOO_BIG) targetMag = currentMag;
+      log.render.log(`navZoom: mode=auto screenFrac=${screenFrac.toFixed(3)} target=${targetMag === currentMag ? 'keep' : 'snap'} natural=${naturalMag.toFixed(3)} cur=${currentMag.toFixed(3)}`);
+    } else {
+      log.render.log(`navZoom: mode=${mode} target=snap natural=${naturalMag.toFixed(3)} cur=${currentMag.toFixed(3)}`);
     }
 
     // Preserve sign of current scale (negative = flipped)

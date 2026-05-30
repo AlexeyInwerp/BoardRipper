@@ -98,11 +98,17 @@ export interface RenderSettings {
   /** Target component size after navigating to a search result, as a fraction
    *  of the smaller viewport dimension. Higher = part fills more of the screen. */
   navTargetSize: number;
-  /** When true, navigating to a component only re-zooms if its on-screen size
-   *  is outside the comfortable band (~5%–70% of the smaller viewport dim);
-   *  otherwise the current zoom is preserved and the viewport just pans.
-   *  When false, every navigation snaps to `navTargetSize`. */
-  navAutoZoom: boolean;
+  /** How navigation should treat zoom level:
+   *   - 'auto'   — keep the current zoom when the part is already in the
+   *                comfortable band (1.5%–70% of the smaller viewport dim);
+   *                snap to `navTargetSize` only when it would otherwise be
+   *                invisible or oversized.
+   *   - 'keep'   — never change zoom; just pan to center the part. The
+   *                `navTargetSize` setting is ignored.
+   *   - 'always' — every navigation snaps to `navTargetSize`. This is the
+   *                pre-v0.31.4 behavior and the mode to use when you want to
+   *                tune `navTargetSize` and see the effect on every click. */
+  navZoomMode: 'auto' | 'keep' | 'always';
   netHighlightGrow: number;
   netHighlightAlpha: number;
   /** Opacity of the black dim overlay (0 = no dim, 1 = fully black) */
@@ -342,7 +348,7 @@ export const DEFAULTS: RenderSettings = {
   selectionPadding: 4,
   selectionFillAlpha: 0.07,
   navTargetSize: 0.25,
-  navAutoZoom: true,
+  navZoomMode: 'auto',
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
   dimOverlayAlpha: 0.5,
@@ -1017,6 +1023,13 @@ function loadFromStorage(): RenderSettings {
         result.wheelDetection = false;
       }
       try { localStorage.setItem(WHEEL_DETECTION_MIGRATED_KEY, '1'); } catch { /* ignore */ }
+      // Migration: navAutoZoom (boolean) → navZoomMode (string). true → 'auto',
+      // false → 'always'. The new 'keep' value is opt-in only.
+      if (typeof parsed.navAutoZoom === 'boolean' && typeof parsed.navZoomMode !== 'string') {
+        result.navZoomMode = parsed.navAutoZoom ? 'auto' : 'always';
+      } else if (parsed.navZoomMode !== 'auto' && parsed.navZoomMode !== 'keep' && parsed.navZoomMode !== 'always') {
+        result.navZoomMode = DEFAULTS.navZoomMode;
+      }
       // Reconcile saved overlay layout (drop unknown slots, append new defaults)
       result.overlayLayout = reconcileOverlayLayout(parsed.overlayLayout);
 
@@ -1300,6 +1313,11 @@ class RenderSettingsStore extends Emitter {
 }
 
 export const renderSettingsStore = new RenderSettingsStore();
+
+// Expose for integration tests (Playwright) — DEV builds only
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as { __renderSettings?: typeof renderSettingsStore }).__renderSettings = renderSettingsStore;
+}
 
 function normalizeForWatermark(s: string): string {
   // NFKC decomposes compatibility characters — crucially, Latin ligatures
