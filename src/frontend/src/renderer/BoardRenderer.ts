@@ -4795,26 +4795,9 @@ export class BoardRenderer {
   }
 
   /**
-   * Returns the viewport scale magnitude that `fitToBoard()` would set right
-   * now, without actually changing the viewport. Used by the focus-zoom cap
-   * so we never zoom in more than 3× the whole-board view.
-   * Returns 0 if the board or container size is unknown — caller must guard.
+   * Animated fit-to-board (no scale cap), used by the FitBoard overlay
+   * button + initial board open.
    */
-  private computeFitToBoardScale(): number {
-    const b = this.board?.bounds;
-    if (!b) return 0;
-    const cw = this.containerEl.clientWidth;
-    const ch = this.containerEl.clientHeight;
-    if (cw === 0 || ch === 0) return 0;
-    const pad = renderSettingsStore.settings.fitPadding;
-    const bw = b.maxX - b.minX;
-    const bh = b.maxY - b.minY;
-    if (bw <= 0 || bh <= 0) return 0;
-    const fitW = bw + pad * 2;
-    const fitH = bh + pad * 2;
-    return Math.min(cw / fitW, ch / fitH);
-  }
-
   fitToBoard(board?: BoardData) {
     const b = board?.bounds ?? this.board?.bounds;
     if (!b) return;
