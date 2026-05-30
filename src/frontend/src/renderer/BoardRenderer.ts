@@ -4084,8 +4084,10 @@ export class BoardRenderer {
     }
 
     const s = renderSettingsStore.settings;
-    const fillAlpha   = pulse * 0.32;
-    const strokeAlpha = pulse * 0.9;
+    // Peak = 1.0 so the part is fully obscured by solid red at the top of
+    // the blink, then fades back out as the duty cycle returns to silent.
+    const fillAlpha   = pulse;
+    const strokeAlpha = pulse;
     const width = Math.max(s.selectionWidth * 1.2, 2);
     const pad = Math.max(s.selectionPadding * 0.5, 1);
     const RED = 0xff2a2a;
