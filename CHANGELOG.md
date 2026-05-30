@@ -1,5 +1,28 @@
 # BoardRipper changelog
 
+## v0.31.6 — 2026-05-31
+
+Worklist gains first-class net support — pin a net to a worklist from
+the search tab or right-click, mark it short/solved/absent, optionally
+flag it with the lightning-bolt surge tag.
+
+### Features
+
+- **Pin button on every search result row.** Each component AND net row in the sidebar Search tab now has a trailing `IconPin` button (turns into `IconPinFilled` + accent tint when already pinned to the active worklist). Clicking pushes the item to the active worklist, auto-creating one if none exists. Click stops propagation so the row's existing focus action still fires when you click the body. (`ebb88a4`)
+- **Nets are first-class worklist entries.** The `Worklist` data model gains a `netEntries: NetWorklistEntry[]` array parallel to the existing parts list; old persisted records hydrate with `[]` (back-filled in `resolveEntries`, no schema migration). Each net entry carries a `mark`, `note`, and an optional `surge` flag — the signal analogue of `waterdamage`, indicating an over-current / ESD event, displayed as a lightning bolt. A subtle "Nets" sub-heading separates the two sections in the panel when both are populated. (`ebb88a4`)
+- **Net-specific mark vocabulary: short / solved / absent.** Separate `NetWorklistMark` type, not the part `replaced/reworked/cleaned` vocab — those describe physical actions on a component and don't map onto a signal. Short = fault identified (red `IconAlertTriangle`); solved = resolved (green `IconCheck`); absent = net not present / not reaching (slate `IconUnlink`). The type system prevents the part vocab from leaking into a net entry. (`bdc0552`)
+- **Right-click pin a net** — the net chip in the board context-menu header now carries the same `IconPin → IconPinFilled` toggle as the component chip. Click to add the net to the active worklist; click again to remove. Auto-creates a worklist on first use, opens the Worklist sidebar tab, and surfaces a toast. (`bdc0552`)
+
+### Internal
+
+- New store API: `pushNets`, `pushNetToActive`, `removeNetEntry`, `setNetMark`, `setNetNote`, `cycleNetMark`, `toggleSurge`. Parallel to the existing part-side methods. Net names are case-canonicalised against the loaded board on push so the entry stays in sync with the board's casing. (`ebb88a4`)
+- New `NET_MARK_*` tables in `WorklistPanel.tsx` (`NET_MARK_ICON`, `NET_MARK_SHORT_LABEL`, `NET_MARK_TITLE`, `NET_MARK_BTN_COLOR`) mirror the existing part-side tables. `WorklistNetRow` is structurally identical to `WorklistRow` apart from the icon set + handler routing. (`bdc0552`)
+- New `qa-worklist-net` testid on the context-menu net chip parallels the existing `qa-worklist-part`, enabling future regression tests to assert against the net chip independently. (`bdc0552`)
+
+### Known limitations
+
+- **Canvas highlight for worklist net entries is not yet wired**. The current `multiHighlightGfx` system only paints part outlines. Layering a worklist-net highlight on top of the existing single-`highlightedNet` machinery without colour collision is a larger refactor — net worklist entries are panel-only for this release. Clicking a net-row in the worklist focuses the net via the standard `focusNet` path, which respects the user's Zoom Mode setting from v0.31.5.
+
 ## v0.31.5 — 2026-05-30
 
 Sidebar Search tab redesign, configurable navigate-to-component zoom, disco
