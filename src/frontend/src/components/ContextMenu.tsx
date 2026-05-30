@@ -355,6 +355,30 @@ export function ContextMenu() {
     }
   };
 
+  /** Net-side counterpart of `onToggleWorklist`. Auto-creates a worklist
+   *  via pushNetToActive when none exists. */
+  const onToggleNetWorklist = (netName: string) => {
+    contextMenuStore.hide();
+    const wl = worklistStore.activeWorklist;
+    if (wl?.netEntries?.some(e => e.netName === netName)) {
+      worklistStore.removeNetEntry(wl.id, netName);
+      boardStore.addToast(`Removed '${netName}' from ${wl.name}`, 'info');
+      return;
+    }
+    const r = worklistStore.pushNetToActive(netName);
+    if (!r) {
+      boardStore.addToast(`Could not add '${netName}' to worklist (no active board?)`, 'error');
+      return;
+    }
+    openBoardSidebarTab('worklist');
+    const worklistName = worklistStore.activeWorklist?.name ?? 'worklist';
+    if (r.added > 0) {
+      boardStore.addToast(`Added '${netName}' to ${worklistName}`, 'info');
+    } else {
+      boardStore.addToast(`'${netName}' already in ${worklistName}`, 'info');
+    }
+  };
+
   /** Render a value chip: the value text + small action icons (copy /
    *  optional search / optional worklist). Click on the text itself is a
    *  shortcut for Copy. Compresses the previous three-row Copy/Search/
@@ -373,6 +397,8 @@ export function ContextMenu() {
     } = {},
   ): React.ReactElement => {
     const kind = actions.testKind ?? 'text';
+    // Net chips toggle the net-side worklist; everything else toggles parts.
+    const onWorklistClick = kind === 'net' ? onToggleNetWorklist : onToggleWorklist;
     return (
       <span className="ctxmenu-chip" key={`chip-${kind}-${value}`}>
         {actions.worklist && (
@@ -381,9 +407,9 @@ export function ContextMenu() {
             title={actions.worklistLit
               ? `'${value}' is in the active worklist — click to remove`
               : `Add '${value}' to the active worklist`}
-            data-testid="qa-worklist-part"
+            data-testid={kind === 'net' ? 'qa-worklist-net' : 'qa-worklist-part'}
             data-lit={actions.worklistLit ? '1' : '0'}
-            onClick={(e) => { e.stopPropagation(); onToggleWorklist(value); }}
+            onClick={(e) => { e.stopPropagation(); onWorklistClick(value); }}
           >
             {actions.worklistLit
               ? <IconPinFilled size={12} stroke={2} />
@@ -424,6 +450,9 @@ export function ContextMenu() {
       // the icon state reflects the current store.
       const isInActiveWorklist =
         !!worklistStore.activeWorklist?.entries.some(e => e.refdes === compName);
+      const isNetInActiveWorklist = !!(
+        netName && worklistStore.activeWorklist?.netEntries?.some(e => e.netName === netName)
+      );
       return (
         <div className="context-menu-header" data-testid="context-menu-header">
           {renderValueChip(compName, { search: true, worklist: true, worklistLit: isInActiveWorklist, testKind: 'part' })}
@@ -436,7 +465,7 @@ export function ContextMenu() {
           {netName && (
             <>
               <span className="ctxmenu-chip-sep">·</span>
-              {renderValueChip(netName, { search: true, testKind: 'net' })}
+              {renderValueChip(netName, { search: true, worklist: true, worklistLit: isNetInActiveWorklist, testKind: 'net' })}
             </>
           )}
         </div>

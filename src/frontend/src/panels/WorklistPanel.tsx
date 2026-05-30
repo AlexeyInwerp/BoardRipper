@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
-import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt } from '@tabler/icons-react';
+import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
-import { worklistStore, MARK_COLOR_CSS } from '../store/worklist-store';
-import type { WorklistEntry, WorklistMark, NetWorklistEntry } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS } from '../store/worklist-store';
+import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark } from '../store/worklist-store';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
 import { useWorklist } from '../hooks/useWorklist';
@@ -44,6 +44,32 @@ const MARK_BTN_COLOR: Record<WorklistMark, string> = {
   replaced: MARK_COLOR_CSS.replaced,
   reworked: MARK_COLOR_CSS.reworked,
   cleaned: MARK_COLOR_CSS.cleaned,
+};
+
+// ── Net-row mark tables ───────────────────────────────────────────────────
+const NET_MARK_ICON: Record<NetWorklistMark, ComponentType<{ size?: number; stroke?: number }> | null> = {
+  none: null,
+  short: IconAlertTriangle,
+  solved: IconCheck,
+  absent: IconUnlink,
+};
+const NET_MARK_SHORT_LABEL: Record<NetWorklistMark, string> = {
+  none: 'No mark',
+  short: 'Short',
+  solved: 'Solved',
+  absent: 'Absent',
+};
+const NET_MARK_TITLE: Record<NetWorklistMark, string> = {
+  none: 'No mark. Click to set Short. Cycle: Short → Solved → Absent → no mark. Shift-click cycles backwards.',
+  short: 'Short. Click to advance to Solved. Shift-click to clear.',
+  solved: 'Solved. Click to advance to Absent. Shift-click to go back to Short.',
+  absent: 'Absent (net not present / not reaching). Click to clear. Shift-click to go back to Solved.',
+};
+const NET_MARK_BTN_COLOR: Record<NetWorklistMark, string> = {
+  none: 'var(--muted, #888)',
+  short: NET_MARK_COLOR_CSS.short,
+  solved: NET_MARK_COLOR_CSS.solved,
+  absent: NET_MARK_COLOR_CSS.absent,
 };
 
 async function copyToClipboard(text: string, summary: string): Promise<void> {
@@ -507,7 +533,7 @@ interface WorklistNetRowProps {
 function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [noteDraft, setNoteDraft] = useState(entry.note);
-  const [flash, setFlash] = useState<{ mark: WorklistMark; x: number; y: number } | null>(null);
+  const [flash, setFlash] = useState<{ mark: NetWorklistMark; x: number; y: number } | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -554,14 +580,14 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
         <button
           style={{
             ...markBtnStyle,
-            color: MARK_BTN_COLOR[entry.mark],
-            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : MARK_BTN_COLOR[entry.mark],
+            color: NET_MARK_BTN_COLOR[entry.mark],
+            borderColor: entry.mark === 'none' ? 'var(--border, #444)' : NET_MARK_BTN_COLOR[entry.mark],
           }}
           onClick={onCycleMark}
-          title={MARK_TITLE[entry.mark]}
+          title={NET_MARK_TITLE[entry.mark]}
         >
           {(() => {
-            const Icon = MARK_ICON[entry.mark];
+            const Icon = NET_MARK_ICON[entry.mark];
             if (!Icon) return <span style={{ opacity: 0.4 }}>·</span>;
             return <Icon size={14} stroke={2} />;
           })()}
@@ -572,12 +598,12 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
               ...flashTooltipStyle,
               left: flash.x,
               top: flash.y,
-              background: flash.mark === 'none' ? 'var(--panel-bg, #222)' : MARK_BTN_COLOR[flash.mark],
+              background: flash.mark === 'none' ? 'var(--panel-bg, #222)' : NET_MARK_BTN_COLOR[flash.mark],
               color: flash.mark === 'none' ? 'var(--text, #ddd)' : '#0a0a0a',
             }}
             role="status"
           >
-            {MARK_SHORT_LABEL[flash.mark]}
+            {NET_MARK_SHORT_LABEL[flash.mark]}
           </div>,
           document.body,
         )}

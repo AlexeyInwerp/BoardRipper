@@ -8,6 +8,12 @@ import { log } from './log-store';
 
 export type WorklistMark = 'none' | 'replaced' | 'reworked' | 'cleaned';
 
+/** Mark vocabulary for **net** worklist entries. Separate from `WorklistMark`
+ *  because "replaced / reworked / cleaned" describe physical actions on a
+ *  component and don't map onto a signal trace. The net analogue is the
+ *  *failure mode*: shorted, missing, or resolved. */
+export type NetWorklistMark = 'none' | 'short' | 'solved' | 'absent';
+
 /** Mark → display colour. CSS strings for the panel UI, matching numeric
  *  values for the canvas overlay. Kept here so the renderer and the panel
  *  agree visually on what state each mark represents. */
@@ -22,6 +28,15 @@ export const MARK_COLOR_HEX: Record<WorklistMark, number> = {
   replaced: 0xff5566,
   reworked: 0xffaa33,
   cleaned: 0x33cc88,
+};
+
+/** Mark colours for **net** entries. Matches the visual semantics from the
+ *  part palette where it makes sense (red = problem, green = resolved). */
+export const NET_MARK_COLOR_CSS: Record<NetWorklistMark, string> = {
+  none: '#ffaa00',       // amber — "in a worklist, not yet acted on"
+  short: '#ff5566',      // red — fault identified
+  solved: '#33cc88',     // green — resolved
+  absent: '#8899aa',     // muted slate — disconnected / not on this board
 };
 
 export interface WorklistEntry {
@@ -49,7 +64,7 @@ export interface WorklistEntry {
  *  net name (case-preserved). */
 export interface NetWorklistEntry {
   netName: string;
-  mark: WorklistMark;
+  mark: NetWorklistMark;
   note: string;
   /** True if the netName couldn't be found in the current board on hydration.
    *  Row is rendered greyed-out, same as the part-entry counterpart. */
@@ -154,8 +169,14 @@ class WorklistStore {
    *  before nets-in-worklist was added. */
   private resolveEntries(worklistes: Worklist[]): void {
     const board = boardStore.board;
+    const validNetMarks: ReadonlySet<NetWorklistMark> = new Set(['none', 'short', 'solved', 'absent']);
     for (const s of worklistes) {
       if (!Array.isArray(s.netEntries)) s.netEntries = [];
+      // Sanitise legacy net marks that briefly shipped with the part vocab
+      // (replaced / reworked / cleaned) in v0.31.5 → reset to 'none'.
+      for (const e of s.netEntries) {
+        if (!validNetMarks.has(e.mark)) e.mark = 'none';
+      }
     }
     if (!board) {
       for (const s of worklistes) {
@@ -538,7 +559,7 @@ class WorklistStore {
     if (s.netEntries.length !== before) this.save(cur);
   }
 
-  setNetMark(worklistId: string, netName: string, mark: WorklistMark): void {
+  setNetMark(worklistId: string, netName: string, mark: NetWorklistMark): void {
     const cur = this.current;
     if (!cur) return;
     const s = cur.worklistes.find(x => x.id === worklistId);
@@ -575,7 +596,7 @@ class WorklistStore {
 
   /** Cycle the per-row mark for a net entry. */
   cycleNetMark(worklistId: string, netName: string, reverse = false): void {
-    const order: WorklistMark[] = ['none', 'replaced', 'reworked', 'cleaned'];
+    const order: NetWorklistMark[] = ['none', 'short', 'solved', 'absent'];
     const cur = this.current;
     if (!cur) return;
     const s = cur.worklistes.find(x => x.id === worklistId);
@@ -583,7 +604,9 @@ class WorklistStore {
     const e = s.netEntries.find(x => x.netName === netName);
     if (!e) return;
     const i = order.indexOf(e.mark);
-    const next = reverse ? (i - 1 + order.length) % order.length : (i + 1) % order.length;
+    const next = reverse
+      ? (i < 0 ? order.length - 1 : (i - 1 + order.length) % order.length)
+      : (i < 0 ? 1 : (i + 1) % order.length);
     e.mark = order[next];
     this.save(cur);
   }
