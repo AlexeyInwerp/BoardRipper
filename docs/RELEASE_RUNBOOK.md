@@ -76,7 +76,7 @@ The script will:
 9. Render landing-page version block + `changelog.html` + `third_party.html`.
 10. Upload via lftp to ftp.ripperdoc.de with atomic renames.
 11. Verify the published manifest reports the expected version.
-12. **If desktop builds were requested**: run `desktop/build-all.mjs`, verify zip integrity + macOS codesign.
+12. **If desktop builds were requested**: run `desktop/build-all.mjs`, verify zip integrity + macOS codesign, then **upload the three zips to FTP** under `/boardripper/desktop/` &mdash; both versioned (`BoardRipper-{macOS-universal,Legacy-macOS-x64,Windows-x64}-vX.Y.Z.zip`, archived) and the always-newest `-latest.zip` pointers (atomic via `.new` rename). GitHub Releases is the primary host for desktop downloads; the FTP mirror is the failover when github.com is unreachable.
 13. Commit (`.release-counter` + `package.json`), tag `v0.X.Y`.
 14. **Push** `main` + tag to origin (skip with `--no-push`).
 15. **Create GitHub Release** with sliced CHANGELOG section as notes + (if built) Electron zips as assets. Skip with `--no-gh-release`.

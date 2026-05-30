@@ -524,6 +524,44 @@ if [ "$DESKTOP_MODE" = "on" ] || [ "$IS_DESKTOP_ONLY" = "true" ]; then
 
   DESKTOP_ZIPS=("$MAC_ZIP" "$LEG_ZIP" "$WIN_ZIP")
   echo "    desktop builds verified ✓"
+
+  # --- Upload desktop zips to ripperdoc.de as a mirror ---
+  # GitHub Releases is the primary host (visible in-app, indexed by gh CLI);
+  # this is the failover for when github.com or its release-asset CDN is down.
+  # Layout under /public_html/boardripper/desktop/:
+  #   BoardRipper-{macOS-universal,Legacy-macOS-x64,Windows-x64}-vX.Y.Z.zip  (archived)
+  #   BoardRipper-{...}-latest.zip                                          (atomic pointer)
+  # Older versioned files are kept for the archive page — they're not auto-pruned.
+  if [ "$DRY_RUN" != "true" ]; then
+    echo ">>> Uploading desktop zips to ftp.ripperdoc.de"
+    STAGE_D="$REPO_ROOT/out/ftp-stage-desktop"
+    rm -rf "$STAGE_D" && mkdir -p "$STAGE_D/boardripper/desktop"
+    cp "$MAC_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-macOS-universal-$VERSION.zip"
+    cp "$LEG_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Legacy-macOS-x64-$VERSION.zip"
+    cp "$WIN_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Windows-x64-$VERSION.zip"
+    # Atomic "latest" pointers: upload .new first, then rename server-side.
+    cp "$MAC_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-macOS-universal-latest.zip.new"
+    cp "$LEG_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Legacy-macOS-x64-latest.zip.new"
+    cp "$WIN_ZIP" "$STAGE_D/boardripper/desktop/BoardRipper-Windows-x64-latest.zip.new"
+
+    lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp.ripperdoc.de" <<LFTP_EOF
+set ftp:ssl-allow no
+mirror --reverse --only-newer --verbose \
+  "$STAGE_D/boardripper/desktop" "/public_html/boardripper/desktop"
+
+cd /public_html/boardripper/desktop
+rm -f BoardRipper-macOS-universal-latest.zip
+mv BoardRipper-macOS-universal-latest.zip.new BoardRipper-macOS-universal-latest.zip
+rm -f BoardRipper-Legacy-macOS-x64-latest.zip
+mv BoardRipper-Legacy-macOS-x64-latest.zip.new BoardRipper-Legacy-macOS-x64-latest.zip
+rm -f BoardRipper-Windows-x64-latest.zip
+mv BoardRipper-Windows-x64-latest.zip.new BoardRipper-Windows-x64-latest.zip
+bye
+LFTP_EOF
+    echo "    desktop zips uploaded ✓"
+  else
+    echo ">>> [DRY RUN] Would upload desktop zips to ftp.ripperdoc.de"
+  fi
 fi
 
 # ════════════════════════════════════════════════════════════════════════

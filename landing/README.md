@@ -29,6 +29,8 @@ The page carries a templated version block — the lines between `<!-- BR_VERSIO
 
 Changelog and Download links point at `https://www.ripperdoc.de/boardripper/` — release artifacts and the changelog page are uploaded to FTP by the same release script. There is no GitHub-Releases dependency.
 
+**Desktop downloads** (`BoardRipper-{macOS-universal,Legacy-macOS-x64,Windows-x64}-latest.zip`) live under `/boardripper/desktop/` on the website mirror; GitHub Releases is the primary host and this mirror is the failover for when github.com is unreachable. The release script uploads both the versioned `-vX.Y.Z.zip` (archived per release) and the `-latest.zip` pointer (atomic via `.new` rename) whenever it runs with `--desktop` or `--desktop-only`. Same bytes as the GitHub Release attachments.
+
 ## Common edits
 
 - **New format:** add a row to the formats `<table>`, update the "eleven boardview formats" count in the lead.

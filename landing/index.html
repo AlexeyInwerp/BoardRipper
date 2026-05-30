@@ -188,21 +188,37 @@ C12*</pre>
 
 <section id="download">
 <h2>Download</h2>
-<p>Two sources, same signed bytes. Pick whichever your network prefers:</p>
+<p>Pick the install style that fits how you work:</p>
+
+<h3>Desktop app</h3>
+<p>An Electron wrapper around the same web UI. One-click install, no Docker. Each platform ships as a portable <code>.zip</code> &mdash; unzip and run.</p>
 <ul>
-  <li><b>Container registry</b> (recommended) &mdash; <code>docker pull ghcr.io/alexeyinwerp/boardripper:latest</code>. Public, no login. Fast incremental updates via layer dedup.</li>
+  <li><b>macOS (Apple Silicon + Intel, universal)</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/desktop/BoardRipper-macOS-universal-latest.zip">BoardRipper-macOS-universal-latest.zip</a></li>
+  <li><b>macOS (Intel-only, legacy 10.13&ndash;11)</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/desktop/BoardRipper-Legacy-macOS-x64-latest.zip">BoardRipper-Legacy-macOS-x64-latest.zip</a></li>
+  <li><b>Windows (x64)</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/desktop/BoardRipper-Windows-x64-latest.zip">BoardRipper-Windows-x64-latest.zip</a></li>
+</ul>
+<p class="small">Primary host is <a href="https://github.com/AlexeyInwerp/BoardRipper/releases/latest">GitHub Releases</a> &mdash; the links above are the failover mirror on ripperdoc.de in case GitHub Releases is unreachable. Same bytes either way. macOS apps are unsigned; first launch needs right-click &rarr; Open. Older versions live in the <a href="https://www.ripperdoc.de/boardripper/archive.html">version archive</a>.</p>
+
+<h3>Docker / self-hosted</h3>
+<p>For NAS, lab benches, and multi-user setups. Pulls a ~15&nbsp;MB scratch-based image; self-updates from the running container.</p>
+<ul>
+  <li><b>Container registry</b> (recommended) &mdash; <code>docker pull ghcr.io/alexeyinwerp/boardripper:latest</code>. Public, no login.</li>
   <li><b>Tarball mirror</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/releases/latest.tar.gz">latest.tar.gz</a> (OCI image archive, ~13&nbsp;MB), shipped alongside a signed <a href="https://www.ripperdoc.de/boardripper/manifest.json">manifest.json</a>. Use this if your network blocks container registries; load with <code>docker load &lt; latest.tar.gz</code>.</li>
-  <li><b>Older versions</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/archive.html">version archive</a> (every release, with tarball / drop-bundle / source links).</li>
-  <li><b>Release notes and version history</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/changelog.html">changelog</a>.</li>
 </ul>
 <p class="small">Both downloads ship the same image. The running container verifies an Ed25519 signature against a key compiled into its own binary before installing any update &mdash; a hijacked mirror cannot deliver a forged update.</p>
 
 <h3>Drop-to-update fallback</h3>
-<p>For installs that can&rsquo;t reach the registry or the mirror (firewalled networks, air-gapped shops, or recovering from a broken self-update), download the bundle and drop it onto the BoardRipper window:</p>
+<p>For Docker installs that can&rsquo;t reach the registry or the mirror (firewalled networks, air-gapped shops, or recovering from a broken self-update), download the bundle and drop it onto the BoardRipper window:</p>
 <ul>
   <li><a href="https://www.ripperdoc.de/boardripper/releases/latest-update.tar">latest-update.tar</a> &mdash; signed bundle (manifest + signature + image), ~13&nbsp;MB</li>
 </ul>
 <p class="small">Drag the file anywhere on the BoardRipper UI. A confirmation prompt appears; click OK and the running container verifies the signature, applies the update, and restarts. The browser reloads after ~30&nbsp;s. Same trust envelope as the in-app updater &mdash; the manifest signature is what grants trust, the file itself is treated as untrusted bytes until verification passes.</p>
+
+<h3>Older versions and changelog</h3>
+<ul>
+  <li><b>Version archive</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/archive.html">every release</a> (tarball / drop-bundle / source links).</li>
+  <li><b>Release notes</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/changelog.html">changelog</a>.</li>
+</ul>
 </section>
 
 <section id="feedback">
