@@ -26,7 +26,7 @@ import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore, MARK_COLOR_HEX } from '../store/worklist-store';
-import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
+import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { getFormat } from '../parsers/registry';
@@ -690,7 +690,9 @@ export class BoardRenderer {
     // GPU slot (browsers limit WebGL contexts to ~8-16). Then null out references
     // so GC can collect the Application and its scene graph.
     try {
-      const gl = (this.app?.renderer as any)?.gl as WebGL2RenderingContext | undefined;
+      // PixiJS v8 omits `.gl` from the public renderer type; cast through
+      // `unknown` to read the WebGL backend's context handle.
+      const gl = (this.app?.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
       gl?.getExtension('WEBGL_lose_context')?.loseContext();
     } catch { /* ignore — renderer may already be gone */ }
     log.render.log(`teardownForReinit tab=${this.tabId} — old app released (context lost, no destroy)`);
@@ -5052,20 +5054,26 @@ export class BoardRenderer {
     try {
       const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
       canvas?.parentElement?.removeChild(canvas);
-      // Force browser to release the WebGL context immediately
-      const gl = (this.app?.renderer as any)?.gl as WebGL2RenderingContext | undefined;
+      // Force browser to release the WebGL context immediately.
+      // The PixiJS v8 renderer exposes the WebGL context as `.gl` on the
+      // WebGL backend; cast through `unknown` to avoid the public-type
+      // omission rather than `any`.
+      const gl = (this.app?.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
       gl?.getExtension('WEBGL_lose_context')?.loseContext();
     } catch { /* ignore */ }
 
     // Break strong reference cycles so GC can collect the Application + scene graph.
     // The onTick arrow function captures `this`, so we must sever the chain:
     //   BoardRenderer → app → ticker → onTick → BoardRenderer
+    // The `app` and `viewport` fields are typed non-nullable to keep call-sites
+    // clean across the file; null them out via an unknown cast since this is
+    // the only teardown path and no subsequent calls run after disposal.
     this.activeScene = null;
     this.sceneCache.clear();
     this.hitGridCache.clear();
     this.viewportStates.clear();
     this.board = null;
-    (this as any).app = null;
-    (this as any).viewport = null;
+    (this as unknown as { app: unknown }).app = null;
+    (this as unknown as { viewport: unknown }).viewport = null;
   }
 }

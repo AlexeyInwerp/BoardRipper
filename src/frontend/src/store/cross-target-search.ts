@@ -8,7 +8,7 @@
 import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
 import { fileInputRefs } from './file-inputs';
-import { openBoardSearch } from '../panels/BoardViewerPanel';
+import { openBoardSearch } from '../panels/board-viewer-bridge';
 
 /**
  * Count substring (case-insensitive) matches of `term` across the given

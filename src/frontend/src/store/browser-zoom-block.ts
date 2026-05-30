@@ -27,7 +27,6 @@ export function installBrowserZoomBlock(): void {
   const onGesture = (e: Event) => {
     if (import.meta.env.DEV) {
       const target = e.target as Element | null;
-      // eslint-disable-next-line no-console
       console.debug('[browser-zoom-block] gesture suppressed at window', e.type, target?.tagName);
     }
     e.preventDefault();

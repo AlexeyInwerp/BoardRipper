@@ -32,8 +32,8 @@ test.describe('Mentor PADS Layout binary .pcb (unsupported)', () => {
     let msg = '';
     try {
       await parseBoardFile(makePadsBinary(), 'N7100.pcb');
-    } catch (e: any) {
-      msg = e.message;
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e);
     }
     expect(msg).toMatch(/PADS/i);
     expect(msg).not.toContain('invalid header offsets');

@@ -53,10 +53,12 @@ async function parseFontsFromPage(
     if (fontCache.has(ck)) continue;
 
     try {
-      // After getOperatorList(), fonts should be resolved — use synchronous get
-      let fontObj: any;
+      // After getOperatorList(), fonts should be resolved — use synchronous get.
+      // pdf.js `commonObjs.get()` returns the resolved Font instance; shape is
+      // not exported, so we narrow at this boundary to the fields we read.
+      let fontObj: { isType3Font?: boolean; data?: Uint8Array } | undefined;
       try {
-        fontObj = page.commonObjs.get(name);
+        fontObj = page.commonObjs.get(name) as typeof fontObj;
       } catch {
         log.pdf.warn(`Font ${name} not available in commonObjs, skipping`);
         continue;
@@ -66,7 +68,10 @@ async function parseFontsFromPage(
 
       if (fontObj.isType3Font) {
         fontCache.set(ck, {
-          font: null as any,
+          // Type3 entries carry no opentype font; null is a sentinel checked by
+          // extractGlyphsForItem (cache.isType3 || !cache.font). Cast required
+          // because the shared FontCacheEntry type declares font: Font.
+          font: null as unknown as FontCacheEntry['font'],
           fontName: name,
           isType3: true,
           glyphCount: 0,

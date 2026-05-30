@@ -6,7 +6,7 @@ import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { BindLink } from '../components/BindLink';
 import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked, setAutoSwitchLinked, onAutoSwitchChange } from '../store/dockview-api';
-import { openBoardSearch } from './BoardViewerPanel';
+import { openBoardSearch } from './board-viewer-bridge';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
 import { log } from '../store/log-store';
@@ -585,6 +585,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Switch pdfStore to this panel's document on activation (for mutations)
   useEffect(() => {
     if (!pdfFileName) return;
+    // Capture the input node at effect time so the cleanup compares against
+    // the node this effect registered, not whatever the ref happens to point
+    // at when React tears the panel down (the input may already be detached).
+    const searchInputNode = searchInputRef.current;
     // Also switch when this panel becomes active (focused)
     const disposable = props.api.onDidActiveChange((e) => {
       log.pdf.log(`onDidActiveChange pdf=${pdfFileName} isActive=${e.isActive} storeActive=${boardStore.activeTabId}`);
@@ -605,8 +609,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
     });
     return () => {
-      // Cleanup on unmount
-      if (fileInputRefs.pdfSearch === searchInputRef.current) {
+      // Cleanup on unmount — only clear the global slot if it still points
+      // at the input this effect captured at setup time.
+      if (fileInputRefs.pdfSearch === searchInputNode) {
         fileInputRefs.pdfSearch = null;
       }
       disposable.dispose();
@@ -1217,7 +1222,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     drawHighlightsRef.current();
     setRenderEpoch(e => e + 1);
-  }, []);
+  }, [rescaleWrapperChildren]);
 
 
   const renderPage = useCallback(async () => {
@@ -1449,7 +1454,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       log.pdf.error('renderPage failed:', err);
       setError(String(err));
     }
-  }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas]);
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas, rescaleWrapperChildren]);
 
   // --- Tiled viewport rendering (zoom > 1) ---
   const renderTiledPage = useCallback(async () => {
@@ -1798,7 +1803,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       log.pdf.error('renderTiledPage failed:', err);
       setError(String(err));
     }
-  }, [pdfFileName, isLoaded, currentPage, cleanMode, clearTileDom]);
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, rescaleWrapperChildren]);
 
   /** Route to tiled or full-page render based on the active mode + zoom level.
    *  Mode is read via shouldUseTilesRef so a runtime mode switch (Settings ▸
@@ -1890,7 +1895,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       hCtx.fillRect(x, y, w, h);
     }
 
-  }, [pdfFileName, isLoaded, currentPage, matches, activeMatchIndex, activeGroupIndex, isMultiTerm, multiTermYGap, multiTermXGap]);
+    // activeMatchIndex / activeGroupIndex are read imperatively from pdfStore
+    // (getDocActiveMatchIndices / getDocActiveGroupIndex), so they're not real
+    // deps of this callback. The "blink to active match" effect at L2176
+    // already drives drawHighlightsRef.current() on those changes; stepping
+    // groups also flips activeMatchIndex (_stepMatchInDoc), so that effect
+    // covers group navigation too.
+  }, [pdfFileName, isLoaded, currentPage, matches, isMultiTerm, multiTermYGap, multiTermXGap]);
 
   const renderPageRef = useRef(renderActive);
   renderPageRef.current = renderActive;
@@ -2173,7 +2184,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       blinkPhaseRef.current = 0;
     };
-  }, [isLoaded, activeMatchIndex, matches, currentPage]);
+  }, [isLoaded, activeMatchIndex, matches, currentPage, isMultiTerm, isAtSyntax, pdfFileName, syncTransform]);
 
   // Follow target: zoom + highlight location (triggered by board follow mode / click-to-lookup)
   useEffect(() => {
@@ -2218,7 +2229,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // Defer to ensure the page has rendered first
     const raf = requestAnimationFrame(applyFollowZoom);
     return () => cancelAnimationFrame(raf);
-  }, [isLoaded, currentPage]);
+  }, [isLoaded, currentPage, syncTransform]);
 
   // Apply initial transform + re-sync after page change
   useEffect(() => { syncTransform(); }, [syncTransform, currentPage]);
@@ -2386,12 +2397,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   // Clean up font cache + adjacent canvases on unmount
   useEffect(() => {
+    // Capture the Map reference at effect time. useRef(new Map()) never
+    // reassigns .current, so this identity stays valid through unmount.
+    const adjCanvasMap = adjCanvasMapRef.current;
     return () => {
       const doc = pdfStore.getDocProxy(pdfFileName);
       clearFontCache(doc?.fingerprints[0] ?? undefined);
       pageGlyphDataRef.current = null;
-      for (const entry of adjCanvasMapRef.current.values()) entry.canvas.remove();
-      adjCanvasMapRef.current.clear();
+      for (const entry of adjCanvasMap.values()) entry.canvas.remove();
+      adjCanvasMap.clear();
       if (adjDebounceRef.current) clearTimeout(adjDebounceRef.current);
       if (scrubberFlashTimerRef.current) clearTimeout(scrubberFlashTimerRef.current);
     };
@@ -2886,7 +2900,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!wasDrag && e.button === 0 && e.pointerType !== 'touch') {
       handleTextClickRef.current(e);
     }
-  }, [scheduleTierRender]);
+  }, [scheduleTierRender, syncTransform]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -3085,7 +3099,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // the useEffect([renderPage]) fires after re-render with the correct currentPage.
       if (samePage) renderPageRef.current();
     }, 250);
-  }, [pdfFileName]);
+  }, [pdfFileName, syncTransform]);
 
   const handleBookmarkDblClick = useCallback((id: string) => {
     if (bookmarkClickTimerRef.current) {

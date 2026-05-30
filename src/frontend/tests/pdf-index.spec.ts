@@ -196,11 +196,17 @@ test.describe('PDF text index', () => {
     // hook via window.__pdfStore (registered in pdf-store.ts). We poll until
     // textExtracting is false and pageCount > 0.
     await page.waitForFunction(() => {
-      const ps = (window as any).__pdfStore;
+      const ps = (window as unknown as {
+        __pdfStore?: {
+          loadedFileNames?: string[];
+          textExtracting?: boolean;
+          pageCount?: number;
+        };
+      }).__pdfStore;
       if (!ps) return false;
       if (!ps.loadedFileNames || ps.loadedFileNames.length === 0) return false;
       // textExtracting is the per-doc flag; if absent, treat as done.
-      return !ps.textExtracting && ps.pageCount > 0;
+      return !ps.textExtracting && (ps.pageCount ?? 0) > 0;
     }, { timeout: 60000 });
 
     // The pdf-search-input is the in-document find bar inside the PDF viewer
@@ -221,7 +227,14 @@ test.describe('PDF text index', () => {
     // We check that searchText was called and the store reflects a non-empty
     // query. Using the __pdfStore dev hook avoids DOM coupling to match counts.
     const searchState = await page.evaluate(() => {
-      const ps = (window as any).__pdfStore;
+      const ps = (window as unknown as {
+        __pdfStore?: {
+          searchQuery?: string;
+          _searchQuery?: string;
+          matches?: unknown[];
+          pageCount?: number;
+        };
+      }).__pdfStore;
       if (!ps) return null;
       return {
         query: ps.searchQuery ?? ps._searchQuery ?? null,

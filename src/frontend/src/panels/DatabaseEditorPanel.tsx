@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { log } from '../store/log-store';
 
@@ -112,7 +112,8 @@ export function DatabaseEditorPanel(_props: IDockviewPanelProps) {
   }, []);
 
   // Resolve selected entity by walking the tree (cheap at v2 scale, ~150 nodes).
-  const selectedEntity = useMemo(() => {
+  // React Compiler memoizes this automatically.
+  const selectedEntity = (() => {
     if (!selected || !data?.brands) return null;
     for (const b of data.brands) {
       if (selected.kind === 'brand' && b.uuid === selected.uuid) return { kind: 'brand' as const, brand: b };
@@ -129,7 +130,7 @@ export function DatabaseEditorPanel(_props: IDockviewPanelProps) {
       }
     }
     return null;
-  }, [selected, data]);
+  })();
 
   return (
     <div style={styles.root}>

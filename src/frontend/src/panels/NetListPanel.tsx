@@ -1,14 +1,15 @@
-import { useMemo } from 'react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 
 export function NetListPanel() {
   const { board, selection, searchQuery } = useBoardStore();
 
-  const nets = useMemo(
-    () => board ? Array.from(board.nets.entries()).sort((a, b) => a[0].localeCompare(b[0])) : [],
-    [board?.nets],
-  );
+  // React Compiler will memoize this derived value; the manual useMemo
+  // depending on `board?.nets` had stale-key issues since `board` reference
+  // changes covarying with `board.nets`.
+  const nets = board
+    ? Array.from(board.nets.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+    : [];
 
   if (!board) {
     return <div className="panel-empty">No board loaded</div>;

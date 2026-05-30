@@ -4,14 +4,14 @@ import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
 import { useUpdateStore } from '../hooks/useUpdateStore';
-import { toggleSidebar, showSidebarTab } from './Sidebar';
+import { toggleSidebar, showSidebarTab } from './Sidebar.utils';
 import { exportToBVR3, getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
-import { openBoardSidebarTab } from '../panels/BoardViewerPanel';
+import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { databankStore } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
@@ -157,10 +157,14 @@ function GlobalSearch() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Register search input ref for Cmd+F shortcut
+  // Register search input ref for Cmd+F shortcut. Capture inputRef.current in
+  // a local at effect-run time so the cleanup compares against the same
+  // element we registered — React 19 may clear the ref before the cleanup
+  // fires, which would otherwise leave the stale registration behind.
   useEffect(() => {
-    fileInputRefs.search = inputRef.current;
-    return () => { if (fileInputRefs.search === inputRef.current) fileInputRefs.search = null; };
+    const el = inputRef.current;
+    fileInputRefs.search = el;
+    return () => { if (fileInputRefs.search === el) fileInputRefs.search = null; };
   }, []);
 
   // Close on outside click

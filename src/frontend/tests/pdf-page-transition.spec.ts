@@ -3,7 +3,7 @@
  * Uses in-browser MutationObserver + canvas pixel sampling to catch
  * sub-frame flashes that screenshot-based approaches miss.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -17,8 +17,8 @@ const OUT_DIR = path.resolve(__dirname, '../test-results/page-transition');
 // same idiom as ci-smoke.spec.ts.
 const havePdf = fs.existsSync(PDF_FILE);
 
-async function dispatchWheel(page: any, x: number, y: number, deltaY: number, ctrlKey = false) {
-  await page.evaluate(({ x, y, deltaY, ctrlKey }: any) => {
+async function dispatchWheel(page: Page, x: number, y: number, deltaY: number, ctrlKey = false) {
+  await page.evaluate(({ x, y, deltaY, ctrlKey }: { x: number; y: number; deltaY: number; ctrlKey: boolean }) => {
     const el = document.elementFromPoint(x, y);
     if (el) el.dispatchEvent(new WheelEvent('wheel', {
       clientX: x, clientY: y, deltaY, ctrlKey, bubbles: true, cancelable: true,
@@ -70,7 +70,20 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
   // 2. Track page input value changes
   // 3. Watch for tile DOM mutations
   await page.evaluate(() => {
-    const w = window as any;
+    type LogEntry = {
+      frame: number;
+      time: number;
+      page: string;
+      tileCount?: number;
+      mainVisible?: boolean;
+      tileSample?: string;
+      mainSample?: string;
+      event?: string;
+    };
+    const w = window as unknown as {
+      __transitionLog: LogEntry[];
+      __monitoring: boolean;
+    };
     w.__transitionLog = [];
     w.__monitoring = true;
 
@@ -87,7 +100,10 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
       const page = pageInput.value;
       const tiles = wrapper.querySelectorAll('.pdf-tile');
       const visibleTiles = Array.from(tiles).filter(
-        (t: any) => t.style.display !== 'none' && t.width > 0
+        (t) => {
+          const c = t as HTMLCanvasElement;
+          return c.style.display !== 'none' && c.width > 0;
+        },
       );
 
       // Sample center pixel of first visible tile
@@ -134,8 +150,8 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
     const observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
         if (m.addedNodes.length > 0 || m.removedNodes.length > 0) {
-          const added = Array.from(m.addedNodes).filter((n: any) => n.classList?.contains('pdf-tile')).length;
-          const removed = Array.from(m.removedNodes).filter((n: any) => n.classList?.contains('pdf-tile')).length;
+          const added = Array.from(m.addedNodes).filter((n) => (n as Element).classList?.contains('pdf-tile')).length;
+          const removed = Array.from(m.removedNodes).filter((n) => (n as Element).classList?.contains('pdf-tile')).length;
           if (added > 0 || removed > 0) {
             w.__transitionLog.push({
               frame: frameId,
@@ -181,9 +197,23 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
   await page.waitForTimeout(1000);
 
   // Stop monitoring and collect results
-  const log: any[] = await page.evaluate(() => {
-    (window as any).__monitoring = false;
-    return (window as any).__transitionLog;
+  type LogEntry = {
+    frame: number;
+    time: number;
+    page?: string;
+    tileCount?: number;
+    mainVisible?: boolean;
+    tileSample?: string;
+    mainSample?: string;
+    event?: string;
+  };
+  const log: LogEntry[] = await page.evaluate(() => {
+    const w = window as unknown as {
+      __monitoring: boolean;
+      __transitionLog: unknown[];
+    };
+    w.__monitoring = false;
+    return w.__transitionLog as LogEntry[];
   });
 
   // Save full log
@@ -192,7 +222,7 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
 
   // Analyze: find page transitions
   let prevPage = '';
-  const transitions: any[] = [];
+  const transitions: { from: string; to: string; frame: number; time: number }[] = [];
   for (const entry of log) {
     if (entry.page && entry.page !== prevPage) {
       if (prevPage) {
@@ -208,7 +238,7 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
   }
 
   // Look for "revert" pattern: page goes N→N+1→N→N+1 (flash of old page)
-  const pageSequence = log.filter((e: any) => e.page).map((e: any) => e.page);
+  const pageSequence = log.filter((e) => e.page).map((e) => e.page!);
   const uniqueTransitions: string[] = [];
   let lastPage = '';
   for (const p of pageSequence) {
@@ -229,7 +259,7 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
   // Check for pixel reversion: post-transition frames that match pre-transition pixels
   if (refSample && transitions.length > 0) {
     const firstTransFrame = transitions[0].frame;
-    const postTransEntries = log.filter((e: any) =>
+    const postTransEntries = log.filter((e) =>
       e.frame > firstTransFrame && e.frame < firstTransFrame + 30 && e.tileSample
     );
     console.log(`\nPost-transition pixel samples (${postTransEntries.length} frames):`);
@@ -244,7 +274,7 @@ test('detect wrong-page flash via in-browser pixel monitoring', async ({ page })
   fs.writeFileSync(path.join(OUT_DIR, 'final-state.png'), finalShot);
 
   // Look for tile mutation events around transitions
-  const tileEvents = log.filter((e: any) => e.event);
+  const tileEvents = log.filter((e) => e.event);
   console.log(`\nTile DOM events: ${tileEvents.length}`);
   for (const e of tileEvents.slice(0, 20)) {
     console.log(`  frame=${e.frame} page=${e.page} ${e.event}`);

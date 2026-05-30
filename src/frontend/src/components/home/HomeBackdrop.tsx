@@ -13,7 +13,7 @@ import {
   onAutoSwitchChange,
   getDockviewApi,
 } from '../../store/dockview-api';
-import { showSidebarTab } from '../Sidebar';
+import { showSidebarTab } from '../Sidebar.utils';
 import { welcomeStore } from '../../store/welcome-store';
 import { shortcuts, formatShortcut } from '../../store/keyboard-shortcuts';
 import type { Shortcut } from '../../store/keyboard-shortcuts';

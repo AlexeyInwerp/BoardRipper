@@ -130,14 +130,20 @@ export function LibraryPanel() {
   void donorIds; // consumed by FileDetailPane and ContextMenu via databankStore.isDonor
 
   // Tree groupings are O(N) at 100k entries — only compute the one the user
-  // is actually looking at. Each is internally version-cached in the store,
-  // so flipping back to a previously-rendered tab is free.
+  // is actually looking at. Each is internally version-cached in the store
+  // (keyed on _filesVersion), so flipping back to a previously-rendered tab
+  // is free. Reading `files` (even though unused in the callback body) is the
+  // load-bearing signal that forces re-grab when the store data mutates —
+  // useDatabank re-renders this component on file changes, but useMemo only
+  // re-runs when a dep reference changes.
   const metadataTree = useMemo(
     () => viewMode === 'metadata' ? databankStore.metadataTree : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [viewMode, files],
   );
   const modelTree = useMemo(
     () => viewMode === 'model' ? databankStore.modelTree : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [viewMode, files],
   );
   const [localSearch, setLocalSearch] = useState('');

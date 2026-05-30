@@ -347,11 +347,16 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
   // Track the prefix text locally so the user can type commas/spaces freely.
   const [editPrefixes, setEditPrefixes] = useState(t.prefixes.join(', '));
 
-  // Keep local text in sync if the parent list changes (e.g. reset).
-  const prevJoinedRef = useRef(t.prefixes.join(', '));
+  // Keep local text in sync if the parent list changes (e.g. reset). This is
+  // the "Storing information from previous renders" pattern from the React
+  // docs (https://react.dev/reference/react/useState#storing-information-from-previous-renders):
+  // calling setState during render with a different value is allowed and
+  // causes React to discard this render before commit — strictly better than
+  // either an effect (cascading render) or a ref read (forbidden by R19).
   const joined = t.prefixes.join(', ');
-  if (prevJoinedRef.current !== joined) {
-    prevJoinedRef.current = joined;
+  const [prevJoined, setPrevJoined] = useState(joined);
+  if (prevJoined !== joined) {
+    setPrevJoined(joined);
     setEditPrefixes(joined);
   }
 
@@ -1150,11 +1155,13 @@ const BOARD_MODIFIER_LABELS: Record<BoardModifier, React.ReactNode> = {
 };
 
 function BoardScrollBindingsEditor({ twoFingerPan, onUpdate }: { twoFingerPan: boolean; onUpdate: DraftUpdater }) {
-  // Derive bindings from twoFingerPan: bare=pan when twoFingerPan, else bare=zoom
-  const bindings: Record<BoardModifier, BoardScrollAction> = {
+  // Derive bindings from twoFingerPan: bare=pan when twoFingerPan, else bare=zoom.
+  // Memoized on the primitive `twoFingerPan` so handleDrop's useCallback below
+  // (which closes over `bindings`) keeps a stable identity across renders.
+  const bindings = useMemo<Record<BoardModifier, BoardScrollAction>>(() => ({
     bare: twoFingerPan ? 'pan' : 'zoom',
     shift: twoFingerPan ? 'zoom' : 'pan',
-  };
+  }), [twoFingerPan]);
 
   const [dragging, setDragging] = useState<BoardScrollAction | null>(null);
   const [dragOver, setDragOver] = useState<BoardModifier | null>(null);

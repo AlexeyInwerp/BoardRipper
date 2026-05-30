@@ -662,7 +662,9 @@ class PdfStore extends Emitter {
             .map(item => ({
               ...item,
               str: item.str.replace(/(?<=\w) (?=\w)/g, ''),
-              fontName: (item as any).fontName ?? '',
+              // Older cached entries may predate the fontName field; widen
+              // through unknown to read it tolerantly before re-asserting type.
+              fontName: (item as unknown as { fontName?: string }).fontName ?? '',
             }))
         );
         this.notify();
@@ -717,7 +719,10 @@ class PdfStore extends Emitter {
             transform: ti.transform,
             width: ti.width,
             height: ti.height,
-            fontName: (ti as any).fontName ?? '',
+            // pdf.js TextItem from getTextContent({includeMarkedContent:false})
+            // does not declare fontName in its public type, but the runtime
+            // value is present (worker fills it). Narrow at this boundary.
+            fontName: (ti as unknown as { fontName?: string }).fontName ?? '',
           });
         }
         pdfDoc.textPages.push(items);

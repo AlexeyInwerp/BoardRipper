@@ -8,12 +8,54 @@ import { test, expect } from '@playwright/test';
 // e.g. net 12V_F_R1 to show PC104/PC258/C415 as members and to NOT link
 // PC101 with PC265 (the actually-on-net pair).
 
+// Minimal shape of the test-only global we touch; only includes the surface
+// this spec actually uses. Mirrors the precedent in nav-target-size.spec.ts.
+type TestPin = {
+  name: string;
+  number: string;
+  position: { x: number; y: number };
+  radius: number;
+  side: string;
+  net: string;
+};
+type TestPart = {
+  name: string;
+  side: string;
+  type: string;
+  origin: { x: number; y: number };
+  pins: TestPin[];
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  meta: { value: string; package: string };
+};
+type TestNet = { name: string; pinIndices: { partIndex: number; pinIndex: number }[] };
+type TestBoard = {
+  format: string;
+  parts: TestPart[];
+  nets: Map<string, TestNet>;
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  outline: { x: number; y: number }[];
+  bomClusters: {
+    memberIndices: number[];
+    memberRefdes: string[];
+    defaultPrimaryIndex: number;
+    defaultPrimaryRefdes: string;
+    reason: string;
+  }[];
+};
+type TestBoardStore = {
+  openBoardFromData: (name: string, board: TestBoard) => void;
+  activeTab: { board: TestBoard };
+};
+
 test('filtered board rebuilds nets so partIndex refs resolve to correct parts', async ({ page }) => {
   await page.goto(process.env.BASE_URL ?? 'http://localhost:8082/');
-  await page.waitForFunction(() => !!(window as any).__boardStore, { timeout: 15000 });
+  await page.waitForFunction(
+    () => !!(window as unknown as { __boardStore?: unknown }).__boardStore,
+    { timeout: 15000 },
+  );
 
   const result = await page.evaluate(() => {
-    const store: any = (window as any).__boardStore;
+    const store = (window as unknown as { __boardStore?: TestBoardStore }).__boardStore!;
 
     // Synthetic 4-part board:
     //   - A (0): cap on net "VCC" + GND
@@ -38,12 +80,12 @@ test('filtered board rebuilds nets so partIndex refs resolve to correct parts', 
       mkPart('CC1', 200, 100, 'VCC'),  // distinct refdes prefix — separate cluster
       mkPart('CD1', 300, 100, '5V'),
     ];
-    const nets = new Map();
+    const nets = new Map<string, TestNet>();
     for (let pi = 0; pi < parts.length; pi++) {
       for (let ni = 0; ni < parts[pi].pins.length; ni++) {
         const pin = parts[pi].pins[ni];
         if (!nets.has(pin.net)) nets.set(pin.net, { name: pin.net, pinIndices: [] });
-        nets.get(pin.net).pinIndices.push({ partIndex: pi, pinIndex: ni });
+        nets.get(pin.net)!.pinIndices.push({ partIndex: pi, pinIndex: ni });
       }
     }
     const board = {
@@ -66,11 +108,21 @@ test('filtered board rebuilds nets so partIndex refs resolve to correct parts', 
     // showBomAlternates defaults to false → CA2 is dropped → board.parts has 3 entries.
     const tab = store.activeTab;
     const rendered = tab.board;
-    const partsByName = new Map(rendered.parts.map((p: any, i: number) => [p.name, i]));
+    // Kept for future debugging; underscored so the unused-vars rule allows it.
+    const _partsByName = new Map(rendered.parts.map((p, i) => [p.name, i]));
+    void _partsByName;
 
     // Walk each net's pinIndices and verify each ref resolves to a pin that
     // is actually on that net.
-    const netDiscrepancies: any[] = [];
+    type Discrepancy = {
+      netName: string;
+      partIndex: number;
+      pinIndex: number;
+      actualPart: string | undefined;
+      actualPin: string | undefined;
+      actualNet: string | undefined;
+    };
+    const netDiscrepancies: Discrepancy[] = [];
     for (const [name, net] of rendered.nets) {
       for (const ref of net.pinIndices) {
         const part = rendered.parts[ref.partIndex];
@@ -90,9 +142,9 @@ test('filtered board rebuilds nets so partIndex refs resolve to correct parts', 
 
     return {
       partCount: rendered.parts.length,
-      partNames: rendered.parts.map((p: any) => p.name),
-      vccPartNames: [...rendered.nets.get('VCC').pinIndices].map((r: any) => rendered.parts[r.partIndex].name).sort(),
-      v5PartNames: [...rendered.nets.get('5V').pinIndices].map((r: any) => rendered.parts[r.partIndex].name).sort(),
+      partNames: rendered.parts.map((p) => p.name),
+      vccPartNames: [...rendered.nets.get('VCC')!.pinIndices].map((r) => rendered.parts[r.partIndex].name).sort(),
+      v5PartNames: [...rendered.nets.get('5V')!.pinIndices].map((r) => rendered.parts[r.partIndex].name).sort(),
       netDiscrepancies,
     };
   });

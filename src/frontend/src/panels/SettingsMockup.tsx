@@ -207,9 +207,14 @@ export function SettingsMockup({
   const wrapperRef   = useRef<HTMLDivElement>(null);
   const pixiRef      = useRef<PixiState | null>(null);
   const settingsRef  = useRef(settings);
-  settingsRef.current = settings;
   const onClickRef   = useRef(onElementClick);
-  onClickRef.current = onElementClick;
+  // Refs mirror the latest props so event handlers (pointermove/dblclick) and
+  // the init effect read fresh values without re-binding listeners. Updating
+  // refs inside an effect (not during render) keeps React 19's refs-rule happy.
+  useEffect(() => {
+    settingsRef.current = settings;
+    onClickRef.current = onElementClick;
+  });
 
   const [zoomPct, setZoomPct] = useState(100);
 

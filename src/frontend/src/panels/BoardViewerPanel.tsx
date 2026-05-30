@@ -13,31 +13,11 @@ import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
-
-// Per-tab handlers for toolbar search → board sidebar integration
-const _boardSearchHandlers = new Map<number, (query: string) => void>();
-export function openBoardSearch(query: string, tabId?: number): void {
-  if (tabId != null) {
-    _boardSearchHandlers.get(tabId)?.(query);
-  } else {
-    // Fallback: use active tab's handler
-    const activeId = boardStore.activeTabId;
-    if (activeId != null) _boardSearchHandlers.get(activeId)?.(query);
-  }
-}
-
-// Per-tab handlers for "open a specific sidebar tab" (right-click → Worklist,
-// toolbar → Worklist, etc). Mirrors the search handler pattern above.
-type SidebarTabName = 'layers' | 'info' | 'search' | 'worklist' | 'revisions';
-const _sidebarTabHandlers = new Map<number, (tab: SidebarTabName) => void>();
-export function openBoardSidebarTab(tab: SidebarTabName, tabId?: number): void {
-  if (tabId != null) {
-    _sidebarTabHandlers.get(tabId)?.(tab);
-  } else {
-    const activeId = boardStore.activeTabId;
-    if (activeId != null) _sidebarTabHandlers.get(activeId)?.(tab);
-  }
-}
+import {
+  registerBoardSearchHandler,
+  registerBoardSidebarTabHandler,
+  type SidebarTabName,
+} from './board-viewer-bridge';
 
 export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: number }>) {
   const tabId = props.params.boardTabId;
@@ -63,22 +43,20 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   // Register per-tab handler for toolbar → board search
   useEffect(() => {
     if (tabId == null) return;
-    const handler = (query: string) => {
+    return registerBoardSearchHandler(tabId, (query: string) => {
       boardStore.switchTab(tabId);
       boardStore.setSearch(query);
       setSidebarOpen(true);
       setSidebarTab('search');
       // Activate this panel in dockview
       props.api.setActive();
-    };
-    _boardSearchHandlers.set(tabId, handler);
-    return () => { _boardSearchHandlers.delete(tabId); };
+    });
   }, [tabId, props.api]);
 
   // Register per-tab handler for "open this sidebar tab" requests (Worklist, etc).
   useEffect(() => {
     if (tabId == null) return;
-    const handler = (tab: SidebarTabName) => {
+    return registerBoardSidebarTabHandler(tabId, (tab: SidebarTabName) => {
       // Worklist is unconditional; revisions is gated on showRevisionsTab. We
       // accept the request optimistically — BoardSidebar's own fallback effect
       // will drop us back to 'info' if the requested tab isn't available.
@@ -89,9 +67,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       // since we widened it above.
       setSidebarTab(tab === 'revisions' ? null : tab);
       props.api.setActive();
-    };
-    _sidebarTabHandlers.set(tabId, handler);
-    return () => { _sidebarTabHandlers.delete(tabId); };
+    });
   }, [tabId, props.api]);
 
   // Auto-open sidebar to layers tab when this tab's board first loads with

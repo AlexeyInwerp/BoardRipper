@@ -5,9 +5,9 @@ import { pdfStore } from '../store/pdf-store';
 import { viewCommands } from '../store/view-commands';
 import { fileInputRefs } from '../store/file-inputs';
 import { ensurePdfPanel, getDockviewApi } from '../store/dockview-api';
-import { openBoardSearch } from '../panels/BoardViewerPanel';
-import { focusBoardSearchInput } from '../components/BoardSidebar';
-import { toggleLibrarySidebar } from '../components/Sidebar';
+import { openBoardSearch } from '../panels/board-viewer-bridge';
+import { focusBoardSearchInput } from '../components/BoardSidebar.utils';
+import { toggleLibrarySidebar } from '../components/Sidebar.utils';
 import { copyText } from '../clipboard';
 
 /**

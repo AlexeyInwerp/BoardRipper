@@ -10,6 +10,7 @@ import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
 import { bomReasonLabel, type BoardData, type Part } from '../parsers';
 import { pinDisplayId } from '../parsers/types';
+import { setActiveSearchInput, getActiveSearchInput } from './BoardSidebar.utils';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
 
@@ -153,8 +154,10 @@ function LayersTab({ tabId }: { tabId: number }) {
   const selectedBoardIndex = tab?.selectedBoardIndex ?? null;
   const [componentsExpanded, setComponentsExpanded] = useState(true);
 
-  // Compute which layers have traces for the currently highlighted net
-  const highlightedLayers = useMemo(() => {
+  // Compute which layers have traces for the currently highlighted net.
+  // React Compiler memoizes this automatically — manual useMemo was rejected
+  // here for narrowing the dep to `board?.traces` instead of `board`.
+  const highlightedLayers = (() => {
     const set = new Set<number>();
     if (selection.highlightedNet && board?.traces) {
       for (const t of board.traces) {
@@ -164,7 +167,7 @@ function LayersTab({ tabId }: { tabId: number }) {
       }
     }
     return set;
-  }, [selection.highlightedNet, board?.traces]);
+  })();
 
   return (
     <div className="panel-content layer-list" data-testid="layer-list">
@@ -442,12 +445,10 @@ function RevisionsTab({ tabId }: { tabId: number }) {
     ? revisions[revisions.length - 1].index
     : 0);
 
-  // Hooks must run unconditionally — keep useMemo above any early return.
   const activeRev = revisions?.find(r => r.index === active);
-  const activeRefdes = useMemo(
-    () => new Set(activeRev?.parts.map(p => p.name) ?? []),
-    [activeRev],
-  );
+  // React Compiler memoizes this automatically. Manual useMemo with
+  // [activeRev] was rejected because activeRev is itself derived inline.
+  const activeRefdes = new Set(activeRev?.parts.map(p => p.name) ?? []);
 
   const bomClusters = board?.bomClusters;
   const showBomAlternates = tab?.showBomAlternates ?? false;
@@ -649,18 +650,6 @@ function RevisionsTab({ tabId }: { tabId: number }) {
   );
 }
 
-let _activeSearchInput: HTMLInputElement | null = null;
-let _pendingFocus = false;
-export function focusBoardSearchInput(): void {
-  if (_activeSearchInput) {
-    _activeSearchInput.focus();
-    _activeSearchInput.select();
-    return;
-  }
-  // SearchTab not mounted yet — flag it so the mount effect focuses on arrival
-  _pendingFocus = true;
-}
-
 interface NetComponentsSublistProps {
   board: BoardData;
   pinIndices: Array<{ partIndex: number; pinIndex: number }>;
@@ -787,16 +776,16 @@ function SearchTab({ tabId }: { tabId: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
-  // Expose input to module-level ref while mounted, for external focus requests
+  // Expose input to module-level ref while mounted, for external focus requests.
+  // Copy ref.current to a local at effect-run time so the cleanup compares
+  // against the SAME element the effect registered — the ref's `.current` may
+  // be null by the time the cleanup runs (React 19 cleans refs before effect
+  // cleanups), which would skip the clear and leave a stale registration.
   useEffect(() => {
-    _activeSearchInput = inputRef.current;
-    if (_pendingFocus && inputRef.current) {
-      _pendingFocus = false;
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
+    const el = inputRef.current;
+    setActiveSearchInput(el);
     return () => {
-      if (_activeSearchInput === inputRef.current) _activeSearchInput = null;
+      if (getActiveSearchInput() === el) setActiveSearchInput(null);
     };
   }, []);
 
@@ -806,36 +795,35 @@ function SearchTab({ tabId }: { tabId: number }) {
     return trimmed !== '' && !/^\.+$/.test(trimmed);
   };
 
-  // Build sorted lists for autocomplete
-  const allParts = useMemo(
-    () => board ? board.parts.map(p => p.name).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [],
-    [board?.parts],
-  );
-  const allNets = useMemo(
-    () => board ? Array.from(board.nets.keys()).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [],
-    [board?.nets],
-  );
+  // Build sorted lists for autocomplete. React Compiler memoizes these
+  // automatically; manual useMemo with narrowed deps (`board?.parts`,
+  // `board?.nets`) was rejected because the inferred dep is `board`. The
+  // broader dep is equivalent here — `buildRenderedBoard` produces a new
+  // BoardData (with new parts/nets) whenever revisions/BOM swaps occur,
+  // and selection changes do NOT mint a new board reference.
+  const allParts = board ? board.parts.map(p => p.name).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [];
+  const allNets = board ? Array.from(board.nets.keys()).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [];
 
   // Compute filtered results (show all when no query)
   const ql = query.toLowerCase();
-  const matchedParts = useMemo(() => {
+  const matchedParts = (() => {
     if (!board) return [];
     const valid = board.parts.filter(p => isValidName(p.name));
     if (!ql) return valid.sort((a, b) => a.name.localeCompare(b.name));
     return valid.filter(p => p.name.toLowerCase().includes(ql));
-  }, [board?.parts, ql]);
+  })();
 
-  const matchedNets = useMemo(() => {
+  const matchedNets = (() => {
     if (!board) return [];
     const entries = Array.from(board.nets.entries())
       .filter(([name]) => isValidName(name))
       .sort((a, b) => a[0].localeCompare(b[0]));
     if (!ql) return entries;
     return entries.filter(([name]) => name.toLowerCase().includes(ql));
-  }, [board?.nets, ql]);
+  })();
 
   // Autocomplete suggestions (max 8)
-  const suggestions = useMemo(() => {
+  const suggestions = (() => {
     if (!ql) return [];
     const items: { label: string; type: 'component' | 'net' }[] = [];
     for (const name of allParts) {
@@ -847,7 +835,7 @@ function SearchTab({ tabId }: { tabId: number }) {
       if (items.length >= 8) return items;
     }
     return items;
-  }, [ql, allParts, allNets]);
+  })();
 
   // Sync toolbar search with local query
   const onQueryChange = useCallback((value: string) => {

@@ -27,8 +27,8 @@ test.describe('BRD_V1.0 unsupported container', () => {
     let msg = '';
     try {
       await parseBoardFile(makeBrdV1(), 'x.brd');
-    } catch (e: any) {
-      msg = e.message;
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e);
     }
     expect(msg).toContain('BRD_V1.0');
     expect(msg).toContain('proprietary');

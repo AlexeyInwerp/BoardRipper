@@ -1,5 +1,22 @@
 import { test, expect } from '@playwright/test';
 
+// Minimal shape of the test-only __pdfStore global; only includes the surface
+// these specs actually exercise. Same pattern as nav-target-size.spec.ts.
+type TestPdfStore = {
+  pageCount: number;
+  textExtracting: boolean;
+  matches: { pageIndex: number }[];
+  matchGroups: number[][];
+  multiTermYGap: number;
+  multiTermXGap: number;
+  searchText: (q: string) => void;
+  setMultiTermYGap: (n: number) => void;
+  setMultiTermXGap: (n: number) => void;
+  _active?: {
+    textPages: { str: string }[][];
+  };
+};
+
 /**
  * Library PDF search tests.
  *
@@ -212,7 +229,7 @@ test.describe('PDF Search (Library)', () => {
     // --- 3. Wait for PDF load + full text extraction ---
     await expect(page.locator('.pdf-search-input')).toBeVisible({ timeout: 15000 });
     await page.waitForFunction(() => {
-      const store = (window as any).__pdfStore;
+      const store = (window as unknown as { __pdfStore?: TestPdfStore }).__pdfStore;
       if (!store || store.pageCount === 0) return false;
       return !store.textExtracting;
     }, { timeout: 90000 });
@@ -224,7 +241,7 @@ test.describe('PDF Search (Library)', () => {
 
     // --- 4. Run spatial search with default + wider gaps ---
     const result = await page.evaluate(() => {
-      const store = (window as any).__pdfStore;
+      const store = (window as unknown as { __pdfStore?: TestPdfStore }).__pdfStore;
       if (!store) return null;
 
       // First try default gaps
@@ -334,7 +351,7 @@ test.describe('PDF Search (Library)', () => {
     // --- 3. Wait for PDF load + text extraction ---
     await expect(page.locator('.pdf-search-input')).toBeVisible({ timeout: 15000 });
     await page.waitForFunction(() => {
-      const store = (window as any).__pdfStore;
+      const store = (window as unknown as { __pdfStore?: TestPdfStore }).__pdfStore;
       if (!store || store.pageCount === 0) return false;
       return !store.textExtracting;
     }, { timeout: 90000 });
@@ -346,7 +363,7 @@ test.describe('PDF Search (Library)', () => {
 
     // --- 4. Spatial search with DEFAULT gaps (V=4x, H=3x) ---
     const result = await page.evaluate(() => {
-      const store = (window as any).__pdfStore;
+      const store = (window as unknown as { __pdfStore?: TestPdfStore }).__pdfStore;
       if (!store) return null;
 
       // Ensure default gaps
@@ -448,7 +465,7 @@ test.describe('PDF Search (Library)', () => {
     // --- 3. Wait for PDF load + text extraction ---
     await expect(page.locator('.pdf-search-input')).toBeVisible({ timeout: 15000 });
     await page.waitForFunction(() => {
-      const store = (window as any).__pdfStore;
+      const store = (window as unknown as { __pdfStore?: TestPdfStore }).__pdfStore;
       if (!store || store.pageCount === 0) return false;
       return !store.textExtracting;
     }, { timeout: 120000 });
@@ -460,7 +477,7 @@ test.describe('PDF Search (Library)', () => {
 
     // --- 4. Spatial search with DEFAULT gaps (V=4x, H=3x) ---
     const result = await page.evaluate(() => {
-      const store = (window as any).__pdfStore;
+      const store = (window as unknown as { __pdfStore?: TestPdfStore }).__pdfStore;
       if (!store) return null;
 
       store.setMultiTermYGap(4);
