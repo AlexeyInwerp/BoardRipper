@@ -1829,7 +1829,7 @@ export function SettingsPanel() {
         <Slider label="Component Size" value={draft.navTargetSize} min={0.05} max={0.90} step={0.05} field="navTargetSize" onUpdate={updateDraft}
           title="Target on-screen size of a component after navigating to it from search / NetList / Worklist. Expressed as a fraction of the smaller viewport dimension. Default 0.25 (~25%)." />
         <Toggle label="Auto-adjust Zoom" value={draft.navAutoZoom} field="navAutoZoom" onUpdate={updateDraft}
-          title="When ON, navigation only changes zoom if the component would be too small (<5% of screen) or too big (>70%). When OFF, every navigation snaps to Component Size. Default: ON." />
+          title="When ON, navigation only changes zoom if the component would be invisible (<1.5% of screen) or oversized (>70%) at the current zoom — otherwise the viewport just pans. When OFF, every navigation snaps to Component Size. Default: ON." />
 
         <div className="settings-subsection-label">Pan</div>
         <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing a drag gesture. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">

@@ -2363,16 +2363,20 @@ export class BoardRenderer {
     let targetMag = Math.min(naturalMag, relCap, 6);
 
     // Auto mode — preserve the current zoom when the bbox already lands in
-    // the comfortable band on screen. Caller signals this with
-    // `options.autoZoom = true`; net focus omits the flag so it always
-    // snaps (nets need the zoom to keep their pins on-screen).
+    // the comfortable band on screen. The lower bound is intentionally tight
+    // (~1.5%): in practice every passive on a 100 mm board falls below 2%
+    // at fit-to-board zoom, and "keep zoom" should be the dominant behavior
+    // so the user's clicks read as "navigate to" rather than "zoom-and-pan".
+    // Only truly sub-pixel parts (sub-1.5% on the smaller viewport dim) and
+    // already-overshot parts (>70% of the screen) trigger a re-zoom.
     if (options.autoZoom) {
       const currentMag = Math.abs(this.viewport.scale.x);
       if (currentMag > 0) {
         const screenFrac = (maxDim * currentMag) / screenMin;
-        const TOO_SMALL = 0.05;
+        const TOO_SMALL = 0.015;
         const TOO_BIG = 0.70;
         if (screenFrac >= TOO_SMALL && screenFrac <= TOO_BIG) targetMag = currentMag;
+        log.render.log(`autoZoom: screenFrac=${screenFrac.toFixed(3)} target=${targetMag === currentMag ? 'keep' : 'snap'} natural=${naturalMag.toFixed(3)} cur=${currentMag.toFixed(3)}`);
       }
     }
 
