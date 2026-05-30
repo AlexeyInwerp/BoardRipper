@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { IconPin, IconPinFilled } from '@tabler/icons-react';
+import { IconPin, IconPinFilled, IconChevronRight, IconChevronDown } from '@tabler/icons-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore, ghostPairSig, bomClusterSig } from '../store/board-store';
 import type { SelectionState } from '../store/board-store';
@@ -8,7 +8,8 @@ import { renderSettingsStore, isNcNet } from '../store/render-settings';
 import { extractBoardNumberFromFilename } from '../store/obd-store';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
-import { bomReasonLabel, type BoardData } from '../parsers';
+import { bomReasonLabel, type BoardData, type Part } from '../parsers';
+import { pinDisplayId } from '../parsers/types';
 
 type SidebarTab = 'layers' | 'info' | 'search' | 'revisions' | 'worklist';
 
@@ -700,6 +701,46 @@ function NetComponentsSublist({ board, pinIndices }: NetComponentsSublistProps) 
   );
 }
 
+/** Spoiler body shown beneath a selected component row. Lists every net
+ *  the part touches (deduped), sorted by the first pin that hits it. Clicking
+ *  a net focuses it on the board. */
+function PartNetsSublist({ part }: { part: Part }) {
+  const nets = useMemo(() => {
+    const seenAt = new Map<string, { firstPinIdx: number; firstPinId: string; count: number }>();
+    for (let i = 0; i < part.pins.length; i++) {
+      const pin = part.pins[i];
+      const net = pin.net;
+      if (!net) continue;
+      const entry = seenAt.get(net);
+      if (entry) {
+        entry.count++;
+      } else {
+        seenAt.set(net, { firstPinIdx: i, firstPinId: pinDisplayId(pin, i), count: 1 });
+      }
+    }
+    return Array.from(seenAt.entries())
+      .map(([net, v]) => ({ net, ...v }))
+      .sort((a, b) => a.firstPinIdx - b.firstPinIdx);
+  }, [part]);
+
+  if (nets.length === 0) return null;
+  return (
+    <div className="net-components-sublist">
+      {nets.map(({ net, firstPinId, count }) => (
+        <div
+          key={net}
+          className="search-result-item search-result-sub"
+          onClick={() => boardStore.focusNet(net)}
+        >
+          <span className="result-pin-id">{firstPinId}</span>
+          <span className="result-name">{net}</span>
+          <span className="result-pins">{count} pin{count === 1 ? '' : 's'}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SearchTab({ tabId }: { tabId: number }) {
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
@@ -841,20 +882,30 @@ function SearchTab({ tabId }: { tabId: number }) {
           {/* Components section */}
           <div className="search-section">
             <button className="search-section-header" onClick={() => setComponentsOpen(!componentsOpen)}>
-              <span className="search-section-arrow">{componentsOpen ? '▾' : '▸'}</span>
+              <span className="search-section-arrow">{componentsOpen ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}</span>
               <span className="search-section-title">Components</span>
               <span className="search-section-count">{matchedParts.length}</span>
             </button>
             {componentsOpen && (
               <div className="search-section-body">
                 {matchedParts.length === 0 && <div className="search-section-empty">No matching components</div>}
-                {matchedParts.map((part) => (
-                  <div key={part.name} className="search-result-item" onClick={() => boardStore.focusPart(part.name)}>
-                    <span className="result-name">{part.name}</span>
-                    <span className={`badge badge-${part.side}`}>{part.side}</span>
-                    <span className="result-pins">{part.pins.length} pins</span>
-                  </div>
-                ))}
+                {matchedParts.map((part) => {
+                  const isSelected = board ? board.parts[selection.partIndex ?? -1]?.name === part.name : false;
+                  return (
+                    <div key={part.name}>
+                      <div
+                        className={`part-item ${isSelected ? 'net-highlighted' : ''}`}
+                        onClick={() => boardStore.focusPart(part.name)}
+                      >
+                        <span className="net-item-arrow">{isSelected ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}</span>
+                        <span className="result-name">{part.name}</span>
+                        <span className={`badge badge-${part.side}`}>{part.side}</span>
+                        <span className="result-pins">{part.pins.length} pins</span>
+                      </div>
+                      {isSelected && <PartNetsSublist part={part} />}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -862,7 +913,7 @@ function SearchTab({ tabId }: { tabId: number }) {
           {/* Nets section */}
           <div className="search-section">
             <button className="search-section-header" onClick={() => setNetsOpen(!netsOpen)}>
-              <span className="search-section-arrow">{netsOpen ? '▾' : '▸'}</span>
+              <span className="search-section-arrow">{netsOpen ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}</span>
               <span className="search-section-title">Nets</span>
               <span className="search-section-count">{matchedNets.length}</span>
             </button>
@@ -878,9 +929,11 @@ function SearchTab({ tabId }: { tabId: number }) {
                     <div key={name}>
                       <div
                         className={`net-item ${isHighlighted ? 'net-highlighted' : ''}`}
-                        onClick={() => boardStore.highlightNet(isHighlighted ? null : name)}
+                        onClick={() => isHighlighted ? boardStore.highlightNet(null) : boardStore.focusNet(name)}
                       >
-                        <span className="net-item-arrow">{skipExpand ? '' : expanded ? '▾' : '▸'}</span>
+                        <span className="net-item-arrow">
+                          {skipExpand ? null : expanded ? <IconChevronDown size={18} /> : <IconChevronRight size={18} />}
+                        </span>
                         <span className="net-name">{name}</span>
                         <span className="net-count">{net.pinIndices.length}</span>
                       </div>

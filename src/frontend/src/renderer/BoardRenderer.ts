@@ -2322,15 +2322,13 @@ export class BoardRenderer {
       if (focus) {
         const focusPart = focus.partIndex != null ? this.board?.parts[focus.partIndex] : undefined;
         const focusRoot = focusPart ? this.rootForPart(focusPart) : undefined;
-        if (focus.partIndex != null) {
-          // Part focus — respects user's navTargetSize + navAutoZoom.
-          const s = renderSettingsStore.settings;
-          this.zoomToBounds(focus.bounds, focusRoot, s.navTargetSize, { autoZoom: s.navAutoZoom });
-        } else {
-          // Net focus — always zoom; nets span enough area that "keep zoom"
-          // typically leaves pins off-screen.
-          this.zoomToBounds(focus.bounds, focusRoot, 0.6);
-        }
+        // Same nav settings apply to both part and net focus. Nets get a
+        // larger default target (0.6) because their bbox spans every pin —
+        // 25% would leave a 16-pin connector occupying half the screen
+        // visually and feel under-zoomed.
+        const s = renderSettingsStore.settings;
+        const target = focus.partIndex != null ? s.navTargetSize : 0.6;
+        this.zoomToBounds(focus.bounds, focusRoot, target, { autoZoom: s.navAutoZoom });
         this.startSelectionBlink();
       }
     } catch (err) {

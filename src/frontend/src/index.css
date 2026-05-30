@@ -974,10 +974,11 @@ html, body, #root {
   max-height: calc(100% - 30px);
 }
 
-.net-item {
+.net-item,
+.part-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 5px 8px;
   cursor: pointer;
   border-radius: 3px;
@@ -985,9 +986,13 @@ html, body, #root {
   box-sizing: border-box;
 }
 
-.net-item:hover {
+.net-item:hover,
+.part-item:hover {
   background: rgba(74, 158, 255, 0.1);
 }
+
+/* Push the count chip to the right edge so the row still reads like a list. */
+.net-item .net-count { margin-left: auto; }
 
 .net-highlighted {
   background: rgba(255, 255, 68, 0.15) !important;
@@ -1138,9 +1143,12 @@ html, body, #root {
 }
 
 .search-section-arrow {
-  font-size: 0.8em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-secondary);
-  width: 12px;
+  width: 20px;
+  flex-shrink: 0;
 }
 
 .search-section-count {
@@ -1179,13 +1187,29 @@ html, body, #root {
   background: rgba(74, 158, 255, 0.1);
 }
 
-/* Net-row arrow indicator (search Nets section). Empty for GND/NC nets so
-   the row keeps the same horizontal rhythm as expandable rows. */
+/* Net/Part-row arrow indicator (search Nets + Components sections). Empty
+   for GND/NC nets so the row keeps the same horizontal rhythm as expandable
+   rows. Uses Tabler chevron icons at 18 px for visibility. */
 .net-item-arrow {
-  display: inline-block;
-  width: 12px;
-  font-size: 0.7em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
   color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+/* Pin id badge shown in the Component → nets sublist (search Components section).
+   Compact monospace chip so pin "A12" / "GND" lines up neatly. */
+.result-pin-id {
+  font-family: monospace;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 6px;
+  min-width: 26px;
+  text-align: center;
   flex-shrink: 0;
 }
 
