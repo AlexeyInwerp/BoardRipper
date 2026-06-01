@@ -1658,6 +1658,8 @@ export function SettingsPanel() {
           title="Display component reference designators (e.g. U1, R100, C42) centered on each part" />
         <Toggle label="Label Drop Shadow" value={draft.partLabelShadow} field="partLabelShadow" onUpdate={updateDraft}
           title="Add a dark shadow halo behind part labels for better readability against colored or busy backgrounds" />
+        <Toggle label="Hide Mechanical Fills" value={draft.autoMarkMechanical} field="autoMarkMechanical" onUpdate={updateDraft}
+          title="Auto-detect EMI shields, heatsink frames and oversized through-hole connector shadows (footprint contains ≥5 other component origins, or description contains SHIELD/HEATSINK/FRAME, or trailing-dot duplicates). Detected parts render without a body fill — border outline and pins still draw — so smaller components beneath stay visible. Right-click any part for a per-component override." />
         <LabelSizeSelector draft={draft} onUpdate={updateDraft} />
       </CollapsibleSection>
       )}

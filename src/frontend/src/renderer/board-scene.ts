@@ -487,11 +487,22 @@ export function updateBorderWidths(batches: BorderBatch[], configuredWidth: numb
 }
 
 
+/** Per-part user overrides surfaced via right-click. See
+ *  `boardStore.partOverrides` — keyed by refdes (`part.name`). */
+export type PartOverrideMap = ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }>;
+
+const EMPTY_PART_OVERRIDES: PartOverrideMap = new Map();
+
 /**
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
-export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex?: string): BoardSceneGraph {
+export function buildBoardScene(
+  board: BoardData,
+  s: RenderSettings,
+  metadataHex?: string,
+  partOverrides: PartOverrideMap = EMPTY_PART_OVERRIDES,
+): BoardSceneGraph {
   // `board` arrives pre-derived via `boardStore.board` (see
   // `store/derive-board-view.ts`): filtered, folded, sides tagged. Hidden
   // parts stay at their raw array index with `hidden: true` so
@@ -827,6 +838,13 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
     // Resolve per-type override — prefix match, longest key wins (e.g. 'FB' beats 'F' for FB1)
     const override = resolvePartTypeOverride(part.name, s);
     if (override?.hidden) continue;
+    // Per-part user override (right-click). `hidden` removes the part entirely;
+    // `sendToBack` is OR-ed with the auto-mechanical flag below — both cause
+    // the body fill to be skipped while the border and pins still draw.
+    const userOverride = partOverrides.get(part.name);
+    if (userOverride?.hidden) continue;
+    const skipFill = userOverride?.sendToBack === true
+      || (s.autoMarkMechanical && part.mechanical === true);
 
     // Push helper: adds a pin label to both the flat side-array and the
     // per-part index (used by the renderer to un-dim selected parts).
@@ -1293,7 +1311,7 @@ export function buildBoardScene(board: BoardData, s: RenderSettings, metadataHex
       }
       (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
 
-      if (s.showComponentColors && override?.color) {
+      if (s.showComponentColors && override?.color && !skipFill) {
         const fillColor = parseInt(override.color.replace('#', ''), 16);
         const map = isBottom ? bottomFillMap : topFillMap;
         let gfx = map.get(fillColor);

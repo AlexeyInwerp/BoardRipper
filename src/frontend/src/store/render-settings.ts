@@ -290,6 +290,12 @@ export interface RenderSettings {
    *  Field kept so saved localStorage settings don't error on load; no longer
    *  surfaced in the Settings UI. */
   selectionHalo: boolean;
+  /** Auto-detect mechanical/oversized parts (EMI shields, heatsink frames,
+   *  opposite-side connector shadows) and render them without a body fill so
+   *  the smaller components they overlap stay visible. Pin shapes and border
+   *  outlines still draw normally. When off, only user-marked
+   *  (`partOverrides.sendToBack`) parts are affected. */
+  autoMarkMechanical: boolean;
 }
 
 /** Check if a net name matches any NC (no-connect) pattern in settings.
@@ -437,6 +443,7 @@ export const DEFAULTS: RenderSettings = {
   overlayPosition: 'left',
   searchAutoDim: true,
   selectionHalo: true,
+  autoMarkMechanical: true,
 };
 
 /** Discrete font-size steps — snapping to these enables BitmapFont atlas sharing */

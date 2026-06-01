@@ -445,6 +445,10 @@ export class BoardRenderer {
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
    *  to skip full scene rebuilds when only interaction-only fields changed. */
   private lastSettingsSnapshot: import('../store/render-settings').RenderSettings | null = null;
+  /** Reference snapshot of `boardStore.partOverrides`. The store replaces the
+   *  Map on every change, so an identity-equality compare in `onBoardUpdate`
+   *  detects right-click hide/send-to-back actions without a deep diff. */
+  private lastPartOverrides: ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }> | null = null;
 
   // Spatial hash for O(1) hit-testing — maps grid cell keys to part indices.
   // Cached per (raw board, foldMode, selectedBoardIndex) via `sceneCacheKey`
@@ -1853,7 +1857,7 @@ export class BoardRenderer {
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex());
+      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides);
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
@@ -2163,6 +2167,21 @@ export class BoardRenderer {
     }
     try {
       const board = boardStore.board;
+      // Per-part overrides (right-click hide / send-to-back) — when the Map
+      // reference changes, force a scene rebuild even though `board` itself is
+      // unchanged. The store replaces the Map on every mutation, so identity
+      // equality is correct and cheap.
+      const curOverrides = boardStore.partOverrides;
+      if (board && board === this.board && this.lastPartOverrides !== null
+          && this.lastPartOverrides !== curOverrides) {
+        this.lastPartOverrides = curOverrides;
+        this.saveViewportState();
+        this.invalidateAllScenes();
+        this.activateScene(board);
+        this.renderSelection();
+        return;
+      }
+      this.lastPartOverrides = curOverrides;
       if (board !== this.board) {
         this.lastFollowQuery = '';
         log.render.log('onBoardUpdate: board changed', board ? 'activating' : 'deactivating');

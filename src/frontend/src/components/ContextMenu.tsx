@@ -330,6 +330,22 @@ export function ContextMenu() {
     boardStore.addToast(`Added "${term}" to watermark filter — reparsing`, 'info');
   };
 
+  /** Toggle "hide this part" — the override stays per-tab and survives derive
+   *  rebuilds because it's keyed by refdes. Hides the menu either way. */
+  const onTogglePartHidden = (refdes: string) => {
+    contextMenuStore.hide();
+    if (!refdes) return;
+    boardStore.setPartOverride(refdes, 'hide');
+  };
+
+  /** Toggle "send to back" — skips the body fill so the part stops occluding
+   *  smaller components beneath it. Border + pins still draw. */
+  const onTogglePartSendToBack = (refdes: string) => {
+    contextMenuStore.hide();
+    if (!refdes) return;
+    boardStore.setPartOverride(refdes, 'sendToBack');
+  };
+
   /** Toggle a refdes in the active worklist. Mirrors shift-click on canvas:
    *  present → remove, absent → add (auto-creates a worklist on first use
    *  via pushRefdesToActive). Hides the menu in either case. */
@@ -557,6 +573,34 @@ export function ContextMenu() {
     const chipPinQuery = state.pinId ? `${state.pinId}@${componentName}` : null;
     const netName = state.netName;
 
+    // Part visibility actions — always at the top of the board menu. Computed
+    // once here so both the nothing-to-search early return and the regular
+    // search-laden flow include them.
+    const partVisibilityItems = componentName.trim() ? (() => {
+      const override = boardStore.partOverrides.get(componentName);
+      const isHidden = override?.hidden === true;
+      const isBack   = override?.sendToBack === true;
+      return (
+        <React.Fragment key="part-visibility">
+          <div
+            className={`context-menu-item${isBack ? ' context-menu-item-active' : ''}`}
+            onClick={() => onTogglePartSendToBack(componentName)}
+            title="Skip drawing the body fill for this part so smaller components beneath stay visible. Border and pins still render."
+          >
+            {isBack ? `✓ Send '${componentName}' to back` : `Send '${componentName}' to back`}
+          </div>
+          <div
+            className={`context-menu-item${isHidden ? ' context-menu-item-active' : ''}`}
+            onClick={() => onTogglePartHidden(componentName)}
+            title="Remove this part from the board view (filter only — does not delete from file)."
+          >
+            {isHidden ? `✓ Hide '${componentName}'` : `Hide '${componentName}'`}
+          </div>
+          <div className="context-menu-separator" />
+        </React.Fragment>
+      );
+    })() : null;
+
     const nothingToSearch =
       boundOpen.length === 0 &&
       otherPdfNames.length === 0 &&
@@ -566,6 +610,7 @@ export function ContextMenu() {
       // Still show the "Search all donors" escape hatch when no PDFs are open.
       return (
         <>
+          {partVisibilityItems}
           <div className="context-menu-item disabled">
             Search &apos;{componentName}&apos; in PDF (none open)
           </div>
@@ -586,6 +631,7 @@ export function ContextMenu() {
     }
 
     const sections: React.ReactNode[] = [];
+    if (partVisibilityItems) sections.push(partVisibilityItems);
 
     // Helper: emit one donor row for a PDF. The row click triggers the
     // default (component-name) search; the ▸ spoiler (if variants exist)

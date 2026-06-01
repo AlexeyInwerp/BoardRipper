@@ -51,6 +51,13 @@ export interface Part {
    *  index is preserved so `selection.partIndex` stays consistent across
    *  filter changes. Never set by parsers. */
   hidden?: boolean;
+  /** Auto-detected or user-marked "mechanical" parts (EMI shields, heatsink
+   *  frames, opposite-side connector shadows). The scene builder skips the
+   *  fill draw for these so the small components they overlap stay visible.
+   *  Border + pins still render. Set by `flagMechanicalParts()` at scene
+   *  build time when `renderSettings.autoMarkMechanical` is on; users can
+   *  also force this via right-click. Never set by parsers. */
+  mechanical?: boolean;
   /** Optional source-format metadata surfaced in the Component Info panel.
    *  Parsers populate whatever fields the format provides; consumers must
    *  treat every field as optional. Currently filled by TVW (Teboview);
@@ -746,6 +753,115 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
  *
  * Pure detection; the caller decides whether to hide secondaries by default.
  */
+/**
+ * Flag "mechanical-like" parts in place — EMI shielding frames, heatsink
+ * clips, opposite-side connector shadows. These visually cover real
+ * components when their fill is drawn, so the scene builder uses
+ * `part.mechanical` to skip the fill draw (border + pins still render).
+ *
+ * Three orthogonal signals; each flips the flag on independently:
+ *   S1. PART description carries a mechanical keyword
+ *       (SHIELD / SHIELDING / HEATSINK / FRAME / NUT). High precision —
+ *       these are explicitly labelled in the source (CAD/BDV/Allegro).
+ *   S2. Trailing-dot refdes whose stripped base exists as another part
+ *       at the same origin. GenCAD convention for "opposite-side body
+ *       shadow of a through-hole connector" (J1601./U5201./J6801. in the
+ *       ASUS ASUS_B7402FEA fixture). Exact-origin match only — no
+ *       similarity threshold, so false-positive risk is zero.
+ *   S3. Containment count — the part's bounding box contains the
+ *       origins of at least `minContains` other parts on the same side.
+ *       Catches frames generically when neither S1 nor S2 fires.
+ *
+ * Mutates `parts[i].mechanical`; never sets it to false (leaves prior
+ * value alone so user overrides survive).
+ */
+const MECHANICAL_KEYWORDS = [
+  'SHIELD', 'SHIELDING', 'HEATSINK', 'HEAT SINK', 'HEAT-SINK',
+  'FRAME', 'CAN CLIP', 'EMI', 'BRACKET',
+];
+
+export function flagMechanicalParts(parts: Part[], minContains = 5): void {
+  // S1 — keyword match on PART description (meta.value).
+  for (const p of parts) {
+    const desc = (p.meta?.value ?? '').toUpperCase();
+    if (!desc) continue;
+    for (const kw of MECHANICAL_KEYWORDS) {
+      if (desc.includes(kw)) { p.mechanical = true; break; }
+    }
+  }
+
+  // S2 — trailing-dot duplicate of another part at the same origin.
+  // Build a {baseName, side, origin-quantised} lookup so we can match the
+  // dotted version against its non-dotted sibling.
+  const Q = 1; // mils tolerance for "same origin"
+  const keyOf = (name: string, side: string, x: number, y: number): string =>
+    `${name}|${side}|${Math.round(x / Q)}|${Math.round(y / Q)}`;
+  const seen = new Set<string>();
+  for (const p of parts) seen.add(keyOf(p.name, p.side, p.origin.x, p.origin.y));
+  for (const p of parts) {
+    if (!p.name.endsWith('.')) continue;
+    const base = p.name.slice(0, -1);
+    if (!base) continue;
+    // Sibling could be on either side — DIMM through-hole shadows commonly
+    // pair TOP-with-dot ↔ BOTTOM-without.
+    if (
+      seen.has(keyOf(base, 'top',    p.origin.x, p.origin.y)) ||
+      seen.has(keyOf(base, 'bottom', p.origin.x, p.origin.y)) ||
+      seen.has(keyOf(base, 'both',   p.origin.x, p.origin.y))
+    ) {
+      p.mechanical = true;
+    }
+  }
+
+  // S3 — containment count. For each part, count how many OTHER parts on
+  // the same side have their origin strictly inside this part's bbox.
+  // Build a per-side origin grid first so this is O(n * k) instead of O(n²).
+  const cellSize = 500; // mils — coarser than typical pad spacing, fine
+  type GridEntry = { idx: number; x: number; y: number };
+  const grids: Record<string, Map<string, GridEntry[]>> = {
+    top: new Map(), bottom: new Map(), both: new Map(),
+  };
+  parts.forEach((p, i) => {
+    const cx = Math.floor(p.origin.x / cellSize);
+    const cy = Math.floor(p.origin.y / cellSize);
+    const k = `${cx},${cy}`;
+    const g = grids[p.side];
+    let arr = g.get(k);
+    if (!arr) { arr = []; g.set(k, arr); }
+    arr.push({ idx: i, x: p.origin.x, y: p.origin.y });
+  });
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.mechanical) continue; // already flagged by S1/S2 — skip the work
+    const { minX, minY, maxX, maxY } = p.bounds;
+    const w = maxX - minX, h = maxY - minY;
+    if (w <= 0 || h <= 0) continue;
+    // Walk cells overlapping the bbox on this side AND on 'both' (a "both"
+    // part physically sits on both layers, so it counts for either side).
+    const c0x = Math.floor(minX / cellSize);
+    const c1x = Math.floor(maxX / cellSize);
+    const c0y = Math.floor(minY / cellSize);
+    const c1y = Math.floor(maxY / cellSize);
+    let count = 0;
+    const sides = p.side === 'both' ? ['top', 'bottom', 'both'] : [p.side, 'both'];
+    outer: for (const s of sides) {
+      const g = grids[s];
+      for (let cx = c0x; cx <= c1x; cx++) {
+        for (let cy = c0y; cy <= c1y; cy++) {
+          const arr = g.get(`${cx},${cy}`);
+          if (!arr) continue;
+          for (const e of arr) {
+            if (e.idx === i) continue;
+            if (e.x < minX || e.x > maxX || e.y < minY || e.y > maxY) continue;
+            count++;
+            if (count >= minContains) { p.mechanical = true; break outer; }
+          }
+        }
+      }
+    }
+  }
+}
+
 export function detectBomAlternateClusters(parts: Part[]): BomAlternateCluster[] {
   if (parts.length < 2) return [];
 

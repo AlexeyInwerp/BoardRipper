@@ -4,7 +4,7 @@ import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
 import { FZKeyError } from '../parsers/fz-parser';
 import { fzKeyStore } from './fz-key-store';
-import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets } from '../parsers/types';
+import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets, flagMechanicalParts } from '../parsers/types';
 import { renderSettingsStore, partBridgesHierarchy } from './render-settings';
 import { log } from './log-store';
 import { createLayerStates } from './layer-store';
@@ -113,6 +113,12 @@ export interface BoardTab {
    *  member refdes joined by `,`); value is the chosen member's refdes. Empty
    *  for clusters where the auto-picked default is fine. */
   bomClusterSelections: Map<string, string>;
+  /** Per-part user overrides. Keyed by stable partName (refdes) so the entry
+   *  survives derive-board-view re-runs even though partIndex can shift in
+   *  some fold modes. `hidden` removes the part entirely (no fill, no border,
+   *  no pins); `sendToBack` is identical to the auto `mechanical` flag (fill
+   *  is skipped). Cleared via the right-click menu's "Show part normally". */
+  partOverrides: Map<string, { hidden?: boolean; sendToBack?: boolean }>;
   /** XZZ fold resolution. 'suggested' uses the parser's auto-fold output;
    *  'all-sides' renders the raw pre-fold layout (both halves side-by-side). */
   foldMode: FoldMode;
@@ -278,6 +284,7 @@ export function ghostPairSig(a: number, b: number): string {
 
 /** Stable empty-set fallback so the snapshot getter doesn't churn identity. */
 const EMPTY_GHOST_SWAPS: ReadonlySet<string> = new Set<string>();
+const EMPTY_PART_OVERRIDES: ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }> = new Map();
 /** Stable empty-map fallback for the bomClusterSelections snapshot getter. */
 const EMPTY_BOM_SELECTIONS: ReadonlyMap<string, string> = new Map<string, string>();
 
@@ -546,6 +553,7 @@ class BoardStore extends Emitter {
   get swappedGhostPairs(): ReadonlySet<string> { return this.activeTab?.swappedGhostPairs ?? EMPTY_GHOST_SWAPS; }
   get showBomAlternates(): boolean { return this.activeTab?.showBomAlternates ?? false; }
   get bomClusterSelections(): ReadonlyMap<string, string> { return this.activeTab?.bomClusterSelections ?? EMPTY_BOM_SELECTIONS; }
+  get partOverrides(): ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }> { return this.activeTab?.partOverrides ?? EMPTY_PART_OVERRIDES; }
   get foldMode(): FoldMode { return this.activeTab?.foldMode ?? 'suggested'; }
   get selectedBoardIndex(): number | null { return this.activeTab?.selectedBoardIndex ?? null; }
   get layerStates(): LayerState[] { return this.activeTab?.layerStates ?? []; }
@@ -754,6 +762,7 @@ class BoardStore extends Emitter {
         swappedGhostPairs: new Set<string>(),
         showBomAlternates: false,
         bomClusterSelections: new Map<string, string>(),
+        partOverrides: new Map(),
         foldMode: 'suggested',
         selectedBoardIndex: null,
         searchSelectionActive: false,
@@ -768,6 +777,9 @@ class BoardStore extends Emitter {
         const cached = await boardCache.get(file.name, file.size, file.lastModified);
         if (cached) {
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
+          // Mechanical-flag pass is cheap and side-effect-only on parts[i].mechanical;
+          // cached boards may pre-date this flag so always re-run on load.
+          flagMechanicalParts(cached.parts);
           tab.board = cached;
           invalidateDerivedBoard(tab);
           applyBoardFilters(tab);
@@ -842,6 +854,7 @@ class BoardStore extends Emitter {
           (fmt?.swapSides ? ', swapSides=ON' : ''),
         );
 
+        flagMechanicalParts(board.parts);
         tab.board = board;
         invalidateDerivedBoard(tab);
         applyBoardFilters(tab);
@@ -944,6 +957,7 @@ class BoardStore extends Emitter {
       swappedGhostPairs: new Set<string>(),
       showBomAlternates: false,
       bomClusterSelections: new Map<string, string>(),
+      partOverrides: new Map(),
       foldMode: 'suggested',
       selectedBoardIndex: null,
       searchSelectionActive: false,
@@ -1247,6 +1261,42 @@ class BoardStore extends Emitter {
     tab.board = buildRenderedBoard(tab.board, rev, tab.hideGhosts, tab.swappedGhostPairs, next, tab.bomClusterSelections);
     invalidateDerivedBoard(tab);
     tab.selection = emptySelection;
+    this.notify();
+  }
+
+  /**
+   * Per-part visibility override. Keyed by refdes (stable across derives).
+   * `mode === 'hide'`         → fill, border, pins all skipped.
+   * `mode === 'sendToBack'`   → fill skipped (same effect as auto-mechanical);
+   *                             border and pins still draw.
+   * `mode === null`           → clear override, render normally.
+   * Toggling a part already in the requested mode also clears the override.
+   * Replaces the Map so snapshot consumers rerender.
+   */
+  setPartOverride(partName: string, mode: 'hide' | 'sendToBack' | null) {
+    const tab = this.activeTab;
+    if (!tab) return;
+    const next = new Map(tab.partOverrides);
+    const existing = next.get(partName);
+    if (mode === null) {
+      if (!existing) return;
+      next.delete(partName);
+    } else if (mode === 'hide') {
+      if (existing?.hidden) { next.delete(partName); }
+      else { next.set(partName, { hidden: true }); }
+    } else {
+      if (existing?.sendToBack) { next.delete(partName); }
+      else { next.set(partName, { sendToBack: true }); }
+    }
+    tab.partOverrides = next;
+    // If we just hid the currently-selected part, clear selection.
+    if (mode === 'hide' && tab.selection.partIndex !== null) {
+      const part = tab.board?.parts[tab.selection.partIndex];
+      if (part?.name === partName) {
+        tab.selection = emptySelection;
+        tab.searchSelectionActive = false;
+      }
+    }
     this.notify();
   }
 
