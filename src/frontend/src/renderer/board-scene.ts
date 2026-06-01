@@ -975,6 +975,23 @@ export function buildBoardScene(
       const color = (isPin1 && s.showPin1Marker) ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
       const ncGfx = isBottom ? bottomNcPinGfx : topNcPinGfx;
 
+      // Mechanical / "send to back" parts: render pins as small placeholder
+      // circles at min-radius regardless of the file's pad shape and size.
+      // Matches the FlexBV rendering for shields/heatsinks/oversized through-
+      // hole connectors so they don't occlude smaller components beneath.
+      // padRects entry kept so hit-testing + label sizing still work.
+      if (skipFill) {
+        const r = s.pinMinRadius;
+        const target = isNcPin
+          ? ncGfx
+          : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
+        target.circle(pin.position.x, pin.position.y, r);
+        padRects[pni] = {
+          rx: pin.position.x - r, ry: pin.position.y - r, rw: r * 2, rh: r * 2,
+        };
+        continue;
+      }
+
       if (isTwoPinPart) {
         let padRx: number, padRy: number, padRw: number, padRh: number;
         if (eb.horiz) {
@@ -1309,7 +1326,13 @@ export function buildBoardScene(
         fillX = eb.px; fillY = eb.py; fillW = eb.pw; fillH = eb.ph;
         fillPoly = obb ?? null;
       }
-      (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
+      // Mechanical / sent-to-back parts: skip the border too. FlexBV renders
+      // shields/heatsinks as nothing but the pin placeholders, and a giant
+      // border outline on a DIMM-shadow or shield frame is still visually
+      // dominant. Pins (drawn above as small circles) keep the part findable.
+      if (!skipFill) {
+        (isBottom ? bottomBorderBatch : topBorderBatch).rects.push(borderRect);
+      }
 
       if (s.showComponentColors && override?.color && !skipFill) {
         const fillColor = parseInt(override.color.replace('#', ''), 16);

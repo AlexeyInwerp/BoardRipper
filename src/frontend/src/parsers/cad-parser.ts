@@ -974,12 +974,12 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const totalPins = pinsOnTop + pinsOnBottom;
   const primarySide: 'top' | 'bottom' | undefined =
     totalPins > 0 && pinsOnBottom / totalPins > 0.55 ? 'bottom' : undefined;
-  if (primarySide === 'bottom') {
-    log.parser.log(
-      `CAD side inversion: pin majority on 'bottom' (${pinsOnBottom}) vs 'top' (${pinsOnTop}); ` +
-      `setting primarySide='bottom' so renderer swaps scene layers.`,
-    );
-  }
+  const topPartCount = allParts.reduce((n, p) => n + (p.side === 'top' ? 1 : 0), 0);
+  const botPartCount = allParts.reduce((n, p) => n + (p.side === 'bottom' ? 1 : 0), 0);
+  log.parser.log(
+    `CAD side distribution: parts top=${topPartCount} bottom=${botPartCount}; ` +
+    `pins top=${pinsOnTop} bottom=${pinsOnBottom}; primarySide=${primarySide ?? 'none'}`,
+  );
 
   // Build a per-revision BoardRevision blob (parts + outline + bounds + nets).
   const hasTraces = routes.traces.length > 0;

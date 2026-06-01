@@ -1,3 +1,5 @@
+import { log } from '../store/log-store';
+
 export interface Point {
   x: number;
   y: number;
@@ -781,12 +783,18 @@ const MECHANICAL_KEYWORDS = [
 ];
 
 export function flagMechanicalParts(parts: Part[], minContains = 5): void {
+  let s1 = 0, s2 = 0, s3 = 0;
+
   // S1 — keyword match on PART description (meta.value).
   for (const p of parts) {
     const desc = (p.meta?.value ?? '').toUpperCase();
     if (!desc) continue;
     for (const kw of MECHANICAL_KEYWORDS) {
-      if (desc.includes(kw)) { p.mechanical = true; break; }
+      if (desc.includes(kw)) {
+        if (!p.mechanical) s1++;
+        p.mechanical = true;
+        break;
+      }
     }
   }
 
@@ -809,6 +817,7 @@ export function flagMechanicalParts(parts: Part[], minContains = 5): void {
       seen.has(keyOf(base, 'bottom', p.origin.x, p.origin.y)) ||
       seen.has(keyOf(base, 'both',   p.origin.x, p.origin.y))
     ) {
+      if (!p.mechanical) s2++;
       p.mechanical = true;
     }
   }
@@ -854,11 +863,31 @@ export function flagMechanicalParts(parts: Part[], minContains = 5): void {
             if (e.idx === i) continue;
             if (e.x < minX || e.x > maxX || e.y < minY || e.y > maxY) continue;
             count++;
-            if (count >= minContains) { p.mechanical = true; break outer; }
+            if (count >= minContains) {
+              if (!p.mechanical) s3++;
+              p.mechanical = true;
+              break outer;
+            }
           }
         }
       }
     }
+  }
+
+  const total = s1 + s2 + s3;
+  if (total > 0) {
+    // Per-side counts help diagnose side-flip / mirror confusion.
+    let topF = 0, botF = 0, bothF = 0;
+    for (const p of parts) {
+      if (!p.mechanical) continue;
+      if (p.side === 'top') topF++;
+      else if (p.side === 'bottom') botF++;
+      else bothF++;
+    }
+    log.parser.log(
+      `flagMechanicalParts: ${total} flagged (S1 keyword=${s1}, S2 dotted-shadow=${s2}, ` +
+      `S3 contains-≥${minContains}=${s3}); by side top=${topF} bottom=${botF} both=${bothF}`,
+    );
   }
 }
 
