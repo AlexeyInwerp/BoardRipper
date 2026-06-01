@@ -798,25 +798,21 @@ export function flagMechanicalParts(parts: Part[], minContains = 5): void {
     }
   }
 
-  // S2 — trailing-dot duplicate of another part at the same origin.
-  // Build a {baseName, side, origin-quantised} lookup so we can match the
-  // dotted version against its non-dotted sibling.
-  const Q = 1; // mils tolerance for "same origin"
-  const keyOf = (name: string, side: string, x: number, y: number): string =>
-    `${name}|${side}|${Math.round(x / Q)}|${Math.round(y / Q)}`;
-  const seen = new Set<string>();
-  for (const p of parts) seen.add(keyOf(p.name, p.side, p.origin.x, p.origin.y));
+  // S2 — trailing-dot duplicate of another part. GenCAD/CAMCAD writes the
+  // opposite-side / mechanical body of a connector as a sibling component
+  // with a `.`-suffixed refdes (J1601/J1601., U5201/U5201., J6801/J6801.).
+  // The shadow often has very different pin geometry from its sibling — the
+  // J1601. body in ASUS_B7402FEA has only 2 mounting-tab pins on TOP while
+  // J1601 carries the full 262-pin DIMM footprint on BOTTOM, so origins
+  // diverge by ~150 mils. The trailing-dot+base-exists pattern itself is the
+  // signal; positional matching is too strict.
+  const namesPresent = new Set<string>();
+  for (const p of parts) namesPresent.add(p.name);
   for (const p of parts) {
     if (!p.name.endsWith('.')) continue;
     const base = p.name.slice(0, -1);
     if (!base) continue;
-    // Sibling could be on either side — DIMM through-hole shadows commonly
-    // pair TOP-with-dot ↔ BOTTOM-without.
-    if (
-      seen.has(keyOf(base, 'top',    p.origin.x, p.origin.y)) ||
-      seen.has(keyOf(base, 'bottom', p.origin.x, p.origin.y)) ||
-      seen.has(keyOf(base, 'both',   p.origin.x, p.origin.y))
-    ) {
+    if (namesPresent.has(base)) {
       if (!p.mechanical) s2++;
       p.mechanical = true;
     }
