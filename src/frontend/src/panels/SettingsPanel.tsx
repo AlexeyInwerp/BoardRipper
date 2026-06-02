@@ -1636,6 +1636,8 @@ export function SettingsPanel() {
           title="Transparency of the board outline. 0 = invisible, 1 = fully opaque" />
         <Slider label="Board Fill" value={draft.boardFillAlpha} min={0} max={0.5} step={0.01} field="boardFillAlpha" onUpdate={updateDraft}
           title="Semi-transparent fill inside the board outline. Helps distinguish the PCB area from the background" />
+        <Toggle label="Use board metadata color" value={draft.useMetadataBoardColor} field="useMetadataBoardColor" onUpdate={updateDraft}
+          title="When on, boards with a known PCB color (Apple → black, Dell → blue, etc.) render with that tint instead of the theme default. Boards without a metadata match silently fall back to the theme default. Intensity is the Board Fill slider above." />
       </CollapsibleSection>
       )}
 
@@ -1715,7 +1717,7 @@ export function SettingsPanel() {
       )}
 
       {activeTab === SECTION_TO_TAB.netColors && (
-      <CollapsibleSection id="netColors" title="Pin Colors by Net" isOpen={openSections.has('netColors')}
+      <CollapsibleSection id="netColors" title="Pin Color Rules" isOpen={openSections.has('netColors')}
         onToggle={toggleSection} sectionRef={netColorsRef} isFocused={focusedSection === 'netColors'}>
         <div className="settings-subsection-label">Default pin color (no rule matched)</div>
         <div className="color-rule-row">
@@ -1882,17 +1884,13 @@ export function SettingsPanel() {
         <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateDraft}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
         <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateDraft}
-          title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 12. Triggers a scene rebuild." />
+          title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild." />
         <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft}
           title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
         <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft}
           title="Draw magenta crosshair markers at each pin's exact coordinate from the board file. Useful for verifying parser accuracy" />
         <Toggle label="[Debug] Outline Vertex Numbers" value={draft.showVertexNumbers} field="showVertexNumbers" onUpdate={updateDraft}
           title="Show numbered markers at each board outline vertex. Yellow = unique, orange = duplicate coordinates. Works for all board formats" />
-        <Toggle label="[Debug] Label Size Tiers" value={draft.showLabelSizeDebug} field="showLabelSizeDebug" onUpdate={updateDraft}
-          title="Color part labels by their computed font-size tier: blue = small, yellow = medium, green = large. Useful for tuning the Small/Medium/Large size thresholds" />
-        <Toggle label="[Debug] PDF Pan Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateDraft}
-          title="Restore the historical PDF pan clamps: first/last-page Y hard-clamp and page-fits-screen X centering. OFF by default — the clamps were occasionally locking users in mid-document scroll. Page-flip thresholds still fire as you cross them either way. Zoom range stays at 0.5×–10× regardless." />
       </CollapsibleSection>
       )}
 
@@ -1907,6 +1905,8 @@ export function SettingsPanel() {
         <PdfWatermarkFilterEditor />
         <div className="settings-subsection-label">Navigation</div>
         <PdfInertiaToggle />
+        <Toggle label="Pan Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateDraft}
+          title="Clamp PDF pan to page edges: prevents scrolling off the document at the first/last page and centers horizontally when the page fits the viewport. Page-flip thresholds still fire as you cross them either way. Zoom range stays at 0.5×–10× regardless." />
         <div className="settings-subsection-label">Shortcuts (when PDF panel is active)</div>
         <div className="pdf-shortcuts-list">
           {shortcuts.filter(s => s.category === 'pdf').map(s => (
@@ -2118,17 +2118,6 @@ function ThemeTab() {
   const effectiveBackground = overrides.background ?? activeTheme?.ui.bgPrimary ?? '#08080c';
   const effectiveChrome = overrides.chrome ?? activeTheme?.ui.bgTertiary ?? '#0c1424';
 
-  // Subscribe to global render-settings so the toggle reflects external changes.
-  const useMetadata = useSyncExternalStore(
-    (cb) => renderSettingsStore.subscribe(cb),
-    () => renderSettingsStore.settings.useMetadataBoardColor,
-  );
-
-  const onToggleMetadata = (next: boolean) => {
-    const current = renderSettingsStore.globalSnapshot();
-    renderSettingsStore.applyGlobal({ ...current, useMetadataBoardColor: next });
-  };
-
   return (
     <div className="settings-section-body" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
@@ -2233,25 +2222,6 @@ function ThemeTab() {
         }
       />
 
-      <div>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', marginBottom: 6 }}>
-          Board fill
-        </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={useMetadata}
-            onChange={(e) => onToggleMetadata(e.target.checked)}
-          />
-          <span>Use board metadata color</span>
-        </label>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 8px', marginTop: 4 }}>
-          When on, boards with a known PCB color (Apple → black, Dell → blue, etc.)
-          render with that tint instead of the theme default. Boards without a
-          metadata match silently fall back to the theme default. Adjust intensity
-          with the Board → Board Outline → Board Fill slider.
-        </div>
-      </div>
     </div>
   );
 }

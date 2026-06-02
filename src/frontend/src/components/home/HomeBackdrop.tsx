@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
-import { boardStore } from '../../store/board-store';
 import { databankStore } from '../../store/databank-store';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
@@ -902,54 +901,6 @@ function LibraryStats() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Cache action buttons (mirrors CacheControlBar in SettingsPanel)
-// ─────────────────────────────────────────────────────────────
-
-function CacheButtons() {
-  // The home backdrop is only visible when no boards/PDFs are open, so a
-  // "re-parse current" button would always be disabled here. Just expose
-  // the global cache wipes; per-board re-parse stays in the Settings panel.
-  const [busy, setBusy] = useState<null | 'boards' | 'pdf'>(null);
-
-  const clearBoards = useCallback(async () => {
-    if (busy) return;
-    if (!confirm('Wipe the parsed-board cache for every file? Open boards will re-parse on next view. PDF caches are left alone.')) return;
-    setBusy('boards');
-    try { await boardStore.resetBoardCaches(); } finally { setBusy(null); }
-  }, [busy]);
-
-  const clearPdf = useCallback(async () => {
-    if (busy) return;
-    if (!confirm('Wipe cached PDF text, tile bitmaps, font glyphs, and watermark skip-sets? Board parses are left alone.')) return;
-    setBusy('pdf');
-    try { await boardStore.resetPdfCaches(); } finally { setBusy(null); }
-  }, [busy]);
-
-  return (
-    <div className="home-cache-actions">
-      <button
-        type="button"
-        className="home-cache-btn"
-        onClick={clearBoards}
-        disabled={busy !== null}
-        title="Wipe the parsed-board cache for every file. Doesn't touch PDFs."
-      >
-        {busy === 'boards' ? 'Clearing…' : 'Clear board cache'}
-      </button>
-      <button
-        type="button"
-        className="home-cache-btn"
-        onClick={clearPdf}
-        disabled={busy !== null}
-        title="Wipe cached PDF text, tile bitmaps, glyphs, and watermark skip-sets."
-      >
-        {busy === 'pdf' ? 'Clearing…' : 'Clear PDF cache'}
-      </button>
-    </div>
-  );
-}
-
 function QuickSettings() {
   const openSettings = useCallback(() => showSidebarTab('settings'), []);
   return (
@@ -991,11 +942,6 @@ function QuickSettings() {
       <div className="home-quick-section">
         <h3 className="home-quick-section-title">Library</h3>
         <LibraryStats />
-      </div>
-
-      <div className="home-quick-section">
-        <h3 className="home-quick-section-title">Cache</h3>
-        <CacheButtons />
       </div>
 
       <button type="button" className="home-settings-link" onClick={openSettings}>

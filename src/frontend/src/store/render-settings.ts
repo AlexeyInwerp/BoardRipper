@@ -202,11 +202,11 @@ export interface RenderSettings {
   pdfRenderMode: 'auto' | 'standard' | 'always-tile';
 
   /** Enable PDF pan boundary clamps.
-   *  - false (default): free pan in both axes. Page-flip thresholds still
-   *    fire as the user crosses them; nothing stops scroll motion regardless
-   *    of position. Zoom range is unaffected (always 0.5–10).
-   *  - true: hard clamps on first/last page Y and page-fits-screen X
-   *    centering. Old behaviour, retained as a debug toggle. */
+   *  - true (default): hard clamps on first/last page Y and page-fits-screen
+   *    X centering. Prevents accidentally scrolling off the document.
+   *  - false: free pan in both axes. Page-flip thresholds still fire as the
+   *    user crosses them; nothing stops scroll motion regardless of position.
+   *  Zoom range is unaffected (always 0.5–10) either way. */
   pdfEnableBoundaries: boolean;
 
   /** Fraction of screen dimension panned per WSAD keypress. Range 0.02–0.30, default 0.10. */
@@ -286,10 +286,6 @@ export interface RenderSettings {
   /** Auto-enable selection-dim while a search-driven selection (focusPart /
    *  focusNet) is active, even if the user's showNetDim toggle is off. */
   searchAutoDim: boolean;
-  /** @deprecated — spotlight is now the 'darklight' dimMode on the dim button.
-   *  Field kept so saved localStorage settings don't error on load; no longer
-   *  surfaced in the Settings UI. */
-  selectionHalo: boolean;
   /** Auto-detect mechanical/oversized parts (EMI shields, heatsink frames,
    *  opposite-side connector shadows) and render them without a body fill so
    *  the smaller components they overlap stay visible. Pin shapes and border
@@ -442,7 +438,6 @@ export const DEFAULTS: RenderSettings = {
   overlayNetsOnSelect: 'panZoomFit',
   overlayPosition: 'left',
   searchAutoDim: true,
-  selectionHalo: true,
   autoMarkMechanical: true,
 };
 
@@ -1255,13 +1250,6 @@ class RenderSettingsStore extends Emitter {
 
   setSearchAutoDim(v: boolean) {
     this._global = { ...this._global, searchAutoDim: v };
-    saveToStorage(this._global);
-    this.recomputeEffective();
-    this.notify();
-  }
-
-  setSelectionHalo(v: boolean) {
-    this._global = { ...this._global, selectionHalo: v };
     saveToStorage(this._global);
     this.recomputeEffective();
     this.notify();
