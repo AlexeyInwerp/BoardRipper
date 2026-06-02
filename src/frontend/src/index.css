@@ -1661,6 +1661,18 @@ html, body, #root {
   border-radius: 2px;
 }
 
+.net-line-color-chain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.net-line-color-chain-link {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+}
+
 .color-rule-remove {
   width: 20px;
   height: 20px;

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
+import { colorToHex, hexToColor } from '../store/layer-store';
 import type { RenderSettings, LabelSize, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
@@ -1775,6 +1776,26 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.netLines && (
       <CollapsibleSection id="netLines" title="Net Lines" isOpen={openSections.has('netLines')}
         onToggle={toggleSection} sectionRef={netLinesRef} isFocused={focusedSection === 'netLines'}>
+        <div className="settings-row" title="Colour of net connection lines. Left: the selected net (primary). Right: chain-adjacent nets reached through 2-pin bridge components in hierarchical highlight mode.">
+          <label className="settings-label">Line colours</label>
+          <div className="net-line-color-chain">
+            <input
+              type="color"
+              className="color-rule-color"
+              value={colorToHex(draft.netLineColor)}
+              onChange={(e) => updateDraft({ netLineColor: hexToColor(e.target.value) })}
+              title="Primary net line colour (the selected net)"
+            />
+            <span className="net-line-color-chain-link" aria-hidden="true">→</span>
+            <input
+              type="color"
+              className="color-rule-color"
+              value={colorToHex(draft.adjacentNetLineColor)}
+              onChange={(e) => updateDraft({ adjacentNetLineColor: hexToColor(e.target.value) })}
+              title="Adjacent (chain-propagated) net line colour, used when Hierarchy Depth > 1"
+            />
+          </div>
+        </div>
         <Slider label="Line Width" value={draft.netLineWidth} min={0.5} max={5} step={0.5} field="netLineWidth" onUpdate={updateDraft}
           title="Thickness of the connection lines drawn between pins of the same net when a net is selected" />
         <Slider label="Line Opacity" value={draft.netLineAlpha} min={0} max={1} step={0.05} field="netLineAlpha" onUpdate={updateDraft}
