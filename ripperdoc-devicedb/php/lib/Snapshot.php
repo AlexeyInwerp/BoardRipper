@@ -225,10 +225,43 @@ final class Snapshot
         readfile($gz);
     }
 
+    /**
+     * Construct the public-facing base URL the snapshot tarball lives
+     * under. The manifest's `tarball_url` is this + "/boards-N.tar.gz".
+     *
+     * Resolution order:
+     *   1. SNAPSHOT_PUBLIC_BASE env override (e.g.
+     *      "https://www.ripperdoc.de/devicedb/api"). Use this when the
+     *      reverse host or mount path can't be inferred from the
+     *      request that triggered manifest generation (cron, CLI).
+     *   2. Derive from the live request's REQUEST_URI prefix — find
+     *      "/<…>/api/v1/" in the path and reconstruct everything up to
+     *      and including the "/api" piece. This handles /devicedb/,
+     *      /devicedb-staging/, and a hypothetical bare /api/ mount.
+     *   3. Fall back to scheme://host (mostly for php -S local dev).
+     */
     private static function publicBase(): string
     {
+        $env = getenv('SNAPSHOT_PUBLIC_BASE');
+        if (is_string($env) && $env !== '') {
+            return rtrim($env, '/');
+        }
         $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
         $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $uri    = $_SERVER['REQUEST_URI'] ?? '/';
+        // Snapshot regen via HTTP arrives at /v1/snapshots/latest (the
+        // request that lazy-generates) OR via cron-snapshot.php (no URI).
+        // Match the longest "/something/api" prefix that appears before
+        // the final /v1/... segment.
+        if (preg_match('#^(.+?)(?:/api)?/v1(?:/|$)#', parse_url($uri, PHP_URL_PATH) ?: '', $m)) {
+            $prefix = $m[1];   // e.g. "/devicedb"
+            // If the original URI actually had "/api/" before "/v1/",
+            // reattach it.
+            if (strpos($uri, $prefix . '/api/v1') !== false) {
+                $prefix .= '/api';
+            }
+            return "$scheme://$host" . $prefix;
+        }
         return "$scheme://$host";
     }
 }

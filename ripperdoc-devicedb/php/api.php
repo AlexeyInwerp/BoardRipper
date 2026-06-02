@@ -179,8 +179,18 @@ try {
             $matched = true;
             break;
 
+        // Two URL shapes accepted (manifest can advertise either):
+        //   /v1/snapshots/{counter}/tarball
+        //   /v1/snapshots/boards-{counter}.tar.gz   ← used in production manifests
         case count($parts) === 3 && $parts[0] === 'snapshots' && $parts[2] === 'tarball' && $method === 'GET':
             Snapshot::tarball((int) $parts[1]);
+            $matched = true;
+            break;
+
+        case count($parts) === 2 && $parts[0] === 'snapshots'
+            && preg_match('/^boards-(\d+)\.tar\.gz$/', $parts[1], $tm) === 1
+            && $method === 'GET':
+            Snapshot::tarball((int) $tm[1]);
             $matched = true;
             break;
 

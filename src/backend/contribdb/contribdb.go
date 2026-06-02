@@ -39,7 +39,15 @@ import (
 
 // DefaultBaseURL is the canonical-server base URL when no override is set
 // (env DEVICEDB_BASE_URL, or databank config key contribdb_base_url).
-const DefaultBaseURL = "https://www.ripperdoc.de"
+//
+// The path suffix /devicedb/api matches the public mount point of the PHP
+// service on Linevast — see ripperdoc-devicedb/php/.htaccess. Client code
+// concatenates "/v1/<endpoint>" onto this base, so the resolved URLs land
+// at https://www.ripperdoc.de/devicedb/api/v1/<endpoint>.
+//
+// For local development against the Go reference at localhost:18099 (which
+// serves /v1/* at its root), set DEVICEDB_BASE_URL=http://localhost:18099 .
+const DefaultBaseURL = "https://www.ripperdoc.de/devicedb/api"
 
 // Service is the contribdb runtime — installed once at boot, drives the
 // register-on-boot retry, snapshot puller, outbox pusher, and reconciler.
