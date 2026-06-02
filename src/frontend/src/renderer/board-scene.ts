@@ -20,7 +20,6 @@ import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
 import {
-  getLabelFontSize,
   computePinRadius,
   computeMultiPinPadding,
   computeEffectiveBounds,
@@ -1086,7 +1085,7 @@ export function buildBoardScene(
           const fitW = pad.rw * 0.85;
           const fitH = twoPinTwoLevel ? (pad.rh * 0.45) : (pad.rh * 0.85);
           pinFontSize = Math.min(fitW / (Math.max(numStr.length, 2) * 0.6), fitH * 0.8);
-          pinFontSize = Math.max(pinFontSize, getLabelFontSize(s));
+          pinFontSize = Math.max(pinFontSize, s.labelMinSize);
           pinX = pad.rx + pad.rw / 2;
           pinY = twoPinTwoLevel
             ? pad.ry + pad.rh * 0.25   // top quarter of pad
@@ -1177,8 +1176,8 @@ export function buildBoardScene(
         // Floor: user's active label-size setting keeps net names legible even on tiny pins.
         // For BGA, also cap at pin diameter so text doesn't spill beyond the circle.
         const netFloor = isTwoPinPart
-          ? getLabelFontSize(s)
-          : Math.min(getLabelFontSize(s), maxNonOverlapRadius * 2 * 0.85);
+          ? s.labelMinSize
+          : Math.min(s.labelMinSize, maxNonOverlapRadius * 2 * 0.85);
         netFontSize = Math.max(netFontSize, netFloor);
         netFontSize = quantizeFontSize(netFontSize);
         if (netFontSize >= s.labelHideThreshold) {
@@ -1359,23 +1358,17 @@ export function buildBoardScene(
         const fitW = eb.pw;
         const fitH = eb.horiz ? eb.ph : eb.ph - 2 * padDepth;
         const fromBounds = Math.min(fitW * 0.85 / (part.name.length * 0.6), fitH * 0.85);
-        fontSize = Math.max(getLabelFontSize(s), fromBounds);
+        fontSize = Math.max(s.labelMinSize, fromBounds);
       } else {
         const targetW = eb.pw * 0.7;
         fontSize = targetW / (part.name.length * 0.6);
-        fontSize = Math.max(getLabelFontSize(s), Math.min(fontSize, eb.ph * 0.8));
+        fontSize = Math.max(s.labelMinSize, Math.min(fontSize, eb.ph * 0.8));
       }
       fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
-        let labelColor: number = BOARD_COLORS.labelPart;
+        const labelColor: number = BOARD_COLORS.labelPart;
         let fontFamily = LABEL_FONT_FAMILY;
-        if (s.showLabelSizeDebug) {
-          const qs = quantizeFontSize(s.labelSizeSmall);
-          const qm = quantizeFontSize(s.labelSizeMedium);
-          labelColor = fontSize <= qs ? 0x4499ff   // blue  = small tier
-                     : fontSize <= qm ? 0xffcc00   // yellow = medium tier
-                     :                  0x44ff88;  // green  = large tier
-        } else if (s.partLabelShadow) {
+        if (s.partLabelShadow) {
           fontFamily = ensureShadowFont(fontSize, s.labelAtlasResolution);
         }
         const label = new BitmapText({

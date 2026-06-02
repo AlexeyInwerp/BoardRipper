@@ -3,7 +3,7 @@ import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import { colorToHex, hexToColor } from '../store/layer-store';
-import type { RenderSettings, LabelSize, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
+import type { RenderSettings, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
@@ -205,40 +205,6 @@ function Toggle({ label, value, field, onUpdate, title }: ToggleProps) {
         onDoubleClick={() => { const rv = ovReset ?? DEFAULTS[field] as boolean; onUpdate({ [field]: rv }); }}
       />
     </div>
-  );
-}
-
-function LabelSizeSelector({ draft, onUpdate }: { draft: RenderSettings; onUpdate: DraftUpdater }) {
-  const sizes: LabelSize[] = ['small', 'medium', 'large'];
-  const fields: Record<LabelSize, keyof RenderSettings> = {
-    small: 'labelSizeSmall', medium: 'labelSizeMedium', large: 'labelSizeLarge',
-  };
-  return (
-    <>
-      <div className="settings-row">
-        <label className="settings-label">Active Size</label>
-        <div className="settings-btn-group">
-          {sizes.map((size) => (
-            <button
-              key={size}
-              className={`settings-btn-option ${draft.labelSize === size ? 'active' : ''}`}
-              onClick={() => onUpdate({ labelSize: size })}
-            >
-              {size[0].toUpperCase() + size.slice(1)}
-            </button>
-          ))}
-        </div>
-      </div>
-      {sizes.map((size) => (
-        <Slider
-          key={size}
-          label={`${size[0].toUpperCase() + size.slice(1)} Size`}
-          value={draft[fields[size]] as number}
-          min={1} max={30} step={1}
-          field={fields[size]} onUpdate={onUpdate}
-        />
-      ))}
-    </>
   );
 }
 
@@ -1663,7 +1629,8 @@ export function SettingsPanel() {
           title="Add a dark shadow halo behind part labels for better readability against colored or busy backgrounds" />
         <Toggle label="Hide Mechanical Fills" value={draft.autoMarkMechanical} field="autoMarkMechanical" onUpdate={updateDraft}
           title="Auto-detect EMI shields, heatsink frames and oversized through-hole connector shadows (footprint contains ≥5 other component origins, or description contains SHIELD/HEATSINK/FRAME, or trailing-dot duplicates). Detected parts render without a body fill — border outline and pins still draw — so smaller components beneath stay visible. Right-click any part for a per-component override." />
-        <LabelSizeSelector draft={draft} onUpdate={updateDraft} />
+        <Slider label="Min Label Size" value={draft.labelMinSize} min={1} max={30} step={1} field="labelMinSize" onUpdate={updateDraft}
+          title="Minimum font size (board mils) for part / pin / net-name labels. Acts as a floor on the auto-computed size, so tiny components still get a readable label. Labels smaller than the Zoom LOD thresholds are still hidden." />
       </CollapsibleSection>
       )}
 

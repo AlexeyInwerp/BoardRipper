@@ -233,7 +233,7 @@ export function SettingsMockup({
     }
     let graph;
     try {
-      graph = buildBoardScene(MOCK_BOARD, { ...s, showLabelSizeDebug: false, showPadVertices: false });
+      graph = buildBoardScene(MOCK_BOARD, { ...s, showPadVertices: false });
     } catch (err) {
       log.render.error('buildBoardScene failed:', err);
       return;

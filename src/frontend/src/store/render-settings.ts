@@ -8,8 +8,6 @@ import {
 } from './overlay-layout';
 import { naturalCompare } from '../components/overlay/natural-sort';
 
-export type LabelSize = 'small' | 'medium' | 'large';
-
 /** Pad shape override — applies to pin pads within a part type */
 export type PadShape = 'natural' | 'round' | 'square';
 
@@ -71,10 +69,9 @@ export interface RenderSettings {
   partPadding: number;
   showPartLabels: boolean;
   partLabelShadow: boolean;
-  labelSize: LabelSize;
-  labelSizeSmall: number;
-  labelSizeMedium: number;
-  labelSizeLarge: number;
+  /** Minimum label font size (board mils). Acts as a floor on the
+   *  auto-computed size, so tiny parts still get a readable label. */
+  labelMinSize: number;
   labelHideThreshold: number;
 
   pinMinRadius: number;
@@ -220,8 +217,6 @@ export interface RenderSettings {
   showPadVertices: boolean;
   /** Debug: show numbered markers at each outline vertex */
   showVertexNumbers: boolean;
-  /** Debug: color part labels by font-size tier (blue=small, yellow=medium, green=large) */
-  showLabelSizeDebug: boolean;
   /** Color part body fills by component type prefix (R/C/L/U/Q/D/J) */
   showComponentColors: boolean;
   /** Opacity of component type fill overlays */
@@ -308,13 +303,6 @@ export function isNcNet(netUpper: string, patterns: string[]): boolean {
   return false;
 }
 
-/** Return the active label font size for the selected tier. */
-export function getLabelFontSize(s: RenderSettings): number {
-  if (s.labelSize === 'small') return s.labelSizeSmall;
-  if (s.labelSize === 'large') return s.labelSizeLarge;
-  return s.labelSizeMedium;
-}
-
 const DEFAULT_NET_COLOR_RULES: NetColorRule[] = [
   { id: 'gnd',  pattern: 'GND',  color: '#666666', enabled: true },
   { id: 'vcc',  pattern: 'VCC',  color: '#dd3333', enabled: true },
@@ -330,10 +318,7 @@ export const DEFAULTS: RenderSettings = {
   partPadding: 4,
   showPartLabels: true,
   partLabelShadow: false,
-  labelSize: 'small',
-  labelSizeSmall: 3,
-  labelSizeMedium: 6,
-  labelSizeLarge: 14,
+  labelMinSize: 3,
   labelHideThreshold: 2,
 
   pinMinRadius: 3,
@@ -397,7 +382,6 @@ export const DEFAULTS: RenderSettings = {
 
   showPadVertices: false,
   showVertexNumbers: false,
-  showLabelSizeDebug: false,
   showComponentColors: true,
   componentFillAlpha: 0.55,
 
@@ -971,10 +955,22 @@ function loadFromStorage(): RenderSettings {
       } else {
         result.hierarchyDepth = Math.max(1, Math.min(4, Math.round(result.hierarchyDepth)));
       }
-      // Migration: small-size default dropped from 4 → 3. Users still on the
-      // previous default get bumped automatically; explicit customizations
-      // (any other value) are preserved.
-      if (result.labelSizeSmall === 4) result.labelSizeSmall = 3;
+      // Migration: label-size tier system (labelSize + labelSizeSmall/Medium/
+      // Large) collapsed to a single labelMinSize. Take whichever tier was
+      // active and assign it to the new field. Old fields then drop out of
+      // the spread because they're no longer on RenderSettings.
+      if (typeof result.labelMinSize !== 'number' || !Number.isFinite(result.labelMinSize)) {
+        const p = parsed as Record<string, unknown>;
+        const tier = p.labelSize;
+        const pick = tier === 'large'  ? p.labelSizeLarge
+                   : tier === 'medium' ? p.labelSizeMedium
+                   :                     p.labelSizeSmall;
+        if (typeof pick === 'number' && Number.isFinite(pick) && pick >= 1 && pick <= 30) {
+          result.labelMinSize = pick;
+        } else {
+          result.labelMinSize = DEFAULTS.labelMinSize;
+        }
+      }
       // Migration: BGA gap formula was halved (factor now equals visible gap
       // as fraction of pin radius, not 2× of it) and the default dropped to 0.
       // Users on the previous default get the new default; other customizations
