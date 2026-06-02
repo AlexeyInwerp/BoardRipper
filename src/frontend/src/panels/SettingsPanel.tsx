@@ -4,6 +4,14 @@ import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { StandaloneCollapsibleSection } from './settings/StandaloneCollapsibleSection';
+import {
+  SettingsSearchProvider,
+  SettingsSearchBar,
+  useFieldSearchState,
+  useSectionSearchState,
+  useSettingsSearch,
+  recordRenderedField,
+} from './settings/SettingsSearch';
 import type { RenderSettings, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
@@ -139,6 +147,12 @@ function CollapsibleSection({
   sectionRef: React.RefObject<HTMLDivElement | null>;
   isFocused: boolean;
 }) {
+  // Section IDs are typed as SectionId but the search index uses the same
+  // string set (plus a few extras for non-main-tab sections). Cast is safe
+  // because the section ids are the same strings.
+  const { hidden, forceOpen } = useSectionSearchState(id as Parameters<typeof useSectionSearchState>[0]);
+  if (hidden) return null;
+  const effectiveOpen = forceOpen || isOpen;
   return (
     <div
       ref={sectionRef}
@@ -146,9 +160,9 @@ function CollapsibleSection({
     >
       <button className="settings-section-header" onClick={() => onToggle(id)}>
         <span className="settings-section-title">{title}</span>
-        <span className="settings-section-chevron">{isOpen ? '▾' : '▸'}</span>
+        <span className="settings-section-chevron">{effectiveOpen ? '▾' : '▸'}</span>
       </button>
-      {isOpen && <div className="settings-section-body">{children}</div>}
+      {effectiveOpen && <div className="settings-section-body">{children}</div>}
     </div>
   );
 }
@@ -166,8 +180,11 @@ function Slider({ label, value, min, max, step, field, onUpdate, title }: Slider
   const defaultValue = ovReset ?? DEFAULTS[field] as number;
   const pct = ((value - min) / (max - min)) * 100;
   const isModified = Math.abs(value - defaultValue) > step * 0.5;
+  useEffect(() => { recordRenderedField(field); }, [field]);
+  const { hidden, matched } = useFieldSearchState(field);
+  if (hidden) return null;
   return (
-    <div className={`settings-row${isOverride ? ' settings-override' : ''}`} title={title}>
+    <div className={`settings-row${isOverride ? ' settings-override' : ''}${matched ? ' settings-search-match' : ''}`} title={title}>
       <label className="settings-label">
         {label}
         <span className="settings-value">{Number(value.toFixed(2))}</span>
@@ -198,8 +215,11 @@ interface ToggleProps {
 
 function Toggle({ label, value, field, onUpdate, title }: ToggleProps) {
   const { isOverride, resetValue: ovReset } = useOverride(field);
+  useEffect(() => { recordRenderedField(field); }, [field]);
+  const { hidden, matched } = useFieldSearchState(field);
+  if (hidden) return null;
   return (
-    <div className={`settings-row settings-toggle-row${isOverride ? ' settings-override' : ''}`} title={title}>
+    <div className={`settings-row settings-toggle-row${isOverride ? ' settings-override' : ''}${matched ? ' settings-search-match' : ''}`} title={title}>
       <label className="settings-label">{label}</label>
       <input type="checkbox" checked={value}
         onChange={(e) => onUpdate({ [field]: e.target.checked })}
@@ -1532,23 +1552,21 @@ export function SettingsPanel() {
   const panelRef = useRef<HTMLDivElement>(null);
 
   return (
+    <SettingsSearchProvider>
+      <SearchClearOnTabSwitch tab={activeTab} />
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
         {/* ── Cache control — prominent, quick-access ── */}
         <CacheControlBar hasBoard={hasBoard} />
 
+        {/* ── Search bar — type or press / to focus, Esc to clear ── */}
+        <SettingsSearchBar />
+
         {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
         <div className="library-tabs-row settings-tabs-row">
           <div className="library-tabs">
             {TAB_ORDER.map(tab => (
-              <button
-                key={tab}
-                type="button"
-                className={`library-tab ${activeTab === tab ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab)}
-              >
-                {TAB_LABELS[tab]}
-              </button>
+              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} />
             ))}
           </div>
         </div>
@@ -1953,7 +1971,41 @@ export function SettingsPanel() {
       </div>
       </OverrideContext.Provider>
     </div>
+    </SettingsSearchProvider>
   );
+}
+
+// ---- Tab pill with match-count badge + search-clear-on-switch helpers ----
+
+function TabPill({ tab, activeTab, setActiveTab }: {
+  tab: SettingsTabId;
+  activeTab: SettingsTabId;
+  setActiveTab: (t: SettingsTabId) => void;
+}) {
+  const { active, matches } = useSettingsSearch();
+  const count = matches.perTabCount.get(tab) ?? 0;
+  return (
+    <button
+      type="button"
+      className={`library-tab ${activeTab === tab ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
+      onClick={() => setActiveTab(tab)}
+    >
+      {TAB_LABELS[tab]}
+      {active && count > 0 && <span className="settings-tab-match-badge">{count}</span>}
+    </button>
+  );
+}
+
+function SearchClearOnTabSwitch({ tab }: { tab: SettingsTabId }) {
+  const { clear } = useSettingsSearch();
+  const prevRef = useRef(tab);
+  useEffect(() => {
+    if (prevRef.current !== tab) {
+      clear();
+      prevRef.current = tab;
+    }
+  }, [tab, clear]);
+  return null;
 }
 
 function useThemeId(): string {
@@ -2231,7 +2283,7 @@ function LibraryTab() {
     <div className="settings-tab-body" data-testid="settings-library-tab">
       <LibrarySyncSection />
 
-      <StandaloneCollapsibleSection title="OpenBoardData" storageKey="obd">
+      <StandaloneCollapsibleSection title="OpenBoardData" storageKey="obd" searchSectionId="obd">
         <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4, margin: '0 0 12px' }}>
           Per-net diagnostic measurements (diode / voltage / resistance) and repair notes from{' '}
           <a href="https://openboarddata.org" target="_blank" rel="noopener noreferrer">openboarddata.org</a>.

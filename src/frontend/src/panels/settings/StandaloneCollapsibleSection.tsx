@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useSectionSearchState } from './SettingsSearch';
+import type { SearchSectionId } from './search-index';
 
 /**
  * Self-managed collapsible section — same visual structure as the main
@@ -8,11 +10,15 @@ import { useState } from 'react';
  * routing needed).
  */
 export function StandaloneCollapsibleSection({
-  title, defaultOpen = true, storageKey, children,
+  title, defaultOpen = true, storageKey, searchSectionId, children,
 }: {
   title: string;
   defaultOpen?: boolean;
   storageKey: string;
+  /** Match against the static search index. When the active query targets
+   *  this section (or a control within it), the section auto-opens and
+   *  non-target sections hide. Omit to opt out of search integration. */
+  searchSectionId?: SearchSectionId;
   children: React.ReactNode;
 }) {
   const fullKey = `boardripper-settings-standalone-open-${storageKey}`;
@@ -24,6 +30,13 @@ export function StandaloneCollapsibleSection({
     } catch { /* ignore */ }
     return defaultOpen;
   });
+  const search = useSectionSearchState(searchSectionId ?? ('__none__' as SearchSectionId));
+  // When no searchSectionId given, opt out: never hidden by search, never
+  // force-opened.
+  const hidden = searchSectionId ? search.hidden : false;
+  const forceOpen = searchSectionId ? search.forceOpen : false;
+  if (hidden) return null;
+  const effectiveOpen = forceOpen || open;
   const toggle = () => {
     setOpen(prev => {
       const next = !prev;
@@ -35,9 +48,9 @@ export function StandaloneCollapsibleSection({
     <div className="settings-section">
       <button className="settings-section-header" onClick={toggle}>
         <span className="settings-section-title">{title}</span>
-        <span className="settings-section-chevron">{open ? '▾' : '▸'}</span>
+        <span className="settings-section-chevron">{effectiveOpen ? '▾' : '▸'}</span>
       </button>
-      {open && <div className="settings-section-body">{children}</div>}
+      {effectiveOpen && <div className="settings-section-body">{children}</div>}
     </div>
   );
 }

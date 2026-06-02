@@ -46,7 +46,7 @@ export function LibrarySyncSection() {
   if (electronMode) return null;
   if (!backendAvailable) {
     return (
-      <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync">
+      <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync" searchSectionId="library-sync">
         <div className="color-rule-hint">
           Backend not available. Start the Docker container to configure library sync.
         </div>
@@ -55,7 +55,7 @@ export function LibrarySyncSection() {
   }
 
   return (
-    <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync">
+    <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync" searchSectionId="library-sync">
       <SyncConfigCard />
       <SyncProgressCard />
       <SyncErrorsCard />

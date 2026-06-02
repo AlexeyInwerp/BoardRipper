@@ -1485,6 +1485,93 @@ html, body, #root {
   animation: section-focus-flash 1.4s ease;
 }
 
+/* --- Search bar --- */
+.settings-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 4px 0 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.settings-search-row:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg-secondary));
+}
+.settings-search-active {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.settings-search-icon {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  user-select: none;
+}
+.settings-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 2px 0;
+  min-width: 0;
+}
+.settings-search-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+.settings-search-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.settings-search-clear {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 3px;
+}
+.settings-search-clear:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+/* Matched row highlight */
+.settings-search-match {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 4px;
+  padding-left: 4px;
+  margin-left: -4px;
+}
+
+/* Tab pill match-count badge */
+.settings-tab-match-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 6px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.settings-tab-has-match:not(.active) {
+  border-bottom-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
 .settings-row {
   margin-bottom: 5px;
 }
