@@ -19,6 +19,7 @@ import {
   type SyncSchedule,
   type TargetCheck,
 } from '../store/librarysync-store';
+import { StandaloneCollapsibleSection } from './settings/StandaloneCollapsibleSection';
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -45,25 +46,22 @@ export function LibrarySyncSection() {
   if (electronMode) return null;
   if (!backendAvailable) {
     return (
-      <div className="settings-section">
-        <div className="settings-section-body">
-          <h3 style={{ margin: '0 0 8px' }}>Library Sync</h3>
-          <div className="color-rule-hint">
-            Backend not available. Start the Docker container to configure library sync.
-          </div>
+      <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync">
+        <div className="color-rule-hint">
+          Backend not available. Start the Docker container to configure library sync.
         </div>
-      </div>
+      </StandaloneCollapsibleSection>
     );
   }
 
   return (
-    <>
+    <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync">
       <SyncConfigCard />
       <SyncProgressCard />
       <SyncErrorsCard />
       <IndexingStatusCard />
       <UpdateStatusCard />
-    </>
+    </StandaloneCollapsibleSection>
   );
 }
 

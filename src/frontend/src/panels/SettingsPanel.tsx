@@ -3,6 +3,7 @@ import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import { colorToHex, hexToColor } from '../store/layer-store';
+import { StandaloneCollapsibleSection } from './settings/StandaloneCollapsibleSection';
 import type { RenderSettings, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import type { MockupSectionId } from './SettingsMockup';
@@ -2230,52 +2231,49 @@ function LibraryTab() {
     <div className="settings-tab-body" data-testid="settings-library-tab">
       <LibrarySyncSection />
 
-      <div className="settings-section">
-        <div className="settings-section-body">
-          <h3 style={{ margin: '0 0 8px' }}>OpenBoardData</h3>
-          <p style={{ fontSize: 12, color: '#888', lineHeight: 1.4, margin: '0 0 12px' }}>
-            Per-net diagnostic measurements (diode / voltage / resistance) and repair notes from{' '}
-            <a href="https://openboarddata.org" target="_blank" rel="noopener noreferrer">openboarddata.org</a>.
-            Data is community-contributed under the <strong>ODbL 1.0</strong> license. BoardRipper does not bundle this data;
-            you fetch it on demand. Re-distribution requires keeping the same license — see{' '}
-            <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener noreferrer">
-              the license terms
-            </a>.
-          </p>
+      <StandaloneCollapsibleSection title="OpenBoardData" storageKey="obd">
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4, margin: '0 0 12px' }}>
+          Per-net diagnostic measurements (diode / voltage / resistance) and repair notes from{' '}
+          <a href="https://openboarddata.org" target="_blank" rel="noopener noreferrer">openboarddata.org</a>.
+          Data is community-contributed under the <strong>ODbL 1.0</strong> license. BoardRipper does not bundle this data;
+          you fetch it on demand. Re-distribution requires keeping the same license — see{' '}
+          <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener noreferrer">
+            the license terms
+          </a>.
+        </p>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-            <button
-              onClick={() => obd.syncIndex()}
-              disabled={obd.syncing}
-              data-testid="obd-sync-btn"
-            >
-              {obd.syncing ? 'Syncing…' : 'Sync OBD index'}
-            </button>
-            <span style={{ fontSize: 12, color: '#888' }}>
-              {obd.indexSynced
-                ? `Last synced: ${obd.indexSyncedAt} · ${obd.indexBoardCount} boards`
-                : 'Never synced'}
-            </span>
-          </div>
-          {obd.error && (
-            <div style={{ color: '#c33', fontSize: 12, marginBottom: 8 }}>{obd.error}</div>
-          )}
-
-          <div style={{ marginTop: 12 }}>
-            {!confirming ? (
-              <button onClick={() => setConfirming(true)}>Delete all OBD data</button>
-            ) : (
-              <span>
-                <strong>Are you sure?</strong>{' '}
-                <button onClick={async () => { await obd.clearCache(); setConfirming(false); }}>
-                  Yes, delete
-                </button>{' '}
-                <button onClick={() => setConfirming(false)}>Cancel</button>
-              </span>
-            )}
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <button
+            onClick={() => obd.syncIndex()}
+            disabled={obd.syncing}
+            data-testid="obd-sync-btn"
+          >
+            {obd.syncing ? 'Syncing…' : 'Sync OBD index'}
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            {obd.indexSynced
+              ? `Last synced: ${obd.indexSyncedAt} · ${obd.indexBoardCount} boards`
+              : 'Never synced'}
+          </span>
         </div>
-      </div>
+        {obd.error && (
+          <div style={{ color: '#c33', fontSize: 12, marginBottom: 8 }}>{obd.error}</div>
+        )}
+
+        <div style={{ marginTop: 12 }}>
+          {!confirming ? (
+            <button onClick={() => setConfirming(true)}>Delete all OBD data</button>
+          ) : (
+            <span>
+              <strong>Are you sure?</strong>{' '}
+              <button onClick={async () => { await obd.clearCache(); setConfirming(false); }}>
+                Yes, delete
+              </button>{' '}
+              <button onClick={() => setConfirming(false)}>Cancel</button>
+            </span>
+          )}
+        </div>
+      </StandaloneCollapsibleSection>
     </div>
   );
 }
