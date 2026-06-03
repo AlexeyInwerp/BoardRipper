@@ -1,5 +1,14 @@
 # BoardRipper changelog
 
+## v0.31.8 — 2026-06-03
+
+PDF open path broken on older browsers — single-edit hotfix to the
+vendored pdf.js worker.
+
+### Fixes
+
+- **PDF `loadFile failed: hashOriginal.toHex is not a function` on Chrome < 136 / Firefox < 132 / Safari < 18 and legacy Electron forks.** pdf.js 5.5 calls `Uint8Array.prototype.toHex` (Chrome 136+) directly inside the worker's `fingerprints` getter, and `Map.prototype.getOrInsertComputed` (Chrome 134+) in 5 places across font/AcroForm/XFA caches. The main-thread polyfills in `pdf-store.ts` don't cross the Web Worker isolation boundary, so every PDF open crashed on those clients. The vendored-pdf.js patch (`patches/pdfjs-dist+5.5.207.patch`) now prepends an idempotent shim block to `pdf.worker.mjs` covering both methods. Electron and modern Chromium are unaffected (the `typeof !== 'function'` guard keeps native impls). Sixth edit added to the existing patch; `patches/README.md` updated.
+
 ## v0.31.7 — 2026-06-03
 
 Settings panel cleanup pass plus a new global search inside Settings.

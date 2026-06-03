@@ -43,10 +43,39 @@ index bd28128..f379689 100644
      const reader = readableStream.getReader();
      const intentState = this._intentStates.get(cacheKey);
 diff --git a/node_modules/pdfjs-dist/build/pdf.worker.mjs b/node_modules/pdfjs-dist/build/pdf.worker.mjs
-index cdac8ab..bc27663 100644
+index cdac8ab..df56aad 100644
 --- a/node_modules/pdfjs-dist/build/pdf.worker.mjs
 +++ b/node_modules/pdfjs-dist/build/pdf.worker.mjs
-@@ -35476,8 +35476,17 @@ class PartialEvaluator {
+@@ -24,6 +24,28 @@
+  * pdfjsVersion = 5.5.207
+  * pdfjsBuild = 527964698
+  */
++// BoardRipper: ES2025 shims for the worker context. pdf.js 5.5 calls
++// Uint8Array.prototype.toHex (Chrome 136+) and Map.prototype.getOrInsertComputed
++// (Chrome 134+) directly. The main-thread polyfills in pdf-store.ts don't
++// cross the Worker boundary, so older Chromium/Firefox/Safari and legacy
++// Electron forks crash with `hashOriginal.toHex is not a function` in the
++// fingerprints getter, and `getOrInsertComputed is not a function` in font
++// caching. See src/frontend/patches/README.md.
++if (typeof Uint8Array.prototype.toHex !== 'function') {
++  Uint8Array.prototype.toHex = function () {
++    let hex = '';
++    for (let i = 0; i < this.length; i++) hex += this[i].toString(16).padStart(2, '0');
++    return hex;
++  };
++}
++if (typeof Map.prototype.getOrInsertComputed !== 'function') {
++  Map.prototype.getOrInsertComputed = function (key, cb) {
++    if (this.has(key)) return this.get(key);
++    const v = cb(key);
++    this.set(key, v);
++    return v;
++  };
++}
+ /******/ // The require scope
+ /******/ var __webpack_require__ = {};
+ /******/ 
+@@ -35476,8 +35498,17 @@ class PartialEvaluator {
      operatorList,
      initialState = null,
      fallbackFontDict = null,
@@ -65,7 +94,7 @@ index cdac8ab..bc27663 100644
      if (stream.isAsync) {
        const bytes = await stream.asyncGetBytes();
        if (bytes) {
-@@ -35969,6 +35978,65 @@ class PartialEvaluator {
+@@ -35969,6 +36000,65 @@ class PartialEvaluator {
                }
              }
          }
@@ -131,7 +160,7 @@ index cdac8ab..bc27663 100644
          operatorList.addOp(fn, args);
        }
        if (stop) {
-@@ -58735,7 +58803,9 @@ class Page {
+@@ -58735,7 +58825,9 @@ class Page {
      cacheKey,
      pageIndex = this.pageIndex,
      annotationStorage = null,
@@ -142,7 +171,7 @@ index cdac8ab..bc27663 100644
    }) {
      const contentStreamPromise = this.getContentStream();
      const resourcesPromise = this.loadResources(RESOURCES_KEYS_OPERATOR_LIST);
-@@ -58793,7 +58863,9 @@ class Page {
+@@ -58793,7 +58885,9 @@ class Page {
          stream: contentStream,
          task,
          resources,
@@ -153,7 +182,7 @@ index cdac8ab..bc27663 100644
        });
        return opList;
      });
-@@ -62955,7 +63027,9 @@ class WorkerMessageHandler {
+@@ -62955,7 +63049,9 @@ class WorkerMessageHandler {
            cacheKey: data.cacheKey,
            annotationStorage: data.annotationStorage,
            modifiedIds: data.modifiedIds,

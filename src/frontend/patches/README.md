@@ -38,12 +38,13 @@ time, before they enter the operator stream. Net effect:
   directly and runs `isPdfWatermarkText`) is unaffected — watermark text
   remains *unselectable* but the glyphs are gone
 
-**Five edits across two files:**
+**Six edits across two files:**
 
 | File | Site | What changes |
 |---|---|---|
 | `build/pdf.mjs` | `PDFPageProxy.render(...)` | Accept a `watermarkFilter: string[] \| null` option and attach it to `intentArgs` before `_pumpOperatorList` runs. |
 | `build/pdf.mjs` | `_pumpOperatorList(...)` | Forward `watermarkFilter` in the `GetOperatorList` worker message. |
+| `build/pdf.worker.mjs` | top of file | Worker-context shims for `Uint8Array.prototype.toHex` and `Map.prototype.getOrInsertComputed`. pdf.js 5.5 calls both directly (`fingerprints` getter, font caches, AcroForm, XFA — 6 call sites total). Main-thread polyfills in `pdf-store.ts` don't cross the Worker boundary, so older Chromium/Firefox/Safari and legacy Electron forks crash with `hashOriginal.toHex is not a function` on PDF open. Idempotent (`typeof !== 'function'` guard) so we don't shadow native impls on Chrome 136+. |
 | `build/pdf.worker.mjs` | `handler.on("GetOperatorList", ...)` | Read `data.watermarkFilter` and pass it into `page.getOperatorList(...)`. |
 | `build/pdf.worker.mjs` | `Page.prototype.getOperatorList(...)` | Forward `watermarkFilter` into the `PartialEvaluator.getOperatorList(...)` call. |
 | `build/pdf.worker.mjs` | `PartialEvaluator.prototype.getOperatorList(...)` | Accept `watermarkFilter`, stash it on `this`, and right before `operatorList.addOp(fn, args)` check whether `fn === OPS.showText` and the reconstructed glyph string substring-matches any term. If so, `continue` instead of emitting the op. |
