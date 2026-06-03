@@ -1,5 +1,29 @@
 # BoardRipper changelog
 
+## v0.31.7 — 2026-06-03
+
+Settings panel cleanup pass plus a new global search inside Settings.
+Mechanical-part auto-detection extended and made calmer. Desktop
+artifacts now mirror to ripperdoc.de alongside the landing-page rework.
+
+### Features
+
+- **Settings search.** Top-of-panel filter box (or press `/` to focus) that lives-filters every Slider, Toggle, section heading, and subsection by label + tooltip + curated keyword synonyms. Tab pills show per-tab match counts so cross-tab discovery works; sections with no matches hide; sections matched by name auto-open and show all their controls. Esc or the ✕ button clears. (`95fb2a7`, `fa2781f`)
+- **Net-line colour chain.** Net Lines section exposes the primary and chain-adjacent colours as a two-swatch row `[primary] → [adjacent]`. Both fields were already read by the renderer but had no UI. (`27dae0e`)
+- **Min Label Size — single slider.** The four-control "Active Size S/M/L + three tier sliders" apparatus collapses to one "Min Label Size" floor. Migration picks whichever tier was active and assigns its value to the new field so previously-tuned settings carry across the upgrade. (`2db9073`)
+- **Mechanical parts: auto-skip body fill.** EMI shields, heatsink frames, and oversized through-hole connector shadows are now auto-detected (footprint contains ≥5 other component origins, description mentions SHIELD/HEATSINK/FRAME, or trailing-dot duplicate set) and rendered without a body fill so the smaller components beneath stay visible. Border outline and pins still draw normally. Right-click any part for a per-component override. `PARSER_VERSION` bumped so stale IndexedDB caches don't hide the change. (`ca318e9`, `a5eebe8`, `415b4de`)
+
+### Cleanup
+
+- **Settings tooltips and section labels.** Label Atlas Resolution default tooltip fixed (8, not 12). PDF Pan Boundaries default tooltip fixed (true, not OFF) — and the toggle moves out of [Debug] into PDF Viewer ▸ Navigation. "Pin Colors by Net" section renamed to **Pin Color Rules** so the name no longer collides with the new net-line colour chain. Dead `selectionHalo` field dropped. (`d0b9ebe`)
+- **Board fill controls united.** "Use board metadata color" toggle moves from Theme tab into Board ▸ Board Outline, sitting next to the Board Fill alpha slider it was already paired with semantically. (`d0b9ebe`)
+- **Library tab visual unification.** Library Folder & Database, Library Sync, and OpenBoardData now all use the same collapsible-chevron treatment instead of three different visual shapes. (`e53fd6c`)
+- **HomeBackdrop cache controls removed.** Settings is the single source for cache wipes; the Quick settings card no longer carries a parallel set of buttons. (`d0b9ebe`)
+
+### Infra
+
+- **Desktop zip mirror on ripperdoc.de + landing-page rework.** Desktop artifacts now publish to the public mirror alongside the signed update pipeline; landing page restructured for the new format. (`47154eb`)
+
 ## v0.31.6 — 2026-05-31
 
 Worklist gains first-class net support — pin a net to a worklist from
