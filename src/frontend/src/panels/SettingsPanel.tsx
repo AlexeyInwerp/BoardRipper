@@ -1553,7 +1553,6 @@ export function SettingsPanel() {
 
   return (
     <SettingsSearchProvider>
-      <SearchClearOnTabSwitch tab={activeTab} />
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
         {/* ── Cache control — prominent, quick-access ── */}
@@ -1996,17 +1995,6 @@ function TabPill({ tab, activeTab, setActiveTab }: {
   );
 }
 
-function SearchClearOnTabSwitch({ tab }: { tab: SettingsTabId }) {
-  const { clear } = useSettingsSearch();
-  const prevRef = useRef(tab);
-  useEffect(() => {
-    if (prevRef.current !== tab) {
-      clear();
-      prevRef.current = tab;
-    }
-  }, [tab, clear]);
-  return null;
-}
 
 function useThemeId(): string {
   return useSyncExternalStore(
