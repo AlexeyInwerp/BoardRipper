@@ -388,11 +388,42 @@ export function useKeyboardShortcuts() {
     document.addEventListener('keydown', handler);
     document.addEventListener('keydown', blockKeyboardZoom);
     document.addEventListener('wheel', blockBrowserZoom, { passive: false });
+
+    // Also attach to every Dockview popout window's document so shortcuts
+    // fire when focus is inside the detached PDF window. (2-window mode.)
+    // Popouts share the parent's JS context, so the same `handler` closure
+    // works — we just need it bound to the popout's document.
+    const popoutDocs = new Set<Document>();
+    const attachToPopout = (doc: Document) => {
+      if (popoutDocs.has(doc)) return;
+      doc.addEventListener('keydown', handler);
+      doc.addEventListener('mousemove', trackMouse, { passive: true });
+      popoutDocs.add(doc);
+    };
+    const detachFromPopout = (doc: Document) => {
+      doc.removeEventListener('keydown', handler);
+      doc.removeEventListener('mousemove', trackMouse);
+      popoutDocs.delete(doc);
+    };
+    const scanPopouts = () => {
+      const api = getDockviewApi();
+      if (!api) return;
+      for (const group of api.groups) {
+        if (group.api.location.type === 'popout') {
+          attachToPopout(group.api.location.getWindow().document);
+        }
+      }
+    };
+    scanPopouts();
+    const scanInterval = setInterval(scanPopouts, 500);
+
     return () => {
       document.removeEventListener('mousemove', trackMouse);
       document.removeEventListener('keydown', handler);
       document.removeEventListener('keydown', blockKeyboardZoom);
       document.removeEventListener('wheel', blockBrowserZoom);
+      clearInterval(scanInterval);
+      for (const doc of Array.from(popoutDocs)) detachFromPopout(doc);
     };
   }, []);
 }
