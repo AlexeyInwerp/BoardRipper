@@ -1,7 +1,14 @@
-import type { DockviewApi } from 'dockview-react';
+import type { DockviewApi, IDockviewPanel, DockviewGroupPanel } from 'dockview-react';
 import { log } from './log-store';
+import { isTwoWindowMode, setTwoWindowMode, onTwoWindowModeChange } from './two-window-mode';
+import { boardStore } from './board-store';
 
 let _api: DockviewApi | null = null;
+/** Re-entrancy guard: suppresses the mode-change side effect during the
+ *  popout-window-closed-by-user flow, which flips the flag itself and handles
+ *  re-add directly. Without this, the listener would also call
+ *  `collapsePdfPopout()` and try to close panels that are already closing. */
+let _modeListenerSuppressed = false;
 
 /** Re-entrancy guard for linked panel activation (board ↔ PDF) */
 let _linkActivating = false;
@@ -31,6 +38,14 @@ export function onAutoSwitchChange(fn: () => void): () => void {
 
 export function setDockviewApi(api: DockviewApi) {
   _api = api;
+  onTwoWindowModeChange(() => {
+    if (_modeListenerSuppressed) return;
+    if (isTwoWindowMode()) {
+      migrateOpenPdfsToPopout().catch(err => log.twoWindow.error('migrate failed:', err));
+    } else {
+      collapsePdfPopout();
+    }
+  });
 }
 
 // Dev hook: expose the dockview API on window so Playwright tests can read
@@ -110,6 +125,101 @@ export function pdfPanelId(fileName: string): string {
   return 'pdf-' + fileName.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+/** True if the panel currently lives in a Dockview popout window. */
+function isPanelInPopout(panel: IDockviewPanel): boolean {
+  return panel.api.location.type === 'popout';
+}
+
+/** Find the Dockview popout group that currently owns the open PDFs (if any). */
+export function findPopoutPdfGroup(): DockviewGroupPanel | null {
+  const api = getDockviewApi();
+  if (!api) return null;
+  for (const group of api.groups) {
+    if (group.api.location.type !== 'popout') continue;
+    if (group.panels.some(p => p.id.startsWith('pdf-'))) return group;
+  }
+  return null;
+}
+
+function pdfFileNameFromPanel(panel: IDockviewPanel): string | null {
+  const params = panel.params as { pdfFileName?: string } | undefined;
+  return params?.pdfFileName ?? null;
+}
+
+/** Mode OFF → ON: pop the docked PDFs out into a new window. */
+async function migrateOpenPdfsToPopout(): Promise<void> {
+  const api = getDockviewApi();
+  if (!api) return;
+  const docked = api.panels.filter(p => p.id.startsWith('pdf-') && !isPanelInPopout(p));
+  if (docked.length === 0) {
+    log.twoWindow.log('migrate: no docked PDFs (mode flag set; next PDF lazily creates popout)');
+    return;
+  }
+  const [first, ...rest] = docked;
+  const ok = await api.addPopoutGroup(first, {
+    onWillClose: () => { handlePopoutWillClose(); },
+  });
+  if (!ok) {
+    log.twoWindow.warn('addPopoutGroup blocked or failed — reverting mode');
+    _modeListenerSuppressed = true;
+    try { setTwoWindowMode(false); } finally { _modeListenerSuppressed = false; }
+    boardStore.addToast('Popup blocked — 2-window mode disabled. Allow popups for this site and try again.', 'error');
+    return;
+  }
+  const popout = findPopoutPdfGroup();
+  if (!popout) {
+    log.twoWindow.error('Popout opened but group not found in api.groups');
+    return;
+  }
+  for (const panel of rest) {
+    panel.api.moveTo({ group: popout });
+  }
+  log.twoWindow.log(`migrated ${docked.length} PDF(s) to popout`);
+}
+
+/** Mode ON → OFF: close popout PDFs, then re-add them via the docked path.
+ *  Closing the last panel in a popout group causes Dockview to close the
+ *  popout window. State (page/zoom/search) survives because pdfStore is
+ *  keyed by file name, not by panel instance. */
+function collapsePdfPopout(): void {
+  const api = getDockviewApi();
+  if (!api) return;
+  const popoutPdfs = api.panels.filter(p => p.id.startsWith('pdf-') && isPanelInPopout(p));
+  if (popoutPdfs.length === 0) {
+    log.twoWindow.log('collapse: no popout PDFs');
+    return;
+  }
+  const fileNames = popoutPdfs.map(pdfFileNameFromPanel).filter((n): n is string => !!n);
+  for (const panel of popoutPdfs) {
+    try { panel.api.close(); } catch (err) { log.twoWindow.warn('close failed:', err); }
+  }
+  // Re-add after Dockview drains the close events; mode flag is OFF here so
+  // the next ensurePdfPanel() routes via the docked path.
+  queueMicrotask(() => {
+    for (const fileName of fileNames) ensurePdfPanel(fileName);
+  });
+  log.twoWindow.log(`collapsed ${popoutPdfs.length} PDF(s) to main window`);
+}
+
+/** Popout is closing (OS close button, redock drag, or last panel closed). */
+function handlePopoutWillClose(): void {
+  const api = getDockviewApi();
+  if (!api) return;
+  const popoutPdfs = api.panels.filter(p => p.id.startsWith('pdf-') && isPanelInPopout(p));
+  const fileNames = popoutPdfs.map(pdfFileNameFromPanel).filter((n): n is string => !!n);
+  if (isTwoWindowMode()) {
+    log.twoWindow.log('popout closing — disabling 2-window mode');
+    // Flip without firing the listener (Dockview already closes the panels
+    // for us; collapsePdfPopout would just double-close).
+    _modeListenerSuppressed = true;
+    try { setTwoWindowMode(false); } finally { _modeListenerSuppressed = false; }
+  }
+  // Re-add the PDFs in the main window after Dockview drains its close events.
+  queueMicrotask(() => {
+    for (const fileName of fileNames) ensurePdfPanel(fileName);
+  });
+}
+
 export function worklistPanelId(): string { return 'worklist-panel'; }
 
 export function ensureWorklistPanel(): void {
@@ -145,14 +255,50 @@ export function ensureWorklistPanel(): void {
 }
 
 export function ensurePdfPanel(fileName: string): void {
-  try {
-    const api = getDockviewApi();
-    if (!api) return;
-    const id = pdfPanelId(fileName);
-    const existing = api.getPanel(id);
-    if (existing) {
-      existing.api.setActive();
-    } else {
+  (async () => {
+    try {
+      const api = getDockviewApi();
+      if (!api) return;
+      const id = pdfPanelId(fileName);
+      const existing = api.getPanel(id);
+      if (existing) {
+        existing.api.setActive();
+        return;
+      }
+
+      if (isTwoWindowMode()) {
+        const popoutGroup = findPopoutPdfGroup();
+        if (popoutGroup) {
+          // Popout already exists → drop a new tab into it.
+          api.addPanel({
+            id,
+            component: 'pdfViewer',
+            title: fileName,
+            params: { pdfFileName: fileName },
+            position: { referenceGroup: popoutGroup.id },
+          });
+          return;
+        }
+        // No popout yet → add the panel in main grid, then popout it. The
+        // briefly-visible main-grid placement is acceptable; the popout opens
+        // within ~50ms on the user-gesture path.
+        const tempPanel = api.addPanel({
+          id,
+          component: 'pdfViewer',
+          title: fileName,
+          params: { pdfFileName: fileName },
+        });
+        const ok = await api.addPopoutGroup(tempPanel, {
+          onWillClose: () => { handlePopoutWillClose(); },
+        });
+        if (!ok) {
+          log.twoWindow.warn('popup blocked — PDF left in main grid:', fileName);
+          boardStore.addToast('Popup blocked — PDF opened in main window. Click the 2-window button to retry.', 'error');
+        }
+        return;
+      }
+
+      // Mode OFF — original docked-placement logic.
       const existingPdf = api.panels.find(p => p.id.startsWith('pdf-'));
       api.addPanel({
         id,
@@ -171,10 +317,10 @@ export function ensurePdfPanel(fileName: string): void {
               };
             })(),
       });
+    } catch (err) {
+      log.ui.error('Failed to open PDF panel:', err);
     }
-  } catch (err) {
-    log.ui.error('Failed to open PDF panel:', err);
-  }
+  })();
 }
 
 /**
