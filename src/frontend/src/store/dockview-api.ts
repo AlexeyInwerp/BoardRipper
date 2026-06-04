@@ -51,6 +51,38 @@ export function setDockviewApi(api: DockviewApi) {
       collapsePdfPopout();
     }
   });
+  startThemeBridge();
+}
+
+// --- Theme bridge: mirror document.body.className into every popout window ---
+// Themes set classes on <body> (light/dark, accent, chrome). Popouts get their
+// own <body> from popout.html and don't inherit the class, so PixiJS-adjacent
+// CSS variables and dockview theme classes need to be re-applied each time
+// the theme changes or a new popout opens.
+let _themeObserver: MutationObserver | null = null;
+let _themeBridgeInterval: ReturnType<typeof setInterval> | null = null;
+
+function syncThemeToPopouts(): void {
+  const api = getDockviewApi();
+  if (!api) return;
+  const mainClass = document.body.className;
+  for (const group of api.groups) {
+    if (group.api.location.type !== 'popout') continue;
+    const popoutBody = group.api.location.getWindow().document.body;
+    if (popoutBody && popoutBody.className !== mainClass) {
+      popoutBody.className = mainClass;
+    }
+  }
+}
+
+function startThemeBridge(): void {
+  if (_themeObserver) return;
+  _themeObserver = new MutationObserver(() => syncThemeToPopouts());
+  _themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // Also re-sync periodically so newly opened popouts pick up the current theme
+  // even if no class change happened since they opened.
+  if (_themeBridgeInterval) clearInterval(_themeBridgeInterval);
+  _themeBridgeInterval = setInterval(syncThemeToPopouts, 500);
 }
 
 // Dev hook: expose the dockview API on window so Playwright tests can read
