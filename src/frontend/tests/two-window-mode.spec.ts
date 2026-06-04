@@ -127,6 +127,28 @@ test.describe('A. Toggle state machine', () => {
     expect(await pdfPanelCount(page, 'popout')).toBe(0);
   });
 
+  test('A4: OFF→ON with 2 PDFs docked — both end up in popout as tabs', async ({ page, context }) => {
+    await openMainPage(page);
+    await uploadPdf(page, 'a4-first.pdf');
+    await uploadPdf(page, 'a4-second.pdf');
+    expect(await pdfPanelCount(page, 'main')).toBe(2);
+
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      page.click('[data-testid="two-window-toggle"]'),
+    ]);
+    await popup.waitForLoadState('domcontentloaded');
+    // Wait for the synchronous moveTo loop to settle the second panel.
+    await page.waitForFunction(() => {
+      const api = (window as unknown as { __dockviewApi?: MinApi }).__dockviewApi;
+      if (!api) return false;
+      return api.panels.filter(p => p.id.startsWith('pdf-') && p.api.location.type === 'popout').length === 2;
+    }, { timeout: 5_000 });
+    expect(await popoutGroupCount(page)).toBe(1);
+    expect(await pdfPanelCount(page, 'main')).toBe(0);
+    expect(await pdfPanelCount(page, 'popout')).toBe(2);
+  });
+
   test('A6: 3 OFF↔ON round-trips leak no windows', async ({ page, context }) => {
     await openMainPage(page);
     await uploadPdf(page, 'a6.pdf');
@@ -242,6 +264,50 @@ test.describe('H. Persistence', () => {
     );
     const active = await page.locator('[data-testid="two-window-toggle"]').evaluate(el => el.classList.contains('active'));
     expect(active).toBe(false);
+  });
+});
+
+// ─── I. Mixed-group safety ─────────────────────────────────────────────────
+
+test.describe('I. Mixed-group safety', () => {
+  test('I24: non-PDF panel in a PDF group stays in main window on toggle ON', async ({ page, context }) => {
+    await openMainPage(page);
+    await uploadPdf(page, 'i24.pdf');
+
+    // Add a non-PDF panel (worklist) into the same group as the PDF, then
+    // toggle 2-window mode. Only the PDF should migrate; worklist stays put.
+    await page.evaluate(() => {
+      type AddOpts = { id: string; component: string; title: string; position?: { referencePanel: string } };
+      const api = (window as unknown as { __dockviewApi?: {
+        addPanel: (o: AddOpts) => unknown;
+        panels: { id: string }[];
+      } }).__dockviewApi;
+      if (!api) return;
+      const pdf = api.panels.find(p => p.id.startsWith('pdf-'));
+      if (!pdf) throw new Error('no pdf panel');
+      api.addPanel({
+        id: 'mixed-test-panel',
+        component: 'worklist',
+        title: 'Mixed test',
+        position: { referencePanel: pdf.id },
+      });
+    });
+
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      page.click('[data-testid="two-window-toggle"]'),
+    ]);
+    await popup.waitForLoadState('domcontentloaded');
+
+    const result = await page.evaluate(() => {
+      const api = (window as unknown as { __dockviewApi?: MinApi }).__dockviewApi;
+      if (!api) return null;
+      const mixed = api.panels.find(p => p.id === 'mixed-test-panel');
+      return mixed ? mixed.api.location.type : null;
+    });
+    expect(result).toBe('grid');
+    expect(await pdfPanelCount(page, 'popout')).toBe(1);
+    expect(await pdfPanelCount(page, 'main')).toBe(0);
   });
 });
 

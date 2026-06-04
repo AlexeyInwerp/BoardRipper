@@ -76,12 +76,14 @@ function syncThemeToPopouts(): void {
 }
 
 function startThemeBridge(): void {
+  // Clean up any prior bridge BEFORE the observer guard, so a setDockviewApi
+  // re-call (StrictMode double-mount, HMR) doesn't leave a stale interval.
+  if (_themeBridgeInterval) { clearInterval(_themeBridgeInterval); _themeBridgeInterval = null; }
   if (_themeObserver) return;
   _themeObserver = new MutationObserver(() => syncThemeToPopouts());
   _themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   // Also re-sync periodically so newly opened popouts pick up the current theme
   // even if no class change happened since they opened.
-  if (_themeBridgeInterval) clearInterval(_themeBridgeInterval);
   _themeBridgeInterval = setInterval(syncThemeToPopouts, 500);
 }
 
