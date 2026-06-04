@@ -291,6 +291,7 @@ function App() {
             components={components}
             tabComponents={tabComponents}
             disableFloatingGroups={false}
+            popoutUrl="popout.html"
           />
           <HomeBackdrop />
         </div>

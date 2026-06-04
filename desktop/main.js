@@ -185,6 +185,33 @@ function createWindow() {
     },
   });
 
+  // 2-Window Mode: Dockview pops out the PDF group via window.open(). Override
+  // child BrowserWindow options so the detached window has a sensible title,
+  // no menu bar, the BoardRipper icon, and the same preload as the main window.
+  // Without this handler, Electron's default child window has the application
+  // menu and a "BoardRipper" title (inherited from the loaded page title).
+  const childIconPath = path.join(__dirname, 'webapp', 'logo.svg');
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    log('INFO', `Popout requested: ${url}`);
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: 900,
+        height: 1200,
+        minWidth: 400,
+        minHeight: 400,
+        title: 'BoardRipper PDF',
+        autoHideMenuBar: true,
+        icon: fs.existsSync(childIconPath) ? childIconPath : undefined,
+        webPreferences: {
+          preload: preloadPath,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      },
+    };
+  });
+
   // Log renderer crashes — retry once with GPU disabled on launch failure
   let retried = false;
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
