@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
+import { IconAppWindow, IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
@@ -16,6 +16,7 @@ import { databankStore } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
+import { isTwoWindowMode, toggleTwoWindowMode, onTwoWindowModeChange } from '../store/two-window-mode';
 
 /** Dropdown showing release notes + update/download action */
 function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) {
@@ -278,6 +279,8 @@ export function Toolbar() {
   // pdfInputRef removed — single Open button + unified file picker now.
   const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis, rotation } = useBoardStore();
   const { electronMode } = useDatabank();
+  const [twoWindow, setTwoWindow] = useState(isTwoWindowMode());
+  useEffect(() => onTwoWindowModeChange(() => setTwoWindow(isTwoWindowMode())), []);
 
   // For files where the label convention is inverted (primarySide='bottom'),
   // the UI presents the physical CPU side as "Top". The store's showTop flag
@@ -373,6 +376,16 @@ export function Toolbar() {
           data-tooltip="Open Worklist sidebar tab (multi-select / mark / export)"
         >
           Worklist
+        </button>
+        <button
+          onClick={() => toggleTwoWindowMode()}
+          className={`toolbar-btn toolbar-btn-icon ${twoWindow ? 'active' : ''}`}
+          data-testid="two-window-toggle"
+          data-tooltip={twoWindow
+            ? '2-Window Mode ON — click to re-dock PDF'
+            : '2-Window Mode — detach PDF viewer to its own window'}
+        >
+          <IconAppWindow size={14} stroke={1.75} />
         </button>
       </div>
 
