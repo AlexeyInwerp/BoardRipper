@@ -9,6 +9,10 @@ let _api: DockviewApi | null = null;
  *  re-add directly. Without this, the listener would also call
  *  `collapsePdfPopout()` and try to close panels that are already closing. */
 let _modeListenerSuppressed = false;
+/** Unsubscribe from the mode-change listener registered in `setDockviewApi`.
+ *  StrictMode double-mount + Dockview's onReady can call setDockviewApi more
+ *  than once; without this guard, listeners pile up and toggles fire N×. */
+let _modeUnsubscribe: (() => void) | null = null;
 
 /** Re-entrancy guard for linked panel activation (board ↔ PDF) */
 let _linkActivating = false;
@@ -38,7 +42,8 @@ export function onAutoSwitchChange(fn: () => void): () => void {
 
 export function setDockviewApi(api: DockviewApi) {
   _api = api;
-  onTwoWindowModeChange(() => {
+  if (_modeUnsubscribe) { _modeUnsubscribe(); _modeUnsubscribe = null; }
+  _modeUnsubscribe = onTwoWindowModeChange(() => {
     if (_modeListenerSuppressed) return;
     if (isTwoWindowMode()) {
       migrateOpenPdfsToPopout().catch(err => log.twoWindow.error('migrate failed:', err));
@@ -163,7 +168,7 @@ async function migrateOpenPdfsToPopout(): Promise<void> {
     log.twoWindow.warn('addPopoutGroup blocked or failed — reverting mode');
     _modeListenerSuppressed = true;
     try { setTwoWindowMode(false); } finally { _modeListenerSuppressed = false; }
-    boardStore.addToast('Popup blocked — 2-window mode disabled. Allow popups for this site and try again.', 'error');
+    boardStore.addToast('Popup blocked — 2-window mode disabled. Allow popups for this site and try again.', 'info');
     return;
   }
   const popout = findPopoutPdfGroup();
@@ -193,11 +198,13 @@ function collapsePdfPopout(): void {
   for (const panel of popoutPdfs) {
     try { panel.api.close(); } catch (err) { log.twoWindow.warn('close failed:', err); }
   }
-  // Re-add after Dockview drains the close events; mode flag is OFF here so
-  // the next ensurePdfPanel() routes via the docked path.
-  queueMicrotask(() => {
+  // Re-add after Dockview drains close events + React renders. A microtask
+  // is too eager — `api.getPanel(id)` can still return the closing panel,
+  // making the new ensurePdfPanel() short-circuit to setActive() on a
+  // doomed panel. setTimeout(0) defers past the current task boundary.
+  setTimeout(() => {
     for (const fileName of fileNames) ensurePdfPanel(fileName);
-  });
+  }, 0);
   log.twoWindow.log(`collapsed ${popoutPdfs.length} PDF(s) to main window`);
 }
 
@@ -215,9 +222,9 @@ function handlePopoutWillClose(): void {
     try { setTwoWindowMode(false); } finally { _modeListenerSuppressed = false; }
   }
   // Re-add the PDFs in the main window after Dockview drains its close events.
-  queueMicrotask(() => {
+  setTimeout(() => {
     for (const fileName of fileNames) ensurePdfPanel(fileName);
-  });
+  }, 0);
 }
 
 export function worklistPanelId(): string { return 'worklist-panel'; }
@@ -293,7 +300,7 @@ export function ensurePdfPanel(fileName: string): void {
         });
         if (!ok) {
           log.twoWindow.warn('popup blocked — PDF left in main grid:', fileName);
-          boardStore.addToast('Popup blocked — PDF opened in main window. Click the 2-window button to retry.', 'error');
+          boardStore.addToast('Popup blocked — PDF opened in main window. Click the 2-window button to retry.', 'info');
         }
         return;
       }
