@@ -917,6 +917,7 @@ export function LibraryPanel() {
           onCreateBinding={handleCreateBinding}
           onUpdateBinding={handleUpdateBinding}
           onDeleteBinding={handleDeleteBinding}
+          electronMode={electronMode}
         />
       )}
 
@@ -1174,13 +1175,39 @@ function DonorToggle({ fileId }: { fileId: number }) {
   );
 }
 
-function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding }: {
+function useRevealLabel(): string {
+  const [platform, setPlatform] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI?.platform().then(p => { if (!cancelled) setPlatform(p); });
+    return () => { cancelled = true; };
+  }, []);
+  if (platform === 'darwin') return 'Show in Finder';
+  if (platform === 'win32') return 'Show in Explorer';
+  return 'Show in folder';
+}
+
+function RevealButton({ path }: { path: string }) {
+  const label = useRevealLabel();
+  return (
+    <button
+      className="library-detail-open library-detail-download"
+      onClick={() => { void window.electronAPI?.showItemInFolder(path); }}
+      title="Show file in the OS file browser"
+    >
+      {label}
+    </button>
+  );
+}
+
+function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding, electronMode }: {
   detail: FileDetail;
   files: DatabankFile[];
   onOpen: (f: DatabankFile) => void;
   onCreateBinding: (boardId: number, pdfId: number, category?: string, autoOpen?: boolean) => void;
   onUpdateBinding: (bindingId: number, patch: { category?: string; auto_open?: boolean }) => void;
   onDeleteBinding: (bindingId: number) => void;
+  electronMode: boolean;
 }) {
   const [showBindPicker, setShowBindPicker] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -1220,6 +1247,18 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         >
           Open
         </button>
+        {electronMode ? (
+          <RevealButton path={detail.path} />
+        ) : (
+          <a
+            className="library-detail-open library-detail-download"
+            href={`/api/files/path/${detail.path.split('/').map(encodeURIComponent).join('/')}?download=1`}
+            download={detail.filename}
+            title="Download file"
+          >
+            Download
+          </a>
+        )}
       </div>
 
       {detail.has_preview && (
