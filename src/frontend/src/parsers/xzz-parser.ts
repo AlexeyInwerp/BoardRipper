@@ -1,4 +1,4 @@
-import type { BoardData, Part, Pin, Nail, Point, Trace } from './types';
+import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
 import { log } from '../store/log-store';
@@ -196,6 +196,7 @@ function desDecrypt(buf: Uint8Array): Uint8Array {
 
 const XZZ_SCALE  = 10000;
 const OUTLINE_LAYER = 28;
+const SILKSCREEN_LAYER = 17;
 const decoder = new TextDecoder('utf-8', { fatal: false });
 
 interface Segment { p1: Point; p2: Point; }
@@ -946,6 +947,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // Raw trace segments collected by source layer id. We assign 0-based
   // Trace.layer indices after we've seen every layer the file uses.
   const rawTraces: Array<{ rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number }> = [];
+  // Silkscreen segments — XZZ rawLayer 17. Routed here instead of into
+  // rawTraces so the renderer's Silkscreen overlay (same toggle Allegro uses)
+  // gets them with neutral styling rather than per-net trace coloring.
+  const silkSegments: Segment[] = [];
 
   while (ptr + 5 <= mainEnd && ptr + 5 <= raw.length) {
     const blockType = raw[ptr]; ptr += 1;
@@ -991,9 +996,18 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
               p2: { x: cx + r * Math.cos(t1), y: cy + r * Math.sin(t1) },
             });
           }
-        } else if (layer >= 1 && layer <= 17) {
-          // Trace arc on a copper / silkscreen / mask layer — linearize into
-          // trace segments with the arc's width + net-index attached.
+        } else if (layer === SILKSCREEN_LAYER) {
+          // Silkscreen arc — linearize and route to the silkscreen overlay.
+          let px = cx + r * Math.cos(sRad), py = cy + r * Math.sin(sRad);
+          for (let i = 1; i <= N; i++) {
+            const t = sRad + (eRad - sRad) * i / N;
+            const nx = cx + r * Math.cos(t), ny = cy + r * Math.sin(t);
+            silkSegments.push({ p1: { x: px, y: py }, p2: { x: nx, y: ny } });
+            px = nx; py = ny;
+          }
+        } else if (layer >= 1 && layer <= 16) {
+          // Trace arc on a copper / mask layer — linearize into trace segments
+          // with the arc's width + net-index attached.
           let px = cx + r * Math.cos(sRad), py = cy + r * Math.sin(sRad);
           for (let i = 1; i <= N; i++) {
             const t = sRad + (eRad - sRad) * i / N;
@@ -1013,7 +1027,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         const y2 = ri32(blockData, 16) / XZZ_SCALE;
         if (layer === OUTLINE_LAYER) {
           segments.push({ p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 } });
-        } else if (layer >= 1 && layer <= 17) {
+        } else if (layer === SILKSCREEN_LAYER) {
+          silkSegments.push({ p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 } });
+        } else if (layer >= 1 && layer <= 16) {
           const width    = blockData.length >= 24 ? ru32(blockData, 20) / XZZ_SCALE : 0;
           const netIndex = blockData.length >= 28 ? ru32(blockData, 24) : 0;
           rawTraces.push({ rawLayer: layer, x1, y1, x2, y2, width, netIndex });
@@ -1082,6 +1098,17 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (!isBottom) continue;
       if (fold.dim === 'x') v.x = 2 * fold.axis - v.x;
       else                  v.y = 2 * fold.axis - v.y;
+    }
+    // Silkscreen segments — classify by midpoint, same as traces.
+    for (const s of silkSegments) {
+      const mid = fold.dim === 'x' ? (s.p1.x + s.p2.x) / 2 : (s.p1.y + s.p2.y) / 2;
+      const isBottom = fold.lowerIsBottom ? mid < fold.axis : mid > fold.axis;
+      if (!isBottom) continue;
+      if (fold.dim === 'x') {
+        s.p1.x = 2 * fold.axis - s.p1.x; s.p2.x = 2 * fold.axis - s.p2.x;
+      } else {
+        s.p1.y = 2 * fold.axis - s.p1.y; s.p2.y = 2 * fold.axis - s.p2.y;
+      }
     }
     // Keep only the "top" half of the outline (discard the bottom half).
     const segsBefore = segments.length;
@@ -1242,6 +1269,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         for (const tp of testPads) tp.x = -tp.x;
         for (const vd of viasRaw) vd.x = -vd.x;
         for (const s of segments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
+        for (const s of silkSegments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
         for (const t of rawTraces) { t.x1 = -t.x1; t.x2 = -t.x2; }
         for (const s of rawSegmentsSnapshot) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
         for (const fc of foldComponents) {
@@ -1253,6 +1281,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         for (const tp of testPads) tp.y = -tp.y;
         for (const vd of viasRaw) vd.y = -vd.y;
         for (const s of segments) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
+        for (const s of silkSegments) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
         for (const t of rawTraces) { t.y1 = -t.y1; t.y2 = -t.y2; }
         for (const s of rawSegmentsSnapshot) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
         for (const fc of foldComponents) {
@@ -1285,6 +1314,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
   for (const vd of viasRaw)  { vd.x -= minX; vd.y -= minY; }
+  for (const s of silkSegments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
   for (const t of rawTraces) { t.x1 -= minX; t.y1 -= minY; t.x2 -= minX; t.y2 -= minY; }
   for (const s of rawSegmentsSnapshot) {
     s.p1.x -= minX; s.p1.y -= minY;
@@ -1344,6 +1374,26 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     };
   });
 
+  // Build silkscreen paths. Chain connected segments into polylines, then
+  // split on NaN sentinels back into one SilkscreenPath per component. XZZ
+  // doesn't tag silkscreen with a side, so everything goes on 'top'; the
+  // renderer's per-side toggles hide it together with the rest of the top
+  // overlay if the user wants bottom-only.
+  const silkscreen: SilkscreenPath[] = [];
+  if (silkSegments.length > 0) {
+    const chained = chainByComponent(silkSegments);
+    let cur: Point[] = [];
+    for (const p of chained) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+        if (cur.length >= 2) silkscreen.push({ points: cur, side: 'top' });
+        cur = [];
+      } else {
+        cur.push({ x: p.x, y: p.y });
+      }
+    }
+    if (cur.length >= 2) silkscreen.push({ points: cur, side: 'top' });
+  }
+
   // Build multi-layer trace data. XZZ layer IDs observed in the wild: 1–7
   // are copper signal layers, 16 is solder mask, 17 is silkscreen, 28 is the
   // board outline (handled as polygon above). The raw ID → 0-based index
@@ -1387,6 +1437,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   if (vias.length > 0) {
     log.parser.log(`(pcb vias) ${vias.length} vias`);
   }
+  if (silkscreen.length > 0) {
+    log.parser.log(`(pcb silkscreen) ${silkscreen.length} paths from ${silkSegments.length} segments`);
+  }
 
   const foldInfo = fold ? {
     dim: fold.dim,
@@ -1406,6 +1459,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     butterflyFoldAxis: fold?.dim,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
+    silkscreen: silkscreen.length > 0 ? silkscreen : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     rawOutline,
     foldComponents,
