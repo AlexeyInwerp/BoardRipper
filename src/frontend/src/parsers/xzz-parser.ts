@@ -555,6 +555,37 @@ function parseTestPadBlock(data: Uint8Array): TestPadData | null {
   return { x, y, netIndex };
 }
 
+interface ViaData { x: number; y: number; outer: number; netIndex: number; }
+
+/**
+ * XZZ via block (block-type 0x02). 32-byte fixed layout, 8×i32 LE:
+ *   [0..4)   i32  x          (÷10000 = mils)
+ *   [4..8)   i32  y
+ *   [8..12)  u32  outer/pad annular-ring diameter (÷10000 = mils)
+ *   [12..16) u32  drill diameter (÷10000 = mils)  — unused, the renderer
+ *                                                   derives drill as a fixed
+ *                                                   ratio of the pad ring.
+ *   [16..20) u32  layer-from / flag (always 1 in surveyed Apple files)
+ *   [20..24) u32  layer-to   / flag (always 5 in surveyed Apple files)
+ *   [24..28) u32  net index  (matches netDict)
+ *   [28..32) u32  padding
+ *
+ * Surveyed on A2442 820-02098-A (17,273 vias). Coordinate space matches the
+ * part / segment blocks. The layer-pair fields stay flag-coded (1, 5) on every
+ * via sampled — without a board exposing real blind/buried stack-ups we can't
+ * confirm whether they're [from, to] or constant. Treat as through-hole and
+ * leave `Via.layers` empty until counter-evidence appears.
+ */
+function parseViaBlock(data: Uint8Array): ViaData | null {
+  if (data.length < 28) return null;
+  const x         = ri32(data, 0)  / XZZ_SCALE;
+  const y         = ri32(data, 4)  / XZZ_SCALE;
+  const outer     = ru32(data, 8)  / XZZ_SCALE;
+  // drill at offset 12, layer-from/to at 16/20 — unused for now
+  const netIndex  = ru32(data, 24);
+  return { x, y, outer, netIndex };
+}
+
 interface FoldResult {
   axis: number;
   dim: 'x' | 'y';
@@ -911,6 +942,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   const segments: Segment[] = [];
   const partDataList: PartData[] = [];
   const testPads: TestPadData[] = [];
+  const viasRaw: ViaData[] = [];
   // Raw trace segments collected by source layer id. We assign 0-based
   // Trace.layer indices after we've seen every layer the file uses.
   const rawTraces: Array<{ rawLayer: number; x1: number; y1: number; x2: number; y2: number; width: number; netIndex: number }> = [];
@@ -923,6 +955,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     ptr += blockSize;
 
     switch (blockType) {
+      case 0x02: { // Via (drill + annular ring + net)
+        const v = parseViaBlock(blockData);
+        if (v) viasRaw.push(v);
+        break;
+      }
       case 0x01: { // Arc — 8×u32: layer, cx, cy, r, angStart, angEnd, width, netIdx
         if (blockData.length < 24) break;
         const layer = ru32(blockData, 0);
@@ -1037,6 +1074,14 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         t.y1 = 2 * fold.axis - t.y1;
         t.y2 = 2 * fold.axis - t.y2;
       }
+    }
+    // Vias use a single point — classify by it directly.
+    for (const v of viasRaw) {
+      const c = fold.dim === 'x' ? v.x : v.y;
+      const isBottom = fold.lowerIsBottom ? c < fold.axis : c > fold.axis;
+      if (!isBottom) continue;
+      if (fold.dim === 'x') v.x = 2 * fold.axis - v.x;
+      else                  v.y = 2 * fold.axis - v.y;
     }
     // Keep only the "top" half of the outline (discard the bottom half).
     const segsBefore = segments.length;
@@ -1195,6 +1240,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       if (axis === 'x') {
         for (const pd of partDataList) for (const p of pd.pins) p.x = -p.x;
         for (const tp of testPads) tp.x = -tp.x;
+        for (const vd of viasRaw) vd.x = -vd.x;
         for (const s of segments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
         for (const t of rawTraces) { t.x1 = -t.x1; t.x2 = -t.x2; }
         for (const s of rawSegmentsSnapshot) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
@@ -1205,6 +1251,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       } else {
         for (const pd of partDataList) for (const p of pd.pins) p.y = -p.y;
         for (const tp of testPads) tp.y = -tp.y;
+        for (const vd of viasRaw) vd.y = -vd.y;
         for (const s of segments) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
         for (const t of rawTraces) { t.y1 = -t.y1; t.y2 = -t.y2; }
         for (const s of rawSegmentsSnapshot) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
@@ -1237,6 +1284,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   for (const s of segments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
   for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
+  for (const vd of viasRaw)  { vd.x -= minX; vd.y -= minY; }
   for (const t of rawTraces) { t.x1 -= minX; t.y1 -= minY; t.x2 -= minX; t.y2 -= minY; }
   for (const s of rawSegmentsSnapshot) {
     s.p1.x -= minX; s.p1.y -= minY;
@@ -1281,6 +1329,21 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     return { position: { x: tp.x, y: tp.y }, side: 'top' as const, net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
   });
 
+  // Build vias from 0x02 blocks. `layers: []` = through-hole — the 0x02
+  // layer-pair fields are flag-coded (1, 5) on every surveyed Apple file with
+  // no observed variance, so we can't reliably decode blind/buried stack-ups
+  // yet. The renderer's via-overlay matches connected layers to nearby trace
+  // endpoints regardless of `layers`, so empty here is safe.
+  const vias = viasRaw.map(v => {
+    const raw2 = netDict.get(v.netIndex) ?? '';
+    return {
+      position: { x: v.x, y: v.y },
+      diameter: v.outer,
+      net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2,
+      layers: [] as number[],
+    };
+  });
+
   // Build multi-layer trace data. XZZ layer IDs observed in the wild: 1–7
   // are copper signal layers, 16 is solder mask, 17 is silkscreen, 28 is the
   // board outline (handled as polygon above). The raw ID → 0-based index
@@ -1321,6 +1384,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   if (traces.length > 0) {
     log.parser.log(`(pcb traces) ${traces.length} segments across ${layerNames.length} layer(s): ${layerNames.join(', ')}`);
   }
+  if (vias.length > 0) {
+    log.parser.log(`(pcb vias) ${vias.length} vias`);
+  }
 
   const foldInfo = fold ? {
     dim: fold.dim,
@@ -1339,6 +1405,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim,
     traces: traces.length > 0 ? traces : undefined,
+    vias: vias.length > 0 ? vias : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     rawOutline,
     foldComponents,
