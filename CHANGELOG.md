@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.31.10 — 2026-06-05
+
+Hotfix for v0.31.9 — opening a PDF while 2-Window Mode was already on
+silently added it to the popout but didn't raise the popout window, so
+the user looking at the main window saw nothing happen.
+
+### Fixes
+
+- **2-Window Mode: focus the popout when adding a PDF to an existing group.** When mode is ON and a popout already exists, `ensurePdfPanel` correctly drops the new panel into the popout group as the active tab — but Chromium does not raise the popout's window automatically, so the user sees no visible change in the main window and concludes the open didn't work. Fixed by calling `popoutGroup.api.location.getWindow().focus()` after the addPanel call. The lazy-popout path (no existing popout) already raises naturally via `window.open()`. Added E2E B8 covering "second PDF while popout exists" with an active-tab assertion. (`ba82ddf`)
+
 ## v0.31.9 — 2026-06-05
 
 2-Window Mode: a single toolbar toggle that pops the entire PDF group
