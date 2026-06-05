@@ -157,3 +157,67 @@ func TestGet_RejectsTraversal(t *testing.T) {
 		t.Error("path traversal should be rejected")
 	}
 }
+
+func TestGet_DefaultsToInline(t *testing.T) {
+	root := t.TempDir()
+	h := NewFileHandler(root, func() string { return root }, nil)
+	if err := os.WriteFile(filepath.Join(root, "test.bvr"), []byte("BVRAW_FORMAT_3\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	req := httptest.NewRequest("GET", "/api/files/test.bvr", nil)
+	req.SetPathValue("name", "test.bvr")
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	got := w.Header().Get("Content-Disposition")
+	want := `inline; filename="test.bvr"`
+	if got != want {
+		t.Errorf("Content-Disposition: got %q, want %q", got, want)
+	}
+}
+
+func TestGet_DownloadQueryFlipsToAttachment(t *testing.T) {
+	root := t.TempDir()
+	h := NewFileHandler(root, func() string { return root }, nil)
+	if err := os.WriteFile(filepath.Join(root, "test.bvr"), []byte("BVRAW_FORMAT_3\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	req := httptest.NewRequest("GET", "/api/files/test.bvr?download=1", nil)
+	req.SetPathValue("name", "test.bvr")
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	got := w.Header().Get("Content-Disposition")
+	want := `attachment; filename="test.bvr"`
+	if got != want {
+		t.Errorf("Content-Disposition: got %q, want %q", got, want)
+	}
+}
+
+func TestGetByPath_DownloadQueryFlipsToAttachment(t *testing.T) {
+	root := t.TempDir()
+	h := NewFileHandler(root, func() string { return root }, nil)
+	subDir := filepath.Join(root, "boards")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "a.brd"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	req := httptest.NewRequest("GET", "/api/files/path/boards/a.brd?download=1", nil)
+	req.SetPathValue("path", "boards/a.brd")
+	w := httptest.NewRecorder()
+	h.GetByPath(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	got := w.Header().Get("Content-Disposition")
+	want := `attachment; filename="a.brd"`
+	if got != want {
+		t.Errorf("Content-Disposition: got %q, want %q", got, want)
+	}
+}
