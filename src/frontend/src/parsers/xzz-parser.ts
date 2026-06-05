@@ -476,7 +476,8 @@ function parseNetBlock(data: Uint8Array): Map<number, string> {
 }
 
 interface PinData { name: string; x: number; y: number; netIndex: number; }
-interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; }
+interface PartSilkLine { x1: number; y1: number; x2: number; y2: number; }
+interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[]; }
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
   const FAIL = { pin: { name: '', x: 0, y: 0, netIndex: 0 }, next: data.length };
@@ -515,11 +516,35 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   ptr += nameLen;
 
   const pins: PinData[] = [];
+  const silkLines: PartSilkLine[] = [];
   const endPtr = partSize + 4;
   while (ptr < endPtr && ptr < data.length) {
     const subType = data[ptr]; ptr += 1;
     switch (subType) {
-      case 0x01: case 0x05: case 0x06:
+      case 0x05: {
+        // Per-part line on a sub-layer. Layout matches the top-level 0x05
+        // (Line) block: 7×u32 = layer, x1, y1, x2, y2, width, netIdx. Apple
+        // files use this to draw the part body outline (4 segments forming a
+        // rectangle) on layer 17 (silkscreen). Surveyed on A2442:
+        //   sub-block counts per big part: 0x05=4 0x06=1 0x09=N
+        //   layer always = 17, width = 1.0 mil.
+        if (ptr + 4 > data.length) { ptr = endPtr; break; }
+        const sz = ru32(data, ptr); ptr += 4;
+        if (ptr + sz > data.length) { ptr = endPtr; break; }
+        if (sz >= 20) {
+          const layer = ru32(data, ptr);
+          if (layer === SILKSCREEN_LAYER) {
+            const x1 = ri32(data, ptr + 4)  / XZZ_SCALE;
+            const y1 = ri32(data, ptr + 8)  / XZZ_SCALE;
+            const x2 = ri32(data, ptr + 12) / XZZ_SCALE;
+            const y2 = ri32(data, ptr + 16) / XZZ_SCALE;
+            silkLines.push({ x1, y1, x2, y2 });
+          }
+        }
+        ptr += sz;
+        break;
+      }
+      case 0x01: case 0x06:
         if (ptr + 4 > data.length) { ptr = endPtr; break; }
         ptr += ru32(data, ptr) + 4;
         break;
@@ -539,7 +564,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
     }
   }
   if (!partName) return null;
-  return { name: partName, side: 'top', pins, groupName };
+  return { name: partName, side: 'top', pins, groupName, silkLines };
 }
 
 interface TestPadData { x: number; y: number; netIndex: number; }
@@ -1070,8 +1095,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         pd.side = 'bottom';
         if (fold.dim === 'x') {
           for (const p of pd.pins) p.x = 2 * fold.axis - p.x;
+          for (const s of pd.silkLines) { s.x1 = 2 * fold.axis - s.x1; s.x2 = 2 * fold.axis - s.x2; }
         } else {
           for (const p of pd.pins) p.y = 2 * fold.axis - p.y;
+          for (const s of pd.silkLines) { s.y1 = 2 * fold.axis - s.y1; s.y2 = 2 * fold.axis - s.y2; }
         }
       }
     }
@@ -1265,7 +1292,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       const axis: 'x' | 'y' = tall ? 'y' : 'x';
 
       if (axis === 'x') {
-        for (const pd of partDataList) for (const p of pd.pins) p.x = -p.x;
+        for (const pd of partDataList) {
+          for (const p of pd.pins) p.x = -p.x;
+          for (const s of pd.silkLines) { s.x1 = -s.x1; s.x2 = -s.x2; }
+        }
         for (const tp of testPads) tp.x = -tp.x;
         for (const vd of viasRaw) vd.x = -vd.x;
         for (const s of segments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
@@ -1277,7 +1307,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         }
         if (fold && fold.dim === 'x') fold.axis = -fold.axis;
       } else {
-        for (const pd of partDataList) for (const p of pd.pins) p.y = -p.y;
+        for (const pd of partDataList) {
+          for (const p of pd.pins) p.y = -p.y;
+          for (const s of pd.silkLines) { s.y1 = -s.y1; s.y2 = -s.y2; }
+        }
         for (const tp of testPads) tp.y = -tp.y;
         for (const vd of viasRaw) vd.y = -vd.y;
         for (const s of segments) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
@@ -1311,7 +1344,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   if (!isFinite(minX)) { minX = 0; minY = 0; }
 
   for (const s of segments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
-  for (const pd of partDataList) for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
+  for (const pd of partDataList) {
+    for (const p of pd.pins) { p.x -= minX; p.y -= minY; }
+    for (const s of pd.silkLines) { s.x1 -= minX; s.y1 -= minY; s.x2 -= minX; s.y2 -= minY; }
+  }
   for (const tp of testPads) { tp.x -= minX; tp.y -= minY; }
   for (const vd of viasRaw)  { vd.x -= minX; vd.y -= minY; }
   for (const s of silkSegments) { s.p1.x -= minX; s.p1.y -= minY; s.p2.x -= minX; s.p2.y -= minY; }
@@ -1374,11 +1410,19 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     };
   });
 
-  // Build silkscreen paths. Chain connected segments into polylines, then
-  // split on NaN sentinels back into one SilkscreenPath per component. XZZ
-  // doesn't tag silkscreen with a side, so everything goes on 'top'; the
-  // renderer's per-side toggles hide it together with the rest of the top
-  // overlay if the user wants bottom-only.
+  // Build silkscreen paths. Two sources:
+  //   1. Top-level layer-17 segments (board-wide silkscreen, no side info).
+  //   2. Per-part silkscreen lines (the rectangle outline drawn around each
+  //      component on the silkscreen layer — 4× 0x05 sub-blocks per part on
+  //      surveyed Apple files). These carry the part's side, so a butterfly
+  //      file's bottom-side parts get their outlines on the bottom overlay.
+  //
+  // Top-level segments get chainByComponent'd (fewer GPU draw calls for the
+  // sparse legacy art). Per-part outlines render as 4 small segments each —
+  // running them through the global chainer would be O(n²) for ~24k segments
+  // (576M comparisons on A2442), so they're emitted directly. Each part's
+  // four lines arrive as four 2-point SilkscreenPaths tagged with the part's
+  // side; the renderer's per-side toggles drive visibility.
   const silkscreen: SilkscreenPath[] = [];
   if (silkSegments.length > 0) {
     const chained = chainByComponent(silkSegments);
@@ -1392,6 +1436,17 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       }
     }
     if (cur.length >= 2) silkscreen.push({ points: cur, side: 'top' });
+  }
+  let partSilkPathCount = 0;
+  for (const pd of partDataList) {
+    if (pd.silkLines.length === 0) continue;
+    for (const s of pd.silkLines) {
+      silkscreen.push({
+        points: [{ x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }],
+        side: pd.side,
+      });
+      partSilkPathCount++;
+    }
   }
 
   // Build multi-layer trace data. XZZ layer IDs observed in the wild: 1–7
@@ -1438,7 +1493,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     log.parser.log(`(pcb vias) ${vias.length} vias`);
   }
   if (silkscreen.length > 0) {
-    log.parser.log(`(pcb silkscreen) ${silkscreen.length} paths from ${silkSegments.length} segments`);
+    log.parser.log(`(pcb silkscreen) ${silkscreen.length} paths (${silkSegments.length} top-level segs + ${partSilkPathCount} per-part)`);
   }
 
   const foldInfo = fold ? {
