@@ -3203,7 +3203,9 @@ export class BoardRenderer {
 
     // ── Determine the effective net to highlight (selection or hover in ambient dim) ──
     const dimMode = boardStore.dimMode;
-    const searchForcesDim = (s.searchAutoDim ?? true) && boardStore.searchSelectionActive;
+    // Auto-dim on search only *promotes* a user who already runs with dim;
+    // it never overrides an explicit dimMode === 'off' (issue #19).
+    const searchForcesDim = dimMode !== 'off' && (s.searchAutoDim ?? true) && boardStore.searchSelectionActive;
     // 'dim' mode (or search-forced dim) draws the full dark overlay.
     // 'darklight' mode skips the overlay rect and only shows the spotlight sprite.
     const showDim = dimMode === 'dim' || searchForcesDim;
@@ -4569,7 +4571,8 @@ export class BoardRenderer {
     this.hoverNet = net;
     // In ambient dim mode, hover changes which pins are punched through the overlay
     const s2 = renderSettingsStore.settings;
-    if (s2.ambientDim && (boardStore.dimMode === 'dim' || ((s2.searchAutoDim ?? true) && boardStore.searchSelectionActive))) {
+    const dm = boardStore.dimMode;
+    if (s2.ambientDim && (dm === 'dim' || (dm !== 'off' && (s2.searchAutoDim ?? true) && boardStore.searchSelectionActive))) {
       this.renderSelection();
     }
   }
