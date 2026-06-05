@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { IconAppWindow, IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
+import { IconColumns1, IconColumns2, IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
@@ -11,7 +11,6 @@ import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
-import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { databankStore } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
@@ -355,6 +354,20 @@ export function Toolbar() {
         >
           &#x2261;
         </button>
+        <button
+          onClick={() => toggleTwoWindowMode()}
+          className={`toolbar-btn ${twoWindow ? 'active' : ''}`}
+          data-testid="two-window-toggle"
+          data-tooltip={twoWindow
+            ? '2-window mode ON — click to re-dock PDF into main window'
+            : '2-window mode — detach PDF viewer into its own window'}
+          style={{ gap: 6 }}
+        >
+          {twoWindow
+            ? <IconColumns2 size={14} stroke={1.75} />
+            : <IconColumns1 size={14} stroke={1.75} />}
+          2 window mode
+        </button>
         {/* In Electron the picker reaches into the local filesystem (truly "Open").
          *  In a browser the file is read into memory client-side — closer to an
          *  upload from the user's mental model — so the web build uses an
@@ -368,24 +381,6 @@ export function Toolbar() {
           style={electronMode ? undefined : { gap: 6 }}
         >
           {electronMode ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
-        </button>
-        <button
-          onClick={() => openBoardSidebarTab('worklist')}
-          className="toolbar-btn"
-          data-testid="worklist-btn"
-          data-tooltip="Open Worklist sidebar tab (multi-select / mark / export)"
-        >
-          Worklist
-        </button>
-        <button
-          onClick={() => toggleTwoWindowMode()}
-          className={`toolbar-btn toolbar-btn-icon ${twoWindow ? 'active' : ''}`}
-          data-testid="two-window-toggle"
-          data-tooltip={twoWindow
-            ? '2-Window Mode ON — click to re-dock PDF'
-            : '2-Window Mode — detach PDF viewer to its own window'}
-        >
-          <IconAppWindow size={14} stroke={1.75} />
         </button>
       </div>
 
