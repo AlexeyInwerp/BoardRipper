@@ -22,7 +22,7 @@ import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
 import { FZKeyDialog } from './components/FZKeyDialog';
 import { WelcomeSetup } from './components/WelcomeSetup';
-import { setDockviewApi, ensureBoardPanel, boardPanelId } from './store/dockview-api';
+import { setDockviewApi, ensureBoardPanel, boardPanelId, isRedockingPdf } from './store/dockview-api';
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
@@ -248,6 +248,9 @@ function App() {
       } else if (e.id.startsWith('pdf-')) {
         const pdfFileName = (e.params as Record<string, unknown>)?.pdfFileName as string | undefined;
         if (pdfFileName) {
+          // Skip cleanup if the panel is in transit (2-window-mode redock):
+          // we just close+re-add to move it; the user did not close the PDF.
+          if (isRedockingPdf(pdfFileName)) return;
           for (const tab of boardStore.tabs) {
             if (tab.pdfFileNames.includes(pdfFileName)) {
               boardStore.removePdfBinding(tab.id, pdfFileName);

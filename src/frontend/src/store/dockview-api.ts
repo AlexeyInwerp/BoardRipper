@@ -13,6 +13,14 @@ let _modeListenerSuppressed = false;
  *  StrictMode double-mount + Dockview's onReady can call setDockviewApi more
  *  than once; without this guard, listeners pile up and toggles fire N×. */
 let _modeUnsubscribe: (() => void) | null = null;
+/** Filenames whose pdf-* panel is being closed-and-re-added as part of the
+ *  2-window-mode redock flow. App.tsx's onDidRemovePanel handler checks this
+ *  set and skips `pdfStore.closeFile()` + binding cleanup for these — the
+ *  panel is moving, not being closed by the user. */
+const _redockingPdfNames = new Set<string>();
+export function isRedockingPdf(fileName: string): boolean {
+  return _redockingPdfNames.has(fileName);
+}
 
 /** Re-entrancy guard for linked panel activation (board ↔ PDF) */
 let _linkActivating = false;
@@ -229,6 +237,9 @@ function collapsePdfPopout(): void {
     return;
   }
   const fileNames = popoutPdfs.map(pdfFileNameFromPanel).filter((n): n is string => !!n);
+  // Mark these as in-transit so App.tsx's onDidRemovePanel doesn't destroy
+  // the underlying pdf.js doc + board bindings when we close to re-add.
+  for (const n of fileNames) _redockingPdfNames.add(n);
   for (const panel of popoutPdfs) {
     try { panel.api.close(); } catch (err) { log.twoWindow.warn('close failed:', err); }
   }
@@ -238,6 +249,9 @@ function collapsePdfPopout(): void {
   // doomed panel. setTimeout(0) defers past the current task boundary.
   setTimeout(() => {
     for (const fileName of fileNames) ensurePdfPanel(fileName);
+    // Clear the redocking marker after re-add; further close events on
+    // these panels should be treated as real user closes.
+    for (const n of fileNames) _redockingPdfNames.delete(n);
   }, 0);
   log.twoWindow.log(`collapsed ${popoutPdfs.length} PDF(s) to main window`);
 }
@@ -255,9 +269,12 @@ function handlePopoutWillClose(): void {
     _modeListenerSuppressed = true;
     try { setTwoWindowMode(false); } finally { _modeListenerSuppressed = false; }
   }
+  // Mark in-transit so onDidRemovePanel doesn't destroy the pdf.js doc.
+  for (const n of fileNames) _redockingPdfNames.add(n);
   // Re-add the PDFs in the main window after Dockview drains its close events.
   setTimeout(() => {
     for (const fileName of fileNames) ensurePdfPanel(fileName);
+    for (const n of fileNames) _redockingPdfNames.delete(n);
   }, 0);
 }
 
