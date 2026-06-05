@@ -1141,10 +1141,19 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     );
   }
 
-  // Whole-board X-mirror correction. XZZ files are often stored mirrored vs
-  // IPC convention (pin 1 on top, pin numbering CCW from above). The butterfly
+  // Whole-board mirror correction. XZZ files are often stored mirrored vs IPC
+  // convention (pin 1 on top, pin numbering CCW from above). The butterfly
   // fold above handles the bottom-side reflection; this pass corrects the
-  // file-wide mirror that survives it. Same shape as cad-parser.ts.
+  // file-wide mirror that survives it.
+  //
+  // Detector measures CHIRALITY (CW vs CCW) — axis-agnostic. The renderer
+  // auto-rotates tall boards 270° (`computeAutoRotation` in board-store.ts:180)
+  // so they display landscape, which swaps the screen axes. A storage X-flip
+  // would then appear as a screen Y-flip ("vertically mirrored"), not what
+  // the user reports as "mirrored horizontally". So:
+  //   - tall in storage  (h > w, auto-rotated) → flip Y in storage → flips X on screen
+  //   - wide in storage  (h ≤ w, no rotation)  → flip X in storage → flips X on screen
+  // Either way fixes chirality; the choice picks the axis that becomes screen-X.
   //
   // `minSamples` is dropped to 4 because the post-fold XZZ corpus skews to
   // small-pin passives and large BGAs — the detector's perimeter-walk filter
@@ -1165,17 +1174,48 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     }));
     const v = detectXMirrorByPinDirection(probeParts, { minSamples: 4 });
     if (v.mirrored) {
-      for (const pd of partDataList) for (const p of pd.pins) p.x = -p.x;
-      for (const tp of testPads) tp.x = -tp.x;
-      for (const s of segments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
-      for (const t of rawTraces) { t.x1 = -t.x1; t.x2 = -t.x2; }
-      for (const s of rawSegmentsSnapshot) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
-      for (const fc of foldComponents) {
-        const oldMin = fc.minX; fc.minX = -fc.maxX; fc.maxX = -oldMin;
+      // Match the renderer's auto-rotate axis-swap so the user sees a
+      // horizontal screen flip, not a vertical one.
+      let bbMinX = Infinity, bbMaxX = -Infinity, bbMinY = Infinity, bbMaxY = -Infinity;
+      for (const s of segments) {
+        if (s.p1.x < bbMinX) bbMinX = s.p1.x; if (s.p1.x > bbMaxX) bbMaxX = s.p1.x;
+        if (s.p2.x < bbMinX) bbMinX = s.p2.x; if (s.p2.x > bbMaxX) bbMaxX = s.p2.x;
+        if (s.p1.y < bbMinY) bbMinY = s.p1.y; if (s.p1.y > bbMaxY) bbMaxY = s.p1.y;
+        if (s.p2.y < bbMinY) bbMinY = s.p2.y; if (s.p2.y > bbMaxY) bbMaxY = s.p2.y;
       }
-      if (fold && fold.dim === 'x') fold.axis = -fold.axis;
+      if (!isFinite(bbMinX)) {
+        for (const pd of partDataList) for (const p of pd.pins) {
+          if (p.x < bbMinX) bbMinX = p.x; if (p.x > bbMaxX) bbMaxX = p.x;
+          if (p.y < bbMinY) bbMinY = p.y; if (p.y > bbMaxY) bbMaxY = p.y;
+        }
+      }
+      const tall = isFinite(bbMinX) && (bbMaxY - bbMinY) > (bbMaxX - bbMinX);
+      const axis: 'x' | 'y' = tall ? 'y' : 'x';
+
+      if (axis === 'x') {
+        for (const pd of partDataList) for (const p of pd.pins) p.x = -p.x;
+        for (const tp of testPads) tp.x = -tp.x;
+        for (const s of segments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
+        for (const t of rawTraces) { t.x1 = -t.x1; t.x2 = -t.x2; }
+        for (const s of rawSegmentsSnapshot) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
+        for (const fc of foldComponents) {
+          const oldMin = fc.minX; fc.minX = -fc.maxX; fc.maxX = -oldMin;
+        }
+        if (fold && fold.dim === 'x') fold.axis = -fold.axis;
+      } else {
+        for (const pd of partDataList) for (const p of pd.pins) p.y = -p.y;
+        for (const tp of testPads) tp.y = -tp.y;
+        for (const s of segments) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
+        for (const t of rawTraces) { t.y1 = -t.y1; t.y2 = -t.y2; }
+        for (const s of rawSegmentsSnapshot) { s.p1.y = -s.p1.y; s.p2.y = -s.p2.y; }
+        for (const fc of foldComponents) {
+          const oldMin = fc.minY; fc.minY = -fc.maxY; fc.maxY = -oldMin;
+        }
+        if (fold && fold.dim === 'y') fold.axis = -fold.axis;
+      }
       log.parser.log(
-        `(pcb x-mirror) corrected file-wide X-mirror — ` +
+        `(pcb mirror) corrected file-wide mirror — axis=${axis.toUpperCase()} ` +
+        `(${tall ? 'tall→Y-flip becomes screen-X' : 'wide→X-flip stays screen-X'}) ` +
         `analyzed=${v.totalAnalyzed} cw=${v.topCW} ccw=${v.topCCW} ratio=${v.wrongRatio.toFixed(2)}`,
       );
     }
