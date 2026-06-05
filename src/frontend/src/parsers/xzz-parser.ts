@@ -1,5 +1,6 @@
 import type { BoardData, Part, Pin, Nail, Point, Trace } from './types';
 import { computeBBox, buildNets } from './types';
+import { detectXMirrorByPinDirection } from './mirror-detect';
 import { log } from '../store/log-store';
 
 // =====================================================================
@@ -1138,6 +1139,46 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       `(pcb ${multiBoard ? 'multi-board' : 'flat'}) ${multiBoard ? 'paired outline components — per-board folds via boardGroups' : 'no butterfly signal — preserving native layout'} ` +
       `| parts=${partDataList.length} outline=${segments.length} segs`,
     );
+  }
+
+  // Whole-board X-mirror correction. XZZ files are often stored mirrored vs
+  // IPC convention (pin 1 on top, pin numbering CCW from above). The butterfly
+  // fold above handles the bottom-side reflection; this pass corrects the
+  // file-wide mirror that survives it. Same shape as cad-parser.ts.
+  //
+  // `minSamples` is dropped to 4 because the post-fold XZZ corpus skews to
+  // small-pin passives and large BGAs — the detector's perimeter-walk filter
+  // discards both, leaving only a handful of clean QFN/SOIC packages to vote
+  // with (820-02098-A has 4). The existing `ratioThreshold` (0.7) stays as the
+  // false-positive guard, so we still need >70% of the qualifying parts to
+  // walk CW before flipping.
+  if (partDataList.length > 0) {
+    const probeParts: Part[] = partDataList.map(pd => ({
+      name: pd.name, side: pd.side, type: 'smd',
+      origin: { x: 0, y: 0 },
+      bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+      pins: pd.pins.map((p, i) => ({
+        name: '', number: String(i + 1),
+        position: { x: p.x, y: p.y },
+        radius: 0, side: pd.side, net: '',
+      })),
+    }));
+    const v = detectXMirrorByPinDirection(probeParts, { minSamples: 4 });
+    if (v.mirrored) {
+      for (const pd of partDataList) for (const p of pd.pins) p.x = -p.x;
+      for (const tp of testPads) tp.x = -tp.x;
+      for (const s of segments) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
+      for (const t of rawTraces) { t.x1 = -t.x1; t.x2 = -t.x2; }
+      for (const s of rawSegmentsSnapshot) { s.p1.x = -s.p1.x; s.p2.x = -s.p2.x; }
+      for (const fc of foldComponents) {
+        const oldMin = fc.minX; fc.minX = -fc.maxX; fc.maxX = -oldMin;
+      }
+      if (fold && fold.dim === 'x') fold.axis = -fold.axis;
+      log.parser.log(
+        `(pcb x-mirror) corrected file-wide X-mirror — ` +
+        `analyzed=${v.totalAnalyzed} cw=${v.topCW} ccw=${v.topCCW} ratio=${v.wrongRatio.toFixed(2)}`,
+      );
+    }
   }
 
   // Normalize coordinates to origin
