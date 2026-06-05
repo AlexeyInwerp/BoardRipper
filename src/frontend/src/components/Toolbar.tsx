@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { IconColumns1, IconColumns2, IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
+import { IconAppWindow, IconBoxMultiple, IconFlipHorizontal, IconUpload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
@@ -364,8 +364,8 @@ export function Toolbar() {
           style={{ gap: 6 }}
         >
           {twoWindow
-            ? <IconColumns2 size={14} stroke={1.75} />
-            : <IconColumns1 size={14} stroke={1.75} />}
+            ? <IconBoxMultiple size={14} stroke={1.75} />
+            : <IconAppWindow size={14} stroke={1.75} />}
           2 window mode
         </button>
         {/* In Electron the picker reaches into the local filesystem (truly "Open").
