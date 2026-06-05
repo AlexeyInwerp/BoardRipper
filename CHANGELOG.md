@@ -1,5 +1,31 @@
 # BoardRipper changelog
 
+## v0.31.9 — 2026-06-05
+
+2-Window Mode: a single toolbar toggle that pops the entire PDF group
+out into its own browser/Electron window so the board can live on one
+display and the schematic on another, with the click-board → jump-PDF
+link still working across windows.
+
+### Features
+
+- **2-Window Mode toggle.** New toolbar button (next to the sidebar/library toggle, labelled "2 window mode") detaches the PDF Dockview group into a separate OS window. Library + BoardView stay in the main window. Toggling off re-docks the PDF into the main grid; closing the popout window via the OS close button does the same and flips the mode off. Persisted to localStorage so the preference survives reloads — the first PDF you open in the new session reopens in a popout automatically. Icon flips between `IconLayoutBoardSplit` (single-window, internal splits) and `IconBoxMultiple` (multiple stacked windows) to communicate state. (`6a8f7d2`, `8e3963e`, `6fa6069`, `f69e011`, `cccd299`, `193cb52`, `f726735`, `9bae652`)
+- **Link maintained across windows.** Because Dockview popouts share the parent's JS context, the existing board↔PDF click-to-jump, BindLink dropdown, PDF↔PDF cross-link, and auto-switch-linked-panel behaviour keep working with no IPC. Clicking a designator on the board (main window) still jumps the PDF in the popout. Mode is symmetric across the browser build and the Electron desktop app — same primitive on both. (`6fa6069`, `cccd299`)
+- **Cross-window plumbing.** Theme classes on `<body>` mirror into every popout window via a `MutationObserver`, so accent/dark-mode changes propagate without a manual refresh. Global keyboard shortcuts (Cmd-F, etc.) attach to every popout's document via a 500 ms poll so they fire when focus is inside the detached window. (`fe56c12`, `8b549c3`)
+- **Electron child-window chrome.** `mainWindow.webContents.setWindowOpenHandler` overrides the spawned BrowserWindow's options so the PDF popout has a native title bar ("BoardRipper PDF"), no application menu, the BoardRipper icon, and the same preload script as main. `popoutUrl` is set to a relative path (`popout.html`) so it resolves correctly under both `http://` (browser dev) and `file://` (packaged Electron). (`cccd299`)
+
+### Fixes
+
+- **Redock must not destroy the pdf.js document.** `App.tsx`'s `onDidRemovePanel` handler calls `pdfStore.closeFile()` plus board-binding cleanup whenever any `pdf-*` panel is removed — designed for the user clicking the panel's X. But the 2-Window-Mode redock path uses `panel.api.close()` purely as a move-mechanism (Dockview's `panel.api.moveTo` only accepts a target group, and there isn't always a same-window PDF group to move into). That fired the same cleanup, destroying the pdf.js doc and clearing bindings, so after toggling off the panel came back but rendered empty. Fixed via an `isRedockingPdf(name)` predicate exported from `dockview-api.ts`; the panel-remove handler short-circuits cleanup while a name is in transit. Both the drag-drop and file-picker open paths flow through the same code, so both are covered. (`90d498c`)
+
+### Cleanup
+
+- **Worklist button removed from the toolbar.** It's still reachable through the sidebar tabs and the keyboard shortcut; freeing the toolbar slot lets the new 2-Window toggle sit next to the sidebar/library toggle without crowding. (`193cb52`)
+
+### Tests
+
+- **17 new tests in `tests/two-window-mode.spec.ts` + `tests/two-window-mode-store.spec.ts`.** Cover sections A (toggle state machine + multi-PDF migration), B (lazy popout), D (window-lifecycle: OS-close, reload-with-mode-on), H (persistence + corrupt-localStorage), I (mixed-group safety: non-PDF panels parked in a PDF group stay in main), J (mode-OFF regression). PDF fixtures generated in-memory via `pdf-lib` so the suite runs without `samples/`. D13 uses `popup.evaluate(() => window.close())` instead of `popup.close()` to reliably fire the `beforeunload` event Dockview hangs the popout-close chain off. (`f0f75d2`, `e05d5ad`)
+
 ## v0.31.8 — 2026-06-03
 
 PDF open path broken on older browsers — single-edit hotfix to the
