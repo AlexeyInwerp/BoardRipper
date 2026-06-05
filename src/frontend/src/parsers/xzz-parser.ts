@@ -1,4 +1,4 @@
-import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath } from './types';
+import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
 import { log } from '../store/log-store';
@@ -475,26 +475,52 @@ function parseNetBlock(data: Uint8Array): Map<number, string> {
   return dict;
 }
 
-interface PinData { name: string; x: number; y: number; netIndex: number; }
+interface PinData {
+  name: string; x: number; y: number; netIndex: number;
+  /** Pad width in mils, ÷10000 from the raw u32 at (28 + nameLen). 0 = unknown. */
+  padW: number;
+  /** Pad height in mils. */
+  padH: number;
+  /** Pad rotation in degrees CCW (raw u32 at offset 20 ÷ 10000). 0 for round pads. */
+  padAngleDeg: number;
+  /** Pad shape from the 1-byte code at (28 + nameLen + 8): 0x01 = round (BGA),
+   *  0x02 = rect (SMD). Unknown codes fall through to 'rect'. */
+  padShape: 'round' | 'rect';
+}
 interface PartSilkLine { x1: number; y1: number; x2: number; y2: number; }
 interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[]; }
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
-  const FAIL = { pin: { name: '', x: 0, y: 0, netIndex: 0 }, next: data.length };
+  const EMPTY: PinData = { name: '', x: 0, y: 0, netIndex: 0, padW: 0, padH: 0, padAngleDeg: 0, padShape: 'rect' };
+  const FAIL = { pin: EMPTY, next: data.length };
   if (ptr + 4 > data.length) return FAIL;
   const pinBlockSize = ru32(data, ptr);
   const pinBlockEnd  = ptr + pinBlockSize + 4;
-  ptr += 4 + 4; // size + unknown
+  ptr += 4 + 4; // size + flag(1)
   if (ptr + 16 > data.length) return { ...FAIL, next: Math.min(pinBlockEnd, data.length) };
   const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
   const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
-  ptr += 8; // unknown
-  if (ptr + 4 > data.length) return { pin: { name: '', x, y, netIndex: 0 }, next: Math.min(pinBlockEnd, data.length) };
+  ptr += 4; // u32 = 0 (constant)
+  const padAngleDeg = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
+  if (ptr + 4 > data.length) return { pin: { ...EMPTY, x, y, padAngleDeg }, next: Math.min(pinBlockEnd, data.length) };
   const nameLen = ru32(data, ptr); ptr += 4;
   const name = (ptr + nameLen <= data.length) ? rstr(data, ptr, nameLen) : '';
-  ptr += nameLen + 32; // unknown
+  ptr += nameLen;
+  // Pad geometry — three identical (u32 w, u32 h, u8 shape) chunks of 9 bytes
+  // each (27 bytes total). Reading the first one is sufficient — every chunk
+  // is a copy on every part surveyed in A2442. Probably top/inner/bottom
+  // layer copies of the same SMD pad shape on a multi-layer board.
+  let padW = 0, padH = 0, padShape: 'round' | 'rect' = 'rect';
+  if (ptr + 9 <= data.length) {
+    padW = ru32(data, ptr)     / XZZ_SCALE;
+    padH = ru32(data, ptr + 4) / XZZ_SCALE;
+    const shapeByte = data[ptr + 8];
+    padShape = shapeByte === 0x01 ? 'round' : 'rect';
+  }
+  // Then 27 bytes of pad geom + 5 padding bytes, then the netIndex.
+  ptr += 32;
   const netIndex = (ptr + 4 <= data.length) ? ru32(data, ptr) : 0;
-  return { pin: { name, x, y, netIndex }, next: Math.min(pinBlockEnd, data.length) };
+  return { pin: { name, x, y, netIndex, padW, padH, padAngleDeg, padShape }, next: Math.min(pinBlockEnd, data.length) };
 }
 
 function parsePartBlock(encBuf: Uint8Array): PartData | null {
@@ -1375,18 +1401,52 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // independent boards in a multi-board file (iPhone AP+BB sandwich).
   const outline = chainByComponent(segments);
 
-  // Build parts
+  // Build parts and per-pin pads. Pad geometry comes from the pin sub-block
+  // (parsePinSubBlock decoded it). Pin.radius now scales to the actual pad —
+  // half the smaller of (padW, padH), with an 0.5 mil floor so a missing-data
+  // pin still renders as a dot. This is the fix for "BGA pins look way too
+  // big": the old hard-coded radius=8 mil drew a 16 mil dot over what is
+  // actually a 9 mil round pad.
   const parts: Part[] = [];
+  const pads: Pad[] = [];
   for (const pd of partDataList) {
     if (!pd.name) continue;
     const pins: Pin[] = pd.pins.map((p, i) => {
       const raw2 = netDict.get(p.netIndex) ?? '';
       const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
-      return { name: '', number: String(i + 1), position: { x: p.x, y: p.y }, radius: 8, side: pd.side, net };
+      const r = (p.padW > 0 && p.padH > 0) ? Math.max(0.5, Math.min(p.padW, p.padH) / 2) : 8;
+      return { name: '', number: String(i + 1), position: { x: p.x, y: p.y }, radius: r, side: pd.side, net };
     });
     const pos  = pins.map(p => p.position);
     const bounds = computeBBox(pos.length > 0 ? pos : [{ x: 0, y: 0 }]);
     parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds });
+
+    // Emit a Pad per pin with valid geometry.
+    for (let i = 0; i < pd.pins.length; i++) {
+      const p = pd.pins[i];
+      if (p.padW <= 0 || p.padH <= 0) continue;
+      const raw2 = netDict.get(p.netIndex) ?? '';
+      const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
+      // Bounds = AABB of the rotated rectangle centred at (p.x, p.y).
+      const halfW = p.padW / 2, halfH = p.padH / 2;
+      const a = (p.padAngleDeg % 360) * Math.PI / 180;
+      const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+      const aabbHalfW = halfW * c + halfH * s;
+      const aabbHalfH = halfW * s + halfH * c;
+      pads.push({
+        bounds: {
+          minX: p.x - aabbHalfW, maxX: p.x + aabbHalfW,
+          minY: p.y - aabbHalfH, maxY: p.y + aabbHalfH,
+        },
+        side: pd.side,
+        net,
+        shape: p.padShape,
+        width: p.padW,
+        height: p.padH,
+        angleDeg: p.padAngleDeg,
+        attached: true,
+      });
+    }
   }
 
   // Build nails from test pads
@@ -1492,6 +1552,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   if (vias.length > 0) {
     log.parser.log(`(pcb vias) ${vias.length} vias`);
   }
+  if (pads.length > 0) {
+    const round = pads.filter(p => p.shape === 'round').length;
+    const rect  = pads.filter(p => p.shape === 'rect').length;
+    log.parser.log(`(pcb pads) ${pads.length} pads (${round} round, ${rect} rect)`);
+  }
   if (silkscreen.length > 0) {
     log.parser.log(`(pcb silkscreen) ${silkscreen.length} paths (${silkSegments.length} top-level segs + ${partSilkPathCount} per-part)`);
   }
@@ -1515,6 +1580,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,
+    pads: pads.length > 0 ? pads : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     rawOutline,
     foldComponents,
