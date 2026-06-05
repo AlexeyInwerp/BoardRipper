@@ -176,6 +176,40 @@ test.describe('A. Toggle state machine', () => {
 // ─── B. Lazy popout creation ───────────────────────────────────────────────
 
 test.describe('B. Lazy popout creation', () => {
+  test('B8: open another PDF while popout exists — lands as active tab in popout', async ({ page, context }) => {
+    await openMainPage(page);
+    await uploadPdf(page, 'b8-first.pdf');
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      page.click('[data-testid="two-window-toggle"]'),
+    ]);
+    await popup.waitForLoadState('domcontentloaded');
+    // Sanity: popout has the first PDF.
+    expect(await pdfPanelCount(page, 'popout')).toBe(1);
+
+    // Open a SECOND PDF while in 2w mode (no popup event expected — uses the
+    // existing popout group, no new window).
+    await uploadPdf(page, 'b8-second.pdf');
+    await page.waitForFunction(() => {
+      const api = (window as unknown as { __dockviewApi?: MinApi }).__dockviewApi;
+      if (!api) return false;
+      return api.panels.filter(p => p.id.startsWith('pdf-') && p.api.location.type === 'popout').length === 2;
+    }, { timeout: 5_000 });
+    expect(await pdfPanelCount(page, 'main')).toBe(0);
+    expect(await pdfPanelCount(page, 'popout')).toBe(2);
+
+    // The new PDF must be the active tab in the popout (otherwise the user
+    // opens a PDF and sees nothing — the bug that triggered this test).
+    const active = await page.evaluate(() => {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const api = (window as any).__dockviewApi;
+      const group = api?.groups.find((g: any) => g.api.location.type === 'popout');
+      const activePanel = group?.panels.find((p: any) => p.api.isActive);
+      return activePanel?.id ?? null;
+    });
+    expect(active).toBe('pdf-b8-second_pdf');
+  });
+
   test('B7: toggle ON then open PDF — PDF goes into a popout', async ({ page, context }) => {
     await openMainPage(page);
     await page.click('[data-testid="two-window-toggle"]');

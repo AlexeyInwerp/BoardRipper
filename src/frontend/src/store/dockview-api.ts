@@ -335,6 +335,13 @@ export function ensurePdfPanel(fileName: string): void {
             params: { pdfFileName: fileName },
             position: { referenceGroup: popoutGroup.id },
           });
+          // Raise the popout window so the user notices the new tab —
+          // without this, the popout silently gains a tab while the main
+          // window stays focused and the user thinks nothing happened.
+          if (popoutGroup.api.location.type === 'popout') {
+            try { popoutGroup.api.location.getWindow().focus(); }
+            catch (err) { log.twoWindow.warn('popout focus failed:', err); }
+          }
           return;
         }
         // No popout yet → add the panel in main grid, then popout it. The
