@@ -620,6 +620,22 @@ export function buildBoardScene(
   metadataHex?: string,
   partOverrides: PartOverrideMap = EMPTY_PART_OVERRIDES,
 ): BoardSceneGraph {
+  // Sub-phase timing reporter — surfaces buildBoardScene's internal cost
+  // breakdown on the load-progress overlay so the user can see whether
+  // surfaces, pins, labels, etc. dominate. Dynamic-imported to avoid a
+  // hard dep on a store from this pure(-ish) scene builder; the overhead
+  // of `console`-style timing is irrelevant compared to the work being
+  // measured. No-op when no load is being tracked.
+  let lastTick = performance.now();
+  const tick = (label: string): void => {
+    const now = performance.now();
+    const dt = now - lastTick;
+    lastTick = now;
+    if (dt < 1) return; // skip noise on instant phases
+    void import('../store/load-progress-store').then(({ loadProgressStore }) => {
+      loadProgressStore.pushLog(`buildBoardScene: ${label} took ${dt.toFixed(0)}ms`);
+    });
+  };
   // `board` arrives pre-derived via `boardStore.board` (see
   // `store/derive-board-view.ts`): filtered, folded, sides tagged. Hidden
   // parts stay at their raw array index with `hidden: true` so
@@ -681,6 +697,7 @@ export function buildBoardScene(
   root.sortableChildren = true;
 
   root.addChild(outlineGfx);
+  tick('init + outlineGfx attach');
 
   const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
 
@@ -794,6 +811,9 @@ export function buildBoardScene(
     }
     root.addChild(surfacesLayer);
   }
+  if (board.surfaces && board.surfaces.length > 0) {
+    tick(`surfaces (${board.surfaces.length} polygons → earcut → Mesh per layer)`);
+  }
 
   // PCB traces — drawn behind components, after outline.
   // Multi-layer: per-layer trace containers (each gets its own color from layerStates).
@@ -867,6 +887,9 @@ export function buildBoardScene(
       root.addChild(traceLayer);
     }
   }
+  if (board.traces && board.traces.length > 0) {
+    tick(`traces (${board.traces.length} segments → chain → stroke)`);
+  }
 
   // ── Silkscreen / assembly outlines ────────────────────────────────────────
   // Per-component polylines from the parser, already in board coordinates.
@@ -904,6 +927,9 @@ export function buildBoardScene(
     silkscreenLayer.addChild(silkscreenBottom);
     silkscreenLayer.addChild(silkscreenTop);
     root.addChild(silkscreenLayer);
+  }
+  if (board.silkscreen && board.silkscreen.length > 0) {
+    tick(`silkscreen (${board.silkscreen.length} paths)`);
   }
 
   // ── Copper pads ─────────────────────────────────────────────────────────────
@@ -1001,6 +1027,9 @@ export function buildBoardScene(
     bottomLayer.addChildAt(copperDropsBottom, bottomLayer.getChildIndex(bottomPinLayer));
     topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer) + 1);
     bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer) + 1);
+  }
+  if (board.pads && board.pads.length > 0) {
+    tick(`pads + drops (${board.pads.length} rects + drill)`);
   }
 
   root.addChild(bottomLayer);
@@ -1679,6 +1708,7 @@ export function buildBoardScene(
 
     partQueue.push({ container: partContainer, isBottom });
   }
+  tick(`parts loop (${board.parts.length} parts, pin Graphics + label BitmapTexts)`);
 
   // Flush component-type fills — one Graphics per color, added before grid cells (fills under pins)
   for (const [color, gfx] of topFillMap) {
@@ -1803,6 +1833,7 @@ export function buildBoardScene(
   topLabelLayer.addChild(topCircleLabelLayer);
   bottomLabelLayer.addChild(bottomTwoPinNetLayer);
   bottomLabelLayer.addChild(bottomCircleLabelLayer);
+  tick('grid flush (pin Graphics → containers, label culling)');
 
   // Build font-size groups: bucket all labels by floor(log2(fontSize)).
   // This gives ~5-6 groups, enabling O(groups) visibility checks instead of O(labels).
@@ -1979,6 +2010,7 @@ export function buildBoardScene(
     viaLayer.addChild(viaCenterGfx);
     root.addChild(viaLayer);
   }
+  tick('fontSizeGroups + vias + tail');
 
   return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

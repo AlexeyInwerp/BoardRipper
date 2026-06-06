@@ -2085,6 +2085,18 @@ export class BoardRenderer {
     this.updateLoD();
 
     this.needsRender = true;
+
+    // Close the load-progress overlay if this activation corresponds to the
+    // file the user is waiting on. Dynamic-import so the renderer doesn't
+    // hard-depend on the store; lookup happens once per activation so the
+    // cost is negligible. Tab switches between already-cached scenes don't
+    // call activateScene's new-scene path, so they skip this naturally.
+    const activatingFile = boardStore.fileName;
+    if (activatingFile) {
+      void import('../store/load-progress-store').then(({ loadProgressStore }) => {
+        loadProgressStore.finishIfMatching(activatingFile);
+      });
+    }
   }
 
   private deactivateScene() {

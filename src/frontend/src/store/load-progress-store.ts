@@ -168,6 +168,22 @@ class LoadProgressStore {
     this.scheduleDismiss();
   }
 
+  /** Finish only if the currently-tracked load is for `fileName`. Used by
+   *  the renderer to close the overlay when activateScene completes for the
+   *  freshly-loaded board, without accidentally closing an unrelated load
+   *  (e.g. user clicked another file mid-stream). No-op when no load is
+   *  active or the active load is for a different file. */
+  finishIfMatching(fileName: string): boolean {
+    if (!this.state.visible || this.state.fileName !== fileName) return false;
+    this.finish();
+    return true;
+  }
+
+  /** Return the file name of the currently-tracked load (or null if none). */
+  activeFileName(): string | null {
+    return this.state.visible ? this.state.fileName : null;
+  }
+
   /** Mark current phase as failed; show overlay until user dismisses. */
   abort(reason: string): void {
     if (!this.state.visible) return;

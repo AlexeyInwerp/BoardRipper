@@ -821,11 +821,13 @@ class BoardStore extends Emitter {
             for (const note of cached.parserNotes) this.addToast(note, 'info');
           }
           this.autoBindBoard(file.name);
-          // Create panel AFTER board + rotation are ready so the renderer sees correct state
-          loadProgressStore.setPhase('Building scene', 'Hand-off to renderer (Dockview panel + BoardRenderer)');
+          // Hand off to the renderer. Don't finish() here — buildBoardScene
+          // runs inside BoardRenderer.activateScene which is what the user
+          // is actually waiting on, especially on cold-cache opens of large
+          // boards like NM-G611. Renderer calls finishIfMatching when done.
+          loadProgressStore.setPhase('Building scene', 'Renderer mounting + buildBoardScene + first frame');
           this.onTabCreated?.(id, file.name);
           this.notify();
-          loadProgressStore.finish();
           return;
         }
 
@@ -913,11 +915,11 @@ class BoardStore extends Emitter {
         return;
       }
 
-      // Create panel AFTER board + rotation are ready so the renderer sees correct state
-      loadProgressStore.setPhase('Building scene', 'Hand-off to renderer (Dockview panel + BoardRenderer)');
+      // Create panel AFTER board + rotation are ready so the renderer sees correct state.
+      // Renderer closes the overlay once activateScene finishes — see above.
+      loadProgressStore.setPhase('Building scene', 'Renderer mounting + buildBoardScene + first frame');
       this.onTabCreated?.(id, file.name);
       this.notify();
-      loadProgressStore.finish();
     } finally {
       this._loading.delete(file.name);
     }
