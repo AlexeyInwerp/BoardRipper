@@ -1419,7 +1419,30 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     });
     const pos  = pins.map(p => p.position);
     const bounds = computeBBox(pos.length > 0 ? pos : [{ x: 0, y: 0 }]);
-    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds });
+    // Resolve a single part rotation from per-pad angles. Pads are centro-
+    // symmetric, so angles 180° apart render identically — normalise via
+    // mod 90 (90° ≡ 0° too, since that just swaps the long/short axis on
+    // an axis-aligned chip). If a clear majority share the same non-axis-
+    // aligned bucket, the part is rotated by that angle and the renderer
+    // will draw an oriented bounding box for it.
+    let angleDeg: number | undefined;
+    if (pd.pins.length >= 2) {
+      const buckets = new Map<number, number>();
+      let total = 0;
+      for (const p of pd.pins) {
+        if (p.padW <= 0 || p.padH <= 0) continue;
+        const m = ((Math.round(p.padAngleDeg) % 90) + 90) % 90;
+        const key = m === 90 ? 0 : m;
+        buckets.set(key, (buckets.get(key) ?? 0) + 1);
+        total++;
+      }
+      let bestKey = 0, bestCount = 0;
+      for (const [k, v] of buckets) if (v > bestCount) { bestCount = v; bestKey = k; }
+      if (bestKey > 0 && bestKey < 90 && total > 0 && bestCount >= total * 0.7) {
+        angleDeg = bestKey;
+      }
+    }
+    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}) });
 
     // Emit a Pad per pin with valid geometry.
     for (let i = 0; i < pd.pins.length; i++) {

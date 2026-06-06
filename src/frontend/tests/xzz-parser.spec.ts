@@ -138,4 +138,36 @@ test.describe('XZZ parser', () => {
       }
     }
   });
+
+  // Regression for "rotated chip drawn with axis-aligned outline" — the
+  // parser must resolve a single part.angleDeg from the per-pad rotations
+  // so the renderer's drawPartOutline picks the OBB branch instead of the
+  // AABB fallback. N3842 on the A2442 board is a 19-pin IC rotated 45°
+  // where every pad's angleDeg lands in {45, 135, 315}.
+  const A2442 = path.resolve(XZZ_SAMPLES, "A24xx/A2442_820-02098 MacBook Pro/Schematic and boardview/MacBook Pro M1 Pro 14' A2442 820-02098-A PCB layer.pcb");
+  const haveA2442 = fs.existsSync(A2442);
+  test('resolves per-part angleDeg from pad rotations on 45°-tilted chips', async () => {
+    test.skip(!haveA2442, 'XZZ sample (A2442 820-02098-A) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const { computePartRenderPoly, DEFAULTS } = await import('../src/store/render-settings');
+    const board = parseXZZ(loadSample(A2442));
+    const part = board.parts.find(p => p.name === 'N3842');
+    expect(part).toBeDefined();
+    expect(part!.angleDeg).toBe(45);
+    const poly = computePartRenderPoly(part!, DEFAULTS);
+    expect(poly).not.toBeNull();
+    expect(poly!.length).toBe(4);
+    // OBB centred near the part origin
+    const cx = poly!.reduce((a, c) => a + c[0], 0) / 4;
+    const cy = poly!.reduce((a, c) => a + c[1], 0) / 4;
+    expect(Math.abs(cx - part!.origin.x)).toBeLessThan(50);
+    expect(Math.abs(cy - part!.origin.y)).toBeLessThan(50);
+    // First edge vector must be near 45° (cos45 ≈ sin45 ≈ 0.707)
+    const ex = poly![1][0] - poly![0][0];
+    const ey = poly![1][1] - poly![0][1];
+    const len = Math.hypot(ex, ey);
+    expect(len).toBeGreaterThan(50);
+    expect(Math.abs(Math.abs(ex / len) - Math.SQRT1_2)).toBeLessThan(0.05);
+    expect(Math.abs(Math.abs(ey / len) - Math.SQRT1_2)).toBeLessThan(0.05);
+  });
 });

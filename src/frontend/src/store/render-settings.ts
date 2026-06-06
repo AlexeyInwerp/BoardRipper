@@ -743,11 +743,54 @@ export function computeDiag2PinPads(
   return { pads: [makePad(p0.x, p0.y, -1), makePad(p1.x, p1.y, 1)], ux, uy, vx, vy, halfW };
 }
 
-/** Convenience wrapper: compute OBB polygon for a part, or null if axis-aligned. */
-export function computePartRenderPoly(
-  part: { pins: { position: { x: number; y: number }; radius?: number }[] },
+/** OBB built by projecting pin positions onto axes rotated by `angleRad`.
+ *  Used when the source format records an explicit part rotation, so we don't
+ *  need PCA to discover it (and don't apply the area-saving gate that PCA
+ *  needs to suppress spurious tilts on axis-aligned parts). */
+function computeRotatedOBB(
+  pins: { position: { x: number; y: number }; radius?: number }[],
+  angleRad: number,
   s: RenderSettings,
 ): [number, number][] | null {
+  if (pins.length === 0) return null;
+  let cx = 0, cy = 0;
+  for (const pin of pins) { cx += pin.position.x; cy += pin.position.y; }
+  cx /= pins.length; cy /= pins.length;
+  const ux = Math.cos(angleRad), uy = Math.sin(angleRad);
+  const vx = -uy, vy = ux;
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  for (const pin of pins) {
+    const dx = pin.position.x - cx;
+    const dy = pin.position.y - cy;
+    const u = dx * ux + dy * uy;
+    const v = dx * vx + dy * vy;
+    if (u < minU) minU = u; if (u > maxU) maxU = u;
+    if (v < minV) minV = v; if (v > maxV) maxV = v;
+  }
+  const pad = pins.length <= 4 ? 0 : computeMultiPinPadding(s, pins.map(p => p.radius ?? 0));
+  minU -= pad; maxU += pad; minV -= pad; maxV += pad;
+  return [
+    [cx + minU * ux + minV * vx, cy + minU * uy + minV * vy],
+    [cx + maxU * ux + minV * vx, cy + maxU * uy + minV * vy],
+    [cx + maxU * ux + maxV * vx, cy + maxU * uy + maxV * vy],
+    [cx + minU * ux + maxV * vx, cy + minU * uy + maxV * vy],
+  ];
+}
+
+/** Convenience wrapper: compute OBB polygon for a part, or null if axis-aligned. */
+export function computePartRenderPoly(
+  part: { angleDeg?: number; pins: { position: { x: number; y: number }; radius?: number }[] },
+  s: RenderSettings,
+): [number, number][] | null {
+  // Explicit rotation from the source format (e.g. XZZ's per-pad angleDeg
+  // resolved into a single part angle) — bypass PCA. Multiples of 90° are
+  // axis-aligned and fall through to the heuristic path.
+  if (part.angleDeg !== undefined && part.pins.length > 0) {
+    const mod90 = ((part.angleDeg % 90) + 90) % 90;
+    if (mod90 > 0.5 && mod90 < 89.5) {
+      return computeRotatedOBB(part.pins, mod90 * Math.PI / 180, s);
+    }
+  }
   // Check diagonal 2-pin parts first
   if (part.pins.length === 2) {
     const dx = Math.abs(part.pins[1].position.x - part.pins[0].position.x);

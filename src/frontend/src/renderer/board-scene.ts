@@ -23,7 +23,7 @@ import {
   computePinRadius,
   computeMultiPinPadding,
   computeEffectiveBounds,
-  computeDiagonalOBB,
+  computePartRenderPoly,
   computeTwoPinOBB,
   computeDiag2PinPads,
   resolvePinColor,
@@ -1315,10 +1315,13 @@ export function buildBoardScene(
         fillX = bx; fillY = by; fillW = bw; fillH = bh;
       } else {
         // For diagonal 2-pin parts, compute a simple OBB along the pin axis.
-        // For multi-pin parts, use the existing diagonal detection.
+        // For multi-pin parts, defer to computePartRenderPoly — it honours
+        // an explicit `part.angleDeg` from the source format before falling
+        // through to PCA, so 45°-rotated XZZ chips get an OBB even when the
+        // pin cloud's PCA area-saving gate would otherwise reject it.
         const obb = isDiag2Pin
           ? computeTwoPinOBB(part.pins, s)
-          : computeDiagonalOBB(part.pins, s);
+          : computePartRenderPoly(part, s);
         borderRect = obb
           ? { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph, poly: obb }
           : { x: eb.px, y: eb.py, w: eb.pw, h: eb.ph };
