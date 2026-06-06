@@ -15,7 +15,7 @@
  * labels during the part loop, then flushes them into cullable Containers within
  * the label layers. This gives O(visible cells) label rendering instead of O(all labels).
  */
-import { Graphics, Container, BitmapText, BitmapFont, Rectangle, Mesh, MeshGeometry, Texture, earcut } from 'pixi.js';
+import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
 import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
@@ -329,27 +329,20 @@ export interface BoardSceneGraph {
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
   traceLayerContainers: Container[];
   /** Copper-fill polygons (ground planes, power pours) — toggled by
-   *  `showSurfaces`. Container is created empty during buildBoardScene;
-   *  the per-layer triangle meshes are NOT tessellated until the user
-   *  first turns "Show copper fills" on. earcut over the full surface set
-   *  (hundreds of polygons with thousands of voids each on NM-G611-class
-   *  boards) blocked the main thread for seconds when it ran at scene
-   *  build time, regressing first-load by far more than the feature is
-   *  worth for users who never enable the toggle. The mesh layer keeps
-   *  the same z-order regardless of when it's built (sortableChildren
-   *  is set during construction). */
+   *  `showSurfaces`. Single root container holding per-layer child
+   *  containers; each layer follows the same colour as its trace layer so
+   *  the user can read "this fill belongs to L2" at a glance. Renders
+   *  BEHIND the trace layer so traces stay readable on top of the dim
+   *  fill. Voids inside surfaces are NOT punched — earcut over hundreds
+   *  of ground-plane polygons with thousands of via-clearance voids
+   *  regressed first-load badly without delivering a visible difference,
+   *  per user testing on NM-G611. The pad + via overlay layers cover
+   *  most clearances anyway. */
   surfacesLayer: Container | null;
   /** Per-layer surface containers, indexed by layer. Parallel to
    *  `traceLayerContainers`; allows the layer-emphasis pass to lift a
-   *  layer's surface fill alongside its traces. Empty until
-   *  `materializeSurfaces` is called. */
+   *  layer's surface fill alongside its traces. */
   surfacesLayerContainers: Container[];
-  /** Tessellate + attach the surface meshes. No-op when no surfaces are
-   *  present, or after it has already been called once on this scene
-   *  graph (idempotent). Called by BoardRenderer.applyLayerVisibility the
-   *  first time the user enables `showSurfaces`, so the earcut cost is
-   *  paid lazily — most users never enable the toggle and never pay it. */
-  materializeSurfaces: () => void;
   /** Silkscreen / assembly outline overlay — toggled by showSilkscreen.
    *  Two child containers (top, bottom); each side container is shown only
    *  when its corresponding board side is visible. */
@@ -713,146 +706,65 @@ export function buildBoardScene(
   const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
 
   // ── Copper-fill polygons (ground planes, power pours) ─────────────────────
-  // Drawn behind traces so the trace network still reads on top of the dim
-  // fill. Each Surface is a polygon outline + optional inner cutouts (pad
-  // clearances, anti-pads, slots). We earcut each polygon-with-holes into
-  // triangles and batch all triangles for a given layer into a single Mesh
-  // so the GPU sees one draw call per copper layer regardless of how many
-  // ground-pour polygons the format emits. Alpha is intentionally low
-  // (~0.25) — the layer should signal "copper exists here" without
-  // dominating signal traces or components.
-  //
-  // Voids actually punch through (this is what the user sees with pads off:
-  // a perforated ground plane instead of a solid slab). The Graphics-based
-  // earlier draft was a single solid fill — kept around in git history as
-  // commit e96077a before this Mesh-based pass.
+  // Each Surface is rendered as a single filled polygon via Graphics.poly()
+  // + Graphics.fill(). Voids (pad clearances, via anti-pads) are NOT
+  // punched — earlier exploration (commit 6bd488f, since reverted) used
+  // earcut to tessellate polygon-with-holes meshes, but user testing on
+  // NM-G611 showed (a) the visual difference was negligible because the
+  // pad/via overlay layers already cover most clearances, and (b) the
+  // tessellation cost was several seconds on dense ground planes. Going
+  // back to a one-Graphics-per-layer fill: PixiJS' internal earcut on a
+  // simple closed polygon is fast (no holes), one draw call per copper
+  // layer regardless of polygon count, and the user explicitly opted for
+  // this trade-off.
   let surfacesLayer: Container | null = null;
   const surfacesLayerContainers: Container[] = [];
   const SURFACE_ALPHA = 0.25;
-  let surfacesMaterialized = false;
-  // No-op default so callers can always invoke materializeSurfaces() without
-  // checking for a missing function. Replaced below when surfaces are present.
-  let materializeSurfaces: () => void = () => { surfacesMaterialized = true; };
   if (board.surfaces && board.surfaces.length > 0) {
     surfacesLayer = new Container();
     surfacesLayer.label = 'surfaces';
     surfacesLayer.sortableChildren = true;
-    // Pre-create per-layer containers so layer-state visibility wiring
-    // (BoardRenderer.applyLayerVisibility) can index them immediately even
-    // before the meshes are tessellated. Empty containers cost nothing on
-    // the GPU; the meshes attach into these on first materializeSurfaces.
-    const layerSurfacesMap = new Map<number, typeof board.surfaces>();
+
+    const drawSurface = (gfx: Graphics, surf: typeof board.surfaces[number]): void => {
+      const poly = surf.polygon;
+      if (!poly || poly.length < 3) return;
+      gfx.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i].x, poly[i].y);
+      gfx.closePath();
+    };
+
     if (isMultiLayer) {
+      const byLayer = new Map<number, typeof board.surfaces>();
       for (const s of board.surfaces) {
         const li = s.layer ?? 0;
-        let arr = layerSurfacesMap.get(li);
-        if (!arr) { arr = []; layerSurfacesMap.set(li, arr); }
+        let arr = byLayer.get(li);
+        if (!arr) { arr = []; byLayer.set(li, arr); }
         arr.push(s);
       }
-      for (const layerIdx of layerSurfacesMap.keys()) {
+      for (const [layerIdx, layerSurfaces] of byLayer) {
         const layerContainer = new Container();
         layerContainer.label = `surface-layer-${layerIdx}`;
+        const gfx = new Graphics();
+        for (const s of layerSurfaces) drawSurface(gfx, s);
+        const layerColor = board.layerNames && layerIdx < board.layerNames.length
+          ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
+          : 0xcc3333;
+        gfx.fill({ color: layerColor, alpha: SURFACE_ALPHA });
+        layerContainer.addChild(gfx);
         surfacesLayer.addChild(layerContainer);
         while (surfacesLayerContainers.length <= layerIdx) surfacesLayerContainers.push(null!);
         surfacesLayerContainers[layerIdx] = layerContainer;
       }
+    } else {
+      const gfx = new Graphics();
+      for (const s of board.surfaces) drawSurface(gfx, s);
+      gfx.fill({ color: 0xcc3333, alpha: SURFACE_ALPHA });
+      surfacesLayer.addChild(gfx);
     }
     root.addChild(surfacesLayer);
-
-    /** Earcut-triangulate one surface (outer polygon + optional voids) and
-     *  push the resulting triangles into the layer-wide vertex / index
-     *  buffers. Returns the number of triangles emitted; 0 means the
-     *  surface was degenerate (<3-vertex outer) or earcut bailed. */
-    const tessellateInto = (
-      surf: typeof board.surfaces[number],
-      verts: number[],
-      indices: number[],
-    ): number => {
-      const poly = surf.polygon;
-      if (!poly || poly.length < 3) return 0;
-      const localVerts: number[] = new Array(poly.length * 2);
-      for (let i = 0; i < poly.length; i++) {
-        localVerts[i * 2] = poly[i].x;
-        localVerts[i * 2 + 1] = poly[i].y;
-      }
-      const holeIndices: number[] = [];
-      if (surf.voids) {
-        for (const v of surf.voids) {
-          if (v.length < 3) continue;
-          holeIndices.push(localVerts.length / 2);
-          for (let i = 0; i < v.length; i++) {
-            localVerts.push(v[i].x, v[i].y);
-          }
-        }
-      }
-      const tris = earcut(localVerts, holeIndices.length > 0 ? holeIndices : undefined);
-      if (tris.length === 0) return 0;
-      const baseVert = verts.length / 2;
-      for (let i = 0; i < localVerts.length; i++) verts.push(localVerts[i]);
-      for (let i = 0; i < tris.length; i++) indices.push(tris[i] + baseVert);
-      return tris.length / 3;
-    };
-
-    const buildLayerMesh = (
-      layerSurfaces: typeof board.surfaces,
-      tint: number,
-    ): Mesh | null => {
-      const verts: number[] = [];
-      const indices: number[] = [];
-      let triCount = 0;
-      for (const s of layerSurfaces) triCount += tessellateInto(s, verts, indices);
-      if (triCount === 0 || verts.length === 0 || indices.length === 0) return null;
-      const positions = new Float32Array(verts);
-      const uvs = new Float32Array(positions.length);
-      const indexBuffer = new Uint32Array(indices);
-      const geometry = new MeshGeometry({
-        positions,
-        uvs,
-        indices: indexBuffer,
-        topology: 'triangle-list',
-      });
-      const mesh = new Mesh({ geometry, texture: Texture.WHITE });
-      mesh.tint = tint;
-      mesh.alpha = SURFACE_ALPHA;
-      return mesh;
-    };
-
-    // Deferred tessellation closure — BoardRenderer calls this the first
-    // time the user enables "Show copper fills". earcut over hundreds of
-    // ground-plane polygons with thousands of via clearance voids would
-    // otherwise add seconds to first-load on NM-G611-class boards even
-    // when the toggle stays off (which it does by default).
-    materializeSurfaces = () => {
-      if (surfacesMaterialized || !surfacesLayer) return;
-      surfacesMaterialized = true;
-      const t0 = performance.now();
-      let totalTris = 0;
-      if (isMultiLayer) {
-        for (const [layerIdx, layerSurfaces] of layerSurfacesMap) {
-          const layerContainer = surfacesLayerContainers[layerIdx];
-          if (!layerContainer) continue;
-          const layerColor = board.layerNames && layerIdx < board.layerNames.length
-            ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
-            : 0xcc3333;
-          const mesh = buildLayerMesh(layerSurfaces, layerColor);
-          if (mesh) {
-            layerContainer.addChild(mesh);
-            totalTris += (mesh.geometry as MeshGeometry).indexBuffer.data.length / 3;
-          }
-        }
-      } else {
-        const mesh = buildLayerMesh(board.surfaces!, 0xcc3333);
-        if (mesh) {
-          surfacesLayer.addChild(mesh);
-          totalTris += (mesh.geometry as MeshGeometry).indexBuffer.data.length / 3;
-        }
-      }
-      const elapsed = performance.now() - t0;
-      log.render.log(`Surfaces materialized: ${board.surfaces!.length} polygons → ${totalTris} triangles in ${elapsed.toFixed(0)}ms`);
-    };
   }
   if (board.surfaces && board.surfaces.length > 0) {
-    tick(`surfaces (${board.surfaces.length} polygons → empty containers; tessellation deferred)`);
+    tick(`surfaces (${board.surfaces.length} polygons → Graphics.fill per layer)`);
   }
 
   // PCB traces — drawn behind components, after outline.
@@ -2052,5 +1964,5 @@ export function buildBoardScene(
   }
   tick('fontSizeGroups + vias + tail');
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, materializeSurfaces, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

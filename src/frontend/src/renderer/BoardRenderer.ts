@@ -153,8 +153,6 @@ interface BoardScene {
   surfacesLayer: Container | null;
   /** Per-layer surface containers, indexed by layer. Mirrors traceLayerContainers. */
   surfacesLayerContainers: Container[];
-  /** Lazy mesh-tessellation closure — called on first showSurfaces=true. */
-  materializeSurfaces: () => void;
   /** Silkscreen / assembly outlines — toggled by showSilkscreen */
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
@@ -1565,15 +1563,7 @@ export class BoardRenderer {
     }
     // Surfaces — master toggle + same per-layer visibility/emphasis as traces
     // so each layer's copper-fill follows that layer's row in the layer panel.
-    if (scene.surfacesLayer) {
-      // Lazy tessellation: meshes aren't built until the user first turns
-      // the toggle on, since earcut over hundreds of ground-plane polygons
-      // with thousands of voids was a major first-load regression for users
-      // who never wanted the feature. materializeSurfaces is idempotent;
-      // subsequent toggles are free.
-      if (showSurfaces) scene.materializeSurfaces();
-      scene.surfacesLayer.visible = showSurfaces;
-    }
+    if (scene.surfacesLayer) scene.surfacesLayer.visible = showSurfaces;
     for (let i = 0; i < scene.surfacesLayerContainers.length; i++) {
       const c = scene.surfacesLayerContainers[i];
       if (!c) continue;
