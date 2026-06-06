@@ -3317,6 +3317,11 @@ export class BoardRenderer {
           const storedPads = selPart.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(sel.partIndex) : null;
           const clamp = this.activeScene?.pinRadiusClamp.get(sel.partIndex) ?? Infinity;
 
+          // showPads off → pin sprite is the classic circle (see
+          // buildBoardScene useRealPadShape), so the selection redraw must
+          // also fall through to the circle path. Otherwise the halo would
+          // re-reveal the real pad outline that we just stopped drawing.
+          const usePadShapeForSel = boardStore.showPads;
           for (let pi = 0; pi < selPart.pins.length; pi++) {
             const pin = selPart.pins[pi];
             const isPin1 = pi === 0 && selPart.pins.length > 2;
@@ -3324,10 +3329,10 @@ export class BoardRenderer {
             let arr = pinDrawsByColor.get(pinColor);
             if (!arr) { arr = []; pinDrawsByColor.set(pinColor, arr); }
             const pb = pin.padBounds;
-            if (storedPads && storedPads[pi]) {
+            if (usePadShapeForSel && storedPads && storedPads[pi]) {
               const padPoly = storedPads[pi];
               arr.push(() => drawPoly(gfx, padPoly));
-            } else if (pb) {
+            } else if (usePadShapeForSel && pb) {
               const padGeom: PadGeometry = {
                 bounds: pb,
                 shape: pin.padShape,
@@ -3462,11 +3467,16 @@ export class BoardRenderer {
             arr.push(fn);
           };
 
-          if (storedPads && storedPads[ref.pinIndex]) {
+          // Same showPads gate as the single-pin selection redraw above —
+          // glow + dim must trace the same shape as the pin sprite, or the
+          // halo would re-reveal the real pad outline that we just stopped
+          // drawing in the pin layer.
+          const usePadShapeForGlow = boardStore.showPads;
+          if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
             pushDim(() => drawPoly(gfx, padPoly));
             pushGlow(() => drawPoly(gfx, padPoly));
-          } else if (pb) {
+          } else if (usePadShapeForGlow && pb) {
             const grow = s.netHighlightGrow;
             const padGeom: PadGeometry = {
               bounds: pb,
