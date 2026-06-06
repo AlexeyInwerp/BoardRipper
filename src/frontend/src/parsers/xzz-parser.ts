@@ -1415,7 +1415,32 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       const raw2 = netDict.get(p.netIndex) ?? '';
       const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
       const r = (p.padW > 0 && p.padH > 0) ? Math.max(0.5, Math.min(p.padW, p.padH) / 2) : 8;
-      return { name: '', number: String(i + 1), position: { x: p.x, y: p.y }, radius: r, side: pd.side, net };
+      // Forward the real pad geometry to the pin so the renderer can draw
+      // the actual rect/round shape (rotated AABB for selection halo + pin
+      // sprite) instead of a generic circle. Mirrors the Pad emission below;
+      // also stops the pin-circle peeking out from under the copper overlay
+      // when "Show pads" is on (the doubling fix).
+      const hasGeom = p.padW > 0 && p.padH > 0;
+      const halfW = p.padW / 2, halfH = p.padH / 2;
+      const a = (p.padAngleDeg % 360) * Math.PI / 180;
+      const cAng = Math.abs(Math.cos(a)), sAng = Math.abs(Math.sin(a));
+      const aabbHalfW = halfW * cAng + halfH * sAng;
+      const aabbHalfH = halfW * sAng + halfH * cAng;
+      const padBounds = hasGeom ? {
+        minX: p.x - aabbHalfW, maxX: p.x + aabbHalfW,
+        minY: p.y - aabbHalfH, maxY: p.y + aabbHalfH,
+      } : undefined;
+      return {
+        name: '', number: String(i + 1),
+        position: { x: p.x, y: p.y }, radius: r, side: pd.side, net,
+        ...(padBounds ? { padBounds } : {}),
+        ...(hasGeom ? {
+          padShape: p.padShape,
+          padWidth: p.padW,
+          padHeight: p.padH,
+          ...(p.padAngleDeg !== 0 ? { padAngleDeg: p.padAngleDeg } : {}),
+        } : {}),
+      };
     });
     const pos  = pins.map(p => p.position);
     const bounds = computeBBox(pos.length > 0 ? pos : [{ x: 0, y: 0 }]);
