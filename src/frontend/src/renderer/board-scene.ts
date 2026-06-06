@@ -19,6 +19,7 @@ import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js'
 import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
+import type { Point } from '../parsers/types';
 import {
   computePinRadius,
   computeMultiPinPadding,
@@ -70,6 +71,86 @@ function computeGridSize(pinCount: number): number {
   return 8;
 }
 
+/** Chain trace segments that share endpoints into polylines, so consecutive
+ *  bends emit one `join: 'round'` instead of two overlapping `cap: 'round'`
+ *  half-circles. Parsers emit traces as discrete segments; stroking each as a
+ *  separate subpath made every L-bend draw two round caps on top of each other
+ *  — alpha-blended to a visibly darker dot at every pivot point.
+ *
+ *  Greedy traversal: pick an unvisited segment, walk forward through matching
+ *  endpoints, then walk backward through the start. Coordinate matching uses
+ *  3-decimal-mil quantisation to absorb float jitter from parsers that emit
+ *  endpoints via multiple computations. At T- and 4-way junctions only one
+ *  branch chains through; remaining branches become their own polylines, so
+ *  the junction still sees a small darkened spot — but the per-segment L-bend
+ *  doubling that motivated this fix is fully eliminated. */
+function chainTraceSegments(traces: { start: Point; end: Point }[]): Point[][] {
+  if (traces.length === 0) return [];
+  const keyOf = (x: number, y: number): string => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+  const endpointMap = new Map<string, number[]>();
+  for (let i = 0; i < traces.length; i++) {
+    const t = traces[i];
+    const ks = keyOf(t.start.x, t.start.y);
+    const ke = keyOf(t.end.x, t.end.y);
+    let arr = endpointMap.get(ks);
+    if (!arr) { arr = []; endpointMap.set(ks, arr); }
+    arr.push(i);
+    if (ks !== ke) {
+      arr = endpointMap.get(ke);
+      if (!arr) { arr = []; endpointMap.set(ke, arr); }
+      arr.push(i);
+    }
+  }
+
+  const visited = new Uint8Array(traces.length);
+  const polylines: Point[][] = [];
+
+  const findNext = (key: string): number => {
+    const candidates = endpointMap.get(key);
+    if (!candidates) return -1;
+    for (let k = 0; k < candidates.length; k++) {
+      if (!visited[candidates[k]]) return candidates[k];
+    }
+    return -1;
+  };
+
+  for (let seed = 0; seed < traces.length; seed++) {
+    if (visited[seed]) continue;
+    visited[seed] = 1;
+    const s0 = traces[seed].start;
+    const e0 = traces[seed].end;
+    const chain: Point[] = [{ x: s0.x, y: s0.y }, { x: e0.x, y: e0.y }];
+
+    // Extend forward from the tail.
+    while (true) {
+      const tail = chain[chain.length - 1];
+      const next = findNext(keyOf(tail.x, tail.y));
+      if (next < 0) break;
+      visited[next] = 1;
+      const t = traces[next];
+      const startMatches = keyOf(t.start.x, t.start.y) === keyOf(tail.x, tail.y);
+      const nextPt = startMatches ? t.end : t.start;
+      chain.push({ x: nextPt.x, y: nextPt.y });
+    }
+
+    // Extend backward from the head.
+    while (true) {
+      const head = chain[0];
+      const next = findNext(keyOf(head.x, head.y));
+      if (next < 0) break;
+      visited[next] = 1;
+      const t = traces[next];
+      const startMatches = keyOf(t.start.x, t.start.y) === keyOf(head.x, head.y);
+      const nextPt = startMatches ? t.end : t.start;
+      chain.unshift({ x: nextPt.x, y: nextPt.y });
+    }
+
+    polylines.push(chain);
+  }
+
+  return polylines;
+}
+
 /** Lay down a pad's geometry on a Graphics using its actual shape. Used by
  *  the pad-layer rendering and by the pin-selection highlight so both reads
  *  the same primitive (a round D-code becomes a circle, not a square AABB).
@@ -92,6 +173,10 @@ export interface PadGeometry {
   height?: number;
   angleDeg?: number;
   cornerRadius?: number;
+  /** Outline vertices in board coords for poly-shape pads (chamfered /
+   *  octagonal copper). When present, drawPadShape traces the actual outline
+   *  rather than the AABB rectangle. */
+  polygon?: { x: number; y: number }[];
 }
 
 export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
@@ -109,6 +194,26 @@ export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
   // (rare) still cover the full AABB.
   if (p.shape === 'round') {
     gfx.circle(cx, cy, Math.max(gW, gH) / 2);
+    return;
+  }
+
+  // Poly D-code → trace the actual outline (chamfered / octagonal). Grow is
+  // applied by pushing each vertex outward along the (vertex - centroid)
+  // direction by `grow` mils, which keeps the chamfer angles intact for
+  // selection halos.
+  if (p.shape === 'poly' && p.polygon && p.polygon.length >= 3) {
+    const pts: number[] = [];
+    if (grow === 0) {
+      for (const v of p.polygon) pts.push(v.x, v.y);
+    } else {
+      for (const v of p.polygon) {
+        const dx = v.x - cx, dy = v.y - cy;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-6) { pts.push(v.x, v.y); continue; }
+        pts.push(v.x + (dx / len) * grow, v.y + (dy / len) * grow);
+      }
+    }
+    gfx.poly(pts);
     return;
   }
 
@@ -229,15 +334,17 @@ export interface BoardSceneGraph {
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
   silkscreenBottom: Container | null;
-  /** Copper pad overlay — toggled by showPads. Same side-split pattern.
-   *  Only includes pads where `attached === true` (pin-bound pads). */
-  padsLayer: Container | null;
+  /** Copper pad overlay — toggled by `showPads` AND the corresponding
+   *  side-visibility. Attached as the layer ABOVE the pin layer so the
+   *  copper-color rectangle substitutes the pin sprite, eliminating the
+   *  earlier "circle behind pad" doubling. Only includes pads where
+   *  `attached === true` (pin-bound pads). */
   padsTop: Container | null;
   padsBottom: Container | null;
   /** Standalone copper-drop pads (GND stitching, power-rail tie pads,
    *  mounting-hole pads) — pads where `attached === false`. Toggled by
-   *  showCopperDrops, default OFF. Same side-split pattern. */
-  copperDropsLayer: Container | null;
+   *  `showCopperDrops` AND the corresponding side-visibility. Renders
+   *  BELOW the pin layer (they're noise, shouldn't occlude pins). */
   copperDropsTop: Container | null;
   copperDropsBottom: Container | null;
   /** Via/drill hole overlay container — toggled by showVias */
@@ -601,9 +708,10 @@ export function buildBoardScene(
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
         for (const [width, traces] of byWidth) {
-          for (const t of traces) {
-            gfx.moveTo(t.start.x, t.start.y);
-            gfx.lineTo(t.end.x, t.end.y);
+          for (const polyline of chainTraceSegments(traces)) {
+            if (polyline.length < 2) continue;
+            gfx.moveTo(polyline[0].x, polyline[0].y);
+            for (let i = 1; i < polyline.length; i++) gfx.lineTo(polyline[i].x, polyline[i].y);
           }
           gfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
         }
@@ -625,9 +733,10 @@ export function buildBoardScene(
         arr.push(t);
       }
       for (const [width, traces] of byWidth) {
-        for (const t of traces) {
-          traceGfx.moveTo(t.start.x, t.start.y);
-          traceGfx.lineTo(t.end.x, t.end.y);
+        for (const polyline of chainTraceSegments(traces)) {
+          if (polyline.length < 2) continue;
+          traceGfx.moveTo(polyline[0].x, polyline[0].y);
+          for (let i = 1; i < polyline.length; i++) traceGfx.lineTo(polyline[i].x, polyline[i].y);
         }
         traceGfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
       }
@@ -680,26 +789,26 @@ export function buildBoardScene(
   // remain visible regardless of which side is selected.
   //
   // Two parallel layer trees so the user can toggle them independently:
-  //   - padsLayer      = pads where pad.attached === true  (real component pins)
-  //   - copperDropsLayer = the rest (GND stitching, power drops, mounting pads)
+  //   - padsTop / padsBottom        = pads where pad.attached === true  (real pin pads)
+  //   - copperDropsTop / -Bottom    = the rest (GND stitching, power drops, mounting pads)
   // Parsers that don't tag attachment (Allegro/BVR/etc.) leave `attached`
   // undefined; we treat undefined as "attached" so existing formats render
   // exactly as before.
-  let padsLayer: Container | null = null;
+  //
+  // Both pairs are attached INTO their corresponding side layer (topLayer /
+  // bottomLayer) — pads above the pin layer, drops below it — so the copper
+  // overlay substitutes the pin sprite when "Show pads" is on, eliminating
+  // the earlier circle-behind-rectangle doubling. Visibility is gated by the
+  // renderer via combined showPads/showCopperDrops + showTop/showBottom.
   let padsTop: Container | null = null;
   let padsBottom: Container | null = null;
-  let copperDropsLayer: Container | null = null;
   let copperDropsTop: Container | null = null;
   let copperDropsBottom: Container | null = null;
   if (board.pads && board.pads.length > 0) {
-    padsLayer = new Container();
-    padsLayer.label = 'pads';
     padsTop = new Container();
     padsTop.label = 'pads-top';
     padsBottom = new Container();
     padsBottom.label = 'pads-bottom';
-    copperDropsLayer = new Container();
-    copperDropsLayer.label = 'copper-drops';
     copperDropsTop = new Container();
     copperDropsTop.label = 'copper-drops-top';
     copperDropsBottom = new Container();
@@ -716,7 +825,13 @@ export function buildBoardScene(
     const botPadGfx  = new Graphics();
     const topDropGfx = new Graphics();
     const botDropGfx = new Graphics();
-    const drillGfx   = new Graphics();
+    // Drill hole graphics are duplicated per side (identical content). Each
+    // side's drill is parented to its pad container so the hole stays visible
+    // as you flip between top and bottom. PixiJS doesn't let one Graphics
+    // belong to two Containers, hence the duplication; cost is ~one extra
+    // GPU buffer per side and is negligible at typical pad counts.
+    const topDrillGfx = new Graphics();
+    const botDrillGfx = new Graphics();
     let anyDrill = false;
     for (const p of board.pads) {
       const aabbW = p.bounds.maxX - p.bounds.minX;
@@ -732,7 +847,8 @@ export function buildBoardScene(
       if (p.drill && p.drill > 0) {
         const cx = (p.bounds.minX + p.bounds.maxX) / 2;
         const cy = (p.bounds.minY + p.bounds.maxY) / 2;
-        drillGfx.circle(cx, cy, p.drill / 2);
+        topDrillGfx.circle(cx, cy, p.drill / 2);
+        botDrillGfx.circle(cx, cy, p.drill / 2);
         anyDrill = true;
       }
     }
@@ -740,24 +856,28 @@ export function buildBoardScene(
     botPadGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: PAD_ALPHA });
     topDropGfx.fill({ color: PAD_TOP_COLOR,    alpha: DROP_ALPHA });
     botDropGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: DROP_ALPHA });
-    if (anyDrill) drillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
+    if (anyDrill) {
+      topDrillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
+      botDrillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
+    }
     padsTop.addChild(topPadGfx);
     padsBottom.addChild(botPadGfx);
     copperDropsTop.addChild(topDropGfx);
     copperDropsBottom.addChild(botDropGfx);
-    // Drops render BELOW pads so a drop pad sitting under a pin doesn't
-    // visually overpower the real pad.
-    copperDropsLayer.addChild(copperDropsBottom);
-    copperDropsLayer.addChild(copperDropsTop);
-    padsLayer.addChild(padsBottom);
-    padsLayer.addChild(padsTop);
-    root.addChild(copperDropsLayer);
-    root.addChild(padsLayer);
-    // Drill holes render above both side fills so the hole visually punches
-    // through whichever side is currently visible.
+    // Drill holes render above the pad fills on each side so the hole
+    // visually punches through whichever side is currently visible.
     if (anyDrill) {
-      padsLayer.addChild(drillGfx);
+      padsTop.addChild(topDrillGfx);
+      padsBottom.addChild(botDrillGfx);
     }
+    // Z-order inside each side container: fill → drops → pin → pads → outline → label.
+    // Drops render below pins (ambient noise, shouldn't occlude); pads render
+    // above pins so the copper-color rectangle substitutes the pin sprite.
+    // Outline + labels stay on top so pin numbers remain readable over pads.
+    topLayer.addChildAt(copperDropsTop, topLayer.getChildIndex(topPinLayer));
+    bottomLayer.addChildAt(copperDropsBottom, bottomLayer.getChildIndex(bottomPinLayer));
+    topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer) + 1);
+    bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer) + 1);
   }
 
   root.addChild(bottomLayer);
@@ -1044,16 +1164,57 @@ export function buildBoardScene(
       } else {
         const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
         const padShape = override?.padShape ?? 'natural';
+        // Use the parser-supplied real pad geometry (TVW / Allegro / XZZ
+        // populate `pin.padShape` + `pin.padBounds`) when the per-type
+        // override is 'natural'. This draws the actual rect/roundrect/poly
+        // shape instead of a generic circle, so the pin sprite matches the
+        // selection halo (which already uses drawPadShape) and the copper
+        // overlay layer, eliminating the "circle behind a pad" doubling.
+        const useParserPadShape =
+          padShape === 'natural' &&
+          pin.padShape !== undefined &&
+          pin.padShape !== 'round' &&
+          pin.padBounds !== undefined;
         if (isNcPin) {
           // Inset by half stroke width so outer edge aligns with filled pins of same radius
           const ncInset = Math.max(0.15, s.pinMinRadius * 0.06);
           const ri = r - ncInset;
-          if (padShape === 'square') ncGfx.rect(pin.position.x - ri, pin.position.y - ri, ri * 2, ri * 2);
-          else                       ncGfx.circle(pin.position.x, pin.position.y, ri);
+          if (useParserPadShape) {
+            // For NC pins we still want a single-pixel-style outline that
+            // doesn't bleed past the equivalent filled-pin extent. Drawing
+            // the pad shape directly (no inset) keeps the outline tight
+            // enough; the existing stroke width matches filled-pin radius.
+            drawPadShape(ncGfx, {
+              bounds: pin.padBounds!,
+              shape: pin.padShape,
+              width: pin.padWidth,
+              height: pin.padHeight,
+              angleDeg: pin.padAngleDeg,
+              cornerRadius: pin.padCornerRadius,
+              polygon: pin.padPolygon,
+            });
+          } else if (padShape === 'square') {
+            ncGfx.rect(pin.position.x - ri, pin.position.y - ri, ri * 2, ri * 2);
+          } else {
+            ncGfx.circle(pin.position.x, pin.position.y, ri);
+          }
         } else {
           const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
-          if (padShape === 'square') pinGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
-          else                       pinGfx.circle(pin.position.x, pin.position.y, r);
+          if (useParserPadShape) {
+            drawPadShape(pinGfx, {
+              bounds: pin.padBounds!,
+              shape: pin.padShape,
+              width: pin.padWidth,
+              height: pin.padHeight,
+              angleDeg: pin.padAngleDeg,
+              cornerRadius: pin.padCornerRadius,
+              polygon: pin.padPolygon,
+            });
+          } else if (padShape === 'square') {
+            pinGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
+          } else {
+            pinGfx.circle(pin.position.x, pin.position.y, r);
+          }
         }
       }
 
@@ -1710,5 +1871,5 @@ export function buildBoardScene(
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsLayer, padsTop, padsBottom, copperDropsLayer, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

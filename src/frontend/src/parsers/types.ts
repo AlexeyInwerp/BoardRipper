@@ -36,6 +36,11 @@ export interface Pin {
   padHeight?: number;
   padAngleDeg?: number;
   padCornerRadius?: number;
+  /** Pre-translated polygon vertices in board coordinates for shape='poly'
+   *  (chamfered / octagonal / freeform copper pads). Closed implicitly — the
+   *  renderer connects the last vertex back to the first. When absent on a
+   *  poly-shape pin, `drawPadShape` falls back to the rotated AABB rectangle. */
+  padPolygon?: Point[];
 }
 
 export interface Part {
@@ -154,6 +159,10 @@ export interface Pad {
   angleDeg?: number;
   /** RoundRect corner radius in mils. */
   cornerRadius?: number;
+  /** Pre-translated polygon vertices in board coordinates for shape='poly'
+   *  (chamfered / octagonal / freeform copper). Closed implicitly. When absent
+   *  on a poly-shape pad, the renderer falls back to the rotated AABB rect. */
+  polygon?: Point[];
 }
 
 export interface BoardData {

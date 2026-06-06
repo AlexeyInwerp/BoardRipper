@@ -197,6 +197,10 @@ interface TvwShape {
   width: number;  // mils
   height: number; // mils
   turn: number;   // degrees
+  /** Shape-local polygon outline for Poly shapes (chamfered / octagonal pads).
+   *  Vertices are in shape-local mils relative to the pad anchor; the parser
+   *  translates by the pad position when emitting the final Pad/Pin polygon. */
+  polygon?: Point[];
 }
 
 interface TvwPad {
@@ -376,16 +380,29 @@ function loadShapes(r: TvwReader): TvwShape[] {
       case TvwShapeType.Poly: {
         r.readU32();
         r.readPStr();
+        // 4 fixed32 = poly bbox in shape-local coords. We re-derive the bbox
+        // from the captured vertices below, but read these to advance the
+        // cursor consistently with the original parser.
         r.readFixed32(); r.readFixed32();
         r.readFixed32(); r.readFixed32();
         const subObjCount = r.readU32();
+        // First sub-object of type 2 holds the outline polygon (chamfered /
+        // octagonal pad shape). Additional sub-objects are auxiliary and
+        // ignored — only the outermost outline is used for rendering.
+        const polyVerts: Point[] = [];
         for (let s = 0; s < subObjCount; s++) {
           const subType = r.readU32();
           if (subType === 2) {
             r.skip(12); // Flags: int32_t[3]
             const vertexCount = r.readU32();
+            const subVerts: Point[] = [];
             for (let v = 0; v < vertexCount; v++) {
-              r.readFixed32(); r.readFixed32();
+              const vx = r.readFixed32();
+              const vy = r.readFixed32();
+              subVerts.push({ x: vx, y: vy });
+            }
+            if (polyVerts.length === 0 && subVerts.length >= 3) {
+              polyVerts.push(...subVerts);
             }
           } else if (subType === 5) {
             r.readU32(); r.readU32(); r.readU32();
@@ -393,6 +410,17 @@ function loadShapes(r: TvwReader): TvwShape[] {
             r.readFixed32(); r.readFixed32();
             r.readS32();
           }
+        }
+        // Re-centre the outline on the shape origin: subtract the polygon's
+        // centroid so the pad anchor (which the placement step adds back via
+        // pad.pos) lines up with the visual centre of the chamfered rectangle.
+        if (polyVerts.length >= 3) {
+          let cx = 0, cy = 0;
+          for (const v of polyVerts) { cx += v.x; cy += v.y; }
+          cx /= polyVerts.length; cy /= polyVerts.length;
+          for (const v of polyVerts) { v.x -= cx; v.y -= cy; }
+          shapes.push({ type: shapeType, width: w, height: h, turn, polygon: polyVerts });
+          continue;
         }
         break;
       }
@@ -1422,11 +1450,23 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
 
   /** AABB of a TVW shape (D-code rect/round) at the given centre. For
    *  non-axis rotations the AABB is widened to the rotated rect's extent.
+   *  Poly shapes use the actual polygon extent when vertices are present so
+   *  chamfered pads don't widen the AABB beyond their visible footprint.
    *  Returns null if the shape is missing or zero-sized. Shared between the
    *  per-pin `padBounds` and the global `pads[]` extraction so the
    *  pin-selection highlight matches the rendered pad rectangle exactly. */
   const computePadBounds = (cx: number, cy: number, shape: TvwShape | null): BBox | null => {
     if (!shape || shape.width <= 0 || shape.height <= 0) return null;
+    if (shape.polygon && shape.polygon.length >= 3) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const v of shape.polygon) {
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+      }
+      return { minX: cx + minX, minY: cy + minY, maxX: cx + maxX, maxY: cy + maxY };
+    }
     let halfW = shape.width / 2;
     let halfH = shape.height / 2;
     if (shape.turn !== 0) {
@@ -1437,6 +1477,15 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       halfH = (s * shape.width + c * shape.height) / 2;
     }
     return { minX: cx - halfW, minY: cy - halfH, maxX: cx + halfW, maxY: cy + halfH };
+  };
+
+  /** Translate a shape-local polygon (re-centred on origin in `loadShapes`)
+   *  to board coordinates by adding the pad position. Returns undefined when
+   *  the shape has no polygon (non-Poly shapes or Poly shapes that failed
+   *  vertex extraction). */
+  const computePadPolygon = (cx: number, cy: number, shape: TvwShape | null): Point[] | undefined => {
+    if (!shape?.polygon || shape.polygon.length < 3) return undefined;
+    return shape.polygon.map(v => ({ x: cx + v.x, y: cy + v.y }));
   };
 
   const resolvePin = (tvwPin: TvwPin, padLayer: TvwLayer, side: 'top' | 'bottom'): Pin | null => {
@@ -1452,6 +1501,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     // highlight uses the same primitive (round → circle, roundrect →
     // rounded rect, etc.) instead of the AABB rectangle.
     const padShape = tvwShapeToPadShape(pad.shapeRef?.type);
+    const padPolygon = computePadPolygon(pad.pos.x, pad.pos.y, pad.shapeRef);
     return {
       name: tvwPin.name,
       number: String(tvwPin.id),
@@ -1466,6 +1516,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         padHeight: pad.shapeRef.height,
         ...(pad.shapeRef.turn !== 0 ? { padAngleDeg: pad.shapeRef.turn } : {}),
       } : {}),
+      ...(padPolygon ? { padPolygon } : {}),
     };
   };
 
@@ -1812,6 +1863,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
       const netName = getNetName(tvw.nets, pad.net);
       const attached = pinCoordKeys.has(coordKey(pad.pos.x, pad.pos.y));
       const shape = tvwShapeToPadShape(pad.shapeRef?.type);
+      const polygon = computePadPolygon(pad.pos.x, pad.pos.y, pad.shapeRef);
       padRects.push({
         bounds,
         side,
@@ -1823,6 +1875,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
           height: pad.shapeRef.height,
           ...(pad.shapeRef.turn !== 0 ? { angleDeg: pad.shapeRef.turn } : {}),
         } : {}),
+        ...(polygon ? { polygon } : {}),
       });
     }
   }

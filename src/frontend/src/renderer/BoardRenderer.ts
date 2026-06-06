@@ -153,12 +153,13 @@ interface BoardScene {
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
   silkscreenBottom: Container | null;
-  /** Copper pad rectangles — toggled by showPads (attached pads only) */
-  padsLayer: Container | null;
+  /** Copper pad rectangles — sit inside topLayer/bottomLayer between pin and
+   *  outline so the copper-color overlay substitutes the pin sprite when
+   *  visible. Toggled by `showPads` AND the corresponding side toggle. */
   padsTop: Container | null;
   padsBottom: Container | null;
-  /** Standalone copper drops — toggled by showCopperDrops, default OFF */
-  copperDropsLayer: Container | null;
+  /** Standalone copper drops — same parenting as pads but render BELOW the
+   *  pin layer (they're noise). Toggled by `showCopperDrops` AND side. */
   copperDropsTop: Container | null;
   copperDropsBottom: Container | null;
   /** Via/drill hole overlay container */
@@ -1562,15 +1563,14 @@ export class BoardRenderer {
     if (scene.silkscreenLayer)  scene.silkscreenLayer.visible  = showSilkscreen;
     if (scene.silkscreenTop)    scene.silkscreenTop.visible    = showTop;
     if (scene.silkscreenBottom) scene.silkscreenBottom.visible = showBottom;
-    // Copper pads — same pattern
-    if (scene.padsLayer)        scene.padsLayer.visible        = showPads;
-    if (scene.padsTop)          scene.padsTop.visible          = showTop;
-    if (scene.padsBottom)       scene.padsBottom.visible       = showBottom;
+    // Copper pads — parented inside the side layers so each container is
+    // gated by both the master `showPads` toggle and its own side toggle.
+    if (scene.padsTop)          scene.padsTop.visible          = showPads && showTop;
+    if (scene.padsBottom)       scene.padsBottom.visible       = showPads && showBottom;
     // Standalone copper drops (GND stitching, power-rail tie pads, mounting
     // pads). Default OFF — independent toggle from real pin pads.
-    if (scene.copperDropsLayer)    scene.copperDropsLayer.visible    = showCopperDrops;
-    if (scene.copperDropsTop)      scene.copperDropsTop.visible      = showTop;
-    if (scene.copperDropsBottom)   scene.copperDropsBottom.visible   = showBottom;
+    if (scene.copperDropsTop)      scene.copperDropsTop.visible      = showCopperDrops && showTop;
+    if (scene.copperDropsBottom)   scene.copperDropsBottom.visible   = showCopperDrops && showBottom;
     // Component sub-layer visibility (master: showComponents)
     scene.topFillLayer.visible       = showComponents;
     scene.bottomFillLayer.visible    = showComponents;
@@ -3297,6 +3297,7 @@ export class BoardRenderer {
                 height: pin.padHeight,
                 angleDeg: pin.padAngleDeg,
                 cornerRadius: pin.padCornerRadius,
+                polygon: pin.padPolygon,
               };
               arr.push(() => drawPadShape(gfx, padGeom));
             } else {
@@ -3436,6 +3437,7 @@ export class BoardRenderer {
               height: pin.padHeight,
               angleDeg: pin.padAngleDeg,
               cornerRadius: pin.padCornerRadius,
+              polygon: pin.padPolygon,
             };
             pushDim(() => drawPadShape(gfx, padGeom));
             pushGlow(() => drawPadShape(gfx, padGeom, grow));
