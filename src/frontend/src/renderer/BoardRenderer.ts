@@ -455,6 +455,14 @@ export class BoardRenderer {
    *  detects right-click hide/send-to-back actions without a deep diff. */
   private lastPartOverrides: ReadonlyMap<string, { hidden?: boolean; sendToBack?: boolean }> | null = null;
 
+  /** Snapshot of `boardStore.showPads` at last scene build. Pin sprites
+   *  switch between the parser-supplied real pad shape (when on) and the
+   *  classic FlexBV circle (when off), and the chosen shape is baked into
+   *  the pin Graphics at build time — toggling the flag therefore needs a
+   *  scene rebuild, not just a Container.visible flip. Initial value `null`
+   *  forces the first build path to run normally. */
+  private lastShowPads: boolean | null = null;
+
   // Spatial hash for O(1) hit-testing — maps grid cell keys to part indices.
   // Cached per (raw board, foldMode, selectedBoardIndex) via `sceneCacheKey`
   // so filter toggles reuse the same grid entry instead of leaking a new
@@ -1870,7 +1878,7 @@ export class BoardRenderer {
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides);
+      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides, boardStore.showPads);
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
 
@@ -2195,6 +2203,23 @@ export class BoardRenderer {
         return;
       }
       this.lastPartOverrides = curOverrides;
+
+      // showPads toggle changes the pin sprite shape (real pad geometry vs
+      // classic circle), which is baked into pin Graphics at scene build
+      // time — so the visibility flip in applyLayerVisibility isn't enough.
+      // Rebuild the scene on actual change. Initial `null` snapshot is just
+      // the "first seen" sentinel; we capture but don't rebuild.
+      const curShowPads = boardStore.showPads;
+      if (board && board === this.board && this.lastShowPads !== null
+          && this.lastShowPads !== curShowPads) {
+        this.lastShowPads = curShowPads;
+        this.saveViewportState();
+        this.invalidateAllScenes();
+        this.activateScene(board);
+        this.renderSelection();
+        return;
+      }
+      this.lastShowPads = curShowPads;
       if (board !== this.board) {
         this.lastFollowQuery = '';
         log.render.log('onBoardUpdate: board changed', board ? 'activating' : 'deactivating');

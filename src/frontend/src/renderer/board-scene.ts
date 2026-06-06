@@ -619,6 +619,11 @@ export function buildBoardScene(
   s: RenderSettings,
   metadataHex?: string,
   partOverrides: PartOverrideMap = EMPTY_PART_OVERRIDES,
+  /** When true, the pin sprite draws in the parser-supplied pad shape
+   *  (matches the copper overlay layer). When false, falls back to classic
+   *  circular pin sprites — used when "Show pads" is off so the user gets
+   *  the FlexBV-style look without the doubled rectangle + circle. */
+  useRealPadShape: boolean = true,
 ): BoardSceneGraph {
   // `board` arrives pre-derived via `boardStore.board` (see
   // `store/derive-board-view.ts`): filtered, folded, sides tagged. Hidden
@@ -1186,9 +1191,11 @@ export function buildBoardScene(
         // layer drew the real (small) pad on top of the synthesized (large)
         // rect, leaving the synthesized rect visible as a halo around every
         // cap/inductor. The estimated rectangle remains the fallback for
-        // formats that don't expose per-pin pad bounds (BVR1/BVR3/BDV/etc.)
-        // and for users who explicitly force a different padShape override.
-        if (padShape === 'natural' && pin.padShape !== undefined && pin.padBounds !== undefined) {
+        // formats that don't expose per-pin pad bounds (BVR1/BVR3/BDV/etc.),
+        // for users who explicitly force a different padShape override, and
+        // when the caller opted out via `useRealPadShape=false` (Show pads
+        // is off → classic circular FlexBV look).
+        if (useRealPadShape && padShape === 'natural' && pin.padShape !== undefined && pin.padBounds !== undefined) {
           const targetGfx = isNcPin
             ? ncGfx
             : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
@@ -1267,6 +1274,7 @@ export function buildBoardScene(
         // selection halo (which already uses drawPadShape) and the copper
         // overlay layer, eliminating the "circle behind a pad" doubling.
         const useParserPadShape =
+          useRealPadShape &&
           padShape === 'natural' &&
           pin.padShape !== undefined &&
           pin.padShape !== 'round' &&
