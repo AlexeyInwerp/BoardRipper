@@ -971,14 +971,20 @@ export function buildBoardScene(
       padsTop.addChild(topDrillGfx);
       padsBottom.addChild(botDrillGfx);
     }
-    // Z-order inside each side container: fill → drops → pin → pads → outline → label.
-    // Drops render below pins (ambient noise, shouldn't occlude); pads render
-    // above pins so the copper-color rectangle substitutes the pin sprite.
-    // Outline + labels stay on top so pin numbers remain readable over pads.
+    // Z-order inside each side container: fill → drops → pads → pin → outline → label.
+    // Both drops and pads render BELOW the pin layer so the pin sprite (drawn
+    // in the resolved net color) sits on top and isn't hidden behind the
+    // uniform warm-copper pad fill. The pin radius is capped at
+    // min(pin.padWidth, pin.padHeight)/2 in the pin loop so a multi-pin
+    // circle inscribes inside the pad and doesn't poke past the pad outline
+    // — the "doubling" artefact the inscribed cap was added for. Net result:
+    // visible pad shape (copper) as a halo, net-colored pin sprite in the
+    // middle. Reverts the previous "pad-above-pin" experiment that hid net
+    // colors on XZZ single-layer boards.
     topLayer.addChildAt(copperDropsTop, topLayer.getChildIndex(topPinLayer));
     bottomLayer.addChildAt(copperDropsBottom, bottomLayer.getChildIndex(bottomPinLayer));
-    topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer) + 1);
-    bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer) + 1);
+    topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer));
+    bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer));
   }
   if (board.pads && board.pads.length > 0) {
     tick(`pads + drops (${board.pads.length} rects + drill)`);
