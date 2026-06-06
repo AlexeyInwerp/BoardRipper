@@ -1,5 +1,28 @@
 # BoardRipper changelog
 
+## v0.31.11 — 2026-06-06
+
+XZZ pass: the parser now extracts the geometry that was sitting
+unread in every Apple boardview — real pad shapes, per-part silkscreen
+outlines, via drills — and renders rotated chips with rotated
+outlines instead of axis-aligned boxes that miss the body. Plus an
+issue-#19 UX fix so a PDF-driven selection respects your dim
+preference.
+
+### Features
+
+- **Real pad geometry from XZZ pin sub-blocks.** Previously framed as "no pad polygon data" — wrong. The pad rectangle (width, height, shape byte, rotation) is in the variable-length region of the 0x09 pin sub-block past the pin name; the old parser read four fields and skipped 32 bytes of "unknown" data which turned out to be three repeated copies of the same (u32 w, u32 h, u8 shape) chunk, with rotation 8 bytes earlier. A2442 mainboard yields 20,046 pads (8,620 round BGA balls + 11,426 rect SMD) feeding the existing `showPads` toggle. Pin radius now scales to `min(padW, padH)/2` so N4090's 2,971 SoC balls draw at their real 6.75 mil instead of the hard-coded 8 mil that drew dots over real pads. `PARSER_VERSION` bumped 66→67 so stale caches don't hide the change. (`aed68a5`)
+- **Per-part silkscreen outlines.** Each XZZ part block carries four 0x05 sub-blocks on layer 17 — the four edges of the silkscreen rectangle drawn around the component. The parser emits them as four 2-point `SilkscreenPath`s tagged with the part's side; the existing silkscreen overlay renders them. The chip-side rectangles now match real PCB silkscreen, not just an inferred bounding box. 17,428 per-part paths on A2442. (`7d7c72d`)
+- **Board-wide silkscreen routed to the overlay.** Top-level layer-17 segments (board logo art, polarity dots, the legacy print on every board) now flow into `board.silkscreen` instead of being discarded. Chained via `chainByComponent` so the sparse art renders with few GPU draw calls. (`33c8184`)
+- **Via blocks (drill + annular ring + net).** 0x02 sub-blocks parsed: 17,273 vias on A2442 with diameter and net. The renderer's via overlay matches connected layers to nearby trace endpoints regardless of the layer-pair field (which is flag-coded `1, 5` on every surveyed Apple file with no observed variance — blind/buried stack-ups unrecoverable until a counter-example shows up). (`e365add`)
+
+### Fixes
+
+- **Rotated XZZ chip outlines follow the chip, not the AABB.** A 45°-rotated multi-pin chip (e.g. N3842 on A2442 — a 19-pad diamond) was drawn with an axis-aligned selection box because `computeDiagonalOBB`'s area-saving gate rejected the OBB: scattered thermal pads at the centre and a single "wing" pin at the AABB edge inflated the rotated rectangle until it saved less than 30% over the AABB and the gate fell through to the rect fallback. The format already records rotation per pad; on a tilted chip every pad's angle (mod 90°, since rectangles are centro-symmetric) lands in the same bucket. The parser now resolves that bucket once and stashes it on `Part.angleDeg`. `computePartRenderPoly` projects pins onto the recorded axis directly when set, bypassing PCA. `board-scene`'s per-part border path flows through the same wrapper so the always-on body rect picks up the same OBB as the selection highlight. Detection gated on ≥70% pad-angle agreement so a chip with one oddly-rotated annotation pad still flips through, but a chip with a single rotated pad on a straight body doesn't get falsely tilted. (`3fea5ad`)
+- **XZZ file-wide X-mirror after butterfly fold.** A whole class of Apple files came out X-flipped on the screen after the butterfly unfold. The pin-direction detector now runs after the fold and corrects, so the file-wide orientation matches the physical board. (`56cdd26`)
+- **XZZ mirror axis after renderer auto-rotation.** Vertical-oriented XZZ files that the renderer auto-rotates 270° were mirroring on the wrong axis (X-mirror on screen instead of Y-mirror, or vice versa) after the rotation swapped scene and screen axes. The mirror now picks the correct axis post-rotation. (`c8fdb42`)
+- **PDF-driven selection respects `dimMode=off` (#19).** The Auto-dim-on-search switch (default ON) was overriding an explicit per-tab `dimMode=off`: clicking a designator in a PDF lit the full dim overlay even when the user had explicitly disabled dimming for that board. The auto-dim rule now only *promotes* a view that's already dimmed (Dim or Darklight); it never introduces dim against an opt-out. No setting migration needed. (`df04f73`)
+
 ## v0.31.10 — 2026-06-05
 
 Hotfix for v0.31.9 — opening a PDF while 2-Window Mode was already on
