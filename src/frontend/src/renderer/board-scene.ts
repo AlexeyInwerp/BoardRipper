@@ -905,7 +905,15 @@ export function buildBoardScene(
   let padsBottom: Container | null = null;
   let copperDropsTop: Container | null = null;
   let copperDropsBottom: Container | null = null;
-  if (board.pads && board.pads.length > 0) {
+  // Pad overlay is only built for MULTI-LAYER boards. On single-layer
+  // formats (XZZ, single-layer BRD, etc.) the pad-overlay adds nothing
+  // beyond a uniform warm-copper rect — the pad shape is already trivial
+  // (round / rect from a flat pin list), no inner-layer routing context
+  // makes the "copper" cue meaningful, and the overlay was actively
+  // hurting per-net pin color visibility. Multi-layer parsers (TVW,
+  // Allegro) keep the overlay so the user can see real copper geometry
+  // alongside the pin sprites. Per-user decision after the XZZ regression.
+  if (board.pads && board.pads.length > 0 && isMultiLayer) {
     padsTop = new Container();
     padsTop.label = 'pads-top';
     padsBottom = new Container();
@@ -986,7 +994,7 @@ export function buildBoardScene(
     topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer));
     bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer));
   }
-  if (board.pads && board.pads.length > 0) {
+  if (board.pads && board.pads.length > 0 && isMultiLayer) {
     tick(`pads + drops (${board.pads.length} rects + drill)`);
   }
 

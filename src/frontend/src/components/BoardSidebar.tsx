@@ -284,7 +284,13 @@ function LayersTab({ tabId }: { tabId: number }) {
             <span className="toggle-check">{showSilkscreen ? '■' : '□'}</span> Silkscreen
           </button>
         )}
-        {board?.pads && board.pads.length > 0 && (
+        {/* Pad + copper-drop overlays only render on multi-layer boards
+            (where copper geometry adds context to the pin sprite). For
+            single-layer XZZ / BRD the pad overlay was hiding net colors
+            and adding nothing, so the layer isn't built and the toggle
+            shouldn't appear either. board.layerNames is the multi-layer
+            signal — same gate used by buildBoardScene. */}
+        {board?.pads && board.pads.length > 0 && !!board.layerNames && board.layerNames.length > 0 && (
           <button
             className={`visibility-toggle ${showPads ? '' : 'off'}`}
             onClick={() => boardStore.togglePads()}
@@ -293,7 +299,7 @@ function LayersTab({ tabId }: { tabId: number }) {
             <span className="toggle-check">{showPads ? '■' : '□'}</span> Pads
           </button>
         )}
-        {board?.pads && board.pads.some(p => p.attached === false) && (
+        {board?.pads && board.pads.some(p => p.attached === false) && !!board.layerNames && board.layerNames.length > 0 && (
           <button
             className={`visibility-toggle ${showCopperDrops ? '' : 'off'}`}
             onClick={() => boardStore.toggleCopperDrops()}
