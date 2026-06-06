@@ -15,7 +15,7 @@
  * labels during the part loop, then flushes them into cullable Containers within
  * the label layers. This gives O(visible cells) label rendering instead of O(all labels).
  */
-import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js';
+import { Graphics, Container, BitmapText, BitmapFont, Rectangle, Mesh, MeshGeometry, Texture, earcut } from 'pixi.js';
 import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
@@ -691,12 +691,18 @@ export function buildBoardScene(
 
   // ── Copper-fill polygons (ground planes, power pours) ─────────────────────
   // Drawn behind traces so the trace network still reads on top of the dim
-  // fill. Each Surface is a polygon outline; per-pad clearance voids are
-  // intentionally NOT rendered — PixiJS v8 Graphics has no native polygon-
-  // with-holes support, and the pad layer overlays the same spot anyway, so
-  // a void's only visual effect would be a faintly darker pad. Alpha is
-  // intentionally low (~0.25) — the layer should signal "copper exists here"
-  // without dominating signal traces or components.
+  // fill. Each Surface is a polygon outline + optional inner cutouts (pad
+  // clearances, anti-pads, slots). We earcut each polygon-with-holes into
+  // triangles and batch all triangles for a given layer into a single Mesh
+  // so the GPU sees one draw call per copper layer regardless of how many
+  // ground-pour polygons the format emits. Alpha is intentionally low
+  // (~0.25) — the layer should signal "copper exists here" without
+  // dominating signal traces or components.
+  //
+  // Voids actually punch through (this is what the user sees with pads off:
+  // a perforated ground plane instead of a solid slab). The Graphics-based
+  // earlier draft was a single solid fill — kept around in git history as
+  // commit e96077a before this Mesh-based pass.
   let surfacesLayer: Container | null = null;
   const surfacesLayerContainers: Container[] = [];
   const SURFACE_ALPHA = 0.25;
@@ -705,12 +711,66 @@ export function buildBoardScene(
     surfacesLayer.label = 'surfaces';
     surfacesLayer.sortableChildren = true;
 
-    const drawSurface = (gfx: Graphics, surf: typeof board.surfaces[number]): void => {
+    /** Earcut-triangulate one surface (outer polygon + optional voids) and
+     *  push the resulting triangles into the layer-wide vertex / index
+     *  buffers. Returns the number of triangles emitted; 0 means the
+     *  surface was degenerate (<3-vertex outer) or earcut bailed. */
+    const tessellateInto = (
+      surf: typeof board.surfaces[number],
+      verts: number[],
+      indices: number[],
+    ): number => {
       const poly = surf.polygon;
-      if (!poly || poly.length < 3) return;
-      gfx.moveTo(poly[0].x, poly[0].y);
-      for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i].x, poly[i].y);
-      gfx.closePath();
+      if (!poly || poly.length < 3) return 0;
+      // Per-surface flat array fed to earcut: outer first, then each hole
+      // appended; hole start-indices tell earcut where holes begin.
+      const localVerts: number[] = new Array(poly.length * 2);
+      for (let i = 0; i < poly.length; i++) {
+        localVerts[i * 2] = poly[i].x;
+        localVerts[i * 2 + 1] = poly[i].y;
+      }
+      const holeIndices: number[] = [];
+      if (surf.voids) {
+        for (const v of surf.voids) {
+          if (v.length < 3) continue;
+          holeIndices.push(localVerts.length / 2);
+          for (let i = 0; i < v.length; i++) {
+            localVerts.push(v[i].x, v[i].y);
+          }
+        }
+      }
+      const tris = earcut(localVerts, holeIndices.length > 0 ? holeIndices : undefined);
+      if (tris.length === 0) return 0;
+      // Offset triangle indices by the current layer-buffer vertex base so
+      // multiple surfaces concatenated into one mesh stay independent.
+      const baseVert = verts.length / 2;
+      for (let i = 0; i < localVerts.length; i++) verts.push(localVerts[i]);
+      for (let i = 0; i < tris.length; i++) indices.push(tris[i] + baseVert);
+      return tris.length / 3;
+    };
+
+    const buildLayerMesh = (
+      layerSurfaces: typeof board.surfaces,
+      tint: number,
+    ): Mesh | null => {
+      const verts: number[] = [];
+      const indices: number[] = [];
+      let triCount = 0;
+      for (const s of layerSurfaces) triCount += tessellateInto(s, verts, indices);
+      if (triCount === 0 || verts.length === 0 || indices.length === 0) return null;
+      const positions = new Float32Array(verts);
+      const uvs = new Float32Array(positions.length);  // unused, white texture
+      const indexBuffer = new Uint32Array(indices);
+      const geometry = new MeshGeometry({
+        positions,
+        uvs,
+        indices: indexBuffer,
+        topology: 'triangle-list',
+      });
+      const mesh = new Mesh({ geometry, texture: Texture.WHITE });
+      mesh.tint = tint;
+      mesh.alpha = SURFACE_ALPHA;
+      return mesh;
     };
 
     if (isMultiLayer) {
@@ -724,22 +784,18 @@ export function buildBoardScene(
       for (const [layerIdx, layerSurfaces] of byLayer) {
         const layerContainer = new Container();
         layerContainer.label = `surface-layer-${layerIdx}`;
-        const gfx = new Graphics();
-        for (const s of layerSurfaces) drawSurface(gfx, s);
         const layerColor = board.layerNames && layerIdx < board.layerNames.length
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
-        gfx.fill({ color: layerColor, alpha: SURFACE_ALPHA });
-        layerContainer.addChild(gfx);
+        const mesh = buildLayerMesh(layerSurfaces, layerColor);
+        if (mesh) layerContainer.addChild(mesh);
         surfacesLayer.addChild(layerContainer);
         while (surfacesLayerContainers.length <= layerIdx) surfacesLayerContainers.push(null!);
         surfacesLayerContainers[layerIdx] = layerContainer;
       }
     } else {
-      const gfx = new Graphics();
-      for (const s of board.surfaces) drawSurface(gfx, s);
-      gfx.fill({ color: 0xcc3333, alpha: SURFACE_ALPHA });
-      surfacesLayer.addChild(gfx);
+      const mesh = buildLayerMesh(board.surfaces, 0xcc3333);
+      if (mesh) surfacesLayer.addChild(mesh);
     }
     root.addChild(surfacesLayer);
   }
