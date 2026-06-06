@@ -1112,39 +1112,68 @@ export function buildBoardScene(
       }
 
       if (isTwoPinPart) {
-        let padRx: number, padRy: number, padRw: number, padRh: number;
-        if (eb.horiz) {
-          padRx = pin.position.x - padDepth / 2;
-          padRy = eb.py; padRw = padDepth; padRh = eb.ph;
-        } else {
-          padRx = eb.px; padRy = pin.position.y - padDepth / 2;
-          padRw = eb.pw; padRh = padDepth;
-        }
         const padShape = override?.padShape ?? 'natural';
-        if (isNcPin) {
-          if (padShape === 'round') {
-            const pr = Math.min(padRw, padRh) / 2;
-            ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-          } else {
-            ncGfx.rect(padRx, padRy, padRw, padRh);
-            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
-          }
+        // Parsers that supply real pad geometry on the Pin (TVW, Allegro,
+        // XZZ) skip the FlexBV-style "estimated pad" rectangle here and
+        // draw the actual footprint instead — otherwise the pad-overlay
+        // layer drew the real (small) pad on top of the synthesized (large)
+        // rect, leaving the synthesized rect visible as a halo around every
+        // cap/inductor. The estimated rectangle remains the fallback for
+        // formats that don't expose per-pin pad bounds (BVR1/BVR3/BDV/etc.)
+        // and for users who explicitly force a different padShape override.
+        if (padShape === 'natural' && pin.padShape !== undefined && pin.padBounds !== undefined) {
+          const targetGfx = isNcPin
+            ? ncGfx
+            : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
+          drawPadShape(targetGfx, {
+            bounds: pin.padBounds,
+            shape: pin.padShape,
+            width: pin.padWidth,
+            height: pin.padHeight,
+            angleDeg: pin.padAngleDeg,
+            cornerRadius: pin.padCornerRadius,
+            polygon: pin.padPolygon,
+          });
+          padRects[pni] = {
+            rx: pin.padBounds.minX,
+            ry: pin.padBounds.minY,
+            rw: pin.padBounds.maxX - pin.padBounds.minX,
+            rh: pin.padBounds.maxY - pin.padBounds.minY,
+          };
         } else {
-          const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
-          if (padShape === 'round') {
-            const pr = Math.min(padRw, padRh) / 2;
-            pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-          } else if (padShape === 'square') {
-            const side = Math.min(padRw, padRh);
-            const sx = padRx + padRw / 2 - side / 2;
-            const sy = padRy + padRh / 2 - side / 2;
-            pinGfx.rect(sx, sy, side, side);
-            padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
+          let padRx: number, padRy: number, padRw: number, padRh: number;
+          if (eb.horiz) {
+            padRx = pin.position.x - padDepth / 2;
+            padRy = eb.py; padRw = padDepth; padRh = eb.ph;
           } else {
-            pinGfx.rect(padRx, padRy, padRw, padRh);
-            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            padRx = eb.px; padRy = pin.position.y - padDepth / 2;
+            padRw = eb.pw; padRh = padDepth;
+          }
+          if (isNcPin) {
+            if (padShape === 'round') {
+              const pr = Math.min(padRw, padRh) / 2;
+              ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+            } else {
+              ncGfx.rect(padRx, padRy, padRw, padRh);
+              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            }
+          } else {
+            const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
+            if (padShape === 'round') {
+              const pr = Math.min(padRw, padRh) / 2;
+              pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+            } else if (padShape === 'square') {
+              const side = Math.min(padRw, padRh);
+              const sx = padRx + padRw / 2 - side / 2;
+              const sy = padRy + padRh / 2 - side / 2;
+              pinGfx.rect(sx, sy, side, side);
+              padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
+            } else {
+              pinGfx.rect(padRx, padRy, padRw, padRh);
+              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            }
           }
         }
       } else if (diag2Pads) {
