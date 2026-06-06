@@ -328,6 +328,17 @@ export interface BoardSceneGraph {
   traceLayer: Container | null;
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
   traceLayerContainers: Container[];
+  /** Copper-fill polygons (ground planes, power pours) — toggled by
+   *  `showSurfaces`. Single root container holding per-layer child
+   *  containers; each layer follows the same colour as its trace layer so
+   *  the user can read "this fill belongs to L2" at a glance. Voids inside
+   *  each surface are punched via Pixi's even-odd fill rule. Renders
+   *  BEHIND the trace layer so traces stay readable on top of the dim fill. */
+  surfacesLayer: Container | null;
+  /** Per-layer surface containers, indexed by layer. Parallel to
+   *  `traceLayerContainers`; allows the layer-emphasis pass to lift a
+   *  layer's surface fill alongside its traces. */
+  surfacesLayerContainers: Container[];
   /** Silkscreen / assembly outline overlay — toggled by showSilkscreen.
    *  Two child containers (top, bottom); each side container is shown only
    *  when its corresponding board side is visible. */
@@ -671,12 +682,68 @@ export function buildBoardScene(
 
   root.addChild(outlineGfx);
 
+  const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
+
+  // ── Copper-fill polygons (ground planes, power pours) ─────────────────────
+  // Drawn behind traces so the trace network still reads on top of the dim
+  // fill. Each Surface is a polygon outline; per-pad clearance voids are
+  // intentionally NOT rendered — PixiJS v8 Graphics has no native polygon-
+  // with-holes support, and the pad layer overlays the same spot anyway, so
+  // a void's only visual effect would be a faintly darker pad. Alpha is
+  // intentionally low (~0.25) — the layer should signal "copper exists here"
+  // without dominating signal traces or components.
+  let surfacesLayer: Container | null = null;
+  const surfacesLayerContainers: Container[] = [];
+  const SURFACE_ALPHA = 0.25;
+  if (board.surfaces && board.surfaces.length > 0) {
+    surfacesLayer = new Container();
+    surfacesLayer.label = 'surfaces';
+    surfacesLayer.sortableChildren = true;
+
+    const drawSurface = (gfx: Graphics, surf: typeof board.surfaces[number]): void => {
+      const poly = surf.polygon;
+      if (!poly || poly.length < 3) return;
+      gfx.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i].x, poly[i].y);
+      gfx.closePath();
+    };
+
+    if (isMultiLayer) {
+      const byLayer = new Map<number, typeof board.surfaces>();
+      for (const s of board.surfaces) {
+        const li = s.layer ?? 0;
+        let arr = byLayer.get(li);
+        if (!arr) { arr = []; byLayer.set(li, arr); }
+        arr.push(s);
+      }
+      for (const [layerIdx, layerSurfaces] of byLayer) {
+        const layerContainer = new Container();
+        layerContainer.label = `surface-layer-${layerIdx}`;
+        const gfx = new Graphics();
+        for (const s of layerSurfaces) drawSurface(gfx, s);
+        const layerColor = board.layerNames && layerIdx < board.layerNames.length
+          ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
+          : 0xcc3333;
+        gfx.fill({ color: layerColor, alpha: SURFACE_ALPHA });
+        layerContainer.addChild(gfx);
+        surfacesLayer.addChild(layerContainer);
+        while (surfacesLayerContainers.length <= layerIdx) surfacesLayerContainers.push(null!);
+        surfacesLayerContainers[layerIdx] = layerContainer;
+      }
+    } else {
+      const gfx = new Graphics();
+      for (const s of board.surfaces) drawSurface(gfx, s);
+      gfx.fill({ color: 0xcc3333, alpha: SURFACE_ALPHA });
+      surfacesLayer.addChild(gfx);
+    }
+    root.addChild(surfacesLayer);
+  }
+
   // PCB traces — drawn behind components, after outline.
   // Multi-layer: per-layer trace containers (each gets its own color from layerStates).
   // Single-layer: single traceLayer container with default red color.
   let traceLayer: Container | null = null;
   const traceLayerContainers: Container[] = [];
-  const isMultiLayer = !!board.layerNames && board.layerNames.length > 0;
 
   if (board.traces && board.traces.length > 0) {
     if (isMultiLayer) {
@@ -1900,5 +1967,5 @@ export function buildBoardScene(
     root.addChild(viaLayer);
   }
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

@@ -1593,6 +1593,13 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
+  toggleSurfaces() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    this.updateActiveTab({ showSurfaces: !tab.showSurfaces });
+    this.notify();
+  }
+
   togglePins() {
     const tab = this.activeTab;
     if (!tab) return;

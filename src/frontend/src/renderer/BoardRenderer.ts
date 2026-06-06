@@ -149,6 +149,10 @@ interface BoardScene {
   traceLayer: Container | null;
   /** Per-layer trace containers for multi-layer boards (indexed by layer). Empty for single-layer. */
   traceLayerContainers: Container[];
+  /** Copper-fill polygons (ground planes, power pours) — toggled by `showSurfaces`. */
+  surfacesLayer: Container | null;
+  /** Per-layer surface containers, indexed by layer. Mirrors traceLayerContainers. */
+  surfacesLayerContainers: Container[];
   /** Silkscreen / assembly outlines — toggled by showSilkscreen */
   silkscreenLayer: Container | null;
   silkscreenTop: Container | null;
@@ -1524,7 +1528,7 @@ export class BoardRenderer {
 
   /** Apply per-layer trace, via, and component sub-layer visibility */
   private applyLayerVisibility(scene: BoardScene) {
-    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
+    const { layerStates, showTraces, showVias, showSilkscreen, showPads, showCopperDrops, showSurfaces, showComponents, showPins, showOutlines, showLabels, showTop, showBottom } = boardStore;
     // Trace layer master toggle
     if (scene.traceLayer) scene.traceLayer.visible = showTraces;
     // Per-layer trace containers. A *selected* layer is revealed transiently —
@@ -1556,6 +1560,15 @@ export class BoardRenderer {
         c.zIndex = i === emphasized ? 10 : 0;
         c.alpha = emphasized === null || i === emphasized ? 1 : LAYER_DIM_ALPHA;
       }
+    }
+    // Surfaces — master toggle + same per-layer visibility/emphasis as traces
+    // so each layer's copper-fill follows that layer's row in the layer panel.
+    if (scene.surfacesLayer) scene.surfacesLayer.visible = showSurfaces;
+    for (let i = 0; i < scene.surfacesLayerContainers.length; i++) {
+      const c = scene.surfacesLayerContainers[i];
+      if (!c) continue;
+      const stateVisible = i < layerStates.length ? layerStates[i].visible : true;
+      c.visible = showSurfaces && (stateVisible || i === selectedLayerIndex);
     }
     // Via overlay
     if (scene.viaLayer) scene.viaLayer.visible = showVias;
