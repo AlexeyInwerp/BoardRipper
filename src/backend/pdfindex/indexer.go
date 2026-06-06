@@ -241,8 +241,13 @@ func (ix *Indexer) process(f PdfFile) {
 	ix.mu.Unlock()
 
 	won, err := ix.store.Claim(f.ID, "pdfium")
-	if err != nil || !won {
-		// Either DB error or another worker/instance holds the claim — skip.
+	if err != nil {
+		log.Printf("pdfindex: claim error file_id=%d path=%q: %v", f.ID, f.Path, err)
+		return
+	}
+	if !won {
+		// Another worker/instance already holds the claim — skip silently
+		// (this is normal during concurrent sweeps).
 		return
 	}
 	// A claimed file is counted as processed whether it extracts, fails, or is
@@ -268,11 +273,13 @@ func (ix *Indexer) process(f PdfFile) {
 
 	data, err := ix.src.ReadFile(f.Path)
 	if err != nil {
+		log.Printf("pdfindex: FAIL read file_id=%d path=%q: %v", f.ID, f.Path, err)
 		ix.fail(f.ID, "read: "+err.Error())
 		return
 	}
 	rawPages, err := ix.extract.ExtractFile(data)
 	if err != nil {
+		log.Printf("pdfindex: FAIL extract file_id=%d path=%q size=%d: %v", f.ID, f.Path, len(data), err)
 		ix.fail(f.ID, "extract: "+err.Error())
 		return
 	}
@@ -287,12 +294,13 @@ func (ix *Indexer) process(f PdfFile) {
 	}
 	if len(pages) > 0 {
 		if err := ix.store.UpsertPages(f.ID, pages); err != nil {
+			log.Printf("pdfindex: FAIL store file_id=%d path=%q pages=%d: %v", f.ID, f.Path, len(pages), err)
 			ix.fail(f.ID, "store: "+err.Error())
 			return
 		}
 	}
 	if _, err := ix.store.Finalize(f.ID); err != nil {
-		log.Printf("pdfindex: finalize %d: %v", f.ID, err)
+		log.Printf("pdfindex: FAIL finalize file_id=%d path=%q: %v", f.ID, f.Path, err)
 	}
 }
 

@@ -2,6 +2,8 @@ package pdfindex
 
 import (
 	"fmt"
+	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
@@ -40,7 +42,9 @@ func (e *Engine) Close() error { return e.pool.Close() }
 
 // ExtractFile returns text per page (slice index = 0-based page number).
 // It enforces a per-file wall-clock kill so a hostile/looping PDF can't
-// permanently wedge a worker.
+// permanently wedge a worker. The progress channel reports the last page
+// successfully reached before a timeout, so the caller can pin the failure
+// to a specific page rather than just "timed out somewhere".
 func (e *Engine) ExtractFile(data []byte) ([]string, error) {
 	instance, err := e.pool.GetInstance(30 * time.Second)
 	if err != nil {
@@ -51,9 +55,11 @@ func (e *Engine) ExtractFile(data []byte) ([]string, error) {
 		pages []string
 		err   error
 	}
+	var progress atomic.Int32 // last page reached + 1; 0 = before any page
+	progress.Store(-1)        // -1 = before open
 	done := make(chan result, 1)
 	go func() {
-		p, e2 := extract(instance, data)
+		p, e2 := extract(instance, data, &progress)
 		done <- result{p, e2}
 	}()
 
@@ -65,13 +71,22 @@ func (e *Engine) ExtractFile(data []byte) ([]string, error) {
 		return r.pages, r.err
 	case <-timer.C:
 		instance.Kill() //nolint:errcheck — best-effort kill
-		return nil, fmt.Errorf("extraction timed out after %v", e.perFileTimeout)
+		switch p := progress.Load(); {
+		case p < 0:
+			return nil, fmt.Errorf("timed out after %v during OpenDocument (input size %d bytes)", e.perFileTimeout, len(data))
+		case p == 0:
+			return nil, fmt.Errorf("timed out after %v before reaching first page (input size %d bytes)", e.perFileTimeout, len(data))
+		default:
+			return nil, fmt.Errorf("timed out after %v while extracting page %d (input size %d bytes)", e.perFileTimeout, p, len(data))
+		}
 	}
 }
 
 // extract performs the actual pdfium calls on a single instance. Recovers from
-// panics so a misbehaving PDF can't crash the host process.
-func extract(instance pdfium.Pdfium, data []byte) (pages []string, err error) {
+// panics so a misbehaving PDF can't crash the host process. `progress` is
+// updated as we move through pages so the caller's timeout path can attribute
+// the failure to a specific page.
+func extract(instance pdfium.Pdfium, data []byte, progress *atomic.Int32) (pages []string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("pdfium panic: %v", r)
@@ -80,9 +95,10 @@ func extract(instance pdfium.Pdfium, data []byte) (pages []string, err error) {
 
 	doc, err := instance.OpenDocument(&requests.OpenDocument{File: &data})
 	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
+		return nil, fmt.Errorf("open (size %d bytes): %w", len(data), err)
 	}
 	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document}) //nolint:errcheck
+	progress.Store(0)
 
 	pc, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
 	if err != nil {
@@ -91,6 +107,7 @@ func extract(instance pdfium.Pdfium, data []byte) (pages []string, err error) {
 
 	pages = make([]string, pc.PageCount)
 	for i := 0; i < pc.PageCount; i++ {
+		progress.Store(int32(i + 1))
 		t, perr := instance.GetPageText(&requests.GetPageText{
 			Page: requests.Page{
 				ByIndex: &requests.PageByIndex{
@@ -100,6 +117,9 @@ func extract(instance pdfium.Pdfium, data []byte) (pages []string, err error) {
 			},
 		})
 		if perr != nil {
+			// Per-page failure: log but continue — pages that do extract
+			// still get indexed so a single bad page doesn't waste the rest.
+			log.Printf("pdfindex: page %d/%d GetPageText failed: %v", i+1, pc.PageCount, perr)
 			continue
 		}
 		pages[i] = t.Text
