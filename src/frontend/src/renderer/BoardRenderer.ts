@@ -1873,6 +1873,14 @@ export class BoardRenderer {
       const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides);
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
+      // Surface the scene-build cost on the load-progress overlay when one
+      // is open. boardStore's load pipeline opens a "Building scene" phase
+      // right before onTabCreated fires, which is what eventually calls into
+      // here; pushing detail here gives the user the actual buildBoardScene
+      // cost broken out from the rest of the phase (panel mount, GPU upload).
+      void import('../store/load-progress-store').then(({ loadProgressStore }) => {
+        loadProgressStore.pushLog(`buildBoardScene: ${elapsed}ms (${board.parts.length} parts, ${(graph.topLabels.length + graph.bottomLabels.length).toLocaleString()} labels, ${board.surfaces?.length ?? 0} surfaces)`);
+      });
 
       // Debug vertex overlay (toggled in settings)
       this.clearDebugVertexLabels();

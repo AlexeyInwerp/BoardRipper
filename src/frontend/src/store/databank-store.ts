@@ -5,6 +5,7 @@ import { libraryCache } from './library-cache';
 import { updateStore } from './update-store';
 import { boardStore } from './board-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from './fetch-with-cloud-retry';
+import { loadProgressStore } from './load-progress-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexProgress, PdfIndexStats } from '../pdf/pdf-index-client';
 
@@ -1375,10 +1376,18 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
-  /** Fetch a file's ArrayBuffer from the backend for opening in the viewer */
+  /** Fetch a file's ArrayBuffer from the backend for opening in the viewer.
+   *  Surfaces a "Downloading" phase on the load-progress overlay with
+   *  byte-level progress driven by Content-Length so the user can see
+   *  whether the wait is network or render bound. */
   async fetchFileBuffer(file: DatabankFile): Promise<File> {
+    loadProgressStore.start(file.filename, file.size);
+    loadProgressStore.setPhase('Downloading', isElectron()
+      ? 'Reading from local library mount (Electron IPC)'
+      : `Backend → browser via /api/files/path (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
     if (isElectron()) {
       const result = await window.electronAPI!.readLibraryFile(file.path);
+      loadProgressStore.pushLog(`Read ${result.buffer.byteLength.toLocaleString()} bytes from Electron`);
       return new File([result.buffer], result.name, { lastModified: result.lastModified });
     }
     const res = await fetchWithCloudRetry(
@@ -1400,11 +1409,46 @@ class DatabankStore extends Emitter {
       if (res.status === 503) {
         const { code, message } = await readCloudError(res);
         boardStore.addToast(formatCloudErrorToast(file.filename, code, message), 'error');
+        loadProgressStore.abort(`HTTP 503${code ? ` (${code})` : ''}`);
         throw new Error(`HTTP 503${code ? ` (${code})` : ''}`);
       }
+      loadProgressStore.abort(`HTTP ${res.status}`);
       throw new Error(`HTTP ${res.status}`);
     }
-    const buffer = await res.arrayBuffer();
+    // Stream the response so the overlay shows download progress.
+    // Falls back to res.arrayBuffer() when the body isn't a ReadableStream
+    // (Safari < 14.1, some service-worker shims) — same result, no progress.
+    const total = Number(res.headers.get('Content-Length')) || file.size || 0;
+    let buffer: ArrayBuffer;
+    if (res.body && total > 0) {
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      let lastPushed = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          received += value.byteLength;
+          // Throttle store updates to every ~64 KiB so we don't notify
+          // on every TCP packet on fast LANs.
+          if (received - lastPushed > 64 * 1024 || received === total) {
+            lastPushed = received;
+            const pct = total > 0 ? Math.round((received / total) * 100) : 0;
+            loadProgressStore.setPhaseDetail(`${(received / 1024 / 1024).toFixed(2)} / ${(total / 1024 / 1024).toFixed(2)} MB (${pct}%)`);
+          }
+        }
+      }
+      const merged = new Uint8Array(received);
+      let off = 0;
+      for (const c of chunks) { merged.set(c, off); off += c.byteLength; }
+      buffer = merged.buffer;
+    } else {
+      buffer = await res.arrayBuffer();
+    }
+    loadProgressStore.pushLog(`Downloaded ${buffer.byteLength.toLocaleString()} bytes`);
     return new File([buffer], file.filename, { lastModified: file.mod_time * 1000 });
   }
 

@@ -7,6 +7,7 @@ import { fzKeyStore } from './fz-key-store';
 import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets, flagMechanicalParts } from '../parsers/types';
 import { renderSettingsStore, partBridgesHierarchy } from './render-settings';
 import { log } from './log-store';
+import { loadProgressStore } from './load-progress-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 import { deriveBoardView } from './derive-board-view';
@@ -779,9 +780,12 @@ class BoardStore extends Emitter {
       this.notify(); // notify immediately so existing renderers know the active tab changed
 
       try {
+        loadProgressStore.start(file.name, file.size);
+        loadProgressStore.setPhase('Cache lookup', 'Checking IndexedDB for previously-parsed board');
         this._openFiles.set(file.name, file);
         const cached = await boardCache.get(file.name, file.size, file.lastModified);
         if (cached) {
+          loadProgressStore.pushLog(`Cache hit: ${cached.parts.length} parts, ${cached.nets.size} nets`);
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
           // Mechanical-flag pass is cheap and side-effect-only on parts[i].mechanical;
           // cached boards may pre-date this flag so always re-run on load.
@@ -818,15 +822,20 @@ class BoardStore extends Emitter {
           }
           this.autoBindBoard(file.name);
           // Create panel AFTER board + rotation are ready so the renderer sees correct state
+          loadProgressStore.setPhase('Building scene', 'Hand-off to renderer (Dockview panel + BoardRenderer)');
           this.onTabCreated?.(id, file.name);
           this.notify();
+          loadProgressStore.finish();
           return;
         }
 
         log.parser.log(`Parsing: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
+        loadProgressStore.setPhase('Reading file bytes', `${(file.size / 1024 / 1024).toFixed(2)} MB`);
         this._openFiles.set(file.name, file);
         const t0 = performance.now();
         const buffer = await file.arrayBuffer();
+        loadProgressStore.pushLog(`Read ${buffer.byteLength.toLocaleString()} bytes into memory`);
+        loadProgressStore.setPhase('Parsing', `${file.name.split('.').pop()?.toUpperCase()} format`);
         let board;
         try {
           board = await parseBoardFile(buffer, file.name);
@@ -844,6 +853,7 @@ class BoardStore extends Emitter {
         }
         const elapsed = (performance.now() - t0).toFixed(0);
         log.parser.log(`Parsed OK in ${elapsed}ms: format=${board.format}, parts=${board.parts.length}, nets=${board.nets.size}, outline=${board.outline.length} pts`);
+        loadProgressStore.pushLog(`Parsed ${board.parts.length} parts, ${board.nets.size} nets, ${board.outline.length} outline pts`);
 
         // Log side detection summary
         const fmt = getFormat(board.format);
@@ -860,6 +870,7 @@ class BoardStore extends Emitter {
           (fmt?.swapSides ? ', swapSides=ON' : ''),
         );
 
+        loadProgressStore.setPhase('Post-process', 'Mechanical-part detection, derived-view, filters');
         flagMechanicalParts(board.parts);
         tab.board = board;
         invalidateDerivedBoard(tab);
@@ -880,6 +891,7 @@ class BoardStore extends Emitter {
           tab.showBottom = true;
         }
 
+        loadProgressStore.setPhase('Writing cache', 'Serialising BoardData to IndexedDB');
         await boardCache.put(file.name, file.size, file.lastModified, board);
 
         if (board.parserNotes) {
@@ -891,6 +903,7 @@ class BoardStore extends Emitter {
         log.parser.error(`Failed to load ${file.name}:`, err);
         const errMsg = err instanceof Error ? err.message : String(err);
         this.addToast(`Failed to load ${file.name}: ${errMsg}`, 'error');
+        loadProgressStore.abort(errMsg);
         const idx = this._tabs.indexOf(tab);
         if (idx !== -1) this._tabs.splice(idx, 1);
         if (this._activeTabId === tab.id) {
@@ -901,8 +914,10 @@ class BoardStore extends Emitter {
       }
 
       // Create panel AFTER board + rotation are ready so the renderer sees correct state
+      loadProgressStore.setPhase('Building scene', 'Hand-off to renderer (Dockview panel + BoardRenderer)');
       this.onTabCreated?.(id, file.name);
       this.notify();
+      loadProgressStore.finish();
     } finally {
       this._loading.delete(file.name);
     }
