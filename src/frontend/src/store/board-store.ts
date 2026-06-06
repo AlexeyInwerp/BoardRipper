@@ -80,6 +80,10 @@ export interface BoardTab {
    *  meaning. Only TVW currently tags pads with `attached`; for other
    *  formats this flag is a no-op. */
   showCopperDrops: boolean;
+  /** Show copper-fill polygons (ground planes, power pours). Default OFF —
+   *  the dim copper-tint fill is informative but visually heavy. Currently
+   *  only TVW Surface blocks populate the data; other formats are a no-op. */
+  showSurfaces: boolean;
   showPins: boolean;
   showOutlines: boolean;
   showLabels: boolean;
@@ -543,6 +547,7 @@ class BoardStore extends Emitter {
   get showSilkscreen(): boolean { return this.activeTab?.showSilkscreen ?? true; }
   get showPads(): boolean { return this.activeTab?.showPads ?? true; }
   get showCopperDrops(): boolean { return this.activeTab?.showCopperDrops ?? false; }
+  get showSurfaces(): boolean { return this.activeTab?.showSurfaces ?? false; }
   get showPins(): boolean { return this.activeTab?.showPins ?? true; }
   get showOutlines(): boolean { return this.activeTab?.showOutlines ?? true; }
   get showLabels(): boolean { return this.activeTab?.showLabels ?? true; }
@@ -749,6 +754,7 @@ class BoardStore extends Emitter {
         showSilkscreen: true,
         showPads: true,
         showCopperDrops: false,
+        showSurfaces: false,
         showPins: true,
         showOutlines: true,
         showLabels: true,
@@ -945,6 +951,7 @@ class BoardStore extends Emitter {
       showSilkscreen: true,
       showPads: true,
       showCopperDrops: false,
+      showSurfaces: false,
       showPins: true,
       showOutlines: true,
       showLabels: true,

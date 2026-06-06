@@ -8,7 +8,7 @@
  * Fixed32 coordinates (raw / 100 = mils), position-dependent string cipher.
  */
 
-import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via, SilkscreenPath, Pad } from './types';
+import type { BoardData, Part, Pin, Point, BBox, Nail, Trace, Via, SilkscreenPath, Pad, Surface } from './types';
 import { computeBBox, buildNets } from './types';
 import { log } from '../store/log-store';
 import { detectPositionOverlapRevisions } from './post-processing/detect-revisions';
@@ -235,6 +235,12 @@ interface TvwDrillHole {
   pos: Point;
 }
 
+interface TvwSurface {
+  net: number;             // net index, -1 = unconnected
+  polygon: Point[];        // outer outline (board coords)
+  voids: Point[][];        // cutouts; each entry is a polygon (board coords)
+}
+
 interface TvwLogicLayer {
   objType: typeof TvwObjectType.Logic;
   name: string;
@@ -243,6 +249,7 @@ interface TvwLogicLayer {
   pads: TvwPad[];
   lines: TvwLine[];
   arcs: TvwArc[];
+  surfaces: TvwSurface[];
 }
 
 interface TvwDrillSlot {
@@ -380,15 +387,20 @@ function loadShapes(r: TvwReader): TvwShape[] {
       case TvwShapeType.Poly: {
         r.readU32();
         r.readPStr();
-        // 4 fixed32 = poly bbox in shape-local coords. We re-derive the bbox
-        // from the captured vertices below, but read these to advance the
-        // cursor consistently with the original parser.
+        // 4 fixed32 = poly bbox in shape-local coords. Empirically these
+        // match the bbox of the vertex list to within rounding, so we just
+        // discard them and re-derive the AABB from the vertices.
         r.readFixed32(); r.readFixed32();
         r.readFixed32(); r.readFixed32();
         const subObjCount = r.readU32();
         // First sub-object of type 2 holds the outline polygon (chamfered /
         // octagonal pad shape). Additional sub-objects are auxiliary and
-        // ignored — only the outermost outline is used for rendering.
+        // ignored — only the outermost outline is used for rendering. The
+        // vertices are already in shape-local mils anchored exactly the way
+        // the format expects pad.pos to be added — DO NOT re-centre on the
+        // centroid (the earlier attempt did, and asymmetric chamfers like
+        // Custom_11 in NM-G611 ended up shifted ~7 mils off-pin, causing
+        // visible per-pin overlap on PU1104 / PU6501).
         const polyVerts: Point[] = [];
         for (let s = 0; s < subObjCount; s++) {
           const subType = r.readU32();
@@ -411,14 +423,7 @@ function loadShapes(r: TvwReader): TvwShape[] {
             r.readS32();
           }
         }
-        // Re-centre the outline on the shape origin: subtract the polygon's
-        // centroid so the pad anchor (which the placement step adds back via
-        // pad.pos) lines up with the visual centre of the chamfered rectangle.
         if (polyVerts.length >= 3) {
-          let cx = 0, cy = 0;
-          for (const v of polyVerts) { cx += v.x; cy += v.y; }
-          cx /= polyVerts.length; cy /= polyVerts.length;
-          for (const v of polyVerts) { v.x -= cx; v.y -= cy; }
           shapes.push({ type: shapeType, width: w, height: h, turn, polygon: polyVerts });
           continue;
         }
@@ -507,25 +512,40 @@ function loadArcs(r: TvwReader): TvwArc[] {
   return arcs;
 }
 
-function skipSurfaces(r: TvwReader): void {
+function loadSurfaces(r: TvwReader): TvwSurface[] {
   const count = r.readU32();
-  if (count === 0) return;
+  if (count === 0) return [];
   r.readU32(); // marker = 2
+  const out: TvwSurface[] = [];
   for (let i = 0; i < count; i++) {
-    r.readS32(); // net
+    const net = r.readS32();
     const edgeCount = r.readU32();
-    r.skip(edgeCount * 8); // vertices (2 × Fixed32 each)
-    r.readS32(); // lineWidth
+    const polygon: Point[] = new Array(edgeCount);
+    for (let v = 0; v < edgeCount; v++) {
+      polygon[v] = { x: r.readFixed32(), y: r.readFixed32() };
+    }
+    r.readS32(); // lineWidth — typically 0 for fills, non-zero for stroked outlines
     const voidCount = r.readU32();
+    const voids: Point[][] = [];
     if (voidCount > 0) {
-      for (let v = 0; v < voidCount; v++) {
+      for (let vi = 0; vi < voidCount; vi++) {
         r.readU32(); // tag
         const voidEdgeCount = r.readU32();
-        r.skip(voidEdgeCount * 8); // void vertices
+        const voidPoly: Point[] = new Array(voidEdgeCount);
+        for (let v = 0; v < voidEdgeCount; v++) {
+          voidPoly[v] = { x: r.readFixed32(), y: r.readFixed32() };
+        }
+        voids.push(voidPoly);
       }
       r.readU32(); // voidFlags
     }
+    // Skip degenerate surfaces (<3 vertices) — they're noise from corrupted
+    // exports and would break the renderer's fill.
+    if (polygon.length >= 3) {
+      out.push({ net, polygon, voids });
+    }
   }
+  return out;
 }
 
 function skipUnknownItems(r: TvwReader): void {
@@ -602,6 +622,7 @@ function loadLogicLayer(r: TvwReader, header: ReturnType<typeof readLayerHeader>
   let pads: TvwPad[] = [];
   let lines: TvwLine[] = [];
   let arcs: TvwArc[] = [];
+  let surfaces: TvwSurface[] = [];
 
   // Pads, lines, arcs, surfaces only exist when shapes are present
   if (shapes.length > 0) {
@@ -613,7 +634,7 @@ function loadLogicLayer(r: TvwReader, header: ReturnType<typeof readLayerHeader>
     pads = loadPads(r, shapes);
     lines = loadLines(r);
     arcs = loadArcs(r);
-    skipSurfaces(r);
+    surfaces = loadSurfaces(r);
 
     // Extra data mode: skip 4 u32s, then reload lines + arcs
     if (dataOrder === 2) {
@@ -637,6 +658,7 @@ function loadLogicLayer(r: TvwReader, header: ReturnType<typeof readLayerHeader>
     pads,
     lines,
     arcs,
+    surfaces,
   };
 }
 
@@ -1880,6 +1902,24 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // ── Copper-fill polygons (ground planes, power pours) ──
+  // Each TVW Surface block is a polygon outline plus optional cutout voids.
+  // Tag with the same `layer` index used by traces so the renderer can route
+  // them through the multi-layer visibility machinery (top/bottom side toggles
+  // for outer copper, layer-state alpha for inner copper).
+  const allSurfaces: Surface[] = [];
+  for (let col = 0; col < copperLayers.length; col++) {
+    const layer = copperLayers[col];
+    for (const surf of layer.surfaces) {
+      allSurfaces.push({
+        polygon: surf.polygon,
+        ...(surf.voids.length > 0 ? { voids: surf.voids } : {}),
+        ...(surf.net >= 0 ? { net: getNetName(tvw.nets, surf.net) } : {}),
+        layer: col,
+      });
+    }
+  }
+
   const board: BoardData = {
     format: 'TVW',
     outline: outlinePoints,
@@ -1891,10 +1931,11 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
     vias: allVias.length > 0 ? allVias : undefined,
     silkscreen: silkscreenPaths.length > 0 ? silkscreenPaths : undefined,
     pads: padRects.length > 0 ? padRects : undefined,
+    surfaces: allSurfaces.length > 0 ? allSurfaces : undefined,
     layerNames,
   };
 
-  log.parser.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers, ${silkscreenPaths.length} silk paths, ${padRects.length} pad rects`);
+  log.parser.log(`TVW→BoardData: ${allParts.length} parts, ${allNails.length} nails, ${board.nets.size} nets, ${copperLayers.length}+${drillLayer ? 1 : 0} layers, ${silkscreenPaths.length} silk paths, ${padRects.length} pad rects, ${allSurfaces.length} surfaces`);
 
   // BOM/revision detection — TVW writers (Tebo-ictview / Landrex) often
   // accumulate every BOM revision into one component list, with multiple

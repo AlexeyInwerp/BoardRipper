@@ -107,6 +107,20 @@ export interface Trace {
   layer?: number;
 }
 
+/** Copper-fill polygon (ground plane, power pour, signal flood). Vertices are
+ *  in board coordinates already pre-rotated/translated. `voids` carries
+ *  cutouts (e.g. clearance gaps around through-hole pads). The renderer fills
+ *  the outer polygon then punches out each void; nested voids aren't
+ *  supported. */
+export interface Surface {
+  polygon: Point[];
+  voids?: Point[][];
+  net?: string;
+  /** Layer index for multi-layer boards (0-based). Undefined → drawn on the
+   *  TOP side container in single-layer mode. */
+  layer?: number;
+}
+
 export interface Via {
   position: Point;
   /** Drill diameter in mils */
@@ -181,6 +195,12 @@ export interface BoardData {
   silkscreen?: SilkscreenPath[];
   /** Copper pad rectangles, tagged by side ('both' = through-hole). */
   pads?: Pad[];
+  /** Copper-fill polygons (ground planes, power pours). Per-layer for
+   *  multi-layer boards. Voids inside each surface are punched out at render
+   *  time. Only formats that expose copper geometry (TVW Surface blocks; for
+   *  later: Allegro shapes, XZZ flood polygons) populate this; legacy
+   *  formats leave it undefined and the surfaces layer renders empty. */
+  surfaces?: Surface[];
   /** Layer names for multi-layer formats (e.g. TVW butterfly columns). Index = column. */
   layerNames?: string[];
   /** Butterfly fold axis in board coordinates — renderer mirrors this axis for the bottom half.
