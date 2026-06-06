@@ -619,11 +619,6 @@ export function buildBoardScene(
   s: RenderSettings,
   metadataHex?: string,
   partOverrides: PartOverrideMap = EMPTY_PART_OVERRIDES,
-  /** When true, the pin sprite draws in the parser-supplied pad shape
-   *  (matches the copper overlay layer). When false, falls back to classic
-   *  circular pin sprites — used when "Show pads" is off so the user gets
-   *  the FlexBV-style look without the doubled rectangle + circle. */
-  useRealPadShape: boolean = true,
 ): BoardSceneGraph {
   // `board` arrives pre-derived via `boardStore.board` (see
   // `store/derive-board-view.ts`): filtered, folded, sides tagged. Hidden
@@ -1240,70 +1235,47 @@ export function buildBoardScene(
       }
 
       if (isTwoPinPart) {
+        // Always render the FlexBV-style synthesized pad rectangle here.
+        // The copper-pad overlay layer (padsTop / padsBottom) sits ABOVE
+        // this pin layer in z-order, so when "Show pads" is on the real
+        // copper rectangle from the parser covers the synthesized rect
+        // exactly. When "Show pads" is off the synthesized rect *is* the
+        // classic FlexBV look, which is what the user expects of a
+        // 2-pin cap/resistor sprite. padRects is set from the rendered
+        // synthesized rect for label sizing.
         const padShape = override?.padShape ?? 'natural';
-        // Parsers that supply real pad geometry on the Pin (TVW, Allegro,
-        // XZZ) skip the FlexBV-style "estimated pad" rectangle here and
-        // draw the actual footprint instead — otherwise the pad-overlay
-        // layer drew the real (small) pad on top of the synthesized (large)
-        // rect, leaving the synthesized rect visible as a halo around every
-        // cap/inductor. The estimated rectangle remains the fallback for
-        // formats that don't expose per-pin pad bounds (BVR1/BVR3/BDV/etc.),
-        // for users who explicitly force a different padShape override, and
-        // when the caller opted out via `useRealPadShape=false` (Show pads
-        // is off → classic circular FlexBV look).
-        if (useRealPadShape && padShape === 'natural' && pin.padShape !== undefined && pin.padBounds !== undefined) {
-          const targetGfx = isNcPin
-            ? ncGfx
-            : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
-          drawPadShape(targetGfx, {
-            bounds: pin.padBounds,
-            shape: pin.padShape,
-            width: pin.padWidth,
-            height: pin.padHeight,
-            angleDeg: pin.padAngleDeg,
-            cornerRadius: pin.padCornerRadius,
-            polygon: pin.padPolygon,
-          });
-          padRects[pni] = {
-            rx: pin.padBounds.minX,
-            ry: pin.padBounds.minY,
-            rw: pin.padBounds.maxX - pin.padBounds.minX,
-            rh: pin.padBounds.maxY - pin.padBounds.minY,
-          };
+        let padRx: number, padRy: number, padRw: number, padRh: number;
+        if (eb.horiz) {
+          padRx = pin.position.x - padDepth / 2;
+          padRy = eb.py; padRw = padDepth; padRh = eb.ph;
         } else {
-          let padRx: number, padRy: number, padRw: number, padRh: number;
-          if (eb.horiz) {
-            padRx = pin.position.x - padDepth / 2;
-            padRy = eb.py; padRw = padDepth; padRh = eb.ph;
+          padRx = eb.px; padRy = pin.position.y - padDepth / 2;
+          padRw = eb.pw; padRh = padDepth;
+        }
+        if (isNcPin) {
+          if (padShape === 'round') {
+            const pr = Math.min(padRw, padRh) / 2;
+            ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
           } else {
-            padRx = eb.px; padRy = pin.position.y - padDepth / 2;
-            padRw = eb.pw; padRh = padDepth;
+            ncGfx.rect(padRx, padRy, padRw, padRh);
+            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
           }
-          if (isNcPin) {
-            if (padShape === 'round') {
-              const pr = Math.min(padRw, padRh) / 2;
-              ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-            } else {
-              ncGfx.rect(padRx, padRy, padRw, padRh);
-              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
-            }
+        } else {
+          const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
+          if (padShape === 'round') {
+            const pr = Math.min(padRw, padRh) / 2;
+            pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+          } else if (padShape === 'square') {
+            const side = Math.min(padRw, padRh);
+            const sx = padRx + padRw / 2 - side / 2;
+            const sy = padRy + padRh / 2 - side / 2;
+            pinGfx.rect(sx, sy, side, side);
+            padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
           } else {
-            const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
-            if (padShape === 'round') {
-              const pr = Math.min(padRw, padRh) / 2;
-              pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-            } else if (padShape === 'square') {
-              const side = Math.min(padRw, padRh);
-              const sx = padRx + padRw / 2 - side / 2;
-              const sy = padRy + padRh / 2 - side / 2;
-              pinGfx.rect(sx, sy, side, side);
-              padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
-            } else {
-              pinGfx.rect(padRx, padRy, padRw, padRh);
-              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
-            }
+            pinGfx.rect(padRx, padRy, padRw, padRh);
+            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
           }
         }
       } else if (diag2Pads) {
@@ -1321,56 +1293,33 @@ export function buildBoardScene(
           rh: Math.max(...ys) - Math.min(...ys),
         };
       } else {
-        const r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+        // Multi-pin parts (BGAs, ICs, etc.) render as classic FlexBV
+        // circles. The pad-overlay layer (padsTop / padsBottom) sits ABOVE
+        // this pin layer, so when "Show pads" is on the real pad shape
+        // (chamfered rect / poly) from the parser covers the circle. When
+        // off, the circle is the visible pin sprite. To stop the circle
+        // from poking past a narrow pad's bounds (e.g. 50×10 pad with
+        // pin.radius=25 leaves a 15-mil halo), cap the radius at half the
+        // shorter pad dimension when the parser supplied real dims —
+        // matches FlexBV's "inscribed" classic pin convention.
+        let r = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+        if (pin.padWidth != null && pin.padHeight != null
+            && pin.padWidth > 0 && pin.padHeight > 0) {
+          r = Math.min(r, Math.min(pin.padWidth, pin.padHeight) / 2);
+        }
         const padShape = override?.padShape ?? 'natural';
-        // Use the parser-supplied real pad geometry (TVW / Allegro / XZZ
-        // populate `pin.padShape` + `pin.padBounds`) when the per-type
-        // override is 'natural'. This draws the actual rect/roundrect/poly
-        // shape instead of a generic circle, so the pin sprite matches the
-        // selection halo (which already uses drawPadShape) and the copper
-        // overlay layer, eliminating the "circle behind a pad" doubling.
-        const useParserPadShape =
-          useRealPadShape &&
-          padShape === 'natural' &&
-          pin.padShape !== undefined &&
-          pin.padShape !== 'round' &&
-          pin.padBounds !== undefined;
         if (isNcPin) {
           // Inset by half stroke width so outer edge aligns with filled pins of same radius
           const ncInset = Math.max(0.15, s.pinMinRadius * 0.06);
           const ri = r - ncInset;
-          if (useParserPadShape) {
-            // For NC pins we still want a single-pixel-style outline that
-            // doesn't bleed past the equivalent filled-pin extent. Drawing
-            // the pad shape directly (no inset) keeps the outline tight
-            // enough; the existing stroke width matches filled-pin radius.
-            drawPadShape(ncGfx, {
-              bounds: pin.padBounds!,
-              shape: pin.padShape,
-              width: pin.padWidth,
-              height: pin.padHeight,
-              angleDeg: pin.padAngleDeg,
-              cornerRadius: pin.padCornerRadius,
-              polygon: pin.padPolygon,
-            });
-          } else if (padShape === 'square') {
+          if (padShape === 'square') {
             ncGfx.rect(pin.position.x - ri, pin.position.y - ri, ri * 2, ri * 2);
           } else {
             ncGfx.circle(pin.position.x, pin.position.y, ri);
           }
         } else {
           const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
-          if (useParserPadShape) {
-            drawPadShape(pinGfx, {
-              bounds: pin.padBounds!,
-              shape: pin.padShape,
-              width: pin.padWidth,
-              height: pin.padHeight,
-              angleDeg: pin.padAngleDeg,
-              cornerRadius: pin.padCornerRadius,
-              polygon: pin.padPolygon,
-            });
-          } else if (padShape === 'square') {
+          if (padShape === 'square') {
             pinGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
           } else {
             pinGfx.circle(pin.position.x, pin.position.y, r);
