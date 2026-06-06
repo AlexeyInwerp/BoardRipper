@@ -20,7 +20,7 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * separation from DB_VERSION means parser fixes don't nuke the
  * pdf-text cache or require any data migration.
  */
-const PARSER_VERSION = 68;
+const PARSER_VERSION = 69;
 
 interface CachedBoard {
   key: string;
@@ -46,6 +46,11 @@ interface SerializedBoardData {
   vias?: Via[];
   silkscreen?: SilkscreenPath[];
   pads?: Pad[];
+  /** Copper-fill polygons (ground planes, power pours) — added in PARSER_VERSION 69.
+   *  Missing on cache entries serialised before that version, which is fine
+   *  because PARSER_VERSION mismatch rejects them anyway and a re-parse re-
+   *  emits surfaces. */
+  surfaces?: BoardData['surfaces'];
   layerNames?: string[];
   butterflyFoldAxis?: 'x' | 'y';
   rawOutline?: Point[];
@@ -96,6 +101,7 @@ function serialize(board: BoardData): SerializedBoardData {
     vias: board.vias,
     silkscreen: board.silkscreen,
     pads: board.pads,
+    surfaces: board.surfaces,
     layerNames: board.layerNames,
     butterflyFoldAxis: board.butterflyFoldAxis,
     rawOutline: board.rawOutline,
@@ -140,6 +146,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       vias: data.vias,
       silkscreen: data.silkscreen,
       pads: data.pads,
+      surfaces: data.surfaces,
       layerNames: data.layerNames,
       butterflyFoldAxis: data.butterflyFoldAxis,
       rawOutline: data.rawOutline,
