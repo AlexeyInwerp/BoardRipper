@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -337,6 +337,25 @@ async function openFileDialog() {
 
 // IPC: renderer can also request the open dialog
 ipcMain.handle('show-open-dialog', () => openFileDialog());
+
+// Reveal a library file in the OS file browser. Path is interpreted
+// relative to the persisted library folder. Guards: relative path must
+// resolve inside libraryDir (no traversal); file must exist.
+ipcMain.handle('show-item-in-folder', (_event, relativePath) => {
+  if (typeof relativePath !== 'string' || !relativePath) return false;
+  const libraryDir = loadSettings().libraryPath;
+  if (!libraryDir) return false;
+  const root = path.resolve(libraryDir);
+  const abs = path.resolve(root, relativePath);
+  // Containment check: abs must equal root or live under it (root + sep).
+  if (abs !== root && !abs.startsWith(root + path.sep)) return false;
+  if (!fs.existsSync(abs)) return false;
+  shell.showItemInFolder(abs);
+  return true;
+});
+
+// Return process.platform — used by the renderer for label formatting.
+ipcMain.handle('platform', () => process.platform);
 
 // IPC: read a file from disk and return its ArrayBuffer + metadata
 ipcMain.handle('read-file', async (_event, filePath) => {

@@ -188,7 +188,11 @@ func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
+	disposition := "inline"
+	if r.URL.Query().Get("download") == "1" {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, safeName))
 	serveFileEager(w, r, filePath, "text/plain; charset=utf-8")
 }
 
@@ -237,7 +241,11 @@ func (h *FileHandler) GetByPath(w http.ResponseWriter, r *http.Request) {
 		contentType = "text/plain; charset=utf-8"
 	}
 
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", safeName))
+	disposition := "inline"
+	if r.URL.Query().Get("download") == "1" {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, safeName))
 	serveFileEager(w, r, filePath, contentType)
 }
 

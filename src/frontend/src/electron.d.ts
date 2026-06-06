@@ -25,6 +25,10 @@ interface ElectronAPI {
   selectLibraryFolder: () => Promise<string | null>;
   scanLibrary: () => Promise<ElectronScanResult>;
   readLibraryFile: (relativePath: string) => Promise<ElectronFileResult>;
+
+  // File reveal + platform detection (added for the library Download button)
+  showItemInFolder: (relativePath: string) => Promise<boolean>;
+  platform: () => Promise<NodeJS.Platform>;
 }
 
 declare global {

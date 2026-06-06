@@ -28,4 +28,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Read a file from the library by relative path → { name, size, lastModified, buffer }
   readLibraryFile: (relativePath) => ipcRenderer.invoke('read-library-file', relativePath),
+
+  // Reveal a library file in the OS file browser (Finder / Explorer /
+  // default file manager) with the file highlighted. relativePath is
+  // relative to the persisted library folder.
+  showItemInFolder: (relativePath) => ipcRenderer.invoke('show-item-in-folder', relativePath),
+
+  // Return process.platform from the main process. Used by the renderer
+  // to format platform-conditional labels like "Show in Finder" vs
+  // "Show in Explorer".
+  platform: () => ipcRenderer.invoke('platform'),
 });
