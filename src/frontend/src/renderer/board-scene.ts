@@ -905,15 +905,15 @@ export function buildBoardScene(
   let padsBottom: Container | null = null;
   let copperDropsTop: Container | null = null;
   let copperDropsBottom: Container | null = null;
-  // Pad overlay is only built for MULTI-LAYER boards. On single-layer
-  // formats (XZZ, single-layer BRD, etc.) the pad-overlay adds nothing
-  // beyond a uniform warm-copper rect — the pad shape is already trivial
-  // (round / rect from a flat pin list), no inner-layer routing context
-  // makes the "copper" cue meaningful, and the overlay was actively
-  // hurting per-net pin color visibility. Multi-layer parsers (TVW,
-  // Allegro) keep the overlay so the user can see real copper geometry
-  // alongside the pin sprites. Per-user decision after the XZZ regression.
-  if (board.pads && board.pads.length > 0 && isMultiLayer) {
+  // Pad overlay is built whenever the parser supplies real pad geometry.
+  // Earlier the build was gated on `isMultiLayer` to avoid uniform warm-
+  // copper hiding net colors on XZZ single-layer boards; the z-order
+  // change (pads now sit BELOW the pin layer, see addChildAt calls
+  // below) keeps net-colored pins on top, so the overlay can render on
+  // every format the parser populates `board.pads` for. User feedback
+  // on 820-02016: the pads ARE there in the file, they should be
+  // toggleable from the sidebar.
+  if (board.pads && board.pads.length > 0) {
     padsTop = new Container();
     padsTop.label = 'pads-top';
     padsBottom = new Container();
@@ -923,36 +923,58 @@ export function buildBoardScene(
     copperDropsBottom = new Container();
     copperDropsBottom.label = 'copper-drops-bottom';
 
-    const PAD_TOP_COLOR    = 0xd4a64a;  // warm copper
-    const PAD_BOTTOM_COLOR = 0x8da6c0;  // cool copper-grey
-    const PAD_ALPHA        = 0.9;
+    // Pads are now NET-COLOURED (was uniform warm copper). The user wants
+    // the real pad geometry to be the dominant visible primitive on
+    // single-layer boards — "better than auto-drawn pins" — but the
+    // earlier uniform-copper rendering hid per-net colouring entirely.
+    // Per-net colouring keeps the pad's distinctive shape (rect, chamfered
+    // poly, etc.) while preserving net identity through colour. Pads sit
+    // ABOVE the pin layer in z-order (see addChildAt at the end), so the
+    // pad shape covers the pin circle and is what the user sees.
+    const PAD_ALPHA        = 0.95;
     const DROP_ALPHA       = 0.55;      // dimmer than real pads — they're noise
     const DRILL_COLOR      = 0x111111;
     const DRILL_ALPHA      = 0.95;
 
-    const topPadGfx  = new Graphics();
-    const botPadGfx  = new Graphics();
-    const topDropGfx = new Graphics();
-    const botDropGfx = new Graphics();
-    // Drill hole graphics are duplicated per side (identical content). Each
-    // side's drill is parented to its pad container so the hole stays visible
-    // as you flip between top and bottom. PixiJS doesn't let one Graphics
-    // belong to two Containers, hence the duplication; cost is ~one extra
-    // GPU buffer per side and is negligible at typical pad counts.
+    // Map colour → Graphics so a single fill batches every pad sharing
+    // that net colour. Far fewer draw calls than one Graphics per pad,
+    // and the colour palette typically resolves to a few dozen entries
+    // (resolvePinColor bins signals into a small set).
+    const topPadByColor    = new Map<number, Graphics>();
+    const botPadByColor    = new Map<number, Graphics>();
+    const topDropByColor   = new Map<number, Graphics>();
+    const botDropByColor   = new Map<number, Graphics>();
+    // Drill hole graphics are duplicated per side (identical content).
     const topDrillGfx = new Graphics();
     const botDrillGfx = new Graphics();
     let anyDrill = false;
+    const getOrCreate = (m: Map<number, Graphics>, key: number): Graphics => {
+      let g = m.get(key);
+      if (!g) { g = new Graphics(); m.set(key, g); }
+      return g;
+    };
     for (const p of board.pads) {
       const aabbW = p.bounds.maxX - p.bounds.minX;
       const aabbH = p.bounds.maxY - p.bounds.minY;
       if (aabbW <= 0 || aabbH <= 0) continue;
       const isAttached = p.attached !== false; // undefined → treat as attached
-      const topGfx = isAttached ? topPadGfx : topDropGfx;
-      const botGfx = isAttached ? botPadGfx : botDropGfx;
-      if (p.side === 'top' || p.side === 'both') drawPadShape(topGfx, p);
-      if (p.side === 'bottom' || p.side === 'both') drawPadShape(botGfx, p);
-      // Punch a drill hole through TH pads so the user can see the hole
-      // through the (otherwise solid) ground/power pad rectangle.
+      // resolvePinColor honours user palette, NC-pattern detection, GND
+      // bucketing, etc. so pad colours match the pin colours the user is
+      // already used to.
+      const colorTop = resolvePinColor(s, p.net ?? '', 'top');
+      const colorBot = resolvePinColor(s, p.net ?? '', 'bottom');
+      if (p.side === 'top' || p.side === 'both') {
+        const gfx = isAttached
+          ? getOrCreate(topPadByColor, colorTop)
+          : getOrCreate(topDropByColor, colorTop);
+        drawPadShape(gfx, p);
+      }
+      if (p.side === 'bottom' || p.side === 'both') {
+        const gfx = isAttached
+          ? getOrCreate(botPadByColor, colorBot)
+          : getOrCreate(botDropByColor, colorBot);
+        drawPadShape(gfx, p);
+      }
       if (p.drill && p.drill > 0) {
         const cx = (p.bounds.minX + p.bounds.maxX) / 2;
         const cy = (p.bounds.minY + p.bounds.maxY) / 2;
@@ -961,40 +983,27 @@ export function buildBoardScene(
         anyDrill = true;
       }
     }
-    topPadGfx.fill({ color: PAD_TOP_COLOR,    alpha: PAD_ALPHA });
-    botPadGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: PAD_ALPHA });
-    topDropGfx.fill({ color: PAD_TOP_COLOR,    alpha: DROP_ALPHA });
-    botDropGfx.fill({ color: PAD_BOTTOM_COLOR, alpha: DROP_ALPHA });
+    for (const [color, gfx] of topPadByColor)  { gfx.fill({ color, alpha: PAD_ALPHA }); padsTop.addChild(gfx); }
+    for (const [color, gfx] of botPadByColor)  { gfx.fill({ color, alpha: PAD_ALPHA }); padsBottom.addChild(gfx); }
+    for (const [color, gfx] of topDropByColor) { gfx.fill({ color, alpha: DROP_ALPHA }); copperDropsTop.addChild(gfx); }
+    for (const [color, gfx] of botDropByColor) { gfx.fill({ color, alpha: DROP_ALPHA }); copperDropsBottom.addChild(gfx); }
     if (anyDrill) {
       topDrillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
       botDrillGfx.fill({ color: DRILL_COLOR, alpha: DRILL_ALPHA });
-    }
-    padsTop.addChild(topPadGfx);
-    padsBottom.addChild(botPadGfx);
-    copperDropsTop.addChild(topDropGfx);
-    copperDropsBottom.addChild(botDropGfx);
-    // Drill holes render above the pad fills on each side so the hole
-    // visually punches through whichever side is currently visible.
-    if (anyDrill) {
       padsTop.addChild(topDrillGfx);
       padsBottom.addChild(botDrillGfx);
     }
-    // Z-order inside each side container: fill → drops → pads → pin → outline → label.
-    // Both drops and pads render BELOW the pin layer so the pin sprite (drawn
-    // in the resolved net color) sits on top and isn't hidden behind the
-    // uniform warm-copper pad fill. The pin radius is capped at
-    // min(pin.padWidth, pin.padHeight)/2 in the pin loop so a multi-pin
-    // circle inscribes inside the pad and doesn't poke past the pad outline
-    // — the "doubling" artefact the inscribed cap was added for. Net result:
-    // visible pad shape (copper) as a halo, net-colored pin sprite in the
-    // middle. Reverts the previous "pad-above-pin" experiment that hid net
-    // colors on XZZ single-layer boards.
+    // Z-order inside each side container: fill → drops → pin → pads → outline → label.
+    // Pads sit ABOVE the pin layer so the net-coloured pad shape is the
+    // dominant visible primitive (covers the auto-drawn pin circle).
+    // Drops stay BELOW the pin layer since they're ambient copper noise
+    // and shouldn't occlude pin labels.
     topLayer.addChildAt(copperDropsTop, topLayer.getChildIndex(topPinLayer));
     bottomLayer.addChildAt(copperDropsBottom, bottomLayer.getChildIndex(bottomPinLayer));
-    topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer));
-    bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer));
+    topLayer.addChildAt(padsTop, topLayer.getChildIndex(topPinLayer) + 1);
+    bottomLayer.addChildAt(padsBottom, bottomLayer.getChildIndex(bottomPinLayer) + 1);
   }
-  if (board.pads && board.pads.length > 0 && isMultiLayer) {
+  if (board.pads && board.pads.length > 0) {
     tick(`pads + drops (${board.pads.length} rects + drill)`);
   }
 

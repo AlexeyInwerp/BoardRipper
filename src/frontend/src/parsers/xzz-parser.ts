@@ -1509,19 +1509,24 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // aligned bucket, the part is rotated by that angle and the renderer
     // will draw an oriented bounding box for it.
     let angleDeg: number | undefined;
+    let _dbgBuckets = '';
+    let _dbgBestKey = 0, _dbgBestCount = 0, _dbgTotal = 0;
     if (pd.pins.length >= 2) {
       const buckets = new Map<number, number>();
-      let total = 0;
       for (const p of pd.pins) {
         if (p.padW <= 0 || p.padH <= 0) continue;
         const m = ((Math.round(p.padAngleDeg) % 90) + 90) % 90;
         const key = m === 90 ? 0 : m;
         buckets.set(key, (buckets.get(key) ?? 0) + 1);
-        total++;
+        _dbgTotal++;
       }
       let bestKey = 0, bestCount = 0;
       for (const [k, v] of buckets) if (v > bestCount) { bestCount = v; bestKey = k; }
-      if (bestKey > 0 && bestKey < 90 && total > 0 && bestCount >= total * 0.7) {
+      _dbgBestKey = bestKey;
+      _dbgBestCount = bestCount;
+      _dbgBuckets = [...buckets.entries()].sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}°×${v}`).join(' ');
+      if (bestKey > 0 && bestKey < 90 && _dbgTotal > 0 && bestCount >= _dbgTotal * 0.7) {
         angleDeg = bestKey;
       }
     }
@@ -1534,6 +1539,9 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // on the AABB perimeter AND both a horizontal and vertical edge are
     // populated, the chip's body axis is the AABB regardless of what the
     // pad angles say. Skip the angleDeg assignment in that case.
+    const angleDegBeforeGuard = angleDeg;
+    let guardPassed = false;
+    let onL = 0, onR = 0, onT = 0, onB = 0, onAny = 0;
     if (angleDeg !== undefined && pd.pins.length >= 3) {
       let aMinX = Infinity, aMaxX = -Infinity, aMinY = Infinity, aMaxY = -Infinity;
       for (const p of pd.pins) {
@@ -1544,7 +1552,6 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       }
       const span = Math.max(aMaxX - aMinX, aMaxY - aMinY);
       const eps = Math.min(2, span * 0.01);
-      let onL = 0, onR = 0, onT = 0, onB = 0, onAny = 0;
       for (const p of pd.pins) {
         const isL = Math.abs(p.x - aMinX) <= eps;
         const isR = Math.abs(p.x - aMaxX) <= eps;
@@ -1560,7 +1567,22 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       const hasV = onL >= 2 || onR >= 2;
       if (hasH && hasV && onAny >= pd.pins.length * 0.4) {
         angleDeg = undefined;
+        guardPassed = true;
       }
+    }
+    // Diagnostic: surface the angle-detector decision for parts whose name
+    // matches a small grep so we can iterate without flooding the log. The
+    // user reported UN/UF/UR parts on 820-02016 still get diagonal outlines
+    // after the perimeter guard — log enough state to identify the cause.
+    if (angleDegBeforeGuard !== undefined && /^(UN|UF|UR|UP|UV|UX)\d/i.test(pd.name)) {
+      log.parser.log(
+        `[xzz angleDeg probe] part="${pd.name}" pins=${pd.pins.length} ` +
+        `padBuckets={${_dbgBuckets}} bestKey=${_dbgBestKey} ` +
+        `(${_dbgBestCount}/${_dbgTotal}=${(_dbgBestCount / Math.max(1, _dbgTotal) * 100).toFixed(0)}%) ` +
+        `→ angleDegBeforeGuard=${angleDegBeforeGuard} | ` +
+        `perimeter onL=${onL} onR=${onR} onT=${onT} onB=${onB} onAny=${onAny}/${pd.pins.length} ` +
+        `guardPassed=${guardPassed} → final angleDeg=${angleDeg}`,
+      );
     }
     parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}) });
 

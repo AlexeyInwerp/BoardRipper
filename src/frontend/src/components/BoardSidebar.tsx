@@ -46,7 +46,12 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
   const hasGhosts = (board?.ghosts?.length ?? 0) > 0;
   const hasBomClusters = (board?.bomClusters?.length ?? 0) > 0;
   const showRevisionsTab = hasRevisions || hasGhosts || hasBomClusters;
-  const [activeTab, setActiveTab] = useState<SidebarTab>(hasLayers ? 'layers' : 'info');
+  // LayersTab hosts ALL visibility toggles (Traces, Vias, Silkscreen, Pads,
+  // etc.) and not just the per-layer rows. Previously the entire tab was
+  // hidden when layerStates was empty (single-layer XZZ / BRD), leaving
+  // users with no way to toggle anything. Always show the tab; it's
+  // labelled "View" on single-layer boards to set expectations.
+  const [activeTab, setActiveTab] = useState<SidebarTab>('layers');
 
   // Apply external tab request (one-shot, rAF defers setState to satisfy lint rule)
   useEffect(() => {
@@ -62,10 +67,9 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
   // (e.g. user switched from a multi-revision board to a clean one). rAF
   // defers the setState to the next frame to avoid cascading renders.
   useEffect(() => {
-    if (
-      (activeTab === 'revisions' && !showRevisionsTab) ||
-      (activeTab === 'layers' && !hasLayers)
-    ) {
+    // Layers/View tab is always available now; only fall back from
+    // Revisions when that tab goes away.
+    if (activeTab === 'revisions' && !showRevisionsTab) {
       const frame = requestAnimationFrame(() => setActiveTab('info'));
       return () => cancelAnimationFrame(frame);
     }
@@ -77,14 +81,12 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
     <div className="board-sidebar" style={{ opacity }}>
       <div className="board-sidebar-header">
         <div className="board-sidebar-tabs">
-          {hasLayers && (
-            <button
-              className={`board-sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
-              onClick={() => setActiveTab('layers')}
-            >
-              Layers
-            </button>
-          )}
+          <button
+            className={`board-sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
+            onClick={() => setActiveTab('layers')}
+          >
+            {hasLayers ? 'Layers' : 'View'}
+          </button>
           <button
             className={`board-sidebar-tab ${activeTab === 'info' ? 'active' : ''}`}
             onClick={() => setActiveTab('info')}
@@ -253,9 +255,11 @@ function LayersTab({ tabId }: { tabId: number }) {
           </div>
         </div>
       )}
-      <div className="layer-list-header">
-        <span>{layerStates.length} layers</span>
-      </div>
+      {layerStates.length > 0 && (
+        <div className="layer-list-header">
+          <span>{layerStates.length} layers</span>
+        </div>
+      )}
 
       {/* Visibility toggles — unified vertical list */}
       <div className="visibility-toggle-list">
@@ -284,13 +288,13 @@ function LayersTab({ tabId }: { tabId: number }) {
             <span className="toggle-check">{showSilkscreen ? '■' : '□'}</span> Silkscreen
           </button>
         )}
-        {/* Pad + copper-drop overlays only render on multi-layer boards
-            (where copper geometry adds context to the pin sprite). For
-            single-layer XZZ / BRD the pad overlay was hiding net colors
-            and adding nothing, so the layer isn't built and the toggle
-            shouldn't appear either. board.layerNames is the multi-layer
-            signal — same gate used by buildBoardScene. */}
-        {board?.pads && board.pads.length > 0 && !!board.layerNames && board.layerNames.length > 0 && (
+        {/* Pad + copper-drop overlays render whenever the parser supplies
+            board.pads (TVW, Allegro, XZZ). The pad layer sits below the
+            pin layer (see board-scene addChildAt), so net-colored pins
+            stay on top and the overlay just adds copper-color halos
+            around them. The earlier multi-layer-only gate hid these
+            toggles from XZZ users entirely; restored. */}
+        {board?.pads && board.pads.length > 0 && (
           <button
             className={`visibility-toggle ${showPads ? '' : 'off'}`}
             onClick={() => boardStore.togglePads()}
@@ -299,7 +303,7 @@ function LayersTab({ tabId }: { tabId: number }) {
             <span className="toggle-check">{showPads ? '■' : '□'}</span> Pads
           </button>
         )}
-        {board?.pads && board.pads.some(p => p.attached === false) && !!board.layerNames && board.layerNames.length > 0 && (
+        {board?.pads && board.pads.some(p => p.attached === false) && (
           <button
             className={`visibility-toggle ${showCopperDrops ? '' : 'off'}`}
             onClick={() => boardStore.toggleCopperDrops()}
