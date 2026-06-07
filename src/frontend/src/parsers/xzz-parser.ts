@@ -1565,7 +1565,18 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       }
       const hasH = onT >= 2 || onB >= 2;
       const hasV = onL >= 2 || onR >= 2;
-      if (hasH && hasV && onAny >= pd.pins.length * 0.4) {
+      // hasH && hasV is the load-bearing check: at least two pins on a
+      // horizontal AABB edge AND at least two pins on a vertical AABB edge
+      // means the chip's body IS the AABB — that's geometrically how an
+      // axis-aligned rectangular chip looks. The original `onAny ≥ 40%`
+      // gate (copied from computeDiagonalOBB's PCA guard) misfired on
+      // big BGAs like UN000 (110 pins, only 28 on perimeter, 25%) because
+      // most pins are INSIDE the grid, not on the edges. A truly
+      // 45°-rotated chip touches the AABB only at its 4 vertex pins, one
+      // per side — which gives onL=onR=onT=onB=1, so hasH=hasV=false and
+      // the guard correctly stays off. Empirically verified on the
+      // UF400/UF500 (79°-pad BGAs) + UR600 + UF700/750 set from 820-02016.
+      if (hasH && hasV) {
         angleDeg = undefined;
         guardPassed = true;
       }
@@ -1574,7 +1585,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     // matches a small grep so we can iterate without flooding the log. The
     // user reported UN/UF/UR parts on 820-02016 still get diagonal outlines
     // after the perimeter guard — log enough state to identify the cause.
-    if (angleDegBeforeGuard !== undefined && /^(UN|UF|UR|UP|UV|UX)\d/i.test(pd.name)) {
+    if (angleDegBeforeGuard !== undefined && /^U\d/i.test(pd.name)) {
       log.parser.log(
         `[xzz angleDeg probe] part="${pd.name}" pins=${pd.pins.length} ` +
         `padBuckets={${_dbgBuckets}} bestKey=${_dbgBestKey} ` +

@@ -1239,47 +1239,70 @@ export function buildBoardScene(
       }
 
       if (isTwoPinPart) {
-        // Always render the FlexBV-style synthesized pad rectangle here.
-        // The copper-pad overlay layer (padsTop / padsBottom) sits ABOVE
-        // this pin layer in z-order, so when "Show pads" is on the real
-        // copper rectangle from the parser covers the synthesized rect
-        // exactly. When "Show pads" is off the synthesized rect *is* the
-        // classic FlexBV look, which is what the user expects of a
-        // 2-pin cap/resistor sprite. padRects is set from the rendered
-        // synthesized rect for label sizing.
         const padShape = override?.padShape ?? 'natural';
-        let padRx: number, padRy: number, padRw: number, padRh: number;
-        if (eb.horiz) {
-          padRx = pin.position.x - padDepth / 2;
-          padRy = eb.py; padRw = padDepth; padRh = eb.ph;
+        // If the parser supplied real pad geometry, draw the actual pad
+        // shape so the pin sprite matches the pad-overlay layer above —
+        // no doubling, no synthesized FlexBV rect poking out past the
+        // real pad. Mirrors the TVW fix in commit e41a379. The pad
+        // overlay then sits exactly on top of this sprite.
+        if (padShape === 'natural' && pin.padShape !== undefined && pin.padBounds !== undefined) {
+          const targetGfx = isNcPin
+            ? ncGfx
+            : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
+          drawPadShape(targetGfx, {
+            bounds: pin.padBounds,
+            shape: pin.padShape,
+            width: pin.padWidth,
+            height: pin.padHeight,
+            angleDeg: pin.padAngleDeg,
+            cornerRadius: pin.padCornerRadius,
+            polygon: pin.padPolygon,
+          });
+          padRects[pni] = {
+            rx: pin.padBounds.minX,
+            ry: pin.padBounds.minY,
+            rw: pin.padBounds.maxX - pin.padBounds.minX,
+            rh: pin.padBounds.maxY - pin.padBounds.minY,
+          };
         } else {
-          padRx = eb.px; padRy = pin.position.y - padDepth / 2;
-          padRw = eb.pw; padRh = padDepth;
-        }
-        if (isNcPin) {
-          if (padShape === 'round') {
-            const pr = Math.min(padRw, padRh) / 2;
-            ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+          // Fallback for parsers without real per-pin pad geometry
+          // (BVR1/BVR3/BDV/CAD/Mentor): synthesise the FlexBV rectangle
+          // from the part's effective bounds + padDepth. This is the
+          // "classic FlexBV look" — wider than a typical SMD pad but
+          // matches what every boardview tool from 2010 onward draws.
+          let padRx: number, padRy: number, padRw: number, padRh: number;
+          if (eb.horiz) {
+            padRx = pin.position.x - padDepth / 2;
+            padRy = eb.py; padRw = padDepth; padRh = eb.ph;
           } else {
-            ncGfx.rect(padRx, padRy, padRw, padRh);
-            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            padRx = eb.px; padRy = pin.position.y - padDepth / 2;
+            padRw = eb.pw; padRh = padDepth;
           }
-        } else {
-          const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
-          if (padShape === 'round') {
-            const pr = Math.min(padRw, padRh) / 2;
-            pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-            padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-          } else if (padShape === 'square') {
-            const side = Math.min(padRw, padRh);
-            const sx = padRx + padRw / 2 - side / 2;
-            const sy = padRy + padRh / 2 - side / 2;
-            pinGfx.rect(sx, sy, side, side);
-            padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
+          if (isNcPin) {
+            if (padShape === 'round') {
+              const pr = Math.min(padRw, padRh) / 2;
+              ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+            } else {
+              ncGfx.rect(padRx, padRy, padRw, padRh);
+              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            }
           } else {
-            pinGfx.rect(padRx, padRy, padRw, padRh);
-            padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
+            if (padShape === 'round') {
+              const pr = Math.min(padRw, padRh) / 2;
+              pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
+              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
+            } else if (padShape === 'square') {
+              const side = Math.min(padRw, padRh);
+              const sx = padRx + padRw / 2 - side / 2;
+              const sy = padRy + padRh / 2 - side / 2;
+              pinGfx.rect(sx, sy, side, side);
+              padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
+            } else {
+              pinGfx.rect(padRx, padRy, padRw, padRh);
+              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+            }
           }
         }
       } else if (diag2Pads) {
