@@ -3749,26 +3749,6 @@ export class BoardRenderer {
       const rb = computePartRenderBounds(part, s);
       partLabelCx = rb.px + rb.pw / 2;
       partLabelCy = rb.py + rb.ph / 2;
-      // Diagnostic: compare elevated label position to the in-scene
-      // partLabelByIndex label position so we can see whether the
-      // "doubled label" the user reports on UD880 / C5964 is two labels
-      // at the SAME spot (visual artefact, e.g. font size buckets) or at
-      // genuinely DIFFERENT spots (selection-shift bug). Logs once per
-      // selection change.
-      const inSceneLbl = this.activeScene.partLabelByIndex.get(sel.partIndex!);
-      if (inSceneLbl) {
-        const dx = partLabelCx - inSceneLbl.x;
-        const dy = partLabelCy - inSceneLbl.y;
-        if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
-          log.render.log(
-            `[part-label probe] part="${part.name}" pins=${part.pins.length} ` +
-            `inScene=(${inSceneLbl.x.toFixed(2)}, ${inSceneLbl.y.toFixed(2)}) ` +
-            `elevated=(${partLabelCx.toFixed(2)}, ${partLabelCy.toFixed(2)}) ` +
-            `Δ=(${dx.toFixed(2)}, ${dy.toFixed(2)}) — labels at different positions, ` +
-            `expected match for multi-pin / equivalent for 2-pin (centered expansion)`,
-          );
-        }
-      }
       partLbl.style.fontSize = fontSize;
       partLbl.text = part.name;
       partLbl.x = partLabelCx;
