@@ -737,11 +737,23 @@ class BoardStore extends Emitter {
     if (existing) {
       this._activeTabId = existing.id;
       this.notify();
+      // Dismiss any in-flight load-progress overlay. databankStore.fetchFileBuffer
+      // calls loadProgressStore.start() BEFORE we get here, so when the user
+      // re-opens an already-loaded file from the library the overlay is mid-
+      // "Downloading" phase and blocks the canvas until it times out. Same for
+      // any other caller that pre-warms the overlay (drag-drop never does, but
+      // future callers might). dismiss() is safe to call when no load is
+      // active (no-op).
+      loadProgressStore.dismiss();
       return;
     }
 
-    // Guard against concurrent loads of the same file
-    if (this._loading.has(file.name)) return;
+    // Guard against concurrent loads of the same file. Same dismiss
+    // rationale as above — fetchFileBuffer already opened the overlay.
+    if (this._loading.has(file.name)) {
+      loadProgressStore.dismiss();
+      return;
+    }
     this._loading.add(file.name);
 
     try {
