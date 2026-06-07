@@ -1525,6 +1525,43 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         angleDeg = bestKey;
       }
     }
+    // Axis-aligned chip guard: pad angles are a noisy signal — UN/UF/UR
+    // chips on 820-02016 have axis-aligned bodies but their pads happen to
+    // be drawn at a 45° angle. Blindly trusting the pad-angle majority
+    // produced diagonal selection outlines around chips the silkscreen
+    // shows are straight. Mirror the perimeter test from
+    // computeDiagonalOBB: if a substantial fraction of pin POSITIONS sit
+    // on the AABB perimeter AND both a horizontal and vertical edge are
+    // populated, the chip's body axis is the AABB regardless of what the
+    // pad angles say. Skip the angleDeg assignment in that case.
+    if (angleDeg !== undefined && pd.pins.length >= 3) {
+      let aMinX = Infinity, aMaxX = -Infinity, aMinY = Infinity, aMaxY = -Infinity;
+      for (const p of pd.pins) {
+        if (p.x < aMinX) aMinX = p.x;
+        if (p.x > aMaxX) aMaxX = p.x;
+        if (p.y < aMinY) aMinY = p.y;
+        if (p.y > aMaxY) aMaxY = p.y;
+      }
+      const span = Math.max(aMaxX - aMinX, aMaxY - aMinY);
+      const eps = Math.min(2, span * 0.01);
+      let onL = 0, onR = 0, onT = 0, onB = 0, onAny = 0;
+      for (const p of pd.pins) {
+        const isL = Math.abs(p.x - aMinX) <= eps;
+        const isR = Math.abs(p.x - aMaxX) <= eps;
+        const isB = Math.abs(p.y - aMinY) <= eps;
+        const isT = Math.abs(p.y - aMaxY) <= eps;
+        if (isL) onL++;
+        if (isR) onR++;
+        if (isB) onB++;
+        if (isT) onT++;
+        if (isL || isR || isB || isT) onAny++;
+      }
+      const hasH = onT >= 2 || onB >= 2;
+      const hasV = onL >= 2 || onR >= 2;
+      if (hasH && hasV && onAny >= pd.pins.length * 0.4) {
+        angleDeg = undefined;
+      }
+    }
     parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}) });
 
     // Emit a Pad per pin with valid geometry.
