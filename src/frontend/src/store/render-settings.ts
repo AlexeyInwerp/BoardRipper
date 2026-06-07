@@ -470,10 +470,26 @@ export interface EffectiveBounds {
 
 export function computeEffectiveBounds(
   bounds: { minX: number; minY: number; maxX: number; maxY: number },
-  pins: { position: { x: number; y: number }; radius?: number }[],
+  pins: { position: { x: number; y: number }; radius?: number; padBounds?: { minX: number; minY: number; maxX: number; maxY: number } }[],
   s: RenderSettings,
 ): EffectiveBounds {
   let { minX, minY, maxX, maxY } = bounds;
+  // Expand the AABB to include each pin's real pad outline when the parser
+  // exposes it (TVW / Allegro / XZZ populate pin.padBounds). `bounds` from
+  // the parser is the AABB of pin CENTRES only, so on parts with wide /
+  // overhanging pads (RP-series resistor packs, regulator IC corner pads)
+  // the outline + selection rectangle were cutting through the pads. Union
+  // of pin.padBounds gives the true pad extent. Parsers without padBounds
+  // (BVR/BDV/CAD/Mentor) hit this code as a no-op and behaviour matches
+  // pre-fix.
+  for (const pin of pins) {
+    const pb = pin.padBounds;
+    if (!pb) continue;
+    if (pb.minX < minX) minX = pb.minX;
+    if (pb.maxX > maxX) maxX = pb.maxX;
+    if (pb.minY < minY) minY = pb.minY;
+    if (pb.maxY > maxY) maxY = pb.maxY;
+  }
   let horiz = false;
   const isSmallPart = pins.length <= 4;
 
