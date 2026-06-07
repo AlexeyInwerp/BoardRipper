@@ -64,58 +64,93 @@ export function LoadProgressOverlay() {
   const total = (state.finishedAt ?? performance.now()) - state.startedAt;
   const failed = state.phases.some(p => p.status === 'error');
 
-  return (
-    <div className="update-progress-overlay" role="dialog" aria-modal="false" aria-labelledby="load-progress-title">
-      <div className="update-progress-modal">
-        <div className="update-progress-spinner" aria-hidden="true" />
-        <h2 id="load-progress-title">{failed ? 'Load failed' : 'Loading board'}</h2>
-        <p>
-          <code>{state.fileName ?? ''}</code>
-          {state.fileSize != null && state.fileSize > 0 ? ` — ${fmtBytes(state.fileSize)}` : ''}
-        </p>
-        <p className="update-progress-note">
-          <span className="update-progress-elapsed">Elapsed: {fmtMs(total)}</span>
-        </p>
+  // Non-blocking corner panel — earlier draft was a full-screen modal
+  // (.update-progress-overlay = position:fixed inset:0 z-index 99999),
+  // which left users stuck behind a black screen if the dismiss path
+  // missed (tab-switch mid-load, finishIfMatching not matching, etc.).
+  // Pin to bottom-right, no backdrop, pointer-events on the panel only.
+  const containerStyle: React.CSSProperties = {
+    position: 'fixed',
+    right: '1rem',
+    bottom: '1rem',
+    zIndex: 9000, // below toasts (10000) and update-progress (99999)
+    pointerEvents: 'none', // canvas stays interactive behind us
+    maxWidth: 'min(420px, calc(100vw - 2rem))',
+  };
+  const panelStyle: React.CSSProperties = {
+    pointerEvents: 'auto', // X button works, rest of canvas stays free
+    background: 'rgba(20, 20, 22, 0.92)',
+    borderRadius: '8px',
+    boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    padding: '0.75rem 1rem',
+    color: '#e0e0e0',
+    fontSize: '12px',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    position: 'relative',
+  };
+  const closeBtnStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '0.25rem',
+    right: '0.5rem',
+    background: 'transparent',
+    border: 'none',
+    color: '#999',
+    cursor: 'pointer',
+    fontSize: '16px',
+    lineHeight: 1,
+    padding: '4px 8px',
+  };
 
-        <div className="update-progress-modal-log-wrap">
-          <div className="update-progress-modal-log-label">Phases ({state.phases.length})</div>
-          <ol className="update-progress-modal-log">
-            {state.phases.map((p, i) => (
-              <li key={i} className={`update-progress-line update-progress-${p.status === 'running' ? 'running' : p.status === 'error' ? 'error' : 'success'}`}>
-                <span className="update-progress-modal-log-time">{phaseIcon(p)}</span>
-                <span className="update-progress-modal-log-msg">
-                  <strong>{p.name}</strong>
-                  {p.detail ? ` — ${p.detail}` : ''}
-                  {p.status === 'done' && p.elapsedMs != null ? ` (${fmtMs(p.elapsedMs)})` : ''}
-                  {p.status === 'running' ? ` (${fmtMs(performance.now() - p.startedAt)})` : ''}
-                </span>
-              </li>
-            ))}
-          </ol>
+  return (
+    <div style={containerStyle} role="status" aria-live="polite" aria-labelledby="load-progress-title">
+      <div style={panelStyle}>
+        <button
+          style={closeBtnStyle}
+          onClick={() => loadProgressStore.dismiss()}
+          title="Dismiss"
+          aria-label="Dismiss load-progress overlay"
+        >
+          ✕
+        </button>
+        <h3 id="load-progress-title" style={{ margin: '0 1.5rem 0.25rem 0', fontSize: '13px' }}>
+          {failed ? '✕ Load failed' : '⟳ Loading board'}
+        </h3>
+        <div style={{ color: '#bbb', marginBottom: '0.25rem', wordBreak: 'break-all' }}>
+          <code style={{ fontSize: '11px' }}>{state.fileName ?? ''}</code>
+          {state.fileSize != null && state.fileSize > 0 ? ` — ${fmtBytes(state.fileSize)}` : ''}
         </div>
+        <div style={{ color: '#888', marginBottom: '0.5rem' }}>Elapsed: {fmtMs(total)}</div>
+
+        <ol style={{ margin: 0, padding: '0 0 0 1rem', listStyle: 'none', maxHeight: '180px', overflowY: 'auto' }}>
+          {state.phases.map((p, i) => (
+            <li key={i} style={{
+              padding: '2px 0',
+              color: p.status === 'error' ? '#f88' : p.status === 'running' ? '#fc8' : '#7c7',
+            }}>
+              <span style={{ display: 'inline-block', width: '1.25rem' }}>{phaseIcon(p)}</span>
+              <strong>{p.name}</strong>
+              {p.detail ? ` — ${p.detail}` : ''}
+              {p.status === 'done' && p.elapsedMs != null ? ` (${fmtMs(p.elapsedMs)})` : ''}
+              {p.status === 'running' ? ` (${fmtMs(performance.now() - p.startedAt)})` : ''}
+            </li>
+          ))}
+        </ol>
 
         {state.log.length > 0 && (
-          <div className="update-progress-modal-log-wrap">
-            <div className="update-progress-modal-log-label">Log ({state.log.length})</div>
-            <ol className="update-progress-modal-log">
+          <details style={{ marginTop: '0.5rem' }}>
+            <summary style={{ cursor: 'pointer', color: '#888', fontSize: '11px' }}>
+              Log ({state.log.length})
+            </summary>
+            <ol style={{ margin: '0.25rem 0 0', padding: '0 0 0 1rem', listStyle: 'none', maxHeight: '120px', overflowY: 'auto', color: '#999', fontSize: '11px' }}>
               {state.log.slice(-10).map((entry, i) => (
-                <li key={i} className="update-progress-line">
-                  <span className="update-progress-modal-log-time">{fmtMs(entry.tMs)}</span>
-                  <span className="update-progress-modal-log-msg">{entry.message}</span>
+                <li key={i} style={{ padding: '1px 0' }}>
+                  <span style={{ display: 'inline-block', width: '3rem', color: '#666' }}>{fmtMs(entry.tMs)}</span>
+                  {entry.message}
                 </li>
               ))}
             </ol>
-          </div>
-        )}
-
-        {failed && (
-          <button
-            className="visibility-toggle"
-            onClick={() => loadProgressStore.dismiss()}
-            style={{ marginTop: '0.5rem' }}
-          >
-            Dismiss
-          </button>
+          </details>
         )}
       </div>
     </div>

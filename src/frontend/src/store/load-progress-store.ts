@@ -74,6 +74,14 @@ class LoadProgressStore {
 
   private subs = new Set<() => void>();
   private dismissTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Watchdog: if no setPhase / setPhaseDetail / pushLog / finish call
+   *  arrives within this many ms after the last activity, the load is
+   *  almost certainly stalled (renderer never reported back, page tab
+   *  backgrounded mid-load, finishIfMatching's filename match missed
+   *  because the active tab changed, etc.). Force-dismiss so the user
+   *  isn't stuck behind a stale overlay forever. */
+  private static readonly WATCHDOG_MS = 30_000;
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   /** Monotonic version bumped on every notify(). Subscribers reading via
    *  useSyncExternalStore use this primitive snapshot to detect changes —
    *  the state object itself is mutated in place for performance (phase
@@ -94,6 +102,25 @@ class LoadProgressStore {
     for (const cb of this.subs) cb();
   }
 
+  /** Reset the watchdog. Called from every mutation that represents
+   *  forward progress (new phase, phase detail update, log push). If
+   *  WATCHDOG_MS elapses with no further activity, force-dismiss. */
+  private armWatchdog(): void {
+    if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    this.watchdogTimer = setTimeout(() => {
+      this.watchdogTimer = null;
+      if (!this.state.visible) return;
+      // Belt-and-braces: also bypass any zombie state by dropping
+      // straight into invisibility (skip the polite finish/animate path).
+      this.state.visible = false;
+      this.notify();
+    }, LoadProgressStore.WATCHDOG_MS);
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdogTimer) { clearTimeout(this.watchdogTimer); this.watchdogTimer = null; }
+  }
+
   getState(): LoadProgressState {
     return this.state;
   }
@@ -111,6 +138,7 @@ class LoadProgressStore {
       log: [],
     };
     this.notify();
+    this.armWatchdog();
   }
 
   /** Close the previous phase (if any) and open a new one. */
@@ -130,6 +158,7 @@ class LoadProgressStore {
       status: 'running',
     });
     this.notify();
+    this.armWatchdog();
   }
 
   /** Update the detail string of the current phase (e.g. download progress). */
@@ -139,6 +168,7 @@ class LoadProgressStore {
     if (!last || last.status !== 'running') return;
     last.detail = detail;
     this.notify();
+    this.armWatchdog();
   }
 
   /** Free-text log entry inside the current phase. */
@@ -151,6 +181,7 @@ class LoadProgressStore {
       phase: last?.name ?? '',
     });
     this.notify();
+    this.armWatchdog();
   }
 
   /** Mark current phase complete; schedule overlay dismissal. */
@@ -164,6 +195,7 @@ class LoadProgressStore {
       last.status = 'done';
     }
     this.state.finishedAt = now;
+    this.clearWatchdog();
     this.notify();
     this.scheduleDismiss();
   }
@@ -196,12 +228,14 @@ class LoadProgressStore {
       last.detail = reason;
     }
     this.state.finishedAt = now;
+    this.clearWatchdog();
     this.notify();
   }
 
   /** User-triggered dismiss (X button on overlay). */
   dismiss(): void {
     if (this.dismissTimer) { clearTimeout(this.dismissTimer); this.dismissTimer = null; }
+    this.clearWatchdog();
     this.state.visible = false;
     this.notify();
   }
