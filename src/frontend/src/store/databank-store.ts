@@ -1377,17 +1377,26 @@ class DatabankStore extends Emitter {
   }
 
   /** Fetch a file's ArrayBuffer from the backend for opening in the viewer.
-   *  Surfaces a "Downloading" phase on the load-progress overlay with
-   *  byte-level progress driven by Content-Length so the user can see
-   *  whether the wait is network or render bound. */
+   *  Surfaces a "Downloading" phase on the load-progress overlay for BOARD
+   *  fetches with byte-level progress driven by Content-Length. PDF /
+   *  other file types skip the overlay entirely: linked-PDF auto-load
+   *  fires this method right after a board fetch completes, and the
+   *  earlier blanket `start()` call was overwriting the in-flight board
+   *  load state (board "Building scene" phase) with the PDF's
+   *  "Downloading" phase — boardStore.loadFile is the only path that
+   *  eventually calls finish(), so PDFs left the overlay open until the
+   *  watchdog fired 30 s later. */
   async fetchFileBuffer(file: DatabankFile): Promise<File> {
-    loadProgressStore.start(file.filename, file.size);
-    loadProgressStore.setPhase('Downloading', isElectron()
-      ? 'Reading from local library mount (Electron IPC)'
-      : `Backend → browser via /api/files/path (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    const trackProgress = file.file_type === 'board';
+    if (trackProgress) {
+      loadProgressStore.start(file.filename, file.size);
+      loadProgressStore.setPhase('Downloading', isElectron()
+        ? 'Reading from local library mount (Electron IPC)'
+        : `Backend → browser via /api/files/path (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    }
     if (isElectron()) {
       const result = await window.electronAPI!.readLibraryFile(file.path);
-      loadProgressStore.pushLog(`Read ${result.buffer.byteLength.toLocaleString()} bytes from Electron`);
+      if (trackProgress) loadProgressStore.pushLog(`Read ${result.buffer.byteLength.toLocaleString()} bytes from Electron`);
       return new File([result.buffer], result.name, { lastModified: result.lastModified });
     }
     const res = await fetchWithCloudRetry(
@@ -1409,10 +1418,10 @@ class DatabankStore extends Emitter {
       if (res.status === 503) {
         const { code, message } = await readCloudError(res);
         boardStore.addToast(formatCloudErrorToast(file.filename, code, message), 'error');
-        loadProgressStore.abort(`HTTP 503${code ? ` (${code})` : ''}`);
+        if (trackProgress) loadProgressStore.abort(`HTTP 503${code ? ` (${code})` : ''}`);
         throw new Error(`HTTP 503${code ? ` (${code})` : ''}`);
       }
-      loadProgressStore.abort(`HTTP ${res.status}`);
+      if (trackProgress) loadProgressStore.abort(`HTTP ${res.status}`);
       throw new Error(`HTTP ${res.status}`);
     }
     // Stream the response so the overlay shows download progress.
@@ -1434,7 +1443,7 @@ class DatabankStore extends Emitter {
           received += value.byteLength;
           // Throttle store updates to every ~64 KiB so we don't notify
           // on every TCP packet on fast LANs.
-          if (received - lastPushed > 64 * 1024 || received === total) {
+          if (trackProgress && (received - lastPushed > 64 * 1024 || received === total)) {
             lastPushed = received;
             const pct = total > 0 ? Math.round((received / total) * 100) : 0;
             loadProgressStore.setPhaseDetail(`${(received / 1024 / 1024).toFixed(2)} / ${(total / 1024 / 1024).toFixed(2)} MB (${pct}%)`);
@@ -1448,7 +1457,7 @@ class DatabankStore extends Emitter {
     } else {
       buffer = await res.arrayBuffer();
     }
-    loadProgressStore.pushLog(`Downloaded ${buffer.byteLength.toLocaleString()} bytes`);
+    if (trackProgress) loadProgressStore.pushLog(`Downloaded ${buffer.byteLength.toLocaleString()} bytes`);
     return new File([buffer], file.filename, { lastModified: file.mod_time * 1000 });
   }
 
