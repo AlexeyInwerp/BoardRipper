@@ -226,8 +226,14 @@ function rotateFlipAxis(flipAxis: 'x' | 'y', oldRotationDeg: number, newRotation
  *  - `flipAxis` — pick based on the *screen* aspect (after rotation), so
  *    pressing "flip" mirrors along the board's visibly-longest side
  *    regardless of how the file stored the board.
- *  - `mirrorY` / `mirrorX` — match the X-fold → mirrorY=true convention
- *    used for natively-butterfly files.
+ *  - `mirrorY` / `mirrorX` — reset to false. The historical "X-fold →
+ *    mirrorY, Y-fold → mirrorX" convention was a render-time compensation
+ *    for the XZZ parser leaving the butterfly bottom-half un-mirrored.
+ *    The parser now fully unfolds geometry inside parseXZZ
+ *    (`p.x = 2 * fold.axis - p.x` for X-fold bottom pins, equivalent for
+ *    Y-fold), so no compensation is needed. Keeping the auto-mirrors
+ *    visibly broke A2338 820-02773 (horizontal mirror after 270°
+ *    autoRotation rotated the Y-flip into screen-X).
  */
 function syncMirrorsToDerivedFold(tab: BoardTab): void {
   const derived = ensureDerivedBoard(tab);
@@ -237,9 +243,8 @@ function syncMirrorsToDerivedFold(tab: BoardTab): void {
 
   tab.flipAxis = flipAxisForRotation(rotation);
 
-  const axis = derived.butterflyFoldAxis ?? null;
-  tab.mirrorY = axis === 'x';
-  tab.mirrorX = axis === 'y';
+  tab.mirrorY = false;
+  tab.mirrorX = false;
 }
 
 /** Extract a "820-XXXXX" board code (5 digits) from a file name, or null if absent. */
@@ -796,7 +801,16 @@ class BoardStore extends Emitter {
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
           tab.flipAxis = flipAxisForRotation(tab.rotation);
-          if (cached.butterflyFoldAxis === 'x') tab.mirrorY = true;
+          // Historical: X-fold XZZ boards used to set mirrorY=true here to
+          // compensate for the renderer-side unfold. The parser now fully
+          // unfolds the bottom half (see parseXZZ butterfly section), so
+          // the geometry is already in screen-correct orientation by the
+          // time it reaches the store. With 270° auto-rotation applied to
+          // tall boards (X-fold result is always tall), the leftover
+          // mirrorY=true rotated into screen-X, producing a visible
+          // horizontal mirror on A2338 820-02773 (M2). Dropping it.
+          // 820-02016 (Y-fold, no auto-mirror) was already displaying
+          // correctly — both fold types should match.
           if (cached.flipAxis) tab.flipAxis = cached.flipAxis;
           const cachedFmt = getFormat(cached.format);
           // Initial side = user's perception of "top". For inverted files
@@ -879,7 +893,11 @@ class BoardStore extends Emitter {
         applyBoardFilters(tab);
         tab.rotation = this.autoRotation(board);
         tab.flipAxis = flipAxisForRotation(tab.rotation);
-        if (board.butterflyFoldAxis === 'x') tab.mirrorY = true;
+        // See cache-hit branch above — the X-fold mirrorY=true compensation
+        // is leftover from when the parser didn't fully unfold the bottom
+        // half. Dropping it fixes A2338 820-02773 horizontal mirror; other
+        // X-fold files should be unaffected because the unfolded geometry
+        // is already in the right orientation.
         if (board.flipAxis) tab.flipAxis = board.flipAxis;
         const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
         if (wantsBottomOnOpen) {

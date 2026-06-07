@@ -518,9 +518,39 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
     padShape = shapeByte === 0x01 ? 'round' : 'rect';
   }
   // Then 27 bytes of pad geom + 5 padding bytes, then the netIndex.
+  const unk3Ptr = ptr;
   ptr += 32;
   const netIndex = (ptr + 4 <= data.length) ? ru32(data, ptr) : 0;
+  if (DEBUG_PART_DUMPS_REMAINING > 0 && ptr + 32 <= data.length) {
+    // Dump the 32 trailing bytes of the pin sub-block (27 pad geom + 5
+    // padding). The padW/padH/shape are already decoded from the first 9;
+    // the rest is unmapped. Looking for orientation hints (per-pin rotation,
+    // side flag, etc.). DEBUG_PART_DUMPS_REMAINING is decremented in the
+    // PART block, so each part's first pin gets a row.
+    log.parser.log(
+      `[xzz unknown-bytes probe] pin="${name}" ` +
+      `padW=${padW} padH=${padH} shape=${padShape} ang=${padAngleDeg} ` +
+      `trailing32=${hex(data, unk3Ptr, 32)}`,
+    );
+  }
   return { pin: { name, x, y, netIndex, padW, padH, padAngleDeg, padShape }, next: Math.min(pinBlockEnd, data.length) };
+}
+
+/** When > 0, dump the unknown-byte regions of the next N decoded parts to
+ *  log.parser. Set by parseXZZ at the start of each invocation so the dump
+ *  fires once per file open (and not for every single part on a 2000-part
+ *  board). Used to RE the part header — looking for orientation / rotation
+ *  / mirror hints that would let us cross-check the pin-direction detector.
+ *  Toggle off by setting to 0; production builds should ship at 0. */
+let DEBUG_PART_DUMPS_REMAINING = 0;
+
+function hex(data: Uint8Array, off: number, len: number): string {
+  const end = Math.min(off + len, data.length);
+  const parts: string[] = [];
+  for (let i = off; i < end; i++) {
+    parts.push(data[i].toString(16).padStart(2, '0'));
+  }
+  return parts.join(' ');
 }
 
 function parsePartBlock(encBuf: Uint8Array): PartData | null {
@@ -528,18 +558,32 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
   let ptr = 0;
   if (ptr + 4 > data.length) return null;
   const partSize = ru32(data, ptr); ptr += 4;
-  ptr += 18; // unknown
+  // unknown1 — 18 bytes between partSize and groupNameSize
+  const unk1Ptr = ptr;
+  ptr += 18;
   if (ptr + 4 > data.length) return null;
   const groupNameSize = ru32(data, ptr); ptr += 4;
   const groupName = (groupNameSize > 0 && ptr + groupNameSize <= data.length) ? rstr(data, ptr, groupNameSize) : '';
   ptr += groupNameSize;
 
   if (ptr >= data.length || data[ptr] !== 0x06) return null;
-  ptr += 31; // sub-block type byte (1) + 30 unknown bytes
+  // unknown2 — 30 bytes after the 0x06 marker byte
+  ptr += 1; // 0x06 marker
+  const unk2Ptr = ptr;
+  ptr += 30;
   if (ptr + 4 > data.length) return null;
   const nameLen = ru32(data, ptr); ptr += 4;
   const partName = (ptr + nameLen <= data.length) ? rstr(data, ptr, nameLen) : '';
   ptr += nameLen;
+
+  if (DEBUG_PART_DUMPS_REMAINING > 0) {
+    DEBUG_PART_DUMPS_REMAINING--;
+    log.parser.log(
+      `[xzz unknown-bytes probe] part="${partName}" group="${groupName}" ` +
+      `unk1[18]=${hex(data, unk1Ptr, 18)} | ` +
+      `unk2[30]=${hex(data, unk2Ptr, 30)}`,
+    );
+  }
 
   const pins: PinData[] = [];
   const silkLines: PartSilkLine[] = [];
@@ -986,6 +1030,14 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   const netBlockSize = ru32(raw, netDataStart);
   const netDict = parseNetBlock(raw.subarray(netDataStart + 4, netDataStart + 4 + netBlockSize));
 
+  // Diagnostic probe: dump the first N parts' unknown-byte regions so we
+  // can RE any orientation / rotation / mirror hints hiding there. Used
+  // to investigate A2338 820-02773 mirror bug — turned out the bug was in
+  // the store, not the format, so the probe found nothing actionable.
+  // Left at 0 so production builds are silent; bump to 5 (or higher) when
+  // investigating new orientation / fold / side-detection issues.
+  DEBUG_PART_DUMPS_REMAINING = 0;
+
   // Process main data blocks
   const mainBlocksSize = ru32(raw, mainDataStart);
   const mainEnd  = mainDataStart + 4 + mainBlocksSize;
@@ -1298,6 +1350,12 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       })),
     }));
     const v = detectXMirrorByPinDirection(probeParts, { minSamples: 4 });
+    log.parser.log(
+      `[xzz mirror-detect] verdict=${v.mirrored ? 'MIRRORED → will flip X' : 'not mirrored → leave as-is'} | ` +
+      `topCCW=${v.topCCW} topCW=${v.topCW} ratio=${isNaN(v.wrongRatio) ? 'NaN' : v.wrongRatio.toFixed(2)} ` +
+      `(threshold 0.70) | bottomCCW=${v.bottomCCW} bottomCW=${v.bottomCW} | ` +
+      `analyzed=${v.totalAnalyzed} (minSamples=4)`,
+    );
     if (v.mirrored) {
       // Match the renderer's auto-rotate axis-swap so the user sees a
       // horizontal screen flip, not a vertical one.
