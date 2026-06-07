@@ -6,6 +6,7 @@ import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
+import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
 import {
   isAutoSwitchLinked,
   setAutoSwitchLinked,
@@ -1027,6 +1028,9 @@ export function HomeBackdrop() {
       <div className="home-backdrop-scroll">
         <div className="home-backdrop-inner">
           <Banner />
+          <div className="home-ui-scale-row">
+            <InterfaceScaleSlider />
+          </div>
           <QuickSettings />
           <Instructions />
           <LatestUpdate />

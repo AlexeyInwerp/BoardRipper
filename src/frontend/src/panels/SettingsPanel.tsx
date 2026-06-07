@@ -14,6 +14,7 @@ import {
 } from './settings/SettingsSearch';
 import type { RenderSettings, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
+import { InterfaceScaleSlider } from '../components/InterfaceScaleSlider';
 import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -2250,6 +2251,11 @@ function ThemeTab() {
           </>
         }
       />
+
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)' }}>
+        Interface scale
+      </div>
+      <InterfaceScaleSlider />
 
     </div>
   );

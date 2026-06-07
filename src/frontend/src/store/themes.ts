@@ -135,7 +135,48 @@ const STORAGE_KEY = 'boardripper-theme';
 const ACCENT_OVERRIDE_KEY = 'boardripper-accent-override';
 const BACKGROUND_OVERRIDE_KEY = 'boardripper-background-override';
 const CHROME_OVERRIDE_KEY = 'boardripper-chrome-override';
+const UI_SCALE_KEY = 'boardripper-ui-scale';
 const DEFAULT_ID = 'default';
+
+/** Interface scaling factor — multiplies the visual size of all chrome
+ *  (toolbars, panels, dialogs, sidebar, start page). The BoardViewer and
+ *  PDF canvases are counter-zoomed via CSS so their rendered pixel
+ *  resolution is unaffected. */
+export const UI_SCALE_MIN = 0.50;
+export const UI_SCALE_MAX = 1.50;
+export const UI_SCALE_STEP = 0.05;
+export const UI_SCALE_DEFAULT = 1.00;
+
+function clampScale(n: number): number {
+  if (!Number.isFinite(n)) return UI_SCALE_DEFAULT;
+  const clamped = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, n));
+  return Math.round(clamped / UI_SCALE_STEP) * UI_SCALE_STEP;
+}
+
+function loadScale(): number {
+  try {
+    const raw = localStorage.getItem(UI_SCALE_KEY);
+    if (!raw) return UI_SCALE_DEFAULT;
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) return UI_SCALE_DEFAULT;
+    return clampScale(n);
+  } catch {
+    return UI_SCALE_DEFAULT;
+  }
+}
+
+function saveScale(n: number | null) {
+  try {
+    if (n == null || n === UI_SCALE_DEFAULT) localStorage.removeItem(UI_SCALE_KEY);
+    else localStorage.setItem(UI_SCALE_KEY, String(n));
+  } catch { /* quota — ignore */ }
+}
+
+/** Apply --ui-scale CSS var. Read by the body { zoom: var(--ui-scale) }
+ *  rule in index.css; canvas containers counter-zoom via the same var. */
+export function applyUiScaleToDOM(scale: number) {
+  document.documentElement.style.setProperty('--ui-scale', String(scale));
+}
 
 /**
  * Architecture note — themes vs interface knobs.
@@ -342,6 +383,7 @@ class ThemeStore extends Emitter {
   private _accentOverride: string | null = null;
   private _backgroundOverride: string | null = null;
   private _chromeOverride: string | null = null;
+  private _scale: number = UI_SCALE_DEFAULT;
   private _initialized = false;
 
   /** Call once at app startup. Idempotent — second call no-ops. */
@@ -351,7 +393,9 @@ class ThemeStore extends Emitter {
     this._accentOverride = loadHexOverride(ACCENT_OVERRIDE_KEY);
     this._backgroundOverride = loadHexOverride(BACKGROUND_OVERRIDE_KEY);
     this._chromeOverride = loadHexOverride(CHROME_OVERRIDE_KEY);
+    this._scale = loadScale();
     this.applyAll();
+    applyUiScaleToDOM(this._scale);
     this._initialized = true;
   }
 
@@ -383,6 +427,11 @@ class ThemeStore extends Emitter {
   /** Effective chrome colour — drives --bg-tertiary. */
   get effectiveChrome(): string {
     return this._chromeOverride ?? this.activeTheme().ui.bgTertiary;
+  }
+
+  /** Current interface scaling factor (1.0 = 100%). */
+  get scale(): number {
+    return this._scale;
   }
 
   activeTheme(): Theme {
@@ -448,6 +497,23 @@ class ThemeStore extends Emitter {
     this._chromeOverride = hex;
     saveHexOverride(CHROME_OVERRIDE_KEY, hex);
     this.applyAll();
+    this.notify();
+  }
+
+  /** Set the global interface scaling factor. Pass null to reset to 100%.
+   *  Out-of-range values are clamped to [UI_SCALE_MIN, UI_SCALE_MAX] and
+   *  snapped to UI_SCALE_STEP. The slider commits this on pointer-up only;
+   *  there's no ephemeral path because mid-drag rescaling resizes the
+   *  slider control itself, breaking the drag. */
+  setScale(n: number | null): void {
+    const next = n == null ? UI_SCALE_DEFAULT : clampScale(n);
+    if (next === this._scale) {
+      saveScale(n == null ? null : next);
+      return;
+    }
+    this._scale = next;
+    applyUiScaleToDOM(next);
+    saveScale(n == null ? null : next);
     this.notify();
   }
 

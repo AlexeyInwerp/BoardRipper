@@ -28,6 +28,13 @@
   --border: #1a1a28;
   --toolbar-height: 40px;
   --statusbar-height: 24px;
+  /* Global interface scaling factor. Multiplies every visual element
+   * inside <body> via CSS `zoom`. Canvas containers counter-zoom (see
+   * .board-panel-canvas / .pdf-canvas-container rules below) so their
+   * rendered pixel resolution is unaffected. Driven by themeStore via
+   * applyUiScaleToDOM; persisted to localStorage under
+   * 'boardripper-ui-scale'. Range [0.75, 1.50] step 0.05. */
+  --ui-scale: 1;
 }
 
 * {
@@ -45,6 +52,23 @@ html, body, #root {
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
   font-size: 13px;
+}
+
+/* Global interface scaling — applied to <body> so it covers the React root
+ * AND every portal mounted to document.body (context menus, dropdown
+ * popovers, WorklistPanel flash, etc.). Canvas-bearing containers below
+ * counter-zoom so the WebGL/PDF render resolution is independent of the
+ * UI scale slider. See themeStore.setScale() in src/store/themes.ts. */
+body {
+  zoom: var(--ui-scale, 1);
+}
+
+/* Counter-zoom canvas hosts so PixiJS / pdf.js render at their native
+ * resolution regardless of the chrome scaling factor. These are the only
+ * elements that are intentionally exempt from the global UI scale. */
+.board-panel-canvas,
+.pdf-canvas-container {
+  zoom: calc(1 / var(--ui-scale, 1));
 }
 
 .app-container {
@@ -6966,4 +6990,72 @@ html, body, #root {
   font-size: 0.8em;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Interface scale slider — used in three places (SettingsPanel
+ * Theme tab, HomeBackdrop quick settings, HomeBackdrop bottom-right
+ * corner). The component lives in src/components/InterfaceScaleSlider.tsx.
+ * ───────────────────────────────────────────────────────────── */
+.ui-scale-full {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ui-scale-full-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+}
+.ui-scale-full-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.ui-scale-full-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ui-scale-full-controls input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.ui-scale-full-reset {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ui-scale-full-reset:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+.ui-scale-full-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Dedicated row on the start page, centred under the welcome banner.
+ * Lives in the home-backdrop main column so it's prominent on first open
+ * without being pinned on top of every other panel layout.
+ *
+ * Counter-zoom keeps the slider control at constant physical size while
+ * the rest of the page rescales live — otherwise the track shrinks under
+ * the pointer mid-drag and becomes hard to grab. The Settings ▸ Theme
+ * slider intentionally scales with everything else; this one is the
+ * primary tuning control so it earns the special treatment. */
+.home-ui-scale-row {
+  align-self: center;
+  width: 100%;
+  max-width: 560px;
 }
