@@ -1,5 +1,52 @@
 # BoardRipper changelog
 
+## v0.31.12 — 2026-06-07
+
+Pad geometry pass across every format that exposes it. TVW chamfered
+pads draw their real outline, XZZ pads carry net-coloured rectangles
+instead of generic circles, 2-pin overrides no longer halo. A clean-up
+sweep on XZZ orientation made every X-fold board (A2338, A2681, most
+Apple MLBs) display correctly, and the worst-case wrong files now stick
+to a manual rotation override. Plus a new toggleable Copper-fills layer
+for ground planes, a load-progress overlay so cold opens have feedback,
+and the part outline / selection rectangle finally hugs the real pads
+on resistor packs and overhanging-pad ICs.
+
+### Features
+
+- **Copper fills overlay (TVW Surface blocks).** New "Show copper fills" toggle in the layers / view sidebar renders ground planes and power pours from each copper layer of a TVW file. Tints with the matching layer colour at 0.25 alpha so the trace network still reads on top of the dim fill. Multi-layer wiring (per-layer container under `surfacesLayer`) follows the same emphasis machinery as traces. (`e96077a`, `2119ccf`, `b012c24`)
+- **Per-file rotation + mirror overrides, persisted.** New IndexedDB store (`boardripper-file-view-prefs`) records the user's rotation / mirrorX / mirrorY / flipAxis choices keyed on `${name}:${size}:${lastModified}`. Auto-rotation still runs first, but the saved override wins. The XZZ auto-rotation heuristic gets right for ~all M1 / M2 MacBook boards now (after this release's fold-axis fixes), but a few outliers — A2338, A2681 — needed an extra 180°. Fix once via the rotate-180 toolbar button; subsequent opens auto-apply. Stays per-file so a fix on one MLB doesn't change another. (`79cf870`)
+- **Per-file load-progress overlay.** Cold opens (29 MB TVW, encrypted XZZ, etc.) now show phase-level timing: Downloading → Cache lookup → Reading file bytes → Parsing → Post-process → Writing cache → Building scene. Each phase carries elapsed-ms and free-form log entries; the overlay stays open through `buildBoardScene` (where most of the wait sits) and auto-dismisses 1.5 s after the last phase completes. Diagnostic markers inside the scene builder report the cost of surfaces, traces, pads, the parts loop and grid flush so we can localise future slow-loads without re-instrumenting. (`79242de`, `daae3a9`)
+- **Re-open-same-file is instant + safe.** Clicking an already-loaded file in the library doesn't re-download or re-parse it — focus jumps to the existing tab and the load overlay dismisses cleanly instead of hanging at "Downloading…" forever. (`a94f55e`)
+
+### TVW + Allegro + XZZ pad geometry
+
+- **TVW pad/pin doubling fixed; chamfered pads render as their real outline.** The earlier doubling artefact — circle pin showing through a copper rectangle on every chip — went away by routing the pin layer through the parser-supplied `pin.padShape` + `padBounds`. Chamfered pads (poly D-code) now trace the actual vertex outline instead of falling back to the rotated AABB; the poly extraction was capturing the wrong centre, fixed by emitting the shape-local verts verbatim. Trace-join `cap: 'round'` doubling at L-bends gone via segment chaining; T- and 4-way junctions still get a small spot, deferred. (`9b8d598`, `c96b280`)
+- **XZZ pin emission now carries real pad geometry.** XZZ `.pcb` files expose width/height/shape/rotation per pin in the 0x09 sub-block; previous releases only used them for the `board.pads` overlay, never on the `Pin` itself. Selection halo, pin sprite, and pad overlay now all trace the same outline. (`1fc462d`)
+- **2-pin parts (caps / inductors / resistors) honour the real pad rectangle.** Synthesised FlexBV-style rect was wider than the real SMD pad on every TVW/Allegro/XZZ file, so the rect poked out as a halo around the pad overlay. Pin loop now uses `pin.padBounds` for 2-pin geometry when supplied, falls back to FlexBV synth for BVR/BDV/CAD/Mentor. (`e41a379`, `9cd6638`)
+- **2-pin pad overrides (per-type `padShape: 'round' / 'square'`) no longer halo.** Same fix as the natural path — the override branches were still sizing themselves from the synth-FlexBV `eb` rect, so any override on a 2-pin part recreated the doubling. Refactored so the pad rect comes from `pin.padBounds` regardless of which shape variant gets drawn. (`9cd6638`)
+- **Pads-off restores the classic FlexBV circular pin look.** Reversing the earlier "pin always draws pad shape" decision: pin sprite is a classic circle inscribed in `min(padW, padH)/2`. Pad overlay sits ABOVE the pin and covers it when toggled on; selection halo follows whichever shape is currently visible. (`e865353`, `cce8d9f`, `1720872`)
+- **Pad overlay z-order + colouring overhaul.** Pads draw BELOW the pin layer on multi-layer boards (so net-coloured pins win) and ABOVE on single-layer XZZ; in both cases pads are now coloured per-net (via `resolvePinColor`) instead of the uniform warm-copper that hid GND/VCC distinctions on every file. Single-layer XZZ no longer skips the pad layer entirely — that was a regression from a partial-fix that hid the sidebar's Pads toggle. (`335e8a4`, `b35e654`, `5a7e664`)
+- **Pad toggle is instant.** Earlier intermediate state baked the pin sprite shape into the pin Graphics at build time, so toggling pads triggered a full scene rebuild. The current implementation pre-builds inscribed-circle pins once and just flips `padsTop.visible` / `padsBottom.visible`. (`1720872`)
+- **Part outline + selection rectangle include real pad extents.** `computeEffectiveBounds` was using the AABB of pin CENTRES only, so RP-series resistor packs and other parts with pads overhanging the pin centres had their outline + selection halo cutting through the pads. Now union of `pin.padBounds` first. Parsers without per-pin pad bounds (BVR/BDV/CAD/Mentor) hit the union as a no-op; identical to pre-fix. (`c05e5bc`)
+
+### XZZ orientation
+
+- **Every X-fold XZZ board has been rendering horizontally mirrored.** Root cause: the original X-fold patch (`e72a562`, March) set `tab.mirrorY = true` on load to compensate for the renderer doing the unfold. The parser has since fully unfolded the bottom half inline (`p.x = 2 * fold.axis - p.x`), so the leftover mirrorY became a free Y-flip. With 270° auto-rotation applied to tall boards (every X-fold result is tall), the Y-flip rotated into screen-X. Dropped the auto-mirror in all three sites — cache-load, fresh-parse, and `syncMirrorsToDerivedFold`. Y-fold boards (820-02016) were getting no auto-mirror in the load paths and displaying correctly; both fold types now match. (`d989252`)
+- **X-fold boards land 180° off after the mirror removal; fixed by branching auto-rotation.** Removing `mirrorY=true` un-mirrored them but every X-fold board then sat 180° rotated from where the user expects to see it. The parser's bottom-half X-flip leaves the geometry in a frame where 270° auto-rotation (standard for tall flipY formats) maps the screen's top 180° from the board's top. `computeAutoRotation` now returns 90° for X-fold + flipY (vs 270°). Y-fold path unchanged so 820-02016 still lands correctly. (`3d0ae42`)
+- **Axis-aligned chips with diagonally-oriented pads no longer get diagonal outlines.** XZZ pad-angle-majority detection (commit `3fea5ad`, May) was firing on chips whose pads are drawn at 45° but whose body sits straight on the board — UN/UF/UR/U-series ICs on A2442 and 820-02016. Added a perimeter test mirroring `computeDiagonalOBB`'s axis-aligned guard: if pins on both a horizontal and a vertical AABB edge, the chip is axis-aligned regardless of what the pad angles say. (`7146246`)
+- **Perimeter guard tightened to actually catch BGAs.** The first cut required ≥40% of pins on the AABB perimeter — fine for small chips, fails for big BGAs where most pins sit inside the grid (UN000 has 25%, UF500 27%). The `hasH && hasV` check (≥2 pins on horizontal AND vertical edges) is geometrically enough — a true 45°-rotated chip touches the AABB only at four vertex pins (one per side, `onL=onR=onT=onB=1`) and that fails `hasH/hasV`. Dropped the threshold. (`1a9ec35`)
+
+### Other fixes
+
+- **Selection halo for pads-off matches the pin sprite.** Selection redraw path was always using `drawPadShape` when pins had `padBounds`, so clicking a pin under "Show pads off" snapped the halo to the pad outline — visually "revealing" the pad the user had just hidden. Gated on `boardStore.showPads`. (`cce8d9f`)
+- **`board.surfaces` survives the IndexedDB round-trip.** `SerializedBoardData` schema never learned about `surfaces`, so first load populated them in memory (Copper-fills toggle visible) and every subsequent cache hit dropped the field (toggle gone). Three lines: add the field to the type, serialize, deserialize. `PARSER_VERSION 68→69`. (`2119ccf`)
+- **pdfindex per-file failures log path + concrete cause.** Earlier `INFO[pdfindex] file extract failed` lines didn't say which file or why; now both surface so a user with a single broken PDF in a 200-PDF library can identify it instead of grepping warnings. (`49b04d2`)
+
+### Internal
+
+- **PARSER_VERSION 67 → 72** across the release: 67→68 (TVW poly polygons), 68→69 (cache surfaces), 69→70 (XZZ debug probe), 70→71 (axis-aligned chip guard v1), 71→72 (guard v2 dropping onAny). Each bump invalidates entries that baked stale derived state into IndexedDB; first open after upgrading re-parses, subsequent opens hit cache normally.
+
 ## v0.31.11 — 2026-06-06
 
 XZZ pass: the parser now extracts the geometry that was sitting

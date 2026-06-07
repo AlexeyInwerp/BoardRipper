@@ -127,6 +127,8 @@
   <li>Multi-layer support &mdash; show / hide top, bottom, and inner layers independently. Butterfly mode shows top and bottom side by side.</li>
   <li>Net highlight &mdash; click a pin and the whole net lights up across the board. A chain-adjacent mode walks through neighbouring nets too.</li>
   <li>PDF schematic, in sync &mdash; pan, zoom, search, night mode. Right-click a net to search it in the schematic.</li>
+  <li>Detached schematic window &mdash; pop the entire PDF group out into its own OS window with one toggle. Board lives on one display, schematic on another, click-board &rarr; jump-PDF link still works across windows. Mode is symmetric across browser and Electron desktop builds; persisted so the first PDF you open reopens in the popout automatically.</li>
+  <li>Worklists &mdash; track repair lists of components per board: pin it, mark it done, jump between entries. Saves with the board so it's there when you re-open. Reachable from the sidebar tab and a keyboard shortcut.</li>
   <li>Touch input &mdash; pinch-zoom, drag-pan, tap to select. Usable on a tablet at the bench.</li>
   <li>Customizable colors &mdash; per-net rules by name pattern (e.g. <code>GND</code>, <code>VCC</code>, <code>PP*</code>), per-component-type fills (R / C / L / U / Q / D / J), per-layer colors, label / pin / outline tuning. Live preview before applying.</li>
   <li>Multi-line search &mdash; each line is an extra AND-filter, useful when a component carries value and voltage on separate label lines:
@@ -154,11 +156,12 @@ C12*</pre>
   <tr><td>FZ</td><td><span class="small">.fz</span></td><td>ASUS, RC6-encrypted, zlib-compressed</td></tr>
   <tr><td>GenCAD</td><td><span class="small">.cad</span></td><td>GenCAD 1.4 PCB interchange (text)</td></tr>
   <tr><td>Mentor Neutral</td><td><span class="small">.cad</span></td><td>Mentor Boardstation neutral file (Samsung / Quanta / Compal exports)</td></tr>
-  <tr><td>XZZ</td><td><span class="small">.pcb</span></td><td>XZZ PCB, DES-encrypted boardview</td></tr>
-  <tr><td>TVW</td><td><span class="small">.tvw</span></td><td>Teboview binary, multi-layer + traces + drill data</td></tr>
+  <tr><td>XZZ</td><td><span class="small">.pcb</span></td><td>XZZ PCB, DES-encrypted boardview. Real per-pin pad geometry, per-part silkscreen, drill / via data, automatic X-fold / Y-fold detection.</td></tr>
+  <tr><td>TVW</td><td><span class="small">.tvw</span></td><td>Teboview binary. Multi-layer, traces, drill data, chamfered / polygon pads, ground-plane copper fills.</td></tr>
   <tr><td>Cadence Allegro BRD</td><td><span class="small">.brd</span></td><td>Cadence Allegro PCB binary, v16.x / v17.x / v18.x. v15 partial, still in beta.</td></tr>
 </table>
 <p class="small">Both <code>.cad</code> and <code>.brd</code> are shared extensions &mdash; BoardRipper sniffs file content to pick the right parser.</p>
+<p class="small">When the auto-detected orientation is wrong (a handful of Apple X-fold MLBs need a 180° flip), rotate once with the toolbar button and the choice is saved per-file. Next time you open the same file, the override applies automatically.</p>
 </section>
 
 <section id="docker">
