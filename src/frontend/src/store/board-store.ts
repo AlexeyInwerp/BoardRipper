@@ -181,12 +181,22 @@ function invalidateDerivedBoard(tab: BoardTab): void {
 
 /** Auto-rotate tall boards 90°/270° so they display wide on screen.
  *  270° when the format's Y axis is flipped (most boardview formats),
- *  otherwise 90°. Matches the convention `loadFile` has always used. */
+ *  otherwise 90°. Matches the convention `loadFile` has always used.
+ *
+ *  X-fold XZZ boards need 90° instead of 270° (an extra 180° relative to
+ *  the Y-fold case): after the parser X-flips the bottom half into the top
+ *  half's region, the "natural top of board" sits in a coordinate frame
+ *  that, when rotated 270°, lands 180° away from where the user expects
+ *  it. Empirically verified against A2338 820-02773 and a sweep of Apple
+ *  X-fold MLBs; Y-fold boards (820-02016) continue through the standard
+ *  branch and are untouched. */
 function computeAutoRotation(board: BoardData): number {
   const w = board.bounds.maxX - board.bounds.minX;
   const h = board.bounds.maxY - board.bounds.minY;
   if (h <= w) return 0;
   const flipY = board.flipY ?? getFormat(board.format)?.flipY ?? false;
+  const isXFold = board.butterflyFoldAxis === 'x';
+  if (isXFold) return flipY ? 90 : 270;
   return flipY ? 270 : 90;
 }
 
