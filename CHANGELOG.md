@@ -1,5 +1,14 @@
 # BoardRipper changelog
 
+## v0.31.14 — 2026-06-07
+
+Follow-up to v0.31.13. The load-overlay UI lockout had a second source
+on the linked-PDF auto-load path.
+
+### Fixes
+
+- **Linked-PDF auto-load no longer hijacks the board load-progress overlay.** `LibraryPanel.handleOpenFile` auto-loads bound PDFs right after the board fetch completes — and both calls flow through `databankStore.fetchFileBuffer`, which unconditionally fired `loadProgressStore.start()`. The PDF call wiped the board's in-flight state (sitting at "Building scene"), and since PDFs go through `boardStore.addPdf` rather than `loadFile` no one ever called `finish()` for the PDF, leaving the overlay open at "Downloading" until v0.31.13's watchdog fired 30 s later. Gated every `loadProgressStore` call in `fetchFileBuffer` on `file.file_type === 'board'`; PDF / schematic / image / future non-board fetches skip the overlay entirely. (`3304386`)
+
 ## v0.31.13 — 2026-06-07
 
 Hotfix for v0.31.12 — multiple users reported the load-progress overlay
