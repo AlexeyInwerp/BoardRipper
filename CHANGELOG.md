@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.31.13 — 2026-06-07
+
+Hotfix for v0.31.12 — multiple users reported the load-progress overlay
+blocking the entire UI, including cases where the board was clearly
+loaded behind it but the overlay refused to close.
+
+### Fixes
+
+- **Load-progress overlay no longer blocks the UI.** Three compounding problems: the overlay was reusing the self-update modal's CSS (position:fixed inset:0 backdrop-blur z-index 99999), the X / Dismiss button only rendered when the load was `failed`, and there was no watchdog if `BoardRenderer.activateScene` failed to call back into `finishIfMatching`. The overlay is now a non-blocking bottom-right corner panel — `pointer-events:none` on the wrapper, `auto` only on the panel itself — with an always-visible X close button and a 30-second watchdog that force-dismisses on stalled-load state. A legitimate slow load still keeps the overlay open as long as any sub-step (downloading bytes, parser sub-phases, cache write) keeps poking `setPhase` / `setPhaseDetail` / `pushLog`. (`bc0b31f`)
+
 ## v0.31.12 — 2026-06-07
 
 Pad geometry pass across every format that exposes it. TVW chamfered
