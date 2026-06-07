@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.31.15 — 2026-06-07
+
+New top-level interface knob: a global scaling factor that resizes every
+chrome surface so the app reads well on dense laptop screens and 4K
+displays alike, without touching board / PDF render resolution.
+
+### Features
+
+- **Global interface scaling factor (50–150%).** A new slider, exposed in two places: the **Theme** tab of Settings (after the chrome / accent / background pickers) and a dedicated centred row directly under the welcome banner on the start page. Mechanism: `body { zoom: var(--ui-scale) }` propagates the scale across the React tree and every portal mounted under `document.body`; the two heavy canvas hosts — `.board-panel-canvas` and `.pdf-canvas-container` — counter-zoom via `calc(1 / var(--ui-scale))` so PixiJS and pdf.js keep rendering at their native pixel resolution regardless of the chrome scale. `themeStore.scale` persists under `boardripper-ui-scale`, clamps to `[0.50, 1.50]` in 5% steps, and applies before first paint so a reload doesn't flash at 100%. The slider commits on pointer-up only — the thumb tracks a local draft during drag — so the control doesn't rescale out from under the pointer mid-drag. Electron picks this up for free; the OS-level Cmd/Ctrl +/- still stacks independently. (`0e012ee`)
+
 ## v0.31.14 — 2026-06-07
 
 Follow-up to v0.31.13. The load-overlay UI lockout had a second source
