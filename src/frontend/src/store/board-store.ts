@@ -8,6 +8,7 @@ import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAd
 import { renderSettingsStore, partBridgesHierarchy } from './render-settings';
 import { log } from './log-store';
 import { loadProgressStore } from './load-progress-store';
+import { fileViewPrefsStore } from './file-view-prefs-store';
 import { createLayerStates } from './layer-store';
 import type { LayerState } from './layer-store';
 import { deriveBoardView } from './derive-board-view';
@@ -811,17 +812,12 @@ class BoardStore extends Emitter {
           tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
           tab.rotation = this.autoRotation(cached);
           tab.flipAxis = flipAxisForRotation(tab.rotation);
-          // Historical: X-fold XZZ boards used to set mirrorY=true here to
-          // compensate for the renderer-side unfold. The parser now fully
-          // unfolds the bottom half (see parseXZZ butterfly section), so
-          // the geometry is already in screen-correct orientation by the
-          // time it reaches the store. With 270° auto-rotation applied to
-          // tall boards (X-fold result is always tall), the leftover
-          // mirrorY=true rotated into screen-X, producing a visible
-          // horizontal mirror on A2338 820-02773 (M2). Dropping it.
-          // 820-02016 (Y-fold, no auto-mirror) was already displaying
-          // correctly — both fold types should match.
           if (cached.flipAxis) tab.flipAxis = cached.flipAxis;
+          // Per-file user overrides win over both auto-rotation and the
+          // parser-supplied flipAxis. Async fetch — we apply once the
+          // record lands. The board is already visible by then; the
+          // applyPrefs call only does work if at least one override is set.
+          void this.applySavedViewPrefs(tab, file);
           const cachedFmt = getFormat(cached.format);
           // Initial side = user's perception of "top". For inverted files
           // (primarySide='bottom'), the user's "Top" button is mapped to the
@@ -903,12 +899,11 @@ class BoardStore extends Emitter {
         applyBoardFilters(tab);
         tab.rotation = this.autoRotation(board);
         tab.flipAxis = flipAxisForRotation(tab.rotation);
-        // See cache-hit branch above — the X-fold mirrorY=true compensation
-        // is leftover from when the parser didn't fully unfold the bottom
-        // half. Dropping it fixes A2338 820-02773 horizontal mirror; other
-        // X-fold files should be unaffected because the unfolded geometry
-        // is already in the right orientation.
         if (board.flipAxis) tab.flipAxis = board.flipAxis;
+        // Per-file user overrides win over auto-detection — see
+        // applySavedViewPrefs for the schema; async so the load path
+        // doesn't block on IndexedDB.
+        void this.applySavedViewPrefs(tab, file);
         const wantsBottomOnOpen = fmt?.swapSides || board.primarySide === 'bottom';
         if (wantsBottomOnOpen) {
           tab.showTop = false;
@@ -1205,11 +1200,61 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
+  /** Async post-load step: if the user has previously saved a rotation /
+   *  mirror override for this file, apply it on top of the auto-detected
+   *  values. Called from both the cache-hit and fresh-parse branches of
+   *  loadFile; no-op when no record exists. */
+  private async applySavedViewPrefs(tab: BoardTab, file: File): Promise<void> {
+    const prefs = await fileViewPrefsStore.get(file.name, file.size, file.lastModified);
+    if (!prefs) return;
+    // Tab may have been closed mid-fetch — drop silently.
+    if (!this._tabs.includes(tab)) return;
+    let changed = false;
+    if (prefs.rotation != null && prefs.rotation !== tab.rotation) {
+      tab.rotation = prefs.rotation;
+      changed = true;
+    }
+    if (prefs.mirrorX != null && prefs.mirrorX !== tab.mirrorX) {
+      tab.mirrorX = prefs.mirrorX;
+      changed = true;
+    }
+    if (prefs.mirrorY != null && prefs.mirrorY !== tab.mirrorY) {
+      tab.mirrorY = prefs.mirrorY;
+      changed = true;
+    }
+    if (prefs.flipAxis != null && prefs.flipAxis !== tab.flipAxis) {
+      tab.flipAxis = prefs.flipAxis;
+      changed = true;
+    }
+    if (changed) {
+      log.cache.log(`Applied saved view prefs for ${file.name}: rotation=${prefs.rotation} mirrorX=${prefs.mirrorX} mirrorY=${prefs.mirrorY} flipAxis=${prefs.flipAxis}`);
+      this.notify();
+    }
+  }
+
+  /** Persist the active tab's current rotation / mirror state for its
+   *  underlying file. Called from every UI handler that mutates one of
+   *  those fields so the user only has to correct each file once. Note:
+   *  distinct from `_saveCurrentViewPrefs` (no underscore, this method),
+   *  which saves GLOBAL prefs (netLineMode, dimMode, etc.); this one
+   *  saves per-file overrides keyed on file identity. */
+  private saveFileViewPrefs(tab: BoardTab): void {
+    const file = this._openFiles.get(tab.fileName);
+    if (!file) return;
+    void fileViewPrefsStore.put(file.name, file.size, file.lastModified, {
+      rotation: tab.rotation,
+      mirrorX: tab.mirrorX,
+      mirrorY: tab.mirrorY,
+      flipAxis: tab.flipAxis,
+    });
+  }
+
   rotateCW() {
     const tab = this.activeTab;
     if (!tab) return;
     const newRotation = (tab.rotation + 90) % 360;
     this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 
@@ -1218,6 +1263,7 @@ class BoardStore extends Emitter {
     if (!tab) return;
     const newRotation = (tab.rotation + 270) % 360;
     this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 
@@ -1228,6 +1274,7 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ rotation: (tab.rotation + 180) % 360 });
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 
@@ -1529,6 +1576,7 @@ class BoardStore extends Emitter {
     if (!tab) return;
     const newRotation = ((degrees % 360) + 360) % 360;
     this.updateActiveTab({ rotation: newRotation, flipAxis: rotateFlipAxis(tab.flipAxis, tab.rotation, newRotation) });
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 
@@ -1536,6 +1584,7 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ mirrorX: !tab.mirrorX });
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 
@@ -1543,6 +1592,7 @@ class BoardStore extends Emitter {
     const tab = this.activeTab;
     if (!tab) return;
     this.updateActiveTab({ mirrorY: !tab.mirrorY });
+    this.saveFileViewPrefs(tab);
     this.notify();
   }
 
