@@ -1240,17 +1240,39 @@ export function buildBoardScene(
 
       if (isTwoPinPart) {
         const padShape = override?.padShape ?? 'natural';
-        // If the parser supplied real pad geometry, draw the actual pad
-        // shape so the pin sprite matches the pad-overlay layer above —
-        // no doubling, no synthesized FlexBV rect poking out past the
-        // real pad. Mirrors the TVW fix in commit e41a379. The pad
-        // overlay then sits exactly on top of this sprite.
-        if (padShape === 'natural' && pin.padShape !== undefined && pin.padBounds !== undefined) {
-          const targetGfx = isNcPin
-            ? ncGfx
-            : getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
+        // Compute pad bounds: real per-pin pad geometry when the parser
+        // supplies it (TVW/Allegro/XZZ), otherwise synthesize the FlexBV
+        // rect from the part's effective bounds + padDepth (BVR/BDV/CAD/
+        // Mentor have no per-pin bounds). All shape variants below
+        // — natural, round override, square override, rect fallback —
+        // size themselves to these bounds, so a per-type override no
+        // longer pokes a wider synth rect out past the real pad covering
+        // it. (Doubling regression after the natural-path-only fix.)
+        const useRealBounds = pin.padBounds !== undefined;
+        let padRx: number, padRy: number, padRw: number, padRh: number;
+        if (useRealBounds) {
+          padRx = pin.padBounds!.minX;
+          padRy = pin.padBounds!.minY;
+          padRw = pin.padBounds!.maxX - pin.padBounds!.minX;
+          padRh = pin.padBounds!.maxY - pin.padBounds!.minY;
+        } else if (eb.horiz) {
+          padRx = pin.position.x - padDepth / 2;
+          padRy = eb.py; padRw = padDepth; padRh = eb.ph;
+        } else {
+          padRx = eb.px; padRy = pin.position.y - padDepth / 2;
+          padRw = eb.pw; padRh = padDepth;
+        }
+        const cx = padRx + padRw / 2;
+        const cy = padRy + padRh / 2;
+        const targetGfx = isNcPin
+          ? ncGfx
+          : getGridPinGfx(isBottom, color, cx, cy);
+        // Natural shape with real geometry → draw the actual pad outline
+        // (chamfered poly, rotated rect, etc.); falls through to a plain
+        // rect for parsers without padShape.
+        if (padShape === 'natural' && pin.padShape !== undefined && useRealBounds) {
           drawPadShape(targetGfx, {
-            bounds: pin.padBounds,
+            bounds: pin.padBounds!,
             shape: pin.padShape,
             width: pin.padWidth,
             height: pin.padHeight,
@@ -1258,52 +1280,20 @@ export function buildBoardScene(
             cornerRadius: pin.padCornerRadius,
             polygon: pin.padPolygon,
           });
-          padRects[pni] = {
-            rx: pin.padBounds.minX,
-            ry: pin.padBounds.minY,
-            rw: pin.padBounds.maxX - pin.padBounds.minX,
-            rh: pin.padBounds.maxY - pin.padBounds.minY,
-          };
+          padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
+        } else if (padShape === 'round') {
+          const pr = Math.min(padRw, padRh) / 2;
+          targetGfx.circle(cx, cy, pr);
+          padRects[pni] = { rx: cx - pr, ry: cy - pr, rw: pr * 2, rh: pr * 2 };
+        } else if (padShape === 'square') {
+          const side = Math.min(padRw, padRh);
+          const sx = cx - side / 2;
+          const sy = cy - side / 2;
+          targetGfx.rect(sx, sy, side, side);
+          padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
         } else {
-          // Fallback for parsers without real per-pin pad geometry
-          // (BVR1/BVR3/BDV/CAD/Mentor): synthesise the FlexBV rectangle
-          // from the part's effective bounds + padDepth. This is the
-          // "classic FlexBV look" — wider than a typical SMD pad but
-          // matches what every boardview tool from 2010 onward draws.
-          let padRx: number, padRy: number, padRw: number, padRh: number;
-          if (eb.horiz) {
-            padRx = pin.position.x - padDepth / 2;
-            padRy = eb.py; padRw = padDepth; padRh = eb.ph;
-          } else {
-            padRx = eb.px; padRy = pin.position.y - padDepth / 2;
-            padRw = eb.pw; padRh = padDepth;
-          }
-          if (isNcPin) {
-            if (padShape === 'round') {
-              const pr = Math.min(padRw, padRh) / 2;
-              ncGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-            } else {
-              ncGfx.rect(padRx, padRy, padRw, padRh);
-              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
-            }
-          } else {
-            const pinGfx = getGridPinGfx(isBottom, color, padRx + padRw / 2, padRy + padRh / 2);
-            if (padShape === 'round') {
-              const pr = Math.min(padRw, padRh) / 2;
-              pinGfx.circle(padRx + padRw / 2, padRy + padRh / 2, pr);
-              padRects[pni] = { rx: padRx + padRw / 2 - pr, ry: padRy + padRh / 2 - pr, rw: pr * 2, rh: pr * 2 };
-            } else if (padShape === 'square') {
-              const side = Math.min(padRw, padRh);
-              const sx = padRx + padRw / 2 - side / 2;
-              const sy = padRy + padRh / 2 - side / 2;
-              pinGfx.rect(sx, sy, side, side);
-              padRects[pni] = { rx: sx, ry: sy, rw: side, rh: side };
-            } else {
-              pinGfx.rect(padRx, padRy, padRw, padRh);
-              padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
-            }
-          }
+          targetGfx.rect(padRx, padRy, padRw, padRh);
+          padRects[pni] = { rx: padRx, ry: padRy, rw: padRw, rh: padRh };
         }
       } else if (diag2Pads) {
         // Diagonal 2-pin: draw rotated rectangular pads along the pin axis
