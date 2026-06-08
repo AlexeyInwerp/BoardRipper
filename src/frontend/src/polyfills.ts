@@ -16,3 +16,16 @@ if (typeof (Promise as { withResolvers?: unknown }).withResolvers !== 'function'
     return { promise, resolve, reject };
   };
 }
+
+// Promise.try — ES2025, Chrome 128+ / V8 12.8+ / Safari 18.4+.
+// pdfjs-dist@5 worker uses Promise.try(handler, data) in its message-channel
+// dispatch (RESOLVE / STREAM / PULL / CANCEL). On older Chromium baselines
+// (pre-128 Electron, Win7 forks), the first message after worker boot throws
+// "Promise.try is not a function" and the PDF panel dies on open.
+if (typeof (Promise as { try?: unknown }).try !== 'function') {
+  (Promise as unknown as {
+    try: <T>(fn: (...a: unknown[]) => T | PromiseLike<T>, ...args: unknown[]) => Promise<T>;
+  }).try = function <T>(fn: (...a: unknown[]) => T | PromiseLike<T>, ...args: unknown[]) {
+    return new Promise<T>((resolve) => resolve(fn(...args)));
+  };
+}
