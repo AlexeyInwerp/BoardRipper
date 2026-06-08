@@ -1,5 +1,16 @@
 # BoardRipper changelog
 
+## v0.31.17 — 2026-06-08
+
+Follow-up to v0.31.16. Same root cause (pdfjs-dist@5 targets a modern V8
+baseline the Legacy Mac build's Electron 22 doesn't have), broader fix:
+audited every pdfjs reference against Chromium 108 and polyfilled the
+full set so this stops being a whack-a-mole.
+
+### Fixes
+
+- **Legacy Mac build now renders PDF text again.** v0.31.16 polyfilled `Promise.try` and PDFs would open — image sprites rendered, but no text. The worker was dying during font / annotation setup on the *next* unguarded modern API. Comprehensive sweep over `pdfjs-dist@5.5.207`'s call sites against the Chromium 108 baseline turned up four more: `URL.parse` (Chrome 120+, 8 sites), `ArrayBuffer.prototype.transferToFixedLength` (Chrome 129+, 4 sites — used for right-sizing font-substitution write buffers), `Uint8Array.prototype.toBase64` and `Uint8Array.fromBase64` (Chrome 140+, used for image data: URLs and XFA payload decoding), plus `Promise.withResolvers` worker-side (Chrome 119+, 14 sites — would have been the very next crash, fires at module init around stream-handler setup). All five shipped as idempotent shims — `src/frontend/src/polyfills.ts` covers the main-thread path; the pdfjs-dist patch's top-of-worker hunk covers the real Web Worker (separate global). `transferToFixedLength` can't replicate detachment semantics from pure JS, so the shim copies; pdfjs drops the source ref immediately either way, so peak memory is unchanged. `toBase64` is chunked at 0x8000 stride to dodge the `String.fromCharCode.apply` argv-length limit on large image buffers. Current Electron 35 (Chromium 134) was never affected by any of these — this is purely the Legacy `BoardRipper-Legacy-macOS-x64-*` zip (Electron 22 / Chromium 108, kept for macOS 10.15 Catalina). (`0691836`)
+
 ## v0.31.16 — 2026-06-08
 
 Defensive fix for a PDF crash observed in an older Electron build —
