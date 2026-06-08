@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.31.16 — 2026-06-08
+
+Defensive fix for a PDF crash observed in an older Electron build —
+verified against current Electron 35, lands as forward insurance against
+future Chromium baseline lag relative to pdfjs-dist.
+
+### Fixes
+
+- **`Promise.try is not a function` no longer kills the PDF panel on older Electron.** pdfjs-dist@5.5.207's worker message-channel dispatch calls `Promise.try(handler, data)` for `RESOLVE` / `STREAM` / `PULL` / `CANCEL` — four sites in pdf.js's own `MessageHandler`. `Promise.try` is ES2025 (Chrome 128+ / V8 12.8+). On older Electron Chromium baselines (the BoardRipper Legacy `.app` shipped earlier this year is one), the first message after worker boot throws and the PDF panel dies on open. Shim added in two places, both idempotent: `src/frontend/src/polyfills.ts` covers fake-worker mode (Electron `file://` runs the worker on the main thread via dynamic import, shares the main global), and a new top-of-file hunk in the pdfjs-dist patch covers the real Web Worker case — main-thread polyfills don't cross the Worker boundary. Current Electron 35 (Chromium 134) was never affected; this is forward insurance against the next pdfjs-dist baseline ratchet. (`4073325`)
+
 ## v0.31.15 — 2026-06-07
 
 New top-level interface knob: a global scaling factor that resizes every
