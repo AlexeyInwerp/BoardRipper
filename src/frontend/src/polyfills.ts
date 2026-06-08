@@ -29,3 +29,53 @@ if (typeof (Promise as { try?: unknown }).try !== 'function') {
     return new Promise<T>((resolve) => resolve(fn(...args)));
   };
 }
+
+// URL.parse — ES2024, Chrome 120+ / V8 12.0+ / Safari 17.4+ / Firefox 126+.
+// pdfjs uses it in URL resolution (Annotation links, font fetch base, etc.).
+// Spec: return URL or null on failure (vs `new URL` which throws).
+if (typeof (URL as { parse?: unknown }).parse !== 'function') {
+  (URL as unknown as { parse: (url: string, base?: string | URL) => URL | null }).parse =
+    function (url: string, base?: string | URL) {
+      try { return new URL(url, base); } catch { return null; }
+    };
+}
+
+// ArrayBuffer.prototype.transferToFixedLength — Chrome 129+ / V8 12.9+.
+// pdfjs uses it to right-size font-substitution write buffers. We can't
+// replicate the detachment semantics in pure JS — we copy instead. Functional
+// equivalence is preserved; the only cost is the source buffer staying live
+// until GC instead of being detached. pdfjs immediately drops the source ref
+// either way, so peak memory is unchanged in practice.
+if (typeof (ArrayBuffer.prototype as { transferToFixedLength?: unknown }).transferToFixedLength !== 'function') {
+  (ArrayBuffer.prototype as unknown as { transferToFixedLength: (newLen?: number) => ArrayBuffer }).transferToFixedLength =
+    function (this: ArrayBuffer, newLength?: number) {
+      const targetLen = newLength === undefined ? this.byteLength : newLength;
+      const out = new ArrayBuffer(targetLen);
+      const copyLen = Math.min(this.byteLength, targetLen);
+      new Uint8Array(out).set(new Uint8Array(this, 0, copyLen));
+      return out;
+    };
+}
+
+// Uint8Array.prototype.toBase64 / Uint8Array.fromBase64 — Chrome 140+ / V8 14.0+.
+// pdfjs uses toBase64 to encode embedded image streams into data: URLs and
+// fromBase64 to decode XFA $content payloads. Chunked encode avoids the
+// `apply()` argv-length crash on large buffers (≈ 64 KiB max on most engines).
+if (typeof (Uint8Array.prototype as { toBase64?: unknown }).toBase64 !== 'function') {
+  (Uint8Array.prototype as unknown as { toBase64: () => string }).toBase64 = function (this: Uint8Array) {
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < this.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(this.subarray(i, i + chunk)));
+    }
+    return btoa(binary);
+  };
+}
+if (typeof (Uint8Array as { fromBase64?: unknown }).fromBase64 !== 'function') {
+  (Uint8Array as unknown as { fromBase64: (str: string) => Uint8Array }).fromBase64 = function (str: string) {
+    const bin = atob(str);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  };
+}
