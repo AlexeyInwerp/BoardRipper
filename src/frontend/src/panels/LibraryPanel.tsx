@@ -564,8 +564,7 @@ export function LibraryPanel() {
         <span className="library-loadstrip-phase">{loadStripLabel}</span>
         {libraryLoad.total > 0 ? (
           <span className="library-loadstrip-counter">
-            {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()}
-            {libraryLoad.total > 0 ? ` (${loadStripPct}%)` : ''}
+            {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()} ({loadStripPct}%)
           </span>
         ) : libraryLoad.done > 0 ? (
           <span className="library-loadstrip-counter">{libraryLoad.done.toLocaleString()} files</span>

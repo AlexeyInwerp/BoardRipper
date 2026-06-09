@@ -837,16 +837,20 @@ func (db *DB) ListFiles(ctx context.Context, fileType string, manufacturer strin
 	return files, rows.Err()
 }
 
-// ListFilesStreaming iterates the same unfiltered, ordered file set as ListFiles
-// without materializing it as a slice. The callback is invoked once per row;
-// the loop aborts (and returns ctx.Err()) if the context is cancelled, or if
-// the callback returns a non-nil error. Used by the NDJSON streaming endpoint
-// so a multi-MB response can be flushed to the client incrementally.
+// ListFilesStreaming iterates the board+pdf file set without materializing
+// it as a slice. The callback is invoked once per row; the loop aborts (and
+// returns ctx.Err()) if the context is cancelled, or if the callback returns
+// a non-nil error. Used by the NDJSON streaming endpoint so a multi-MB
+// response can be flushed to the client incrementally. The WHERE filter
+// must stay aligned with FilesETag's COUNT so the "total" advisory in the
+// stream's begin envelope doesn't overshoot 100 % when other file types
+// land in the table.
 func (db *DB) ListFilesStreaming(ctx context.Context, fn func(*FileRecord) error) error {
 	const query = `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
 	                      board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
 	                      board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex, content_hash
 	               FROM files
+	               WHERE file_type IN ('board','pdf')
 	               ORDER BY manufacturer, board_number, filename`
 	rows, err := db.reader.QueryContext(ctx, query)
 	if err != nil {

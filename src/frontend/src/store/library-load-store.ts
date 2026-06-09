@@ -11,7 +11,7 @@ import { useSyncExternalStore } from 'react';
  * strip the panel embeds in its existing statsbar.
  *
  * Lifecycle:
- *   begin(source)             → opens with phase='connecting', source=...
+ *   begin(note?)              → opens with phase='connecting'
  *   setPhase(phase, note?)    → connecting → cache → streaming → finalizing
  *   advance(done, total?)     → updates counter (called per stream batch)
  *   finish()                  → phase='done', strip auto-hides
@@ -27,11 +27,8 @@ export type LibraryLoadPhase =
   | 'done'
   | 'error';
 
-export type LibraryLoadSource = 'network' | 'cache' | 'unknown';
-
 export interface LibraryLoadSnapshot {
   phase: LibraryLoadPhase;
-  source: LibraryLoadSource;
   /** Files delivered to the store so far. */
   done: number;
   /** Best-known total. Zero while unknown. */
@@ -40,18 +37,14 @@ export interface LibraryLoadSnapshot {
   note: string;
   /** Set when phase === 'error'. */
   error: string | null;
-  /** Bumped on each notify so memoised hooks invalidate cleanly. */
-  rev: number;
 }
 
 const initialSnapshot: LibraryLoadSnapshot = {
   phase: 'idle',
-  source: 'unknown',
   done: 0,
   total: 0,
   note: '',
   error: null,
-  rev: 0,
 };
 
 class LibraryLoadStore extends Emitter {
@@ -60,12 +53,12 @@ class LibraryLoadStore extends Emitter {
   getSnapshot(): LibraryLoadSnapshot { return this._snap; }
 
   private _patch(p: Partial<LibraryLoadSnapshot>) {
-    this._snap = { ...this._snap, ...p, rev: this._snap.rev + 1 };
+    this._snap = { ...this._snap, ...p };
     this.notify();
   }
 
-  begin(source: LibraryLoadSource, note = '') {
-    this._snap = { ...initialSnapshot, phase: 'connecting', source, note, rev: this._snap.rev + 1 };
+  begin(note = '') {
+    this._snap = { ...initialSnapshot, phase: 'connecting', note };
     this.notify();
   }
 
@@ -83,7 +76,6 @@ class LibraryLoadStore extends Emitter {
   }
 
   finish() {
-    // Hold on the final counter for a moment so the bar isn't snatched away.
     this._patch({ phase: 'done', error: null });
   }
 
@@ -91,9 +83,9 @@ class LibraryLoadStore extends Emitter {
     this._patch({ phase: 'error', error: message });
   }
 
-  /** Reset to idle. Used when a fresh ensureLoaded() is starting from scratch. */
+  /** Reset to idle. */
   reset() {
-    this._snap = { ...initialSnapshot, rev: this._snap.rev + 1 };
+    this._snap = initialSnapshot;
     this.notify();
   }
 }

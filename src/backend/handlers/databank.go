@@ -211,6 +211,11 @@ func (h *DatabankHandler) ListFilesStream(w http.ResponseWriter, r *http.Request
 
 	flusher, _ := w.(http.Flusher)
 	enc := json.NewEncoder(w)
+	// File paths/names rarely contain `<>&` and even when they do the worker
+	// reads the response as raw NDJSON, never sticks it into an HTML document.
+	// Skipping the escape scan saves a per-string pass on every one of N
+	// records — small but measurable on 100k-row streams.
+	enc.SetEscapeHTML(false)
 
 	// Compact signature for the "begin" line — strips the ETag's enclosing
 	// quotes so the JS side can compare it directly with libraryCache's
