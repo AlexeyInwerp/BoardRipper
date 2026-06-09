@@ -127,6 +127,7 @@ export const THEMES: Record<string, Theme> = {
       defaultPinColorTop:    '#ffffff',
       defaultPinColorBottom: '#ffffff',
       netColorRules:       [],       // no GND/VCC/PP color rules
+      showSelectionHalo:   false,    // suppress yellow pin-halo overlay
     },
   },
 };

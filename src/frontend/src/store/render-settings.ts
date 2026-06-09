@@ -108,6 +108,11 @@ export interface RenderSettings {
   navZoomMode: 'auto' | 'keep' | 'always';
   netHighlightGrow: number;
   netHighlightAlpha: number;
+  /** Draw the coloured halo (filled ring) around highlighted pins / part
+   *  outlines on net selection. When false, pins still recolour but the
+   *  yellow/blue selection overlay is suppressed — used by Landrex for a
+   *  clean monochrome look without the noisy highlight glow. */
+  showSelectionHalo: boolean;
   /** Opacity of the black dim overlay (0 = no dim, 1 = fully black) */
   dimOverlayAlpha: number;
   /** Always dim the board even when nothing is selected — hover/click punches through */
@@ -338,6 +343,7 @@ export const DEFAULTS: RenderSettings = {
   navZoomMode: 'auto',
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
+  showSelectionHalo: true,
   dimOverlayAlpha: 0.5,
   ambientDim: true,
 

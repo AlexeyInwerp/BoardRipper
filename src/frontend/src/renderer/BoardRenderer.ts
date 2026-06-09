@@ -3420,14 +3420,16 @@ export class BoardRenderer {
             continue;
           }
 
-          const gfx = gfxFor(part);
-          const outlines = gfx === this.butterflySelectionGfx ? botPartOutlines : topPartOutlines;
-          if (part.pins.length === 1) {
-            const pin = part.pins[0];
-            const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-            outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
-          } else {
-            outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
+          if (s.showSelectionHalo) {
+            const gfx = gfxFor(part);
+            const outlines = gfx === this.butterflySelectionGfx ? botPartOutlines : topPartOutlines;
+            if (part.pins.length === 1) {
+              const pin = part.pins[0];
+              const r = computePinRadius(s, pin.radius) + s.selectionPadding;
+              outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+            } else {
+              outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
+            }
           }
         }
 
@@ -3458,6 +3460,10 @@ export class BoardRenderer {
             arr.push(fn);
           };
           const pushGlow = (fn: () => void) => {
+            // Landrex / "clean" mode: suppress the yellow halo overlay around
+            // highlighted pins. Pin recolouring (pushDim path) still runs, so
+            // selected nets are still distinguishable by pin colour.
+            if (!s.showSelectionHalo) return;
             const map = isBotGfx ? botHighlightsByColor : topHighlightsByColor;
             let arr = map.get(glowColor);
             if (!arr) { arr = []; map.set(glowColor, arr); }
