@@ -798,7 +798,7 @@ export function LibraryPanel() {
               className="library-search-partial"
               title="The library is still loading. The filter runs against the files received so far."
             >
-              partial · {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()}
+              streaming database from server… {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()}
             </span>
           )}
         </div>
