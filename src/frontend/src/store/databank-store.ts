@@ -1143,11 +1143,28 @@ class DatabankStore extends Emitter {
       this._scanStatus = status;
       this._persistScanStatus();
       if (!status.running) {
+        // Same invariants as the post-scan branch in _startScanPolling: a
+        // partial scan still moves `last_file_scan_at` and may have added
+        // rows, so drain any inflight load and invalidate the in-memory
+        // signature before re-fetching.
+        await this._drainFilesInflight();
+        this._filesComplete = false;
+        this._filesSignature = null;
         await this.fetchFiles();
         await this.fetchTree();
       }
     }
     this.notify();
+  }
+
+  /** Wait until the currently in-flight fetchFiles() promise resolves and
+   *  is cleared. Used by scan-completion paths so the next fetchFiles()
+   *  call always kicks off fresh work (otherwise the inflight coalescing
+   *  in fetchFiles makes the caller wait, then return with stale data). */
+  private async _drainFilesInflight(): Promise<void> {
+    while (this._filesInflight) {
+      try { await this._filesInflight; } catch { /* surface elsewhere */ }
+    }
   }
 
   private _filesFetchedAfterScan = false;
@@ -1168,9 +1185,24 @@ class DatabankStore extends Emitter {
         // state. A 500ms re-render during a scan is negligible.
         this.notify();
 
-        // File scan done — fetch files once
+        // File scan done — fetch files once.
         if (!status.running && !this._filesFetchedAfterScan) {
           this._filesFetchedAfterScan = true;
+          // A scan changes the file set; whatever the UI currently shows (or
+          // is mid-streaming) is now stale. Two interlocking risks if we just
+          // call fetchFiles() directly:
+          //   1. fetchFiles() coalesces against `_filesInflight`. If a load
+          //      started BEFORE the scan and is still in flight, the new call
+          //      would await it and return — the post-scan list never lands.
+          //   2. _doFetchFiles() has an in-memory shortcut that no-ops when
+          //      the signature matches `_filesSignature`. After a no-op scan
+          //      the signature can collide with the pre-scan one (unlikely
+          //      but possible) and the load progress strip would never appear.
+          // Drain the inflight load, then null out the in-memory match so
+          // fetchFiles() always re-streams and the strip is always shown.
+          await this._drainFilesInflight();
+          this._filesComplete = false;
+          this._filesSignature = null;
           await this.fetchFiles();
           await this.fetchTree();
           this.notify();
