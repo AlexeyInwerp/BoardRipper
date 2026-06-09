@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
+import { useLibraryLoad } from '../store/library-load-store';
 import { databankStore, contentCollapsePlan } from '../store/databank-store';
 import type { CollapsedFileInfo, DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
@@ -127,6 +128,7 @@ export function LibraryPanel() {
     pdfIndexProgress, pdfIndexStats,
     pendingPdfSearch,
   } = useDatabank();
+  const libraryLoad = useLibraryLoad();
   void donorIds; // consumed by FileDetailPane and ContextMenu via databankStore.isDonor
 
   // Tree groupings are O(N) at 100k entries — only compute the one the user
@@ -538,8 +540,56 @@ export function LibraryPanel() {
 
   // Stats bar — moved to the panel bottom for visual consistency with
   // SettingsPanel and to keep the tabs row at the natural top of the view.
+  const showLoadStrip =
+    libraryLoad.phase !== 'idle' && libraryLoad.phase !== 'done';
+  const loadStripPct = libraryLoad.total > 0
+    ? Math.min(100, Math.round((libraryLoad.done / libraryLoad.total) * 100))
+    : 0;
+  const loadStripLabel =
+    libraryLoad.phase === 'connecting' ? 'Connecting'
+    : libraryLoad.phase === 'cache' ? 'Restoring cache'
+    : libraryLoad.phase === 'streaming' ? 'Streaming files'
+    : libraryLoad.phase === 'finalizing' ? 'Indexing'
+    : libraryLoad.phase === 'error' ? 'Load failed'
+    : '';
+  const loadStrip = showLoadStrip && (
+    <div className={`library-loadstrip ${libraryLoad.phase}`} role="status" aria-live="polite">
+      <div className="library-loadstrip-bar">
+        <div
+          className="library-loadstrip-fill"
+          style={{ width: `${loadStripPct}%` }}
+        />
+      </div>
+      <div className="library-loadstrip-text">
+        <span className="library-loadstrip-phase">{loadStripLabel}</span>
+        {libraryLoad.total > 0 ? (
+          <span className="library-loadstrip-counter">
+            {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()}
+            {libraryLoad.total > 0 ? ` (${loadStripPct}%)` : ''}
+          </span>
+        ) : libraryLoad.done > 0 ? (
+          <span className="library-loadstrip-counter">{libraryLoad.done.toLocaleString()} files</span>
+        ) : null}
+        {libraryLoad.note && (
+          <span className="library-loadstrip-note">{libraryLoad.note}</span>
+        )}
+        {libraryLoad.phase === 'error' && libraryLoad.error && (
+          <button
+            className="library-scan-btn"
+            style={{ marginLeft: 8, padding: '0 6px', fontSize: 10 }}
+            onClick={() => { void databankStore.fetchFiles(); }}
+            title={libraryLoad.error}
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   const statsBar = (
     <div className="library-statsbar">
+      {loadStrip}
       <div className="library-statsbar-text">
         {scanning ? (
           <>
@@ -742,6 +792,14 @@ export function LibraryPanel() {
             >
               x
             </button>
+          )}
+          {!filesComplete && libraryLoad.total > 0 && (
+            <span
+              className="library-search-partial"
+              title="The library is still loading. The filter runs against the files received so far."
+            >
+              partial · {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()}
+            </span>
           )}
         </div>
       )}

@@ -2,6 +2,7 @@ import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
 import { libraryCache } from './library-cache';
+import { libraryLoadStore } from './library-load-store';
 import { updateStore } from './update-store';
 import { boardStore } from './board-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from './fetch-with-cloud-retry';
@@ -718,56 +719,237 @@ class DatabankStore extends Emitter {
     await this._filesInflight;
   }
 
+  /** Throttled notify gate used while a stream is in flight. React re-render
+   *  + downstream useMemo invalidation on every batch (50+ per load) would
+   *  spend more time re-rendering than streaming, so we coalesce to ~10 Hz. */
+  private _streamNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+  private _streamNotifyDirty = false;
+  private _scheduleStreamNotify() {
+    this._streamNotifyDirty = true;
+    if (this._streamNotifyTimer) return;
+    this._streamNotifyTimer = setTimeout(() => {
+      this._streamNotifyTimer = null;
+      if (this._streamNotifyDirty) {
+        this._streamNotifyDirty = false;
+        this.notify();
+      }
+    }, 100);
+  }
+
+  /** Append a streamed batch to `_files` / `_filesById` / `_filesByPath`
+   *  without reallocating the full Maps. Bumps `_filesVersion` so memoised
+   *  trees (metadata/model) know to recompute on next read. */
+  private _appendFiles(batch: DatabankFile[]) {
+    if (batch.length === 0) return;
+    // Push in-place — `_files` is already private; consumers read it through
+    // getters and never mutate. Avoids an N-allocation per batch.
+    for (const f of batch) {
+      this._files.push(f);
+      this._filesById.set(f.id, f);
+      this._filesByPath.set(f.path, f);
+    }
+    this._filesVersion++;
+    this._metadataCache = null;
+    this._modelCache = null;
+  }
+
+  /** Mark the streamed load as complete and persist the signature. Called
+   *  once per stream after the final batch. */
+  private _finalizeFiles(signature: string | null) {
+    this._filesComplete = true;
+    this._filesSignature = signature;
+    this._filesVersion++;
+    this._metadataCache = null;
+    this._modelCache = null;
+  }
+
+  /** Reset the in-memory file list before a fresh stream. Called when the
+   *  signature changed (cache+memory both stale). */
+  private _resetFilesForStream() {
+    this._files = [];
+    this._filesById = new Map();
+    this._filesByPath = new Map();
+    this._filesComplete = false;
+    this._filesSignature = null;
+    this._filesVersion++;
+    this._metadataCache = null;
+    this._modelCache = null;
+  }
+
   private async _doFetchFiles(): Promise<void> {
     this._loading = true;
     this.notify();
 
     if (isElectron()) {
+      libraryLoadStore.begin('unknown', 'Electron scan');
+      libraryLoadStore.setPhase('streaming');
       await this._electronScan();
+      libraryLoadStore.advance(this._files.length, this._files.length);
+      libraryLoadStore.finish();
       this._loading = false;
       this.notify();
       return;
     }
 
-    // Fire stats and IDB read in parallel — both add 50–300 ms each, and
-    // the cached snapshot is independent of the stats response (we just
-    // validate its signature after). On a warm load both finish in roughly
-    // the time of the slower one instead of summing.
-    const [stats, cachedSnapshot] = await Promise.all([
-      this.apiFetch<DatabankStats>('/api/databank/stats'),
-      libraryCache.getRaw(),
-    ]);
+    libraryLoadStore.begin('unknown', 'Reading library stats…');
+    libraryLoadStore.setPhase('connecting');
+
+    // Stats is light (one SQL count + config row) — block on it so we know
+    // the signature before we touch IDB or the stream endpoint.
+    const stats = await this.apiFetch<DatabankStats>('/api/databank/stats');
     if (stats) {
       this._stats = stats;
       this._persistStats();
     }
+    const signature = stats ? libraryCache.signatureFor(stats) : null;
 
-    if (stats) {
-      const signature = libraryCache.signatureFor(stats);
-      // Already loaded the right signature in memory — nothing to do.
-      if (this._filesComplete && this._filesSignature === signature) {
-        this._loading = false;
-        this.notify();
-        return;
-      }
-      if (cachedSnapshot && cachedSnapshot.signature === signature) {
-        log.scan.log(`Library cache hit (${cachedSnapshot.files.length} files, sig ${signature})`);
-        this._setFiles(cachedSnapshot.files, { complete: true, signature });
-        this._loading = false;
-        this.notify();
-        return;
+    // In-memory hit — nothing to do.
+    if (signature && this._filesComplete && this._filesSignature === signature) {
+      libraryLoadStore.advance(this._files.length, this._files.length);
+      libraryLoadStore.finish();
+      this._loading = false;
+      this.notify();
+      return;
+    }
+
+    // IDB chunked cache hit. Walk chunks via cursor and hand each batch to
+    // _appendFiles, yielding the main thread between batches so the search
+    // input remains responsive.
+    if (signature) {
+      libraryLoadStore.setPhase('cache', 'Checking local cache…');
+      const meta = await libraryCache.getMeta();
+      if (meta && meta.signature === signature) {
+        log.scan.log(`Library cache hit (${meta.total} files, sig ${signature}, chunked)`);
+        this._resetFilesForStream();
+        libraryLoadStore.advance(0, meta.total);
+        libraryLoadStore.setPhase('streaming', 'Restoring from cache…');
+        const result = await libraryCache.streamChunks(signature, async (chunk, _idx, _count) => {
+          this._appendFiles(chunk);
+          libraryLoadStore.advance(this._files.length, meta.total);
+          this._scheduleStreamNotify();
+          // Yield so the UI can paint between chunks.
+          await new Promise<void>(r => setTimeout(r, 0));
+        });
+        if (result.ok) {
+          libraryLoadStore.setPhase('finalizing');
+          this._finalizeFiles(signature);
+          libraryLoadStore.advance(this._files.length, this._files.length);
+          libraryLoadStore.finish();
+          this._loading = false;
+          this.notify();
+          return;
+        }
+        // Cache was torn (missing chunk) — fall through to network stream
+        // with whatever partial data we accumulated.
+        log.scan.warn('Library cache chunks torn — falling back to network');
       }
     }
 
-    const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
-    if (data) {
-      const signature = stats ? libraryCache.signatureFor(stats) : null;
-      this._setFiles(data, { complete: true, signature });
-      if (signature) libraryCache.put(signature, data);
-    }
+    // Network stream path. The NDJSON endpoint yields a `begin` line, then
+    // one `file` line per row, then a `done` line. We batch up to 2048
+    // files before flushing to the store + load progress.
+    await this._streamFilesFromNetwork(signature);
 
     this._loading = false;
     this.notify();
+  }
+
+  /** Stream the file list from /api/databank/files/stream. Falls back to
+   *  the bulk /api/databank/files endpoint if the stream errors out before
+   *  any rows arrive (older backends, proxy issues). */
+  private async _streamFilesFromNetwork(signature: string | null): Promise<void> {
+    this._resetFilesForStream();
+    libraryLoadStore.setPhase('streaming', 'Streaming files…');
+
+    let receivedAny = false;
+    let total = 0;
+    let serverSig = signature;
+    const batchAll: DatabankFile[] = [];
+    const flushBatch = async () => {
+      if (batchAll.length === 0) return;
+      this._appendFiles(batchAll);
+      libraryLoadStore.advance(this._files.length, total || this._files.length);
+      this._scheduleStreamNotify();
+      batchAll.length = 0;
+      // Yield so the UI thread can process events between batches.
+      await new Promise<void>(r => setTimeout(r, 0));
+    };
+
+    try {
+      const res = await fetch('/api/databank/files/stream');
+      if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      const BATCH = 2048;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let msg: { type?: string; total?: number; signature?: string; error?: string; count?: number } & Partial<DatabankFile>;
+          try { msg = JSON.parse(line); } catch { continue; }
+          if (msg.type === 'begin') {
+            total = msg.total ?? 0;
+            if (msg.signature) serverSig = msg.signature;
+            libraryLoadStore.advance(0, total);
+          } else if (msg.type === 'file') {
+            // Strip the `type` field — the rest of the object is the FileRecord.
+            const { type: _t, ...file } = msg;
+            batchAll.push(file as DatabankFile);
+            receivedAny = true;
+            if (batchAll.length >= BATCH) await flushBatch();
+          } else if (msg.type === 'error') {
+            throw new Error(msg.error || 'stream error');
+          } else if (msg.type === 'done') {
+            // Drain any tail buffered after the last full BATCH.
+            await flushBatch();
+          }
+        }
+      }
+      // Drain anything still pending — partial final batch, or backend that
+      // omitted the `done` envelope.
+      await flushBatch();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!receivedAny) {
+        // Stream never produced anything — fall back to bulk. Same effect
+        // as before this change, except we still surface a progress phase.
+        log.scan.warn(`Files stream failed before first row (${msg}); using bulk endpoint`);
+        libraryLoadStore.setPhase('streaming', 'Falling back to bulk fetch…');
+        const data = await this.apiFetch<DatabankFile[]>('/api/databank/files');
+        if (data) {
+          this._setFiles(data, { complete: true, signature });
+          if (signature) void libraryCache.writeChunked(signature, data);
+          libraryLoadStore.advance(data.length, data.length);
+          libraryLoadStore.finish();
+          return;
+        }
+        libraryLoadStore.error(msg);
+        return;
+      }
+      // Partial stream — keep what we have, surface the error.
+      log.scan.warn(`Files stream truncated after ${this._files.length} files: ${msg}`);
+      libraryLoadStore.error(msg);
+      return;
+    }
+
+    libraryLoadStore.setPhase('finalizing', 'Indexing…');
+    this._finalizeFiles(serverSig);
+    libraryLoadStore.advance(this._files.length, this._files.length);
+    libraryLoadStore.finish();
+
+    // Cache write is async + tx-isolated; never blocks the UI.
+    if (serverSig) void libraryCache.writeChunked(serverSig, this._files);
+    log.scan.log(`Library streamed: ${this._files.length} files (sig ${serverSig ?? 'unknown'})`);
   }
 
   private _filesByIdsInflight: Promise<void> | null = null;

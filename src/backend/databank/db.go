@@ -837,6 +837,37 @@ func (db *DB) ListFiles(ctx context.Context, fileType string, manufacturer strin
 	return files, rows.Err()
 }
 
+// ListFilesStreaming iterates the same unfiltered, ordered file set as ListFiles
+// without materializing it as a slice. The callback is invoked once per row;
+// the loop aborts (and returns ctx.Err()) if the context is cancelled, or if
+// the callback returns a non-nil error. Used by the NDJSON streaming endpoint
+// so a multi-MB response can be flushed to the client incrementally.
+func (db *DB) ListFilesStreaming(ctx context.Context, fn func(*FileRecord) error) error {
+	const query = `SELECT id, path, filename, extension, file_type, size, mod_time, scan_time,
+	                      board_number, manufacturer, model, format_id, part_count, net_count, donor_pool, has_preview,
+	                      board_manufacturer, resolution_status, board_uuid, board_color, board_color_hex, content_hash
+	               FROM files
+	               ORDER BY manufacturer, board_number, filename`
+	rows, err := db.reader.QueryContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		f, err := db.scanFile(rows)
+		if err != nil {
+			return err
+		}
+		if err := fn(f); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 // ListFilesByIDs returns files for the given ID set. Order is unspecified.
 // Bounded by the caller to avoid unbounded SQL placeholder lists.
 func (db *DB) ListFilesByIDs(ctx context.Context, ids []int64) ([]FileRecord, error) {

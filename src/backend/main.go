@@ -149,6 +149,10 @@ func main() {
 	mux.HandleFunc("POST /api/databank/scan/stop", write(dbHandler.ScanStop))
 	mux.HandleFunc("GET /api/databank/scan/status", read(dbHandler.ScanStatus))
 	mux.HandleFunc("GET /api/databank/files", read(dbHandler.ListFiles))
+	// /files/stream is a literal segment so it wins over /files/{id} on Go 1.22+
+	// ServeMux precedence — long-lived NDJSON stream, no read() wrapper so the
+	// per-request deadline doesn't truncate a slow client mid-flight.
+	mux.HandleFunc("GET /api/databank/files/stream", dbHandler.ListFilesStream)
 	mux.HandleFunc("GET /api/databank/files/{id}", read(dbHandler.GetFile))
 	mux.HandleFunc("PATCH /api/databank/files/{id}", write(dbHandler.UpdateFile))
 	mux.HandleFunc("GET /api/databank/tree", read(dbHandler.Tree))

@@ -171,6 +171,103 @@ func (h *DatabankHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(files)
 }
 
+// ListFilesStream streams the full unfiltered file list as NDJSON.
+// First line: {"type":"begin","signature":"<etag-body>","total":<count>}
+// Then one  : {"type":"file", ...FileRecord}
+// Final line: {"type":"done","count":<actual>}
+//
+// Flushes every flushEveryN rows so the client renders progressively instead
+// of waiting for the whole multi-MB body. ETag-aware: matches the bulk endpoint
+// so a 304 still short-circuits this path.
+func (h *DatabankHandler) ListFilesStream(w http.ResponseWriter, r *http.Request) {
+	etag, _ := h.db.FilesETag()
+	if etag != "" {
+		if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+			w.Header().Set("ETag", etag)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+
+	// Derive the "total" hint from the ETag body (shape `last_scan:count`);
+	// purely advisory — the client trusts the actual stream. Saves a second
+	// COUNT(*) round-trip just to populate the progress bar.
+	var total int64
+	if sigBody := strings.Trim(etag, "\""); sigBody != "" {
+		if idx := strings.LastIndex(sigBody, ":"); idx >= 0 {
+			if n, err := strconv.ParseInt(sigBody[idx+1:], 10, 64); err == nil {
+				total = n
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Encourage proxies/buffers to not coalesce — without this, nginx-like
+	// intermediaries can buffer the whole response back into one block.
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+
+	// Compact signature for the "begin" line — strips the ETag's enclosing
+	// quotes so the JS side can compare it directly with libraryCache's
+	// `${last_file_scan_at}:${boards+pdfs}` shape.
+	sig := strings.Trim(etag, "\"")
+	_ = enc.Encode(struct {
+		Type      string `json:"type"`
+		Signature string `json:"signature,omitempty"`
+		Total     int64  `json:"total"`
+	}{"begin", sig, total})
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	const flushEveryN = 1024
+	var count int64
+	err := h.db.ListFilesStreaming(r.Context(), func(f *databank.FileRecord) error {
+		// Encode the file record under a "type"-tagged envelope. Lifting the
+		// FileRecord fields up through json marshaling is cleaner than holding
+		// a parallel wrapper struct — the embedded pointer gives us all the
+		// existing `json:` tags for free.
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			*databank.FileRecord
+		}{"file", f}); err != nil {
+			return err
+		}
+		count++
+		if count%flushEveryN == 0 && flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	})
+
+	if err != nil {
+		// Stream is already mid-flight; we can't change status codes. Surface
+		// the error inline so the client treats it as a load failure instead
+		// of a silent truncation.
+		_ = enc.Encode(struct {
+			Type  string `json:"type"`
+			Error string `json:"error"`
+		}{"error", err.Error()})
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
+
+	_ = enc.Encode(struct {
+		Type  string `json:"type"`
+		Count int64  `json:"count"`
+	}{"done", count})
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // maxIDsPerRequest caps a single `ids=` query so a malformed client can't
 // blow up the SQL placeholder list.
 const maxIDsPerRequest = 1024

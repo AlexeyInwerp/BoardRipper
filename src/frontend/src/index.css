@@ -4179,13 +4179,62 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 4px 8px;
   border-top: 1px solid var(--border);
   background: var(--bg-tertiary);
   flex-shrink: 0;
   margin-top: auto;
   min-height: 22px;
+}
+
+/* Library load progress strip — sits in the statsbar above the normal
+   text/actions row while phase != idle/done. */
+.library-loadstrip {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 2px;
+}
+.library-loadstrip-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.08));
+  overflow: hidden;
+}
+.library-loadstrip-fill {
+  height: 100%;
+  background: var(--accent, #5af);
+  transition: width 120ms ease-out;
+}
+.library-loadstrip.error .library-loadstrip-fill {
+  background: var(--danger, #e55);
+}
+.library-loadstrip-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.library-loadstrip-phase { font-weight: 600; color: var(--text-primary, var(--text-secondary)); }
+.library-loadstrip-counter { opacity: 0.85; }
+.library-loadstrip-note { opacity: 0.65; font-style: italic; }
+.library-loadstrip.error .library-loadstrip-phase { color: var(--danger, #e55); }
+
+/* "partial" chip beside the filter input while the library is still streaming. */
+.library-search-partial {
+  font-size: 10px;
+  color: var(--accent, #5af);
+  padding: 1px 6px;
+  border: 1px solid var(--accent, #5af);
+  border-radius: 8px;
+  white-space: nowrap;
+  align-self: center;
+  opacity: 0.85;
 }
 .library-statsbar-text {
   flex: 1;
