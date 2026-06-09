@@ -21,6 +21,7 @@ import { BoardTab } from './components/BoardTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
 import { LoadProgressOverlay } from './components/LoadProgressOverlay';
+import { PeekHintChip } from './components/PeekHintChip';
 import { FZKeyDialog } from './components/FZKeyDialog';
 import { WelcomeSetup } from './components/WelcomeSetup';
 import { setDockviewApi, ensureBoardPanel, boardPanelId, isRedockingPdf } from './store/dockview-api';
@@ -323,6 +324,7 @@ function App() {
       )}
       <UpdateProgressOverlay />
       <LoadProgressOverlay />
+      <PeekHintChip />
       <FZKeyDialog />
       <WelcomeSetup />
     </div>

@@ -9,6 +9,7 @@ import { openBoardSearch } from '../panels/board-viewer-bridge';
 import { focusBoardSearchInput } from '../components/BoardSidebar.utils';
 import { toggleLibrarySidebar } from '../components/Sidebar.utils';
 import { copyText } from '../clipboard';
+import { peekHintStore } from '../store/peek-hint-store';
 
 /**
  * Global keyboard shortcut handler — attach once in App.
@@ -27,18 +28,23 @@ let _lastMouseY = 0;
 
 /**
  * Hold-to-peek state for Space-flip:
- *   - keydown records the original side + a timestamp and flips immediately.
- *   - keyup checks the duration: under SPACE_HOLD_PEEK_MS = tap (keep flipped);
- *     at or over = hold (revert to the original side).
+ *   - keydown records the original side + a timestamp, flips immediately,
+ *     and arms a timer that triggers the peek-hint chip after the threshold.
+ *   - keyup checks the duration: under SPACE_HOLD_PEEK_MS = tap (keep
+ *     flipped, no hint); at or over = hold (revert to original + dismiss
+ *     hint).
  *
- * 180 ms balances: a deliberate tap is well under it (~60 ms typical), and a
- * "peek" gesture naturally lingers above it. Browsers fire `e.repeat=true` at
- * roughly the autorepeat rate (~30 ms intervals after a ~500 ms initial
- * delay), so any autorepeat we see is well past the threshold and gated out
- * by the `_spaceFlipPress` presence check.
+ * 350 ms sits comfortably above a "gentle" tap (a slow, controlled press
+ * can run 200–300 ms — the original 180 ms threshold was too tight). Still
+ * well under the natural human "I'm holding this" reflex of ~500 ms.
+ * Tune up if normal taps still register as peeks.
  */
-const SPACE_HOLD_PEEK_MS = 180;
-let _spaceFlipPress: { wasUiTopVisible: boolean; pressedAt: number } | null = null;
+const SPACE_HOLD_PEEK_MS = 350;
+let _spaceFlipPress: {
+  wasUiTopVisible: boolean;
+  pressedAt: number;
+  hintTimer: ReturnType<typeof setTimeout> | null;
+} | null = null;
 
 /** Text to copy for the active board tab's current selection, mirroring the
  *  Cmd/Ctrl+F prefill priority: a selected pin yields its net (or, when the
@@ -264,7 +270,16 @@ export function useKeyboardShortcuts() {
             // the toggle flips both kinds of files identically.
             const swap = board?.primarySide === 'bottom';
             const uiTopVisible = swap ? showBottom : showTop;
-            _spaceFlipPress = { wasUiTopVisible: uiTopVisible, pressedAt: performance.now() };
+            // Hint chip shows up only AFTER threshold crosses — a quick tap
+            // never sees it, so casual flips stay distraction-free.
+            const hintTimer = setTimeout(() => {
+              peekHintStore.show();
+            }, SPACE_HOLD_PEEK_MS);
+            _spaceFlipPress = {
+              wasUiTopVisible: uiTopVisible,
+              pressedAt: performance.now(),
+              hintTimer,
+            };
             if (uiTopVisible) boardStore.selectBottom();
             else boardStore.selectTop();
             return;
@@ -415,6 +430,8 @@ export function useKeyboardShortcuts() {
       const press = _spaceFlipPress;
       if (!press) return;
       _spaceFlipPress = null;
+      if (press.hintTimer) clearTimeout(press.hintTimer);
+      peekHintStore.hide();
       const heldMs = performance.now() - press.pressedAt;
       if (heldMs < SPACE_HOLD_PEEK_MS) return; // tap: keep flipped state
       // Hold: restore the side that was visible before the press.
@@ -426,7 +443,11 @@ export function useKeyboardShortcuts() {
     // next tap isn't ignored as "autorepeat". Don't revert — the user may
     // come back and release Space normally; reverting now would surprise
     // them.
-    const spaceBlurHandler = () => { _spaceFlipPress = null; };
+    const spaceBlurHandler = () => {
+      if (_spaceFlipPress?.hintTimer) clearTimeout(_spaceFlipPress.hintTimer);
+      _spaceFlipPress = null;
+      peekHintStore.hide();
+    };
 
     document.addEventListener('keydown', handler);
     document.addEventListener('keyup', spaceKeyupHandler);

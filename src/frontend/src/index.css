@@ -4225,6 +4225,31 @@ body {
 .library-loadstrip-note { opacity: 0.65; font-style: italic; }
 .library-loadstrip.error .library-loadstrip-phase { color: var(--danger, #e55); }
 
+/* Floating hint chip shown while Space is held past the tap-vs-hold
+   threshold ("peeking other side"). Sits top-center, above the canvas. */
+.peek-hint-chip {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10001;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: 12px;
+  font-family: monospace;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--accent, #5af);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  pointer-events: none;
+  animation: peek-hint-in 0.12s ease-out;
+}
+@keyframes peek-hint-in {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
 /* "partial" chip beside the filter input while the library is still streaming. */
 .library-search-partial {
   font-size: 10px;
