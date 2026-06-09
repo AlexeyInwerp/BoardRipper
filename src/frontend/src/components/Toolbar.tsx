@@ -389,7 +389,7 @@ export function Toolbar() {
         <button
           onClick={(e) => boardStore.selectTop(e.shiftKey)}
           className={`toolbar-btn ${uiShowTop ? 'active' : ''}`}
-          data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
+          data-tooltip={`${formatShortcut('flipBoard')}: tap to flip \u00B7 hold to peek \u00B7 Shift both`}
         >
           Top
         </button>
@@ -413,7 +413,7 @@ export function Toolbar() {
         <button
           onClick={(e) => boardStore.selectBottom(e.shiftKey)}
           className={`toolbar-btn ${uiShowBottom ? 'active' : ''}`}
-          data-tooltip={`${formatShortcut('flipBoard')} flip \u00B7 Shift both`}
+          data-tooltip={`${formatShortcut('flipBoard')}: tap to flip \u00B7 hold to peek \u00B7 Shift both`}
         >
           Bottom
         </button>

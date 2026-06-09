@@ -87,7 +87,7 @@ export const shortcuts: Shortcut[] = [
     label: 'Flip Board',
     category: 'view',
     key: ' ',         // Space
-    description: 'Toggle between top and bottom layer',
+    description: 'Tap: flip between top and bottom. Hold: peek at the other side (returns on release).',
   },
   {
     id: 'rotateCW',

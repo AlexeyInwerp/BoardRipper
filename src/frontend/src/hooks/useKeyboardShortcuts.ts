@@ -25,6 +25,21 @@ function activePanelKind(): 'board' | 'pdf' | null {
 let _lastMouseX = 0;
 let _lastMouseY = 0;
 
+/**
+ * Hold-to-peek state for Space-flip:
+ *   - keydown records the original side + a timestamp and flips immediately.
+ *   - keyup checks the duration: under SPACE_HOLD_PEEK_MS = tap (keep flipped);
+ *     at or over = hold (revert to the original side).
+ *
+ * 180 ms balances: a deliberate tap is well under it (~60 ms typical), and a
+ * "peek" gesture naturally lingers above it. Browsers fire `e.repeat=true` at
+ * roughly the autorepeat rate (~30 ms intervals after a ~500 ms initial
+ * delay), so any autorepeat we see is well past the threshold and gated out
+ * by the `_spaceFlipPress` presence check.
+ */
+const SPACE_HOLD_PEEK_MS = 180;
+let _spaceFlipPress: { wasUiTopVisible: boolean; pressedAt: number } | null = null;
+
 /** Text to copy for the active board tab's current selection, mirroring the
  *  Cmd/Ctrl+F prefill priority: a selected pin yields its net (or, when the
  *  pin carries no net, a `part-pin` reference); a part-only selection yields
@@ -229,7 +244,8 @@ export function useKeyboardShortcuts() {
             return;
 
           case 'flipBoard': {
-            // Cursor over a PDF panel → fit-to-width; otherwise → flip board
+            // Cursor over a PDF panel → fit-to-width; otherwise → flip board.
+            // The PDF path is tap-only — no peek/hold semantics for fit-width.
             const hovered = document.elementFromPoint(_lastMouseX, _lastMouseY);
             if (hovered?.closest('.pdf-viewer')) {
               e.preventDefault();
@@ -237,6 +253,10 @@ export function useKeyboardShortcuts() {
               return;
             }
             e.preventDefault();
+            // Autorepeat or second-keydown-without-keyup → already flipped on
+            // the first keydown, ignore subsequent firings until keyup. Without
+            // this gate, holding Space would re-flip every autorepeat tick.
+            if (e.repeat || _spaceFlipPress) return;
             const { showTop, showBottom, butterfly, board } = boardStore;
             if (butterfly || (showTop && showBottom)) return;
             // selectTop/selectBottom already swap raw flags for primarySide='bottom'
@@ -244,6 +264,7 @@ export function useKeyboardShortcuts() {
             // the toggle flips both kinds of files identically.
             const swap = board?.primarySide === 'bottom';
             const uiTopVisible = swap ? showBottom : showTop;
+            _spaceFlipPress = { wasUiTopVisible: uiTopVisible, pressedAt: performance.now() };
             if (uiTopVisible) boardStore.selectBottom();
             else boardStore.selectTop();
             return;
@@ -385,9 +406,33 @@ export function useKeyboardShortcuts() {
       }
     };
 
+    // Space-flip release: tap → keep flipped, hold → revert to original side.
+    // Mirrors the keydown side of the flipBoard case above; lives outside it
+    // so it can fire on the same document(s) regardless of which one received
+    // the keydown (popout windows share the same module-level press state).
+    const spaceKeyupHandler = (e: KeyboardEvent) => {
+      if (e.key !== ' ' && e.code !== 'Space') return;
+      const press = _spaceFlipPress;
+      if (!press) return;
+      _spaceFlipPress = null;
+      const heldMs = performance.now() - press.pressedAt;
+      if (heldMs < SPACE_HOLD_PEEK_MS) return; // tap: keep flipped state
+      // Hold: restore the side that was visible before the press.
+      if (press.wasUiTopVisible) boardStore.selectTop();
+      else boardStore.selectBottom();
+    };
+    // Window blur safety net: if focus leaves the page mid-hold (e.g. the
+    // user alt-tabs), we'll never get keyup. Discard the press state so the
+    // next tap isn't ignored as "autorepeat". Don't revert — the user may
+    // come back and release Space normally; reverting now would surprise
+    // them.
+    const spaceBlurHandler = () => { _spaceFlipPress = null; };
+
     document.addEventListener('keydown', handler);
+    document.addEventListener('keyup', spaceKeyupHandler);
     document.addEventListener('keydown', blockKeyboardZoom);
     document.addEventListener('wheel', blockBrowserZoom, { passive: false });
+    window.addEventListener('blur', spaceBlurHandler);
 
     // Also attach to every Dockview popout window's document so shortcuts
     // fire when focus is inside the detached PDF window. (2-window mode.)
@@ -397,11 +442,13 @@ export function useKeyboardShortcuts() {
     const attachToPopout = (doc: Document) => {
       if (popoutDocs.has(doc)) return;
       doc.addEventListener('keydown', handler);
+      doc.addEventListener('keyup', spaceKeyupHandler);
       doc.addEventListener('mousemove', trackMouse, { passive: true });
       popoutDocs.add(doc);
     };
     const detachFromPopout = (doc: Document) => {
       doc.removeEventListener('keydown', handler);
+      doc.removeEventListener('keyup', spaceKeyupHandler);
       doc.removeEventListener('mousemove', trackMouse);
       popoutDocs.delete(doc);
     };
@@ -420,8 +467,10 @@ export function useKeyboardShortcuts() {
     return () => {
       document.removeEventListener('mousemove', trackMouse);
       document.removeEventListener('keydown', handler);
+      document.removeEventListener('keyup', spaceKeyupHandler);
       document.removeEventListener('keydown', blockKeyboardZoom);
       document.removeEventListener('wheel', blockBrowserZoom);
+      window.removeEventListener('blur', spaceBlurHandler);
       clearInterval(scanInterval);
       for (const doc of Array.from(popoutDocs)) detachFromPopout(doc);
     };
