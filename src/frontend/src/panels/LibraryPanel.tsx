@@ -118,7 +118,7 @@ export function fmtIndexEta(p: { running: boolean; total: number; done: number; 
 
 export function LibraryPanel() {
   const {
-    files, folderTree, scanStatus, viewMode, selectedFileId,
+    files, folderTree, folderTreeLoading, scanStatus, viewMode, selectedFileId,
     selectedFileDetail, loadStatus, loadError,
     autoPdf, backendAvailable,
     libraryPath, electronMode,
@@ -1000,6 +1000,7 @@ export function LibraryPanel() {
         ) : (
           <FolderView
             tree={folderTree}
+            treeLoading={folderTreeLoading}
             selectedFileId={selectedFileId}
             filterFile={filterFile}
             searchFilter={debouncedSearch}
@@ -2223,8 +2224,9 @@ function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolea
   return { ...node, files, file_ids: undefined, children };
 }
 
-function FolderView({ tree, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
+function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
   tree: FolderNode | null;
+  treeLoading: boolean;
   selectedFileId: number | null;
   filterFile: (f: DatabankFile) => boolean;
   searchFilter: string;
@@ -2240,7 +2242,25 @@ function FolderView({ tree, selectedFileId, filterFile, searchFilter, onSelectFi
     [searchFilter, tree, filterFile],
   );
 
+  // First-paint loading: render the same bar+text strip the library load uses,
+  // with an indeterminate fill (no progress signal — fetchTree is one HTTP
+  // call). Once `tree` lands we drop the strip and render the live tree.
   if (!visibleTree) {
+    if (treeLoading || !tree) {
+      return (
+        <div className="library-tree">
+          <div className="library-loadstrip" role="status" aria-live="polite">
+            <div className="library-loadstrip-bar">
+              <div className="library-loadstrip-fill indeterminate" />
+            </div>
+            <div className="library-loadstrip-text">
+              <span className="library-loadstrip-phase">Loading folder tree</span>
+              <span className="library-loadstrip-note">~2 MB · one moment</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return <div className="library-empty">
       {searchFilter.trim() ? `No folders match "${searchFilter}".` : 'Loading folder tree...'}
     </div>;

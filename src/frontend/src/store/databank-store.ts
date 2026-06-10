@@ -733,6 +733,11 @@ class DatabankStore extends Emitter {
       this._filesInflight = null;
     });
     await this._filesInflight;
+    // Pre-fetch the folder tree in the background so the first visit to the
+    // Folders tab is instant instead of "wait 1–2 s with no feedback".
+    // Coalesced inside fetchTree so a manual Folders-tab click that races us
+    // doesn't double-fetch the multi-MB body.
+    void this.fetchTree();
   }
 
   /** Throttled notify gate used while a stream is in flight. React re-render
@@ -995,16 +1000,29 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
+  private _folderTreeLoading = false;
+  private _folderTreeInflight: Promise<void> | null = null;
+  get folderTreeLoading() { return this._folderTreeLoading; }
+
   async fetchTree(): Promise<void> {
     if (isElectron()) {
       // Tree is built during _electronScan
       return;
     }
-    const data = await this.apiFetch<FolderNode>('/api/databank/tree');
-    if (data) {
-      this._folderTree = data;
+    // Coalesce — fetchTree is fired both from _runStartupLoad's pre-fetch
+    // and from LibraryPanel's useEffect when the Folders tab opens; without
+    // this guard the same multi-MB body would be fetched twice.
+    if (this._folderTreeInflight) { await this._folderTreeInflight; return; }
+    this._folderTreeLoading = true;
+    this.notify();
+    this._folderTreeInflight = this.apiFetch<FolderNode>('/api/databank/tree').then((data) => {
+      if (data) this._folderTree = data;
+    }).finally(() => {
+      this._folderTreeLoading = false;
+      this._folderTreeInflight = null;
       this.notify();
-    }
+    });
+    await this._folderTreeInflight;
   }
 
   /** Fetch a single file's detail including its bindings */

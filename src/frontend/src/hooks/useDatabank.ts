@@ -11,6 +11,7 @@ interface DatabankSnapshot {
   files: DatabankFile[];
   filesComplete: boolean;
   folderTree: FolderNode | null;
+  folderTreeLoading: boolean;
   scanStatus: ScanStatus | null;
   searchResults: SearchResult[];
   searchQuery: string;
@@ -45,6 +46,7 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   files: databankStore.files,
   filesComplete: databankStore.filesComplete,
   folderTree: databankStore.folderTree,
+  folderTreeLoading: databankStore.folderTreeLoading,
   scanStatus: databankStore.scanStatus,
   searchResults: databankStore.searchResults,
   searchQuery: databankStore.searchQuery,

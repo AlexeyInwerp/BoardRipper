@@ -4210,6 +4210,18 @@ body {
   background: var(--accent, #5af);
   transition: width 120ms ease-out;
 }
+/* Used when we have no progress signal — the fill becomes a 30%-wide bar
+   that slides left↔right across the track so the user sees motion. */
+.library-loadstrip-fill.indeterminate {
+  width: 30% !important;
+  transition: none;
+  animation: library-loadstrip-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes library-loadstrip-indeterminate {
+  0%   { transform: translateX(-110%); }
+  50%  { transform: translateX(230%); }
+  100% { transform: translateX(-110%); }
+}
 .library-loadstrip.error .library-loadstrip-fill {
   background: var(--danger, #e55);
 }
