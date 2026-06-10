@@ -732,9 +732,49 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const navHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navHintShownRef = useRef(false);
   // Click-to-lookup overlay state
-  const [clickHighlight, setClickHighlight] = useState<{ word: string; rect: { x: number; y: number; w: number; h: number }; key: number; zoom: number } | null>(null);
+  // Click-highlight is managed imperatively (refs + direct DOM writes), NOT React
+  // state. It lives inside the CSS-transformed page wrapper, so a state update here
+  // would re-render the component and force the browser to recomposite that GPU
+  // layer — showing a blurry low-res copy at zoom > 1 until the next committed
+  // render re-sharpens it (see the applyTransform comment above). Writing styles
+  // directly touches only this one overlay div and never triggers a re-render.
+  const clickHighlightElRef = useRef<HTMLDivElement | null>(null);
+  const clickTooltipElRef = useRef<HTMLSpanElement | null>(null);
   const clickHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clickHighlightKeyRef = useRef(0);
+
+  const showClickHighlight = useCallback(
+    (rect: { x: number; y: number; w: number; h: number }, word: string, zoom: number, durationMs = 4000) => {
+      const el = clickHighlightElRef.current;
+      if (!el) return;
+      // Wrapper children are sized at committed-zoom CSS pixels; the captured zoom
+      // matches committedZoom at click time. Auto-dismiss bounds any later staleness.
+      const z = zoom || 1;
+      const padY = 1 / z; // y-only breathing room; x hugs the word so it can't bleed onto the next glyph
+      el.style.left = `${rect.x * z}px`;
+      el.style.top = `${(rect.y - padY) * z}px`;
+      el.style.width = `${rect.w * z}px`;
+      el.style.height = `${(rect.h + padY * 2) * z}px`;
+      const tip = clickTooltipElRef.current;
+      if (tip) tip.textContent = word || 'Double-click to search';
+      el.style.display = '';
+      // Restart the 4s fade animation on reuse — no remount happens to retrigger it.
+      el.style.animation = 'none';
+      if (tip) tip.style.animation = 'none';
+      void el.offsetWidth; // force reflow so the animation replays
+      el.style.animation = '';
+      if (tip) tip.style.animation = '';
+      if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
+      clickHighlightTimerRef.current = setTimeout(() => {
+        if (clickHighlightElRef.current) clickHighlightElRef.current.style.display = 'none';
+      }, durationMs);
+    },
+    [],
+  );
+
+  const hideClickHighlight = useCallback(() => {
+    if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
+    if (clickHighlightElRef.current) clickHighlightElRef.current.style.display = 'none';
+  }, []);
   // Tile DOM management
   const tileGridRef = useRef<TileGridInfo | null>(null);
   const tileRenderIdRef = useRef(0);
@@ -2220,16 +2260,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // Show highlight on the first item for visual feedback
       if (target.items.length > 0) {
         const r = textItemRect(target.items[0].transform, target.items[0].width, viewportTransformRef.current, baseScale);
-        setClickHighlight({ word: '', rect: { x: r.x, y: r.y, w: r.w, h: r.h }, key: ++clickHighlightKeyRef.current, zoom: zoomRef.current });
-        if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
-        clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 3000);
+        showClickHighlight({ x: r.x, y: r.y, w: r.w, h: r.h }, '', zoomRef.current, 3000);
       }
     };
 
     // Defer to ensure the page has rendered first
     const raf = requestAnimationFrame(applyFollowZoom);
     return () => cancelAnimationFrame(raf);
-  }, [isLoaded, currentPage, syncTransform]);
+  }, [isLoaded, currentPage, syncTransform, showClickHighlight]);
 
   // Apply initial transform + re-sync after page change
   useEffect(() => { syncTransform(); }, [syncTransform, currentPage]);
@@ -2797,16 +2835,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   const handleTextClick = useCallback((e: React.MouseEvent) => {
     const hit = hitTestWord(e);
-    if (!hit) { setClickHighlight(null); return; }
+    if (!hit) { hideClickHighlight(); return; }
 
     // Remember last clicked word + location for Cmd+F prefill / exact-match pick
     pdfStore.setLastClickedWord(hit.word);
     pdfStore.setLastClickedLocation({ fileName: pdfFileName, pageIndex: hit.pageIndex, itemIndex: hit.itemIndex });
 
-    // Show highlight + tooltip overlay on any text
-    setClickHighlight({ ...hit, key: ++clickHighlightKeyRef.current, zoom: zoomRef.current });
-    if (clickHighlightTimerRef.current) clearTimeout(clickHighlightTimerRef.current);
-    clickHighlightTimerRef.current = setTimeout(() => setClickHighlight(null), 4000);
+    // Show highlight + tooltip overlay on any text (imperative — no re-render)
+    showClickHighlight(hit.rect, hit.word, zoomRef.current);
 
     // Focus part/net on board AND mirror the term into the board search panel
     // (board → PDF lookup is symmetric; this closes the reverse direction).
@@ -2826,7 +2862,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (pdfStore.getLinkedDoc(pdfFileName)) {
       pdfStore.crossProbe(pdfFileName, hit.word);
     }
-  }, [hitTestWord, pdfFileName]);
+  }, [hitTestWord, pdfFileName, showClickHighlight, hideClickHighlight]);
 
   const handleTextDblClick = useCallback((e: React.MouseEvent) => {
     const hit = hitTestWord(e);
@@ -2841,7 +2877,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       pdfStore.searchText(hit.word);
       navHintShownRef.current = false;
     }
-    setClickHighlight(null);
+    hideClickHighlight();
 
     const board = boardStore.board;
     if (board) {
@@ -2853,7 +2889,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       }
       openBoardSearch(hit.word);
     }
-  }, [hitTestWord, pdfFileName]);
+  }, [hitTestWord, pdfFileName, hideClickHighlight]);
 
   const handleTextClickRef = useRef(handleTextClick);
   handleTextClickRef.current = handleTextClick;
@@ -3414,36 +3450,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <canvas ref={canvasRef} style={(tiledMode || (isGlyphComposite && !glyphLoading && !isFiltered)) ? { visibility: 'hidden' } : undefined} />
           <canvas ref={highlightRef} className="pdf-highlight-canvas" />
           <canvas ref={glyphCanvasRef} className="pdf-glyph-overlay-canvas" />
-          {clickHighlight && (() => {
-            // Wrapper children are sized at committed-zoom CSS pixels; use
-            // clickHighlight.zoom (captured at click time, matches committedZoom
-            // at that moment) as the multiplier. Auto-dismisses in 4s, so any
-            // staleness from later zoom changes is bounded.
-            const z = clickHighlight.zoom || 1;
-            // Horizontal padding only on the y axis — schematics commonly pack
-            // a pin label "1" right after a designator "R5960" with sub-pixel
-            // gap, and a couple of x-pixels of slack here visibly overlaps it.
-            // Y padding stays for a touch of visual breathing room above/below
-            // the glyph.
-            const padY = 1 / z;
-            return (
-              <div
-                key={clickHighlight.key}
-                className="pdf-click-highlight"
-                style={{
-                  left: clickHighlight.rect.x * z,
-                  top: (clickHighlight.rect.y - padY) * z,
-                  width: clickHighlight.rect.w * z,
-                  height: (clickHighlight.rect.h + padY * 2) * z,
-                  borderWidth: 1.5,
-                }}
-              >
-                <span className="pdf-click-tooltip" style={{ transform: 'translateX(-50%)' }}>
-                  {clickHighlight.word || 'Double-click to search'}
-                </span>
-              </div>
-            );
-          })()}
+          {/* Imperatively positioned (see showClickHighlight). Always mounted +
+              hidden so a click never re-renders this component — which at zoom > 1
+              would recomposite the GPU layer and momentarily blur the page. */}
+          <div ref={clickHighlightElRef} className="pdf-click-highlight" style={{ display: 'none', borderWidth: 1.5 }}>
+            <span ref={clickTooltipElRef} className="pdf-click-tooltip" style={{ transform: 'translateX(-50%)' }} />
+          </div>
         </div>
         {pageCount > 1 && (
           <PageScrubber
