@@ -3420,16 +3420,21 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             // at that moment) as the multiplier. Auto-dismisses in 4s, so any
             // staleness from later zoom changes is bounded.
             const z = clickHighlight.zoom || 1;
-            const pad = 2 / z;
+            // Horizontal padding only on the y axis — schematics commonly pack
+            // a pin label "1" right after a designator "R5960" with sub-pixel
+            // gap, and a couple of x-pixels of slack here visibly overlaps it.
+            // Y padding stays for a touch of visual breathing room above/below
+            // the glyph.
+            const padY = 1 / z;
             return (
               <div
                 key={clickHighlight.key}
                 className="pdf-click-highlight"
                 style={{
-                  left: (clickHighlight.rect.x - pad) * z,
-                  top: (clickHighlight.rect.y - pad) * z,
-                  width: (clickHighlight.rect.w + pad * 2) * z,
-                  height: (clickHighlight.rect.h + pad * 2) * z,
+                  left: clickHighlight.rect.x * z,
+                  top: (clickHighlight.rect.y - padY) * z,
+                  width: clickHighlight.rect.w * z,
+                  height: (clickHighlight.rect.h + padY * 2) * z,
                   borderWidth: 1.5,
                 }}
               >
