@@ -713,7 +713,12 @@ class PdfStore extends Emitter {
           // trigger pdf.js's word-break heuristic, inserting spaces into single text
           // runs like "CPU_PWROK" → "CPU_PW ROK". Strip spaces between word chars
           // within a single item — real word boundaries are between separate items.
-          const str = ti.str.replace(/(?<=\w) (?=\w)/g, '');
+          // EXCEPTION: keep a space between two digits, so a designator immediately
+          // followed by adjacent pin numbers ("R5960 1 3") is not fused into one
+          // un-lookup-able token ("R596013"). Kerning false-breaks are alphabetic;
+          // designator↔pin boundaries are digit↔digit.
+          const str = ti.str.replace(/(\w) (?=(\w))/g, (m, l, r) =>
+            /\d/.test(l) && /\d/.test(r) ? m : l);
           items.push({
             str,
             transform: ti.transform,
