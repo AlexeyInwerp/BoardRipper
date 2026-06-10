@@ -599,16 +599,25 @@ export function LibraryPanel() {
     && filesComplete
     && expectedTotal > 0
     && loadedTotal + 16 < expectedTotal; // 16 = small slack window
+  const incompleteFillPct = expectedTotal > 0
+    ? Math.min(100, Math.round((loadedTotal / expectedTotal) * 100))
+    : 0;
+  // Visually identical to loadStrip so the layout/density doesn't suddenly
+  // change between "loading" and "incomplete" — only the fill color shifts.
   const incompleteStrip = isIncomplete && (
     <div className="library-loadstrip error" role="alert">
+      <div className="library-loadstrip-bar">
+        <div
+          className="library-loadstrip-fill"
+          style={{ width: `${incompleteFillPct}%` }}
+        />
+      </div>
       <div className="library-loadstrip-text">
         <span className="library-loadstrip-phase">Library load incomplete</span>
         <span className="library-loadstrip-counter">
-          {loadedTotal.toLocaleString()} of {expectedTotal.toLocaleString()} files
+          {loadedTotal.toLocaleString()} / {expectedTotal.toLocaleString()} ({incompleteFillPct}%)
         </span>
-        <span className="library-loadstrip-note">
-          (the stream stopped early — usually a transient network issue)
-        </span>
+        <span className="library-loadstrip-note">stream stopped early</span>
         <button
           className="library-scan-btn"
           style={{ marginLeft: 8, padding: '0 6px', fontSize: 10 }}
