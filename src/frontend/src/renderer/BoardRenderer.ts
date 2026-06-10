@@ -3459,11 +3459,15 @@ export class BoardRenderer {
             if (!arr) { arr = []; map.set(pinColor, arr); }
             arr.push(fn);
           };
+          const isSelectedPin =
+            ref.partIndex === sel.partIndex && ref.pinIndex === sel.pinIndex;
           const pushGlow = (fn: () => void) => {
             // Landrex / "clean" mode: suppress the yellow halo overlay around
-            // highlighted pins. Pin recolouring (pushDim path) still runs, so
-            // selected nets are still distinguishable by pin colour.
-            if (!s.showSelectionHalo) return;
+            // every pin on the highlighted net. The explicitly-clicked pin is
+            // exempt — it always keeps its halo so the user sees what they
+            // selected. Pin recolouring (pushDim path) still runs for the rest,
+            // so the selected net is still distinguishable by pin colour.
+            if (!s.showSelectionHalo && !isSelectedPin) return;
             const map = isBotGfx ? botHighlightsByColor : topHighlightsByColor;
             let arr = map.get(glowColor);
             if (!arr) { arr = []; map.set(glowColor, arr); }
