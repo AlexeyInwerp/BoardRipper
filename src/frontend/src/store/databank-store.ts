@@ -1009,15 +1009,31 @@ class DatabankStore extends Emitter {
       // Tree is built during _electronScan
       return;
     }
-    // Coalesce — fetchTree is fired both from _runStartupLoad's pre-fetch
-    // and from LibraryPanel's useEffect when the Folders tab opens; without
-    // this guard the same multi-MB body would be fetched twice.
+    // Coalesce — fetchTree is fired both from fetchFiles's pre-fetch and
+    // from LibraryPanel's useEffect when the Folders tab opens; without this
+    // guard the same multi-MB body would be fetched twice.
     if (this._folderTreeInflight) { await this._folderTreeInflight; return; }
     this._folderTreeLoading = true;
     this.notify();
-    this._folderTreeInflight = this.apiFetch<FolderNode>('/api/databank/tree').then((data) => {
-      if (data) this._folderTree = data;
-    }).finally(() => {
+    this._folderTreeInflight = (async () => {
+      // Warm path: IDB cache keyed off the same signature as the file list.
+      // If files+tree were last persisted under the current backend
+      // signature, the tree is byte-identical to what /api/databank/tree
+      // would return now — skip the ~1 s network round-trip + JSON.parse.
+      const sig = this._stats ? libraryCache.signatureFor(this._stats) : null;
+      if (sig) {
+        const cached = await libraryCache.getTree(sig);
+        if (cached) {
+          this._folderTree = cached as FolderNode;
+          return;
+        }
+      }
+      const data = await this.apiFetch<FolderNode>('/api/databank/tree');
+      if (data) {
+        this._folderTree = data;
+        if (sig) void libraryCache.putTree(sig, data);
+      }
+    })().finally(() => {
       this._folderTreeLoading = false;
       this._folderTreeInflight = null;
       this.notify();
