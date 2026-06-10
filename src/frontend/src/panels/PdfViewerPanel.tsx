@@ -3457,12 +3457,22 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 function extractWord(str: string, charIndex: number): string | null {
   const idx = Math.max(0, Math.min(charIndex, str.length - 1));
   const wordChars = /[A-Za-z0-9_]/;
-  if (!wordChars.test(str[idx])) return null;
+  // A '.' is part of the word only when it is a decimal point inside a pure
+  // number ("0.001Ohm"), NOT a designator→pin reference ("R5960.3"). The
+  // discriminator: the digit run left of the dot must not be the tail of an
+  // alphanumeric designator (i.e. not preceded by a letter/underscore).
+  const isDecimalDot = (i: number): boolean => {
+    if (str[i] !== '.' || !/\d/.test(str[i - 1] ?? '') || !/\d/.test(str[i + 1] ?? '')) return false;
+    let j = i - 1;
+    while (j > 0 && /\d/.test(str[j - 1])) j--;
+    return !/[A-Za-z_]/.test(str[j - 1] ?? '');
+  };
+  if (!wordChars.test(str[idx]) && !isDecimalDot(idx)) return null;
 
   let start = idx;
   let end = idx;
-  while (start > 0 && wordChars.test(str[start - 1])) start--;
-  while (end < str.length - 1 && wordChars.test(str[end + 1])) end++;
+  while (start > 0 && (wordChars.test(str[start - 1]) || isDecimalDot(start - 1))) start--;
+  while (end < str.length - 1 && (wordChars.test(str[end + 1]) || isDecimalDot(end + 1))) end++;
 
   const word = str.slice(start, end + 1);
   return word.length > 0 ? word : null;

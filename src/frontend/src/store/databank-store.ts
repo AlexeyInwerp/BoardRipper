@@ -829,12 +829,16 @@ class DatabankStore extends Emitter {
         this._resetFilesForStream();
         libraryLoadStore.advance(0, meta.total);
         libraryLoadStore.setPhase('streaming', 'Restoring from cache…');
-        const result = await libraryCache.streamChunks(signature, async (chunk, _idx, _count) => {
+        // SYNC callback only — see streamChunks doc-comment. The whole walk
+        // runs inside one IDB tx; any await here would auto-commit it and
+        // silently truncate the cache restore at chunkSize files. The
+        // 100 ms `_scheduleStreamNotify` debounce coalesces re-renders;
+        // when the tx finishes, libraryLoadStore.finish() fires a notify
+        // too. UI sees one final update with the full file set.
+        const result = await libraryCache.streamChunks(signature, (chunk, _idx, _count) => {
           this._appendFiles(chunk);
           libraryLoadStore.advance(this._files.length, meta.total);
           this._scheduleStreamNotify();
-          // Yield so the UI can paint between chunks.
-          await new Promise<void>(r => setTimeout(r, 0));
         });
         if (result.ok) {
           libraryLoadStore.setPhase('finalizing');
