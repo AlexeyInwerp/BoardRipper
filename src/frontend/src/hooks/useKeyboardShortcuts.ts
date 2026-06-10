@@ -44,12 +44,13 @@ const SPACE_HOLD_PEEK_MS = 350;
  *  even if the user keeps holding Space, so a long peek doesn't leave a
  *  permanent label cluttering the canvas. */
 const PEEK_HINT_LIFESPAN_MS = 3000;
-let _spaceFlipPress: {
+interface SpaceFlipPress {
   wasUiTopVisible: boolean;
   pressedAt: number;
   hintTimer: ReturnType<typeof setTimeout> | null;
   hintHideTimer: ReturnType<typeof setTimeout> | null;
-} | null = null;
+}
+let _spaceFlipPress: SpaceFlipPress | null = null;
 
 /** Text to copy for the active board tab's current selection, mirroring the
  *  Cmd/Ctrl+F prefill priority: a selected pin yields its net (or, when the
@@ -280,7 +281,7 @@ export function useKeyboardShortcuts() {
             // tap never sees the chip at all, and a long peek doesn't leave
             // it permanently parked on the canvas. The hide-timer ref lives
             // on the press record so keyup/blur can cancel it cleanly.
-            const press: NonNullable<typeof _spaceFlipPress> = {
+            const press: SpaceFlipPress = {
               wasUiTopVisible: uiTopVisible,
               pressedAt: performance.now(),
               hintTimer: null,
