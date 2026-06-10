@@ -714,10 +714,20 @@ class DatabankStore extends Emitter {
     }
   }
 
-  async fetchFiles(): Promise<void> {
+  /** `opts.force` skips the IDB cache + in-memory shortcut, forcing a
+   *  fresh network stream. Used by the LibraryPanel's "Reload" button on
+   *  the completeness chip so a torn cache can recover even when its
+   *  signature still matches the backend. */
+  async fetchFiles(opts: { force?: boolean } = {}): Promise<void> {
     if (this._filesInflight) {
       await this._filesInflight;
       return;
+    }
+    if (opts.force) {
+      // Wipe the cache + in-memory match so neither shortcut can fire.
+      this._filesComplete = false;
+      this._filesSignature = null;
+      await libraryCache.clear();
     }
     this._filesInflight = this._doFetchFiles().finally(() => {
       this._filesInflight = null;

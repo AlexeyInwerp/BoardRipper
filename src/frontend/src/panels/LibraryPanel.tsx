@@ -612,7 +612,7 @@ export function LibraryPanel() {
         <button
           className="library-scan-btn"
           style={{ marginLeft: 8, padding: '0 6px', fontSize: 10 }}
-          onClick={() => { void databankStore.fetchFiles(); }}
+          onClick={() => { void databankStore.fetchFiles({ force: true }); }}
         >
           Reload
         </button>
