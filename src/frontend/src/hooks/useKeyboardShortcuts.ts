@@ -40,10 +40,15 @@ let _lastMouseY = 0;
  * Tune up if normal taps still register as peeks.
  */
 const SPACE_HOLD_PEEK_MS = 350;
+/** How long the hint chip stays visible after it first appears. Auto-hides
+ *  even if the user keeps holding Space, so a long peek doesn't leave a
+ *  permanent label cluttering the canvas. */
+const PEEK_HINT_LIFESPAN_MS = 3000;
 let _spaceFlipPress: {
   wasUiTopVisible: boolean;
   pressedAt: number;
   hintTimer: ReturnType<typeof setTimeout> | null;
+  hintHideTimer: ReturnType<typeof setTimeout> | null;
 } | null = null;
 
 /** Text to copy for the active board tab's current selection, mirroring the
@@ -270,16 +275,24 @@ export function useKeyboardShortcuts() {
             // the toggle flips both kinds of files identically.
             const swap = board?.primarySide === 'bottom';
             const uiTopVisible = swap ? showBottom : showTop;
-            // Hint chip shows up only AFTER threshold crosses — a quick tap
-            // never sees it, so casual flips stay distraction-free.
-            const hintTimer = setTimeout(() => {
-              peekHintStore.show();
-            }, SPACE_HOLD_PEEK_MS);
-            _spaceFlipPress = {
+            // Hint chip shows up only AFTER the tap-vs-hold threshold trips,
+            // and self-dismisses PEEK_HINT_LIFESPAN_MS after that — a quick
+            // tap never sees the chip at all, and a long peek doesn't leave
+            // it permanently parked on the canvas. The hide-timer ref lives
+            // on the press record so keyup/blur can cancel it cleanly.
+            const press: NonNullable<typeof _spaceFlipPress> = {
               wasUiTopVisible: uiTopVisible,
               pressedAt: performance.now(),
-              hintTimer,
+              hintTimer: null,
+              hintHideTimer: null,
             };
+            press.hintTimer = setTimeout(() => {
+              peekHintStore.show();
+              press.hintHideTimer = setTimeout(() => {
+                peekHintStore.hide();
+              }, PEEK_HINT_LIFESPAN_MS);
+            }, SPACE_HOLD_PEEK_MS);
+            _spaceFlipPress = press;
             if (uiTopVisible) boardStore.selectBottom();
             else boardStore.selectTop();
             return;
@@ -431,6 +444,7 @@ export function useKeyboardShortcuts() {
       if (!press) return;
       _spaceFlipPress = null;
       if (press.hintTimer) clearTimeout(press.hintTimer);
+      if (press.hintHideTimer) clearTimeout(press.hintHideTimer);
       peekHintStore.hide();
       const heldMs = performance.now() - press.pressedAt;
       if (heldMs < SPACE_HOLD_PEEK_MS) return; // tap: keep flipped state
@@ -445,6 +459,7 @@ export function useKeyboardShortcuts() {
     // them.
     const spaceBlurHandler = () => {
       if (_spaceFlipPress?.hintTimer) clearTimeout(_spaceFlipPress.hintTimer);
+      if (_spaceFlipPress?.hintHideTimer) clearTimeout(_spaceFlipPress.hintHideTimer);
       _spaceFlipPress = null;
       peekHintStore.hide();
     };

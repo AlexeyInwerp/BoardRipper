@@ -4236,19 +4236,24 @@ body {
   transform: translateX(-50%);
   z-index: 10001;
   padding: 10px 18px;
-  border-radius: 10px;
-  background: rgba(20, 20, 24, 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  border-radius: 0;
+  background: rgba(20, 20, 24, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   color: #fff;
   font-size: 13px;
   font-family: inherit;
   letter-spacing: 0.01em;
-  border: 1px solid var(--accent, #5af);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
   pointer-events: none;
+  /* The vanish-after-3s lifecycle is owned by the keyboard handler, which
+     calls peekHintStore.hide() on a setTimeout. We only animate the fade
+     here so the disappearance feels gentle. */
   animation: peek-hint-in 0.14s ease-out;
+  transition: opacity 0.4s ease-in;
 }
+.peek-hint-chip.fading { opacity: 0; }
 @keyframes peek-hint-in {
   from { opacity: 0; transform: translate(-50%, 6px); }
   to { opacity: 1; transform: translate(-50%, 0); }
