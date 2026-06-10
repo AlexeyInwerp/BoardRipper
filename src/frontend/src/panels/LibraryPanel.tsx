@@ -586,9 +586,44 @@ export function LibraryPanel() {
     </div>
   );
 
+  // Completeness guard: after the strip is done (phase==='done'), compare the
+  // in-memory file count to the backend stats. A mismatch means the stream
+  // truncated mid-flight, IDB returned a torn cache, or a post-scan refetch
+  // got skipped — none of which the strip alone surfaces. Show a sticky chip
+  // with a one-click reload until the counts agree. Allow a tiny slack in case
+  // the scanner adds a row between the stats call and the stream finishing.
+  const expectedTotal = stats ? stats.boards + stats.pdfs : 0;
+  const loadedTotal = files.length;
+  const isIncomplete =
+    libraryLoad.phase === 'done'
+    && filesComplete
+    && expectedTotal > 0
+    && loadedTotal + 16 < expectedTotal; // 16 = small slack window
+  const incompleteStrip = isIncomplete && (
+    <div className="library-loadstrip error" role="alert">
+      <div className="library-loadstrip-text">
+        <span className="library-loadstrip-phase">Library load incomplete</span>
+        <span className="library-loadstrip-counter">
+          {loadedTotal.toLocaleString()} of {expectedTotal.toLocaleString()} files
+        </span>
+        <span className="library-loadstrip-note">
+          (the stream stopped early — usually a transient network issue)
+        </span>
+        <button
+          className="library-scan-btn"
+          style={{ marginLeft: 8, padding: '0 6px', fontSize: 10 }}
+          onClick={() => { void databankStore.fetchFiles(); }}
+        >
+          Reload
+        </button>
+      </div>
+    </div>
+  );
+
   const statsBar = (
     <div className="library-statsbar">
       {loadStrip}
+      {incompleteStrip}
       <div className="library-statsbar-text">
         {scanning ? (
           <>

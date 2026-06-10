@@ -458,7 +458,13 @@ class DatabankStore extends Emitter {
     const brandMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
-      const brand = f.manufacturer || 'Unknown';
+      // When the boards.db resolver only got as far as pattern-matching the
+      // board number, `manufacturer` is empty but the ODM (`board_manufacturer`,
+      // e.g. Wistron, Quanta, Compal) is still useful — group those files under
+      // a bracketed ODM label so the user can navigate them instead of having
+      // 90% of the library dumped into one "Unknown" bucket.
+      const brand = f.manufacturer
+        || (f.board_manufacturer ? `[ODM] ${f.board_manufacturer}` : 'Unknown');
       const model = f.model || 'Unknown model';
 
       if (!brandMap.has(brand)) brandMap.set(brand, new Map());
@@ -933,7 +939,14 @@ class DatabankStore extends Emitter {
 
     // Cache write is async + tx-isolated; never blocks the UI.
     if (serverSig) void libraryCache.writeChunked(serverSig, this._files);
-    log.scan.log(`Library streamed: ${this._files.length} files (sig ${serverSig ?? 'unknown'})`);
+    const got = this._files.length;
+    if (total > 0 && got + 16 < total) {
+      // Stream advertised more rows than it delivered. Loudly log so the
+      // Debug panel surfaces it next to the completeness chip in the panel.
+      log.scan.warn(`Library stream short: ${got} delivered, ${total} advertised (sig ${serverSig ?? 'unknown'})`);
+    } else {
+      log.scan.log(`Library streamed: ${got} files (sig ${serverSig ?? 'unknown'})`);
+    }
   }
 
   private _filesByIdsInflight: Promise<void> | null = null;
