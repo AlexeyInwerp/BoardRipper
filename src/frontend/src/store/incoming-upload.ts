@@ -1,6 +1,7 @@
 import { boardStore } from './board-store';
 import { databankStore, isElectron } from './databank-store';
 import { log } from './log-store';
+import { pdfIndexClient } from '../pdf/pdf-index-client';
 
 /**
  * Save dropped board/PDF files into the server library's `incoming/` folder
@@ -40,6 +41,17 @@ export async function saveDroppedToIncoming(files: File[]): Promise<void> {
     // Refresh the library list + totals so the new file shows up immediately.
     void databankStore.fetchFiles();
     void databankStore.fetchStats();
+    // Auto-index any dropped PDFs so they're searchable in Ctrl-F /
+    // PDF-search without a full library re-index. We don't get per-file IDs
+    // back from the upload response, so we kick the pdfindex pipeline on the
+    // whole `incoming` folder — cheap (only files that landed since the last
+    // pass run), idempotent, and matches the existing per-folder index UX.
+    const hasPdf = files.some(f => f.name.toLowerCase().endsWith('.pdf'));
+    if (hasPdf) {
+      void pdfIndexClient.indexFolder('incoming').then(res => {
+        if (res.ok) databankStore.startPdfIndexPolling();
+      }).catch(() => { /* non-critical */ });
+    }
     boardStore.addToast(
       `Saved ${saved} file${saved > 1 ? 's' : ''} to library (incoming)`,
       'info',

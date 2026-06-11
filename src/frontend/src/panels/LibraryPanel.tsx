@@ -1006,6 +1006,7 @@ export function LibraryPanel() {
             searchFilter={debouncedSearch}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
+            onIndexFolder={handleIndexFolder}
           />
         )}
       </div>
@@ -2224,7 +2225,7 @@ function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolea
   return { ...node, files, file_ids: undefined, children };
 }
 
-function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
+function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile, onIndexFolder }: {
   tree: FolderNode | null;
   treeLoading: boolean;
   selectedFileId: number | null;
@@ -2232,6 +2233,9 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   searchFilter: string;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
+  /** Fired when the user clicks the "idx" button next to a folder. The
+   *  handler runs the PDF text-indexer over that subtree only. */
+  onIndexFolder?: (folderPath: string) => void;
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-folders', ['']);
 
@@ -2277,6 +2281,7 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
         expanded={expanded}
         selectedFileId={selectedFileId}
         filterFile={filterFile}
+        onIndexFolder={onIndexFolder}
         onToggleExpand={toggle}
         onSelectFile={onSelectFile}
         onOpenFile={onOpenFile}
@@ -2285,7 +2290,7 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   );
 }
 
-function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onToggleExpand, onSelectFile, onOpenFile }: {
+function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onToggleExpand, onSelectFile, onOpenFile, onIndexFolder }: {
   node: FolderNode;
   depth: number;
   expanded: Set<string>;
@@ -2294,12 +2299,18 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
   onToggleExpand: (path: string) => void;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
+  onIndexFolder?: (folderPath: string) => void;
 }) {
   const isExpanded = expanded.has(node.path);
   const nodeFiles = resolveNodeFiles(node);
   const hasChildren = (node.children && node.children.length > 0) || nodeFiles.length > 0;
 
   const filteredFiles = nodeFiles.filter(filterFile);
+
+  // Skip the idx button on the synthetic root node (node.path === '') — the
+  // existing global "index all PDFs" toolbar button already covers that, and
+  // a duplicate at the very top of the tree feels noisy.
+  const showIdxBtn = onIndexFolder && node.path !== '';
 
   return (
     <div className="library-tree-group">
@@ -2312,6 +2323,15 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
           <span className="library-tree-arrow">{isExpanded ? '▼' : '▶'}</span>
         )}
         <span className="library-tree-folder">{node.name || '/'}</span>
+        {showIdxBtn && (
+          <button
+            className="library-live-index-btn"
+            title={`Re-index PDFs in "${node.path}"`}
+            onClick={(e) => { e.stopPropagation(); onIndexFolder!(node.path); }}
+          >
+            idx
+          </button>
+        )}
       </div>
       {isExpanded && (
         <div className="library-tree-children">
@@ -2326,6 +2346,7 @@ function FolderNodeView({ node, depth, expanded, selectedFileId, filterFile, onT
               onToggleExpand={onToggleExpand}
               onSelectFile={onSelectFile}
               onOpenFile={onOpenFile}
+              onIndexFolder={onIndexFolder}
             />
           ))}
           {filteredFiles.map(f => (
