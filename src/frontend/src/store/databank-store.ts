@@ -247,6 +247,36 @@ export interface DonorEntry {
   added_at: string;
 }
 
+/**
+ * Canonical display forms for common brand / ODM names. Keys are
+ * lowercased; values preserve the conventional capitalisation users expect
+ * to see in the library tree (HP all-caps, Asus title-case, etc.). The
+ * metadataTree builder consults this map after lowercasing the brand so
+ * "ASUS" / "Asus" / "asus" all collapse into one display bucket. Brands
+ * not in the map fall back to whichever value the resolver / scrape source
+ * happened to produce first for that lowercased key.
+ */
+const BRAND_CANONICAL: Record<string, string> = {
+  apple: 'Apple', asus: 'Asus', acer: 'Acer', dell: 'Dell',
+  lenovo: 'Lenovo', hp: 'HP', msi: 'MSI', ibm: 'IBM',
+  amd: 'AMD', intel: 'Intel', samsung: 'Samsung', lg: 'LG',
+  toshiba: 'Toshiba', fujitsu: 'Fujitsu', sony: 'Sony',
+  google: 'Google', microsoft: 'Microsoft', xiaomi: 'Xiaomi',
+  huawei: 'Huawei', oppo: 'Oppo', oneplus: 'OnePlus',
+  razer: 'Razer', gigabyte: 'Gigabyte', biostar: 'Biostar',
+  asrock: 'ASRock', evga: 'EVGA', nvidia: 'NVIDIA',
+  // ODMs (used inside [ODM] X labels)
+  quanta: 'Quanta', compal: 'Compal', wistron: 'Wistron',
+  inventec: 'Inventec', pegatron: 'Pegatron', foxconn: 'Foxconn',
+};
+
+/** Map any spelling of a known brand/ODM to its canonical display form;
+ *  return the raw value untouched for anything we don't recognise. */
+function canonicalBrand(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  return BRAND_CANONICAL[key] ?? raw;
+}
+
 class DatabankStore extends Emitter {
   // ── Load lifecycle (added 2026-05-09) ───────────────────────────────
   /** Tracks the app-startup load orchestrated by ensureLoaded(). */
@@ -450,25 +480,41 @@ class DatabankStore extends Emitter {
     if (this._metadataCache && this._metadataCache.version === this._filesVersion) {
       return this._metadataCache.tree;
     }
-    // Brand → Model → (board_number ? boardNumbers[board#] : model.ungrouped)
+    // Brand → Model → (board_number ? boardNumbers[board#] : model.ungrouped).
+    // Bucket key is the lowercased brand so "ASUS" / "Asus" / "asus" collapse
+    // into the same group; display name comes from BRAND_CANONICAL when known
+    // (so HP / MSI / IBM stay all-caps and Asus/Apple/etc. stay title-case)
+    // and falls back to the first non-empty value we see for unknown brands.
     interface ModelAcc {
       boardMap: Map<string, DatabankFile[]>;
       ungrouped: DatabankFile[];
     }
-    const brandMap = new Map<string, Map<string, ModelAcc>>();
+    const brandKeyToDisplay = new Map<string, string>();
+    const brandKeyToModelMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
       // When the boards.db resolver only got as far as pattern-matching the
       // board number, `manufacturer` is empty but the ODM (`board_manufacturer`,
       // e.g. Wistron, Quanta, Compal) is still useful — group those files under
-      // a bracketed ODM label so the user can navigate them instead of having
-      // 90% of the library dumped into one "Unknown" bucket.
+      // a bracketed ODM label. ODM strings are also canonicalised so a mixed-
+      // case scrape doesn't split "Wistron" / "WISTRON" buckets.
       const brand = f.manufacturer
-        || (f.board_manufacturer ? `[ODM] ${f.board_manufacturer}` : 'Unknown');
+        ? canonicalBrand(f.manufacturer)
+        : (f.board_manufacturer ? `[ODM] ${canonicalBrand(f.board_manufacturer)}` : 'Unknown');
+      const brandKey = brand.toLowerCase();
+
+      // Display name picks: known-canonical wins, then first-seen value, then
+      // the raw brand. Re-assigning per row so a canonical entry seen later
+      // replaces an earlier first-seen value.
+      const display = BRAND_CANONICAL[brandKey]
+        ?? brandKeyToDisplay.get(brandKey)
+        ?? brand;
+      brandKeyToDisplay.set(brandKey, display);
+
       const model = f.model || 'Unknown model';
 
-      if (!brandMap.has(brand)) brandMap.set(brand, new Map());
-      const modelMap = brandMap.get(brand)!;
+      if (!brandKeyToModelMap.has(brandKey)) brandKeyToModelMap.set(brandKey, new Map());
+      const modelMap = brandKeyToModelMap.get(brandKey)!;
       if (!modelMap.has(model)) modelMap.set(model, { boardMap: new Map(), ungrouped: [] });
       const acc = modelMap.get(model)!;
 
@@ -480,12 +526,15 @@ class DatabankStore extends Emitter {
       }
     }
 
-    // Sort: brands alphabetically with 'Unknown' last; models alphabetically
-    // with 'Unknown model' last; board numbers via localeCompare.
-    const sortBrands = (a: string, b: string) => {
-      if (a === 'Unknown') return b === 'Unknown' ? 0 : 1;
-      if (b === 'Unknown') return -1;
-      return a.localeCompare(b);
+    // Sort: brands alphabetically by their display name with 'Unknown' last;
+    // models alphabetically with 'Unknown model' last; board numbers via
+    // localeCompare. Keys are lowercased — we sort the display, not the key.
+    const sortBrandKeys = (a: string, b: string) => {
+      const ad = brandKeyToDisplay.get(a)!;
+      const bd = brandKeyToDisplay.get(b)!;
+      if (ad === 'Unknown') return bd === 'Unknown' ? 0 : 1;
+      if (bd === 'Unknown') return -1;
+      return ad.localeCompare(bd);
     };
     const sortModels = (a: string, b: string) => {
       if (a === 'Unknown model') return b === 'Unknown model' ? 0 : 1;
@@ -494,8 +543,9 @@ class DatabankStore extends Emitter {
     };
 
     const groups: MetadataGroup[] = [];
-    for (const brand of [...brandMap.keys()].sort(sortBrands)) {
-      const modelMap = brandMap.get(brand)!;
+    for (const brandKey of [...brandKeyToModelMap.keys()].sort(sortBrandKeys)) {
+      const display = brandKeyToDisplay.get(brandKey)!;
+      const modelMap = brandKeyToModelMap.get(brandKey)!;
       const models: MetadataGroup['models'] = [];
       for (const model of [...modelMap.keys()].sort(sortModels)) {
         const acc = modelMap.get(model)!;
@@ -504,7 +554,7 @@ class DatabankStore extends Emitter {
           .map(([boardNumber, files]) => ({ boardNumber, files }));
         models.push({ model, boardNumbers, ungrouped: acc.ungrouped });
       }
-      groups.push({ manufacturer: brand, models });
+      groups.push({ manufacturer: display, models });
     }
 
     this._metadataCache = { version: this._filesVersion, tree: groups };
