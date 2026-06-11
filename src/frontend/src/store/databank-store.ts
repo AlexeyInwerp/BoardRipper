@@ -303,6 +303,7 @@ class DatabankStore extends Emitter {
   private _filesByPath = new Map<string, DatabankFile>();
   private _metadataCache: { version: number; tree: MetadataGroup[] } | null = null;
   private _modelCache: { version: number; tree: ModelGroup[] } | null = null;
+  private _unrecognizedTreeCache: { version: number; tree: FolderNode | null } | null = null;
 
   /** Single mutation point for `_files`. Bumps the version so memoized
    *  getters (metadataTree/modelTree) know to recompute. */
@@ -311,6 +312,7 @@ class DatabankStore extends Emitter {
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
+    this._unrecognizedTreeCache = null;
     // Build both lookup tables in a single pass — `new Map(files.map(...))`
     // allocates 2N intermediate tuple arrays per Map (4N total at 100k rows).
     const byId = new Map<number, DatabankFile>();
@@ -493,6 +495,12 @@ class DatabankStore extends Emitter {
     const brandKeyToModelMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
+      // Truly-unrecognised files (no brand AND no ODM) skip the brand grouping
+      // entirely — they're rendered in their natural filesystem layout under
+      // the "---unrecognized---" separator further down, so the user can find
+      // them at their real folder path. See unrecognizedFolderTree below.
+      if (!f.manufacturer && !f.board_manufacturer) continue;
+
       // When the boards.db resolver only got as far as pattern-matching the
       // board number, `manufacturer` is empty but the ODM (`board_manufacturer`,
       // e.g. Wistron, Quanta, Compal) is still useful — group those files under
@@ -500,7 +508,7 @@ class DatabankStore extends Emitter {
       // case scrape doesn't split "Wistron" / "WISTRON" buckets.
       const brand = f.manufacturer
         ? canonicalBrand(f.manufacturer)
-        : (f.board_manufacturer ? `[ODM] ${canonicalBrand(f.board_manufacturer)}` : 'Unknown');
+        : `[ODM] ${canonicalBrand(f.board_manufacturer)}`;
       const brandKey = brand.toLowerCase();
 
       // Display name picks: known-canonical wins, then first-seen value, then
@@ -559,6 +567,51 @@ class DatabankStore extends Emitter {
 
     this._metadataCache = { version: this._filesVersion, tree: groups };
     return groups;
+  }
+
+  /** Filesystem-shaped tree of files the resolver couldn't categorise (no
+   *  brand AND no ODM). Rendered under the "---unrecognized---" separator in
+   *  the Board# tab so the user can still navigate them by their real
+   *  on-disk path. Returns null when every file has at least an ODM. */
+  get unrecognizedFolderTree(): FolderNode | null {
+    if (this._unrecognizedTreeCache && this._unrecognizedTreeCache.version === this._filesVersion) {
+      return this._unrecognizedTreeCache.tree;
+    }
+    const unknownFiles: DatabankFile[] = [];
+    for (const f of this._files) {
+      if (!f.manufacturer && !f.board_manufacturer) unknownFiles.push(f);
+    }
+    if (unknownFiles.length === 0) {
+      this._unrecognizedTreeCache = { version: this._filesVersion, tree: null };
+      return null;
+    }
+
+    const root: FolderNode = { name: '/', path: '', children: [], files: [] };
+    const nodeMap = new Map<string, FolderNode>([['', root]]);
+
+    const ensureDir = (dir: string): FolderNode => {
+      if (dir === '') return root;
+      const cached = nodeMap.get(dir);
+      if (cached) return cached;
+      const lastSlash = dir.lastIndexOf('/');
+      const parent = lastSlash >= 0 ? dir.substring(0, lastSlash) : '';
+      const parentNode = ensureDir(parent);
+      const name = lastSlash >= 0 ? dir.substring(lastSlash + 1) : dir;
+      const node: FolderNode = { name, path: dir, children: [], files: [] };
+      (parentNode.children ||= []).push(node);
+      nodeMap.set(dir, node);
+      return node;
+    };
+
+    for (const f of unknownFiles) {
+      const lastSlash = f.path.lastIndexOf('/');
+      const dir = lastSlash >= 0 ? f.path.substring(0, lastSlash) : '';
+      const node = ensureDir(dir);
+      (node.files ||= []).push(f);
+    }
+
+    this._unrecognizedTreeCache = { version: this._filesVersion, tree: root };
+    return root;
   }
 
   get modelTree(): ModelGroup[] {
@@ -818,6 +871,7 @@ class DatabankStore extends Emitter {
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
+    this._unrecognizedTreeCache = null;
   }
 
   /** Mark the streamed load as complete and persist the signature. Called
@@ -828,6 +882,7 @@ class DatabankStore extends Emitter {
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
+    this._unrecognizedTreeCache = null;
   }
 
   /** Reset the in-memory file list before a fresh stream. Called when the
@@ -841,6 +896,7 @@ class DatabankStore extends Emitter {
     this._filesVersion++;
     this._metadataCache = null;
     this._modelCache = null;
+    this._unrecognizedTreeCache = null;
   }
 
   private async _doFetchFiles(): Promise<void> {

@@ -4570,6 +4570,20 @@ body {
   color: var(--accent);
 }
 
+/* "---unrecognized---" divider between brand groups and the filesystem-
+   shaped folder tree of unbucketed files in the Board# view. */
+.library-tree-separator {
+  padding: 8px 8px 4px 8px;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  border-top: 1px dashed var(--border);
+  user-select: none;
+}
+
 .library-tree-board-num {
   color: var(--text-primary);
   font-family: monospace;

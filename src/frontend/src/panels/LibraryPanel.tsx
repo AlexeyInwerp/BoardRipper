@@ -140,6 +140,12 @@ export function LibraryPanel() {
   // re-runs when a dep reference changes.
   const metadataTree = useMemo(
     () => viewMode === 'metadata' ? databankStore.metadataTree : null,
+    [viewMode, files],
+  );
+  // Sidecar folder-tree of files the resolver couldn't categorise (no brand
+  // AND no ODM). Renders under "---unrecognized---" separator in MetadataView.
+  const unrecognizedFolderTree = useMemo(
+    () => viewMode === 'metadata' ? databankStore.unrecognizedFolderTree : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [viewMode, files],
   );
@@ -990,8 +996,10 @@ export function LibraryPanel() {
         ) : viewMode === 'metadata' ? (
           <MetadataView
             groups={metadataTree ?? []}
+            unrecognizedTree={unrecognizedFolderTree}
             selectedFileId={selectedFileId}
             filterFile={filterFile}
+            searchFilter={debouncedSearch}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
           />
@@ -1972,10 +1980,15 @@ function NameGroupedFileRows({ files, indent, selectedFileId, onSelectFile, onOp
   );
 }
 
-function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
+function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
   groups: MetadataGroup[];
+  /** Filesystem-shaped tree of files the resolver couldn't categorise.
+   *  Rendered after the brand groups under a "---unrecognized---" divider so
+   *  the user can still navigate them by their real on-disk path. */
+  unrecognizedTree: FolderNode | null;
   selectedFileId: number | null;
   filterFile: (f: DatabankFile) => boolean;
+  searchFilter: string;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
 }) {
@@ -2084,6 +2097,30 @@ function MetadataView({ groups, selectedFileId, filterFile, onSelectFile, onOpen
           </div>
         );
       })}
+      {unrecognizedTree && (() => {
+        // Mirror FolderView's filter behaviour: when the user is actively
+        // searching, prune empty subdirs so the unrecognised section
+        // shrinks to the matches; otherwise keep the full structure.
+        const visible = searchFilter.trim()
+          ? pruneEmptyFolders(unrecognizedTree, filterFile)
+          : unrecognizedTree;
+        if (!visible) return null;
+        return (
+          <>
+            <div className="library-tree-separator">---unrecognized---</div>
+            <FolderNodeView
+              node={visible}
+              depth={0}
+              expanded={expanded}
+              selectedFileId={selectedFileId}
+              filterFile={filterFile}
+              onToggleExpand={toggle}
+              onSelectFile={onSelectFile}
+              onOpenFile={onOpenFile}
+            />
+          </>
+        );
+      })()}
     </div>
   );
 }
