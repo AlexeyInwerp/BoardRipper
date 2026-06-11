@@ -495,13 +495,16 @@ class DatabankStore extends Emitter {
     const brandKeyToModelMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
-      // Anything without a real brand goes to the unrecognized folder-tree
-      // section below the separator — only files the resolver could attach
-      // to a manufacturer make it into the alphabetical brand groups. ODM-
-      // only files (we know who built the board, but not whose product it
-      // is) belong with the unsorted bulk so they're navigable by their
-      // real on-disk path instead of getting a fake [ODM] X bucket name
-      // that pollutes the sorted section.
+      // The sorted section is for files that fully resolved against
+      // boards.db (resolution_status === 'resolved') — those carry a real
+      // model + board_uuid and slot cleanly into Brand → Model → Board#.
+      // pattern_matched rows might have a brand string (the keyword
+      // resolver guesses Acer / Asus / etc. from the filename or dir
+      // hints) but they lack the model / board# structure, so they belong
+      // in the unrecognized folder-tree section below the divider where
+      // the user can navigate them by their real on-disk path instead of
+      // being lumped under "Unknown model".
+      if (f.resolution_status !== 'resolved') continue;
       if (!f.manufacturer) continue;
 
       const brand = canonicalBrand(f.manufacturer);
@@ -576,7 +579,10 @@ class DatabankStore extends Emitter {
     }
     const unknownFiles: DatabankFile[] = [];
     for (const f of this._files) {
-      if (!f.manufacturer) unknownFiles.push(f);
+      // Mirror of metadataTree's gate: anything that isn't fully resolved
+      // against boards.db goes here, including pattern_matched rows that
+      // carry a brand-keyword guess but no model / board_uuid context.
+      if (f.resolution_status !== 'resolved') unknownFiles.push(f);
     }
     if (unknownFiles.length === 0) {
       this._unrecognizedTreeCache = { version: this._filesVersion, tree: null };
