@@ -9,10 +9,11 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2, IconHistory, IconFolder, IconFolderSearch, IconFileText, IconPin, IconPinFilled } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
+import { showSidebarTab } from '../components/Sidebar.utils';
 
 /** Persisted tree expansion state — survives tab switches and page reloads.
  *  Closing a parent keeps children's keys in the Set so re-opening restores them. */
@@ -347,10 +348,6 @@ export function LibraryPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (viewMode === 'model') handleSetViewMode('metadata'); }, []);
 
-  const handleFileScan = useCallback(() => {
-    databankStore.triggerFileScan();
-  }, []);
-
   const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
     databankStore.selectFile(file.id);
     databankStore.addToHistory(file);
@@ -664,7 +661,7 @@ export function LibraryPanel() {
             )}
             {pdfIndexProgress?.running && (
               <span className="library-indexing" style={{ marginLeft: 8 }}>
-                Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
+                {' · '}Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
                 {pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : ''}
                 {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
                 {fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}
@@ -677,17 +674,20 @@ export function LibraryPanel() {
             )}
             {!pdfIndexProgress?.running && pdfIndexStats && (
               <span className="library-scan-result" style={{ marginLeft: 8 }}>
-                {pdfIndexStats.indexed} indexed · {pdfIndexStats.pages} pages
+                {' · '}{pdfIndexStats.indexed} indexed · {pdfIndexStats.pages} pages
                 {pdfIndexStats.failed > 0 && (
-                  <button
-                    className="library-scan-btn"
-                    style={{ marginLeft: 6, padding: '0 5px', fontSize: 10 }}
-                    onClick={failedListLoading ? undefined : showFailedList}
-                    disabled={failedListLoading}
-                    title="Show failed PDF files"
-                  >
-                    {failedListLoading ? '…' : `${pdfIndexStats.failed} failed`}
-                  </button>
+                  <>
+                    {' · '}
+                    <button
+                      className="library-scan-btn"
+                      style={{ marginLeft: 4, padding: '0 5px', fontSize: 10 }}
+                      onClick={failedListLoading ? undefined : showFailedList}
+                      disabled={failedListLoading}
+                      title="Show failed PDF files"
+                    >
+                      {failedListLoading ? '…' : `${pdfIndexStats.failed} failed`}
+                    </button>
+                  </>
                 )}
               </span>
             )}
@@ -695,28 +695,13 @@ export function LibraryPanel() {
         )}
       </div>
       <div className="library-statsbar-actions">
-        {scanStatus?.running ? (
-          <button className="library-scan-btn library-scan-stop" onClick={() => databankStore.stopScan()} title="Stop scan">Stop</button>
-        ) : (
-          <>
-            {pdfIndexProgress?.running ? (
-              <>
-                <button className="library-scan-btn library-scan-stop" onClick={() => pdfIndexClient.stop()} title="Stop PDF indexing">Stop</button>
-              </>
-            ) : (
-              <button
-                className="library-scan-btn library-scan-icon"
-                onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
-                title="Index all PDFs for text search"
-              >
-                <IconFileText size={14} />
-              </button>
-            )}
-            <button className="library-scan-btn library-scan-icon" onClick={handleFileScan} title="Scan filesystem for board and PDF files">
-              <IconFolderSearch size={14} />
-            </button>
-          </>
-        )}
+        <button
+          className="library-scan-btn library-scan-icon"
+          onClick={() => showSidebarTab('settings')}
+          title="Open Library settings (scan, index, …)"
+        >
+          <IconSettings size={14} />
+        </button>
       </div>
     </div>
   );
@@ -844,6 +829,13 @@ export function LibraryPanel() {
           )}
         </div>
       )}
+
+      {/* Stats + progress bar — moved up here from the panel bottom so the
+       *  scan/index status lives near the search/filter input instead of
+       *  forcing the user's eye to jump to the bottom of the panel.
+       *  Scan/index action buttons themselves now live under
+       *  Settings ▸ Library; the gear icon on the right jumps there. */}
+      {statsBar}
 
       {/* Electron library folder picker */}
       {electronMode && (
@@ -1024,9 +1016,6 @@ export function LibraryPanel() {
         />
       )}
 
-      {/* Stats + scan buttons — pinned to bottom of the panel for visual
-       *  consistency with SettingsPanel (tabs at top, status at bottom). */}
-      {statsBar}
     </div>
   );
 }
@@ -2047,7 +2036,7 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
   return (
     <div className="library-tree">
       {expanded.size > 0 && (
-        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all">⊟</button>
+        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all"><IconChevronsUp size={13} stroke={2} /></button>
       )}
       {filteredGroups.map(group => {
         const mfrKey = `mfr:${group.manufacturer}`;
@@ -2203,7 +2192,7 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
   return (
     <div className="library-tree">
       {expanded.size > 0 && (
-        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all">⊟</button>
+        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all"><IconChevronsUp size={13} stroke={2} /></button>
       )}
       {filteredGroups.map(group => {
         const modelKey = `model:${group.modelLine}`;
@@ -2353,7 +2342,7 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   return (
     <div className="library-tree">
       {expanded.size > 0 && (
-        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all folders">⊟</button>
+        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all folders"><IconChevronsUp size={13} stroke={2} /></button>
       )}
       <FolderNodeView
         node={visibleTree}

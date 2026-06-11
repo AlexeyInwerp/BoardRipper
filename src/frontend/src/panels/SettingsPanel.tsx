@@ -734,8 +734,10 @@ function openDatabaseEditor(): void {
 // ---- Library settings (auto-pdf, history depth, clear history) ----
 
 function LibrarySettingsSection() {
-  const { autoPdf, historyDepth, recentItems } = useDatabank();
+  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress } = useDatabank();
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
+  const scanRunning = scanStatus?.running ?? false;
+  const pdfIndexRunning = pdfIndexProgress?.running ?? false;
 
   // Keep local draft in sync when the stored value changes externally
   useEffect(() => {
@@ -751,6 +753,46 @@ function LibrarySettingsSection() {
   return (
     <div className="settings-subsection">
       <div className="settings-subsection-label">Library</div>
+
+      {/* Scan / index actions — moved from the Library panel statsbar so the
+       *  panel chrome stays focused on browsing. */}
+      <div className="settings-row-field">
+        <span>Scan boards & PDFs</span>
+        {scanRunning ? (
+          <button
+            className="settings-action-btn"
+            onClick={() => databankStore.stopScan()}
+          >
+            Stop scan
+          </button>
+        ) : (
+          <button
+            className="settings-action-btn"
+            onClick={() => databankStore.triggerFileScan()}
+          >
+            Scan now
+          </button>
+        )}
+      </div>
+
+      <div className="settings-row-field">
+        <span>Index PDF text</span>
+        {pdfIndexRunning ? (
+          <button
+            className="settings-action-btn"
+            onClick={() => pdfIndexClient.stop()}
+          >
+            Stop indexing
+          </button>
+        ) : (
+          <button
+            className="settings-action-btn"
+            onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+          >
+            Index all PDFs
+          </button>
+        )}
+      </div>
 
       <label className="settings-row-toggle">
         <input
