@@ -38,9 +38,14 @@ export async function saveDroppedToIncoming(files: File[]): Promise<void> {
 
   if (saved > 0) {
     log.ui.log(`Saved ${saved} dropped file(s) to library incoming/`);
-    // Refresh the library list + totals so the new file shows up immediately.
-    void databankStore.fetchFiles();
-    void databankStore.fetchStats();
+    // Force-refresh the library so the dropped row(s) show up + sort into
+    // the right brand bucket — fetchFiles({force}) clears the IDB chunk
+    // cache + in-memory signature so neither the in-memory shortcut nor
+    // a stale cached snapshot can hide the newly-inserted row. The cache
+    // clear also drops the cached folder tree, so the auto-pre-fetch at
+    // the end of fetchFiles refills it from the live backend — the
+    // dropped file lands in its real folder in the Folders tab too.
+    void databankStore.fetchFiles({ force: true });
     // Auto-index any dropped PDFs so they're searchable in Ctrl-F /
     // PDF-search without a full library re-index. We don't get per-file IDs
     // back from the upload response, so we kick the pdfindex pipeline on the
