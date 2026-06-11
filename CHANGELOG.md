@@ -1,5 +1,36 @@
 # BoardRipper changelog
 
+## v0.31.18 — 2026-06-11
+
+Bigger update than the recent point-releases — covers four areas. The
+library-list pipeline was rebuilt around a streaming endpoint with an
+IDB chunk cache so opening a 100 k-file library no longer freezes the
+UI; the PDF text-click path got a stack of lookup-precision fixes;
+holding Space now lets you peek at the other side of the board and
+returns on release; the Landrex theme's selection halo behaviour
+matches its lower-contrast aesthetic.
+
+### Features
+
+- **Streaming library load with visible progress.** Opening the library on a NAS install with ~80 k files used to block the main thread for several seconds — `res.json()` on `/api/databank/files` parsed the full 50–100 MB payload synchronously, the search input was frozen until the parse finished, and there was no progress UI. New backend endpoint `GET /api/databank/files/stream` emits NDJSON (begin → one file per line → done), the frontend reads via `fetch().body.getReader()` and batches 2 048 rows at a time, yields the main thread between batches, and surfaces a progress strip + counter inside the Library statsbar. Filter input gets a "streaming database from server… 12 k / 80 k" chip so partial-state search is discoverable. ETag/304 fast-path preserved on both endpoints. (`0a61705`, `9ca16b9`)
+- **Hold Space to peek at the other board side.** Tap Space still flips top↔bottom permanently (existing behaviour). Hold Space — past a 350 ms threshold — flips while held and returns to the original side on release. Casual taps never trigger peek; the gesture is autorepeat-gated so holding doesn't re-flip every tick, and a window blur mid-hold drops the press state so an alt-tab doesn't strand the next tap. A small floating hint chip ("Peeking other side — release Space to revert") appears bottom-center once the threshold trips, auto-vanishes 3 s in, and is suppressed entirely for taps under the threshold. PDF-panel context (Space → fit-to-width) unchanged. (`ff36fbe`, `47d239f`, `e1f3549`, `5ad47e7`, `da114ee`)
+- **Landrex theme — selection halo overlay suppressed.** The yellow halo overlay that lit every pin on the selected net was overpowering against Landrex's lower-contrast pastel palette and made the actual board geometry hard to read. Suppressed in that theme; pin recolouring still runs so the selected net is distinguishable by pin colour alone. (`b291ad5`, `f8ea9b4`)
+
+### Fixes
+
+- **streamChunks auto-commit bug truncated warm load at chunk size.** The IDB cache walk's cursor handler was `cursorReq.onsuccess = async () => { await onChunk(...); cursor.continue(); }`. The `await` created a microtask gap where IDB had no pending request, so the read transaction auto-committed and the cursor silently aborted. `tx.oncomplete` then fired "successfully" with only the first chunk — every warm load stopped at exactly 2 048 files regardless of how many were cached. Made the cursor handler strictly synchronous (no `async`, no `await`, no `Promise<void>` return — and the doc-comment loudly forbids reintroducing them). Added a sticky "Library load incomplete — N of M files" chip with a one-click Reload that bypasses the cache via `fetchFiles({ force: true })` so a torn cache always recovers. (`51ffbfa`, `189acfd`, `07fc4eb`)
+- **Rescan no longer leaves the library showing stale data without progress.** Two interacting bugs: `fetchFiles()` coalesces against `_filesInflight`, so the post-scan call was awaiting the pre-scan promise and returning — the post-scan file set never landed. And `_doFetchFiles`'s in-memory shortcut could collide on a signature-stable rescan, skip `libraryLoadStore.begin/setPhase` entirely, and leave the progress strip permanently hidden. Drain the inflight load and null out `_filesComplete`/`_filesSignature` before the refresh fetch in both `_startScanPolling` and `stopScan`. (`7a8db93`)
+- **`extractWord` keeps decimal values whole.** Clicking on `0.001Ohm` or `0.002` used to split into `0` and `001Ohm` / `002` because `.` was a hard word boundary. `.` now counts as a word char only when it's a true decimal point inside a number (digits on both sides, digit-run-tail not preceded by a letter/underscore) — so `R5960.3` / `U5960.6` still break at the dot for designator→pin lookups, but `0.001Ohm` stays one selection. Click exactly on the dot of `0.001` also seeds the expansion. (`33e8d20`)
+- **`extractWord` keeps digit↔digit space so designator+pin lookups don't fuse.** Adjacent runs like `R5960 1` were fusing into `R59601` for the click-extracted word because the consolidated text-item string lost the visual gap. Preserved the boundary so designator and pin number are separately lookable. (`097bb7c`)
+- **PDF click highlight no longer bleeds into the adjacent pin label.** `extractWord` correctly returned `R5960`, but the rendered highlight rectangle was inflated by `pad = 2 / z` pixels on every side plus a 1.5 px border. In dense schematic layouts where the designator and its pin label sit a sub-pixel apart, those extra pixels visibly extended the orange highlight box over the next glyph — looking like the click selected `R5960 1` together. Dropped the horizontal padding so the rect hugs the word's actual extent tight. (`33604a6`)
+- **PDF click highlight no longer triggers a parent re-render / focus loss.** Moved the highlight rendering to an imperative path so a single click doesn't propagate through React's reconciliation and blur the focused element. (`112e773`)
+- **ODM fallback in the Board# metadata tree.** Files whose `manufacturer` is empty but whose `board_manufacturer` (ODM) was pattern-matched now group under `[ODM] Wistron` / `[ODM] Quanta` / `[ODM] Compal` instead of all piling into one giant "Unknown" bucket. (`189acfd`)
+
+### Performance
+
+- **Folder tree cached in IDB so warm loads are instant.** On a warm reload the file list came from the chunk cache in ~100 ms, but `fetchTree` still hit the network every time — ~700 ms over a typical home/Tailscale link plus JSON.parse on a 2 MB body. Tree now lives alongside the file chunks under the same `last_file_scan_at:count` signature so they invalidate together; the first Folders click writes the response back to IDB and every subsequent visit is instant. Folder-tree fetch also surfaces an indeterminate progress strip during the cold path (no per-row signal available — it's one HTTP call), and prefetches in the background after every `fetchFiles` so the first visit is usually already warm. (`b7541c1`, `c992250`)
+- **Streaming-load diff cleanup.** Post-audit pass: drop the dead getRaw/put cache methods, single-tx cursor walks where they're safe to use, parallel stats+meta fetch (saves one RTT on warm TTFB), in-place `delete msg.type` instead of `{ type, ...rest }` per-row spread (≈ 100 k allocations saved per cold load on a big library), backend NDJSON encoder gets `SetEscapeHTML(false)`, and `WHERE file_type IN ('board','pdf')` matches the streaming query to the ETag's count source so the `begin.total` advisory can never overshoot. (`51d2493`)
+
 ## v0.31.17 — 2026-06-08
 
 Follow-up to v0.31.16. Same root cause (pdfjs-dist@5 targets a modern V8
