@@ -4771,6 +4771,51 @@ body {
   margin-bottom: 6px;
 }
 
+/* Second line under the meta row showing the file's library-relative
+   path. Single-line middle-truncated by default; click to expand the
+   spoiler and reveal the full path (which can then wrap freely so the
+   user can select it for copy). Hover surfaces the full path in the
+   native tooltip without expanding. */
+.library-detail-path {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 11px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  user-select: none;
+  border-left: 2px solid transparent;
+  padding-left: 6px;
+  border-radius: 2px;
+  transition: background 0.08s, border-color 0.08s;
+}
+.library-detail-path:hover {
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border-left-color: var(--accent, #5af);
+}
+.library-detail-path-label {
+  font-weight: 600;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.library-detail-path-value {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+.library-detail-path.expanded {
+  cursor: default;
+}
+.library-detail-path.expanded .library-detail-path-value {
+  white-space: normal;
+  word-break: break-all;
+  user-select: text;
+}
+
 .library-detail-bindings {
   border-top: 1px solid var(--border);
   padding-top: 4px;

@@ -1311,6 +1311,36 @@ function RevealButton({ path }: { path: string }) {
   );
 }
 
+/** Render the library-relative filesystem path of a file in the info pane.
+ *  Long paths are middle-truncated to a single line by default (so the parent
+ *  folder is visible AND the filename stays readable); clicking the row
+ *  expands the spoiler so the full path is selectable for copy. The whole
+ *  row is monospace so directory separators line up across files. */
+function FileDetailPath({ path }: { path: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!path) return null;
+  // Keep the head + tail visible, ellipse the middle. The 22-char chunks
+  // comfortably fit ~60 chars total on the typical sidebar width — the
+  // detail pane wraps anything wider, and the spoiler removes the cap.
+  const MAX = 60;
+  const truncated = path.length > MAX
+    ? `${path.slice(0, 22)}…${path.slice(-(MAX - 22 - 1))}`
+    : path;
+  return (
+    <div
+      className={`library-detail-path${expanded ? ' expanded' : ''}`}
+      title={expanded ? '' : path}
+      onClick={() => setExpanded(v => !v)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(v => !v); } }}
+    >
+      <span className="library-detail-path-label">path:</span>
+      <span className="library-detail-path-value">{expanded ? path : truncated}</span>
+    </div>
+  );
+}
+
 function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding, electronMode }: {
   detail: FileDetail;
   files: DatabankFile[];
@@ -1395,6 +1425,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         {detail.net_count != null && <span>{detail.net_count} nets</span>}
         <span>{formatSize(detail.size)}</span>
       </div>
+      <FileDetailPath path={detail.path} />
 
       {detail.file_type === 'pdf' && (
         <div className="library-detail-donor-row">
