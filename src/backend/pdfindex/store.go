@@ -7,7 +7,9 @@ import (
 	"time"
 )
 
-// StatusRow mirrors pdf_index_status.
+// StatusRow mirrors pdf_index_status. ListFailed enriches it with filename
+// + path joined from the files table so the UI can render readable rows
+// instead of "ID 42".
 type StatusRow struct {
 	FileID      int64  `json:"file_id"`
 	Status      string `json:"status"` // pending|indexing|indexed|empty|failed
@@ -16,6 +18,8 @@ type StatusRow struct {
 	AttemptedAt int64  `json:"attempted_at"`
 	IndexedAt   int64  `json:"indexed_at"`
 	Error       string `json:"error"`
+	Filename    string `json:"filename,omitempty"`
+	Path        string `json:"path,omitempty"`
 }
 
 // Page is one extracted page (text > 0 chars only).
@@ -212,8 +216,10 @@ func (db *DB) ResetAll() error {
 }
 
 func (db *DB) ListFailed() ([]StatusRow, error) {
+	// Filename/Path are filled in by the handler from the databank — search.go
+	// follows the same "no ATTACH, enrich in Go" pattern.
 	rows, err := db.reader.Query(
-		`SELECT file_id, status, COALESCE(error,'') FROM pdf_index_status WHERE status='failed'`)
+		`SELECT file_id, status, COALESCE(error,'') FROM pdf_index_status WHERE status='failed' ORDER BY file_id`)
 	if err != nil {
 		return nil, err
 	}

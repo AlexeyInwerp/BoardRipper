@@ -37,6 +37,10 @@ export interface PdfIndexFailedEntry {
   file_id: number;
   status: string;
   error: string;
+  /** Joined from databank on the server side. Empty when the row's file
+   *  has been deleted from databank since the index attempt. */
+  filename?: string;
+  path?: string;
 }
 
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T | null> {

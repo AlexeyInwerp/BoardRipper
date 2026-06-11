@@ -237,6 +237,27 @@ func (h *PdfIndexHandler) Failed(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []pdfindex.StatusRow{}
 	}
+	// Enrich each row with filename + path from the databank — pdfindex.db
+	// doesn't ATTACH databank.db (single-writer disciplines diverge), so we
+	// do it in Go like the search handler does. A row whose file id was
+	// since deleted from databank just keeps empty filename/path.
+	if h.bank != nil && len(rows) > 0 {
+		ids := make([]int64, 0, len(rows))
+		for _, r := range rows {
+			ids = append(ids, r.FileID)
+		}
+		records, _ := h.bank.ListFilesByIDs(r.Context(), ids)
+		byID := make(map[int64]databank.FileRecord, len(records))
+		for _, rec := range records {
+			byID[rec.ID] = rec
+		}
+		for i := range rows {
+			if rec, ok := byID[rows[i].FileID]; ok {
+				rows[i].Filename = rec.Filename
+				rows[i].Path = rec.Path
+			}
+		}
+	}
 	writeJSON(w, rows)
 }
 

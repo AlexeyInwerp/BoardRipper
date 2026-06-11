@@ -160,6 +160,20 @@ export function LibraryPanel() {
   const [failedListLoading, setFailedListLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
+  // Active tree's collapse-all fn registered into this ref by whichever view
+  // is currently rendered (FolderView / MetadataView / ModelView). The chrome
+  // button below dispatches through it so the affordance lives in a fixed
+  // panel-chrome position instead of floating inside the scrolling tree.
+  const treeCollapseAllRef = useRef<(() => void) | null>(null);
+  const [treeHasExpanded, setTreeHasExpanded] = useState(false);
+  const registerTreeCollapseAll = useCallback((
+    fn: (() => void) | null,
+    hasExpanded: boolean,
+  ) => {
+    treeCollapseAllRef.current = fn;
+    setTreeHasExpanded(hasExpanded);
+  }, []);
+
   const showFailedList = useCallback(async () => {
     setFailedListLoading(true);
     const list = await pdfIndexClient.failed();
@@ -695,6 +709,15 @@ export function LibraryPanel() {
         )}
       </div>
       <div className="library-statsbar-actions">
+        {treeHasExpanded && (
+          <button
+            className="library-scan-btn library-scan-icon"
+            onClick={() => treeCollapseAllRef.current?.()}
+            title="Collapse all open folders in the current view"
+          >
+            <IconChevronsUp size={14} />
+          </button>
+        )}
         <button
           className="library-scan-btn library-scan-icon"
           onClick={() => showSidebarTab('settings')}
@@ -709,18 +732,21 @@ export function LibraryPanel() {
   const failedModal = failedList !== null && (
     <div className="library-modal-backdrop" onClick={() => setFailedList(null)}>
       <div className="library-modal library-modal-wide" onClick={e => e.stopPropagation()}>
-        <div className="library-modal-title">Failed PDF Indexing ({failedList.length})</div>
+        <div className="library-modal-title">PDF indexing failures ({failedList.length})</div>
         {failedList.length === 0 ? (
           <div className="library-modal-filename">No failed files.</div>
         ) : (
-          <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {failedList.map(f => (
-              <div key={f.file_id} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 5 }}>
-                <div className="library-modal-filename" style={{ marginBottom: 2 }}>
-                  ID {f.file_id} — {f.status}
+              <div key={f.file_id} className="library-failed-row">
+                <div className="library-failed-filename" title={f.filename || `ID ${f.file_id}`}>
+                  {f.filename || `(deleted file — id ${f.file_id})`}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-secondary)', wordBreak: 'break-all', opacity: 0.8 }}>
-                  {f.error || '(no error message)'}
+                {f.path && (
+                  <div className="library-failed-path" title={f.path}>{f.path}</div>
+                )}
+                <div className="library-failed-error">
+                  {f.error || '(no error message returned by the indexer — likely a worker crash; check container logs for a panic / SIGSEGV around this file)'}
                 </div>
               </div>
             ))}
@@ -728,8 +754,13 @@ export function LibraryPanel() {
         )}
         <div className="library-modal-actions">
           {failedList.length > 0 && (
-            <button className="library-scan-btn" onClick={handleRetryFailed} disabled={retrying}>
-              {retrying ? 'Retrying…' : 'Retry failed'}
+            <button
+              className="library-scan-btn"
+              onClick={handleRetryFailed}
+              disabled={retrying}
+              title="Reset only the failed rows back to pending and re-run the indexer — already-indexed files are NOT touched"
+            >
+              {retrying ? 'Retrying…' : `Retry ${failedList.length} failed (does not re-index the rest)`}
             </button>
           )}
           <button className="library-scan-btn" onClick={() => setFailedList(null)}>Close</button>
@@ -976,6 +1007,7 @@ export function LibraryPanel() {
             filterFile={filterFile}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
+            registerCollapseAll={registerTreeCollapseAll}
           />
         ) : viewMode === 'metadata' ? (
           <MetadataView
@@ -986,6 +1018,7 @@ export function LibraryPanel() {
             searchFilter={debouncedSearch}
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
+            registerCollapseAll={registerTreeCollapseAll}
           />
         ) : viewMode === 'folders' && browseMode === 'live' ? (
           <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} onIndexFolder={handleIndexFolder} />
@@ -999,6 +1032,7 @@ export function LibraryPanel() {
             onSelectFile={handleSelectFile}
             onOpenFile={handleOpenFile}
             onIndexFolder={handleIndexFolder}
+            registerCollapseAll={registerTreeCollapseAll}
           />
         )}
       </div>
@@ -1992,7 +2026,7 @@ function NameGroupedFileRows({ files, indent, selectedFileId, onSelectFile, onOp
   );
 }
 
-function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile }: {
+function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile, registerCollapseAll }: {
   groups: MetadataGroup[];
   /** Filesystem-shaped tree of files the resolver couldn't categorise.
    *  Rendered after the brand groups under a "---unrecognized---" divider so
@@ -2003,6 +2037,10 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
   searchFilter: string;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
+  /** Bound by LibraryPanel — receives the view's collapseAll fn + whether
+   *  anything is currently expanded so the chrome can show / hide and
+   *  invoke a single global "collapse all" button. */
+  registerCollapseAll?: (fn: (() => void) | null, hasExpanded: boolean) => void;
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-metadata');
 
@@ -2033,11 +2071,15 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
     })).filter(g => g.models.length > 0);
   }, [groups, filterFile]);
 
+  // Hand the collapse-all up to the panel chrome so the user sees a static
+  // affordance instead of an absolute-positioned button that scrolls away.
+  useEffect(() => {
+    registerCollapseAll?.(collapseAll, expanded.size > 0);
+    return () => registerCollapseAll?.(null, false);
+  }, [registerCollapseAll, collapseAll, expanded.size]);
+
   return (
     <div className="library-tree">
-      {expanded.size > 0 && (
-        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all"><IconChevronsUp size={13} stroke={2} /></button>
-      )}
       {filteredGroups.map(group => {
         const mfrKey = `mfr:${group.manufacturer}`;
         const isExpanded = expanded.has(mfrKey);
@@ -2159,14 +2201,19 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
 
 // --- Model Tree View ---
 
-function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFile }: {
+function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFile, registerCollapseAll }: {
   groups: ModelGroup[];
   selectedFileId: number | null;
   filterFile: (f: DatabankFile) => boolean;
   onSelectFile: (f: DatabankFile) => void;
   onOpenFile: (f: DatabankFile) => void;
+  registerCollapseAll?: (fn: (() => void) | null, hasExpanded: boolean) => void;
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-model');
+  useEffect(() => {
+    registerCollapseAll?.(collapseAll, expanded.size > 0);
+    return () => registerCollapseAll?.(null, false);
+  }, [registerCollapseAll, collapseAll, expanded.size]);
 
   // Collapse byte-identical duplicates across the WHOLE view — see MetadataView
   // note. A content group spanning model variants (board# revisions) folds to
@@ -2191,9 +2238,6 @@ function ModelView({ groups, selectedFileId, filterFile, onSelectFile, onOpenFil
 
   return (
     <div className="library-tree">
-      {expanded.size > 0 && (
-        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all"><IconChevronsUp size={13} stroke={2} /></button>
-      )}
       {filteredGroups.map(group => {
         const modelKey = `model:${group.modelLine}`;
         const isExpanded = expanded.has(modelKey);
@@ -2294,7 +2338,7 @@ function pruneEmptyFolders(node: FolderNode, filter: (f: DatabankFile) => boolea
   return { ...node, files, file_ids: undefined, children };
 }
 
-function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile, onIndexFolder }: {
+function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilter, onSelectFile, onOpenFile, onIndexFolder, registerCollapseAll }: {
   tree: FolderNode | null;
   treeLoading: boolean;
   selectedFileId: number | null;
@@ -2305,8 +2349,13 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
   /** Fired when the user clicks the "idx" button next to a folder. The
    *  handler runs the PDF text-indexer over that subtree only. */
   onIndexFolder?: (folderPath: string) => void;
+  registerCollapseAll?: (fn: (() => void) | null, hasExpanded: boolean) => void;
 }) {
   const [expanded, toggle, collapseAll] = usePersistedExpanded('boardripper-tree-folders', ['']);
+  useEffect(() => {
+    registerCollapseAll?.(collapseAll, expanded.size > 0);
+    return () => registerCollapseAll?.(null, false);
+  }, [registerCollapseAll, collapseAll, expanded.size]);
 
   // Only prune when the user is actively filtering — otherwise let empty
   // directories stay visible (browsing a fresh library should show structure).
@@ -2341,9 +2390,6 @@ function FolderView({ tree, treeLoading, selectedFileId, filterFile, searchFilte
 
   return (
     <div className="library-tree">
-      {expanded.size > 0 && (
-        <button className="library-collapse-all" onClick={collapseAll} title="Collapse all folders"><IconChevronsUp size={13} stroke={2} /></button>
-      )}
       <FolderNodeView
         node={visibleTree}
         depth={0}

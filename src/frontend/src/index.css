@@ -4489,38 +4489,9 @@ body {
   padding: 2px 0;
   position: relative;
 }
-.library-collapse-all {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.08s, border-color 0.08s, color 0.08s;
-  font-size: 0.9em;
-  line-height: 1;
-  cursor: pointer;
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.6;
-}
-.library-collapse-all:hover {
-  opacity: 1;
-  color: var(--text-primary);
-  border-color: var(--text-secondary);
-}
+/* .library-collapse-all classes retired — the collapse-all affordance now
+   lives in the statsbar actions row (library-scan-btn.library-scan-icon)
+   and dispatches into the active tree via a registered ref. */
 
 .library-tree-group {
   /* container for a tree level */
@@ -7126,7 +7097,41 @@ body {
 /* ---- FZ decryption-key dialog ---------------------------------------- */
 /* Reuses .library-modal-* — only adds a wider variant + textarea styling
  * matching .library-modal-field input. */
-.library-modal.library-modal-wide { max-width: 520px; }
+.library-modal.library-modal-wide { max-width: 640px; }
+
+/* Failed-row layout inside the PDF-indexing-failures modal. */
+.library-failed-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.library-failed-filename {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.library-failed-path {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.65;
+  word-break: break-all;
+}
+.library-failed-error {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--danger, #e88);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 2px;
+  padding: 4px 6px;
+  background: rgba(255, 80, 80, 0.06);
+  border-left: 2px solid var(--danger, #e88);
+  border-radius: 2px;
+}
 .library-modal-field textarea {
   background: var(--bg-primary);
   border: 1px solid var(--border);
