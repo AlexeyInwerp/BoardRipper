@@ -4271,17 +4271,6 @@ body {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-/* "partial" chip beside the filter input while the library is still streaming. */
-.library-search-partial {
-  font-size: 10px;
-  color: var(--accent, #5af);
-  padding: 1px 6px;
-  border: 1px solid var(--accent, #5af);
-  border-radius: 8px;
-  white-space: nowrap;
-  align-self: center;
-  opacity: 0.85;
-}
 .library-statsbar-text {
   flex: 1;
   min-width: 0;

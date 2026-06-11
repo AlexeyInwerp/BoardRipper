@@ -554,7 +554,7 @@ export function LibraryPanel() {
   const loadStripLabel =
     libraryLoad.phase === 'connecting' ? 'Connecting'
     : libraryLoad.phase === 'cache' ? 'Restoring cache'
-    : libraryLoad.phase === 'streaming' ? 'Streaming files'
+    : libraryLoad.phase === 'streaming' ? 'Streaming database from server'
     : libraryLoad.phase === 'finalizing' ? 'Indexing'
     : libraryLoad.phase === 'error' ? 'Load failed'
     : '';
@@ -841,14 +841,6 @@ export function LibraryPanel() {
             >
               x
             </button>
-          )}
-          {!filesComplete && libraryLoad.total > 0 && (
-            <span
-              className="library-search-partial"
-              title="The library is still loading. The filter runs against the files received so far."
-            >
-              streaming database from server… {libraryLoad.done.toLocaleString()} / {libraryLoad.total.toLocaleString()}
-            </span>
           )}
         </div>
       )}
