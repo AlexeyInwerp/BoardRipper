@@ -495,17 +495,15 @@ class DatabankStore extends Emitter {
     const brandKeyToModelMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
-      // The sorted section is for files that fully resolved against
-      // boards.db (resolution_status === 'resolved') — those carry a real
-      // model + board_uuid and slot cleanly into Brand → Model → Board#.
-      // pattern_matched rows might have a brand string (the keyword
-      // resolver guesses Acer / Asus / etc. from the filename or dir
-      // hints) but they lack the model / board# structure, so they belong
-      // in the unrecognized folder-tree section below the divider where
-      // the user can navigate them by their real on-disk path instead of
-      // being lumped under "Unknown model".
-      if (f.resolution_status !== 'resolved') continue;
-      if (!f.manufacturer) continue;
+      // The sorted section is for files we know enough about to place
+      // precisely — i.e. both a brand AND a model. boards.db-resolved
+      // rows always satisfy this; pattern_matched rows do too when the
+      // keyword resolver found both (e.g. "ASUS UX310UV ..." picks up
+      // brand from the ASUS keyword and model from asusModelRe). Files
+      // with only a brand (and no model) drop into the unrecognized
+      // folder-tree section so they remain navigable by their real path
+      // instead of being lumped under "Unknown model".
+      if (!f.manufacturer || !f.model) continue;
 
       const brand = canonicalBrand(f.manufacturer);
       const brandKey = brand.toLowerCase();
@@ -579,10 +577,10 @@ class DatabankStore extends Emitter {
     }
     const unknownFiles: DatabankFile[] = [];
     for (const f of this._files) {
-      // Mirror of metadataTree's gate: anything that isn't fully resolved
-      // against boards.db goes here, including pattern_matched rows that
-      // carry a brand-keyword guess but no model / board_uuid context.
-      if (f.resolution_status !== 'resolved') unknownFiles.push(f);
+      // Mirror of metadataTree's gate: anything that doesn't have BOTH
+      // brand and model goes here, including brand-only pattern_matched
+      // rows we can't safely lump under "Unknown model" in the brand tree.
+      if (!f.manufacturer || !f.model) unknownFiles.push(f);
     }
     if (unknownFiles.length === 0) {
       this._unrecognizedTreeCache = { version: this._filesVersion, tree: null };
