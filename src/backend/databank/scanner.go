@@ -458,14 +458,25 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 			// File exists in DB — check if changed
 			if rec.Size == df.size && rec.ModTime == df.modTime {
 				// Disk-unchanged. Re-resolve metadata against the current
-				// boards.db so a freshly-imported reference DB (e.g. apple-
-				// boards.ts promotion) can lift previously-Unsorted rows
-				// into proper hierarchy without forcing the user to Reset
-				// All. Only triggers when board_uuid actually changes, so
-				// this is a no-op on a stable DB.
+				// boards.db so a freshly-imported reference DB (e.g.
+				// apple-boards.ts promotion) AND any resolver-logic change
+				// (e.g. the brand-keyword fall-through for OBD-matched-but-
+				// unresolved files) can lift previously-Unsorted rows into
+				// proper hierarchy without forcing the user to Reset All.
+				// The gate is "any meta field changed" — we used to gate on
+				// BoardUUID alone, but the keyword fall-through populates
+				// Manufacturer / Model without touching BoardUUID, so a
+				// UUID-only gate skipped exactly the rows that needed the
+				// re-categorisation. Idempotent on a stable resolver +
+				// stable boards.db.
 				if s.boardDB != nil && s.boardDB.Available() {
 					meta := ExtractMetadataWithBoardDB(df.relPath, s.boardDB)
-					if meta.BoardUUID != rec.BoardUUID {
+					if meta.BoardUUID != rec.BoardUUID ||
+						meta.Manufacturer != rec.Manufacturer ||
+						meta.Model != rec.Model ||
+						meta.BoardNumber != rec.BoardNumber ||
+						meta.BoardManufacturer != rec.BoardManufacturer ||
+						meta.ResolutionStatus != rec.ResolutionStatus {
 						if err := s.db.UpdateFileResolution(
 							rec.ID,
 							meta.BoardNumber, meta.Manufacturer, meta.Model,

@@ -937,15 +937,28 @@ func (db *DB) AllFilePathsAndIDs(ctx context.Context) ([]FilePathID, error) {
 // AllFileRow is the snapshot the scanner uses to diff disk vs DB and to
 // detect whether a re-resolution against an updated boards.db would improve
 // an existing row's metadata.
+// AllFileRow is the slim shape returned by AllFilePaths for the scan's diff
+// pass. The resolver fields are loaded so the "disk-unchanged" branch can
+// re-resolve metadata in place and detect any field change (brand-keyword
+// fall-through populates Manufacturer/Model without touching BoardUUID, so
+// a UUID-only gate was missing those rows).
 type AllFileRow struct {
-	ID        int64
-	Size      int64
-	ModTime   int64
-	BoardUUID string // empty for unresolved or pre-v6 rows
+	ID                int64
+	Size              int64
+	ModTime           int64
+	BoardUUID         string // empty for unresolved or pre-v6 rows
+	Manufacturer      string
+	Model             string
+	BoardNumber       string
+	BoardManufacturer string
+	ResolutionStatus  string
 }
 
 func (db *DB) AllFilePaths() (map[string]AllFileRow, error) {
-	rows, err := db.reader.Query(`SELECT id, path, size, mod_time, board_uuid FROM files`)
+	rows, err := db.reader.Query(`SELECT id, path, size, mod_time, board_uuid,
+	                                     manufacturer, model, board_number,
+	                                     board_manufacturer, resolution_status
+	                              FROM files`)
 	if err != nil {
 		return nil, err
 	}
@@ -955,11 +968,22 @@ func (db *DB) AllFilePaths() (map[string]AllFileRow, error) {
 	for rows.Next() {
 		var id, size, modTime int64
 		var path string
-		var boardUUID sql.NullString
-		if err := rows.Scan(&id, &path, &size, &modTime, &boardUUID); err != nil {
+		var boardUUID, mfr, model, boardNum, boardMfr, resStat sql.NullString
+		if err := rows.Scan(&id, &path, &size, &modTime, &boardUUID,
+			&mfr, &model, &boardNum, &boardMfr, &resStat); err != nil {
 			return nil, err
 		}
-		result[path] = AllFileRow{ID: id, Size: size, ModTime: modTime, BoardUUID: boardUUID.String}
+		result[path] = AllFileRow{
+			ID:                id,
+			Size:              size,
+			ModTime:           modTime,
+			BoardUUID:         boardUUID.String,
+			Manufacturer:      mfr.String,
+			Model:             model.String,
+			BoardNumber:       boardNum.String,
+			BoardManufacturer: boardMfr.String,
+			ResolutionStatus:  resStat.String,
+		}
 	}
 	return result, rows.Err()
 }
