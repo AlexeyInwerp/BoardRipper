@@ -13,7 +13,7 @@ import (
 func newTestFileHandler(t *testing.T) *FileHandler {
 	t.Helper()
 	tmpDir := t.TempDir()
-	return NewFileHandler(tmpDir, func() string { return tmpDir }, nil)
+	return NewFileHandler(tmpDir, func() string { return tmpDir }, nil, nil)
 }
 
 // multipartUpload builds a POST /api/upload request carrying one file.
@@ -37,7 +37,7 @@ func multipartUpload(t *testing.T, filename string, content []byte) *http.Reques
 func TestUpload_SavesBoardToIncomingAndIndexes(t *testing.T) {
 	root := t.TempDir()
 	var indexed []string
-	h := NewFileHandler(root, func() string { return root }, func(relPath string) error {
+	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string) error {
 		indexed = append(indexed, relPath)
 		return nil
 	})
@@ -60,7 +60,7 @@ func TestUpload_SavesBoardToIncomingAndIndexes(t *testing.T) {
 
 func TestUpload_AcceptsPdf(t *testing.T) {
 	root := t.TempDir()
-	h := NewFileHandler(root, func() string { return root }, nil)
+	h := NewFileHandler(root, func() string { return root }, nil, nil)
 	req := multipartUpload(t, "schematic.pdf", []byte("%PDF-1.4\n"))
 	w := httptest.NewRecorder()
 	h.Upload(w, req)
@@ -74,7 +74,7 @@ func TestUpload_AcceptsPdf(t *testing.T) {
 
 func TestUpload_RejectsUnsupported(t *testing.T) {
 	root := t.TempDir()
-	h := NewFileHandler(root, func() string { return root }, nil)
+	h := NewFileHandler(root, func() string { return root }, nil, nil)
 	req := multipartUpload(t, "notes.txt", []byte("hello"))
 	w := httptest.NewRecorder()
 	h.Upload(w, req)
@@ -86,7 +86,7 @@ func TestUpload_RejectsUnsupported(t *testing.T) {
 // A path-laden filename must be flattened to its base — no escaping incoming/.
 func TestUpload_SanitizesFilename(t *testing.T) {
 	root := t.TempDir()
-	h := NewFileHandler(root, func() string { return root }, nil)
+	h := NewFileHandler(root, func() string { return root }, nil, nil)
 	req := multipartUpload(t, "../../evil.brd", []byte("x"))
 	w := httptest.NewRecorder()
 	h.Upload(w, req)
@@ -160,7 +160,7 @@ func TestGet_RejectsTraversal(t *testing.T) {
 
 func TestGet_DefaultsToInline(t *testing.T) {
 	root := t.TempDir()
-	h := NewFileHandler(root, func() string { return root }, nil)
+	h := NewFileHandler(root, func() string { return root }, nil, nil)
 	if err := os.WriteFile(filepath.Join(root, "test.bvr"), []byte("BVRAW_FORMAT_3\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestGet_DefaultsToInline(t *testing.T) {
 
 func TestGet_DownloadQueryFlipsToAttachment(t *testing.T) {
 	root := t.TempDir()
-	h := NewFileHandler(root, func() string { return root }, nil)
+	h := NewFileHandler(root, func() string { return root }, nil, nil)
 	if err := os.WriteFile(filepath.Join(root, "test.bvr"), []byte("BVRAW_FORMAT_3\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestGet_DownloadQueryFlipsToAttachment(t *testing.T) {
 
 func TestGetByPath_DownloadQueryFlipsToAttachment(t *testing.T) {
 	root := t.TempDir()
-	h := NewFileHandler(root, func() string { return root }, nil)
+	h := NewFileHandler(root, func() string { return root }, nil, nil)
 	subDir := filepath.Join(root, "boards")
 	if err := os.MkdirAll(subDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

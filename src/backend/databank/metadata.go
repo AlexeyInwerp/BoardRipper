@@ -214,6 +214,24 @@ func ExtractMetadataWithBoardDB(relPath string, bdb *boarddb.DB) Metadata {
 				m.BoardUUID = match.UUID
 				m.BoardColor = match.Color
 				m.BoardColorHex = match.ColorHex
+				return m
+			}
+
+			// boards.db doesn't have this number, but the filename / dir path
+			// can still carry a real brand keyword ("ASUS FA507R - …" → ASUS,
+			// not Quanta). Run the keyword resolver and merge its findings in
+			// — without this fall-through every OBD-matched-but-unresolved
+			// file inherited only its ODM and ended up in "Unknown" / "[ODM] X"
+			// despite the brand being right there in the filename. We
+			// intentionally do NOT overwrite a board_manufacturer the OBD
+			// scrape already populated — that's the most authoritative ODM
+			// signal we have.
+			kw := ExtractMetadata(relPath)
+			if kw.Manufacturer != "" {
+				m.Manufacturer = kw.Manufacturer
+			}
+			if kw.Model != "" {
+				m.Model = kw.Model
 			}
 			return m
 		}

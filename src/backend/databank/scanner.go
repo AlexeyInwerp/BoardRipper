@@ -166,6 +166,18 @@ func (s *Scanner) ScanRoot() string {
 	return s.dataDir
 }
 
+// ExtractMetadata runs the same metadata extraction the scanner / IndexFile
+// use, in a thread-safe way. Used by the drop-to-incoming upload handler so
+// it can choose a brand/model subfolder for the file before writing it,
+// without duplicating the resolver logic. relPath is forward-slash, relative
+// to the scan root.
+func (s *Scanner) ExtractMetadata(relPath string) Metadata {
+	s.mu.Lock()
+	bdb := s.boardDB
+	s.mu.Unlock()
+	return ExtractMetadataWithBoardDB(relPath, bdb)
+}
+
 // IndexFile indexes a single file that already exists on disk under the
 // scan root, without walking the whole library. It mirrors scanWorker's
 // per-file insert/update path so a dropped file shows up in the library

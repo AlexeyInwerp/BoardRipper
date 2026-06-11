@@ -23,10 +23,24 @@ type ScanRootFunc func() string
 // without a full rescan. May be nil (indexing is then skipped).
 type IndexFileFunc func(relPath string) error
 
-// incomingSubdir is the flat folder under the scan root where dropped files
-// are saved. No further substructure is created — every dropped board/PDF
-// lands directly in <scanRoot>/incoming/.
+// ExtractMetadataFunc runs the resolver / pattern-matcher used by the
+// scanner so the upload handler can pre-route the file into a brand /
+// model subfolder under incoming/. Same forward-slash relPath shape as
+// IndexFileFunc. May be nil (then everything lands in incoming/ flat).
+type ExtractMetadataFunc func(relPath string) databank.Metadata
+
+// incomingSubdir is the parent folder under the scan root where dropped
+// files are saved. New drops are organised into brand/model subfolders
+// underneath (e.g. incoming/Apple/MacBook Pro 16"/820-XXXXX.brd); files
+// whose brand the resolver can't identify land in incoming/uncategorized/.
+// Files dropped before this routing was added remain wherever they were —
+// the scanner reconciles them on the next pass.
 const incomingSubdir = "incoming"
+
+// uncategorizedSubdir is the bucket for dropped files the resolver couldn't
+// assign a brand to. Matches the user-facing word the LibraryPanel uses for
+// the same fallback (LibraryPanel's "Unknown" / "[ODM] X" buckets).
+const uncategorizedSubdir = "uncategorized"
 
 // maxUploadBytes caps a single drop-to-incoming upload. Matches the eager
 // serve cap (serve.go) so anything we accept we can also serve back.
@@ -34,8 +48,9 @@ const maxUploadBytes = 512 << 20 // 512 MiB
 
 type FileHandler struct {
 	dataDir    string
-	scanRootFn ScanRootFunc  // returns the active scan root (may differ from dataDir if library_dir is set)
-	indexFn    IndexFileFunc // indexes an uploaded file into the databank (may be nil)
+	scanRootFn ScanRootFunc        // returns the active scan root (may differ from dataDir if library_dir is set)
+	extractFn  ExtractMetadataFunc // resolves brand/model so we can pick a subfolder (may be nil → flat incoming/)
+	indexFn    IndexFileFunc       // indexes an uploaded file into the databank (may be nil)
 }
 
 type FileInfo struct {
@@ -44,8 +59,51 @@ type FileInfo struct {
 	Modified time.Time `json:"modified"`
 }
 
-func NewFileHandler(dataDir string, scanRootFn ScanRootFunc, indexFn IndexFileFunc) *FileHandler {
-	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn, indexFn: indexFn}
+func NewFileHandler(dataDir string, scanRootFn ScanRootFunc, extractFn ExtractMetadataFunc, indexFn IndexFileFunc) *FileHandler {
+	return &FileHandler{dataDir: dataDir, scanRootFn: scanRootFn, extractFn: extractFn, indexFn: indexFn}
+}
+
+// sanitizePathPart strips characters that would break the on-disk layout
+// out of a single path component. Path separators and ':' (Windows /
+// macOS-reserved) collapse to '_', control bytes are dropped, and a
+// resulting empty / "." / ".." string becomes "_" so we always produce
+// a real directory name.
+func sanitizePathPart(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '/' || r == '\\' || r == ':':
+			b.WriteRune('_')
+		case r < 0x20 || r == 0x7F:
+			// drop control bytes
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	out = strings.Trim(out, ".")
+	if out == "" || out == "." || out == ".." {
+		return "_"
+	}
+	return out
+}
+
+// decideIncomingSubdir picks the subfolder under incoming/ for a freshly-
+// dropped file based on what the resolver could tell us. Brand resolved →
+// incoming/{brand}/{model}/ (model only when present); brand empty →
+// incoming/uncategorized/. Returned path uses forward slashes so it can be
+// concatenated to either the disk path (after FromSlash) or the URL/db
+// path verbatim.
+func decideIncomingSubdir(meta databank.Metadata) string {
+	if meta.Manufacturer == "" {
+		return uncategorizedSubdir
+	}
+	brand := sanitizePathPart(meta.Manufacturer)
+	model := strings.TrimSpace(meta.Model)
+	if model == "" || strings.EqualFold(model, "Unknown model") {
+		return brand
+	}
+	return brand + "/" + sanitizePathPart(model)
 }
 
 // resolveWithinRoot rejects paths whose symlink-resolved target escapes
@@ -94,7 +152,21 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	safeName := filepath.Base(header.Filename)
-	incomingDir := filepath.Join(h.scanRootFn(), incomingSubdir)
+
+	// Pre-extract metadata using just the bare incoming/<filename> path so we
+	// can route the file into a brand/model subfolder before writing it. This
+	// gives the same answer the scanner's resolver would on the next pass —
+	// see scanner.ExtractMetadata. When the resolver doesn't know the brand,
+	// fall back to incoming/uncategorized/. When extractFn itself is nil
+	// (legacy / test wiring) skip subfolder routing entirely and keep the
+	// historical flat incoming/ layout.
+	subDir := ""
+	if h.extractFn != nil {
+		preExtractRel := filepath.ToSlash(filepath.Join(incomingSubdir, safeName))
+		subDir = decideIncomingSubdir(h.extractFn(preExtractRel))
+	}
+
+	incomingDir := filepath.Join(h.scanRootFn(), incomingSubdir, filepath.FromSlash(subDir))
 	if err := os.MkdirAll(incomingDir, 0o755); err != nil {
 		http.Error(w, "Failed to create incoming folder (library mount read-only?): "+err.Error(), http.StatusInternalServerError)
 		return
@@ -126,7 +198,7 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, safeName))
+	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, safeName))
 	if h.indexFn != nil {
 		if err := h.indexFn(relPath); err != nil {
 			// File is saved; indexing failure is non-fatal (next scan picks it up).

@@ -133,7 +133,7 @@ func main() {
 	mux.HandleFunc("GET /api/health", healthHandler.Serve)
 
 	// File API routes (existing)
-	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot, scanner.IndexFile)
+	fileHandler := handlers.NewFileHandler(dataDir, scanner.ScanRoot, scanner.ExtractMetadata, scanner.IndexFile)
 	mux.HandleFunc("POST /api/upload", fileHandler.Upload)                  // streaming upload — no wrap
 	mux.HandleFunc("GET /api/files", read(fileHandler.List))
 	mux.HandleFunc("GET /api/files/{name}", fileHandler.Get)                // streaming download — no wrap
