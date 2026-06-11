@@ -4559,18 +4559,32 @@ body {
   color: var(--accent);
 }
 
-/* "---unrecognized---" divider between brand groups and the filesystem-
-   shaped folder tree of unbucketed files in the Board# view. */
+/* Divider between brand groups and the filesystem-shaped folder tree of
+   unbucketed files in the Board# view. Dashed rule on both sides with the
+   label floated in the center — the dashes come from a real CSS rule, not
+   the literal "---" the early prototype used. */
 .library-tree-separator {
-  padding: 8px 8px 4px 8px;
-  margin-top: 6px;
-  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 4px 6px 4px;
   font-family: monospace;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
   opacity: 0.7;
-  border-top: 1px dashed var(--border);
   user-select: none;
+}
+.library-tree-separator::before,
+.library-tree-separator::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}
+.library-tree-separator > span {
+  padding: 0 4px;
+  white-space: nowrap;
 }
 
 .library-tree-board-num {

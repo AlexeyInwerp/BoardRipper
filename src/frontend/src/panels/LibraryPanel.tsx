@@ -2136,7 +2136,7 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
         if (rootChildren.length === 0 && rootFiles.length === 0) return null;
         return (
           <>
-            <div className="library-tree-separator">---unrecognized---</div>
+            <div className="library-tree-separator"><span>unrecognized</span></div>
             {rootChildren.map(child => (
               <FolderNodeView
                 key={child.path}
