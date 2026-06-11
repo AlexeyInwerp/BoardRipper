@@ -495,20 +495,16 @@ class DatabankStore extends Emitter {
     const brandKeyToModelMap = new Map<string, Map<string, ModelAcc>>();
 
     for (const f of this._files) {
-      // Truly-unrecognised files (no brand AND no ODM) skip the brand grouping
-      // entirely — they're rendered in their natural filesystem layout under
-      // the "---unrecognized---" separator further down, so the user can find
-      // them at their real folder path. See unrecognizedFolderTree below.
-      if (!f.manufacturer && !f.board_manufacturer) continue;
+      // Anything without a real brand goes to the unrecognized folder-tree
+      // section below the separator — only files the resolver could attach
+      // to a manufacturer make it into the alphabetical brand groups. ODM-
+      // only files (we know who built the board, but not whose product it
+      // is) belong with the unsorted bulk so they're navigable by their
+      // real on-disk path instead of getting a fake [ODM] X bucket name
+      // that pollutes the sorted section.
+      if (!f.manufacturer) continue;
 
-      // When the boards.db resolver only got as far as pattern-matching the
-      // board number, `manufacturer` is empty but the ODM (`board_manufacturer`,
-      // e.g. Wistron, Quanta, Compal) is still useful — group those files under
-      // a bracketed ODM label. ODM strings are also canonicalised so a mixed-
-      // case scrape doesn't split "Wistron" / "WISTRON" buckets.
-      const brand = f.manufacturer
-        ? canonicalBrand(f.manufacturer)
-        : `[ODM] ${canonicalBrand(f.board_manufacturer)}`;
+      const brand = canonicalBrand(f.manufacturer);
       const brandKey = brand.toLowerCase();
 
       // Display name picks: known-canonical wins, then first-seen value, then
@@ -569,17 +565,18 @@ class DatabankStore extends Emitter {
     return groups;
   }
 
-  /** Filesystem-shaped tree of files the resolver couldn't categorise (no
-   *  brand AND no ODM). Rendered under the "---unrecognized---" separator in
-   *  the Board# tab so the user can still navigate them by their real
-   *  on-disk path. Returns null when every file has at least an ODM. */
+  /** Filesystem-shaped tree of files the resolver couldn't pin to a brand
+   *  (whether or not we know the ODM). Rendered under the
+   *  "---unrecognized---" separator in the Board# tab so the user can still
+   *  navigate them by their real on-disk path. Returns null when every file
+   *  has a brand. */
   get unrecognizedFolderTree(): FolderNode | null {
     if (this._unrecognizedTreeCache && this._unrecognizedTreeCache.version === this._filesVersion) {
       return this._unrecognizedTreeCache.tree;
     }
     const unknownFiles: DatabankFile[] = [];
     for (const f of this._files) {
-      if (!f.manufacturer && !f.board_manufacturer) unknownFiles.push(f);
+      if (!f.manufacturer) unknownFiles.push(f);
     }
     if (unknownFiles.length === 0) {
       this._unrecognizedTreeCache = { version: this._filesVersion, tree: null };
