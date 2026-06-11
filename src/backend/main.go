@@ -261,6 +261,15 @@ func main() {
 			defer close(indexer.StartWatchdog(5*time.Minute, 600))
 
 			pdfIdxHandler := handlers.NewPdfIndexHandler(pdfIndex, indexer, db)
+
+			// Wire the scanner → pdfindex re-queue path: when a PDF file's
+			// size or mod_time changes vs the stored row, the scanner flips
+			// its pdf_index_status back to 'pending' so the next indexer run
+			// re-extracts text from the new bytes. Captures pdfIndex by
+			// reference; safe to call concurrently with scans.
+			scanner.SetPdfModifiedHook(func(fileID int64) error {
+				return pdfIndex.MarkPending(fileID)
+			})
 			mux.HandleFunc("GET /api/pdfindex/status/{id}", read(pdfIdxHandler.Status))
 			mux.HandleFunc("GET /api/pdfindex/stats", read(pdfIdxHandler.Stats))
 			mux.HandleFunc("POST /api/pdfindex/run", pdfIdxHandler.Run)

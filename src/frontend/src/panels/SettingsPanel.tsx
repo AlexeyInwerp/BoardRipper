@@ -29,8 +29,8 @@ import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection } from './LibrarySyncSection';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
-import { isElectron } from '../store/databank-store';
 import { fmtIndexEta } from './LibraryPanel';
+import { isElectron } from '../store/databank-store';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -734,10 +734,37 @@ function openDatabaseEditor(): void {
 // ---- Library settings (auto-pdf, history depth, clear history) ----
 
 function LibrarySettingsSection() {
-  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress } = useDatabank();
+  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress, pdfIndexStats } = useDatabank();
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
   const scanRunning = scanStatus?.running ?? false;
   const pdfIndexRunning = pdfIndexProgress?.running ?? false;
+  const [forcing, setForcing] = useState(false);
+
+  // Live indexer numbers. `pdfIndexProgress` is the running snapshot
+  // (done/total/active workers/current file/started_at); `pdfIndexStats`
+  // is the steady-state aggregate (indexed/pages/failed/pending). Show
+  // both depending on running state.
+  const indexPct = pdfIndexProgress && pdfIndexProgress.total > 0
+    ? Math.round((pdfIndexProgress.done / pdfIndexProgress.total) * 100)
+    : 0;
+  const indexEta = pdfIndexProgress ? fmtIndexEta(pdfIndexProgress) : '';
+
+  const handleForceReindex = useCallback(async () => {
+    if (forcing) return;
+    if (!confirm(
+      'Force re-index ALL PDFs?\n\n' +
+      'This resets every status row (indexed / empty / failed) back to "pending" and re-extracts text from scratch. ' +
+      'Use this only after changing the watermark term list or upgrading the indexer. ' +
+      'It takes hours on a large library and is NOT what you want for a regular rescan — for that, "Index all PDFs" is already additive.',
+    )) return;
+    setForcing(true);
+    try {
+      await pdfIndexClient.reindex('all');
+      databankStore.startPdfIndexPolling();
+    } finally {
+      setForcing(false);
+    }
+  }, [forcing]);
 
   // Keep local draft in sync when the stored value changes externally
   useEffect(() => {
@@ -775,23 +802,74 @@ function LibrarySettingsSection() {
         )}
       </div>
 
+      {/* PDF text indexing — verbose status when running, summary when idle.
+       *  The "Index all PDFs" trigger is additive (processes only `pending`
+       *  rows); the separate Force row below resets every row first. */}
+      <div className="settings-pdfindex-card">
+        <div className="settings-pdfindex-header">
+          <span className="settings-pdfindex-label">PDF text indexing</span>
+          {pdfIndexRunning ? (
+            <button
+              className="settings-action-btn settings-pdfindex-stop"
+              onClick={() => pdfIndexClient.stop()}
+              title="Stop the indexer. Files already in progress finish their current page; the rest stay as pending and resume on the next run."
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              className="settings-action-btn"
+              onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+            >
+              Index all PDFs
+            </button>
+          )}
+        </div>
+
+        {pdfIndexRunning && pdfIndexProgress ? (
+          <>
+            <div className="settings-pdfindex-bar">
+              <div className="settings-pdfindex-fill" style={{ width: `${indexPct}%` }} />
+            </div>
+            <div className="settings-pdfindex-stats">
+              <span>{pdfIndexProgress.done.toLocaleString()} / {pdfIndexProgress.total.toLocaleString()} ({indexPct}%)</span>
+              {pdfIndexProgress.workers > 0 && (
+                <span> · {pdfIndexProgress.active_workers}/{pdfIndexProgress.workers} threads</span>
+              )}
+              {pdfIndexProgress.errors > 0 && (
+                <span className="settings-pdfindex-err"> · {pdfIndexProgress.errors} err</span>
+              )}
+              {indexEta && <span> · {indexEta}</span>}
+            </div>
+            {pdfIndexProgress.current_file && (
+              <div className="settings-pdfindex-file" title={pdfIndexProgress.current_file}>
+                {pdfIndexProgress.current_file}
+              </div>
+            )}
+          </>
+        ) : pdfIndexStats ? (
+          <div className="settings-pdfindex-stats">
+            <span>{pdfIndexStats.indexed.toLocaleString()} indexed</span>
+            <span> · {pdfIndexStats.pages.toLocaleString()} pages</span>
+            {pdfIndexStats.pending > 0 && <span> · {pdfIndexStats.pending.toLocaleString()} pending</span>}
+            {pdfIndexStats.failed > 0 && (
+              <span className="settings-pdfindex-err"> · {pdfIndexStats.failed} failed</span>
+            )}
+          </div>
+        ) : null}
+      </div>
+
       <div className="settings-row-field">
-        <span>Index PDF text</span>
-        {pdfIndexRunning ? (
-          <button
-            className="settings-action-btn"
-            onClick={() => pdfIndexClient.stop()}
-          >
-            Stop indexing
-          </button>
-        ) : (
-          <button
-            className="settings-action-btn"
-            onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
-          >
-            Index all PDFs
-          </button>
-        )}
+        <span title="Resets every PDF status row back to pending and re-extracts text from scratch. Hours on a large library — use only after changing the watermark term list or upgrading the indexer.">
+          Force re-index everything
+        </span>
+        <button
+          className="settings-action-btn settings-action-danger"
+          disabled={forcing || pdfIndexRunning}
+          onClick={handleForceReindex}
+        >
+          {forcing ? '…' : 'Force re-index'}
+        </button>
       </div>
 
       <label className="settings-row-toggle">

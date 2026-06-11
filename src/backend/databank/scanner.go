@@ -40,6 +40,12 @@ type ScanStatus struct {
 	CompletedAt int64  `json:"completed_at,omitempty"` // unix timestamp of last scan completion
 }
 
+// PdfModifiedHook is fired for every PDF whose size or mod_time changed
+// since the last scan. The hook flips its row in the pdf_index_status table
+// back to 'pending' so the indexer re-extracts text from the new bytes.
+// nil means "no PDF index wired" — scanner silently skips the notification.
+type PdfModifiedHook func(fileID int64) error
+
 // Scanner walks DATA_DIR and syncs findings with the database.
 type Scanner struct {
 	db         *DB
@@ -47,11 +53,21 @@ type Scanner struct {
 	libraryDir string // optional separate library directory
 	boardDB    *boarddb.DB // optional board reference database
 
-	mu       sync.Mutex
-	status   ScanStatus
-	cancelFn func()       // cancel the current scan goroutine
-	cancelCh chan struct{} // closed on cancel
-	activeOp string       // "", "file"
+	mu             sync.Mutex
+	status         ScanStatus
+	cancelFn       func()       // cancel the current scan goroutine
+	cancelCh       chan struct{} // closed on cancel
+	activeOp       string       // "", "file"
+	onPdfModified  PdfModifiedHook // optional — re-queues modified PDFs into pdf_index_status
+}
+
+// SetPdfModifiedHook registers the callback the scanner fires when a PDF
+// file's size or mod_time changes from the stored value. Wire pdfindex.DB's
+// MarkPending here so re-indexing happens automatically on the next run.
+func (s *Scanner) SetPdfModifiedHook(fn PdfModifiedHook) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onPdfModified = fn
 }
 
 // SetBoardDB registers the board reference database for ODM-aware metadata extraction.
@@ -499,6 +515,14 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 				continue
 			}
 			atomic.AddInt64(&updated, 1)
+			// PDF whose bytes likely changed → re-queue for text extraction.
+			// The hook is wired to pdfindex.DB.MarkPending in main.go; nil
+			// hook (e.g. degraded boot without pdfindex) silently skips.
+			if s.onPdfModified != nil && FileTypeFromExt(df.relPath) == "pdf" {
+				if err := s.onPdfModified(rec.ID); err != nil {
+					log.Printf("Scanner: re-queue PDF index for %s failed: %v", df.relPath, err)
+				}
+			}
 		} else {
 			// New file — append to the pending insert buffer; flush when full.
 			meta := ExtractMetadataWithBoardDB(df.relPath, s.boardDB)

@@ -255,6 +255,27 @@ func (db *DB) ResetForReindex(scope string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// MarkPending flips a single file's status back to 'pending' regardless of
+// its current state — even already-indexed rows. Used by the scanner when
+// a PDF's size or mod_time changes on disk, so the next indexer run
+// re-extracts text against the new bytes. Safe to call for file_ids the
+// status table doesn't yet know about — INSERT … ON CONFLICT keeps the
+// row consistent with how Claim creates one.
+func (db *DB) MarkPending(fileID int64) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	_, err := db.writer.Exec(`
+		INSERT INTO pdf_index_status (file_id, status, attempted_at, indexed_at)
+		VALUES (?, 'pending', 0, 0)
+		ON CONFLICT(file_id) DO UPDATE
+		   SET status='pending',
+		       error='',
+		       indexed_at=0
+		 WHERE pdf_index_status.status != 'pending'
+		   AND pdf_index_status.status != 'indexing'`, fileID)
+	return err
+}
+
 // DoneOrActiveFileIDs returns file_ids whose status is terminal-or-active
 // (indexed|empty|duplicate|indexing) — the set the sweep should SKIP. Used to
 // pre-filter the work list so Progress.Total reflects only pending work.

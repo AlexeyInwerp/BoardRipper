@@ -1983,6 +1983,73 @@ body {
   border-color: var(--accent-hover);
 }
 
+.settings-action-danger {
+  border-color: var(--danger, #e55) !important;
+  color: var(--danger, #e55) !important;
+}
+.settings-action-danger:hover:not(:disabled) {
+  background: rgba(255, 80, 80, 0.08);
+}
+
+/* PDF text indexing card — sits inside Settings ▸ Library and shows live
+   indexer progress when running, steady-state stats when idle. */
+.settings-pdfindex-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: var(--bg-secondary, rgba(255,255,255,0.04));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.settings-pdfindex-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.settings-pdfindex-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.settings-pdfindex-stop {
+  border-color: var(--danger, #e55) !important;
+  color: var(--danger, #e55) !important;
+}
+.settings-pdfindex-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.settings-pdfindex-fill {
+  height: 100%;
+  background: var(--accent, #5af);
+  transition: width 200ms ease-out;
+}
+.settings-pdfindex-stats {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.settings-pdfindex-err {
+  color: var(--danger, #e55);
+}
+.settings-pdfindex-file {
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.65;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
 .settings-apply-btn {
   background: #2a6f2a;
   border-color: #3a8f3a;
