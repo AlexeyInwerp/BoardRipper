@@ -2136,19 +2136,39 @@ function MetadataView({ groups, unrecognizedTree, selectedFileId, filterFile, se
           ? pruneEmptyFolders(unrecognizedTree, filterFile)
           : unrecognizedTree;
         if (!visible) return null;
+        // Skip the synthetic root "/" node — render its children + any files
+        // it directly contains at depth 0 so the user lands on the real
+        // top-level folders without an extra expand click.
+        const rootChildren = visible.children ?? [];
+        const rootFiles = (visible.files ?? []).filter(filterFile);
+        if (rootChildren.length === 0 && rootFiles.length === 0) return null;
         return (
           <>
             <div className="library-tree-separator">---unrecognized---</div>
-            <FolderNodeView
-              node={visible}
-              depth={0}
-              expanded={expanded}
-              selectedFileId={selectedFileId}
-              filterFile={filterFile}
-              onToggleExpand={toggle}
-              onSelectFile={onSelectFile}
-              onOpenFile={onOpenFile}
-            />
+            {rootChildren.map(child => (
+              <FolderNodeView
+                key={child.path}
+                node={child}
+                depth={0}
+                expanded={expanded}
+                selectedFileId={selectedFileId}
+                filterFile={filterFile}
+                onToggleExpand={toggle}
+                onSelectFile={onSelectFile}
+                onOpenFile={onOpenFile}
+              />
+            ))}
+            {rootFiles.map(f => (
+              <FileRow
+                key={f.id}
+                file={f}
+                selected={f.id === selectedFileId}
+                indent={0}
+                showPreview={f.file_type === 'pdf'}
+                onSelect={onSelectFile}
+                onOpen={onOpenFile}
+              />
+            ))}
           </>
         );
       })()}
