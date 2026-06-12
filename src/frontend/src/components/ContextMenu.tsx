@@ -335,7 +335,17 @@ export function ContextMenu() {
   const onTogglePartHidden = (refdes: string) => {
     contextMenuStore.hide();
     if (!refdes) return;
+    const wasHidden = boardStore.partOverrides.get(refdes)?.hidden === true;
     boardStore.setPartOverride(refdes, 'hide');
+    // Hiding removes the part from hit-testing, so the context menu can't
+    // reach it again — without feedback the part is just "gone". Toast with
+    // Undo + point at the Layers-tab restore row.
+    if (!wasHidden) {
+      boardStore.addToast(`Hidden '${refdes}' — restore via Layers tab`, 'info', {
+        label: 'Undo',
+        run: () => boardStore.setPartOverride(refdes, null),
+      });
+    }
   };
 
   /** Toggle "send to back" — skips the body fill so the part stops occluding

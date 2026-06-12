@@ -26,6 +26,8 @@ import {
 import type { TileGridInfo } from '../pdf/tile-manager';
 import { renderSettingsStore, isPdfWatermarkText, getActiveWatermarkFilter } from '../store/render-settings';
 import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
+import { databankStore } from '../store/databank-store';
+import { showSidebarTab } from '../components/Sidebar.utils';
 
 const DRAG_THRESHOLD = 3;
 const TOUCH_PINCH_FACTOR = 2;       // amplify touch-screen pinch (pointer events)
@@ -581,6 +583,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
+
+  // Page-number input is draft-based: typing edits a local draft only; the
+  // page change commits on Enter/blur (typing "250" must not visit 2 and 25).
+  const [pageDraft, setPageDraft] = useState<string | null>(null);
+  const pageDraftCancelRef = useRef(false);
 
   // Switch pdfStore to this panel's document on activation (for mutations)
   useEffect(() => {
@@ -3235,15 +3242,29 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <input
             className="pdf-page-input"
             type="text"
-            value={currentPage}
-            onChange={e => {
-              const n = parseInt(e.target.value, 10);
-              if (!isNaN(n)) { pdfStore.switchTo(pdfFileName); pdfStore.goToPage(n); }
-            }}
+            value={pageDraft ?? String(currentPage)}
+            onChange={e => setPageDraft(e.target.value)}
             onKeyDown={e => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Enter') {
+                (e.target as HTMLInputElement).blur();
+              } else if (e.key === 'Escape') {
+                pageDraftCancelRef.current = true;
+                (e.target as HTMLInputElement).blur();
+              }
             }}
             onFocus={e => e.target.select()}
+            onBlur={e => {
+              const cancelled = pageDraftCancelRef.current;
+              pageDraftCancelRef.current = false;
+              const raw = e.currentTarget.value;
+              setPageDraft(null);
+              if (cancelled) return;
+              const n = parseInt(raw, 10);
+              if (!isNaN(n)) {
+                pdfStore.switchTo(pdfFileName);
+                pdfStore.goToPage(Math.max(1, Math.min(n, pageCount)));
+              }
+            }}
           />
           <span className="pdf-page-info">/ {pageCount}</span>
           <button
@@ -3273,6 +3294,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                   }
                 }}
                 onKeyDown={(e) => {
+                  // PageUp/PageDown page the PDF even while the search field is
+                  // focused — after a search the focus stays here, and losing
+                  // keyboard paging mid-probe is worse than the caret quirk.
+                  // (Home/End stay untouched: they move the text caret.)
+                  if (e.key === 'PageDown' || e.key === 'PageUp') {
+                    e.preventDefault();
+                    pdfStore.switchTo(pdfFileName);
+                    pdfStore.goToPage(currentPage + (e.key === 'PageDown' ? 1 : -1));
+                    return;
+                  }
                   if (matches.length > 0 && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
                     e.preventDefault();
                     pdfStore.switchTo(pdfFileName);
@@ -3296,7 +3327,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 }}
               />
             </form>
-            {matches.length > 0 && (
+            {matches.length > 0 ? (
               <>
                 <button className="pdf-search-nav-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.prevMatch(); }} title="Previous match">&#9650;</button>
                 <span className="pdf-search-counter">
@@ -3306,7 +3337,23 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
                 </span>
                 <button className="pdf-search-nav-btn" onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.nextMatch(); }} title="Next match">&#9660;</button>
               </>
-            )}
+            ) : searchQuery && !textExtracting ? (
+              // Zero results: say so instead of showing nothing, and offer the
+              // escape hatch — full-text search across all library PDFs.
+              <>
+                <span className="pdf-search-counter">0/0</span>
+                <button
+                  className="pdf-search-nav-btn pdf-search-library-btn"
+                  title={`No matches here — search all library PDFs for "${searchQuery}"`}
+                  onClick={() => {
+                    databankStore.requestPdfSearch(searchQuery, 'all');
+                    showSidebarTab('library');
+                  }}
+                >
+                  Library&nbsp;⌕
+                </button>
+              </>
+            ) : null}
           </div>
           {lookupHint && (
             <div className="pdf-lookup-hint">

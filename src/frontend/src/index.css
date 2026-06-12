@@ -2854,6 +2854,31 @@ body {
   padding-left: 30px;
 }
 
+/* Recovery row for parts removed via the context menu's Hide */
+.hidden-parts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px 4px 30px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.hidden-parts-restore {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.hidden-parts-restore:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .layer-list-container {
   padding: 4px 0;
 }
@@ -3579,6 +3604,12 @@ body {
 .pdf-search-nav-btn:hover {
   color: var(--accent);
   background: var(--bg-tertiary);
+}
+
+/* Zero-result escape hatch: text button instead of the 8px arrow glyphs */
+.pdf-search-library-btn {
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .pdf-lookup-hint {
@@ -5905,6 +5936,22 @@ body {
   background: #5c1a1a;
   color: #ff8888;
   border: 1px solid #882222;
+}
+
+.toast-action {
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  margin-left: 12px;
+  padding: 1px 8px;
+  vertical-align: middle;
+}
+.toast-action:hover {
+  filter: brightness(1.4);
 }
 .toast-info {
   background: #1a3a5c;

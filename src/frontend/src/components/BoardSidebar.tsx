@@ -158,6 +158,11 @@ function LayersTab({ tabId }: { tabId: number }) {
   const foldMode = tab?.foldMode ?? 'suggested';
   const selectedBoardIndex = tab?.selectedBoardIndex ?? null;
   const [componentsExpanded, setComponentsExpanded] = useState(true);
+  // Parts removed via the context menu's Hide — they no longer hit-test, so
+  // this row is the only discoverable way back besides the undo toast.
+  const hiddenParts = [...(tab?.partOverrides ?? new Map<string, { hidden?: boolean }>())]
+    .filter(([, o]) => o.hidden === true)
+    .map(([name]) => name);
 
   // Compute which layers have traces for the currently highlighted net.
   // React Compiler memoizes this automatically — manual useMemo was rejected
@@ -364,6 +369,18 @@ function LayersTab({ tabId }: { tabId: number }) {
                 title={showLabels ? 'Hide labels' : 'Show labels'}
               >
                 <span className="toggle-check">{showLabels ? '■' : '□'}</span> Labels
+              </button>
+            </div>
+          )}
+          {hiddenParts.length > 0 && (
+            <div className="hidden-parts-row" title={hiddenParts.join(', ')}>
+              <span className="hidden-parts-label">Hidden parts ({hiddenParts.length})</span>
+              <button
+                className="hidden-parts-restore"
+                onClick={() => boardStore.unhideAllParts()}
+                title={`Restore: ${hiddenParts.join(', ')}`}
+              >
+                Restore all
               </button>
             </div>
           )}

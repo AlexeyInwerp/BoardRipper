@@ -4738,18 +4738,24 @@ export class BoardRenderer {
     if (hit) {
       if (shift) {
         // Shift+click goes straight to the active worklist (auto-creates one
-        // on first shift-click) and opens the sidebar Worklist tab so the
-        // user sees the row appear. Shift+click on a part already in the
-        // active worklist removes it. No intermediate "push" step.
+        // on first shift-click). Both directions toast — the sidebar may be
+        // closed, and silent add/remove loses the user's place mid-probe.
+        // The sidebar only force-opens on the very first shift-click (when
+        // the worklist is auto-created), so the user learns where rows go;
+        // after that the toast is the feedback channel.
         const board = boardStore.board;
         const refdes = board?.parts[hit.partIndex]?.name;
         if (refdes) {
           const wl = worklistStore.activeWorklist;
           if (wl && wl.entries.some(e => e.refdes === refdes)) {
             worklistStore.removeEntry(wl.id, refdes);
+            boardStore.addToast(`Removed '${refdes}' from ${wl.name}`, 'info');
           } else {
+            const firstUse = !wl;
             worklistStore.pushRefdesToActive(refdes);
-            openBoardSidebarTab('worklist');
+            const name = worklistStore.activeWorklist?.name ?? 'worklist';
+            boardStore.addToast(`Added '${refdes}' to ${name}`, 'info');
+            if (firstUse) openBoardSidebarTab('worklist');
           }
         }
         return;

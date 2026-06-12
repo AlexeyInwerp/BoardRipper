@@ -341,6 +341,14 @@ export function useKeyboardShortcuts() {
             e.preventDefault();
             pdfStore.goToPage(pdfStore.currentPage - 1);
             return;
+          case 'pageFirst':
+            e.preventDefault();
+            pdfStore.goToPage(1);
+            return;
+          case 'pageLast':
+            e.preventDefault();
+            pdfStore.goToPage(pdfStore.pageCount);
+            return;
 
           case 'panBoardLeft':
           case 'panBoardRight':

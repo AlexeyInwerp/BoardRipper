@@ -308,6 +308,14 @@ function App() {
           {toasts.map(t => (
             <div key={t.id} className={`toast toast-${t.type}`} onClick={() => boardStore.dismissToast(t.id)}>
               {t.message}
+              {t.action && (
+                <button
+                  className="toast-action"
+                  onClick={(e) => { e.stopPropagation(); t.action?.run(); boardStore.dismissToast(t.id); }}
+                >
+                  {t.action.label}
+                </button>
+              )}
             </div>
           ))}
         </div>

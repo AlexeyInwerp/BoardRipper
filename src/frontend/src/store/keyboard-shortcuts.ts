@@ -161,6 +161,20 @@ export const shortcuts: Shortcut[] = [
     key: 'PageUp',
     description: 'Go to the previous PDF page',
   },
+  {
+    id: 'pageFirst',
+    label: 'PDF First Page',
+    category: 'navigation',
+    key: 'Home',
+    description: 'Jump to the first PDF page',
+  },
+  {
+    id: 'pageLast',
+    label: 'PDF Last Page',
+    category: 'navigation',
+    key: 'End',
+    description: 'Jump to the last PDF page',
+  },
 
   // --- PDF Viewer ---
   {
@@ -312,6 +326,8 @@ function formatKeyName(key: string): string {
     case 'ArrowDown': return isMac ? '\u2193' : 'Down';
     case 'PageUp': return isMac ? 'PgUp' : 'PgUp';
     case 'PageDown': return isMac ? 'PgDn' : 'PgDn';
+    case 'Home': return 'Home';
+    case 'End': return 'End';
     case 'Backquote': return '~';
     default: return key.toUpperCase();
   }

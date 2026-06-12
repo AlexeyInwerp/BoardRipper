@@ -479,6 +479,8 @@ export interface Toast {
   message: string;
   type: 'error' | 'info';
   timestamp: number;
+  /** Optional action button (e.g. Undo). Clicking it runs + dismisses. */
+  action?: { label: string; run: () => void };
 }
 
 class BoardStore extends Emitter {
@@ -513,8 +515,8 @@ class BoardStore extends Emitter {
   get pdfFiles(): Map<string, PdfEntry> { return this._pdfFiles; }
   get toasts(): Toast[] { return this._toasts; }
 
-  addToast(message: string, type: 'error' | 'info' = 'error') {
-    const toast: Toast = { id: this._nextToastId++, message, type, timestamp: Date.now() };
+  addToast(message: string, type: 'error' | 'info' = 'error', action?: Toast['action']) {
+    const toast: Toast = { id: this._nextToastId++, message, type, timestamp: Date.now(), action };
     this._toasts = [...this._toasts, toast];
     this.notify();
     setTimeout(() => this.dismissToast(toast.id), 6000);
@@ -1408,6 +1410,23 @@ class BoardStore extends Emitter {
         tab.searchSelectionActive = false;
       }
     }
+    this.notify();
+  }
+
+  /** Restore every hidden part on the active tab (sendToBack overrides stay). */
+  unhideAllParts() {
+    const tab = this.activeTab;
+    if (!tab) return;
+    let changed = false;
+    const next = new Map(tab.partOverrides);
+    for (const [name, o] of next) {
+      if (!o.hidden) continue;
+      changed = true;
+      if (o.sendToBack) next.set(name, { sendToBack: true });
+      else next.delete(name);
+    }
+    if (!changed) return;
+    tab.partOverrides = next;
     this.notify();
   }
 
