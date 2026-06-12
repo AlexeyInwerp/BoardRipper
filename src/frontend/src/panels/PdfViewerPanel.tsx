@@ -3212,7 +3212,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             boundNames={boundBoardTabs.map(t => t.fileName)}
             options={boardTabNames}
             onToggle={handleBindBoard}
-            title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'No board linked'}
+            title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'Link this PDF to a boardview'}
+            primaryLabel="Boardview"
+            unlinkedLabel="Link board…"
             headerItem={boardTabNames.length > 0 ? {
               label: 'auto-open boardview',
               checked: autoSwitchLinked,
@@ -3226,9 +3228,17 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             }}
           />
         )}
-        <span className="pdf-filename" title={boundBoardTabs.length > 0 ? boundBoardTabs.map(t => t.fileName).join(', ') : 'No board linked'}>
-          {boundBoardTabs.length > 0 ? boundBoardTabs.map(t => t.fileName).join(', ') : 'no link'}
-        </span>
+        {boundBoardTabs.length > 0 ? (
+          <span className="pdf-filename" title={boundBoardTabs.map(t => t.fileName).join(', ')}>
+            {boundBoardTabs.map(t => t.fileName).join(', ')}
+          </span>
+        ) : (boardTabNames.length === 0 && !pdfStore.loadedFileNames.some(n => n !== pdfFileName)) ? (
+          // No link targets exist at all (BindLink hidden) — explain instead
+          // of the old dead-end "no link" label.
+          <span className="pdf-filename" title="Open a boardview file to link it with this PDF">
+            no board open
+          </span>
+        ) : null}
         <div className="pdf-toolbar-separator" />
 
         <div className="pdf-toolbar-group">

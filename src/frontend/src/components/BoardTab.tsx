@@ -1,6 +1,9 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 import type { IDockviewPanelHeaderProps } from 'dockview-react';
 import { useBoardStore } from '../hooks/useBoardStore';
+import { boardStore } from '../store/board-store';
+import { pdfStore } from '../store/pdf-store';
+import { BindLink } from './BindLink';
 
 /** Subscribes to dockview title changes via useSyncExternalStore — avoids the
  *  effect-setState race that dockview's own useTitle has (also avoids the
@@ -15,16 +18,30 @@ function useTitle(api: IDockviewPanelHeaderProps['api']): string {
   );
 }
 
+// Stable snapshot of open PDF names for useSyncExternalStore (the store
+// getter builds a fresh array per call). Module-level cache, invalidated on
+// every pdfStore notify — same pattern as SettingsPanel's theme overrides.
+let _pdfNamesCache: string[] | null = null;
+pdfStore.subscribe(() => { _pdfNamesCache = null; });
+function getPdfNamesSnapshot(): string[] {
+  if (!_pdfNamesCache) _pdfNamesCache = pdfStore.loadedFileNames;
+  return _pdfNamesCache;
+}
+
 /**
  * Board-specific dockview tab header. Mirrors DockviewDefaultTab's structure
- * and close-button behavior, and prepends a ∞ indicator when the board tab
- * has linked PDFs. No change to dockview's CSS — uses the built-in
- * .dv-default-tab class so appearance matches PDF tabs exactly.
+ * and close-button behavior. The ∞ link control is a full BindLink (board →
+ * PDFs, multi-select) so linking works from the board side too — previously
+ * the only entry point was the PDF toolbar.
  */
 export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number }>) {
   const { api, params } = props;
   const title = useTitle(api);
   const { tabs } = useBoardStore();
+  const pdfNames = useSyncExternalStore(
+    (cb) => pdfStore.subscribe(cb),
+    getPdfNamesSnapshot,
+  );
 
   const tabId = params.boardTabId;
   const tab = tabId != null ? tabs.find(t => t.id === tabId) : null;
@@ -57,6 +74,15 @@ export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number 
     e.preventDefault();
   }, []);
 
+  const handleToggle = useCallback((name: string | null) => {
+    if (!tab) return;
+    if (name === null) {
+      for (const p of tab.pdfFileNames) boardStore.removePdfBinding(tab.id, p);
+    } else {
+      boardStore.togglePdfBinding(tab.id, name);
+    }
+  }, [tab]);
+
   return (
     <div
       data-testid="dockview-dv-default-tab"
@@ -65,12 +91,24 @@ export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number 
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerLeave}
     >
-      {linkedCount > 0 && (
+      {tab && pdfNames.length > 0 && (
         <span
-          className="board-tab-link-indicator"
-          title={`Linked PDFs: ${linkedPdfs.join(', ')}`}
+          className="board-tab-bindlink"
+          // Keep BindLink interactions out of dockview's tab drag/activate
+          // and out of the middle-click-close tracking above.
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
         >
-          ∞{linkedCount > 1 ? linkedCount : ''}
+          <BindLink
+            boundNames={linkedPdfs}
+            options={pdfNames}
+            onToggle={handleToggle}
+            primaryLabel="Linked PDFs"
+            fixedDropdown
+            title={linkedCount > 0
+              ? `Linked PDFs: ${linkedPdfs.join(', ')} — click to manage`
+              : 'Link a PDF to this board'}
+          />
         </span>
       )}
       <span className="dv-default-tab-content">{title}</span>

@@ -17,6 +17,17 @@ import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
 import { isTwoWindowMode, toggleTwoWindowMode, onTwoWindowModeChange } from '../store/two-window-mode';
 
+/** Display a version string with exactly one leading `v`. The backend's
+ *  Version (release.sh tag, e.g. "v0.31.18") already carries the prefix, so
+ *  the old `v${state.current_version}` rendered "vv0.31.18". Non-numeric
+ *  builds like "dev" are shown verbatim (no spurious "vdev"). */
+function fmtVersion(v: string | undefined | null): string {
+  if (!v) return '';
+  if (/^v/i.test(v)) return v;
+  if (/^\d/.test(v)) return 'v' + v;
+  return v; // "dev", "local", etc.
+}
+
 /** Dropdown showing release notes + update/download action */
 function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) {
   const [open, setOpen] = useState(false);
@@ -49,17 +60,17 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
           if (!open) updateStore.check();
           setOpen(v => !v);
         }}
-        title={updating ? 'Updating — see Debug tab' : state.has_update ? (isImportant ? `Important update: ${state.latest_version}` : `Update available: ${state.latest_version}`) : `v${state.current_version} — click to check`}
+        title={updating ? 'Updating — see Debug tab' : state.has_update ? (isImportant ? `Important update: ${fmtVersion(state.latest_version)}` : `Update available: ${fmtVersion(state.latest_version)}`) : `${fmtVersion(state.current_version)} — click to check`}
       >
-        {updating ? 'Updating…' : state.has_update ? `${state.latest_version}` : `v${state.current_version}`}
+        {updating ? 'Updating…' : state.has_update ? fmtVersion(state.latest_version) : fmtVersion(state.current_version)}
       </button>
 
       {open && (
         <div className={`update-dropdown${isImportant && state.has_update ? ' update-dropdown-important' : ''}`}>
           <div className="update-dropdown-header">
             <div className="update-dropdown-header-main">
-              <span>{state.has_update ? (isImportant ? 'Important update' : 'Update available') : `v${state.current_version}`}</span>
-              {state.has_update && <span className="update-dropdown-version-tag">{manifest?.version || state.latest_version}</span>}
+              <span>{state.has_update ? (isImportant ? 'Important update' : 'Update available') : fmtVersion(state.current_version)}</span>
+              {state.has_update && <span className="update-dropdown-version-tag">{fmtVersion(manifest?.version || state.latest_version)}</span>}
             </div>
             {isImportant && manifest?.important_reason && (
               <span className="update-dropdown-important-reason">{manifest.important_reason}</span>
@@ -135,7 +146,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
                   </a>
                 )}
                 <span className="update-dropdown-version">
-                  {state.current_version} &#8594; {state.latest_version}
+                  {fmtVersion(state.current_version)} &#8594; {fmtVersion(state.latest_version)}
                 </span>
               </div>
             </div>

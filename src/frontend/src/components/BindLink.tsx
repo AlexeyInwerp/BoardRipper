@@ -9,6 +9,14 @@ interface BindLinkProps {
   onToggle: (name: string | null) => void;
   /** Tooltip for the link icon */
   title?: string;
+  /** Section header rendered above the primary options list (e.g. "Boardview"). */
+  primaryLabel?: string;
+  /** Text rendered inside the button while nothing is linked — turns the bare
+   *  glyph into a discoverable affordance (e.g. "Link board…"). */
+  unlinkedLabel?: string;
+  /** Position the dropdown with position:fixed (escapes overflow-clipped
+   *  containers like dockview tab headers). */
+  fixedDropdown?: boolean;
   /** Optional header item shown above the bindings list (e.g. "auto-open boardview" toggle) */
   headerItem?: {
     label: string;
@@ -27,66 +35,75 @@ interface BindLinkProps {
 /**
  * Link icon that opens a dropdown to manage board↔PDF associations.
  * Multi-select: boards can link multiple PDFs.
+ *
+ * The menu stays open until the user clicks outside or presses Escape —
+ * the old 5s auto-close timer kept closing it mid-decision.
  */
-export function BindLink({ boundNames, options, onToggle, title, headerItem, secondary }: BindLinkProps) {
+export function BindLink({ boundNames, options, onToggle, title, primaryLabel, unlinkedLabel, fixedDropdown, headerItem, secondary }: BindLinkProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null);
   const linked = boundNames.length > 0 || (secondary?.boundNames.length ?? 0) > 0;
   const showPrimary = options.length > 0 || !!headerItem;
 
-  const resetTimer = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setOpen(false), 5000);
-  };
-
   useEffect(() => {
-    if (!open) {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      return;
+    if (!open) return;
+    if (fixedDropdown && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 4, left: r.left });
     }
-    resetTimer();
-    const handler = (e: MouseEvent) => {
+    const onMouse = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => {
-      document.removeEventListener('mousedown', handler);
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
     };
-  }, [open]);
+    document.addEventListener('mousedown', onMouse);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onMouse);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, fixedDropdown]);
 
   const handleSelect = (name: string) => {
     onToggle(name);
-    resetTimer();
   };
 
   const handleClear = () => {
     onToggle(null);
-    resetTimer();
   };
 
   return (
     <div className="bind-link" ref={ref}>
       <button
+        ref={btnRef}
         className={`bind-link-btn ${linked ? 'bound' : ''}`}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         title={title ?? (linked ? `Linked: ${boundNames.join(', ')}` : 'Not linked')}
       >
-        {linked ? '\u221E' : '\u25CB\u25CB'}
+        {linked ? '∞' : '○○'}
+        {!linked && unlinkedLabel && (
+          <span className="bind-link-unlinked-label">{unlinkedLabel}</span>
+        )}
       </button>
       {open && (
-        <div className="bind-link-dropdown">
+        <div
+          className="bind-link-dropdown"
+          style={fixedDropdown && dropPos ? { position: 'fixed', top: dropPos.top, left: dropPos.left, marginTop: 0 } : undefined}
+        >
           {showPrimary && (
           <>
+          {primaryLabel && <div className="bind-link-section-label">{primaryLabel}</div>}
           {headerItem && (
             <div
               className="bind-link-option bind-link-header"
-              onClick={(e) => { e.stopPropagation(); headerItem.onChange(!headerItem.checked); resetTimer(); }}
+              onClick={(e) => { e.stopPropagation(); headerItem.onChange(!headerItem.checked); }}
             >
-              <span className="bind-link-check">{headerItem.checked ? '✓' : '\u00A0'}</span>
+              <span className="bind-link-check">{headerItem.checked ? '✓' : ' '}</span>
               {headerItem.label}
             </div>
           )}
@@ -104,7 +121,7 @@ export function BindLink({ boundNames, options, onToggle, title, headerItem, sec
                 className={`bind-link-option ${isBound ? 'active' : ''}`}
                 onClick={() => handleSelect(name)}
               >
-                <span className="bind-link-check">{isBound ? '✓' : '\u00A0'}</span>
+                <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
                 {name}
               </div>
             );
@@ -118,7 +135,7 @@ export function BindLink({ boundNames, options, onToggle, title, headerItem, sec
             <div
               className="bind-link-option bind-link-clear"
               data-testid="bind-link-pdf-clear"
-              onClick={(e) => { e.stopPropagation(); secondary.onToggle(null); resetTimer(); }}
+              onClick={(e) => { e.stopPropagation(); secondary.onToggle(null); }}
             >
               (none)
             </div>
@@ -129,7 +146,7 @@ export function BindLink({ boundNames, options, onToggle, title, headerItem, sec
                   key={`sec-${name}`}
                   className={`bind-link-option ${isBound ? 'active' : ''}`}
                   data-testid="bind-link-pdf-option"
-                  onClick={(e) => { e.stopPropagation(); secondary.onToggle(name); resetTimer(); }}
+                  onClick={(e) => { e.stopPropagation(); secondary.onToggle(name); }}
                 >
                   <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
                   {name}

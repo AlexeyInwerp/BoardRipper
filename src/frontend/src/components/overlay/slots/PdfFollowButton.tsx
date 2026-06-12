@@ -8,7 +8,9 @@ export function PdfFollowButton({ ctx }: { ctx: SlotCtx }) {
       className={`board-netlines-toggle ${followPdf ? 'active' : ''}`}
       onClick={() => boardStore.toggleFollowPdf()}
       disabled={pdfFileNames.length === 0}
-      title={followPdf ? 'PDF follow: ON' : 'PDF follow: OFF'}
+      title={pdfFileNames.length === 0
+        ? "PDF follow needs a linked PDF — use the ∞ button on this board's tab (or the PDF toolbar) to link one"
+        : followPdf ? 'PDF follow: ON' : 'PDF follow: OFF'}
     >
       ⇶
     </button>
