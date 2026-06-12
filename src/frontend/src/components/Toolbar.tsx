@@ -5,7 +5,7 @@ import { useBoardStore } from '../hooks/useBoardStore';
 import { useDatabank } from '../hooks/useDatabank';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { toggleSidebar, showSidebarTab } from './Sidebar.utils';
-import { exportToBVR3, getAllExtensions, getFileExtension, getFormat } from '../parsers';
+import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
 import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
@@ -493,25 +493,10 @@ export function Toolbar() {
 
       <div className="toolbar-spacer" />
 
-      {board && board.format !== 'BVR3' && (
-        <button
-          className="toolbar-btn"
-          data-tooltip="Not yet implemented"
-          disabled
-          onClick={() => {
-            const bvr3 = exportToBVR3(board);
-            const blob = new Blob([bvr3], { type: 'text/plain' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            const base = boardStore.fileName.replace(/\.[^.]+$/, '');
-            a.download = `${base}.bvr`;
-            a.click();
-            URL.revokeObjectURL(a.href);
-          }}
-        >
-          Save as BVR3
-        </button>
-      )}
+      {/* "Save as BVR3" was a permanently-disabled placeholder (export path
+          still has a side-inversion bug). Dead chrome trains users to ignore
+          the toolbar — removed until the feature actually ships, at which
+          point it belongs in an overflow menu. exportToBVR3 stays in parsers. */}
 
       <UpdateBadge update={update} />
     </div>

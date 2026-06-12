@@ -1236,6 +1236,14 @@ body {
   font-style: italic;
 }
 
+.search-section-overflow {
+  padding: 6px 8px 6px 26px;
+  color: var(--text-secondary);
+  font-size: 0.78em;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 .search-result-item {
   display: flex;
   align-items: center;
@@ -6207,6 +6215,21 @@ body {
   max-width: 680px;
   margin: 0 auto;
   opacity: 0.75;
+}
+
+.home-demo-btn {
+  margin-top: 14px;
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 7px 18px;
+}
+.home-demo-btn:hover {
+  filter: brightness(1.1);
 }
 
 /* --- Card shell --- */

@@ -840,35 +840,53 @@ function SearchTab({ tabId }: { tabId: number }) {
     return trimmed !== '' && !/^\.+$/.test(trimmed);
   };
 
-  // Build sorted lists for autocomplete. React Compiler memoizes these
-  // automatically; manual useMemo with narrowed deps (`board?.parts`,
-  // `board?.nets`) was rejected because the inferred dep is `board`. The
-  // broader dep is equivalent here — `buildRenderedBoard` produces a new
-  // BoardData (with new parts/nets) whenever revisions/BOM swaps occur,
-  // and selection changes do NOT mint a new board reference.
-  const allParts = board ? board.parts.map(p => p.name).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [];
-  const allNets = board ? Array.from(board.nets.keys()).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [];
+  // The React Compiler is NOT installed (verified: absent from package.json /
+  // lockfile; vite uses bare react()), so these O(N log N) sorts must be
+  // memoized by hand or they re-run on every keystroke. Dep on `board` is
+  // correct: buildRenderedBoard mints a new BoardData on revision/BOM swaps;
+  // selection changes do not.
+  const allParts = useMemo(
+    () => board ? board.parts.map(p => p.name).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [],
+    [board],
+  );
+  const allNets = useMemo(
+    () => board ? Array.from(board.nets.keys()).filter(isValidName).sort((a, b) => a.localeCompare(b)) : [],
+    [board],
+  );
+
+  // Pre-sort the full valid lists ONCE per board; filtering per keystroke is
+  // O(N) over the pre-sorted arrays (no re-sort).
+  const sortedParts = useMemo(
+    () => board ? board.parts.filter(p => isValidName(p.name)).sort((a, b) => a.name.localeCompare(b.name)) : [],
+    [board],
+  );
+  const sortedNets = useMemo(
+    () => board
+      ? Array.from(board.nets.entries()).filter(([name]) => isValidName(name)).sort((a, b) => a[0].localeCompare(b[0]))
+      : [],
+    [board],
+  );
 
   // Compute filtered results (show all when no query)
   const ql = query.toLowerCase();
-  const matchedParts = (() => {
-    if (!board) return [];
-    const valid = board.parts.filter(p => isValidName(p.name));
-    if (!ql) return valid.sort((a, b) => a.name.localeCompare(b.name));
-    return valid.filter(p => p.name.toLowerCase().includes(ql));
-  })();
+  const matchedParts = useMemo(
+    () => ql ? sortedParts.filter(p => p.name.toLowerCase().includes(ql)) : sortedParts,
+    [sortedParts, ql],
+  );
+  const matchedNets = useMemo(
+    () => ql ? sortedNets.filter(([name]) => name.toLowerCase().includes(ql)) : sortedNets,
+    [sortedNets, ql],
+  );
 
-  const matchedNets = (() => {
-    if (!board) return [];
-    const entries = Array.from(board.nets.entries())
-      .filter(([name]) => isValidName(name))
-      .sort((a, b) => a[0].localeCompare(b[0]));
-    if (!ql) return entries;
-    return entries.filter(([name]) => name.toLowerCase().includes(ql));
-  })();
+  // Render cap: dense boards have 5–8k parts/nets. Rendering them all
+  // unvirtualized janks every keystroke; cap the DOM and show an overflow
+  // hint instead. Refine the query to narrow.
+  const RESULT_CAP = 400;
+  const shownParts = matchedParts.length > RESULT_CAP ? matchedParts.slice(0, RESULT_CAP) : matchedParts;
+  const shownNets = matchedNets.length > RESULT_CAP ? matchedNets.slice(0, RESULT_CAP) : matchedNets;
 
   // Autocomplete suggestions (max 8)
-  const suggestions = (() => {
+  const suggestions = useMemo(() => {
     if (!ql) return [];
     const items: { label: string; type: 'component' | 'net' }[] = [];
     for (const name of allParts) {
@@ -880,7 +898,7 @@ function SearchTab({ tabId }: { tabId: number }) {
       if (items.length >= 8) return items;
     }
     return items;
-  })();
+  }, [ql, allParts, allNets]);
 
   // Sync toolbar search with local query
   const onQueryChange = useCallback((value: string) => {
@@ -947,7 +965,7 @@ function SearchTab({ tabId }: { tabId: number }) {
             {componentsOpen && (
               <div className="search-section-body">
                 {matchedParts.length === 0 && <div className="search-section-empty">No matching components</div>}
-                {matchedParts.map((part) => {
+                {shownParts.map((part) => {
                   const isExpanded = expandedPart === part.name;
                   const isPinned = pinnedRefdes.has(part.name);
                   return (
@@ -978,6 +996,11 @@ function SearchTab({ tabId }: { tabId: number }) {
                     </div>
                   );
                 })}
+                {matchedParts.length > shownParts.length && (
+                  <div className="search-section-overflow">
+                    Showing {shownParts.length} of {matchedParts.length} — refine the search to narrow.
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -992,7 +1015,7 @@ function SearchTab({ tabId }: { tabId: number }) {
             {netsOpen && (
               <div className="search-section-body">
                 {matchedNets.length === 0 && <div className="search-section-empty">No matching nets</div>}
-                {matchedNets.map(([name, net]) => {
+                {shownNets.map(([name, net]) => {
                   const upper = name.toUpperCase();
                   const skipExpand = upper.includes('GND') || isNcNet(upper, renderSettingsStore.settings.ncNetPatterns);
                   const isExpanded = expandedNet === name && !skipExpand;
@@ -1034,6 +1057,11 @@ function SearchTab({ tabId }: { tabId: number }) {
                     </div>
                   );
                 })}
+                {matchedNets.length > shownNets.length && (
+                  <div className="search-section-overflow">
+                    Showing {shownNets.length} of {matchedNets.length} — refine the search to narrow.
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
 import { databankStore } from '../../store/databank-store';
+import { boardStore } from '../../store/board-store';
+import { MOCK_BOARD } from '../../renderer/mockup-data';
+import { ensureBoardPanel } from '../../store/dockview-api';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
@@ -197,11 +200,29 @@ function CollapsibleCard({
 // Banner + rant
 // ─────────────────────────────────────────────────────────────
 
+const DEMO_NAME = 'Demo board.bvr';
+
 function Banner() {
+  const openDemo = useCallback(() => {
+    // Evaluation path: a new user with no file in hand can still see the
+    // viewer working. MOCK_BOARD already powers the Settings mockup; here it
+    // opens as a real, interactive tab.
+    if (boardStore.tabs.some(t => t.fileName === DEMO_NAME)) {
+      const existing = boardStore.tabs.find(t => t.fileName === DEMO_NAME)!;
+      ensureBoardPanel(existing.id, DEMO_NAME);
+      return;
+    }
+    boardStore.openBoardFromData(DEMO_NAME, MOCK_BOARD);
+    const tab = boardStore.tabs.find(t => t.fileName === DEMO_NAME);
+    if (tab) ensureBoardPanel(tab.id, DEMO_NAME);
+  }, []);
   return (
     <header className="home-banner">
       <h1 className="home-banner-title">***WELCOME YOU TO BOARDRIPPER***</h1>
       <p className="home-banner-rant">{sessionRant}</p>
+      <button type="button" className="home-demo-btn" onClick={openDemo}>
+        Try a demo board — no file needed
+      </button>
     </header>
   );
 }
