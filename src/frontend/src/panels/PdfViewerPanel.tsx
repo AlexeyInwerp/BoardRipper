@@ -25,7 +25,7 @@ import {
 } from '../pdf/tile-manager';
 import type { TileGridInfo } from '../pdf/tile-manager';
 import { renderSettingsStore, isPdfWatermarkText, getActiveWatermarkFilter } from '../store/render-settings';
-import { invertScrollBindings, useBareScrollAction } from '../store/scroll-mode';
+import { invertScrollBindings, scrollSwapTooltip, useBareScrollAction } from '../store/scroll-mode';
 import { databankStore } from '../store/databank-store';
 import { showSidebarTab } from '../components/Sidebar.utils';
 
@@ -3453,9 +3453,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           <button
             className="pdf-toolbar-btn"
             onClick={invertScrollBindings}
-            title={bareAction === 'pan'
-              ? 'Scroll: Pan · Shift+Scroll: Zoom — click to swap'
-              : 'Scroll: Zoom · Shift+Scroll: Pan — click to swap'}
+            title={scrollSwapTooltip()}
           >
             {bareAction === 'pan' ? <IconHandMove size={14} /> : <IconZoomIn size={14} />}
           </button>

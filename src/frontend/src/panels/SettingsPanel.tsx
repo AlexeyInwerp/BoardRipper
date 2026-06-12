@@ -26,7 +26,8 @@ import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewer
 import { getDockviewApi } from '../store/dockview-api';
 import { log } from '../store/log-store';
 import { useObdForBoard } from '../store/obd-store';
-import { LibrarySyncSection } from './LibrarySyncSection';
+import { LibrarySyncSection, SoftwareUpdateSection } from './LibrarySyncSection';
+import { welcomeStore } from '../store/welcome-store';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
@@ -55,7 +56,7 @@ function useOverride(field: keyof RenderSettings) {
   return { isOverride, resetValue: gv as number & boolean };
 }
 
-type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'pdf' | 'boardOverlay';
+type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'dbinfo' | 'pdf' | 'boardOverlay';
 
 export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system';
 
@@ -87,10 +88,12 @@ export const SECTION_TO_TAB: Record<SectionId, SettingsTabId> = {
   // System tab
   performance: 'system',
   pdf:         'system',
-  // Library folder + auto-scan + DB info + library prefs lives on the Library
-  // tab. The internal section id is still `server` for localStorage continuity
-  // (`boardripper-settings-open-sections-*`) and focus refs.
+  // Library folder + auto-scan + scan/index controls live on the Library tab.
+  // The internal section id is still `server` for localStorage continuity
+  // (`boardripper-settings-open-sections-*`) and focus refs. `dbinfo` is the
+  // split-out database stats / dedup / reset block.
   server:      'library',
+  dbinfo:      'library',
 };
 
 const ACTIVE_TAB_KEY = 'boardripper-settings-active-tab';
@@ -112,13 +115,17 @@ function openSectionsKey(tab: SettingsTabId): string {
 }
 
 function loadOpenSections(tab: SettingsTabId): Set<SectionId> {
+  // First visit to the Library tab: the everyday section (Scanning & Indexing)
+  // starts open instead of a wall of collapsed headers.
+  const fallback = (): Set<SectionId> =>
+    tab === 'library' ? new Set<SectionId>(['server']) : new Set();
   try {
     const raw = localStorage.getItem(openSectionsKey(tab));
-    if (!raw) return new Set();
+    if (!raw) return fallback();
     const parsed = JSON.parse(raw) as SectionId[];
     return new Set(parsed);
   } catch {
-    return new Set();
+    return fallback();
   }
 }
 
@@ -928,6 +935,15 @@ function ScrollBindingsEditor() {
   const [dragging, setDragging] = useState<ScrollAction | null>(null);
   const [dragOver, setDragOver] = useState<keyof ScrollBindings | null>(null);
 
+  // Re-sync when any other surface (HomeBackdrop, WelcomeSetup, DebugPanel,
+  // PDF toolbar swap) changes the bindings while this editor is mounted —
+  // otherwise the pills show stale state and a drag persists wrong swaps.
+  useEffect(() => {
+    const onChange = () => setBindings(loadScrollBindings());
+    window.addEventListener('pdf-scroll-bindings-changed', onChange);
+    return () => window.removeEventListener('pdf-scroll-bindings-changed', onChange);
+  }, []);
+
   const save = useCallback((next: ScrollBindings) => {
     setBindings(next);
     try { localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
@@ -1002,7 +1018,9 @@ function ScrollBindingsEditor() {
           );
         })}
       </div>
-      {(bindings.bare !== 'zoom' || bindings.shift !== 'pan' || bindings.meta !== 'switch') && (
+      {(bindings.bare !== DEFAULT_SCROLL_BINDINGS.bare
+        || bindings.shift !== DEFAULT_SCROLL_BINDINGS.shift
+        || bindings.meta !== DEFAULT_SCROLL_BINDINGS.meta) && (
         <button className="scroll-bindings-reset" onClick={handleReset}>Reset to default</button>
       )}
     </div>
@@ -1018,12 +1036,16 @@ const QUALITY_LABELS: Record<PdfRenderQuality, string> = {
   low: 'Low',
 };
 
-const QUALITY_DESCRIPTIONS: Record<PdfRenderQuality, string> = {
-  max: 'Pixel-perfect at all zoom levels. High GPU usage. Desktop with dedicated GPU.',
-  high: 'Crisp text up to 800%. Good for modern laptops.',
-  medium: 'Softens above 400%. Smooth on integrated GPUs and tablets.',
-  low: 'Softens above 200%. Best for older machines or battery saving.',
-};
+// Derived from QUALITY_CONFIGS so the copy can't drift from the real caps.
+function qualityDescription(q: PdfRenderQuality): string {
+  const t = getPdfQualityConfig(q).maxMainTier;
+  switch (q) {
+    case 'max':    return `Pixel-perfect up to ${t}× zoom. High GPU usage. Desktop with dedicated GPU.`;
+    case 'high':   return `Crisp text up to ${t}× zoom. Good for modern laptops.`;
+    case 'medium': return `Softens above ${t}× zoom. Smooth on integrated GPUs and tablets.`;
+    case 'low':    return `Softens above ${t}× zoom. Best for older machines or battery saving.`;
+  }
+}
 
 function PdfQualitySelector() {
   const [quality, setQuality] = useState<PdfRenderQuality>(loadPdfQuality);
@@ -1044,13 +1066,13 @@ function PdfQualitySelector() {
             key={q}
             className={`settings-btn-option${quality === q ? ' active' : ''}`}
             onClick={() => handleChange(q)}
-            title={QUALITY_DESCRIPTIONS[q]}
+            title={qualityDescription(q)}
           >
             {QUALITY_LABELS[q]}
           </button>
         ))}
       </div>
-      <p className="settings-hint">{QUALITY_DESCRIPTIONS[quality]}</p>
+      <p className="settings-hint">{qualityDescription(quality)}</p>
       <div className="pdf-quality-details">
         <span>Main tier: {cfg.maxMainTier}× | Adj tier: {cfg.maxAdjTier}× | Cache: {cfg.cacheMaxEntries} pages / {Math.round(cfg.cacheMaxPixels / 1_000_000)}MP</span>
       </div>
@@ -1067,8 +1089,8 @@ const RENDER_MODE_LABELS: Record<'auto' | 'standard' | 'always-tile', string> = 
 };
 
 const RENDER_MODE_DESCRIPTIONS: Record<'auto' | 'standard' | 'always-tile', string> = {
-  auto: 'Tile above 1.05× zoom for crisp text at deep zoom. Full page below. Default.',
-  standard: 'Always render the full page into one canvas (Firefox-style). Smoother during pinch/zoom; pixels go soft past ~5–6× zoom on A4.',
+  auto: 'Tile above 1.05× zoom for crisp text at deep zoom. Full page below.',
+  standard: 'Always render the full page into one canvas (Firefox-style). Smoother during pinch/zoom; pixels go soft past ~5–6× zoom on A4. Default.',
   'always-tile': 'Always tile. Mostly an escape hatch for debugging — rarely useful.',
 };
 
@@ -1533,6 +1555,7 @@ export function SettingsPanel() {
   const partTypeOverridesRef = useRef<HTMLDivElement>(null);
   const zoomLodRef = useRef<HTMLDivElement>(null);
   const serverRef = useRef<HTMLDivElement>(null);
+  const dbinfoRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
   const boardOverlayRef = useRef<HTMLDivElement>(null);
 
@@ -1540,7 +1563,7 @@ export function SettingsPanel() {
     outline: outlineRef, parts: partsRef, pins: pinsRef,
     netColors: netColorsRef, selection: selectionRef, zoomLod: zoomLodRef, netLines: netLinesRef, navigation: navigationRef,
     performance: performanceRef, shortcuts: shortcutsRef,
-    partTypeOverrides: partTypeOverridesRef, server: serverRef, pdf: pdfRef,
+    partTypeOverrides: partTypeOverridesRef, server: serverRef, dbinfo: dbinfoRef, pdf: pdfRef,
     boardOverlay: boardOverlayRef,
   });
 
@@ -1586,6 +1609,33 @@ export function SettingsPanel() {
     });
     setDirty(true);
   }, []);
+
+  // Immediate global commit for input-behavior / system fields (Input +
+  // System tabs). No draft, no Apply — matches what QuickSettings on the
+  // home screen already does for the same fields. The draft + Apply
+  // pipeline is reserved for the Board tab (visual render settings +
+  // per-board overrides). Baseline is advanced too so these edits never
+  // show up in the board-tab dirty diff.
+  const updateGlobal: DraftUpdater = useCallback((partial) => {
+    renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSettings, ...partial });
+    baselineRef.current = { ...baselineRef.current, ...partial };
+    setDraft(prev => ({ ...prev, ...partial }));
+  }, []);
+
+  // Re-sync draft + baseline when the store changes underneath us (e.g.
+  // QuickSettings on the home screen, theme poke) while nothing is being
+  // edited here — otherwise a later Apply would clobber those changes with
+  // a stale snapshot. Skipped while dirty or previewing.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useEffect(() => {
+    return renderSettingsStore.subscribe(() => {
+      if (dirtyRef.current || previewingRef.current) return;
+      const snap = isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot();
+      baselineRef.current = structuredClone(snap);
+      setDraft(structuredClone(snap));
+    });
+  }, [isBoardMode]);
 
   const ruleActions: RuleUpdater = useMemo(() => ({
     add(pattern, color) {
@@ -1642,7 +1692,11 @@ export function SettingsPanel() {
       const overrides = computeOverrides(global, draft);
       renderSettingsStore.setBoardOverrides(activeFileName, overrides);
     } else {
-      renderSettingsStore.applyGlobal(draft);
+      // Surgical apply: merge only the fields the user actually edited
+      // (diff vs baseline) onto the CURRENT global settings, so changes
+      // made elsewhere while this panel was open are never clobbered.
+      const changed = computeOverrides(baselineRef.current, draft);
+      renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSettings, ...changed });
     }
     baselineRef.current = structuredClone(draft);
     setDirty(false); setPreviewing(false);
@@ -1688,9 +1742,6 @@ export function SettingsPanel() {
     <SettingsSearchProvider>
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
-        {/* ── Cache control — prominent, quick-access ── */}
-        <CacheControlBar hasBoard={hasBoard} />
-
         {/* ── Search bar — type or press / to focus, Esc to clear ── */}
         <SettingsSearchBar />
 
@@ -1703,43 +1754,52 @@ export function SettingsPanel() {
           </div>
         </div>
 
-        {/* ── Mode switch: Global vs Board ── */}
-        <div className="settings-mode-switch">
-          <button
-            className={`settings-mode-btn${effectiveMode === 'global' ? ' active' : ''}`}
-            onClick={() => setMode('global')}
-          >Global</button>
-          <button
-            className={`settings-mode-btn${effectiveMode === 'board' ? ' active' : ''}`}
-            onClick={() => setMode('board')}
-            disabled={!hasBoard}
-            title={hasBoard ? `Board overrides for ${activeFileName}` : 'Open a board to edit per-board settings'}
-          >Board</button>
-        </div>
-        <div className="settings-mode-hint">
-          {isBoardMode
-            ? <>Overrides for <strong>{activeFileName}</strong> &middot; <span className="settings-override-legend">yellow</span> = overridden</>
-            : 'Changes apply to all boards'}
-        </div>
+        {/* Mode switch + draft footer govern ONLY the Board tab — every other
+            tab commits immediately (updateGlobal / own stores), so rendering
+            Apply/Cancel there would act on invisible state. */}
+        {activeTab === 'board' && (
+          <>
+            {/* ── Mode switch: Global vs Board ── */}
+            <div className="settings-mode-switch">
+              <button
+                className={`settings-mode-btn${effectiveMode === 'global' ? ' active' : ''}`}
+                onClick={() => setMode('global')}
+              >Global</button>
+              <button
+                className={`settings-mode-btn${effectiveMode === 'board' ? ' active' : ''}`}
+                onClick={() => setMode('board')}
+                disabled={!hasBoard}
+                title={hasBoard ? `Board overrides for ${activeFileName}` : 'Open a board to edit per-board settings'}
+              >Board</button>
+            </div>
+            <div className="settings-mode-hint">
+              {isBoardMode
+                ? <>Overrides for <strong>{activeFileName}</strong> &middot; <span className="settings-override-legend">yellow</span> = overridden</>
+                : 'Changes apply to all boards'}
+            </div>
 
-        {/* Render preview (SettingsMockup) is silently disabled for now —
-            kept in the tree via the import so we can flip it back quickly
-            by toggling SHOW_MOCKUP_PREVIEW to true. */}
-        {SHOW_MOCKUP_PREVIEW && <SettingsMockup settings={draft} onElementClick={focusSection} />}
-        <div className="settings-footer">
-          <button
-            className={`settings-action-btn ${previewing ? 'active' : ''}`}
-            onClick={handlePreview} disabled={!dirty}
-            title={previewing ? 'Stop preview, revert board to saved' : 'Preview changes on the board'}
-          >
-            {previewing ? 'Stop Preview' : 'Preview'}
-          </button>
-          <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}>Apply</button>
-          <button className="settings-action-btn" onClick={handleCancel} disabled={!dirty}>Cancel</button>
-        </div>
+            {/* Render preview (SettingsMockup) is silently disabled for now —
+                kept in the tree via the import so we can flip it back quickly
+                by toggling SHOW_MOCKUP_PREVIEW to true. */}
+            {SHOW_MOCKUP_PREVIEW && <SettingsMockup settings={draft} onElementClick={focusSection} />}
+            <div className="settings-footer">
+              <button
+                className={`settings-action-btn ${previewing ? 'active' : ''}`}
+                onClick={handlePreview} disabled={!dirty}
+                title={previewing ? 'Stop preview, revert board to saved' : 'Preview changes on the board'}
+              >
+                {previewing ? 'Stop Preview' : 'Preview'}
+              </button>
+              <button className="settings-action-btn settings-apply-btn" onClick={handleApply} disabled={!dirty}>Apply</button>
+              <button className="settings-action-btn" onClick={handleCancel} disabled={!dirty}>Cancel</button>
+            </div>
+          </>
+        )}
       </div>
       <OverrideContext.Provider value={overrideCtx}>
       <div className="settings-scroll">
+
+      <SearchEmptyState activeTab={activeTab} goTab={setActiveTab} />
 
       {activeTab === 'theme' && (
         <ThemeTab />
@@ -1813,15 +1873,15 @@ export function SettingsPanel() {
       <CollapsibleSection id="zoomLod" title="Zoom Level of Detail" isOpen={openSections.has('zoomLod')}
         onToggle={toggleSection} sectionRef={zoomLodRef} isFocused={focusedSection === 'zoomLod'}>
         <div className="color-rule-hint" style={{ marginBottom: 6 }}>Controls when text labels appear/disappear as you zoom. Higher = must zoom in more. At 100% zoom: 1 mil = 1 screen pixel.</div>
-        <Slider label="Part Labels" value={draft.labelMinScreenPx} min={0} max={50} step={1} field="labelMinScreenPx" onUpdate={updateDraft}
+        <Slider label="Part Labels" value={draft.labelMinScreenPx} min={0} max={50} step={1} field="labelMinScreenPx" onUpdate={updateGlobal}
           title="Part name labels (R1, U1, C42) appear when they reach this many screen pixels. At 100% zoom a medium (8 mil) label = 8px. Set to 10 to hide them below 125% zoom." />
-        <Slider label="Pin Labels" value={draft.circleLabelMinScreenPx} min={0} max={50} step={1} field="circleLabelMinScreenPx" onUpdate={updateDraft}
+        <Slider label="Pin Labels" value={draft.circleLabelMinScreenPx} min={0} max={50} step={1} field="circleLabelMinScreenPx" onUpdate={updateGlobal}
           title="Pin numbers and net names on ICs/BGAs appear when they reach this many screen pixels. At 100% zoom a 6-mil pin label = 6px." />
-        <Slider label="2-Pin Net Names" value={draft.twoPinLabelMinScreenPx} min={0} max={50} step={1} field="twoPinLabelMinScreenPx" onUpdate={updateDraft}
+        <Slider label="2-Pin Net Names" value={draft.twoPinLabelMinScreenPx} min={0} max={50} step={1} field="twoPinLabelMinScreenPx" onUpdate={updateGlobal}
           title="Net names on resistors/capacitors (2-pin parts) appear when they reach this many screen pixels." />
-        <Slider label="Label Cull (mils)" value={draft.labelHideThreshold} min={0} max={20} step={0.5} field="labelHideThreshold" onUpdate={updateDraft}
+        <Slider label="Label Cull (mils)" value={draft.labelHideThreshold} min={0} max={20} step={0.5} field="labelHideThreshold" onUpdate={updateGlobal}
           title="Labels smaller than this (in board mils) are permanently removed from the scene — never drawn at any zoom. Saves GPU memory on dense boards." />
-        <Slider label="Global Zoom Floor" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateDraft}
+        <Slider label="Global Zoom Floor" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateGlobal}
           title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
       </CollapsibleSection>
       )}
@@ -1930,20 +1990,30 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.navigation && (
       <CollapsibleSection id="navigation" title="Navigation" isOpen={openSections.has('navigation')}
         onToggle={toggleSection} sectionRef={navigationRef} isFocused={focusedSection === 'navigation'}>
+        <div className="settings-row settings-toggle-row" title="Re-open the first-run gesture wizard: do the gesture you want for each pan/zoom action and it configures the bindings for you.">
+          <label className="settings-label">Interactive gesture setup</label>
+          <button
+            className="settings-action-btn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => welcomeStore.show()}
+          >
+            Re-run setup…
+          </button>
+        </div>
         <div className="settings-subsection-label">Scroll wheel behavior</div>
         <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
-        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateDraft} />
+        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateGlobal} />
         <Toggle
           label="Mouse wheel detection"
           value={draft.wheelDetection}
           field="wheelDetection"
-          onUpdate={updateDraft}
+          onUpdate={updateGlobal}
           title="When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
         />
 
         <div className="settings-subsection-label">Trackpad/Mouse drag behavior</div>
         <p className="settings-hint">Drag pills between slots to swap left-drag and Shift+left-drag actions.</p>
-        <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateDraft} />
+        <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateGlobal} />
 
         <div className="settings-subsection-label">Keyboard pan / zoom</div>
         <div className="settings-row" title="Fraction of screen dimension panned per WSAD or Alt+Arrow keypress. Default: 10% of screen width/height per press.">
@@ -1956,8 +2026,8 @@ export function SettingsPanel() {
               type="range" className="settings-slider"
               min={2} max={30} step={1}
               value={Math.round(draft.keyboardPanFraction * 100)}
-              onChange={(e) => updateDraft({ keyboardPanFraction: parseFloat(e.target.value) / 100 })}
-              onDoubleClick={() => updateDraft({ keyboardPanFraction: DEFAULTS.keyboardPanFraction })}
+              onChange={(e) => updateGlobal({ keyboardPanFraction: parseFloat(e.target.value) / 100 })}
+              onDoubleClick={() => updateGlobal({ keyboardPanFraction: DEFAULTS.keyboardPanFraction })}
             />
           </div>
         </div>
@@ -1965,37 +2035,37 @@ export function SettingsPanel() {
           label="Keyboard Zoom Step"
           value={draft.keyboardZoomDelta}
           min={50} max={400} step={10}
-          field="keyboardZoomDelta" onUpdate={updateDraft}
+          field="keyboardZoomDelta" onUpdate={updateGlobal}
           title={`Raw zoom delta per Shift+W / Shift+S keypress. Applies to both board and PDF. Current: ×${Math.pow(2, 1.3 * (draft.keyboardZoomDelta / 500)).toFixed(2)} per press. Default: 100 (≈×1.32).`}
         />
 
         <div className="settings-subsection-label">Zoom</div>
-        <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateDraft}
+        <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateGlobal}
           title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />
-        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateDraft}
+        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateGlobal}
           title="Extra padding (screen pixels) added when fitting the board to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
 
         <div className="settings-subsection-label">Navigate-to-component</div>
-        <Slider label="Component Size" value={draft.navTargetSize} min={0.05} max={0.90} step={0.05} field="navTargetSize" onUpdate={updateDraft}
+        <Slider label="Component Size" value={draft.navTargetSize} min={0.05} max={0.90} step={0.05} field="navTargetSize" onUpdate={updateGlobal}
           title="Target on-screen size of a component after navigating to it from search / NetList / Worklist. Expressed as a fraction of the smaller viewport dimension. Default 0.25 (~25%)." />
         <div className="settings-row" data-test="nav-zoom-mode" title="How navigation should treat zoom level.">
           <label className="settings-label">Zoom Mode</label>
           <div className="settings-btn-group" style={{ marginLeft: 'auto' }}>
             <button
               className={`settings-btn-option${draft.navZoomMode === 'auto' ? ' active' : ''}`}
-              onClick={() => updateDraft({ navZoomMode: 'auto' })}
+              onClick={() => updateGlobal({ navZoomMode: 'auto' })}
               title="Auto — keep current zoom when the part is in the comfortable band (1.5%–70% of screen). Snap to Component Size only when extreme."
               data-test="nav-zoom-auto"
             >Auto</button>
             <button
               className={`settings-btn-option${draft.navZoomMode === 'keep' ? ' active' : ''}`}
-              onClick={() => updateDraft({ navZoomMode: 'keep' })}
+              onClick={() => updateGlobal({ navZoomMode: 'keep' })}
               title="Keep — never change zoom, just pan to the part. Component Size is ignored."
               data-test="nav-zoom-keep"
             >Keep</button>
             <button
               className={`settings-btn-option${draft.navZoomMode === 'always' ? ' active' : ''}`}
-              onClick={() => updateDraft({ navZoomMode: 'always' })}
+              onClick={() => updateGlobal({ navZoomMode: 'always' })}
               title="Always — every navigation snaps to Component Size. Pre-v0.31.4 behavior."
               data-test="nav-zoom-always"
             >Always</button>
@@ -2006,11 +2076,11 @@ export function SettingsPanel() {
         <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing a drag gesture. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">
           <label className="settings-label">Inertia</label>
           <input type="checkbox" checked={!draft.disableInertia}
-            onChange={(e) => updateDraft({ disableInertia: !e.target.checked })} />
+            onChange={(e) => updateGlobal({ disableInertia: !e.target.checked })} />
         </div>
 
         <div className="settings-subsection-label">Click</div>
-        <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateDraft}
+        <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateGlobal}
           title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
       </CollapsibleSection>
       )}
@@ -2018,17 +2088,17 @@ export function SettingsPanel() {
       {activeTab === SECTION_TO_TAB.performance && (
       <CollapsibleSection id="performance" title="Performance & Debug" isOpen={openSections.has('performance')}
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
-        <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateDraft}
+        <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateGlobal}
           title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
-        <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateDraft}
+        <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
-        <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateDraft}
+        <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}
           title="Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild." />
-        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateDraft}
+        <Toggle label="Hide Text During Zoom" value={draft.hideTextDuringZoom} field="hideTextDuringZoom" onUpdate={updateGlobal}
           title="Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops" />
-        <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateDraft}
+        <Toggle label="[Debug] Pad Vertex Crosshairs" value={draft.showPadVertices} field="showPadVertices" onUpdate={updateGlobal}
           title="Draw magenta crosshair markers at each pin's exact coordinate from the board file. Useful for verifying parser accuracy" />
-        <Toggle label="[Debug] Outline Vertex Numbers" value={draft.showVertexNumbers} field="showVertexNumbers" onUpdate={updateDraft}
+        <Toggle label="[Debug] Outline Vertex Numbers" value={draft.showVertexNumbers} field="showVertexNumbers" onUpdate={updateGlobal}
           title="Show numbered markers at each board outline vertex. Yellow = unique, orange = duplicate coordinates. Works for all board formats" />
       </CollapsibleSection>
       )}
@@ -2044,7 +2114,7 @@ export function SettingsPanel() {
         <PdfWatermarkFilterEditor />
         <div className="settings-subsection-label">Navigation</div>
         <PdfInertiaToggle />
-        <Toggle label="Pan Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateDraft}
+        <Toggle label="Pan Boundaries" value={draft.pdfEnableBoundaries} field="pdfEnableBoundaries" onUpdate={updateGlobal}
           title="Clamp PDF pan to page edges: prevents scrolling off the document at the first/last page and centers horizontally when the page fits the viewport. Page-flip thresholds still fire as you cross them either way. Zoom range stays at 0.5×–10× regardless." />
         <div className="settings-subsection-label">Shortcuts (when PDF panel is active)</div>
         <div className="pdf-shortcuts-list">
@@ -2061,14 +2131,33 @@ export function SettingsPanel() {
       </CollapsibleSection>
       )}
 
+      {activeTab === 'system' && (
+        <>
+          <SoftwareUpdateSection />
+          {/* Cache/render resets are troubleshooting tools, not everyday
+              controls — demoted from the panel header into their own block. */}
+          <StandaloneCollapsibleSection title="Troubleshooting" defaultOpen={false}
+            storageKey="troubleshooting" searchSectionId="troubleshooting">
+            <CacheControlBar hasBoard={hasBoard} />
+          </StandaloneCollapsibleSection>
+        </>
+      )}
+
       {activeTab === SECTION_TO_TAB.server && (
-      <CollapsibleSection id="server" title="Library Folder & Database" isOpen={openSections.has('server')}
+      <>
+      {/* The everyday section first (scan/index controls); database stats,
+          dedup and the destructive resets live in their own block below. */}
+      <CollapsibleSection id="server" title="Scanning & Indexing" isOpen={openSections.has('server')}
         onToggle={toggleSection} sectionRef={serverRef} isFocused={focusedSection === 'server'}>
         <LibraryFolderSetting />
         <AutoScanToggle />
-        <DatabaseInfoSection />
         <LibrarySettingsSection />
       </CollapsibleSection>
+      <CollapsibleSection id="dbinfo" title="Database info" isOpen={openSections.has('dbinfo')}
+        onToggle={toggleSection} sectionRef={dbinfoRef} isFocused={focusedSection === 'dbinfo'}>
+        <DatabaseInfoSection />
+      </CollapsibleSection>
+      </>
       )}
 
       {activeTab === SECTION_TO_TAB.shortcuts && (
@@ -2096,10 +2185,12 @@ export function SettingsPanel() {
         <LibraryTab />
       )}
 
-      <button className="settings-reset-btn" onClick={handleReset}
-        title={isBoardMode ? 'Clear all board overrides — revert to global settings' : 'Reset all settings to defaults'}>
-        {isBoardMode ? 'Reset to Global' : 'Reset to Defaults'}
-      </button>
+      {activeTab === 'board' && (
+        <button className="settings-reset-btn" onClick={handleReset}
+          title={isBoardMode ? 'Clear all board overrides — revert to global settings' : 'Reset all settings to defaults (board render + input behavior)'}>
+          {isBoardMode ? 'Reset to Global' : 'Reset to Defaults'}
+        </button>
+      )}
       </div>
       </OverrideContext.Provider>
     </div>
@@ -2125,6 +2216,38 @@ function TabPill({ tab, activeTab, setActiveTab }: {
       {TAB_LABELS[tab]}
       {active && count > 0 && <span className="settings-tab-match-badge">{count}</span>}
     </button>
+  );
+}
+
+/** Inline note when a search has zero matches on the ACTIVE tab — names the
+ *  tabs that do match instead of leaving the body silently empty. Deliberately
+ *  does NOT auto-switch tabs; moving the user without asking is worse. */
+function SearchEmptyState({ activeTab, goTab }: {
+  activeTab: SettingsTabId;
+  goTab: (t: SettingsTabId) => void;
+}) {
+  const { active, matches } = useSettingsSearch();
+  if (!active) return null;
+  if ((matches.perTabCount.get(activeTab) ?? 0) > 0) return null;
+  const others = TAB_ORDER.filter(t => t !== activeTab && (matches.perTabCount.get(t) ?? 0) > 0);
+  return (
+    <div className="settings-search-empty">
+      {others.length === 0 ? (
+        'No settings match this search.'
+      ) : (
+        <>
+          No matches on this tab —{' '}
+          {others.map((t, i) => (
+            <span key={t}>
+              {i > 0 && ', '}
+              <button type="button" className="settings-search-empty-link" onClick={() => goTab(t)}>
+                {matches.perTabCount.get(t)} on {TAB_LABELS[t]}
+              </button>
+            </span>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 

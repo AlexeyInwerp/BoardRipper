@@ -3,6 +3,7 @@ import { renderSettingsStore } from './render-settings';
 import {
   loadScrollBindings,
   SCROLL_BINDINGS_KEY,
+  type ScrollAction,
   type ScrollBindings,
 } from '../panels/PdfViewerPanel';
 
@@ -29,6 +30,16 @@ export function invertScrollBindings(): void {
   const next: ScrollBindings = { bare: b.shift, shift: b.bare, meta: b.meta };
   localStorage.setItem(SCROLL_BINDINGS_KEY, JSON.stringify(next));
   window.dispatchEvent(new CustomEvent('pdf-scroll-bindings-changed', { detail: next }));
+}
+
+/** Tooltip for the swap button, built from the ACTUAL stored PDF bindings so
+ *  a custom 3-slot config (e.g. bare='switch') is described truthfully —
+ *  the old hardcoded "Pan/Zoom" pair lied whenever the third action was in
+ *  one of the two visible slots. */
+export function scrollSwapTooltip(): string {
+  const b = loadScrollBindings();
+  const name = (a: ScrollAction) => a === 'pan' ? 'Pan' : a === 'zoom' ? 'Zoom' : 'Flip pages';
+  return `Scroll: ${name(b.bare)} · Shift+Scroll: ${name(b.shift)} · Ctrl/Cmd+Scroll: ${name(b.meta)} — click to swap Scroll and Shift+Scroll`;
 }
 
 /**

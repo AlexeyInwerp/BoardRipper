@@ -20,8 +20,8 @@ export type SearchSectionId =
   | 'outline' | 'parts' | 'pins' | 'partTypeOverrides' | 'netColors'
   | 'selection' | 'boardOverlay' | 'netLines'
   | 'zoomLod' | 'navigation' | 'shortcuts'
-  | 'performance' | 'pdf'
-  | 'server' | 'library-sync' | 'obd'
+  | 'performance' | 'pdf' | 'updates' | 'troubleshooting'
+  | 'server' | 'dbinfo' | 'library-sync' | 'obd'
   | 'theme';
 
 export interface IndexEntry {
@@ -141,6 +141,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
 
   // Navigation
   S('input', 'navigation', 'Navigation', ['scroll', 'pan', 'zoom', 'wheel', 'drag', 'pinch']),
+  S('input', 'navigation', 'Interactive gesture setup', ['welcome', 'wizard', 'first run', 'gesture', 're-run setup']),
   S('input', 'navigation', 'Scroll wheel behavior', ['scroll', 'wheel', 'pan', 'zoom', 'bindings', 'shift', 'ctrl', 'cmd']),
   S('input', 'navigation', 'Trackpad/Mouse drag behavior', ['drag', 'left drag', 'pan', 'zoom', 'shift drag']),
   S('input', 'navigation', 'Keyboard pan / zoom', ['wsad', 'arrow keys', 'keyboard']),
@@ -180,18 +181,20 @@ export const SETTINGS_INDEX: IndexEntry[] = [
 
   // ── LIBRARY TAB ────────────────────────────────────────────────────────
 
-  // Library Folder & Database
-  S('library', 'server', 'Library Folder & Database', ['library', 'folder', 'database', 'db']),
+  // Scanning & Indexing
+  S('library', 'server', 'Scanning & Indexing', ['library', 'folder', 'scan', 'index', 'rescan']),
   S('library', 'server', 'Library Folder', ['library path', 'docker mount']),
   S('library', 'server', 'Auto-scan on startup'),
-  S('library', 'server', 'Database Info', ['db stats', 'file count', 'index status']),
-  S('library', 'server', 'Open Database Editor'),
-  S('library', 'server', 'Find duplicates', ['dedup', 'duplicates', 'duplicate detection']),
-  S('library', 'server', 'Reset PDF Text', ['reset pdf index', 'wipe pdf']),
-  S('library', 'server', 'Reset Database', ['wipe', 'reset all']),
   S('library', 'server', 'Auto-load bound PDFs', ['auto pdf', 'open pdf on board']),
   S('library', 'server', 'Recent history depth', ['history', 'recent files']),
   S('library', 'server', 'Clear recent history'),
+
+  // Database info (split out of Scanning & Indexing)
+  S('library', 'dbinfo', 'Database info', ['db stats', 'file count', 'index status', 'database']),
+  S('library', 'dbinfo', 'Open Database Editor'),
+  S('library', 'dbinfo', 'Find duplicates', ['dedup', 'duplicates', 'duplicate detection']),
+  S('library', 'dbinfo', 'Reset PDF Text', ['reset pdf index', 'wipe pdf']),
+  S('library', 'dbinfo', 'Reset Database', ['wipe', 'reset all']),
 
   // Library Sync (standalone collapsible)
   S('library', 'library-sync', 'Library Sync', ['webdav', 'copyparty', 'mirror', 'sync']),
@@ -199,7 +202,15 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   S('library', 'library-sync', 'Sync progress', ['running', 'transferring']),
   S('library', 'library-sync', 'Sync errors', ['failed', 'error log']),
   S('library', 'library-sync', 'Indexing status', ['scan', 'pdf index']),
-  S('library', 'library-sync', 'Update status', ['boardripper update', 'self-update']),
+
+  // ── SYSTEM TAB (continued) ─────────────────────────────────────────────
+
+  // Software update (standalone collapsible, moved from Library Sync)
+  S('system', 'updates', 'Software update', ['boardripper update', 'self-update', 'check now', 'version', 'upgrade']),
+  S('system', 'updates', 'Drop-to-update recovery', ['update bundle', 'offline update', 'brupdate', 'drag and drop update']),
+
+  // Troubleshooting (standalone collapsible — cache/render resets)
+  S('system', 'troubleshooting', 'Troubleshooting', ['cache', 'reset caches', 'restart render', 'reset pdf caches', 'clear cache', 'indexeddb']),
 
   // OpenBoardData (standalone collapsible)
   S('library', 'obd', 'OpenBoardData', ['obd', 'diagnostic', 'voltage', 'diode', 'resistance', 'measurements']),

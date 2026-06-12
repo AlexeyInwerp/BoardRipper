@@ -10,7 +10,7 @@ import type { SearchSectionId } from './search-index';
  * routing needed).
  */
 export function StandaloneCollapsibleSection({
-  title, defaultOpen = true, storageKey, searchSectionId, children,
+  title, defaultOpen = true, storageKey, searchSectionId, summary, children,
 }: {
   title: string;
   defaultOpen?: boolean;
@@ -19,6 +19,9 @@ export function StandaloneCollapsibleSection({
    *  this section (or a control within it), the section auto-opens and
    *  non-target sections hide. Omit to opt out of search integration. */
   searchSectionId?: SearchSectionId;
+  /** Optional status summary rendered in the header next to the chevron —
+   *  visible while the section is collapsed (e.g. "on · daily"). */
+  summary?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const fullKey = `boardripper-settings-standalone-open-${storageKey}`;
@@ -48,6 +51,7 @@ export function StandaloneCollapsibleSection({
     <div className="settings-section">
       <button className="settings-section-header" onClick={toggle}>
         <span className="settings-section-title">{title}</span>
+        {summary != null && <span className="settings-section-summary">{summary}</span>}
         <span className="settings-section-chevron">{effectiveOpen ? '▾' : '▸'}</span>
       </button>
       {effectiveOpen && <div className="settings-section-body">{children}</div>}

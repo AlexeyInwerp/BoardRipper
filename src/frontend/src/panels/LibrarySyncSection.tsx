@@ -19,6 +19,7 @@ import {
   type SyncSchedule,
   type TargetCheck,
 } from '../store/librarysync-store';
+import { updateStore } from '../store/update-store';
 import { StandaloneCollapsibleSection } from './settings/StandaloneCollapsibleSection';
 
 // ---- Helpers ----------------------------------------------------------------
@@ -43,24 +44,28 @@ function fmtNum(n?: number): string {
 
 export function LibrarySyncSection() {
   const { backendAvailable, electronMode } = useDatabank();
+  const { config, configLoaded } = useLibrarySync();
   if (electronMode) return null;
   if (!backendAvailable) {
     return (
-      <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync" searchSectionId="library-sync">
+      <StandaloneCollapsibleSection title="Library Sync" defaultOpen={false} storageKey="library-sync" searchSectionId="library-sync">
         <div className="color-rule-hint">
-          Backend not available. Start the Docker container to configure library sync.
+          Library sync needs the backend — it will be configurable once the server is reachable.
         </div>
       </StandaloneCollapsibleSection>
     );
   }
 
+  // WebDAV mirroring is a niche power feature — collapsed by default, with
+  // the configured state summarised in the header so it's collapsed ≠ hidden.
+  const summary = !configLoaded ? undefined : config.enabled ? `on · ${config.schedule}` : 'off';
   return (
-    <StandaloneCollapsibleSection title="Library Sync" storageKey="library-sync" searchSectionId="library-sync">
+    <StandaloneCollapsibleSection title="Library Sync" defaultOpen={false} summary={summary}
+      storageKey="library-sync" searchSectionId="library-sync">
       <SyncConfigCard />
       <SyncProgressCard />
       <SyncErrorsCard />
       <IndexingStatusCard />
-      <UpdateStatusCard />
     </StandaloneCollapsibleSection>
   );
 }
@@ -447,23 +452,42 @@ function IndexingStatusCard() {
 
 // ---- 4. Software-update status ----------------------------------------------
 
-function UpdateStatusCard() {
+/** Software-update section — lives on Settings ▸ System (moved out of
+ *  Library Sync, where nobody looked for it). Read-only status mirror of
+ *  updateStore plus a manual "Check now" and the only discoverable mention
+ *  of the drop-to-update recovery path outside a mid-drag overlay. */
+export function SoftwareUpdateSection() {
   const update = useUpdateStore();
+  const [checking, setChecking] = useState(false);
   if (!update.state) return null;
   const has = update.state.has_update;
+  const summary = has ? 'update available' : update.state.current_version;
+  const handleCheck = async () => {
+    if (checking) return;
+    setChecking(true);
+    try { await updateStore.check(); } finally { setChecking(false); }
+  };
   return (
-    <div className="settings-section">
-      <div className="settings-section-body">
-        <h3 style={{ margin: '0 0 8px' }}>
-          Software updates
-          {has && <span style={{ marginLeft: 8, fontSize: 12, color: '#c80' }}>● update available</span>}
-          {!has && update.state.current_version !== 'dev' && <span style={{ marginLeft: 8, fontSize: 12, color: '#393' }}>● up to date</span>}
-        </h3>
-        <DetailRow label="current version" value={update.state.current_version} />
-        {update.state.latest_version && <DetailRow label="latest version" value={update.state.latest_version} />}
-        <DetailRow label="last checked" value={fmtTime(update.state.checked_at)} />
-        {update.state.error && <DetailRow label="error" value={update.state.error} />}
+    <StandaloneCollapsibleSection title="Software update" summary={summary}
+      storageKey="software-update" searchSectionId="updates">
+      <div style={{ marginBottom: 8 }}>
+        {has && <span style={{ fontSize: 12, color: '#c80' }}>● update available</span>}
+        {!has && update.state.current_version !== 'dev' && <span style={{ fontSize: 12, color: '#393' }}>● up to date</span>}
       </div>
-    </div>
+      <DetailRow label="current version" value={update.state.current_version} />
+      {update.state.latest_version && <DetailRow label="latest version" value={update.state.latest_version} />}
+      <DetailRow label="last checked" value={fmtTime(update.state.checked_at)} />
+      {update.state.error && <DetailRow label="error" value={update.state.error} />}
+      <div style={{ marginTop: 8 }}>
+        <button className="settings-action-btn" onClick={handleCheck} disabled={checking}>
+          {checking ? 'Checking…' : 'Check now'}
+        </button>
+      </div>
+      <p className="settings-hint" style={{ marginTop: 8 }}>
+        Recovery: if the app can&apos;t reach the update servers, download the signed
+        update bundle (<code>boardripper-update-v*.tar</code>) on another machine and
+        drag it onto this window — it verifies and installs offline.
+      </p>
+    </StandaloneCollapsibleSection>
   );
 }
