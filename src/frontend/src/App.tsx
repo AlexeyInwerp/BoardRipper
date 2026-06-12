@@ -10,6 +10,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import { Toolbar } from './components/Toolbar';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
+import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { Sidebar } from './components/Sidebar';
 import { isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide } from './components/Sidebar.utils';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
@@ -316,6 +317,7 @@ function App() {
       </div>
       <StatusBar />
       <ContextMenu />
+      <ShortcutsOverlay />
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map(t => (

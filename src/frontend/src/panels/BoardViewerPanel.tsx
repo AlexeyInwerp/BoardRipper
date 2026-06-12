@@ -228,7 +228,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
             setSidebarOpen(next);
             setSliderVisible(next);
           }}
-          title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+          title={sidebarOpen ? 'Hide board panel (Layers · Info · Search · Worklist)' : 'Show board panel (Layers · Info · Search · Worklist)'}
         >
           ☰
         </button>

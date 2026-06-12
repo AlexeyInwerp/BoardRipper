@@ -44,17 +44,24 @@ export interface Shortcut {
    *  Shift+Backquote, `°` on DE is also Shift+Backquote — both should
    *  toggle the library). */
   ignoreShift?: boolean;
+  /** Render this entry in cheat sheets but DON'T run it through the matcher —
+   *  for behaviours handled by ad-hoc code paths (Tab jump, arrow match-nav)
+   *  that previously appeared in no shortcut list at all. */
+  displayOnly?: boolean;
+  /** Matcher still runs this binding, but hide it from cheat sheets — used to
+   *  collapse duplicate rows (e.g. ⌘P opens the same picker as ⌘O). */
+  hideInList?: boolean;
 }
 
 export const shortcuts: Shortcut[] = [
   // --- File ---
   {
     id: 'openBoard',
-    label: 'Open Board',
+    label: 'Open File',
     category: 'file',
     key: 'o',
     mod: true,
-    description: 'Open a board file',
+    description: 'Open a board or PDF (⌘O and ⌘P both open the same picker)',
   },
   {
     id: 'openPdf',
@@ -62,6 +69,7 @@ export const shortcuts: Shortcut[] = [
     category: 'file',
     key: 'p',
     mod: true,
+    hideInList: true, // same picker as Open File — one row in the cheat sheet
     description: 'Open a PDF schematic',
   },
   {
@@ -174,6 +182,27 @@ export const shortcuts: Shortcut[] = [
     category: 'navigation',
     key: 'End',
     description: 'Jump to the last PDF page',
+  },
+  // Display-only — these behaviours are handled by ad-hoc code paths in
+  // useKeyboardShortcuts (Tab jump, arrow match-nav) and previously appeared
+  // in no cheat sheet. Listed here so both the home screen and Settings
+  // surface them; the matcher skips displayOnly entries.
+  {
+    id: 'tabJump',
+    label: 'Jump board ↔ PDF',
+    category: 'navigation',
+    key: 'Tab',
+    displayOnly: true,
+    description: 'Switch focus between the active board panel and its linked PDF (and back).',
+  },
+  {
+    id: 'matchNav',
+    label: 'Next / previous match',
+    category: 'navigation',
+    key: 'ArrowDown',
+    displayLabel: '↑ ↓',
+    displayOnly: true,
+    description: 'With PDF search results, Up/Down step through matches; with none, they page the PDF.',
   },
 
   // --- PDF Viewer ---

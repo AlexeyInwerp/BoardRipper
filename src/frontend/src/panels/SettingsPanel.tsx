@@ -2170,7 +2170,7 @@ export function SettingsPanel() {
               cat === 'pdf' ? 'PDF' :
               cat[0].toUpperCase() + cat.slice(1)
             }</div>
-            {shortcuts.filter(s => s.category === cat).map(s => (
+            {shortcuts.filter(s => s.category === cat && !s.hideInList).map(s => (
               <div key={s.id} className="shortcuts-row">
                 <span className="shortcuts-label" title={s.description}>{s.label}</span>
                 <kbd className="shortcuts-key">{formatShortcut(s.id)}</kbd>

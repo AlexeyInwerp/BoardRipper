@@ -242,6 +242,7 @@ export function useKeyboardShortcuts() {
       }
 
       for (const shortcut of shortcuts) {
+        if (shortcut.displayOnly) continue; // cheat-sheet-only; handled ad-hoc above
         if (!matchesShortcut(e, shortcut)) continue;
 
         switch (shortcut.id) {

@@ -361,7 +361,7 @@ export function Toolbar() {
         <button
           onClick={toggleSidebar}
           className="toolbar-btn toolbar-btn-icon"
-          data-tooltip="Toggle sidebar"
+          data-tooltip="Toggle Library / Settings panel"
         >
           &#x2261;
         </button>

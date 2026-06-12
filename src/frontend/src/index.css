@@ -5244,6 +5244,34 @@ body {
   flex-shrink: 0;
 }
 
+/* "Open" affordance on a search hit — visible on row hover/focus */
+.library-search-result-open {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 1px 7px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.library-search-result:hover .library-search-result-open,
+.library-search-result:focus .library-search-result-open,
+.library-search-result:focus-within .library-search-result-open {
+  opacity: 1;
+}
+.library-search-result-open:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.library-search-result:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .library-search-result-hits {
   color: var(--accent);
   font-size: 10px;
@@ -6664,6 +6692,45 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 18px 24px;
 }
+
+/* '?' mid-session shortcut overlay */
+.shortcuts-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.shortcuts-overlay {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  max-width: 880px;
+  max-height: 86vh;
+  overflow: auto;
+  padding: 16px 20px 20px;
+}
+.shortcuts-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+.shortcuts-overlay-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+}
+.shortcuts-overlay-close:hover { color: var(--accent); }
 .home-shortcut-col {
   display: flex;
   flex-direction: column;

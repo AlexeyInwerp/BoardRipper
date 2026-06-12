@@ -1895,8 +1895,13 @@ function SearchResultsView({ results, selectedFileId, onSelectResult, onOpenResu
         <div
           key={`${r.file_id}-${i}`}
           className={`library-search-result${r.file_id === selectedFileId ? ' selected' : ''}`}
+          tabIndex={0}
+          title="Double-click or press Enter to open"
           onClick={() => onSelectResult(r.file_id)}
           onDoubleClick={() => onOpenResult(r)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); onOpenResult(r); }
+          }}
         >
           <div className="library-search-result-header">
             <span className="library-file-icon library-icon-pdf">P</span>
@@ -1905,6 +1910,13 @@ function SearchResultsView({ results, selectedFileId, onSelectResult, onOpenResu
               {r.hit_count ?? 1} hit{(r.hit_count ?? 1) === 1 ? '' : 's'}
             </span>
             <span className="library-search-result-page">p{r.page_num}</span>
+            <button
+              className="library-search-result-open"
+              title="Open this PDF"
+              onClick={(e) => { e.stopPropagation(); onOpenResult(r); }}
+            >
+              Open
+            </button>
           </div>
           {r.snippet && (
             <div className="library-search-result-snippet">

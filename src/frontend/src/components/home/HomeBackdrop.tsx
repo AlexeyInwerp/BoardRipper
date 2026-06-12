@@ -969,9 +969,10 @@ const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'wsad', 'navigat
 function ShortcutList() {
   return (
     <CollapsibleCard id="shortcuts" title="Keyboard shortcuts">
+      <p className="home-shortcut-hint">Press <kbd>?</kbd> anytime to bring this list up over your work.</p>
       <div className="home-shortcut-grid">
         {CATEGORY_ORDER.map((cat) => {
-          const items = shortcuts.filter((s) => s.category === cat);
+          const items = shortcuts.filter((s) => s.category === cat && !s.hideInList);
           if (items.length === 0) return null;
           return (
             <div key={cat} className="home-shortcut-col">
