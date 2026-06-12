@@ -1566,6 +1566,18 @@ export function SettingsPanel() {
     focusTimerRef.current = setTimeout(() => setFocusedSection(null), 1400);
   }, [activeTab, setActiveTab]);
 
+  // External deep-link: other panels dispatch 'settings-focus-section' with a
+  // SectionId (e.g. the Library empty state pointing at the scan controls).
+  // The sidebar tab itself is switched by the caller via showSidebarTab.
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const id = (e as CustomEvent<SectionId>).detail;
+      if (id && SECTION_TO_TAB[id]) focusSection(id);
+    };
+    window.addEventListener('settings-focus-section', onFocus);
+    return () => window.removeEventListener('settings-focus-section', onFocus);
+  }, [focusSection]);
+
   const updateDraft: DraftUpdater = useCallback((partial) => {
     setDraft(prev => {
       const next = { ...prev, ...partial };

@@ -872,7 +872,7 @@ function LibraryStats() {
   if (!backendAvailable) {
     return (
       <p className="home-card-empty">
-        Backend unreachable — start the Docker container (or local Go server) to see library stats.
+        Backend unreachable — library stats will appear once the BoardRipper server is back.
       </p>
     );
   }
@@ -1031,8 +1031,8 @@ export function HomeBackdrop() {
           <div className="home-ui-scale-row">
             <InterfaceScaleSlider />
           </div>
-          <QuickSettings />
           <Instructions />
+          <QuickSettings />
           <LatestUpdate />
           <ShortcutList />
           <Footer />

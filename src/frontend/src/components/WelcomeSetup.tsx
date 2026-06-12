@@ -206,8 +206,8 @@ function WelcomeSetupBody() {
       <div className="library-modal library-modal-wide welcome-modal">
         <div className="library-modal-title" id="welcome-title">Welcome to BoardRipper</div>
         <div className="library-modal-filename">
-          Most important step is navigation set up.Pick an action, then do the gesture you want for it in the box. 
-          You can change everything later in Settings.
+          The most important step is navigation setup. Pick an action, then do the gesture
+          you want for it in the box. You can change everything later in Settings.
         </div>
 
         <div className="welcome-chiprow">
@@ -242,7 +242,10 @@ function WelcomeSetupBody() {
         </label>
 
         <div className="library-modal-actions">
-          <button type="button" onClick={() => welcomeStore.finish()}>Skip for now</button>
+          <button type="button" className="welcome-never-btn" onClick={() => welcomeStore.finish()}>
+            Don&apos;t show again
+          </button>
+          <button type="button" onClick={() => welcomeStore.dismiss()}>Skip for now</button>
           <button type="button" className="library-modal-save" onClick={onSave}>Save</button>
         </div>
       </div>

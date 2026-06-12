@@ -888,7 +888,7 @@ export function LibraryPanel() {
       {/* Backend warning (web mode only) */}
       {!electronMode && !backendAvailable && (
         <div className="library-backend-warn">
-          Backend unavailable — start Docker or run the Go server on :8080
+          Backend unreachable — is the BoardRipper server running? Retrying automatically.
         </div>
       )}
 
@@ -991,7 +991,16 @@ export function LibraryPanel() {
           </div>
         ) : files.length === 0 ? (
           <div className="library-empty">
-            No files found. Click Scan to index your data directory.
+            <div>Library is empty — no files indexed yet.</div>
+            <button
+              className="library-empty-action"
+              onClick={() => {
+                showSidebarTab('settings');
+                window.dispatchEvent(new CustomEvent('settings-focus-section', { detail: 'server' }));
+              }}
+            >
+              Open Settings ▸ Library to scan
+            </button>
           </div>
         ) : viewMode === 'history' ? (
           <HistoryView

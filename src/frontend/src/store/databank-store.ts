@@ -713,7 +713,7 @@ class DatabankStore extends Emitter {
       return await res.json();
     } catch {
       if (!this._backendWarned && !settling) {
-        log.scan.warn('Backend unavailable — run the Docker container or backend on :8080');
+        log.scan.warn('Backend unavailable — is the BoardRipper server running? (dev: go backend on :1336)');
         this._backendWarned = true;
       }
       if (this._backendAvailable) {
@@ -770,6 +770,13 @@ class DatabankStore extends Emitter {
    *  ensureLoaded can transition to 'error' on any thrown failure. */
   private async _runStartupLoad(): Promise<void> {
     try {
+      // First contact: an empty History tab is a dead-end — a new user with a
+      // mounted library would see nothing. Boot to the Board# view instead;
+      // History stays the default once the user has actually opened files.
+      if (this._viewMode === 'history' && this._recentItems.length === 0) {
+        this._viewMode = 'metadata';
+      }
+
       // Electron branch: same as today's initElectron path.
       if (typeof window !== 'undefined' && window.electronAPI?.scanLibrary) {
         await this.initElectron();

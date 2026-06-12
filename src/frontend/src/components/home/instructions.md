@@ -71,7 +71,7 @@ Second row — overlay toggles:
 - **Shift + W / Shift + S** zoom in / out at the canvas center.
 - **`~`** toggles the Library sidebar — the key left of `1` (layout-independent: works as `~` on US, `°` on DE, etc.).
 
-> AZERTY note: today these shortcuts follow the printed letters on your keyboard, so on AZERTY layouts the keys are Z/Q/S/D rather than the physical W/A/S/D positions. Layout-aware remapping is on the roadmap.
+**AZERTY note:** these shortcuts go by key *position*, not the printed letter — pan with the keys printed Z/Q/S/D on AZERTY (the physical W/A/S/D positions), rotate with A/E. No remapping needed.
 
 ## Tips
 

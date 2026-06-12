@@ -194,11 +194,24 @@ function App() {
 
     const boardFiles: File[] = [];
     const pdfFiles: File[] = [];
+    const skipped: string[] = [];
 
     for (const file of files) {
       const type = isSupportedFile(file.name);
       if (type === 'board') boardFiles.push(file);
       else if (type === 'pdf') pdfFiles.push(file);
+      else skipped.push(file.name);
+    }
+
+    // Never discard a drop silently — name what was ignored and why.
+    if (skipped.length > 0) {
+      const shown = skipped.slice(0, 3).join(', ');
+      const more = skipped.length > 3 ? ` (+${skipped.length - 3} more)` : '';
+      boardStore.addToast(
+        `Ignored ${skipped.length === 1 ? 'unsupported file' : `${skipped.length} unsupported files`}: ` +
+        `${shown}${more}. BoardRipper opens boardview files and PDFs.`,
+        'error',
+      );
     }
 
     // Load board files

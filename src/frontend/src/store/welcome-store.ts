@@ -42,6 +42,13 @@ class WelcomeStore {
     this.notify();
   }
 
+  /** Close WITHOUT persisting — "Skip for now" must mean now, not forever.
+   *  The modal may auto-show again next launch. */
+  dismiss(): void {
+    this.open = false;
+    this.notify();
+  }
+
   /** Close and mark complete so it never auto-shows again. */
   finish(): void {
     this.open = false;

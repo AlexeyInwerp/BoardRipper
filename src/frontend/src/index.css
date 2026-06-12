@@ -2879,6 +2879,31 @@ body {
   border-color: var(--accent);
 }
 
+/* Actionable button inside .library-empty states */
+.library-empty-action {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  margin-top: 10px;
+  padding: 4px 12px;
+}
+.library-empty-action:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Welcome modal: opt-out is the quiet option, pushed away from Skip/Save */
+.welcome-never-btn {
+  margin-right: auto;
+  opacity: 0.6;
+}
+.welcome-never-btn:hover {
+  opacity: 1;
+}
+
 .layer-list-container {
   padding: 4px 0;
 }
