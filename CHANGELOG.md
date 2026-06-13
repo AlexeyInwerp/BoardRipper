@@ -1,5 +1,43 @@
 # BoardRipper changelog
 
+## v0.31.19 — 2026-06-13
+
+A broad UX pass driven by a six-phase improvement plan plus bench
+feedback, layered on top of the library drop-to-incoming and
+auto-indexing work. Headline: the in-tab board panel now opens on
+component **Info** for single-layer boards instead of the visibility
+tab, board↔PDF linking works from both sides, PDF paging and search
+stop losing your place, Settings commit behaviour is consistent, and a
+clutch of long-standing rough edges (the `vv0.31.x` version badge, the
+interface-scale slider jitter, the inconsistent library stats line) are
+gone.
+
+### Features
+
+- **Drop-to-incoming with auto-organisation.** Files dragged onto the app are now routed into `incoming/{brand}/{model}/` (with a brand fall-through when the model is unknown), the new row is force-streamed so it appears immediately, and dropped PDFs are auto-indexed for full-text search. The DB folder tree gains a per-folder index button. (`335dec1`, `311a08f`, `49f2a8e`)
+- **PDF indexer re-queues on modify + manual Force re-index.** The scanner now marks a PDF pending again when its bytes change, and Settings ▸ Library exposes verbose index status plus a Force re-index control. (`d7e014d`)
+- **Board↔PDF linking from both sides.** The ∞ control is now a full link menu on the board tab *and* the PDF toolbar (it was PDF-only); the 5-second auto-close that kept dismissing the menu mid-decision is gone, the unlinked state reads "Link board…", and a "Boardview" section header was added. (`325afda`)
+- **PDF paging that keeps your place.** The page-number box commits on Enter/blur instead of navigating per keystroke (typing "250" no longer visits 2 then 25); PageUp/PageDown page even while the search field is focused; new Home/End jump to first/last page; a zero-result Ctrl-F shows `0/0` with a one-click handoff to the library-wide PDF search. (`0495267`, `42a34f9`)
+- **'?' shortcut overlay.** Press `?` anywhere to bring the full keyboard-shortcut cheat sheet up over your work — previously it was only visible on the empty home screen. Tab-jump and arrow match-navigation are now listed, and ⌘O/⌘P collapse to one "Open File" row (they open the same picker). (`42a34f9`)
+- **Worklist + hidden-parts affordances.** Shift-click add/remove now toasts both directions and only force-opens the sidebar on first use; hiding a part shows an Undo toast and a "Hidden parts (N) / Restore all" row in the Layers tab so a hidden part is recoverable. (`0495267`, `db72f69`)
+- **First-contact polish.** The Library boots to the Board# view when history is empty, empty states point at the right action, dropped files that match no parser now say so, and the welcome modal's "Skip for now" no longer means "never again". (`567366a`)
+- **Unrecognized files keep their filesystem layout** under a labelled divider in the Board# tree instead of collapsing into one bucket. (`1f66453`, `7a5268f`, `3e57b38`)
+
+### Changes
+
+- **Settings restructured for coherence.** Input/System fields commit immediately (matching the home-screen Quick settings); the Preview/Apply/Cancel footer and Reset render only on the Board tab they govern; the Navigation section now leads the Input tab; the Library tab splits into "Scanning & Indexing" and "Database info"; software-update moved to its own System-tab section with a Check-now button and the drop-to-update recovery note; Library Sync collapses with an on/off summary; settings search shows a "no matches on this tab — N on X" hint. (`98de9d5`, `bb4d2e1`)
+- **Single-layer boards open on Info.** The in-tab sidebar now defaults to component detail (Info) on boards with no layer stack, and Layers on multi-layer boards; Info is first in the strip. (`30c1d9a`)
+- **SearchTab handles dense boards.** The part/net lists are memoized and capped at 400 rendered rows with an overflow hint, so the search tab no longer janks every keystroke on 5–8 k-part boards. (`f0bf6d7`)
+- **Library housekeeping** — stats/progress moved below the search row, scan/index actions moved to Settings, collapse-all relocated to the statsbar, the failed-index modal gained filename + path, brand grouping is case-insensitive with a canonical display label, and the dead "Save as BVR3" toolbar button was removed. (`8e64479`, `48c672f`, `bc49a0b`, `f0bf6d7`)
+
+### Fixes
+
+- **Update badge showed `vv0.31.x`.** The backend version already carries a `v` prefix, so the up-to-date badge double-prefixed it while the update-available path showed it raw — the two never matched. A single normalizer fixes all five display sites (and the dev-build "vdev"). (`325afda`)
+- **Interface-scale slider jitter.** The conditional "Reset" button appeared/disappeared as the value crossed 100% and shifted the track width mid-drag. Removed it; reset is now double-click on the slider (which previously did nothing here). (`bb4d2e1`)
+- **Library stats line jumped between tabs.** It sat below the filter input, which only renders on non-PDF tabs, so the line shifted up a row on the PDF tab. Pinned directly under the tab row. (`bb4d2e1`)
+- **Adversarial-review regressions** from the UX work — board-tab link indicator vanishing when the bound PDF wasn't open, a Settings re-sync subscriber clobbering global slider baselines, a collapsed-only summary chip, split-view scoping of "Restore all", and a stale fixed-position dropdown — all fixed before ship. (`db72f69`)
+- **Sorted-section gating** in the Board# tree now requires both brand and model (and `resolution_status === 'resolved'`), and the re-resolve gate triggers on any metadata-field change. (`70433d7`, `0fa860d`, `7005f75`, `73aec8c`)
+
 ## v0.31.18 — 2026-06-11
 
 Bigger update than the recent point-releases — covers four areas. The
