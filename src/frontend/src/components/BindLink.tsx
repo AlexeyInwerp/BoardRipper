@@ -63,9 +63,20 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
     };
     document.addEventListener('mousedown', onMouse);
     document.addEventListener('keydown', onKey);
+    // A position:fixed dropdown's coords are captured once; close it on any
+    // scroll/resize rather than render it detached from its button.
+    const onReflow = fixedDropdown ? () => setOpen(false) : null;
+    if (onReflow) {
+      window.addEventListener('scroll', onReflow, true);
+      window.addEventListener('resize', onReflow);
+    }
     return () => {
       document.removeEventListener('mousedown', onMouse);
       document.removeEventListener('keydown', onKey);
+      if (onReflow) {
+        window.removeEventListener('scroll', onReflow, true);
+        window.removeEventListener('resize', onReflow);
+      }
     };
   }, [open, fixedDropdown]);
 

@@ -377,7 +377,7 @@ function LayersTab({ tabId }: { tabId: number }) {
               <span className="hidden-parts-label">Hidden parts ({hiddenParts.length})</span>
               <button
                 className="hidden-parts-restore"
-                onClick={() => boardStore.unhideAllParts()}
+                onClick={() => boardStore.unhideAllParts(tabId)}
                 title={`Restore: ${hiddenParts.join(', ')}`}
               >
                 Restore all

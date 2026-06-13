@@ -91,7 +91,7 @@ export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number 
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerLeave}
     >
-      {tab && pdfNames.length > 0 && (
+      {tab && (linkedCount > 0 || pdfNames.length > 0) && (
         <span
           className="board-tab-bindlink"
           // Keep BindLink interactions out of dockview's tab drag/activate

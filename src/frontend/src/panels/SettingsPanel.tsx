@@ -1616,8 +1616,18 @@ export function SettingsPanel() {
   // pipeline is reserved for the Board tab (visual render settings +
   // per-board overrides). Baseline is advanced too so these edits never
   // show up in the board-tab dirty diff.
+  // applyGlobal notifies synchronously, which fires the re-sync subscriber
+  // below. In Board mode that subscriber would rebuild the draft from the
+  // *effective* (global+override) snapshot and corrupt the baselines of
+  // other override-carrying global-only fields. Guard against our own notify.
+  const selfUpdateRef = useRef(false);
   const updateGlobal: DraftUpdater = useCallback((partial) => {
-    renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSettings, ...partial });
+    selfUpdateRef.current = true;
+    try {
+      renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSettings, ...partial });
+    } finally {
+      selfUpdateRef.current = false;
+    }
     baselineRef.current = { ...baselineRef.current, ...partial };
     setDraft(prev => ({ ...prev, ...partial }));
   }, []);
@@ -1625,12 +1635,13 @@ export function SettingsPanel() {
   // Re-sync draft + baseline when the store changes underneath us (e.g.
   // QuickSettings on the home screen, theme poke) while nothing is being
   // edited here — otherwise a later Apply would clobber those changes with
-  // a stale snapshot. Skipped while dirty or previewing.
+  // a stale snapshot. Skipped while dirty, previewing, or for our own
+  // updateGlobal-originated notifies.
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   useEffect(() => {
     return renderSettingsStore.subscribe(() => {
-      if (dirtyRef.current || previewingRef.current) return;
+      if (selfUpdateRef.current || dirtyRef.current || previewingRef.current) return;
       const snap = isBoardMode ? renderSettingsStore.snapshot() : renderSettingsStore.globalSnapshot();
       baselineRef.current = structuredClone(snap);
       setDraft(structuredClone(snap));

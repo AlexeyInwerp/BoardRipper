@@ -2914,6 +2914,11 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
 }
+.hidden-parts-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .hidden-parts-restore {
   background: none;
   border: 1px solid var(--border);
@@ -6710,6 +6715,17 @@ body {
 }
 
 /* --- Keyboard shortcuts --- */
+.home-shortcut-hint {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+.home-shortcut-hint kbd {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.95em;
+}
+
 .home-shortcut-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

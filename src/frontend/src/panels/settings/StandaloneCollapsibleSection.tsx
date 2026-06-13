@@ -51,7 +51,7 @@ export function StandaloneCollapsibleSection({
     <div className="settings-section">
       <button className="settings-section-header" onClick={toggle}>
         <span className="settings-section-title">{title}</span>
-        {summary != null && <span className="settings-section-summary">{summary}</span>}
+        {summary != null && !effectiveOpen && <span className="settings-section-summary">{summary}</span>}
         <span className="settings-section-chevron">{effectiveOpen ? '▾' : '▸'}</span>
       </button>
       {effectiveOpen && <div className="settings-section-body">{children}</div>}

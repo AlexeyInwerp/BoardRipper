@@ -1413,9 +1413,11 @@ class BoardStore extends Emitter {
     this.notify();
   }
 
-  /** Restore every hidden part on the active tab (sendToBack overrides stay). */
-  unhideAllParts() {
-    const tab = this.activeTab;
+  /** Restore every hidden part on the given tab (or the active tab when no id
+   *  is passed). sendToBack overrides stay. tabId matters in split view where
+   *  the panel acting may not be the active tab. */
+  unhideAllParts(tabId?: number) {
+    const tab = tabId != null ? this.getTab(tabId) : this.activeTab;
     if (!tab) return;
     let changed = false;
     const next = new Map(tab.partOverrides);
