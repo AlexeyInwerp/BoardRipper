@@ -1880,6 +1880,106 @@ export function SettingsPanel() {
       </CollapsibleSection>
       )}
 
+      {/* Navigation first — gesture/scroll setup is the most important thing a
+          new user configures, so it leads the Input tab. */}
+      {activeTab === SECTION_TO_TAB.navigation && (
+      <CollapsibleSection id="navigation" title="Navigation" isOpen={openSections.has('navigation')}
+        onToggle={toggleSection} sectionRef={navigationRef} isFocused={focusedSection === 'navigation'}>
+        <div className="settings-row settings-toggle-row" title="Re-open the first-run gesture wizard: do the gesture you want for each pan/zoom action and it configures the bindings for you.">
+          <label className="settings-label">Interactive gesture setup</label>
+          <button
+            className="settings-action-btn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => welcomeStore.show()}
+          >
+            Re-run setup…
+          </button>
+        </div>
+        <div className="settings-subsection-label">Scroll wheel behavior</div>
+        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
+        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateGlobal} />
+        <Toggle
+          label="Mouse wheel detection"
+          value={draft.wheelDetection}
+          field="wheelDetection"
+          onUpdate={updateGlobal}
+          title="When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
+        />
+
+        <div className="settings-subsection-label">Trackpad/Mouse drag behavior</div>
+        <p className="settings-hint">Drag pills between slots to swap left-drag and Shift+left-drag actions.</p>
+        <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateGlobal} />
+
+        <div className="settings-subsection-label">Keyboard pan / zoom</div>
+        <div className="settings-row" title="Fraction of screen dimension panned per WSAD or Alt+Arrow keypress. Default: 10% of screen width/height per press.">
+          <label className="settings-label">
+            Keyboard Pan Step
+            <span className="settings-value">{Math.round(draft.keyboardPanFraction * 100)}%</span>
+          </label>
+          <div className="settings-slider-wrap">
+            <input
+              type="range" className="settings-slider"
+              min={2} max={30} step={1}
+              value={Math.round(draft.keyboardPanFraction * 100)}
+              onChange={(e) => updateGlobal({ keyboardPanFraction: parseFloat(e.target.value) / 100 })}
+              onDoubleClick={() => updateGlobal({ keyboardPanFraction: DEFAULTS.keyboardPanFraction })}
+            />
+          </div>
+        </div>
+        <Slider
+          label="Keyboard Zoom Step"
+          value={draft.keyboardZoomDelta}
+          min={50} max={400} step={10}
+          field="keyboardZoomDelta" onUpdate={updateGlobal}
+          title={`Raw zoom delta per Shift+W / Shift+S keypress. Applies to both board and PDF. Current: ×${Math.pow(2, 1.3 * (draft.keyboardZoomDelta / 500)).toFixed(2)} per press. Default: 100 (≈×1.32).`}
+        />
+
+        <div className="settings-subsection-label">Zoom</div>
+        <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateGlobal}
+          title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />
+        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateGlobal}
+          title="Extra padding (screen pixels) added when fitting the board to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
+
+        <div className="settings-subsection-label">Navigate-to-component</div>
+        <Slider label="Component Size" value={draft.navTargetSize} min={0.05} max={0.90} step={0.05} field="navTargetSize" onUpdate={updateGlobal}
+          title="Target on-screen size of a component after navigating to it from search / NetList / Worklist. Expressed as a fraction of the smaller viewport dimension. Default 0.25 (~25%)." />
+        <div className="settings-row" data-test="nav-zoom-mode" title="How navigation should treat zoom level.">
+          <label className="settings-label">Zoom Mode</label>
+          <div className="settings-btn-group" style={{ marginLeft: 'auto' }}>
+            <button
+              className={`settings-btn-option${draft.navZoomMode === 'auto' ? ' active' : ''}`}
+              onClick={() => updateGlobal({ navZoomMode: 'auto' })}
+              title="Auto — keep current zoom when the part is in the comfortable band (1.5%–70% of screen). Snap to Component Size only when extreme."
+              data-test="nav-zoom-auto"
+            >Auto</button>
+            <button
+              className={`settings-btn-option${draft.navZoomMode === 'keep' ? ' active' : ''}`}
+              onClick={() => updateGlobal({ navZoomMode: 'keep' })}
+              title="Keep — never change zoom, just pan to the part. Component Size is ignored."
+              data-test="nav-zoom-keep"
+            >Keep</button>
+            <button
+              className={`settings-btn-option${draft.navZoomMode === 'always' ? ' active' : ''}`}
+              onClick={() => updateGlobal({ navZoomMode: 'always' })}
+              title="Always — every navigation snaps to Component Size. Pre-v0.31.4 behavior."
+              data-test="nav-zoom-always"
+            >Always</button>
+          </div>
+        </div>
+
+        <div className="settings-subsection-label">Pan</div>
+        <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing a drag gesture. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">
+          <label className="settings-label">Inertia</label>
+          <input type="checkbox" checked={!draft.disableInertia}
+            onChange={(e) => updateGlobal({ disableInertia: !e.target.checked })} />
+        </div>
+
+        <div className="settings-subsection-label">Click</div>
+        <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateGlobal}
+          title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
+      </CollapsibleSection>
+      )}
+
       {activeTab === SECTION_TO_TAB.zoomLod && (
       <CollapsibleSection id="zoomLod" title="Zoom Level of Detail" isOpen={openSections.has('zoomLod')}
         onToggle={toggleSection} sectionRef={zoomLodRef} isFocused={focusedSection === 'zoomLod'}>
@@ -1995,104 +2095,6 @@ export function SettingsPanel() {
           title="Length of each dash segment (screen pixels) in the dashed net line pattern" />
         <Toggle label="Pulse Animation" value={draft.netLinePulse} field="netLinePulse" onUpdate={updateDraft}
           title="Animate net lines with a red traveling pulse effect, making the connection path easier to follow across the board" />
-      </CollapsibleSection>
-      )}
-
-      {activeTab === SECTION_TO_TAB.navigation && (
-      <CollapsibleSection id="navigation" title="Navigation" isOpen={openSections.has('navigation')}
-        onToggle={toggleSection} sectionRef={navigationRef} isFocused={focusedSection === 'navigation'}>
-        <div className="settings-row settings-toggle-row" title="Re-open the first-run gesture wizard: do the gesture you want for each pan/zoom action and it configures the bindings for you.">
-          <label className="settings-label">Interactive gesture setup</label>
-          <button
-            className="settings-action-btn"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => welcomeStore.show()}
-          >
-            Re-run setup…
-          </button>
-        </div>
-        <div className="settings-subsection-label">Scroll wheel behavior</div>
-        <p className="settings-hint">Drag pills between slots to reassign scroll actions.</p>
-        <BoardScrollBindingsEditor twoFingerPan={draft.twoFingerPan} onUpdate={updateGlobal} />
-        <Toggle
-          label="Mouse wheel detection"
-          value={draft.wheelDetection}
-          field="wheelDetection"
-          onUpdate={updateGlobal}
-          title="When scroll is set to pan, classic mouse-wheel events override to zoom instead — avoids jerky pan with a physical scroll wheel. Trackpads and fine-grained wheels are unaffected."
-        />
-
-        <div className="settings-subsection-label">Trackpad/Mouse drag behavior</div>
-        <p className="settings-hint">Drag pills between slots to swap left-drag and Shift+left-drag actions.</p>
-        <BoardDragBindingsEditor dragToZoom={draft.dragToZoom} onUpdate={updateGlobal} />
-
-        <div className="settings-subsection-label">Keyboard pan / zoom</div>
-        <div className="settings-row" title="Fraction of screen dimension panned per WSAD or Alt+Arrow keypress. Default: 10% of screen width/height per press.">
-          <label className="settings-label">
-            Keyboard Pan Step
-            <span className="settings-value">{Math.round(draft.keyboardPanFraction * 100)}%</span>
-          </label>
-          <div className="settings-slider-wrap">
-            <input
-              type="range" className="settings-slider"
-              min={2} max={30} step={1}
-              value={Math.round(draft.keyboardPanFraction * 100)}
-              onChange={(e) => updateGlobal({ keyboardPanFraction: parseFloat(e.target.value) / 100 })}
-              onDoubleClick={() => updateGlobal({ keyboardPanFraction: DEFAULTS.keyboardPanFraction })}
-            />
-          </div>
-        </div>
-        <Slider
-          label="Keyboard Zoom Step"
-          value={draft.keyboardZoomDelta}
-          min={50} max={400} step={10}
-          field="keyboardZoomDelta" onUpdate={updateGlobal}
-          title={`Raw zoom delta per Shift+W / Shift+S keypress. Applies to both board and PDF. Current: ×${Math.pow(2, 1.3 * (draft.keyboardZoomDelta / 500)).toFixed(2)} per press. Default: 100 (≈×1.32).`}
-        />
-
-        <div className="settings-subsection-label">Zoom</div>
-        <Slider label="Wheel Smoothing" value={draft.wheelSmooth} min={1} max={20} step={1} field="wheelSmooth" onUpdate={updateGlobal}
-          title="Mouse wheel zoom smoothness. 1 = instant snap, higher = smoother animated zoom. Default: 5" />
-        <Slider label="Fit Padding" value={draft.fitPadding} min={0} max={200} step={10} field="fitPadding" onUpdate={updateGlobal}
-          title="Extra padding (screen pixels) added when fitting the board to the viewport (Fit to Screen, double-click zoom). Prevents the board from touching viewport edges" />
-
-        <div className="settings-subsection-label">Navigate-to-component</div>
-        <Slider label="Component Size" value={draft.navTargetSize} min={0.05} max={0.90} step={0.05} field="navTargetSize" onUpdate={updateGlobal}
-          title="Target on-screen size of a component after navigating to it from search / NetList / Worklist. Expressed as a fraction of the smaller viewport dimension. Default 0.25 (~25%)." />
-        <div className="settings-row" data-test="nav-zoom-mode" title="How navigation should treat zoom level.">
-          <label className="settings-label">Zoom Mode</label>
-          <div className="settings-btn-group" style={{ marginLeft: 'auto' }}>
-            <button
-              className={`settings-btn-option${draft.navZoomMode === 'auto' ? ' active' : ''}`}
-              onClick={() => updateGlobal({ navZoomMode: 'auto' })}
-              title="Auto — keep current zoom when the part is in the comfortable band (1.5%–70% of screen). Snap to Component Size only when extreme."
-              data-test="nav-zoom-auto"
-            >Auto</button>
-            <button
-              className={`settings-btn-option${draft.navZoomMode === 'keep' ? ' active' : ''}`}
-              onClick={() => updateGlobal({ navZoomMode: 'keep' })}
-              title="Keep — never change zoom, just pan to the part. Component Size is ignored."
-              data-test="nav-zoom-keep"
-            >Keep</button>
-            <button
-              className={`settings-btn-option${draft.navZoomMode === 'always' ? ' active' : ''}`}
-              onClick={() => updateGlobal({ navZoomMode: 'always' })}
-              title="Always — every navigation snaps to Component Size. Pre-v0.31.4 behavior."
-              data-test="nav-zoom-always"
-            >Always</button>
-          </div>
-        </div>
-
-        <div className="settings-subsection-label">Pan</div>
-        <div className="settings-row settings-toggle-row" title="Continue panning with momentum after releasing a drag gesture. When disabled, panning stops immediately on release. Note: trackpad scroll momentum is controlled by your OS settings and cannot be disabled by the app">
-          <label className="settings-label">Inertia</label>
-          <input type="checkbox" checked={!draft.disableInertia}
-            onChange={(e) => updateGlobal({ disableInertia: !e.target.checked })} />
-        </div>
-
-        <div className="settings-subsection-label">Click</div>
-        <Slider label="Pin Click Radius" value={draft.clickThreshold} min={5} max={100} step={5} field="clickThreshold" onUpdate={updateGlobal}
-          title="Maximum distance (screen pixels) from a pin center that counts as a click on that pin. Larger = easier to click small or densely packed pins" />
       </CollapsibleSection>
       )}
 

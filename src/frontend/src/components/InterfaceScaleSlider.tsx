@@ -7,8 +7,8 @@
  * Behaviour: scale is committed on pointer-up / key-up only. While
  * dragging, the thumb moves and the % readout updates from a local draft,
  * but body zoom does not change — otherwise the slider track shrinks
- * under the pointer mid-drag and becomes hard to grab. Tap "Reset" or
- * release at 100% to revert.
+ * under the pointer mid-drag and becomes hard to grab. Double-click the
+ * slider (or release at 100%) to revert to default.
  */
 import { useSyncExternalStore, useCallback, useState, useEffect } from 'react';
 import {
@@ -16,7 +16,6 @@ import {
   UI_SCALE_MIN,
   UI_SCALE_MAX,
   UI_SCALE_STEP,
-  UI_SCALE_DEFAULT,
 } from '../store/themes';
 
 function useScale(): number {
@@ -53,12 +52,13 @@ export function InterfaceScaleSlider() {
     });
   }, [committed]);
 
+  // Double-click resets to default. Replaces the old conditional "Reset"
+  // button, which appeared/disappeared as the value crossed 100% and shifted
+  // the slider track width → visible jitter while dragging near default.
   const onReset = useCallback(() => {
     setDraft(null);
     themeStore.setScale(null);
   }, []);
-
-  const dirty = display !== UI_SCALE_DEFAULT;
 
   return (
     <div className="ui-scale-full">
@@ -79,22 +79,14 @@ export function InterfaceScaleSlider() {
           onPointerCancel={commit}
           onKeyUp={commit}
           onBlur={commit}
+          onDoubleClick={onReset}
           aria-label="Interface scale"
         />
-        {dirty && (
-          <button
-            type="button"
-            className="ui-scale-full-reset"
-            onClick={onReset}
-            title="Reset to 100%"
-          >
-            Reset
-          </button>
-        )}
       </div>
       <div className="ui-scale-full-hint">
         Scales every panel, toolbar, dialog, and the start page. Board and PDF
-        rendering keep their native resolution. Applied on release.
+        rendering keep their native resolution. Applied on release; double-click
+        the slider to reset to 100%.
       </div>
     </div>
   );

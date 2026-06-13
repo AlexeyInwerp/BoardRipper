@@ -835,7 +835,14 @@ export function LibraryPanel() {
         )}
       </div>
 
-      {/* Search */}
+      {/* Stats + progress bar — pinned directly under the tab row so its
+       *  position is identical on every tab. (Previously it sat below the
+       *  filter input, which only renders on non-PDF tabs, so the stats line
+       *  jumped up a row when switching to the PDF tab.) Scan/index actions
+       *  live under Settings ▸ Library; the gear icon on the right jumps there. */}
+      {statsBar}
+
+      {/* Filter (all tabs except PDF, which has its own search inside content) */}
       {viewMode !== 'search' && (
         <div className="library-search">
           <input
@@ -860,13 +867,6 @@ export function LibraryPanel() {
           )}
         </div>
       )}
-
-      {/* Stats + progress bar — moved up here from the panel bottom so the
-       *  scan/index status lives near the search/filter input instead of
-       *  forcing the user's eye to jump to the bottom of the panel.
-       *  Scan/index action buttons themselves now live under
-       *  Settings ▸ Library; the gear icon on the right jumps there. */}
-      {statsBar}
 
       {/* Electron library folder picker */}
       {electronMode && (
