@@ -51,12 +51,34 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
   // hidden when layerStates was empty (single-layer XZZ / BRD), leaving
   // users with no way to toggle anything. Always show the tab; it's
   // labelled "View" on single-layer boards to set expectations.
-  const [activeTab, setActiveTab] = useState<SidebarTab>('layers');
+  // Per-board default: multilayer boards open on Layers (the layer stack is
+  // the primary thing to inspect); single-layer boards open on Info —
+  // component detail is what techs reach for first. Lazy init handles the
+  // case where the board is already present at mount (no flash); the effect
+  // below corrects it once a board finishes loading.
+  const [activeTab, setActiveTab] = useState<SidebarTab>(hasLayers ? 'layers' : 'info');
+  // True once the user (or an external request) has explicitly chosen a tab,
+  // so the per-board default never clobbers a deliberate selection.
+  const userPickedTabRef = useRef(false);
+  const lastBoardRef = useRef(board);
+  const pickTab = (t: SidebarTab) => { userPickedTabRef.current = true; setActiveTab(t); };
+
+  // Apply the per-board default when a board first loads / changes in this panel.
+  useEffect(() => {
+    if (board !== lastBoardRef.current) {
+      lastBoardRef.current = board;
+      userPickedTabRef.current = false; // new board → default applies again
+    }
+    if (!userPickedTabRef.current) {
+      setActiveTab(hasLayers ? 'layers' : 'info');
+    }
+  }, [board, hasLayers]);
 
   // Apply external tab request (one-shot, rAF defers setState to satisfy lint rule)
   useEffect(() => {
     if (!requestedTab || requestedTab === activeTab) return;
     const frame = requestAnimationFrame(() => {
+      userPickedTabRef.current = true; // honour the external pick over the default
       setActiveTab(requestedTab);
       onTabApplied?.();
     });
@@ -82,27 +104,27 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
       <div className="board-sidebar-header">
         <div className="board-sidebar-tabs">
           <button
-            className={`board-sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
-            onClick={() => setActiveTab('layers')}
-          >
-            {hasLayers ? 'Layers' : 'View'}
-          </button>
-          <button
             className={`board-sidebar-tab ${activeTab === 'info' ? 'active' : ''}`}
-            onClick={() => setActiveTab('info')}
+            onClick={() => pickTab('info')}
           >
             Info
           </button>
           <button
+            className={`board-sidebar-tab ${activeTab === 'layers' ? 'active' : ''}`}
+            onClick={() => pickTab('layers')}
+          >
+            {hasLayers ? 'Layers' : 'View'}
+          </button>
+          <button
             className={`board-sidebar-tab ${activeTab === 'search' ? 'active' : ''}`}
-            onClick={() => setActiveTab('search')}
+            onClick={() => pickTab('search')}
           >
             Search
           </button>
           {showRevisionsTab && (
             <button
               className={`board-sidebar-tab ${activeTab === 'revisions' ? 'active' : ''}`}
-              onClick={() => setActiveTab('revisions')}
+              onClick={() => pickTab('revisions')}
               title={
                 hasRevisions
                   ? 'Multiple board revisions detected in this file'
@@ -116,7 +138,7 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
           )}
           <button
             className={`board-sidebar-tab ${activeTab === 'worklist' ? 'active' : ''}`}
-            onClick={() => setActiveTab('worklist')}
+            onClick={() => pickTab('worklist')}
             title="Multi-select scratchpad + named worklistes (mark/note/export)"
           >
             Worklist
