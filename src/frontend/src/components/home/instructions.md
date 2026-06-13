@@ -1,84 +1,97 @@
 # Getting started
 
-Welcome to **BoardRipper** — a browser-based viewer for PCB boardview files. Each section below expands when you click it.
+**BoardRipper** is one place for the two things you juggle at the bench — the
+boardview and the schematic PDF — instead of a separate tool for each. Each
+section below expands when you click it. Press **?** any time for the keyboard
+shortcut list.
 
 ## Run it in Docker (recommended)
 
-BoardRipper is designed to live in a **Docker container** on your NAS or workstation. In that mode it can auto-scan one or more mounted *boards folders* and build a **browsable, automatically organised library** of every board and linked PDF it finds — searchable from the sidebar without dragging files one at a time.
+BoardRipper is built to live in a **Docker container** on your NAS or
+workstation, where it auto-scans one or more mounted *boards folders* into a
+**browsable, full-text-searchable library** of every board and PDF it finds —
+no manual importing.
 
-Two separate volumes, different jobs:
+- **`/library`** — mount your boards folder(s) here (usually read-only). Each
+  subfolder shows up as a top-level group. Mount several to keep repositories
+  separate, e.g. `/path/MacBooks:/library/MacBooks:ro`.
+- **`/data`** — writable storage. Anything you **drag onto the app** lands here
+  and survives restarts. Independent of `/library`.
+- Point a browser at the host port; the Library picks up new files
+  automatically. It can also **mirror a remote WebDAV/CopyParty share** on a
+  schedule (Settings ▸ Library) and **update itself** from a signed release.
 
-- **`/library`** — mount your boards folder(s) here (usually read-only). Each subfolder under `/library` shows up as a top-level group in the Library panel. Mount several folders as subdirectories to keep repositories separate, e.g. `/path/to/MacBooks:/library/MacBooks:ro` and `/path/to/iPhones:/library/iPhones:ro`.
-- **`/data`** — writable upload storage. Any file you **drag-and-drop onto the app** lands here and persists across restarts. This is independent of `/library`.
-- Point a browser at the host on the configured port; the Library tab picks up new files automatically — no imports, no indexing dance.
-
-Running from source locally also works, but the auto-scan library is the killer feature — use the Docker image if you have more than a handful of files.
+Running from source works too, but the auto-scanned library is the reason to
+use the container if you have more than a handful of files.
 
 ## Open a file
 
-- Drop a board file anywhere on this window: `.bvr` / `.bv`, `.brd` (OpenBoardView *or* Cadence Allegro binary), `.bdv` (plain-text *or* Honhan / Tebo-ICT obfuscated), `.fz`, `.cad` (GenCAD *or* Mentor Boardstation Neutral), `.pcb` (XZZ PCB), or `.tvw`.
-- Or drop a PDF schematic next to it — PDFs open in a side panel and stay linked to the board.
-- **⌘O** / **⌘P** open the same unified file picker (boards + PDFs are routed by extension).
-- In Docker mode: open the **Library** tab in the sidebar and pick any board from the auto-scanned folder.
+- Drop a board anywhere on this window: `.bvr` / `.bv`, `.brd` (OpenBoardView
+  *or* Cadence Allegro binary), `.bdv` (plain-text *or* Honhan / Tebo-ICT
+  obfuscated), `.fz`, `.cad` (GenCAD *or* Mentor Boardstation Neutral),
+  `.pcb` (XZZ), or `.tvw` — 11 formats in all.
+- Drop a PDF schematic too — it opens in a side panel and links to the board.
+- **⌘O** / **⌘P** open the same picker (boards + PDFs routed by extension).
+- In Docker mode, open the **Library** tab and pick any indexed board.
 
-## Top toolbar
+## The Library
 
-The bar above this screen is mostly self-explanatory. In short:
+The sidebar **Library** tab is the heart of the Docker setup:
 
-- **☰** opens the sidebar (Library / Settings / Debug).
-- **Open** (desktop build) / **Upload** (web build) is a single file picker that accepts boards and PDFs in the same dialog.
-- **Top / Bottom** pick the layer; Shift-click shows both; the small arrow between them flips the mirror axis.
-- **↺ ↻ ⇔ ⇕** rotate and mirror the board.
-- **Traces** toggles PCB traces when the file has them.
-- **Search** runs a global fuzzy search across parts, pins, nets, and PDF text.
-- The **version badge** on the right shows the changelog and checks for updates.
+- **Board #** groups everything by board number / model, collapsing
+  byte-identical copies across folders automatically.
+- **PDF** searches the *full text* of every indexed schematic — type a part or
+  value and jump straight to the page. Mark PDFs as **donors** to build a
+  reusable reference pool.
+- **Folders** browses the indexed DB or the live filesystem.
+- Byte-identical duplicates are detected and collapsed; the original is the one
+  that gets indexed.
 
-## BoardViewer tab controls
+## Link board ↔ PDF (and PDF ↔ PDF)
 
-Inside every board tab there is a small cluster of overlay buttons. They act only on the active board, not the app as a whole.
+- Click the **∞** control on a board tab *or* a PDF toolbar to link them — it
+  works from either side. Linked, a click on a component jumps the schematic to
+  the matching location (toggle **⇶ PDF follow** per board).
+- Cross-link two PDFs the same way to hop a designator between sheets.
 
-### Top-left corner
+## Inside a board tab
 
-- **☰** — toggle the floating *BoardSidebar* inside the tab (Layers / Info / Search). Click again to close; click once more to re-show and reveal the opacity slider next to it.
+A small cluster of overlay buttons acts only on the active board:
 
-### Bottom-right status group
+- **☰** toggles the in-tab panel. It opens on **Info** (component detail) for
+  single-layer boards and **Layers** for multi-layer ones; **Search**,
+  **Revisions**, and **Worklist** are alongside.
+- **⇶** PDF follow · **pan/zoom** quick-swap · **zoom-to-fit** ·
+  **hover info** · **◐** selection dim · **net lines** · **hidden-side ghosts**.
+- Right-click a component for hide / send-to-back / copy / search-in-PDF /
+  add-to-worklist, and **OpenBoardData** diode/voltage readings when available.
+- **Shift-click** a component to add it to the active **Worklist** — a
+  mark/note/export scratchpad for a repair job.
 
-First row — view controls:
+## Navigate
 
-- **⇶** — **PDF follow**. When ON, clicking a component here jumps the linked PDF panel to its schematic location. Disabled until a PDF is bound.
-- :icon-hand-move: / :icon-zoom-in: — **Quick scroll swap**. Shows the current bare-scroll action (pan or zoom). Click to swap bare and Shift+scroll. Equivalent to flipping *Board — scroll* in Quick settings below.
-- :icon-object-scan: — **Zoom to fit**. Frames the full board in the viewport.
-
-Second row — overlay toggles:
-
-- :icon-tooltip: — **Hover info**. Shows a tooltip with component / pin details under the cursor.
-- **◐** — **Selection dim**. When a net is selected, fade everything that is not on that net.
-- :icon-hierarchy: — **Net lines**. Draw connection lines between pins on the selected net.
-- :icon-ghost: — **Hidden-side ghosts**. Overlay components from the back side faintly onto the front (and vice versa) so through-hole alignment is visible.
-
-## Navigate the board
-
-- **Drag** or **scroll** to pan and zoom — change the assignment in *Quick settings* below, or click **Set up by gesture** there to just demonstrate the gesture you want and have it configured for you.
-- **Pinch-to-zoom** works on any trackpad and always zooms, regardless of the scroll-wheel settings.
-- **Two-finger scroll** on a trackpad is the same event as a mouse wheel — whatever you bind the scroll wheel to, two-finger scroll does the same.
-- **Space** flips between top and bottom layers.
-- Click a pin or component to highlight its net and (if a PDF is linked) jump to the matching schematic location.
+- **Drag** / **scroll** to pan and zoom — reassign in *Quick settings*, or click
+  **Set up by gesture** and just demonstrate the gesture you want.
+- **Pinch-to-zoom** always zooms; **two-finger scroll** mirrors the mouse wheel.
+- **Space** flips top/bottom. Click a pin/component to highlight its net.
 
 ### Game-style shortcuts
 
-- **W / A / S / D** pan the board (and the PDF, when its panel is active).
-- **Q / E** rotate the board 90° CCW / CW.
-- **Shift + W / Shift + S** zoom in / out at the canvas center.
-- **`~`** toggles the Library sidebar — the key left of `1` (layout-independent: works as `~` on US, `°` on DE, etc.).
+- **W / A / S / D** pan · **Q / E** rotate 90° · **Shift+W / Shift+S** zoom ·
+  **`~`** toggles the Library sidebar (the key left of `1`).
+- **?** opens the full shortcut list over your work.
 
-**AZERTY note:** these shortcuts go by key *position*, not the printed letter — pan with the keys printed Z/Q/S/D on AZERTY (the physical W/A/S/D positions), rotate with A/E. No remapping needed.
+**AZERTY note:** shortcuts go by key *position*, not the printed letter — pan
+with Z/Q/S/D, rotate with A/E. No remapping needed.
 
 ## Tips
 
-- Open multiple boards at once — each gets its own tab.
-- The **Library** tab in the sidebar shows every board in your loaded repository and lets you match against the reference database.
-- Parsed boards are cached locally in IndexedDB, so re-opening the same file is instant.
+- Open multiple boards — each gets its own tab; drag tabs to split the view.
+- Boards are matched against a built-in **reference database** (brand / family /
+  model) and cached in IndexedDB, so re-opening is instant.
+- Schematic PDFs can have shop watermarks filtered out (Settings ▸ PDF).
 
 ## Feedback / issues
 
-Found a parser quirk or a rendering glitch? File an issue on [GitHub](https://github.com/alexeyinwerp/boardripper/issues) — sample files help a lot.
+Found a parser quirk or a rendering glitch? File an issue on
+[GitHub](https://github.com/alexeyinwerp/boardripper/issues) — sample files help.
