@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 interface BindLinkProps {
   /** Currently bound target names */
@@ -14,8 +15,11 @@ interface BindLinkProps {
   /** Text rendered inside the button while nothing is linked — turns the bare
    *  glyph into a discoverable affordance (e.g. "Link board…"). */
   unlinkedLabel?: string;
-  /** Position the dropdown with position:fixed (escapes overflow-clipped
-   *  containers like dockview tab headers). */
+  /** Render the dropdown in a portal to <body> with position:fixed. Required
+   *  when the button lives inside a clipped / transformed container (e.g. a
+   *  dockview tab header) — an in-flow absolute dropdown there is clipped, and
+   *  position:fixed alone resolves against the transformed ancestor, not the
+   *  viewport, so it lands in the wrong place. */
   fixedDropdown?: boolean;
   /** Optional header item shown above the bindings list (e.g. "auto-open boardview" toggle) */
   headerItem?: {
@@ -43,6 +47,7 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null);
   const linked = boundNames.length > 0 || (secondary?.boundNames.length ?? 0) > 0;
   const showPrimary = options.length > 0 || !!headerItem;
@@ -54,9 +59,11 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
       setDropPos({ top: r.bottom + 4, left: r.left });
     }
     const onMouse = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      // The dropdown may be portaled outside `ref`, so check it explicitly —
+      // otherwise clicking an option counts as an outside click and closes it.
+      if (ref.current?.contains(t) || dropdownRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -88,6 +95,79 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
     onToggle(null);
   };
 
+  // Don't render the portaled (fixed) dropdown until its coords are measured,
+  // so it never flashes at 0,0 before positioning.
+  const dropdownReady = !fixedDropdown || dropPos != null;
+
+  const dropdown = open && dropdownReady ? (
+    <div
+      ref={dropdownRef}
+      className="bind-link-dropdown"
+      style={fixedDropdown && dropPos ? { position: 'fixed', top: dropPos.top, left: dropPos.left, marginTop: 0, zIndex: 10050 } : undefined}
+    >
+      {showPrimary && (
+      <>
+      {primaryLabel && <div className="bind-link-section-label">{primaryLabel}</div>}
+      {headerItem && (
+        <div
+          className="bind-link-option bind-link-header"
+          onClick={(e) => { e.stopPropagation(); headerItem.onChange(!headerItem.checked); }}
+        >
+          <span className="bind-link-check">{headerItem.checked ? '✓' : ' '}</span>
+          {headerItem.label}
+        </div>
+      )}
+      <div
+        className="bind-link-option bind-link-clear"
+        onClick={handleClear}
+      >
+        (none)
+      </div>
+      {options.map(name => {
+        const isBound = boundNames.includes(name);
+        return (
+          <div
+            key={name}
+            className={`bind-link-option ${isBound ? 'active' : ''}`}
+            onClick={() => handleSelect(name)}
+          >
+            <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
+            {name}
+          </div>
+        );
+      })}
+      </>
+      )}
+      {secondary && secondary.options.length > 0 && (
+      <>
+        {showPrimary && <div className="bind-link-separator" />}
+        <div className="bind-link-section-label">{secondary.label}</div>
+        <div
+          className="bind-link-option bind-link-clear"
+          data-testid="bind-link-pdf-clear"
+          onClick={(e) => { e.stopPropagation(); secondary.onToggle(null); }}
+        >
+          (none)
+        </div>
+        {secondary.options.map(name => {
+          const isBound = secondary.boundNames.includes(name);
+          return (
+            <div
+              key={`sec-${name}`}
+              className={`bind-link-option ${isBound ? 'active' : ''}`}
+              data-testid="bind-link-pdf-option"
+              onClick={(e) => { e.stopPropagation(); secondary.onToggle(name); }}
+            >
+              <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
+              {name}
+            </div>
+          );
+        })}
+      </>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="bind-link" ref={ref}>
       <button
@@ -101,73 +181,10 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
           <span className="bind-link-unlinked-label">{unlinkedLabel}</span>
         )}
       </button>
-      {open && (
-        <div
-          className="bind-link-dropdown"
-          style={fixedDropdown && dropPos ? { position: 'fixed', top: dropPos.top, left: dropPos.left, marginTop: 0 } : undefined}
-        >
-          {showPrimary && (
-          <>
-          {primaryLabel && <div className="bind-link-section-label">{primaryLabel}</div>}
-          {headerItem && (
-            <div
-              className="bind-link-option bind-link-header"
-              onClick={(e) => { e.stopPropagation(); headerItem.onChange(!headerItem.checked); }}
-            >
-              <span className="bind-link-check">{headerItem.checked ? '✓' : ' '}</span>
-              {headerItem.label}
-            </div>
-          )}
-          <div
-            className="bind-link-option bind-link-clear"
-            onClick={handleClear}
-          >
-            (none)
-          </div>
-          {options.map(name => {
-            const isBound = boundNames.includes(name);
-            return (
-              <div
-                key={name}
-                className={`bind-link-option ${isBound ? 'active' : ''}`}
-                onClick={() => handleSelect(name)}
-              >
-                <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
-                {name}
-              </div>
-            );
-          })}
-          </>
-          )}
-          {secondary && secondary.options.length > 0 && (
-          <>
-            {showPrimary && <div className="bind-link-separator" />}
-            <div className="bind-link-section-label">{secondary.label}</div>
-            <div
-              className="bind-link-option bind-link-clear"
-              data-testid="bind-link-pdf-clear"
-              onClick={(e) => { e.stopPropagation(); secondary.onToggle(null); }}
-            >
-              (none)
-            </div>
-            {secondary.options.map(name => {
-              const isBound = secondary.boundNames.includes(name);
-              return (
-                <div
-                  key={`sec-${name}`}
-                  className={`bind-link-option ${isBound ? 'active' : ''}`}
-                  data-testid="bind-link-pdf-option"
-                  onClick={(e) => { e.stopPropagation(); secondary.onToggle(name); }}
-                >
-                  <span className="bind-link-check">{isBound ? '✓' : ' '}</span>
-                  {name}
-                </div>
-              );
-            })}
-          </>
-          )}
-        </div>
-      )}
+      {/* Portal the fixed-position dropdown to <body> so it escapes the
+          dockview tab header's clipping/transform; the in-flow variant
+          (PDF toolbar) renders inline as before. */}
+      {fixedDropdown ? (dropdown && createPortal(dropdown, document.body)) : dropdown}
     </div>
   );
 }
