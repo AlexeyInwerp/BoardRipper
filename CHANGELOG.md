@@ -1,5 +1,13 @@
 # BoardRipper changelog
 
+## v0.31.20 — 2026-06-13
+
+Point fix for the board-side link menu shipped in v0.31.19.
+
+### Fixes
+
+- **Board-tab ∞ link menu opened off-screen.** The dropdown is mounted inside the dockview tab header — a clipped / transformed container — so the in-flow absolute menu was clipped and `position:fixed` resolved against the transformed ancestor instead of the viewport, landing the menu in the wrong place. It now renders through a portal to `<body>` with measured viewport coordinates, so it drops down directly under the icon; outside-click detection checks the portaled node, and it holds off first paint until positioned. Added a geometry regression test (asserts the dropdown box is on-screen and anchored under its button — verified failing on the pre-fix code) since the original `toBeVisible()` probe passed even with the menu off-screen. (`c7bcdc8`)
+
 ## v0.31.19 — 2026-06-13
 
 A broad UX pass driven by a six-phase improvement plan plus bench
