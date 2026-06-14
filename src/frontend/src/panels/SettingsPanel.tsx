@@ -19,6 +19,7 @@ import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
+import { startMcpBridge } from '../store/mcp-bridge';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
@@ -58,16 +59,17 @@ function useOverride(field: keyof RenderSettings) {
 
 type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'dbinfo' | 'pdf' | 'boardOverlay';
 
-export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system';
+export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' | 'integrations';
 
-const TAB_ORDER: SettingsTabId[] = ['theme', 'board', 'input', 'library', 'system'];
+const TAB_ORDER: SettingsTabId[] = ['theme', 'board', 'input', 'library', 'system', 'integrations'];
 
 const TAB_LABELS: Record<SettingsTabId, string> = {
-  theme:   'Theme',
-  board:   'Board',
-  input:   'Input',
-  library: 'Library',
-  system:  'System',
+  theme:        'Theme',
+  board:        'Board',
+  input:        'Input',
+  library:      'Library',
+  system:       'System',
+  integrations: 'Integrations',
 };
 
 /** Maps each section id to the tab that owns it. Used by focusSection deep-links. */
@@ -512,6 +514,91 @@ function LibraryFolderSetting() {
 }
 
 // ---- Auto-scan toggle ----
+
+interface McpStatus { enabled: boolean; drive_ui: boolean; clients: number; }
+
+function IntegrationsSection() {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [token, setToken] = useState('');
+
+  const refresh = useCallback(() => {
+    fetch('/api/mcp/status')
+      .then(r => r.ok ? r.json() : null)
+      .then((s: McpStatus | null) => setStatus(s))
+      .catch(() => setStatus(null));
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!status?.enabled) { setToken(''); return; }
+    fetch('/api/mcp/token')
+      .then(r => r.ok ? r.json() : { token: '' })
+      .then((d: { token?: string }) => setToken(d.token ?? ''))
+      .catch(() => setToken(''));
+  }, [status?.enabled]);
+
+  // Poll client count while enabled so the operator sees pages connect live.
+  useEffect(() => {
+    if (!status?.enabled) return;
+    const t = setInterval(refresh, 4000);
+    return () => clearInterval(t);
+  }, [status?.enabled, refresh]);
+
+  const setFlag = async (key: 'mcp_enabled' | 'mcp_drive_ui', on: boolean) => {
+    setStatus(s => s ? { ...s, [key === 'mcp_enabled' ? 'enabled' : 'drive_ui']: on } : s);
+    try {
+      await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value: on ? 'true' : '' }),
+      });
+    } catch { /* ignore */ }
+    if (key === 'mcp_enabled' && on) startMcpBridge();
+    refresh();
+  };
+
+  const enabled = !!status?.enabled;
+  const cmd = `claude mcp add --transport http boardripper ${location.protocol}//${location.host}/api/mcp --header "Authorization: Bearer ${token || '<enable to reveal>'}"`;
+
+  return (
+    <div className="settings-tab-body">
+      <StandaloneCollapsibleSection title="MCP server (AI agents)" defaultOpen storageKey="mcp">
+        <p className="settings-hint">
+          Let an AI agent (Claude Code, or any MCP client) query this BoardRipper —
+          PDF full-text search, OpenBoardData readings, the board reference DB, and the
+          live connectivity of whatever board you have open. Off by default.
+        </p>
+        <div className="settings-row settings-toggle-row">
+          <label className="settings-label">Enable MCP server</label>
+          <input type="checkbox" checked={enabled}
+            onChange={e => setFlag('mcp_enabled', e.target.checked)} />
+        </div>
+        <div className="settings-row settings-toggle-row">
+          <label className="settings-label" title="Lets agents highlight nets, select parts, change side, and navigate PDFs on the open board">
+            Allow agents to control the UI
+          </label>
+          <input type="checkbox" checked={!!status?.drive_ui} disabled={!enabled}
+            onChange={e => setFlag('mcp_drive_ui', e.target.checked)} />
+        </div>
+        {enabled && (
+          <>
+            <div className="settings-row">
+              <span className="settings-label">Connected pages</span>
+              <span>{status?.clients ?? 0}</span>
+            </div>
+            <p className="settings-hint" style={{ marginBottom: 4 }}>Add to Claude Code:</p>
+            <pre className="mcp-connect-cmd" style={{
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all', userSelect: 'all',
+              fontSize: 11, padding: '8px 10px', borderRadius: 6,
+              background: 'var(--panel-alt, rgba(0,0,0,0.25))', margin: 0,
+            }}>{cmd}</pre>
+          </>
+        )}
+      </StandaloneCollapsibleSection>
+    </div>
+  );
+}
 
 function AutoScanToggle() {
   const { backendAvailable, electronMode } = useDatabank();
@@ -2196,6 +2283,10 @@ export function SettingsPanel() {
 
       {activeTab === 'library' && (
         <LibraryTab />
+      )}
+
+      {activeTab === 'integrations' && (
+        <IntegrationsSection />
       )}
 
       {activeTab === 'board' && (
