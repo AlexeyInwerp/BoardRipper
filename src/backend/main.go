@@ -19,6 +19,7 @@ import (
 	"boardripper/databank"
 	"boardripper/handlers"
 	"boardripper/librarysync"
+	"boardripper/mcpserver"
 	"boardripper/obd"
 	"boardripper/pdfindex"
 	"boardripper/updater"
@@ -300,6 +301,30 @@ func main() {
 			}
 		}
 	}
+
+	// --- MCP server (off by default; enabled via Settings ▸ Integrations) ---
+	mcpSecret, err := mcpserver.EnsureSecret(dataDir)
+	if err != nil {
+		log.Fatalf("mcp secret: %v", err)
+	}
+	mcpState := mcpserver.NewState(db)
+	mcpBridge := mcpserver.NewBridge()
+	mcpDeps := &mcpserver.Deps{
+		State:  mcpState,
+		Bridge: mcpBridge,
+		Files:  db,
+		Boards: bdb,
+		OBD:    obdStore,
+	}
+	if pdfIndex != nil {
+		mcpDeps.PDF = pdfIndex // avoid typed-nil in the PDFSearcher interface
+	}
+	mcpSrv := mcpserver.New(mcpDeps)
+	mux.Handle("/api/mcp", mcpserver.Gate(mcpState, mcpSecret, mcpSrv.Handler()))
+	mux.Handle("/api/mcp/", mcpserver.Gate(mcpState, mcpSecret, mcpSrv.Handler()))
+	mux.HandleFunc("/api/mcp/bridge", mcpBridge.ServeWS)
+	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge))
+	mux.HandleFunc("GET /api/mcp/token", mcpserver.TokenHandler(mcpState, mcpSecret))
 
 	// Serve static frontend files.
 	//
