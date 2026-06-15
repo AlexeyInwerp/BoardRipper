@@ -103,7 +103,7 @@ export const shortcuts: Shortcut[] = [
     category: 'view',
     key: 'ArrowRight',
     mod: true,
-    description: 'Rotate the board 90° clockwise',
+    description: 'Rotate 90° clockwise (board or PDF page)',
   },
   {
     id: 'rotateCCW',
@@ -111,7 +111,7 @@ export const shortcuts: Shortcut[] = [
     category: 'view',
     key: 'ArrowLeft',
     mod: true,
-    description: 'Rotate the board 90° counter-clockwise',
+    description: 'Rotate 90° counter-clockwise (board or PDF page)',
   },
   {
     id: 'mirrorBoard',
@@ -272,7 +272,7 @@ export const shortcuts: Shortcut[] = [
     category: 'wsad',
     key: 'q',
     code: 'KeyQ',
-    description: 'Rotate the board 90° counter-clockwise',
+    description: 'Rotate 90° counter-clockwise (board or PDF page)',
   },
   {
     id: 'rotateBoardCW',
@@ -280,7 +280,7 @@ export const shortcuts: Shortcut[] = [
     category: 'wsad',
     key: 'e',
     code: 'KeyE',
-    description: 'Rotate the board 90° clockwise',
+    description: 'Rotate 90° clockwise (board or PDF page)',
   },
   {
     id: 'zoomBoardIn',

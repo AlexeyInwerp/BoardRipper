@@ -306,11 +306,13 @@ export function useKeyboardShortcuts() {
 
           case 'rotateCW':
             e.preventDefault();
-            boardStore.rotateCW();
+            if (activePanelKind() === 'pdf') pdfStore.rotateActive('cw');
+            else boardStore.rotateCW();
             return;
           case 'rotateCCW':
             e.preventDefault();
-            boardStore.rotateCCW();
+            if (activePanelKind() === 'pdf') pdfStore.rotateActive('ccw');
+            else boardStore.rotateCCW();
             return;
           case 'mirrorBoard':
             e.preventDefault();
@@ -374,11 +376,15 @@ export function useKeyboardShortcuts() {
           case 'rotateBoardCW': {
             const kind = activePanelKind();
             if (kind === null) return;
-            // PDFs do not rotate — silently no-op when active panel is PDF.
-            if (kind === 'pdf') { e.preventDefault(); return; }
             e.preventDefault();
-            if (shortcut.id === 'rotateBoardCCW') boardStore.rotateCCW();
-            else boardStore.rotateCW();
+            const dir = shortcut.id === 'rotateBoardCCW' ? 'ccw' : 'cw';
+            if (kind === 'pdf') {
+              if (dir === 'ccw') pdfStore.rotateActive('ccw');
+              else pdfStore.rotateActive('cw');
+            } else {
+              if (dir === 'ccw') boardStore.rotateCCW();
+              else boardStore.rotateCW();
+            }
             return;
           }
 
