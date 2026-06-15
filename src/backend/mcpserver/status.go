@@ -17,9 +17,10 @@ func StatusHandler(st *State, b *Bridge, srv *Server) http.HandlerFunc {
 			clients = b.ClientCount()
 		}
 		out := map[string]any{
-			"enabled":  st.Enabled(),
-			"drive_ui": st.DriveUI(),
-			"clients":  clients,
+			"enabled":   st.Enabled(),
+			"drive_ui":  st.DriveUI(),
+			"clients":   clients,
+			"auth_mode": st.AuthMode(),
 		}
 		if srv != nil {
 			out["activity"] = srv.Activity()

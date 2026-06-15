@@ -37,6 +37,7 @@ var allowedConfigKeys = map[string]bool{
 	"pdf_watermark_terms":   true,
 	"mcp_enabled":           true,
 	"mcp_drive_ui":          true,
+	"mcp_auth_mode":         true,
 }
 
 // DatabankHandler serves all /api/databank/* endpoints.

@@ -28,3 +28,14 @@ func (s *State) Enabled() bool { return s.flag("mcp_enabled") }
 
 // DriveUI reports whether mutating drive-UI tools may act.
 func (s *State) DriveUI() bool { return s.flag("mcp_drive_ui") }
+
+// AuthMode reports the configured auth scheme: "oauth" or "token" (default).
+func (s *State) AuthMode() string {
+	if s == nil || s.cfg == nil {
+		return "token"
+	}
+	if v, _ := s.cfg.GetConfig("mcp_auth_mode"); v == "oauth" {
+		return "oauth"
+	}
+	return "token"
+}
