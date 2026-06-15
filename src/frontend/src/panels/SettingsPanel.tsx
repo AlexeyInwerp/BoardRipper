@@ -516,36 +516,41 @@ function LibraryFolderSetting() {
 // ---- Auto-scan toggle ----
 
 interface McpActivity { last_tool: string; last_tool_at_ms: number; total_calls: number; }
-interface McpStatus { enabled: boolean; drive_ui: boolean; clients: number; activity?: McpActivity; }
+interface McpStatus { enabled: boolean; drive_ui: boolean; clients: number; activity?: McpActivity; auth_mode?: string; }
 
 type McpClientId = 'claude-code' | 'claude-desktop' | 'cursor' | 'other';
 const MCP_CLIENTS: { id: McpClientId; label: string; paste: string }[] = [
   { id: 'claude-code', label: 'Claude Code', paste: 'Run this in your terminal.' },
   { id: 'claude-desktop', label: 'Claude Desktop', paste: 'Add to claude_desktop_config.json, then restart Claude Desktop.' },
   { id: 'cursor', label: 'Cursor', paste: 'Add to ~/.cursor/mcp.json (or .cursor/mcp.json in your project).' },
-  { id: 'other', label: 'Other', paste: 'Any MCP client over Streamable HTTP — use this URL + header.' },
+  { id: 'other', label: 'Other', paste: 'Any MCP client over Streamable HTTP.' },
 ];
 
-function mcpSnippet(client: McpClientId, url: string, token: string): string {
+// oauth=true drops the bearer header — the client discovers the auth server and
+// the user approves in the browser the first time (no token to copy).
+function mcpSnippet(client: McpClientId, url: string, token: string, oauth: boolean): string {
   const t = token || '<enable the server to reveal the token>';
   switch (client) {
     case 'claude-code':
-      return `claude mcp add --transport http boardripper ${url} --header "Authorization: Bearer ${t}"`;
+      return oauth
+        ? `claude mcp add --transport http boardripper ${url}`
+        : `claude mcp add --transport http boardripper ${url} --header "Authorization: Bearer ${t}"`;
     case 'claude-desktop':
       return JSON.stringify({
         mcpServers: {
-          boardripper: {
-            command: 'npx',
-            args: ['-y', 'mcp-remote', url, '--header', `Authorization: Bearer ${t}`],
-          },
+          boardripper: oauth
+            ? { command: 'npx', args: ['-y', 'mcp-remote', url] }
+            : { command: 'npx', args: ['-y', 'mcp-remote', url, '--header', `Authorization: Bearer ${t}`] },
         },
       }, null, 2);
     case 'cursor':
       return JSON.stringify({
-        mcpServers: { boardripper: { url, headers: { Authorization: `Bearer ${t}` } } },
+        mcpServers: { boardripper: oauth ? { url } : { url, headers: { Authorization: `Bearer ${t}` } } },
       }, null, 2);
     case 'other':
-      return `URL:    ${url}\nHeader: Authorization: Bearer ${t}`;
+      return oauth
+        ? `URL: ${url}\nAuth: OAuth 2.1 (the client discovers the auth server; approve in browser)`
+        : `URL:    ${url}\nHeader: Authorization: Bearer ${t}`;
   }
 }
 
@@ -644,9 +649,22 @@ function IntegrationsSection() {
     refresh();
   };
 
+  const setAuthMode = async (mode: 'token' | 'oauth') => {
+    setStatus(s => s ? { ...s, auth_mode: mode } : s);
+    try {
+      await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'mcp_auth_mode', value: mode }),
+      });
+    } catch { /* ignore */ }
+    refresh();
+  };
+
   const enabled = !!status?.enabled;
+  const oauth = status?.auth_mode === 'oauth';
   const url = `${location.protocol}//${location.host}/api/mcp`;
-  const snippet = mcpSnippet(client, url, token);
+  const snippet = mcpSnippet(client, url, token, oauth);
   const activeClient = MCP_CLIENTS.find(c => c.id === client)!;
 
   return (
@@ -674,6 +692,19 @@ function IntegrationsSection() {
         {enabled && (
           <>
             <McpLiveStatus status={status!} />
+
+            <p className="settings-hint" style={{ margin: '12px 0 4px' }}>Authentication:</p>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+              <button type="button" className={`library-tab ${!oauth ? 'active' : ''}`}
+                onClick={() => setAuthMode('token')}>Token</button>
+              <button type="button" className={`library-tab ${oauth ? 'active' : ''}`}
+                onClick={() => setAuthMode('oauth')}>OAuth (no token)</button>
+            </div>
+            <p className="settings-hint" style={{ margin: '0 0 8px' }}>
+              {oauth
+                ? 'Clients connect with just the URL and approve access in the browser the first time — no token to copy.'
+                : 'Clients authenticate with the bearer token below.'}
+            </p>
 
             <p className="settings-hint" style={{ margin: '12px 0 4px' }}>Connect a client:</p>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>

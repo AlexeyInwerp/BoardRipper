@@ -1,7 +1,11 @@
 # MCP OAuth Onboarding — Design (Sub-project C)
 
 **Date:** 2026-06-15
-**Status:** Design only — to get its own implementation plan when scheduled.
+**Status:** IMPLEMENTED on `feature/mcp-server-live-board-bridge` (Approach A, embedded AS).
+Backend `mcpserver/oauth.go` + `GateAuto`; Settings auth-mode toggle. Verified end-to-end
+over real HTTP (DCR → PKCE authorize → token → 20 tools via the MCP client) and in the
+browser. Bearer remains the default; OAuth is opt-in via `mcp_auth_mode=oauth`. External-OIDC
+(Approach B) and login-gated consent for exposed deployments remain future work.
 **Depends on:** Sub-project A (MCP server + bridge), already built on `feature/mcp-server-live-board-bridge`.
 
 ## 1. Goal
