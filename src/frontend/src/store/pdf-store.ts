@@ -420,6 +420,11 @@ interface PdfDocument {
   cleanMode: boolean;
   pageCount: number;
   currentPage: number;
+  /** User rotation applied on top of each page's intrinsic rotation: 0/90/180/270 (CW degrees). */
+  rotation: number;
+  /** Page layout mode. 'continuous' = stacked scrollable pages (default);
+   *  'single' = one page at a time, pan locked to it. Forced to 'single' while rotated. */
+  pageMode: 'single' | 'continuous';
   textPages: PdfTextItem[][];
   searchQuery: string;
   matches: PdfTextMatch[];
@@ -476,6 +481,8 @@ class PdfStore extends Emitter {
   get fileName(): string { return this._active?.fileName ?? ''; }
   get pageCount(): number { return this._active?.pageCount ?? 0; }
   get currentPage(): number { return this._active?.currentPage ?? 1; }
+  get rotation(): number { return this._active?.rotation ?? 0; }
+  get pageMode(): 'single' | 'continuous' { return this._active?.pageMode ?? 'continuous'; }
   get searchQuery(): string { return this._active?.searchQuery ?? ''; }
   get matches(): PdfTextMatch[] { return this._active?.matches ?? []; }
   get activeMatchIndex(): number { return this._active?.activeMatchIndex ?? -1; }
@@ -513,6 +520,14 @@ class PdfStore extends Emitter {
   /** Per-document accessors — allow panels to render without being the "active" doc */
   getDocPageCount(fileName: string): number { return this._documents.get(fileName)?.pageCount ?? 0; }
   getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }
+  getDocRotation(fileName: string): number { return this._documents.get(fileName)?.rotation ?? 0; }
+  getDocPageMode(fileName: string): 'single' | 'continuous' { return this._documents.get(fileName)?.pageMode ?? 'continuous'; }
+  /** Effective single-page: explicit single mode OR forced single while rotated. */
+  isDocSinglePage(fileName: string): boolean {
+    const d = this._documents.get(fileName);
+    if (!d) return false;
+    return d.pageMode === 'single' || d.rotation !== 0;
+  }
   getDocSearchQuery(fileName: string): string { return this._documents.get(fileName)?.searchQuery ?? ''; }
   getDocMatches(fileName: string): PdfTextMatch[] { return this._documents.get(fileName)?.matches ?? []; }
   getDocActiveMatchIndex(fileName: string): number { return this._documents.get(fileName)?.activeMatchIndex ?? -1; }
@@ -615,6 +630,8 @@ class PdfStore extends Emitter {
         cleanMode: false,
         pageCount: doc.numPages,
         currentPage: 1,
+        rotation: 0,
+        pageMode: 'continuous',
         textPages: [],
         searchQuery: '',
         searchSource: null,
@@ -860,6 +877,48 @@ class PdfStore extends Emitter {
     if (n === active.currentPage) return;
     active.currentPage = n;
     this.notify();
+  }
+
+  /** Rotate the named doc 90° in the given direction. While rotated the layout
+   *  is forced single-page (continuous can't stack rotated pages cleanly), but
+   *  the user's chosen `pageMode` is preserved — see `isDocSinglePage` — so
+   *  returning to 0° restores their continuous-scroll preference. */
+  rotate(fileName: string, dir: 'cw' | 'ccw') {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    const delta = dir === 'cw' ? 90 : -90;
+    d.rotation = (((d.rotation + delta) % 360) + 360) % 360;
+    this.notify();
+  }
+
+  /** Rotate the active doc (keyboard shortcuts). */
+  rotateActive(dir: 'cw' | 'ccw') {
+    if (this._activeFileName) this.rotate(this._activeFileName, dir);
+  }
+
+  /** Reset the named doc to unrotated. */
+  resetRotation(fileName: string) {
+    const d = this._documents.get(fileName);
+    if (!d || d.rotation === 0) return;
+    d.rotation = 0;
+    this.notify();
+  }
+
+  /** Set the page layout mode. Switching to 'continuous' is ignored while the
+   *  doc is rotated — rotation pins the layout to single-page. */
+  setPageMode(fileName: string, mode: 'single' | 'continuous') {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    if (mode === 'continuous' && d.rotation !== 0) return;
+    if (d.pageMode === mode) return;
+    d.pageMode = mode;
+    this.notify();
+  }
+
+  togglePageMode(fileName: string) {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    this.setPageMode(fileName, d.pageMode === 'single' ? 'continuous' : 'single');
   }
 
   // INVARIANT: in-document search runs entirely on in-memory textPages and must

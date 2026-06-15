@@ -17,7 +17,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn, IconRotateClockwise, IconFileStack, IconFile } from '@tabler/icons-react';
 import {
   TILE_SIZE, computeTileGrid, tileRenderRequest,
   getTileCached, putTileCached, invalidateTileCache,
@@ -580,7 +580,12 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
+  /** Effective single-page layout: explicit single mode OR forced while rotated. */
+  const singlePageMode = pageMode === 'single' || rotation !== 0;
+  /** Current user rotation, read imperatively inside render callbacks. */
+  const rotationRef = useRef(rotation);
+  rotationRef.current = rotation;
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
@@ -1006,7 +1011,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     let { x, y } = panRef.current;
 
     const total = pdfStore.getDocPageCount(pdfFileName);
-    const singlePage = total === 1;
+    // Treat as single-page when the doc has one page, or single-page layout is
+    // active (explicit mode, or forced while rotated) — pan is locked to the
+    // current page on both axes rather than flowing into neighbours.
+    const singlePage = total === 1 || pdfStore.isDocSinglePage(pdfFileName);
     const SINGLE_PAGE_MARGIN = 80;
 
     // --- X axis ---
@@ -1149,6 +1157,30 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     syncTransform();
   }, [currentPage, syncTransform, clearTileDom]);
 
+  // Rotation change — every cached bitmap/tile is now wrong-orientation. Drop
+  // them all for this doc, tear down adjacent + tile DOM, re-fit (the rotated
+  // page has different dimensions), and re-render from scratch. Skips the
+  // first run so loading an unrotated doc doesn't redundantly clear caches.
+  const prevRotationRef = useRef(rotation);
+  useEffect(() => {
+    if (prevRotationRef.current === rotation) return;
+    prevRotationRef.current = rotation;
+    clearTileDom();
+    invalidateTileCache(pdfFileName);
+    invalidatePageCache(pdfFileName);
+    for (const entry of adjCanvasMapRef.current.values()) entry.canvas.remove();
+    adjCanvasMapRef.current.clear();
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    renderTierRef.current = 1;
+    syncTransform();
+    renderPageRef.current();
+  }, [rotation, pdfFileName, syncTransform, clearTileDom]);
+
+  // Re-clamp pan whenever the effective single-page layout flips (toggling the
+  // mode mid-document can leave the pan straddling a page boundary).
+  useEffect(() => { syncTransform(); }, [singlePageMode, syncTransform]);
+
   useEffect(() => {
     return () => {
       clearTileDom();
@@ -1170,13 +1202,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   ): Promise<CachedRender> => {
     const page = await pdfStore.getPageFor(pdfFileName, pageNum);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const unscaledViewport = page.getViewport({ scale: 1 });
+    const rot = page.rotate + rotationRef.current;
+    const unscaledViewport = page.getViewport({ scale: 1, rotation: rot });
     const baseScale = containerWidth / unscaledViewport.width;
 
     const dpr = window.devicePixelRatio || 1;
     let hiresScale = baseScale * tier * dpr;
     hiresScale = clampFullPageScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
-    const viewport = page.getViewport({ scale: hiresScale });
+    const viewport = page.getViewport({ scale: hiresScale, rotation: rot });
     const cssW = containerWidth;
     const cssH = unscaledViewport.height * baseScale;
 
@@ -1325,13 +1358,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       if (renderIdRef.current !== renderId) return;
       const tPage = performance.now();
 
-      const unscaledViewport = page.getViewport({ scale: 1 });
+      const rot = page.rotate + rotationRef.current;
+      const unscaledViewport = page.getViewport({ scale: 1, rotation: rot });
       const baseScale = containerWidth / unscaledViewport.width;
 
       const dpr = window.devicePixelRatio || 1;
       let hiresScale = baseScale * resTier * dpr;
       hiresScale = clampFullPageScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
-      const viewport = page.getViewport({ scale: hiresScale });
+      const viewport = page.getViewport({ scale: hiresScale, rotation: rot });
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
 
@@ -1532,7 +1566,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const page = await pdfStore.getPageFor(pdfFileName, currentPage);
       if (tileRenderIdRef.current !== tileRenderId) return;
 
-      const unscaledVp = page.getViewport({ scale: 1 });
+      const rot = page.rotate + rotationRef.current;
+      const unscaledVp = page.getViewport({ scale: 1, rotation: rot });
       const baseScale = containerWidth / unscaledVp.width;
       const dpr = window.devicePixelRatio || 1;
       // Tile path: each tile renders into its own TILE_SIZE canvas (1024px),
@@ -1715,6 +1750,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
         const tileViewport = page.getViewport({
           scale: renderScale,
+          rotation: rot,
           offsetX: -req.srcX * renderScale,
           offsetY: -req.srcY * renderScale,
         });
@@ -1960,6 +1996,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   // --- Adjacent page rendering (N pages visible when panning / zoomed out) ---
   useEffect(() => {
+    // Single-page layout (explicit or forced while rotated): tear down any
+    // adjacent canvases and never render neighbours.
+    if (singlePageMode) {
+      const adjMap = adjCanvasMapRef.current;
+      for (const entry of adjMap.values()) entry.canvas.remove();
+      adjMap.clear();
+      return;
+    }
     if (!isLoaded || pageCount <= 1) return;
     const wrapper = wrapperRef.current;
     const container = containerRef.current;
@@ -2071,7 +2115,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     })();
 
     return () => { ac.abort(); };
-  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap, adjTrigger]);
+  }, [isLoaded, currentPage, pageCount, pdfFileName, cleanMode, renderPageToBitmap, adjTrigger, singlePageMode]);
 
   // Sync search input when searchQuery changes externally (e.g. pre-populated from library)
   useEffect(() => {
@@ -2468,6 +2512,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       e.preventDefault();
       pdfStore.switchTo(pdfFileName);
 
+      // Single-page layout (explicit mode or forced while rotated): never flip
+      // to a neighbouring page on scroll/zoom — pan stays clamped to the current
+      // page. Page changes happen only via nav controls, scrubber, or shortcuts.
+      const noFlip = pdfStore.isDocSinglePage(pdfFileName);
+
       // Trackpad pinch-to-zoom generates wheel events with ctrlKey=true.
       // Always treat those as zoom — pinch is a fundamental gesture that should
       // never be remapped by scroll binding settings.
@@ -2514,7 +2563,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
         // Page boundary detection during zoom: when zoomed in and the viewport
         // center has moved over an adjacent page, switch to it so it renders crisp.
-        if (cssH > 0) {
+        if (cssH > 0 && !noFlip) {
           const pageH = cssH * newZoom;
           const containerH = container.clientHeight;
           const curPage = pdfStore.getDocCurrentPage(pdfFileName);
@@ -2568,7 +2617,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const curPage = pdfStore.getDocCurrentPage(pdfFileName);
         const total = pdfStore.getDocPageCount(pdfFileName);
 
-        if (newY + pageH < containerH / 2 && curPage < total) {
+        if (!noFlip && newY + pageH < containerH / 2 && curPage < total) {
           skipResetRef.current = true;
           ++tileRenderIdRef.current;
           if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
@@ -2587,7 +2636,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           pdfStore.goToPage(curPage + 1);
           newY += pageH;
           flashScrubber();
-        } else if (newY > containerH / 2 && curPage > 1) {
+        } else if (!noFlip && newY > containerH / 2 && curPage > 1) {
           skipResetRef.current = true;
           ++tileRenderIdRef.current;
           if (tierDebounceRef.current) { clearTimeout(tierDebounceRef.current); tierDebounceRef.current = null; }
@@ -3458,6 +3507,33 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           >
             &#x25D0;
           </button>
+        </div>
+        <div className="pdf-toolbar-group">
+          <button
+            data-testid="pdf-rotate"
+            className={`pdf-toolbar-btn${rotation !== 0 ? ' active' : ''}`}
+            onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.rotate(pdfFileName, 'cw'); }}
+            title={rotation === 0
+              ? 'Rotate page 90° clockwise (Q/E or ⌘←/→)'
+              : `Rotated ${rotation}° — click to rotate further (Q/E or ⌘←/→)`}
+          >
+            <IconRotateClockwise size={14} />
+          </button>
+          {pageCount > 1 && (
+            <button
+              data-testid="pdf-page-mode"
+              className={`pdf-toolbar-btn${singlePageMode ? ' active' : ''}`}
+              onClick={() => { if (rotation !== 0) return; pdfStore.switchTo(pdfFileName); pdfStore.togglePageMode(pdfFileName); }}
+              disabled={rotation !== 0}
+              title={rotation !== 0
+                ? 'Rotated pages are always shown one at a time'
+                : (pageMode === 'single'
+                    ? 'Single page — click for continuous scroll'
+                    : 'Continuous scroll — click for single page')}
+            >
+              {singlePageMode ? <IconFile size={14} /> : <IconFileStack size={14} />}
+            </button>
+          )}
         </div>
         <div className="pdf-viewport-group">
           <button

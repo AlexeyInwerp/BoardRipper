@@ -48,6 +48,8 @@ export interface PdfDocSnapshot {
   isLoaded: boolean;
   pageCount: number;
   currentPage: number;
+  rotation: number;
+  pageMode: 'single' | 'continuous';
   searchQuery: string;
   matches: PdfTextMatch[];
   activeMatchIndex: number;
@@ -90,6 +92,8 @@ function getDocSnapshot(fileName: string): PdfDocSnapshot {
     isLoaded: pdfStore.isDocLoaded(fileName),
     pageCount: pdfStore.getDocPageCount(fileName),
     currentPage: pdfStore.getDocCurrentPage(fileName),
+    rotation: pdfStore.getDocRotation(fileName),
+    pageMode: pdfStore.getDocPageMode(fileName),
     searchQuery: pdfStore.getDocSearchQuery(fileName),
     matches: pdfStore.getDocMatches(fileName),
     activeMatchIndex: pdfStore.getDocActiveMatchIndex(fileName),
