@@ -323,8 +323,9 @@ func main() {
 	mux.Handle("/api/mcp", mcpserver.Gate(mcpState, mcpSecret, mcpSrv.Handler()))
 	mux.Handle("/api/mcp/", mcpserver.Gate(mcpState, mcpSecret, mcpSrv.Handler()))
 	mux.HandleFunc("/api/mcp/bridge", mcpBridge.ServeWS)
-	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge))
+	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge, mcpSrv))
 	mux.HandleFunc("GET /api/mcp/token", mcpserver.TokenHandler(mcpState, mcpSecret))
+	mux.HandleFunc("POST /api/mcp/selftest", mcpserver.SelfTestHandler(mcpState, mcpSrv))
 
 	// Serve static frontend files.
 	//

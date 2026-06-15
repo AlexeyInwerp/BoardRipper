@@ -7019,6 +7019,14 @@ body {
   margin-bottom: 4px;
 }
 
+/* Settings has more tabs than the Library panel — let the strip wrap to a
+   second line in narrow/floating panels so every tab (incl. Integrations)
+   stays reachable instead of overflowing off-edge. */
+.settings-tabs-row .library-tabs {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
 /* ── Overlay inline filter inputs (Parts + Nets dropdowns) ─────────────────── */
 
 /* Always-visible filter input in the overlay row — styled to match the toggle

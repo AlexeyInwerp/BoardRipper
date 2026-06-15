@@ -225,6 +225,38 @@ func TestServer_ListToolsIncludesLive(t *testing.T) {
 	}
 }
 
+func TestServer_SelfTestAndActivity(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}), Bridge: NewBridge()}
+	srv := New(deps)
+	tools, err := srv.SelfTest(context.Background())
+	if err != nil {
+		t.Fatalf("SelfTest: %v", err)
+	}
+	if len(tools) < 10 {
+		t.Fatalf("expected many tools, got %d", len(tools))
+	}
+
+	// Activity starts empty, records after a call.
+	if srv.Activity().TotalCalls != 0 {
+		t.Fatalf("expected 0 calls initially")
+	}
+	sess := connectClient(t, deps) // separate server instance
+	defer sess.Close()
+	// Drive activity on THIS srv via its own in-memory client.
+	ct, st := mcp.NewInMemoryTransports()
+	srv.mcp.Connect(context.Background(), st, nil)
+	c := mcp.NewClient(&mcp.Implementation{Name: "a", Version: "1"}, nil)
+	cs, _ := c.Connect(context.Background(), ct, nil)
+	defer cs.Close()
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "ping"}); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	snap := srv.Activity()
+	if snap.TotalCalls < 1 || snap.LastTool != "ping" {
+		t.Fatalf("activity not recorded: %+v", snap)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

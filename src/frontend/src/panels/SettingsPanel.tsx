@@ -515,11 +515,97 @@ function LibraryFolderSetting() {
 
 // ---- Auto-scan toggle ----
 
-interface McpStatus { enabled: boolean; drive_ui: boolean; clients: number; }
+interface McpActivity { last_tool: string; last_tool_at_ms: number; total_calls: number; }
+interface McpStatus { enabled: boolean; drive_ui: boolean; clients: number; activity?: McpActivity; }
+
+type McpClientId = 'claude-code' | 'claude-desktop' | 'cursor' | 'other';
+const MCP_CLIENTS: { id: McpClientId; label: string; paste: string }[] = [
+  { id: 'claude-code', label: 'Claude Code', paste: 'Run this in your terminal.' },
+  { id: 'claude-desktop', label: 'Claude Desktop', paste: 'Add to claude_desktop_config.json, then restart Claude Desktop.' },
+  { id: 'cursor', label: 'Cursor', paste: 'Add to ~/.cursor/mcp.json (or .cursor/mcp.json in your project).' },
+  { id: 'other', label: 'Other', paste: 'Any MCP client over Streamable HTTP — use this URL + header.' },
+];
+
+function mcpSnippet(client: McpClientId, url: string, token: string): string {
+  const t = token || '<enable the server to reveal the token>';
+  switch (client) {
+    case 'claude-code':
+      return `claude mcp add --transport http boardripper ${url} --header "Authorization: Bearer ${t}"`;
+    case 'claude-desktop':
+      return JSON.stringify({
+        mcpServers: {
+          boardripper: {
+            command: 'npx',
+            args: ['-y', 'mcp-remote', url, '--header', `Authorization: Bearer ${t}`],
+          },
+        },
+      }, null, 2);
+    case 'cursor':
+      return JSON.stringify({
+        mcpServers: { boardripper: { url, headers: { Authorization: `Bearer ${t}` } } },
+      }, null, 2);
+    case 'other':
+      return `URL:    ${url}\nHeader: Authorization: Bearer ${t}`;
+  }
+}
+
+function CopyButton({ text, disabled }: { text: string; disabled?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button type="button" className="library-tab" disabled={disabled}
+      style={{ padding: '3px 10px', fontSize: 11 }}
+      onClick={async () => {
+        try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+        catch { /* clipboard blocked */ }
+      }}>
+      {copied ? 'Copied ✓' : 'Copy'}
+    </button>
+  );
+}
+
+function McpLiveStatus({ status }: { status: McpStatus }) {
+  const [test, setTest] = useState<{ ok: boolean; count?: number; error?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const act = status.activity;
+  const ago = act && act.last_tool_at_ms
+    ? `${Math.max(0, Math.round((Date.now() - act.last_tool_at_ms) / 1000))}s ago`
+    : null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="settings-row">
+        <span className="settings-label">Connected pages</span>
+        <span>{status.clients}</span>
+      </div>
+      <div className="settings-row">
+        <span className="settings-label">Tool calls</span>
+        <span>{act?.total_calls ?? 0}{act?.last_tool ? ` · last: ${act.last_tool}${ago ? ` (${ago})` : ''}` : ''}</span>
+      </div>
+      <div className="settings-row settings-toggle-row">
+        <button type="button" className="library-tab" disabled={testing}
+          onClick={async () => {
+            setTesting(true);
+            try {
+              const r = await fetch('/api/mcp/selftest', { method: 'POST' });
+              setTest(await r.json());
+            } catch (e: any) { setTest({ ok: false, error: String(e?.message ?? e) }); }
+            setTesting(false);
+          }}>
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+        {test && (
+          <span style={{ fontSize: 12, color: test.ok ? 'var(--accent, #4ade80)' : '#f87171' }}>
+            {test.ok ? `✓ responding · ${test.count} tools` : `✗ ${test.error ?? 'failed'}`}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function IntegrationsSection() {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [token, setToken] = useState('');
+  const [client, setClient] = useState<McpClientId>('claude-code');
 
   const refresh = useCallback(() => {
     fetch('/api/mcp/status')
@@ -538,10 +624,10 @@ function IntegrationsSection() {
       .catch(() => setToken(''));
   }, [status?.enabled]);
 
-  // Poll client count while enabled so the operator sees pages connect live.
+  // Poll status while enabled so connected pages + tool activity update live.
   useEffect(() => {
     if (!status?.enabled) return;
-    const t = setInterval(refresh, 4000);
+    const t = setInterval(refresh, 3000);
     return () => clearInterval(t);
   }, [status?.enabled, refresh]);
 
@@ -559,15 +645,18 @@ function IntegrationsSection() {
   };
 
   const enabled = !!status?.enabled;
-  const cmd = `claude mcp add --transport http boardripper ${location.protocol}//${location.host}/api/mcp --header "Authorization: Bearer ${token || '<enable to reveal>'}"`;
+  const url = `${location.protocol}//${location.host}/api/mcp`;
+  const snippet = mcpSnippet(client, url, token);
+  const activeClient = MCP_CLIENTS.find(c => c.id === client)!;
 
   return (
     <div className="settings-tab-body">
       <StandaloneCollapsibleSection title="MCP server (AI agents)" defaultOpen storageKey="mcp">
         <p className="settings-hint">
-          Let an AI agent (Claude Code, or any MCP client) query this BoardRipper —
-          PDF full-text search, OpenBoardData readings, the board reference DB, and the
-          live connectivity of whatever board you have open. Off by default.
+          Let an AI agent (Claude Code, Claude Desktop, Cursor, or any MCP client) query
+          this BoardRipper — PDF full-text search, OpenBoardData readings, the board
+          reference DB, and the live connectivity of whatever board you have open — and
+          drive the view. Off by default.
         </p>
         <div className="settings-row settings-toggle-row">
           <label className="settings-label">Enable MCP server</label>
@@ -581,18 +670,28 @@ function IntegrationsSection() {
           <input type="checkbox" checked={!!status?.drive_ui} disabled={!enabled}
             onChange={e => setFlag('mcp_drive_ui', e.target.checked)} />
         </div>
+
         {enabled && (
           <>
-            <div className="settings-row">
-              <span className="settings-label">Connected pages</span>
-              <span>{status?.clients ?? 0}</span>
+            <McpLiveStatus status={status!} />
+
+            <p className="settings-hint" style={{ margin: '12px 0 4px' }}>Connect a client:</p>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+              {MCP_CLIENTS.map(c => (
+                <button key={c.id} type="button"
+                  className={`library-tab ${client === c.id ? 'active' : ''}`}
+                  onClick={() => setClient(c.id)}>{c.label}</button>
+              ))}
             </div>
-            <p className="settings-hint" style={{ marginBottom: 4 }}>Add to Claude Code:</p>
-            <pre className="mcp-connect-cmd" style={{
-              whiteSpace: 'pre-wrap', wordBreak: 'break-all', userSelect: 'all',
-              fontSize: 11, padding: '8px 10px', borderRadius: 6,
-              background: 'var(--panel-alt, rgba(0,0,0,0.25))', margin: 0,
-            }}>{cmd}</pre>
+            <p className="settings-hint" style={{ margin: '0 0 4px' }}>{activeClient.paste}</p>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+              <pre className="mcp-connect-cmd" style={{
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all', userSelect: 'all',
+                fontSize: 11, padding: '8px 10px', borderRadius: 6, margin: 0, flex: 1,
+                background: 'var(--panel-alt, rgba(0,0,0,0.25))',
+              }}>{snippet}</pre>
+              <CopyButton text={snippet} />
+            </div>
           </>
         )}
       </StandaloneCollapsibleSection>
