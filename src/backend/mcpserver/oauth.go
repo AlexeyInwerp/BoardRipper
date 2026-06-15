@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"html"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -305,8 +306,9 @@ func (o *OAuth) Token(w http.ResponseWriter, r *http.Request) {
 
 	tok := randToken(32)
 	o.mu.Lock()
-	o.tokens[tok] = &accessToken{clientID: ac.clientID, scope: ac.scope, expiry: time.Now().Add(accessTokenTTL)}
+	o.tokens[tok] = &accessToken{clientID: ac.clientID, scope: oauthScope, expiry: time.Now().Add(accessTokenTTL)}
 	o.mu.Unlock()
+	log.Printf("mcp oauth: issued token (client=%s, token_len=%d, ttl=%s)", ac.clientID, len(tok), accessTokenTTL)
 
 	oauthJSON(w, 200, map[string]any{
 		"access_token": tok,

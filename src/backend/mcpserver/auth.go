@@ -2,10 +2,10 @@ package mcpserver
 
 import (
 	"crypto/subtle"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
-
-	"github.com/modelcontextprotocol/go-sdk/auth"
 )
 
 // Gate enforces the enable flag and bearer-token auth in front of the MCP
@@ -39,11 +39,17 @@ func GateAuto(st *State, secret string, oauth *OAuth, next http.Handler) http.Ha
 			return
 		}
 		if st.AuthMode() == "oauth" {
-			opts := &auth.RequireBearerTokenOptions{
-				ResourceMetadataURL: oauth.ResourceMetadataURL(r),
-				Scopes:              []string{oauthScope},
+			// Explicit verification (no scope requirement — token presence is the
+			// grant) with the proper challenge + a diagnostic log on rejection.
+			tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			info, err := oauth.Verifier()(r.Context(), tok, r)
+			if err != nil || info == nil {
+				log.Printf("mcp oauth: rejected %s %s (token_len=%d, reason=%v)", r.Method, r.URL.Path, len(tok), err)
+				w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer resource_metadata=%q", oauth.ResourceMetadataURL(r)))
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
 			}
-			auth.RequireBearerToken(oauth.Verifier(), opts)(next).ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
