@@ -7,7 +7,9 @@ import { worklistStore } from '../store/worklist-store';
 import type { SelectionState } from '../store/board-store';
 import { colorToHex, hexToColor } from '../store/layer-store';
 import { renderSettingsStore, isNcNet } from '../store/render-settings';
+import { useRenderSettings } from '../hooks/useRenderSettings';
 import { extractBoardNumberFromFilename } from '../store/obd-store';
+import { boardHasDiodeData } from '../store/diode-readings';
 import { ComponentInfoBody } from './ComponentInfoBody';
 import { WorklistPanel } from '../panels/WorklistPanel';
 import { bomReasonLabel, type BoardData, type Part } from '../parsers';
@@ -176,6 +178,10 @@ function LayersTab({ tabId }: { tabId: number }) {
   const showPins = tab?.showPins ?? true;
   const showOutlines = tab?.showOutlines ?? true;
   const showLabels = tab?.showLabels ?? true;
+  const rsettings = useRenderSettings();
+  const showDiodeValues = rsettings.showDiodeValues;
+  const diodeBn = tab?.fileName ? extractBoardNumberFromFilename(tab.fileName) : null;
+  const hasDiodeData = boardHasDiodeData(board, diodeBn ?? undefined);
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
   const foldMode = tab?.foldMode ?? 'suggested';
   const selectedBoardIndex = tab?.selectedBoardIndex ?? null;
@@ -337,6 +343,15 @@ function LayersTab({ tabId }: { tabId: number }) {
             title={showCopperDrops ? 'Hide standalone GND/power copper drops' : 'Show standalone GND/power copper drops'}
           >
             <span className="toggle-check">{showCopperDrops ? '■' : '□'}</span> Copper drops
+          </button>
+        )}
+        {hasDiodeData && (
+          <button
+            className={`visibility-toggle ${showDiodeValues ? '' : 'off'}`}
+            onClick={() => renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSnapshot(), showDiodeValues: !showDiodeValues })}
+            title={showDiodeValues ? 'Hide diode values' : 'Show diode-mode reference readings on pins'}
+          >
+            <span className="toggle-check">{showDiodeValues ? '■' : '□'}</span> Diode values
           </button>
         )}
         {board?.surfaces && board.surfaces.length > 0 && (

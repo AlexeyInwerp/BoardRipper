@@ -85,6 +85,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   F('board', 'pins', 'pinScaleFactor', 'Scale Factor', 'How much the file-specified pin radius affects rendered size. 0 = all pins identical (Min Radius). 1 = proportional to file data. >1 = exaggerated differences'),
   F('board', 'pins', 'pinAlpha', 'Fill Opacity', 'Fill transparency of pin circles and rectangular pads. 0 = invisible, 1 = fully opaque'),
   F('board', 'pins', 'showPinNumbers', 'Show Pin Numbers', 'Display pin number/name labels inside pin circles on multi-pin components (ICs, connectors). On BGA parts, numbers and net names alternate vertically to reduce overlap'),
+  F('board', 'pins', 'showDiodeValues', 'Show Diode Values', 'Draw diode-mode reference readings on pins (XZZ-baked values + OpenBoardData). Only visible on boards that carry readings; also in the board sidebar View tab', ['diode', 'voltage', 'reading', 'obd', 'measurement']),
   F('board', 'pins', 'showPin1Marker', 'Pin 1 Marker', 'Highlight pin 1 with red color and a triangle indicator on multi-pin parts', ['triangle', 'red', 'orientation']),
   F('board', 'pins', 'pinNetLabelBg', 'Pin Label Background', 'Draw a dark background plate behind net name labels on circle pins. Improves readability when labels overflow beyond the pin area'),
   F('board', 'pins', 'twoPinNetLabelBg', '2-Pin Label Background', 'Draw a dark background plate behind net name labels on 2-pin rectangular pads'),

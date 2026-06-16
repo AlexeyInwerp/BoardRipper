@@ -122,6 +122,8 @@ interface BoardScene {
   labels: import('pixi.js').BitmapText[];
   topLabels: import('pixi.js').BitmapText[];
   bottomLabels: import('pixi.js').BitmapText[];
+  topDiodeLabels: import('pixi.js').BitmapText[];
+  bottomDiodeLabels: import('pixi.js').BitmapText[];
   topPinLabels: Container[];
   bottomPinLabels: Container[];
   /** Pin labels per part index — used by selection highlight to brighten only
@@ -1692,10 +1694,10 @@ export class BoardRenderer {
       if (!fp || !fp.butterfly ||
           fp.topRot !== topLabelRot || fp.topSx !== sx || fp.topSy !== topSy ||
           fp.botRot !== botLabelRot || fp.botSx !== botScaleX || fp.botSy !== botScaleY) {
-        for (const arr of [scene.topLabels, scene.topPinLabels, scene.viaLabels]) {
+        for (const arr of [scene.topLabels, scene.topPinLabels, scene.topDiodeLabels, scene.viaLabels]) {
           for (const label of arr) { label.rotation = topLabelRot; label.scale.set(sx, topSy); }
         }
-        for (const arr of [scene.bottomLabels, scene.bottomPinLabels]) {
+        for (const arr of [scene.bottomLabels, scene.bottomPinLabels, scene.bottomDiodeLabels]) {
           for (const label of arr) { label.rotation = botLabelRot; label.scale.set(botScaleX, botScaleY); }
         }
         this.lastFlipParams = { butterfly: true, topRot: topLabelRot, topSx: sx, topSy, botRot: botLabelRot, botSx: botScaleX, botSy: botScaleY };
@@ -1727,7 +1729,7 @@ export class BoardRenderer {
       const fp2 = this.lastFlipParams;
       if (!fp2 || fp2.butterfly ||
           fp2.topRot !== labelRot || fp2.topSx !== lsx || fp2.topSy !== lsy) {
-        for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels, scene.viaLabels]) {
+        for (const arr of [scene.labels, scene.topPinLabels, scene.bottomPinLabels, scene.topDiodeLabels, scene.bottomDiodeLabels, scene.viaLabels]) {
           for (const label of arr) { label.rotation = labelRot; label.scale.set(lsx, lsy); }
         }
         this.lastFlipParams = { butterfly: false, topRot: labelRot, topSx: lsx, topSy: lsy, botRot: 0, botSx: 1, botSy: 1 };
