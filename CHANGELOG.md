@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.31.21 — 2026-06-16
+
+Two features: PDF orientation controls and a diode-value channel for XZZ
+boards.
+
+### Features
+
+- **PDF rotation, mirror & page modes.** PDF documents gain per-document 90° rotation (Q/E, or ⌘←/→), a horizontal mirror (⌘↑), and a single-page / continuous page-mode toggle (default continuous; rotation forces single but restores your page mode when un-rotated). Rotation flows through every viewport so fit-width, the click/highlight transform, and the tile grid all adapt; mirror is a wrapper flip that carries the page, highlight, and overlays together. The orientation controls sit just right of the page-switching group, and the board↔PDF link (∞) control now lives in the PDF tab. (`fe6d9f4`, `2de7955`, `8bbed00`)
+- **Diode-value channel for XZZ boards.** XZZ "Middle layer diode value" `.pcb` companions carry reference diode-mode readings in a table after the file's `v6` marker; these are now parsed and drawn **directly on the pins** (white, per-pin), with **OpenBoardData** as a second source feeding the same display via each pin's net. Toggle it from the board sidebar's **View** tab (or Settings ▸ Pins); readings also appear in the hover tooltip and the Component Info pin table. The control only shows on boards that actually carry readings. (`3d4b6b6`, `e017f3d`, `1bda8a9`, `fa9513c`)
+
 ## v0.31.20 — 2026-06-13
 
 Point fix for the board-side link menu shipped in v0.31.19.
