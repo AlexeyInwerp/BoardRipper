@@ -2,6 +2,14 @@ import { Emitter } from './emitter';
 import { log } from './log-store';
 import { setThemeOverridesProvider, renderSettingsStore } from './render-settings';
 import type { RenderSettings } from './render-settings';
+import {
+  shadeToward,
+  pickAccentFg,
+  pickTextColors,
+} from './color-math';
+
+// Re-exported for existing call sites that imported these from themes.ts.
+export { lightenHex, darkenHex, shadeToward, pickAccentFg, pickTextColors, hexToInt } from './color-math';
 
 /**
  * A theme bundles every color that's currently configurable across the app —
@@ -128,6 +136,93 @@ export const THEMES: Record<string, Theme> = {
       defaultPinColorBottom: '#ffffff',
       netColorRules:       [],       // no GND/VCC/PP color rules
       showSelectionHalo:   false,    // suppress yellow pin-halo overlay
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Light themes. These are the first themes whose ui.bgPrimary is light;
+  // they rely on the luminance-aware machinery added alongside them:
+  //   - pickTextColors() flips body text to graphite (theme.ui.text* on a
+  //     light base is ignored — the values below are documentation only).
+  //   - shadeToward() is used for knob-derived siblings, but the non-override
+  //     path reads bgSecondary/border verbatim, so those are pre-darkened.
+  // Board side: canvas is a tinted mat, boardFill a near-white sheet on top,
+  // outline a dark ink, every label dark, and selection an amber that pops on
+  // a light canvas (the dark-theme yellow #ffff44 is invisible on paper).
+  // No boardOverrides — the user's render settings ride through unchanged.
+  'drafting-paper': {
+    id: 'drafting-paper',
+    label: 'Drafting Paper (light)',
+    ui: {
+      bgPrimary:     '#f4f1ea',
+      bgSecondary:   '#e5e3dc',
+      bgTertiary:    '#e7e2d6',
+      textPrimary:   '#1c1f24',
+      textSecondary: '#5b616b',
+      accent:        '#b5532a',
+      border:        '#cbc7bc',
+      iconBoardBg:   '#3f9142',
+      iconPdfBg:     '#c0392b',
+    },
+    board: {
+      canvasBackground:   '#ece7db',
+      boardFill:          '#fbfaf6',
+      outline:            '#8a7a5f',
+      selection:          '#e0a526',
+      butterflySelection: '#2f6db5',
+      labelText:          '#2b2722',
+      labelPart:          '#5b4f3c',
+      labelNet:           '#7a5a2a',
+    },
+  },
+  daylight: {
+    id: 'daylight',
+    label: 'Daylight (light)',
+    ui: {
+      bgPrimary:     '#eceef1',
+      bgSecondary:   '#dee0e3',
+      bgTertiary:    '#dde0e4',
+      textPrimary:   '#1c1f24',
+      textSecondary: '#5b616b',
+      accent:        '#2f6db5',
+      border:        '#c2c5c9',
+      iconBoardBg:   '#3f9142',
+      iconPdfBg:     '#c0392b',
+    },
+    board: {
+      canvasBackground:   '#e4e7eb',
+      boardFill:          '#f8f9fb',
+      outline:            '#5a6470',
+      selection:          '#e08a1e',
+      butterflySelection: '#2f6db5',
+      labelText:          '#1f2329',
+      labelPart:          '#4a5560',
+      labelNet:           '#2f6db5',
+    },
+  },
+  'blueprint-light': {
+    id: 'blueprint-light',
+    label: 'Blueprint (light)',
+    ui: {
+      bgPrimary:     '#e9eef5',
+      bgSecondary:   '#dbe0e6',
+      bgTertiary:    '#d6dfeb',
+      textPrimary:   '#16263a',
+      textSecondary: '#52606f',
+      accent:        '#1f5fa8',
+      border:        '#bcc4cf',
+      iconBoardBg:   '#2f7d4f',
+      iconPdfBg:     '#b5453a',
+    },
+    board: {
+      canvasBackground:   '#dde6f0',
+      boardFill:          '#f3f7fc',
+      outline:            '#16263a',
+      selection:          '#e0892a',
+      butterflySelection: '#1f5fa8',
+      labelText:          '#16263a',
+      labelPart:          '#2c4663',
+      labelNet:           '#1f5fa8',
     },
   },
 };
@@ -276,39 +371,6 @@ function saveToStorage(activeId: string) {
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
-/** Mix a hex colour toward white by `amount` ∈ [0,1]. Used to derive a
- *  lighter sibling token (e.g. button surface from canvas background) when
- *  the user overrides only the parent token. */
-export function lightenHex(hex: string, amount: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const lr = Math.round(r + (255 - r) * amount);
-  const lg = Math.round(g + (255 - g) * amount);
-  const lb = Math.round(b + (255 - b) * amount);
-  const toHex = (n: number) => n.toString(16).padStart(2, '0');
-  return `#${toHex(lr)}${toHex(lg)}${toHex(lb)}`;
-}
-
-/** WCAG relative luminance ∈ [0,1]. */
-function relativeLuminance(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const linearize = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-  return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
-}
-
-/** Pick a foreground colour that reads on top of `bgHex`. Flips to dark
- *  text only when the accent is genuinely bright (gold / lime / yellow);
- *  ordinary saturated accents — blue, red, violet, magenta, teal — keep
- *  the white-on-accent look the app has used since v1. The 0.5 luminance
- *  threshold is intentionally above the WCAG-strict cutoff so picking
- *  e.g. ATARI Red doesn't re-skin every accent button as black-text. */
-export function pickAccentFg(bgHex: string): string {
-  return relativeLuminance(bgHex) > 0.5 ? '#0a0a0a' : '#ffffff';
-}
-
 function loadHexOverride(key: string): string | null {
   try {
     const raw = localStorage.getItem(key);
@@ -334,33 +396,37 @@ interface UiOverrides {
 
 /** Apply a theme's UI + canvas colors to CSS custom properties on <html>.
  *  Each override replaces the corresponding theme token and cascades into
- *  related siblings:
- *    - background  → --bg-primary; --bg-secondary derived (lighten 6%)
- *    - chrome      → --bg-tertiary; --border derived (lighten 12%)
- *    - accent      → --accent; --accent-hover derived in CSS via color-mix
+ *  related siblings (siblings shade *away* from the base's luminance pole —
+ *  lighten on dark, darken on light — via shadeToward):
+ *    - background  → --bg-primary; --bg-secondary derived; text auto-flips
+ *    - chrome      → --bg-tertiary; --border derived
+ *    - accent      → --accent; --accent-fg auto-flips; --accent-hover in CSS
  */
 export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = {}) {
   const root = document.documentElement;
   const { accent, background, chrome } = overrides;
 
-  if (background) {
-    root.style.setProperty('--bg-primary',   background);
-    root.style.setProperty('--bg-secondary', lightenHex(background, 0.06));
-  } else {
-    root.style.setProperty('--bg-primary',   theme.ui.bgPrimary);
-    root.style.setProperty('--bg-secondary', theme.ui.bgSecondary);
-  }
+  // Tier siblings are derived with shadeToward (not plain lightenHex) so a
+  // light background/chrome produces a darker — therefore visible — sibling
+  // instead of running into white. The non-override path now also derives
+  // the sibling rather than trusting theme.ui.bg{Secondary,border}; this lets
+  // a theme declare just bgPrimary/bgTertiary and get a correct tier for free,
+  // and keeps knob and theme paths consistent.
+  const effBg = background ?? theme.ui.bgPrimary;
+  root.style.setProperty('--bg-primary',   effBg);
+  root.style.setProperty('--bg-secondary', background ? shadeToward(effBg, 0.06) : theme.ui.bgSecondary);
 
-  if (chrome) {
-    root.style.setProperty('--bg-tertiary', chrome);
-    root.style.setProperty('--border',      lightenHex(chrome, 0.12));
-  } else {
-    root.style.setProperty('--bg-tertiary', theme.ui.bgTertiary);
-    root.style.setProperty('--border',      theme.ui.border);
-  }
+  const effChrome = chrome ?? theme.ui.bgTertiary;
+  root.style.setProperty('--bg-tertiary', effChrome);
+  root.style.setProperty('--border',      chrome ? shadeToward(effChrome, 0.12) : theme.ui.border);
 
-  root.style.setProperty('--text-primary',   theme.ui.textPrimary);
-  root.style.setProperty('--text-secondary', theme.ui.textSecondary);
+  // Body text is derived from the effective background's luminance so it
+  // stays readable when the background knob (or a light theme) flips the base
+  // from dark to light. Dark backgrounds reproduce the historical pair, so
+  // existing dark themes are unchanged.
+  const text = pickTextColors(effBg);
+  root.style.setProperty('--text-primary',   text.primary);
+  root.style.setProperty('--text-secondary', text.secondary);
   const effAccent = accent ?? theme.ui.accent;
   root.style.setProperty('--accent', effAccent);
   // --accent-fg = the text colour that reads on top of an accent-tinted
@@ -372,11 +438,18 @@ export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = 
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
   root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);
   root.style.setProperty('--icon-pdf-bg',    theme.ui.iconPdfBg);
-}
 
-/** Convert '#rrggbb' to a 24-bit integer for PixiJS color arguments. */
-export function hexToInt(hex: string): number {
-  return parseInt(hex.slice(1), 16);
+  // Board-side colours mirrored as CSS vars. The PixiJS scene reads these
+  // through BOARD_COLORS (JS), not CSS — but exposing them on :root gives the
+  // visibility test harness a single DOM source of truth for every theme
+  // colour, and is the hook the upcoming custom-theme editor reads/writes.
+  root.style.setProperty('--board-fill',         theme.board.boardFill);
+  root.style.setProperty('--board-outline',      theme.board.outline);
+  root.style.setProperty('--board-selection',    theme.board.selection);
+  root.style.setProperty('--board-butterfly',    theme.board.butterflySelection);
+  root.style.setProperty('--board-label-text',   theme.board.labelText);
+  root.style.setProperty('--board-label-part',   theme.board.labelPart);
+  root.style.setProperty('--board-label-net',    theme.board.labelNet);
 }
 
 class ThemeStore extends Emitter {

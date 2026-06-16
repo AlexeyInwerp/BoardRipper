@@ -12,15 +12,15 @@ test.describe('Themes', () => {
     const bgPrimary = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim()
     );
-    expect(bgPrimary).toBe('#0f0f1a');
+    expect(bgPrimary).toBe('#08080c'); // THEMES.default.ui.bgPrimary
 
     const canvasBg = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim()
     );
-    expect(canvasBg).toBe('#1a1a2e');
+    expect(canvasBg).toBe('#050508'); // THEMES.default.board.canvasBackground
   });
 
-  test('switching to Landrex Classic flips UI + canvas to black and persists', async ({ page }) => {
+  test('switching to Landrex Classic flips the canvas to black, leaves chrome, and persists', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
@@ -32,24 +32,47 @@ test.describe('Themes', () => {
     // Allow one animation frame for the DOM update + scene rebuild.
     await page.waitForTimeout(100);
 
+    // Landrex is a *board* style: the canvas goes pure black but the interface
+    // chrome is deliberately left identical to default (ui mirrors default).
     const bgPrimary = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim()
     );
-    expect(bgPrimary).toBe('#000000');
+    expect(bgPrimary).toBe('#08080c');
 
     const canvasBg = await page.evaluate(() =>
       getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim()
     );
     expect(canvasBg).toBe('#000000');
 
-    // Persistence: reload and confirm Landrex sticks.
+    // Persistence: reload and confirm Landrex sticks (canvas stays black).
     await page.reload();
     await page.waitForLoadState('networkidle');
 
-    const bgAfterReload = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim()
+    const canvasAfterReload = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--canvas-bg').trim()
     );
-    expect(bgAfterReload).toBe('#000000');
+    expect(canvasAfterReload).toBe('#000000');
+  });
+
+  test('light theme flips background light and text dark (auto-contrast)', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('boardripper-theme', JSON.stringify({ activeId: 'daylight' }));
+      localStorage.removeItem('boardripper-background-override');
+    });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    const vars = await page.evaluate(() => {
+      const cs = getComputedStyle(document.documentElement);
+      return {
+        bg: cs.getPropertyValue('--bg-primary').trim(),
+        text: cs.getPropertyValue('--text-primary').trim(),
+      };
+    });
+    // Daylight is a light theme: background light, and pickTextColors must have
+    // flipped body text to the dark graphite pair (the white-on-white guard).
+    expect(vars.bg.toLowerCase()).toBe('#eceef1');
+    expect(vars.text.toLowerCase()).toBe('#1c1f24');
   });
 
   test('Settings panel renders four tabs', async ({ page }) => {

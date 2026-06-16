@@ -2426,8 +2426,9 @@ function ThemeTab() {
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 8px 6px' }}>
           Picks the canvas / board-side colour set (background, fill, outline,
-          selection accent) and any per-theme settings overlays. Interface
-          chrome is controlled separately by the colour pickers below.
+          selection accent) and any per-theme settings overlays. Light themes
+          also set a light interface baseline; text auto-adjusts for contrast.
+          The colour pickers below override the chosen theme's chrome.
         </div>
         <div role="radiogroup" aria-label="Board theme" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {themes.map(t => (
