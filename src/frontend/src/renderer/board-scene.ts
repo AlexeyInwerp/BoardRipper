@@ -2016,7 +2016,6 @@ export function buildBoardScene(
   const topDiodeLabels: BitmapText[] = [];
   const bottomDiodeLabels: BitmapText[] = [];
   if (s.showDiodeValues && diodeResolver) {
-    const DIODE_OPEN = 0xff5555, DIODE_XZZ = 0x66ccff, DIODE_OBD = 0xffb24d;
     for (const part of board.parts) {
       if (part.hidden) continue;
       const isBottom = part.side === 'bottom';
@@ -2029,17 +2028,16 @@ export function buildBoardScene(
           ? 'OL'
           : (r.mv != null ? (r.mv / 1000).toFixed(3) : r.raw);
         const radius = computePinRadius(s, pin.radius);
-        // Small but legible. NOT quantizeFontSize'd — its steps jump 4→6, so
-        // "smaller than 6" snapped to a near-invisible 4. Round to an integer
-        // (caps atlas count) so we can land on intermediate sizes like 5.
+        // Small but legible. NOT quantizeFontSize'd — its steps jump 4→6, so a
+        // small value would snap to a near-invisible 4. Round to an integer
+        // (caps atlas count) so we can land on intermediate sizes.
         const fontSize = Math.max(
           3,
-          Math.round(Math.min(radius * 0.65, (radius * 2 * 0.95) / (text.length * 0.62))),
+          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62))),
         );
-        const color = r.kind === 'open' ? DIODE_OPEN : (r.source === 'obd' ? DIODE_OBD : DIODE_XZZ);
         const label = new BitmapText({
           text,
-          style: { fontSize, fill: color, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
+          style: { fontSize, fill: 0xffffff, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
         });
         label.anchor.set(0.5, 1.1);                  // sit just above the pin
         label.x = pin.position.x;
