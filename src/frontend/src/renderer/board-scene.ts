@@ -2029,10 +2029,12 @@ export function buildBoardScene(
           ? 'OL'
           : (r.mv != null ? (r.mv / 1000).toFixed(3) : r.raw);
         const radius = computePinRadius(s, pin.radius);
-        // Deliberately small: cap well under the pad radius and shrink further
-        // to fit the value width. Readable on zoom-in without crowding the pins.
-        const fontSize = quantizeFontSize(
-          Math.max(3, Math.min(radius * 0.6, (radius * 2 * 0.85) / (text.length * 0.62))),
+        // Small but legible. NOT quantizeFontSize'd — its steps jump 4→6, so
+        // "smaller than 6" snapped to a near-invisible 4. Round to an integer
+        // (caps atlas count) so we can land on intermediate sizes like 5.
+        const fontSize = Math.max(
+          3,
+          Math.round(Math.min(radius * 0.65, (radius * 2 * 0.95) / (text.length * 0.62))),
         );
         const color = r.kind === 'open' ? DIODE_OPEN : (r.source === 'obd' ? DIODE_OBD : DIODE_XZZ);
         const label = new BitmapText({
