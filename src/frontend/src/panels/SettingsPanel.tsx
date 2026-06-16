@@ -2409,6 +2409,168 @@ function TokenPickerBlock({
   );
 }
 
+const MONO = 'ui-monospace, Menlo, Consolas, monospace';
+
+/** Compact one-line colour control: label, swatch input, hex readout, and an
+ *  optional clear (×) button when the value is an active override. */
+function MiniColorRow({
+  label,
+  value,
+  onChange,
+  onClear,
+  note,
+}: {
+  label: string;
+  value: string;
+  onChange: (hex: string) => void;
+  onClear?: () => void;
+  note?: React.ReactNode;
+}) {
+  const v = (value || '#000000').toLowerCase();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+      <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 104 }}>{label}</span>
+      <input
+        type="color"
+        value={v}
+        onChange={(e) => onChange(e.target.value.toLowerCase())}
+        title={`Pick ${label.toLowerCase()}`}
+        style={{ width: 30, height: 22, padding: 0, border: '1px solid var(--border)', borderRadius: 3, background: 'transparent', cursor: 'pointer' }}
+      />
+      <code style={{ fontSize: 10.5, color: 'var(--text-secondary)', fontFamily: MONO }}>{v.toUpperCase()}</code>
+      {note && <span style={{ fontSize: 10, color: 'var(--text-secondary)', opacity: 0.7 }}>{note}</span>}
+      {onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          title="Clear this override — fall back to the global setting"
+          style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 10, lineHeight: 1, padding: '2px 6px', borderRadius: 3, cursor: 'pointer' }}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+const GROUP_LABEL: React.CSSProperties = { fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', margin: '8px 0 2px' };
+
+/**
+ * Custom theme editor — the single user-editable theme. Edits its interface
+ * baseline (ui) + board palette directly, and exposes pin colours as
+ * *overrides* over the global render settings (set = override, × = inherit),
+ * exactly the "global settings + overrides if set" model. Lives at the bottom
+ * of the Theme tab; creating it adds a "Custom" entry to the board-theme list.
+ */
+function CustomThemeEditor() {
+  // Subscribe to theme changes so edits re-render live.
+  useThemeId();
+  const overrides = useThemeOverrides();
+  const custom = themeStore.customTheme;
+  const isActive = themeStore.isCustomActive;
+
+  if (!custom) {
+    return (
+      <div>
+        <div style={GROUP_LABEL}>Custom theme</div>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 0 8px' }}>
+          Create an editable theme seeded from the current one — then tune every
+          interface and board colour, and override pin colours per theme.
+        </div>
+        <button
+          type="button"
+          className="settings-apply-btn"
+          onClick={() => { themeStore.ensureCustom(); themeStore.setTheme('custom'); }}
+        >
+          Create custom theme
+        </button>
+      </div>
+    );
+  }
+
+  const ov = custom.boardOverrides ?? {};
+  const pinOverrideOn = ov.defaultPinColorTop != null || ov.defaultPinColorBottom != null;
+  const globalTop = renderSettingsStore.globalSettings.defaultPinColorTop;
+  const globalBottom = renderSettingsStore.globalSettings.defaultPinColorBottom;
+
+  const setUi = (k: keyof Theme['ui'], hex: string) => themeStore.updateCustom({ ui: { [k]: hex } });
+  const setBoard = (k: keyof Theme['board'], hex: string) => themeStore.updateCustom({ board: { [k]: hex } });
+
+  // A ui colour is visually masked when the matching interface knob override
+  // is set (knob wins) — surface that so edits don't look like no-ops.
+  const maskedNote = (masked: boolean) => (masked ? <em>overridden by picker above</em> : undefined);
+
+  return (
+    <div>
+      <div style={{ ...GROUP_LABEL, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>Custom theme</span>
+        {!isActive && (
+          <button
+            type="button"
+            onClick={() => themeStore.setTheme('custom')}
+            style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}
+          >
+            Activate to preview
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => { if (confirm('Delete the custom theme?')) themeStore.resetCustom(); }}
+          style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border)', color: 'var(--danger)', fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}
+          title="Delete the custom theme"
+        >
+          Delete
+        </button>
+      </div>
+
+      <div style={GROUP_LABEL}>Interface</div>
+      <MiniColorRow label="Background" value={custom.ui.bgPrimary} onChange={(h) => setUi('bgPrimary', h)} note={maskedNote(overrides.background != null)} />
+      <MiniColorRow label="Chrome" value={custom.ui.bgTertiary} onChange={(h) => setUi('bgTertiary', h)} note={maskedNote(overrides.chrome != null)} />
+      <MiniColorRow label="Accent" value={custom.ui.accent} onChange={(h) => setUi('accent', h)} note={maskedNote(overrides.accent != null)} />
+      <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.7, padding: '2px 0' }}>
+        Body text and the secondary surface/border tiers are derived automatically for contrast.
+      </div>
+
+      <div style={GROUP_LABEL}>Board canvas</div>
+      <MiniColorRow label="Canvas" value={custom.board.canvasBackground} onChange={(h) => setBoard('canvasBackground', h)} />
+      <MiniColorRow label="Board fill" value={custom.board.boardFill} onChange={(h) => setBoard('boardFill', h)} />
+      <MiniColorRow label="Outline" value={custom.board.outline} onChange={(h) => setBoard('outline', h)} />
+      <MiniColorRow label="Selection" value={custom.board.selection} onChange={(h) => setBoard('selection', h)} />
+      <MiniColorRow label="Butterfly" value={custom.board.butterflySelection} onChange={(h) => setBoard('butterflySelection', h)} />
+      <MiniColorRow label="Pin labels" value={custom.board.labelText} onChange={(h) => setBoard('labelText', h)} />
+      <MiniColorRow label="Part labels" value={custom.board.labelPart} onChange={(h) => setBoard('labelPart', h)} />
+      <MiniColorRow label="Net labels" value={custom.board.labelNet} onChange={(h) => setBoard('labelNet', h)} />
+
+      <div style={GROUP_LABEL}>Pin colours (override)</div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px 0' }}>
+        <input
+          type="checkbox"
+          checked={pinOverrideOn}
+          onChange={(e) => {
+            if (e.target.checked) {
+              themeStore.setCustomOverride('defaultPinColorTop', globalTop);
+              themeStore.setCustomOverride('defaultPinColorBottom', globalBottom);
+            } else {
+              themeStore.setCustomOverride('defaultPinColorTop', null);
+              themeStore.setCustomOverride('defaultPinColorBottom', null);
+            }
+          }}
+        />
+        Override default pin colours for this theme
+      </label>
+      {pinOverrideOn && (
+        <>
+          <MiniColorRow label="Top pins" value={ov.defaultPinColorTop ?? globalTop} onChange={(h) => themeStore.setCustomOverride('defaultPinColorTop', h)} onClear={() => themeStore.setCustomOverride('defaultPinColorTop', null)} />
+          <MiniColorRow label="Bottom pins" value={ov.defaultPinColorBottom ?? globalBottom} onChange={(h) => themeStore.setCustomOverride('defaultPinColorBottom', h)} onClear={() => themeStore.setCustomOverride('defaultPinColorBottom', null)} />
+          <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.7, padding: '2px 0' }}>
+            These override the global pin colours (Board ▸ Pins) only while the custom theme is active. Net-name colour rules stay global.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ThemeTab() {
   const activeId = useThemeId();
   const themes: Theme[] = themeStore.list();
@@ -2527,6 +2689,8 @@ function ThemeTab() {
         Interface scale
       </div>
       <InterfaceScaleSlider />
+
+      <CustomThemeEditor />
 
     </div>
   );

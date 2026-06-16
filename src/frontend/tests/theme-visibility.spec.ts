@@ -34,8 +34,26 @@ const haveBoard = fs.existsSync(BVR_FILE);
 
 // Themes under test. Keep in sync with THEMES in src/store/themes.ts.
 const DARK_THEMES = ['default', 'landrex'];
-const LIGHT_THEMES = ['drafting-paper', 'daylight', 'blueprint-light'];
+const LIGHT_THEMES = ['drafting-paper', 'daylight', 'blueprint-light', 'custom'];
 const ALL_THEMES = [...DARK_THEMES, ...LIGHT_THEMES];
+
+// A user-built LIGHT custom theme, seeded directly into localStorage. Proves
+// the auto-contrast machinery (pickTextColors / shadeToward) protects an
+// arbitrary user theme — not just the curated ones — from white-on-white.
+const CUSTOM_LIGHT_BLOB = JSON.stringify({
+  id: 'custom',
+  label: 'Custom',
+  ui: {
+    bgPrimary: '#f2f0ec', bgSecondary: '#e3e1db', bgTertiary: '#e8e6e0',
+    textPrimary: '#1c1f24', textSecondary: '#5b616b',
+    accent: '#7a4dbf', border: '#ccc8c0', iconBoardBg: '#3f9142', iconPdfBg: '#c0392b',
+  },
+  board: {
+    canvasBackground: '#eceae4', boardFill: '#fbfaf7', outline: '#6b6258',
+    selection: '#d98a1e', butterflySelection: '#2f6db5',
+    labelText: '#23262b', labelPart: '#54595f', labelNet: '#2f6db5',
+  },
+});
 
 // ── WCAG maths (mirrors src/store/color-math.ts; duplicated so the test is
 //    self-contained and can't be silently broken by an edit to the source). ──
@@ -83,14 +101,16 @@ function contrast(a: string, b: string): number {
  *  the first-contact screen. Overrides are cleared so the theme's own tokens
  *  paint (the thing under test). */
 async function loadWithTheme(page: import('@playwright/test').Page, themeId: string) {
-  await page.addInitScript((id) => {
+  await page.addInitScript(({ id, customBlob }) => {
     try {
       localStorage.setItem('boardripper-theme', JSON.stringify({ activeId: id }));
       localStorage.removeItem('boardripper-accent-override');
       localStorage.removeItem('boardripper-background-override');
       localStorage.removeItem('boardripper-chrome-override');
+      if (id === 'custom') localStorage.setItem('boardripper-custom-theme', customBlob);
+      else localStorage.removeItem('boardripper-custom-theme');
     } catch { /* ignore */ }
-  }, themeId);
+  }, { id: themeId, customBlob: CUSTOM_LIGHT_BLOB });
   await page.goto('/');
   await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 10000 });
 }

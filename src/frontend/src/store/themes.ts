@@ -232,7 +232,12 @@ const ACCENT_OVERRIDE_KEY = 'boardripper-accent-override';
 const BACKGROUND_OVERRIDE_KEY = 'boardripper-background-override';
 const CHROME_OVERRIDE_KEY = 'boardripper-chrome-override';
 const UI_SCALE_KEY = 'boardripper-ui-scale';
+const CUSTOM_THEME_KEY = 'boardripper-custom-theme';
 const DEFAULT_ID = 'default';
+/** Reserved id for the single user-editable theme (the custom theme editor).
+ *  Unlike the built-in THEMES entries it is persisted as user data, not a
+ *  constant, and is the only theme whose colours can be edited in the UI. */
+export const CUSTOM_ID = 'custom';
 
 /** Interface scaling factor — multiplies the visual size of all chrome
  *  (toolbars, panels, dialogs, sidebar, start page). The BoardViewer and
@@ -355,7 +360,9 @@ function loadFromStorage(): string {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_ID;
     const parsed = JSON.parse(raw) as PersistedTheme;
-    if (parsed?.activeId && THEMES[parsed.activeId]) return parsed.activeId;
+    // CUSTOM_ID is valid even though it isn't in THEMES — activeTheme() falls
+    // back to default if the custom theme blob is missing.
+    if (parsed?.activeId && (THEMES[parsed.activeId] || parsed.activeId === CUSTOM_ID)) return parsed.activeId;
     log.ui.warn(`themes: unknown activeId in localStorage: ${parsed?.activeId} — falling back to '${DEFAULT_ID}'`);
     return DEFAULT_ID;
   } catch {
@@ -385,6 +392,43 @@ function saveHexOverride(key: string, hex: string | null) {
   try {
     if (hex == null) localStorage.removeItem(key);
     else localStorage.setItem(key, hex);
+  } catch { /* quota — ignore */ }
+}
+
+/** A clone of `src` re-stamped as the editable custom theme. Used to seed the
+ *  custom theme from whatever theme is active when the user first edits it, so
+ *  they start from a familiar palette rather than a blank slate. */
+function seedCustomFrom(src: Theme): Theme {
+  return {
+    id: CUSTOM_ID,
+    label: 'Custom',
+    ui: { ...src.ui },
+    board: { ...src.board },
+    // boardOverrides start empty: the custom theme only overrides global
+    // render-settings (pin / net colours) once the user explicitly opts in.
+    boardOverrides: src.boardOverrides ? structuredClone(src.boardOverrides) : undefined,
+  };
+}
+
+function loadCustomTheme(): Theme | null {
+  try {
+    const raw = localStorage.getItem(CUSTOM_THEME_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Theme;
+    // Minimal shape validation — a corrupt blob shouldn't brick the app.
+    if (!parsed?.ui?.bgPrimary || !parsed?.board?.canvasBackground) return null;
+    parsed.id = CUSTOM_ID;
+    if (!parsed.label) parsed.label = 'Custom';
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveCustomTheme(theme: Theme | null) {
+  try {
+    if (theme == null) localStorage.removeItem(CUSTOM_THEME_KEY);
+    else localStorage.setItem(CUSTOM_THEME_KEY, JSON.stringify(theme));
   } catch { /* quota — ignore */ }
 }
 
@@ -458,11 +502,13 @@ class ThemeStore extends Emitter {
   private _backgroundOverride: string | null = null;
   private _chromeOverride: string | null = null;
   private _scale: number = UI_SCALE_DEFAULT;
+  private _customTheme: Theme | null = null;
   private _initialized = false;
 
   /** Call once at app startup. Idempotent — second call no-ops. */
   init(): void {
     if (this._initialized) return;
+    this._customTheme = loadCustomTheme();
     this._activeId = loadFromStorage();
     this._accentOverride = loadHexOverride(ACCENT_OVERRIDE_KEY);
     this._backgroundOverride = loadHexOverride(BACKGROUND_OVERRIDE_KEY);
@@ -509,7 +555,17 @@ class ThemeStore extends Emitter {
   }
 
   activeTheme(): Theme {
+    if (this._activeId === CUSTOM_ID && this._customTheme) return this._customTheme;
     return THEMES[this._activeId] ?? THEMES[DEFAULT_ID];
+  }
+
+  /** The editable custom theme, or null if the user hasn't created one yet. */
+  get customTheme(): Theme | null {
+    return this._customTheme;
+  }
+  /** True when the custom theme is the active one. */
+  get isCustomActive(): boolean {
+    return this._activeId === CUSTOM_ID && this._customTheme != null;
   }
 
   private applyAll(): void {
@@ -521,7 +577,11 @@ class ThemeStore extends Emitter {
   }
 
   setTheme(id: string): void {
-    if (!THEMES[id]) {
+    if (id === CUSTOM_ID) {
+      // Selecting Custom seeds it from the current theme on first use so the
+      // user starts from a familiar palette rather than an empty one.
+      this.ensureCustom();
+    } else if (!THEMES[id]) {
       log.ui.warn(`themes: setTheme called with unknown id '${id}' — ignored`);
       return;
     }
@@ -529,6 +589,79 @@ class ThemeStore extends Emitter {
     this._activeId = id;
     saveToStorage(id);
     this.applyAll();
+    this.notify();
+  }
+
+  /** Create the custom theme (seeded from the currently-active theme) if it
+   *  doesn't exist yet. Returns the custom theme. Does not switch to it. */
+  ensureCustom(): Theme {
+    if (!this._customTheme) {
+      this._customTheme = seedCustomFrom(this.activeTheme());
+      saveCustomTheme(this._customTheme);
+    }
+    return this._customTheme;
+  }
+
+  /**
+   * Patch the custom theme's colours. Accepts partial `ui` / `board` colour
+   * maps and a `boardOverrides` patch (pin / net colours that override the
+   * GLOBAL render settings while the custom theme is active — the same
+   * mechanism Landrex uses). Creates the custom theme first if needed.
+   * Re-applies + notifies immediately if the custom theme is active.
+   */
+  updateCustom(patch: {
+    ui?: Partial<Theme['ui']>;
+    board?: Partial<Theme['board']>;
+    boardOverrides?: Partial<RenderSettings> | null;
+  }): void {
+    const base = this.ensureCustom();
+    const next: Theme = {
+      ...base,
+      ui: { ...base.ui, ...(patch.ui ?? {}) },
+      board: { ...base.board, ...(patch.board ?? {}) },
+    };
+    if (patch.boardOverrides !== undefined) {
+      // null clears overrides entirely; an object merges into existing ones.
+      next.boardOverrides = patch.boardOverrides == null
+        ? undefined
+        : { ...(base.boardOverrides ?? {}), ...patch.boardOverrides };
+    }
+    this._customTheme = next;
+    saveCustomTheme(next);
+    if (this._activeId === CUSTOM_ID) this.applyAll();
+    // Always notify: the editor UI re-renders even when previewing while the
+    // custom theme isn't the active one. The boardOverrides re-merge is gated
+    // by the subscriber at the bottom of this module.
+    this.notify();
+  }
+
+  /**
+   * Set or clear a single board-override key on the custom theme (the "pin
+   * colours act as overrides over the global render settings" model). Passing
+   * null removes the key so that field falls back to the global setting; the
+   * `boardOverrides` object is dropped entirely once it's empty.
+   */
+  setCustomOverride<K extends keyof RenderSettings>(key: K, value: RenderSettings[K] | null): void {
+    const base = this.ensureCustom();
+    const ov: Partial<RenderSettings> = { ...(base.boardOverrides ?? {}) };
+    if (value == null) delete ov[key];
+    else ov[key] = value;
+    const next: Theme = { ...base, boardOverrides: Object.keys(ov).length ? ov : undefined };
+    this._customTheme = next;
+    saveCustomTheme(next);
+    if (this._activeId === CUSTOM_ID) this.applyAll();
+    this.notify();
+  }
+
+  /** Delete the custom theme and, if it was active, fall back to default. */
+  resetCustom(): void {
+    this._customTheme = null;
+    saveCustomTheme(null);
+    if (this._activeId === CUSTOM_ID) {
+      this._activeId = DEFAULT_ID;
+      saveToStorage(DEFAULT_ID);
+      this.applyAll();
+    }
     this.notify();
   }
 
@@ -591,9 +724,11 @@ class ThemeStore extends Emitter {
     this.notify();
   }
 
-  /** All available themes, sorted by label for UI display. */
+  /** All available themes, sorted by label for UI display. The custom theme
+   *  (when it exists) is appended last so it sits below the built-ins. */
   list(): Theme[] {
-    return Object.values(THEMES).sort((a, b) => a.label.localeCompare(b.label));
+    const builtins = Object.values(THEMES).sort((a, b) => a.label.localeCompare(b.label));
+    return this._customTheme ? [...builtins, this._customTheme] : builtins;
   }
 }
 

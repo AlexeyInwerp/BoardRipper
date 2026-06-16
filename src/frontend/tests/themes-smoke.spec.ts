@@ -84,10 +84,9 @@ test.describe('Themes', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    // Open Settings panel via the toolbar settings button.
-    // (Selector loose enough to tolerate aria-label / text label changes.)
-    const settingsButton = page.getByRole('button', { name: /settings/i }).first();
-    await settingsButton.click();
+    // The Library/Settings/Debug sidebar is open by default; switch to its
+    // Settings tab (a .sidebar-tab button), which reveals the SettingsPanel.
+    await page.locator('.sidebar-tab', { hasText: 'Settings' }).first().click();
 
     const panel = page.locator('[data-testid="settings-panel"]');
     await expect(panel).toBeVisible();
@@ -97,5 +96,25 @@ test.describe('Themes', () => {
     await expect(tabsRow.getByText('Board', { exact: true })).toBeVisible();
     await expect(tabsRow.getByText('Input', { exact: true })).toBeVisible();
     await expect(tabsRow.getByText('System', { exact: true })).toBeVisible();
+  });
+
+  test('custom theme editor: Create button appears on the Theme tab', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.removeItem('boardripper-theme');
+      localStorage.removeItem('boardripper-custom-theme');
+      localStorage.removeItem('boardripper-settings-active-tab');
+    });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    await page.locator('.sidebar-tab', { hasText: 'Settings' }).first().click();
+    const panel = page.locator('[data-testid="settings-panel"]');
+    await expect(panel).toBeVisible();
+
+    // Make sure the Theme sub-tab is active, then assert the custom editor's
+    // create affordance is present (proves CustomThemeEditor mounted).
+    const tabsRow = panel.locator('.settings-tabs-row, .library-tabs-row').first();
+    await tabsRow.getByText('Theme', { exact: true }).click();
+    await expect(panel.getByRole('button', { name: /create custom theme/i })).toBeVisible();
   });
 });
