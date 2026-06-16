@@ -1869,6 +1869,8 @@ export function SettingsPanel() {
           title="Fill transparency of pin circles and rectangular pads. 0 = invisible, 1 = fully opaque" />
         <Toggle label="Show Pin Numbers" value={draft.showPinNumbers} field="showPinNumbers" onUpdate={updateDraft}
           title="Display pin number/name labels inside pin circles on multi-pin components (ICs, connectors). On BGA parts, numbers and net names alternate vertically to reduce overlap" />
+        <Toggle label="Show Diode Values" value={draft.showDiodeValues} field="showDiodeValues" onUpdate={updateDraft}
+          title="Draw diode-mode reference readings on pins (XZZ-baked values + OpenBoardData). Only visible on boards that carry readings; also toggleable from the board sidebar's View tab" />
         <Toggle label="Pin 1 Marker" value={draft.showPin1Marker} field="showPin1Marker" onUpdate={updateDraft}
           title="Highlight pin 1 with red color and a triangle indicator on multi-pin parts" />
         <Toggle label="Pin Label Background" value={draft.pinNetLabelBg} field="pinNetLabelBg" onUpdate={updateDraft}

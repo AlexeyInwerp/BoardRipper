@@ -19,7 +19,7 @@ import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js'
 import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
-import type { Point } from '../parsers/types';
+import type { Point, Pin, DiodeReading } from '../parsers/types';
 import {
   computePinRadius,
   computeMultiPinPadding,
@@ -294,6 +294,9 @@ export interface BoardSceneGraph {
   labels:      BitmapText[];
   topLabels:   BitmapText[];
   bottomLabels: BitmapText[];
+  /** On-pin diode-value labels, per side — counter-flipped by applyFlips. */
+  topDiodeLabels: BitmapText[];
+  bottomDiodeLabels: BitmapText[];
   /** Pin number labels (and net-name wrappers), tracked for zoom-based LoD */
   topPinLabels:    Container[];
   bottomPinLabels: Container[];
@@ -623,6 +626,10 @@ export function buildBoardScene(
   s: RenderSettings,
   metadataHex?: string,
   partOverrides: PartOverrideMap = EMPTY_PART_OVERRIDES,
+  /** Resolves a pin's diode-mode reading from any source (XZZ-baked + OBD).
+   *  When supplied and `s.showDiodeValues` is on, readings are drawn on pins.
+   *  Optional so SettingsMockup and tests can build scenes without it. */
+  diodeResolver?: (pin: Pin) => DiodeReading | undefined,
 ): BoardSceneGraph {
   // Sub-phase timing reporter — surfaces buildBoardScene's internal cost
   // breakdown on the load-progress overlay so the user can see whether
@@ -1998,7 +2005,50 @@ export function buildBoardScene(
     viaLayer.addChild(viaCenterGfx);
     root.addChild(viaLayer);
   }
+  // ── Diode-value labels (on-pin reference readings) ───────────────────────
+  // Source-agnostic via `diodeResolver` (XZZ-baked per pin + OBD per net).
+  // Drawn into the per-side label layers AND tracked in topDiodeLabels /
+  // bottomDiodeLabels so applyFlips counter-mirrors them per side (the test
+  // board folds — without this the text renders mirrored on the bottom half).
+  // `none`/0 readings are skipped; value shown in volts, `OL` literally.
+  // Colour: light blue (baked) / amber (OBD) / red (open) — high contrast vs
+  // the many green pins.
+  const topDiodeLabels: BitmapText[] = [];
+  const bottomDiodeLabels: BitmapText[] = [];
+  if (s.showDiodeValues && diodeResolver) {
+    for (const part of board.parts) {
+      if (part.hidden) continue;
+      const isBottom = part.side === 'bottom';
+      const layer = isBottom ? bottomLabelLayer : topLabelLayer;
+      const track = isBottom ? bottomDiodeLabels : topDiodeLabels;
+      for (const pin of part.pins) {
+        const r = diodeResolver(pin);
+        if (!r || r.kind === 'none') continue;
+        const text = r.kind === 'open'
+          ? 'OL'
+          : (r.mv != null ? (r.mv / 1000).toFixed(3) : r.raw);
+        const radius = computePinRadius(s, pin.radius);
+        // Small but legible. NOT quantizeFontSize'd — its steps jump 4→6, so a
+        // small value would snap to a near-invisible 4. Round to an integer
+        // (caps atlas count) so we can land on intermediate sizes.
+        const fontSize = Math.max(
+          3,
+          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62))),
+        );
+        const label = new BitmapText({
+          text,
+          style: { fontSize, fill: 0xffffff, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
+        });
+        label.anchor.set(0.5, 1.1);                  // sit just above the pin
+        label.x = pin.position.x;
+        label.y = pin.position.y - radius * 0.7;
+        layer.addChild(label);
+        track.push(label);
+      }
+    }
+  }
+
   tick('fontSizeGroups + vias + tail');
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topDiodeLabels, bottomDiodeLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
 }

@@ -9,6 +9,7 @@ import { HoverInfoButton }  from './slots/HoverInfoButton';
 import { NetDimButton }     from './slots/NetDimButton';
 import { NetLinesButton }   from './slots/NetLinesButton';
 import { GhostsButton }     from './slots/GhostsButton';
+import { DiodeValuesButton } from './slots/DiodeValuesButton';
 import { Separator }        from './slots/Separator';
 import { PartsDropdown }    from './slots/PartsDropdown';
 import { NetsDropdown }     from './slots/NetsDropdown';
@@ -28,6 +29,7 @@ export function renderOverlaySlot(id: OverlaySlotId, ctx: SlotCtx): ReactNode {
     case 'netDim':        return <NetDimButton     ctx={ctx} />;
     case 'netLines':      return <NetLinesButton   ctx={ctx} />;
     case 'ghosts':        return <GhostsButton     ctx={ctx} />;
+    case 'diodeValues':   return <DiodeValuesButton ctx={ctx} />;
     case 'partsDropdown': return <PartsDropdown ctx={ctx} />;
     case 'netsDropdown':  return <NetsDropdown ctx={ctx} />;
   }

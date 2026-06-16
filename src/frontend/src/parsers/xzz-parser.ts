@@ -1,4 +1,4 @@
-import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad } from './types';
+import type { BoardData, Part, Pin, Nail, Point, Trace, SilkscreenPath, Pad, DiodeReading, DiodeReferenceChannel } from './types';
 import { computeBBox, buildNets } from './types';
 import { detectXMirrorByPinDirection } from './mirror-detect';
 import { log } from '../store/log-store';
@@ -984,6 +984,47 @@ export function isPadsBinaryHeader(header: Uint8Array): boolean {
   return true;
 }
 
+/** "v6v6555v6v6" — the XOR-boundary marker. The diode-value table (when
+ *  present) begins right after it. */
+const DIODE_MARKER = [0x76,0x36,0x76,0x36,0x35,0x35,0x35,0x76,0x36,0x76,0x36];
+
+/** Classify one raw diode token: "OL" → open, "0"/"0.000" → none, numeric →
+ *  value (millivolts). Tolerates a trailing dot ("312."). Returns null for an
+ *  unparseable token (counted as unmatched by the caller). */
+function classifyXzzDiode(tok: string): DiodeReading | null {
+  if (tok === '') return null;
+  if (/^OL$/i.test(tok)) return { raw: tok, kind: 'open', mv: null, source: 'xzz-pcb' };
+  const n = Number(tok.replace(/\.$/, ''));     // tolerate trailing dot
+  if (!Number.isFinite(n)) return null;
+  if (n === 0) return { raw: tok, kind: 'none', mv: 0, source: 'xzz-pcb' };
+  return { raw: tok, kind: 'value', mv: Math.round(n), source: 'xzz-pcb' };
+}
+
+/** Parse the post-`v6v6555v6v6===` diode-value table baked into XZZ
+ *  "Middle layer diode value" .pcb companions. Records are newline-delimited
+ *  `=<value>=<partName>(<pinNumber>)`. Returns a map keyed `PART(PIN)`; empty
+ *  for normal boardviews (no marker). The section is plaintext — it lives past
+ *  the XOR boundary marker, so it is never XOR'd or DES'd. */
+export function parseDiodeSection(raw: Uint8Array): Map<string, DiodeReading> {
+  const out = new Map<string, DiodeReading>();
+  let pos = -1;
+  outer: for (let i = 0; i + DIODE_MARKER.length <= raw.length; i++) {
+    for (let j = 0; j < DIODE_MARKER.length; j++) if (raw[i + j] !== DIODE_MARKER[j]) continue outer;
+    pos = i; break;
+  }
+  if (pos < 0) return out;
+  // Decode the tail as latin1 (records are ASCII) and scan for records.
+  let s = '';
+  for (let i = pos; i < raw.length; i++) s += String.fromCharCode(raw[i]);
+  const rx = /=([^=\n]*)=([A-Za-z0-9_]+)\((\d+)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(s))) {
+    const reading = classifyXzzDiode(m[1].trim());
+    if (reading) out.set(`${m[2]}(${m[3]})`, reading);
+  }
+  return out;
+}
+
 export function parseXZZ(buffer: ArrayBuffer): BoardData {
   let raw = new Uint8Array(buffer);
 
@@ -1489,7 +1530,11 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         minY: p.y - aabbHalfH, maxY: p.y + aabbHalfH,
       } : undefined;
       return {
-        name: '', number: String(i + 1),
+        // Preserve the real pad number parsed from the pin sub-block — the
+        // diode-value table (post-v6 section) keys readings by PART(pinNumber),
+        // so dropping it (the old `String(i+1)`) broke the join. Fall back to
+        // the 1-based index when the file carries no name.
+        name: '', number: p.name || String(i + 1),
         position: { x: p.x, y: p.y }, radius: r, side: pd.side, net,
         ...(padBounds ? { padBounds } : {}),
         ...(hasGeom ? {
@@ -1750,9 +1795,32 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
       ` (${fold.lowerIsBottom ? 'lower' : 'upper'} half mirrored onto top)`,
   } : undefined;
 
+  // Diode-value channel — join the post-v6 reading table onto pins by
+  // PART(pinNumber). Absent on normal boardviews (no marker → empty map).
+  const diodeMap = parseDiodeSection(raw);
+  let diodeReference: DiodeReferenceChannel | undefined;
+  if (diodeMap.size > 0) {
+    const counts = { value: 0, open: 0, none: 0 };
+    for (const r of diodeMap.values()) counts[r.kind]++;
+    const matchedKeys = new Set<string>();
+    for (const part of parts) {
+      for (const pin of part.pins) {
+        const r = diodeMap.get(`${part.name}(${pin.number})`);
+        if (r) { pin.diode = r; matchedKeys.add(`${part.name}(${pin.number})`); }
+      }
+    }
+    const matched = matchedKeys.size;
+    diodeReference = { source: 'xzz-pcb', units: 'mV', counts, matched, unmatched: diodeMap.size - matched };
+    log.parser.log(
+      `[xzz diode] ${diodeMap.size} records → matched ${matched} pins, ` +
+      `${diodeMap.size - matched} unmatched (value=${counts.value} open=${counts.open} none=${counts.none})`,
+    );
+  }
+
   return {
     format: 'XZZ', outline, parts, nails, nets: buildNets(parts), bounds,
     butterflyFoldAxis: fold?.dim,
+    diodeReference,
     traces: traces.length > 0 ? traces : undefined,
     vias: vias.length > 0 ? vias : undefined,
     silkscreen: silkscreen.length > 0 ? silkscreen : undefined,
