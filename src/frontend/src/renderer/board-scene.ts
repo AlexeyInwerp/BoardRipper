@@ -19,7 +19,7 @@ import { Graphics, Container, BitmapText, BitmapFont, Rectangle } from 'pixi.js'
 import type { BoardData } from '../parsers';
 import { log } from '../store/log-store';
 import { pinDisplayId } from '../parsers/types';
-import type { Point } from '../parsers/types';
+import type { Point, Pin, DiodeReading } from '../parsers/types';
 import {
   computePinRadius,
   computeMultiPinPadding,
@@ -623,6 +623,10 @@ export function buildBoardScene(
   s: RenderSettings,
   metadataHex?: string,
   partOverrides: PartOverrideMap = EMPTY_PART_OVERRIDES,
+  /** Resolves a pin's diode-mode reading from any source (XZZ-baked + OBD).
+   *  When supplied and `s.showDiodeValues` is on, readings are drawn on pins.
+   *  Optional so SettingsMockup and tests can build scenes without it. */
+  diodeResolver?: (pin: Pin) => DiodeReading | undefined,
 ): BoardSceneGraph {
   // Sub-phase timing reporter — surfaces buildBoardScene's internal cost
   // breakdown on the load-progress overlay so the user can see whether
@@ -1998,6 +2002,37 @@ export function buildBoardScene(
     viaLayer.addChild(viaCenterGfx);
     root.addChild(viaLayer);
   }
+  // ── Diode-value labels (on-pin reference readings) ───────────────────────
+  // Source-agnostic via `diodeResolver` (XZZ-baked per pin + OBD per net).
+  // Drawn into the per-side label layers so the butterfly fold / flip
+  // transforms apply automatically (the test board folds). `none`/0 readings
+  // are skipped; value shown in volts, `OL` literally. Colour encodes source.
+  if (s.showDiodeValues && diodeResolver) {
+    const DIODE_OPEN = 0xf87171, DIODE_XZZ = 0x4ade80, DIODE_OBD = 0x60a5fa;
+    for (const part of board.parts) {
+      if (part.hidden) continue;
+      const layer = part.side === 'bottom' ? bottomLabelLayer : topLabelLayer;
+      for (const pin of part.pins) {
+        const r = diodeResolver(pin);
+        if (!r || r.kind === 'none') continue;
+        const text = r.kind === 'open'
+          ? 'OL'
+          : (r.mv != null ? (r.mv / 1000).toFixed(3) : r.raw);
+        const radius = computePinRadius(s, pin.radius);
+        const fontSize = quantizeFontSize(Math.max(6, radius * 1.5));
+        const color = r.kind === 'open' ? DIODE_OPEN : (r.source === 'obd' ? DIODE_OBD : DIODE_XZZ);
+        const label = new BitmapText({
+          text,
+          style: { fontSize, fill: color, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
+        });
+        label.anchor.set(0.5, 1.05);                 // sit just above the pin
+        label.x = pin.position.x;
+        label.y = pin.position.y - radius * 0.8;
+        layer.addChild(label);
+      }
+    }
+  }
+
   tick('fontSizeGroups + vias + tail');
 
   return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };

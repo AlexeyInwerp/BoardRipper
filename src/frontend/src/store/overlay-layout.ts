@@ -18,7 +18,7 @@
  *  open-ended `sep${number}` ids — see `isSeparatorId` below. */
 export type NamedSlotId =
   | 'pdfFollow' | 'scrollMode' | 'fitBoard'
-  | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts'
+  | 'hoverInfo' | 'netDim' | 'netLines' | 'ghosts' | 'diodeValues'
   | 'partsDropdown' | 'netsDropdown';
 
 export type SeparatorSlotId = `sep${number}`;
@@ -28,7 +28,7 @@ export interface OverlaySlot { id: OverlaySlotId; visible: boolean }
 
 const NAMED_SLOT_IDS: ReadonlySet<NamedSlotId> = new Set([
   'pdfFollow', 'scrollMode', 'fitBoard',
-  'hoverInfo', 'netDim', 'netLines', 'ghosts',
+  'hoverInfo', 'netDim', 'netLines', 'ghosts', 'diodeValues',
   'partsDropdown', 'netsDropdown',
 ]);
 
@@ -70,6 +70,7 @@ export const DEFAULT_OVERLAY_LAYOUT: ReadonlyArray<Readonly<OverlaySlot>> = [
   { id: 'netDim',        visible: true },
   { id: 'netLines',      visible: true },
   { id: 'ghosts',        visible: true },
+  { id: 'diodeValues',   visible: true },
   { id: 'sep2',          visible: true },
   { id: 'partsDropdown', visible: true },
   { id: 'netsDropdown',  visible: true },

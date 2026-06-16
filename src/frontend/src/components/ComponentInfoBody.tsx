@@ -22,6 +22,7 @@ import { bomReasonLabel, type BoardData, type BomAlternateCluster } from '../par
 import type { SelectionState } from '../store/board-store';
 import { boardStore, bomClusterSig } from '../store/board-store';
 import { obdStore, useObdNetLookup, type ObdNet } from '../store/obd-store';
+import { formatDiode } from '../store/diode-readings';
 import { DiagnosisNotes } from './DiagnosisNotes';
 
 export interface ComponentInfoBodyProps {
@@ -134,6 +135,7 @@ export function ComponentInfoBody({
               <th>#</th>
               <th>Name</th>
               <th>Net</th>
+              {board.diodeReference && <th title="diode-mode reference reading baked into the board file (volts)">Diode</th>}
               {obd.hasData && <th title="diode / V / Ω from OpenBoardData">OBD</th>}
             </tr>
           </thead>
@@ -168,6 +170,16 @@ export function ComponentInfoBody({
                   >
                     {pin.net}
                   </td>
+                  {board.diodeReference && (
+                    <td className="pin-diode" data-testid="pin-diode-cell"
+                        style={{ fontSize: 11, fontFamily: 'monospace',
+                                 color: pin.diode?.kind === 'open' ? '#f87171'
+                                      : pin.diode?.kind === 'value' ? '#4ade80' : '#666' }}>
+                      {pin.diode && pin.diode.kind !== 'none'
+                        ? formatDiode(pin.diode)
+                        : <span style={{ color: '#666' }}>—</span>}
+                    </td>
+                  )}
                   {obd.hasData && (
                     <td className="pin-obd" data-testid="pin-obd-cell">
                       <ObdCell nets={obdNets} />

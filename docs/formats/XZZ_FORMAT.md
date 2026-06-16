@@ -171,3 +171,38 @@ Segments are chained into a polygon using a greedy nearest-neighbor algorithm:
 - The DES implementation uses precomputed SP (S-box + P permutation) lookup tables and
   byte-level IP/FP permutation tables for performance.
 - BigInt is used only for one-time key schedule computation at module initialization.
+
+---
+
+## Diode-Value Channel (post-`v6` table)
+
+XZZ ships companion `.pcb` files named `… Middle layer diode value-<board>.pcb`
+that carry reference ("golden board") **diode-mode multimeter readings**. The
+readings are **not** geometry — they live in a plaintext table appended after
+the `v6v6555v6v6` XOR-boundary marker (so they are never XOR'd or DES'd), past
+the net block.
+
+```
+v6v6555v6v6===<4 binary bytes>\n
+=359=N47(21)
+=0=N47(31)
+=OL=N46(1)
+=732=N47(7)
+…
+```
+
+- Grammar: newline-delimited `=<value>=<partName>(<pinNumber>)`, **one record
+  per pin**.
+- Value classes: integer **millivolts** (e.g. `359`), `OL` (open / infinite),
+  `0` (no reading / tied to ground). A rare malformed token like `312.` is
+  tolerated (trailing dot stripped).
+- Join key `PART(pinNumber)` maps 1:1 onto the parser's pins — this is why the
+  parser now preserves the real pad number (`Pin.number`) instead of a 1-based
+  index.
+
+`parseDiodeSection()` returns `Map<"PART(PIN)", DiodeReading>`; the join stamps
+`Pin.diode` and sets `BoardData.diodeReference` (counts + match diagnostics).
+Normal boardviews have no marker → empty map → no channel. The readings are
+surfaced on-pin (toggleable overlay), in the hover tooltip, and in the
+ComponentInfo pin table; OpenBoardData provides a second, per-net source feeding
+the same surfaces (see `store/diode-readings.ts`).

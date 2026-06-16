@@ -83,6 +83,11 @@ export interface RenderSettings {
   showPinNumbers: boolean;
   /** Show pin-1 marker (red color + triangle indicator) on multi-pin parts */
   showPin1Marker: boolean;
+  /** Draw diode-mode reference readings directly on pins (XZZ-baked + OBD).
+   *  The overlay only renders when the board actually carries readings, so
+   *  this is harmless on normal boards. Toggled via the `diodeValues` overlay
+   *  slot. */
+  showDiodeValues: boolean;
 
   /** Min rendered font size in screen pixels — labels smaller than this are hidden */
   labelMinScreenPx: number;
@@ -333,6 +338,7 @@ export const DEFAULTS: RenderSettings = {
   pinAlpha: 0.85,
   showPinNumbers: true,
   showPin1Marker: true,
+  showDiodeValues: true,
   labelMinScreenPx: 3,
   labelZoomHide: 0,
 

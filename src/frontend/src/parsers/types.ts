@@ -41,6 +41,41 @@ export interface Pin {
    *  renderer connects the last vertex back to the first. When absent on a
    *  poly-shape pin, `drawPadShape` falls back to the rotated AABB rectangle. */
   padPolygon?: Point[];
+  /** XZZ-baked per-pin diode-mode reference reading. Present only on boards
+   *  that ship a diode-value channel (XZZ `.pcb` companion files). The OBD
+   *  source is resolved separately, per-net, at display time — never stored
+   *  here. See `store/diode-readings.ts`. */
+  diode?: DiodeReading;
+}
+
+/** Where a diode-mode reading came from. `xzz-pcb` = baked into the XZZ
+ *  companion file (per pin, millivolts). `obd` = OpenBoardData corpus
+ *  (per net, volts), resolved via `pin.net` at display time. */
+export type DiodeSource = 'xzz-pcb' | 'obd';
+
+/** A single diode-mode multimeter reading, source-agnostic so one render /
+ *  tooltip / panel path serves every source. */
+export interface DiodeReading {
+  /** Original token as stored: "359" (XZZ mV), "0.450" (OBD V), "OL", "0". */
+  raw: string;
+  /** value = a real reading; open = OL (infinite); none = 0 / no reading. */
+  kind: 'value' | 'open' | 'none';
+  /** Normalized millivolts when parseable (XZZ int; OBD volts×1000); else null. */
+  mv: number | null;
+  source: DiodeSource;
+}
+
+/** Descriptor for a board's XZZ-baked diode channel; presence on `BoardData`
+ *  gates the XZZ source's UI. (The OBD source is gated independently by an OBD
+ *  match existing for the board.) */
+export interface DiodeReferenceChannel {
+  source: 'xzz-pcb';
+  units: 'mV';
+  /** Histogram across all parsed records. */
+  counts: { value: number; open: number; none: number };
+  /** Records that joined to a pin / found no pin (diagnostics). */
+  matched: number;
+  unmatched: number;
 }
 
 export interface Part {
@@ -285,6 +320,12 @@ export interface BoardData {
    *  raw file data — e.g. "Un-mirrored X coords (v1 SERG_UKRAINE converter)".
    *  Surfaced to the user as an info toast on load so the fixup is not silent. */
   parserNotes?: string[];
+
+  /** Present ⇒ this board ships XZZ-baked diode readings (gates the XZZ source
+   *  of the diode-value channel). Absent ⇒ no baked readings. The OBD source
+   *  is gated independently by an OBD match existing. See
+   *  `store/diode-readings.ts` for the source-merging resolver. */
+  diodeReference?: DiodeReferenceChannel;
 }
 
 export interface BomAlternateCluster {

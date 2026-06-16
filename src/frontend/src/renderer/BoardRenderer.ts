@@ -33,7 +33,8 @@ import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
-import { obdNetIndex, extractBoardNumberFromFilename } from '../store/obd-store';
+import { obdNetIndex, extractBoardNumberFromFilename, obdStore } from '../store/obd-store';
+import { primaryDiodeReading, boardHasDiodeData, formatDiode } from '../store/diode-readings';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -306,6 +307,7 @@ export class BoardRenderer {
   private unsubscribeViewCommands: (() => void) | null = null;
   private unsubscribeSelectionSet: (() => void) | null = null;
   private unsubscribeWorklist: (() => void) | null = null;
+  private unsubscribeObd: (() => void) | null = null;
   /** Outline-only highlight overlay for the ephemeral multi-select set AND the
    *  active worklist. Single Graphics object — re-cleared and redrawn on store
    *  notify. Sits above standard selection at zIndex 28 (just below the rich
@@ -1227,6 +1229,7 @@ export class BoardRenderer {
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
+    this.unsubscribeObd = obdStore.subscribe(() => this.onObdUpdate());
     this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
       this.redrawMultiHighlight();
       // When "highlight connections" is on, the shared-net glow is derived from
@@ -1870,7 +1873,11 @@ export class BoardRenderer {
   private buildScene(board: BoardData): BoardScene {
     const t0 = performance.now();
     try {
-      const graph = buildBoardScene(board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides);
+      const diodeBn = this.getMemoizedObdBoardNumber() ?? undefined;
+      const graph = buildBoardScene(
+        board, renderSettingsStore.settings, this.activeBoardColorHex(), boardStore.partOverrides,
+        (pin) => primaryDiodeReading(pin, diodeBn),
+      );
       const elapsed = (performance.now() - t0).toFixed(0);
       log.render.log(`Scene built in ${elapsed}ms: ${board.parts.length} parts, ${graph.topLabels.length + graph.bottomLabels.length} labels`);
       // Surface the scene-build cost on the load-progress overlay when one
@@ -2869,6 +2876,29 @@ export class BoardRenderer {
    * Theme switched — swap the live PixiJS background color and trigger a full
    * scene rebuild so getter-driven BOARD_COLORS values take effect.
    */
+  /**
+   * OBD data changed — the on-pin diode layer draws OBD readings (per net) as
+   * a second source, so rebuild when OBD that carries diode values for THIS
+   * board arrives. Passing board=null to boardHasDiodeData checks the OBD
+   * source only, so XZZ-baked boards (whose layer doesn't depend on OBD) don't
+   * thrash on unrelated OBD index churn.
+   */
+  private onObdUpdate(): void {
+    if (!this.board || this.contextLost || this.reinitializing) return;
+    if (!renderSettingsStore.settings.showDiodeValues) return;
+    const bn = this.getMemoizedObdBoardNumber() ?? undefined;
+    if (!boardHasDiodeData(null, bn)) return;
+    try {
+      this.saveViewportState();
+      this.invalidateAllScenes();
+      this.activateScene(this.board);
+      this.renderSelection();
+      this.lastLodScale = -1;
+    } catch (err) {
+      log.render.warn('onObdUpdate diode rebuild failed:', err);
+    }
+  }
+
   private onThemeUpdate(): void {
     if (this.app && this.app.renderer) {
       this.app.renderer.background.color = hexToInt(themeStore.activeTheme().board.canvasBackground);
@@ -4594,12 +4624,15 @@ export class BoardRenderer {
       const pin = part?.pins[hit.pinIndex];
       if (pin && part) {
         const pinId = pin.number || String(hit.pinIndex + 1);
+        const diodeStr = pin.diode && pin.diode.kind !== 'none'
+          ? `Diode ${formatDiode(pin.diode)}` : undefined;
         this.showTooltip(e.offsetX, e.offsetY, {
           net: pin.net ?? '',
           part: part.name,
           pin: pinId,
           value: part.meta?.value,
           packageName: part.meta?.package,
+          diode: diodeStr,
         });
         this.setHoverNet(pin.net || null);
         return;
@@ -4634,7 +4667,7 @@ export class BoardRenderer {
     }
   }
 
-  private showTooltip(x: number, y: number, info: { net: string; part: string; pin?: string; value?: string; packageName?: string }) {
+  private showTooltip(x: number, y: number, info: { net: string; part: string; pin?: string; value?: string; packageName?: string; diode?: string }) {
     const el = this.tooltipEl;
     if (!el) return;
 
@@ -4660,9 +4693,11 @@ export class BoardRenderer {
     // OBD enrichment: if the hovered net has cached OpenBoardData readings,
     // append a compact "d 0.45 · 3.30 V · 47k Ω · 📝" line.
     if (this.tooltipObdSpan) {
+      // XZZ-baked diode (pin-level) + OBD readings (net-level) on one line.
       const obdLine = hasNet ? this.formatObdForNet(info.net) : '';
-      this.tooltipObdSpan.textContent = obdLine;
-      this.tooltipObdSpan.style.display = obdLine ? '' : 'none';
+      const combined = [info.diode, obdLine].filter(Boolean).join('   ·   ');
+      this.tooltipObdSpan.textContent = combined;
+      this.tooltipObdSpan.style.display = combined ? '' : 'none';
     }
 
     el.style.display = 'block';
@@ -5053,6 +5088,7 @@ export class BoardRenderer {
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
     this.unsubscribeTheme?.();
+    this.unsubscribeObd?.();
     this.unsubscribeViewCommands?.();
     this.unsubscribeSelectionSet?.();
     this.unsubscribeWorklist?.();

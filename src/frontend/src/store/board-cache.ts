@@ -20,7 +20,9 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  * separation from DB_VERSION means parser fixes don't nuke the
  * pdf-text cache or require any data migration.
  */
-const PARSER_VERSION = 72;
+// 73: XZZ diode-value channel — parser preserves real pad numbers and joins
+//     the post-v6 diode reading table onto pins (Pin.diode + diodeReference).
+const PARSER_VERSION = 73;
 
 interface CachedBoard {
   key: string;
