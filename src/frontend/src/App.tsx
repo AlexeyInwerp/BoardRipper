@@ -19,6 +19,7 @@ import { PdfViewerPanel } from './panels/PdfViewerPanel';
 import { DatabaseEditorPanel } from './panels/DatabaseEditorPanel';
 import { WorklistPanel } from './panels/WorklistPanel';
 import { BoardTab } from './components/BoardTab';
+import { PdfTab } from './components/PdfTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
 import { LoadProgressOverlay } from './components/LoadProgressOverlay';
@@ -65,6 +66,7 @@ const components: Record<string, React.FC<IDockviewPanelProps>> = {
 
 const tabComponents = {
   boardTab: BoardTab,
+  pdfTab: PdfTab,
 };
 
 const BOARD_EXTS = new Set<string>(); // populated lazily

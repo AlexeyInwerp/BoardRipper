@@ -1,11 +1,9 @@
-import { useRef, useEffect, useCallback, useState, useSyncExternalStore } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { usePdfDoc } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
-import { useBoardStore } from '../hooks/useBoardStore';
-import { BindLink } from '../components/BindLink';
-import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked, setAutoSwitchLinked, onAutoSwitchChange } from '../store/dockview-api';
+import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked } from '../store/dockview-api';
 import { openBoardSearch } from './board-viewer-bridge';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
@@ -587,7 +585,7 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint } = usePdfDoc(pdfFileName);
   /** Effective single-page layout: explicit single mode OR forced while rotated. */
   const singlePageMode = pageMode === 'single' || rotation !== 0;
   /** Current user rotation, read imperatively inside render callbacks. */
@@ -596,8 +594,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Horizontal mirror, read imperatively inside transform/hit-test callbacks. */
   const mirrorRef = useRef(mirror);
   mirrorRef.current = mirror;
-  const { tabs } = useBoardStore();
-  const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
   // Page-number input is draft-based: typing edits a local draft only; the
   // page change commits on Enter/blur (typing "250" must not visit 2 and 25).
@@ -640,32 +636,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     };
   }, [pdfFileName, props.api]);
 
-  // Board binding: which board tabs have this PDF linked
-  const boundBoardTabs = tabs.filter(t => t.pdfFileNames.includes(pdfFileName));
-  const boardTabNames = tabs.map(t => t.fileName);
-
-  const handleBindBoard = (boardFileName: string | null) => {
-    if (boardFileName === null) {
-      for (const tab of boundBoardTabs) {
-        boardStore.removePdfBinding(tab.id, pdfFileName);
-      }
-    } else {
-      // Single-select: unbind from current, bind to selected
-      for (const tab of boundBoardTabs) {
-        boardStore.removePdfBinding(tab.id, pdfFileName);
-      }
-      const target = tabs.find(t => t.fileName === boardFileName);
-      if (target) {
-        boardStore.addPdfBinding(target.id, pdfFileName);
-      }
-    }
-  };
-
-  // Cross-link this PDF to another open PDF (1:1). null or the current partner = unlink.
-  const handleLinkPdf = (name: string | null) => {
-    if (name === null || name === linkedDoc) pdfStore.unlinkDoc(pdfFileName);
-    else pdfStore.linkDocs(pdfFileName, name);
-  };
+  // Board/PDF linking lives in the dockview tab (∞) — see components/PdfTab.tsx.
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const highlightRef = useRef<HTMLCanvasElement>(null);
@@ -1319,7 +1290,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     drawHighlightsRef.current();
     setRenderEpoch(e => e + 1);
-  }, [rescaleWrapperChildren]);
+  }, [rescaleWrapperChildren, mirrorWidth]);
 
 
   const renderPage = useCallback(async () => {
@@ -1552,7 +1523,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       log.pdf.error('renderPage failed:', err);
       setError(String(err));
     }
-  }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas, rescaleWrapperChildren]);
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, pageCount, renderPageToBitmap, blitToCanvas, rescaleWrapperChildren, mirrorWidth]);
 
   // --- Tiled viewport rendering (zoom > 1) ---
   const renderTiledPage = useCallback(async () => {
@@ -1903,7 +1874,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       log.pdf.error('renderTiledPage failed:', err);
       setError(String(err));
     }
-  }, [pdfFileName, isLoaded, currentPage, cleanMode, rescaleWrapperChildren]);
+  }, [pdfFileName, isLoaded, currentPage, cleanMode, rescaleWrapperChildren, mirrorWidth]);
 
   /** Route to tiled or full-page render based on the active mode + zoom level.
    *  Mode is read via shouldUseTilesRef so a runtime mode switch (Settings ▸
@@ -3281,40 +3252,8 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   return (
     <div className="pdf-viewer">
       <div className="pdf-toolbar">
-        {(boardTabNames.length > 0 || pdfStore.loadedFileNames.some(n => n !== pdfFileName)) && (
-          <BindLink
-            boundNames={boundBoardTabs.map(t => t.fileName)}
-            options={boardTabNames}
-            onToggle={handleBindBoard}
-            title={boundBoardTabs.length > 0 ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')}` : 'Link this PDF to a boardview'}
-            primaryLabel="Boardview"
-            unlinkedLabel="Link board…"
-            headerItem={boardTabNames.length > 0 ? {
-              label: 'auto-open boardview',
-              checked: autoSwitchLinked,
-              onChange: setAutoSwitchLinked,
-            } : undefined}
-            secondary={{
-              label: 'Cross-link PDF',
-              boundNames: linkedDoc ? [linkedDoc] : [],
-              options: pdfStore.loadedFileNames.filter(n => n !== pdfFileName),
-              onToggle: handleLinkPdf,
-            }}
-          />
-        )}
-        {boundBoardTabs.length > 0 ? (
-          <span className="pdf-filename" title={boundBoardTabs.map(t => t.fileName).join(', ')}>
-            {boundBoardTabs.map(t => t.fileName).join(', ')}
-          </span>
-        ) : (boardTabNames.length === 0 && !pdfStore.loadedFileNames.some(n => n !== pdfFileName)) ? (
-          // No link targets exist at all (BindLink hidden) — explain instead
-          // of the old dead-end "no link" label.
-          <span className="pdf-filename" title="Open a boardview file to link it with this PDF">
-            no board open
-          </span>
-        ) : null}
-        <div className="pdf-toolbar-separator" />
-
+        {/* Board/PDF linking moved to the dockview tab (∞ on the PDF tab) —
+            symmetric with the board tab. See components/PdfTab.tsx. */}
         <div className="pdf-toolbar-group">
           <button
             className="pdf-toolbar-btn"

@@ -49,7 +49,7 @@ The sidebar **Library** tab is the heart of the Docker setup:
 
 ## Link board ↔ PDF (and PDF ↔ PDF)
 
-- Click the **∞** control on a board tab *or* a PDF toolbar to link them — it
+- Click the **∞** control on a board tab *or* a PDF tab to link them — it
   works from either side. Linked, a click on a component jumps the schematic to
   the matching location (toggle **⇶ PDF follow** per board).
 - Cross-link two PDFs the same way to hop a designator between sheets.

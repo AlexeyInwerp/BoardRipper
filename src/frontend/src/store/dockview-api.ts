@@ -331,6 +331,7 @@ export function ensurePdfPanel(fileName: string): void {
           api.addPanel({
             id,
             component: 'pdfViewer',
+            tabComponent: 'pdfTab',
             title: fileName,
             params: { pdfFileName: fileName },
             position: { referenceGroup: popoutGroup.id },
@@ -350,6 +351,7 @@ export function ensurePdfPanel(fileName: string): void {
         const tempPanel = api.addPanel({
           id,
           component: 'pdfViewer',
+          tabComponent: 'pdfTab',
           title: fileName,
           params: { pdfFileName: fileName },
         });
@@ -368,6 +370,7 @@ export function ensurePdfPanel(fileName: string): void {
       api.addPanel({
         id,
         component: 'pdfViewer',
+        tabComponent: 'pdfTab',
         title: fileName,
         params: { pdfFileName: fileName },
         position: existingPdf

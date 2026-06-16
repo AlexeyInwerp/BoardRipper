@@ -291,9 +291,12 @@ search input, overwriting any existing query.
 ## PDF↔PDF cross-lookup
 
 Two open text PDFs can be explicitly linked 1:1 from the main bind (∞/○○)
-menu in the PDF toolbar: the `BindLink` dropdown shows board associations on
-top and, after a separator, a **Cross-link PDF** section listing the other open
-PDFs (→ `PdfStore.linkDocs`/`unlinkDoc`). The bind menu renders whenever there
+menu on the **PDF dockview tab** (`components/PdfTab.tsx` — symmetric with the
+board tab; moved out of the PDF toolbar): the `BindLink` dropdown shows board
+associations on top and, after a separator, a **Cross-link PDF** section listing
+the other open PDFs (→ `PdfStore.linkDocs`/`unlinkDoc`). Like the board tab it
+uses the `fixedDropdown` variant (portal to `<body>`) so the menu isn't clipped
+by the transformed tab header. The bind menu renders whenever there
 is a board OR another open PDF to link, so it appears even for board-less
 PDF-only viewing. The link is symmetric, persisted in `localStorage`
 (`pdf-link:<fileName>`, restored on `loadFile`) by the pure `pdf-links.ts`
