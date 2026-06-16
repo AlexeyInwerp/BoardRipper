@@ -1,4 +1,4 @@
-import type { BoardData, BoardRevision, BomAlternateCluster, GhostComponent, Net, Pad, Point, SilkscreenPath, Trace, Via } from '../parsers';
+import type { BoardData, BoardRevision, BomAlternateCluster, DiodeReferenceChannel, GhostComponent, Net, Pad, Point, SilkscreenPath, Trace, Via } from '../parsers';
 
 const DB_NAME = 'boardripper-cache';
 // DB_VERSION is ONLY bumped for schema changes (new/removed object stores,
@@ -22,7 +22,9 @@ const MAX_PDF_TEXT_ENTRIES = 30;
  */
 // 73: XZZ diode-value channel — parser preserves real pad numbers and joins
 //     the post-v6 diode reading table onto pins (Pin.diode + diodeReference).
-const PARSER_VERSION = 73;
+// 74: cache serialize/deserialize now persist diodeReference (v73 stripped it,
+//     so the on-pin overlay's UI vanished on cache hit) — bust those entries.
+const PARSER_VERSION = 74;
 
 interface CachedBoard {
   key: string;
@@ -71,6 +73,9 @@ interface SerializedBoardData {
   flipY?: boolean;
   flipAxis?: 'x' | 'y';
   primarySide?: 'top' | 'bottom';
+  /** XZZ diode-value channel descriptor — added in PARSER_VERSION 74. Gates the
+   *  on-pin diode overlay's UI; pin-level readings live inside `parts`. */
+  diodeReference?: DiodeReferenceChannel;
 }
 
 interface SerializedRevision {
@@ -128,6 +133,7 @@ function serialize(board: BoardData): SerializedBoardData {
     flipY: board.flipY,
     flipAxis: board.flipAxis,
     primarySide: board.primarySide,
+    diodeReference: board.diodeReference,
   };
 }
 
@@ -173,6 +179,7 @@ function deserialize(data: SerializedBoardData): BoardData | null {
       flipY: data.flipY,
       flipAxis: data.flipAxis,
       primarySide: data.primarySide,
+      diodeReference: data.diodeReference,
     };
   } catch {
     return null;
