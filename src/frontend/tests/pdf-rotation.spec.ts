@@ -134,3 +134,81 @@ test('keyboard E/Q rotate the PDF when its panel is active', async ({ page }) =>
   const aspectAfter = await pageAspect(page);
   expect(Math.abs(aspectAfter - 1 / aspectBefore)).toBeLessThan(0.15);
 });
+
+test('mirror flips the page wrapper without changing aspect; controls sit right of page nav', async ({ page }) => {
+  const PDF_FILE = firstSamplePdf();
+  test.skip(!PDF_FILE, 'no sample PDF present (proprietary, gitignored)');
+  test.setTimeout(60000);
+
+  await page.goto('/');
+  await page.waitForTimeout(800);
+  await page.getByTestId('file-input').setInputFiles(PDF_FILE!);
+  await page.waitForTimeout(500);
+  const tab = page.locator('.dv-tab', { hasText: /\.pdf$/i }).first();
+  if (await tab.count()) await tab.click();
+  await expect(page.locator('.pdf-canvas-container')).toBeVisible();
+  await page.waitForTimeout(2500);
+
+  const wrapperTransform = () => page.evaluate(() => {
+    const w = document.querySelector('.pdf-page-wrapper') as HTMLElement | null;
+    return w?.style.transform ?? '';
+  });
+
+  const aspectBefore = await pageAspect(page);
+  expect(await wrapperTransform()).not.toContain('scaleX(-1)');
+
+  // Toggle mirror → wrapper transform gains the horizontal flip, dims unchanged.
+  const mirrorBtn = page.getByTestId('pdf-mirror');
+  await expect(mirrorBtn).toBeVisible();
+  await mirrorBtn.click();
+  await page.waitForTimeout(800);
+
+  expect(await wrapperTransform()).toContain('scaleX(-1)');
+  const aspectMirrored = await pageAspect(page);
+  expect(Math.abs(aspectMirrored - aspectBefore)).toBeLessThan(0.05); // mirror keeps dims
+
+  // Toggle off.
+  await mirrorBtn.click();
+  await page.waitForTimeout(600);
+  expect(await wrapperTransform()).not.toContain('scaleX(-1)');
+
+  // Control block placement: rotate/mirror buttons come AFTER the page-number
+  // input and BEFORE the search box in DOM order (i.e. right of page switching).
+  const order = await page.evaluate(() => {
+    const all = Array.from(document.querySelectorAll('.pdf-toolbar *'));
+    const idx = (sel: string) => all.findIndex(el => el.matches(sel));
+    return {
+      pageInput: idx('.pdf-page-input'),
+      rotate: idx('[data-testid="pdf-rotate"]'),
+      mirror: idx('[data-testid="pdf-mirror"]'),
+      search: idx('.pdf-search-wrapper'),
+    };
+  });
+  expect(order.pageInput).toBeGreaterThanOrEqual(0);
+  expect(order.rotate).toBeGreaterThan(order.pageInput);
+  expect(order.mirror).toBeGreaterThan(order.rotate);
+  if (order.search >= 0) expect(order.search).toBeGreaterThan(order.mirror);
+});
+
+test('keyboard ⌘↑ mirrors the PDF when its panel is active', async ({ page }) => {
+  const PDF_FILE = firstSamplePdf();
+  test.skip(!PDF_FILE, 'no sample PDF present (proprietary, gitignored)');
+  test.setTimeout(60000);
+
+  await page.goto('/');
+  await page.waitForTimeout(800);
+  await page.getByTestId('file-input').setInputFiles(PDF_FILE!);
+  await page.waitForTimeout(500);
+  const tab = page.locator('.dv-tab', { hasText: /\.pdf$/i }).first();
+  if (await tab.count()) await tab.click();
+  await expect(page.locator('.pdf-canvas-container')).toBeVisible();
+  await page.waitForTimeout(2500);
+
+  await page.locator('.pdf-canvas-container').click({ position: { x: 5, y: 5 } });
+  const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+  await page.keyboard.press(`${mod}+ArrowUp`);
+  await page.waitForTimeout(800);
+
+  const tf = await page.evaluate(() => (document.querySelector('.pdf-page-wrapper') as HTMLElement | null)?.style.transform ?? '');
+  expect(tf).toContain('scaleX(-1)');
+});

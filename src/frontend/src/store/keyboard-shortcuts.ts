@@ -115,11 +115,11 @@ export const shortcuts: Shortcut[] = [
   },
   {
     id: 'mirrorBoard',
-    label: 'Mirror Board',
+    label: 'Mirror',
     category: 'view',
     key: 'ArrowUp',
     mod: true,
-    description: 'Mirror the board horizontally',
+    description: 'Mirror horizontally (board or PDF page)',
   },
   {
     id: 'panLeft',

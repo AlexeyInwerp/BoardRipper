@@ -17,7 +17,7 @@ import { drawGlyphBoxes, drawGlyphOutlines, drawTextItems } from '../pdf/glyph-o
 import { drawSimplifiedGlyphs } from '../pdf/glyph-simplifier';
 import type { SimplifyStats } from '../pdf/glyph-simplifier';
 import { drawMonospaceReplacement } from '../pdf/glyph-replacer';
-import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn, IconRotateClockwise, IconFileStack, IconFile } from '@tabler/icons-react';
+import { IconArrowAutofitWidth, IconBookmarkPlus, IconWand, IconHandMove, IconZoomIn, IconRotateClockwise, IconFileStack, IconFile, IconSwitchHorizontal } from '@tabler/icons-react';
 import {
   TILE_SIZE, computeTileGrid, tileRenderRequest,
   getTileCached, putTileCached, invalidateTileCache,
@@ -508,8 +508,15 @@ function zoomToItemGroup(
  *  matches displayed size, and Safari rasterizes the GPU layer at full
  *  resolution. During gestures s briefly diverges; a 60ms-debounced
  *  render commits the new sizes and resets s to 1. */
-function applyTransform(el: HTMLElement | null, x: number, y: number, s: number) {
-  if (el) el.style.transform = `translate(${x}px,${y}px) scale(${s})`;
+function applyTransform(el: HTMLElement | null, x: number, y: number, s: number, mirrorW = 0) {
+  if (!el) return;
+  // mirrorW > 0 flips the whole wrapper (page + tiles + highlight + overlays)
+  // horizontally around the page's local content width. Applied innermost so
+  // it mirrors in pre-scale content space; pan/zoom math is unaffected because
+  // the flipped page occupies the same on-screen box. Geometry consumers that
+  // read X (click hit-test, match centering) mirror their own coordinate.
+  const flip = mirrorW > 0 ? ` translateX(${mirrorW}px) scaleX(-1)` : '';
+  el.style.transform = `translate(${x}px,${y}px) scale(${s})${flip}`;
 }
 
 // --- Page Scrubber Rail ---
@@ -580,12 +587,15 @@ function PageScrubber({ currentPage, pageCount, onGoToPage, scrubberRef }: {
 
 export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string }>) {
   const pdfFileName = props.params.pdfFileName ?? '';
-  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
+  const { isLoaded, textExtracting, textExtractProgress, pageCount, currentPage, rotation, pageMode, mirror, searchQuery, matches, activeMatchIndex, matchGroupCount, activeGroupIndex, isMultiTerm, isAtSyntax, multiTermYGap, multiTermXGap, bookmarks, cleanMode, lookupHint, crossProbeHint, linkedDoc } = usePdfDoc(pdfFileName);
   /** Effective single-page layout: explicit single mode OR forced while rotated. */
   const singlePageMode = pageMode === 'single' || rotation !== 0;
   /** Current user rotation, read imperatively inside render callbacks. */
   const rotationRef = useRef(rotation);
   rotationRef.current = rotation;
+  /** Horizontal mirror, read imperatively inside transform/hit-test callbacks. */
+  const mirrorRef = useRef(mirror);
+  mirrorRef.current = mirror;
   const { tabs } = useBoardStore();
   const autoSwitchLinked = useSyncExternalStore(onAutoSwitchChange, isAutoSwitchLinked);
 
@@ -1052,10 +1062,16 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
    *  layer at full resolution = sharp. During gestures this briefly
    *  diverges; the next 60ms-debounced render commits the new zoom and
    *  resets it to 1. Also triggers tile re-render on pan in tiled mode. */
+  /** Local content width to flip around when mirrored (0 = no mirror). Uses the
+   *  committed-zoom content size so the flip matches the wrapper children. */
+  const mirrorWidth = useCallback(() =>
+    mirrorRef.current ? (containerRef.current?.clientWidth ?? 0) * committedZoomRef.current : 0
+  , []);
+
   const syncTransform = useCallback(() => {
     clampPan();
     const transientScale = zoomRef.current / committedZoomRef.current;
-    applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, transientScale);
+    applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, transientScale, mirrorWidth());
     if (!zoomDisplayRafRef.current) {
       zoomDisplayRafRef.current = requestAnimationFrame(() => {
         zoomDisplayRafRef.current = 0;
@@ -1063,7 +1079,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       });
     }
     if (shouldUseTilesRef.current()) scheduleTierRenderRef.current();
-  }, [clampPan]);
+  }, [clampPan, mirrorWidth]);
 
   /** Schedule a re-render at exact zoom resolution.
    *  Adaptive throttle: renders at a rate the system can sustain (based on EMA of
@@ -1177,9 +1193,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     renderPageRef.current();
   }, [rotation, pdfFileName, syncTransform, clearTileDom]);
 
-  // Re-clamp pan whenever the effective single-page layout flips (toggling the
-  // mode mid-document can leave the pan straddling a page boundary).
-  useEffect(() => { syncTransform(); }, [singlePageMode, syncTransform]);
+  // Re-apply the wrapper transform when the layout flips (single↔continuous can
+  // leave pan straddling a boundary) or the mirror toggles (the flip lives in
+  // the transform, so it needs a fresh syncTransform to take/release effect).
+  useEffect(() => { syncTransform(); }, [singlePageMode, mirror, syncTransform]);
 
   useEffect(() => {
     return () => {
@@ -1291,7 +1308,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     if (wrapperRef.current) {
       // Reset wrapper transient scale so the layer rasterizes at full size.
-      applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommit);
+      applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommit, mirrorWidth());
     }
 
     scaleRef.current = entry.baseScale;
@@ -1446,7 +1463,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       highlight.style.width = `${cssW * zCommitFP}px`;
       highlight.style.height = `${cssH * zCommitFP}px`;
       if (wrapperRef.current) {
-        applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommitFP);
+        applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommitFP, mirrorWidth());
       }
 
       drawHighlightsRef.current();
@@ -1710,7 +1727,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // CSS, reset the wrapper's transient scale so Safari rasterizes the
       // GPU layer at the (new larger) intrinsic CSS size = displayed size.
       if (wrapperRef.current) {
-        applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommit);
+        applyTransform(wrapperRef.current, panRef.current.x, panRef.current.y, zoomRef.current / zCommit, mirrorWidth());
       }
 
       // Don't hide old tiles here — they stay visible as backdrop.
@@ -2238,6 +2255,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           floor,
         );
 
+        // Mirrored: the centering pan was computed in un-mirrored space; reflect
+        // its X so the match lands centered on the flipped display.
+        if (mirrorRef.current) newPan.x = container.clientWidth * (1 - newZoom) - newPan.x;
         zoomRef.current = newZoom;
         panRef.current = newPan;
         syncTransform();
@@ -2303,6 +2323,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         containerRef.current.clientWidth, containerRef.current.clientHeight, 0.25,
         floor,
       );
+      if (mirrorRef.current) pan.x = containerRef.current.clientWidth * (1 - zoom) - pan.x;
       zoomRef.current = zoom;
       panRef.current = pan;
       syncTransform();
@@ -2851,8 +2872,12 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!container) return null;
 
     const containerRect = container.getBoundingClientRect();
-    const clickX = (e.clientX - containerRect.left - panRef.current.x) / zoomRef.current;
+    let clickX = (e.clientX - containerRect.left - panRef.current.x) / zoomRef.current;
     const clickY = (e.clientY - containerRect.top - panRef.current.y) / zoomRef.current;
+    // Mirrored: the wrapper is flipped via CSS but text-item rects are in
+    // un-mirrored page space, so flip the click X back to match (page width in
+    // this space equals the container width at zoom 1 / fit-width).
+    if (mirrorRef.current) clickX = container.clientWidth - clickX;
 
     const scale = scaleRef.current;
     const vpT = viewportTransformRef.current;
@@ -3335,6 +3360,45 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           </button>
         </div>
 
+        {/* Orientation / layout controls — kept directly right of page switching. */}
+        <div className="pdf-toolbar-group">
+          <button
+            data-testid="pdf-rotate"
+            className={`pdf-toolbar-btn${rotation !== 0 ? ' active' : ''}`}
+            onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.rotate(pdfFileName, 'cw'); }}
+            title={rotation === 0
+              ? 'Rotate page 90° clockwise (Q/E or ⌘←/→)'
+              : `Rotated ${rotation}° — click to rotate further (Q/E or ⌘←/→)`}
+          >
+            <IconRotateClockwise size={14} />
+          </button>
+          <button
+            data-testid="pdf-mirror"
+            className={`pdf-toolbar-btn${mirror ? ' active' : ''}`}
+            onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.toggleMirror(pdfFileName); }}
+            title={mirror
+              ? 'Mirrored horizontally — click to un-mirror (⌘↑)'
+              : 'Mirror horizontally — flip left↔right (⌘↑)'}
+          >
+            <IconSwitchHorizontal size={14} />
+          </button>
+          {pageCount > 1 && (
+            <button
+              data-testid="pdf-page-mode"
+              className={`pdf-toolbar-btn${singlePageMode ? ' active' : ''}`}
+              onClick={() => { if (rotation !== 0) return; pdfStore.switchTo(pdfFileName); pdfStore.togglePageMode(pdfFileName); }}
+              disabled={rotation !== 0}
+              title={rotation !== 0
+                ? 'Rotated pages are always shown one at a time'
+                : (pageMode === 'single'
+                    ? 'Single page — click for continuous scroll'
+                    : 'Continuous scroll — click for single page')}
+            >
+              {singlePageMode ? <IconFile size={14} /> : <IconFileStack size={14} />}
+            </button>
+          )}
+        </div>
+
         <div className="pdf-toolbar-separator" />
         <div className="pdf-search-wrapper">
           <div className="pdf-search-bar">
@@ -3507,33 +3571,6 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           >
             &#x25D0;
           </button>
-        </div>
-        <div className="pdf-toolbar-group">
-          <button
-            data-testid="pdf-rotate"
-            className={`pdf-toolbar-btn${rotation !== 0 ? ' active' : ''}`}
-            onClick={() => { pdfStore.switchTo(pdfFileName); pdfStore.rotate(pdfFileName, 'cw'); }}
-            title={rotation === 0
-              ? 'Rotate page 90° clockwise (Q/E or ⌘←/→)'
-              : `Rotated ${rotation}° — click to rotate further (Q/E or ⌘←/→)`}
-          >
-            <IconRotateClockwise size={14} />
-          </button>
-          {pageCount > 1 && (
-            <button
-              data-testid="pdf-page-mode"
-              className={`pdf-toolbar-btn${singlePageMode ? ' active' : ''}`}
-              onClick={() => { if (rotation !== 0) return; pdfStore.switchTo(pdfFileName); pdfStore.togglePageMode(pdfFileName); }}
-              disabled={rotation !== 0}
-              title={rotation !== 0
-                ? 'Rotated pages are always shown one at a time'
-                : (pageMode === 'single'
-                    ? 'Single page — click for continuous scroll'
-                    : 'Continuous scroll — click for single page')}
-            >
-              {singlePageMode ? <IconFile size={14} /> : <IconFileStack size={14} />}
-            </button>
-          )}
         </div>
         <div className="pdf-viewport-group">
           <button

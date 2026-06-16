@@ -425,6 +425,9 @@ interface PdfDocument {
   /** Page layout mode. 'continuous' = stacked scrollable pages (default);
    *  'single' = one page at a time, pan locked to it. Forced to 'single' while rotated. */
   pageMode: 'single' | 'continuous';
+  /** Horizontal mirror (left↔right flip), for aligning a schematic with a
+   *  bottom-side board view. Independent of rotation and page mode. */
+  mirror: boolean;
   textPages: PdfTextItem[][];
   searchQuery: string;
   matches: PdfTextMatch[];
@@ -483,6 +486,7 @@ class PdfStore extends Emitter {
   get currentPage(): number { return this._active?.currentPage ?? 1; }
   get rotation(): number { return this._active?.rotation ?? 0; }
   get pageMode(): 'single' | 'continuous' { return this._active?.pageMode ?? 'continuous'; }
+  get mirror(): boolean { return this._active?.mirror ?? false; }
   get searchQuery(): string { return this._active?.searchQuery ?? ''; }
   get matches(): PdfTextMatch[] { return this._active?.matches ?? []; }
   get activeMatchIndex(): number { return this._active?.activeMatchIndex ?? -1; }
@@ -522,6 +526,7 @@ class PdfStore extends Emitter {
   getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }
   getDocRotation(fileName: string): number { return this._documents.get(fileName)?.rotation ?? 0; }
   getDocPageMode(fileName: string): 'single' | 'continuous' { return this._documents.get(fileName)?.pageMode ?? 'continuous'; }
+  getDocMirror(fileName: string): boolean { return this._documents.get(fileName)?.mirror ?? false; }
   /** Effective single-page: explicit single mode OR forced single while rotated. */
   isDocSinglePage(fileName: string): boolean {
     const d = this._documents.get(fileName);
@@ -632,6 +637,7 @@ class PdfStore extends Emitter {
         currentPage: 1,
         rotation: 0,
         pageMode: 'continuous',
+        mirror: false,
         textPages: [],
         searchQuery: '',
         searchSource: null,
@@ -894,6 +900,19 @@ class PdfStore extends Emitter {
   /** Rotate the active doc (keyboard shortcuts). */
   rotateActive(dir: 'cw' | 'ccw') {
     if (this._activeFileName) this.rotate(this._activeFileName, dir);
+  }
+
+  /** Toggle the named doc's horizontal mirror. */
+  toggleMirror(fileName: string) {
+    const d = this._documents.get(fileName);
+    if (!d) return;
+    d.mirror = !d.mirror;
+    this.notify();
+  }
+
+  /** Toggle the active doc's mirror (keyboard shortcut). */
+  mirrorActive() {
+    if (this._activeFileName) this.toggleMirror(this._activeFileName);
   }
 
   /** Reset the named doc to unrotated. */

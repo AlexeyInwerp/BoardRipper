@@ -316,7 +316,8 @@ export function useKeyboardShortcuts() {
             return;
           case 'mirrorBoard':
             e.preventDefault();
-            boardStore.flipHorizontal();
+            if (activePanelKind() === 'pdf') pdfStore.mirrorActive();
+            else boardStore.flipHorizontal();
             return;
 
           case 'panLeft':

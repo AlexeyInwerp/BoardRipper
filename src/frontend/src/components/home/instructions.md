@@ -74,6 +74,9 @@ A small cluster of overlay buttons acts only on the active board:
   **Set up by gesture** and just demonstrate the gesture you want.
 - **Pinch-to-zoom** always zooms; **two-finger scroll** mirrors the mouse wheel.
 - **Space** flips top/bottom. Click a pin/component to highlight its net.
+- In a **PDF**, the controls right of the page arrows **rotate** the page,
+  **mirror** it left↔right, and switch **single ↔ continuous** scrolling.
+  With the PDF focused, **Q / E** rotate and **⌘↑** mirrors.
 
 ### Game-style shortcuts
 

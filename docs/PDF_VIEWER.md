@@ -239,6 +239,36 @@ When the user scrolls vertically past a page boundary, `skipResetRef.current
 the visual position stays continuous. The tile cache isn't cleared — the old
 page's tiles slide out of view naturally as the new page's tiles render in.
 
+## Orientation: rotation, mirror, page modes
+
+Three per-document view controls live in `pdf-store` (`rotation`, `mirror`,
+`pageMode`) and surface as a toolbar group directly right of the page-switching
+arrows (`pdf-rotate` / `pdf-mirror` / `pdf-page-mode`). Keyboard, when the PDF
+panel is active: **Q/E** and **⌘←/→** rotate, **⌘↑** mirrors.
+
+- **Rotation (0/90/180/270 CW)** is the only one pdf.js renders natively: every
+  `page.getViewport()` call (full-page, tiled, adjacent) passes
+  `rotation: page.rotate + userRotation`. pdf.js swaps W/H for 90/270, so
+  fit-width, `cssH`, the `viewportTransformRef` used by highlights + click
+  hit-test, and the tile grid all follow automatically. Rotation isn't part of
+  any cache key — a rotation-change effect drops `invalidatePageCache` /
+  `invalidateTileCache` + adjacent canvases and re-fits (it's rare + deliberate,
+  so a full re-render is fine, and the fragile `getBestPageCache` key parser
+  stays untouched).
+- **Mirror** is a pure CSS `scaleX(-1)` appended innermost in `applyTransform`,
+  flipping around the committed-zoom content width (`mirrorWidth()`). The whole
+  wrapper — main canvas, tiles, highlight canvas, click overlay — flips together
+  in every mode with zero render/cache changes. The two consumers that read raw
+  X compensate: `hitTestWord` does `clickX = clientW - clickX`, and the two
+  match-centering pans do `pan.x = clientW*(1 - zoom) - pan.x`.
+- **Page mode** `single` vs `continuous` (default). `isDocSinglePage` =
+  explicit single **or** `rotation !== 0` (rotation forces single but leaves the
+  stored `pageMode` alone, so un-rotating restores continuous). Single mode
+  short-circuits the adjacent-page effect (and tears down its canvases), gates
+  the wheel page-flip via `noFlip`, and uses the `singlePage` clamp branch so
+  pan is locked to the current page. Continuous is the original stacked-adjacent
+  + boundary-flip behaviour described above.
+
 ## Click-to-lookup
 
 Clicking on PDF text runs `hitTestWord` which:
