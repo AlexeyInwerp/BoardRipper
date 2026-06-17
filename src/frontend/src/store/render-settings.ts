@@ -1352,12 +1352,17 @@ class RenderSettingsStore extends Emitter {
   /** Set the active board fileName — recomputes effective settings, notifies only if they changed */
   setActiveBoard(fileName: string) {
     if (this._activeBoard === fileName) return;
-    // Check if switching boards could change effective settings: only if either
-    // the old or new board has per-board overrides. Without overrides, effective = global.
+    // Recompute effective settings if switching boards could change them: when
+    // either board carries per-board overrides, OR the active THEME carries
+    // boardOverrides (e.g. Landrex greyscale, a custom theme's pin colours).
+    // Missing the theme case meant a board loaded under a saved override-theme
+    // rendered with un-merged settings until the next theme switch.
     const hadOverrides = this._activeBoard ? this.hasBoardOverrides(this._activeBoard) : false;
     const hasOverrides = fileName ? this.hasBoardOverrides(fileName) : false;
+    const themeOv = themeOverridesProvider();
+    const themeHasOverrides = !!themeOv && Object.keys(themeOv).length > 0;
     this._activeBoard = fileName;
-    if (hadOverrides || hasOverrides) {
+    if (hadOverrides || hasOverrides || themeHasOverrides) {
       this.recomputeEffective();
       this.notify();
     }

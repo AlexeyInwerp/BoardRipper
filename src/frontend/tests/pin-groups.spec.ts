@@ -87,7 +87,7 @@ test('a theme can carry its own pinGroups (override flows into effective setting
   expect(r.after).toBe('0');   // #000000 → 0
 });
 
-test('Landrex is a plain B&W theme — net colours still apply (no overrides)', async ({ page }) => {
+test('Landrex is fully monochrome — greyscale pins, no net colours, readable', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 10000 });
 
@@ -98,20 +98,24 @@ test('Landrex is a plain B&W theme — net colours still apply (no overrides)', 
     const t = themes.themeStore.activeTheme();
     const s = rs.renderSettingsStore.settings;
     return {
-      hasOverrides: !!t.boardOverrides,
       canvas: t.board.canvasBackground,
+      boardFill: t.board.boardFill,
+      labelText: t.board.labelText,
+      showComponentColors: s.showComponentColors,
       groups: s.pinGroups.length,
       vcc: rs.resolvePinColor(s, 'VCC', 'top').toString(16),
       gnd: rs.resolvePinColor(s, 'GND', 'top').toString(16),
     };
   });
-  // Landrex carries no boardOverrides now — it's a normal theme with a B&W
-  // board palette; net-class colours behave like every other theme.
-  expect(r.hasOverrides).toBe(false);
+  // No net-class colour: VCC/GND fall to the greyscale default pin colour.
+  expect(r.groups).toBe(0);
+  expect(r.showComponentColors).toBe(false);
+  expect(r.vcc).toBe('cfcfcf');   // greyscale top-pin default, not power-red
+  expect(r.gnd).toBe('cfcfcf');
+  // Readable, not white-on-white: black board fill under white pin labels.
   expect(r.canvas).toBe('#000000');
-  expect(r.groups).toBeGreaterThan(0);
-  expect(r.vcc).toBe('dd3333');   // power red — visible, not hidden
-  expect(r.gnd).toBe('666666');   // ground grey
+  expect(r.boardFill).toBe('#000000');
+  expect(r.labelText).toBe('#ffffff');
 });
 
 test('net-label background colour + opacity are theme-carried', async ({ page }) => {

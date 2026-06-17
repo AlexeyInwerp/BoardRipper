@@ -106,11 +106,12 @@ export const THEMES: Record<string, Theme> = {
   landrex: {
     id: 'landrex',
     label: 'Landrex Classic',
-    // A plain theme with a mostly-black-and-white board palette (the classic
-    // Landrex / OpenBoardView look: black board defined by a white outline).
-    // NO boardOverrides — pin/net group colours, component colours and the
-    // pin-1 marker all behave exactly like any other theme; the theme just
-    // supplies a monochrome base. Interface chrome stays dark (mirrors default).
+    // A true black-and-white board: greyscale pins/parts, NO net or component
+    // colour (the classic Landrex / OpenBoardView monochrome look). Unlike the
+    // old version this is READABLE (black board + white labels + label shadow,
+    // not white-on-white) and still fully EDITABLE — editing any colour forks
+    // the theme into the custom slot like every other theme; the greyscale
+    // override is just a starting point. Interface chrome stays dark.
     ui: {
       bgPrimary:     '#08080c',
       bgSecondary:   '#0f0f18',
@@ -123,21 +124,28 @@ export const THEMES: Record<string, Theme> = {
       iconPdfBg:     '#cc4444',
     },
     board: {
-      // Black board defined by a white outline. boardFill matches the canvas so
-      // the silhouette reads only via the outline (classic look) AND so white
-      // pin/net labels sit on black — readable — instead of white-on-white.
+      // Black board defined by a white outline; boardFill matches the canvas so
+      // white pin/net labels sit on black — readable, not white-on-white.
       canvasBackground:   '#000000',
       boardFill:          '#000000',
       outline:            '#ffffff',
-      selection:          '#ffff44',
-      butterflySelection: '#44aaff',
-      labelText:          '#ffffff',   // pin numbers — white on black board
+      selection:          '#ffff44',   // selection/butterfly stay functional
+      butterflySelection: '#44aaff',   // highlights (not part/net colour)
+      labelText:          '#ffffff',
       labelPart:          '#e6e6e6',
-      labelNet:           '#c8c8c8',   // net names slightly dimmer than parts
+      labelNet:           '#c8c8c8',
       netLabelBg:         '#000000',
       netLabelBgOpacity:  0.55,
     },
-    // No boardOverrides — behaves like any other theme.
+    // Greyscale supermode — no part/net colour. Forking to custom + editing a
+    // pin group writes a non-empty pinGroups, so colour is still one edit away.
+    boardOverrides: {
+      showComponentColors:   false,      // part bodies drawn without type colour
+      showPin1Marker:        false,      // no red pin-1 dot
+      pinGroups:             [],         // no net-class colours
+      defaultPinColorTop:    '#cfcfcf',  // light-grey pins (top side)
+      defaultPinColorBottom: '#8f8f8f',  // mid-grey pins (bottom) — side cue
+    },
   },
 
   // ──────────────────────────────────────────────────────────────────────
