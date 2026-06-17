@@ -458,6 +458,8 @@ export class BoardRenderer {
    *  Lets onThemeUpdate rebuild only when board-side colours actually change,
    *  not on every accent / background / chrome knob tweak. */
   private _lastBoardColorKey = '';
+  /** Debounce timer for scheduleRebuild — coalesces rapid colour-edit rebuilds. */
+  private _rebuildTimer: ReturnType<typeof setTimeout> | null = null;
   /** Reference snapshot of `boardStore.partOverrides`. The store replaces the
    *  Map on every change, so an identity-equality compare in `onBoardUpdate`
    *  detects right-click hide/send-to-back actions without a deep diff. */
@@ -669,6 +671,7 @@ export class BoardRenderer {
    */
   private teardownForReinit() {
     log.render.log('teardownForReinit', 'tab=' + this.tabId);
+    if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
 
     // Save viewport state
     if (this.board && this.viewport) {
@@ -2860,15 +2863,11 @@ export class BoardRenderer {
 
       this.textHiddenForZoom = false;
       this.netLinesHiddenForZoom = false;
-      // Update viewport interaction plugins
+      // Update viewport interaction plugins (cheap, immediate).
       this.applyViewportPlugins();
-      // Save viewport, invalidate all scenes, rebuild current
-      this.saveViewportState();
-      this.invalidateAllScenes();
-      this.activateScene(this.board);
-      this.renderSelection();
-      // Force LoD re-evaluation on next tick (new scene, thresholds may have changed)
-      this.lastLodScale = -1;
+      // Debounce the expensive scene rebuild so rapid colour-edit changes
+      // coalesce and the UI isn't blocked per drag-frame (see scheduleRebuild).
+      this.scheduleRebuild();
       this.lastSettingsSnapshot = cur;
     } catch (err) {
       log.render.error(`onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
@@ -2922,13 +2921,31 @@ export class BoardRenderer {
     const key = JSON.stringify(board);
     if (key === this._lastBoardColorKey) return;
     this._lastBoardColorKey = key;
+    this.scheduleRebuild();
+  }
+
+  /**
+   * Debounced full scene rebuild. Colour edits in the theme editors fire on
+   * every drag frame; rebuilding the whole PixiJS scene synchronously per frame
+   * blocks the colour picker and janks the UI on dense boards. Coalescing into
+   * a single rebuild a short time after the LAST change keeps the picker
+   * responsive and the board updates once the user pauses. The rebuild also
+   * runs off the input-event handler (in the timer), so the UI never blocks
+   * mid-interaction. A board switch / Apply pays only the same ~140 ms.
+   */
+  private scheduleRebuild(): void {
     if (!this.board || this.contextLost || this.reinitializing) return;
-    this.saveViewportState();
-    this.invalidateAllScenes();
-    this.activateScene(this.board);
-    this.renderSelection();
-    this.lastLodScale = -1;
-    this.needsRender = true;
+    if (this._rebuildTimer) clearTimeout(this._rebuildTimer);
+    this._rebuildTimer = setTimeout(() => {
+      this._rebuildTimer = null;
+      if (!this.board || this.contextLost || this.reinitializing || this.destroyed) return;
+      this.saveViewportState();
+      this.invalidateAllScenes();
+      this.activateScene(this.board);
+      this.renderSelection();
+      this.lastLodScale = -1;
+      this.needsRender = true;
+    }, 140);
   }
 
   // --- Selection spotlight (radial darkening around selected part) ---
@@ -5106,6 +5123,7 @@ export class BoardRenderer {
     if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }
+    if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
     if (this.wheelIdleTimer) { clearTimeout(this.wheelIdleTimer); this.wheelIdleTimer = null; }
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();
