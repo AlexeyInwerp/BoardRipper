@@ -31,7 +31,7 @@ import {
   quantizeFontSize,
   resolvePartTypeOverride,
   applyBodyShapeOverride,
-  isNcNet,
+  isOutlineOnlyNet,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
@@ -1224,7 +1224,7 @@ export function buildBoardScene(
       const isPin1 = pni === 0 && isMultiPin;
       // Compute netUpper early — needed for both NC drawing routing and label suppression.
       const netUpper = pin.net?.toUpperCase() ?? '';
-      const isNcPin  = isNcNet(netUpper, s.ncNetPatterns);
+      const isNcPin  = isOutlineOnlyNet(s, netUpper);
       const color = (isPin1 && s.showPin1Marker) ? BOARD_COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
       const ncGfx = isBottom ? bottomNcPinGfx : topNcPinGfx;
 

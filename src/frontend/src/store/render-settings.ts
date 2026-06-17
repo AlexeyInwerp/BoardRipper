@@ -60,6 +60,29 @@ export interface NetColorRule {
   enabled: boolean;
 }
 
+/** One keyword→colour rule inside a pin group. `keywords` is a comma-separated
+ *  list (e.g. "VCC, 3VA, VDD"); each keyword is matched case-insensitively
+ *  against the net name. A keyword ending in `*` is a prefix match; one
+ *  containing `#` matches a run of digits; otherwise the parent group's match
+ *  mode applies (substring for normal groups, exact for outline-only groups —
+ *  see matchPinGroupKeyword). */
+export interface PinGroupRule {
+  id: string;
+  keywords: string;
+  color: string;
+}
+
+/** A named, ordered category of pin/net colour rules (Power, Ground, Datalines,
+ *  Logical, Misc…). Supersedes the flat `netColorRules` + `ncNetPatterns`.
+ *  `outlineOnly` renders matching pins as outline-only circles (no fill / no
+ *  labels) — the old "no-connect" behaviour, now generalised to any group. */
+export interface PinGroup {
+  id: string;
+  label: string;
+  outlineOnly: boolean;
+  rules: PinGroupRule[];
+}
+
 export interface RenderSettings {
   outlineWidth: number;
   outlineAlpha: number;
@@ -259,16 +282,24 @@ export interface RenderSettings {
    */
   dragToZoom: boolean;
 
+  /** @deprecated Superseded by `pinGroups`. Retained so older persisted
+   *  settings still parse and can be migrated (migrateToPinGroups). Not read by
+   *  the pin-colour resolver anymore. */
   netColorRules: NetColorRule[];
 
-  /** Default pin fill color (hex `#rrggbb`) applied when no `netColorRules`
-   *  pattern matches. Separate values for the top and bottom side of the board.
+  /** Pin/net colour groups — the source of truth for pin fill colours and
+   *  outline-only (no-connect-style) rendering. Each group is an ordered list
+   *  of keyword→colour rules; first matching rule across all groups wins. */
+  pinGroups: PinGroup[];
+
+  /** Default pin fill color (hex `#rrggbb`) applied when no `pinGroups` rule
+   *  matches. Separate values for the top and bottom side of the board.
    *  Traditional defaults: green top, red bottom. */
   defaultPinColorTop: string;
   defaultPinColorBottom: string;
 
-  /** Net name patterns treated as "no connect" — outline-only pins, no fill, no labels.
-   *  Patterns are case-insensitive. Supports trailing `*` wildcard (e.g. `NC_*` matches `NC_PAD`). */
+  /** @deprecated Folded into `pinGroups` (the outline-only group). Kept for
+   *  migration of older persisted settings. */
   ncNetPatterns: string[];
 
   /** Part Types — ordered list of component categories with prefix rules. */
@@ -318,6 +349,111 @@ const DEFAULT_NET_COLOR_RULES: NetColorRule[] = [
   { id: 'vcc',  pattern: 'VCC',  color: '#dd3333', enabled: true },
   { id: 'pp',   pattern: 'PP',   color: '#dd6633', enabled: true },
 ];
+
+/** Canonical pin/net groups. Colours for Power/Ground/PP preserve the legacy
+ *  net-colour-rule values; Datalines/Logical are new. The Misc group is
+ *  outline-only (the old no-connect rendering). */
+export const DEFAULT_PIN_GROUPS: PinGroup[] = [
+  {
+    id: 'power', label: 'Power', outlineOnly: false,
+    rules: [
+      { id: 'power-v',  keywords: 'VCC, 3VA, VDD, VSG, 3VS, 5VS', color: '#dd3333' },
+      { id: 'power-pp', keywords: 'PP',                           color: '#dd6633' },
+    ],
+  },
+  {
+    id: 'ground', label: 'Ground', outlineOnly: false,
+    rules: [
+      { id: 'gnd', keywords: 'GND', color: '#666666' },
+      { id: 'vss', keywords: 'VSS', color: '#9a9a9a' },
+    ],
+  },
+  {
+    id: 'datalines', label: 'Datalines', outlineOnly: false,
+    rules: [
+      { id: 'serial', keywords: 'I2C, SPI, SDA, SCL, SPMI, UART, SMB', color: '#d96bb0' },
+      { id: 'pci',    keywords: 'PCI',                                 color: '#3a7bd5' },
+      { id: 'ddr',    keywords: 'DDR',                                 color: '#6fa8e0' },
+    ],
+  },
+  {
+    id: 'logical', label: 'Logical', outlineOnly: false,
+    rules: [
+      { id: 'enable', keywords: 'EN, RESET, RST, SW#', color: '#3aa6a0' },
+      { id: 'onoff',  keywords: 'ONOFF',               color: '#9a6bd9' },
+    ],
+  },
+  {
+    id: 'misc', label: 'Misc', outlineOnly: true,
+    rules: [
+      { id: 'nc', keywords: 'NC, NC_*, NO CONNECT, N/C', color: '#555555' },
+    ],
+  },
+];
+
+/**
+ * Match one keyword against an upper-cased net name.
+ *  - `*` is a wildcard run, `#` matches a run of digits → anchored regex.
+ *  - No wildcard: substring match for normal groups (so VCC→VCCIO, GND→AGND
+ *    keep working as before), exact match for outline-only groups (so the bare
+ *    keyword `NC` never catches `SYNC` — preserves the old isNcNet behaviour).
+ */
+export function matchPinGroupKeyword(netUpper: string, keyword: string, exact: boolean): boolean {
+  const kw = keyword.trim().toUpperCase();
+  if (!kw) return false;
+  if (kw.includes('*') || kw.includes('#')) {
+    const re = '^' + kw.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/#/g, '[0-9]+') + '$';
+    try { return new RegExp(re).test(netUpper); } catch { return false; }
+  }
+  return exact ? netUpper === kw : netUpper.includes(kw);
+}
+
+/** Resolve the first matching pin group/rule for a net name, or null. */
+export function resolvePinGroup(
+  settings: RenderSettings,
+  netName: string,
+): { color: number; outlineOnly: boolean } | null {
+  if (!netName || !settings.pinGroups) return null;
+  const upper = netName.toUpperCase();
+  for (const group of settings.pinGroups) {
+    for (const rule of group.rules) {
+      for (const kw of rule.keywords.split(',')) {
+        if (matchPinGroupKeyword(upper, kw, group.outlineOnly)) {
+          return { color: parseInt(rule.color.replace('#', ''), 16), outlineOnly: group.outlineOnly };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** True when a net should render as an outline-only pin (no fill / no labels). */
+export function isOutlineOnlyNet(settings: RenderSettings, netName: string): boolean {
+  return resolvePinGroup(settings, netName)?.outlineOnly ?? false;
+}
+
+/**
+ * Build pinGroups for a settings object that predates them (migration). Starts
+ * from the canonical defaults; folds any *custom* legacy netColorRules (beyond
+ * the built-in gnd/vcc/pp) into a "Custom" group, and replaces the Misc/NC
+ * keywords if the user customised ncNetPatterns.
+ */
+export function migrateToPinGroups(s: Partial<RenderSettings>): PinGroup[] {
+  const groups: PinGroup[] = DEFAULT_PIN_GROUPS.map(g => ({ ...g, rules: g.rules.map(r => ({ ...r })) }));
+  const legacyDefaults = new Set(['GND', 'VCC', 'PP']);
+  const custom = (s.netColorRules ?? []).filter(r => r.enabled && !legacyDefaults.has(r.pattern.toUpperCase()));
+  if (custom.length) {
+    groups.splice(groups.length - 1, 0, {
+      id: 'custom-legacy', label: 'Custom', outlineOnly: false,
+      rules: custom.map((r, i) => ({ id: `legacy-${i}`, keywords: r.pattern, color: r.color })),
+    });
+  }
+  if (s.ncNetPatterns && s.ncNetPatterns.length) {
+    const misc = groups.find(g => g.id === 'misc');
+    if (misc) misc.rules = [{ id: 'nc', keywords: s.ncNetPatterns.join(', '), color: '#555555' }];
+  }
+  return groups;
+}
 
 export const DEFAULTS: RenderSettings = {
   outlineWidth: 3,
@@ -409,6 +545,7 @@ export const DEFAULTS: RenderSettings = {
   dragToZoom: false,
 
   netColorRules: DEFAULT_NET_COLOR_RULES.map(r => ({ ...r })),
+  pinGroups: DEFAULT_PIN_GROUPS.map(g => ({ ...g, rules: g.rules.map(r => ({ ...r })) })),
   defaultPinColorTop: '#44cc44',
   defaultPinColorBottom: '#cc4444',
 
@@ -905,16 +1042,12 @@ export function computePartRenderBounds(
   return { px: eb.px, py: eb.py, pw: eb.pw, ph: eb.ph };
 }
 
-/** Resolve pin color from a settings object (not necessarily the live one) */
+/** Resolve pin color from a settings object (not necessarily the live one).
+ *  Driven by `pinGroups`; the matched rule's colour wins (outline-only groups
+ *  use it as the outline stroke colour). Falls back to the per-side default. */
 export function resolvePinColor(settings: RenderSettings, netName: string, side: 'top' | 'bottom'): number {
-  if (netName) {
-    const upper = netName.toUpperCase();
-    for (const rule of settings.netColorRules) {
-      if (rule.enabled && upper.includes(rule.pattern.toUpperCase())) {
-        return parseInt(rule.color.replace('#', ''), 16);
-      }
-    }
-  }
+  const g = resolvePinGroup(settings, netName);
+  if (g) return g.color;
   const fallback = side === 'bottom' ? settings.defaultPinColorBottom : settings.defaultPinColorTop;
   return parseInt(fallback.replace('#', ''), 16);
 }
@@ -1018,6 +1151,16 @@ function loadFromStorage(): RenderSettings {
         // Legacy format — migrate prefix-keyed overrides into types.
         result.partTypes = migrateLegacyPartTypes(parsed.partTypeOverrides);
       }
+      // Migration: pinGroups superseded netColorRules + ncNetPatterns. Old
+      // persisted settings have no pinGroups → build them from defaults, folding
+      // in any custom legacy rules. New persisted settings keep their groups
+      // (fall back to defaults if the stored array is empty/corrupt).
+      if (!Array.isArray(parsed.pinGroups) || parsed.pinGroups.length === 0) {
+        result.pinGroups = migrateToPinGroups(parsed);
+      } else {
+        result.pinGroups = parsed.pinGroups;
+      }
+
       // Clamp hierarchyDepth into the supported 1–4 range (the slider enforces
       // it, but guard hand-edited / corrupt persisted values). A missing key is
       // already backfilled by the DEFAULTS spread above.
@@ -1138,10 +1281,13 @@ function saveToStorage(s: RenderSettings) {
 function mergeSettings(global: RenderSettings, overrides: Partial<RenderSettings>): RenderSettings {
   if (!overrides || Object.keys(overrides).length === 0) return global;
   const merged = { ...global, ...overrides };
-  // partTypes: board overrides fully replace the global list when present
-  // (same "replace entirely" semantics as netColorRules).
+  // partTypes / pinGroups: board (and theme) overrides fully replace the global
+  // list when present — deep-clone so callers can't mutate the override source.
   if (overrides.partTypes) {
     merged.partTypes = structuredClone(overrides.partTypes);
+  }
+  if (overrides.pinGroups) {
+    merged.pinGroups = structuredClone(overrides.pinGroups);
   }
   return merged;
 }

@@ -19,7 +19,7 @@ import { boardStore } from '../store/board-store';
 import type { SelectionState, NetLineMode } from '../store/board-store';
 import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
-import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isNcNet, resolvePartType } from '../store/render-settings';
+import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isOutlineOnlyNet, resolvePartType } from '../store/render-settings';
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
@@ -3454,7 +3454,7 @@ export class BoardRenderer {
         if (!net) continue;
 
         const netUpper = netName.toUpperCase();
-        const skipGhosts = netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns);
+        const skipGhosts = netUpper.includes('GND') || isOutlineOnlyNet(s, netUpper);
 
         // Part outlines + ghost gathering for this net.
         for (const ref of net.pinIndices) {
@@ -3952,7 +3952,7 @@ export class BoardRenderer {
         if (!net || seen.has(net)) continue;
         seen.add(net);
         const up = net.toUpperCase();
-        if (up.includes('GND') || isNcNet(up, s.ncNetPatterns)) continue;
+        if (up.includes('GND') || isOutlineOnlyNet(s, up)) continue;
         count.set(net, (count.get(net) ?? 0) + 1);
       }
     }
@@ -4015,7 +4015,7 @@ export class BoardRenderer {
 
     // Skip GND/NC nets — GND connects too many components, NC is not a real net.
     const netUpper = netName.toUpperCase();
-    if (netUpper.includes('GND') || isNcNet(netUpper, s.ncNetPatterns)) return;
+    if (netUpper.includes('GND') || isOutlineOnlyNet(s, netUpper)) return;
 
     // For chain-adjacent, force chain topology on adjacent nets even if the
     // primary selection prefers star — star requires a part anchor that the
