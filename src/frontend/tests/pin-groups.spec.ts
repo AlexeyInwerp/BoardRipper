@@ -86,3 +86,46 @@ test('a theme can carry its own pinGroups (override flows into effective setting
   expect(r.before).toBe('666666');
   expect(r.after).toBe('0');   // #000000 → 0
 });
+
+test('Landrex clears pin groups → monochrome white pins', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 10000 });
+
+  const r = await page.evaluate(async () => {
+    const themes = await import('/src/store/themes.ts');
+    const rs = await import('/src/store/render-settings.ts');
+    themes.themeStore.setTheme('landrex');
+    const s = rs.renderSettingsStore.settings;
+    return {
+      groups: s.pinGroups.length,
+      vcc: rs.resolvePinColor(s, 'VCC', 'top').toString(16),
+      gnd: rs.resolvePinColor(s, 'GND', 'top').toString(16),
+    };
+  });
+  // Landrex's boardOverrides clear pinGroups → every pin falls to the white
+  // default, restoring the monochrome look.
+  expect(r.groups).toBe(0);
+  expect(r.vcc).toBe('ffffff');
+  expect(r.gnd).toBe('ffffff');
+});
+
+test('net-label background colour + opacity are theme-carried', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('toolbar')).toBeVisible({ timeout: 10000 });
+
+  const r = await page.evaluate(async () => {
+    const themes = await import('/src/store/themes.ts');
+    themes.themeStore.ensureCustom();
+    themes.themeStore.setTheme('custom');
+    const before = { ...themes.themeStore.activeTheme().board };
+    themes.themeStore.updateCustom({ board: { netLabelBg: '#123456', netLabelBgOpacity: 0.4 } });
+    const after = { ...themes.themeStore.activeTheme().board };
+    return {
+      beforeBg: before.netLabelBg, beforeOp: before.netLabelBgOpacity,
+      afterBg: after.netLabelBg, afterOp: after.netLabelBgOpacity,
+    };
+  });
+  expect(r.beforeBg).toBeTruthy();           // default seeded from active theme
+  expect(r.afterBg.toLowerCase()).toBe('#123456');
+  expect(r.afterOp).toBe(0.4);
+});

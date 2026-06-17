@@ -50,6 +50,11 @@ export interface Theme {
     labelPart: string;
     /** Net-name labels. Default is light blue; monochrome themes set white. */
     labelNet: string;
+    /** Background box behind net-name labels (when the bg toggle is on). Dark
+     *  themes use near-black; light themes a light tint of the board fill. */
+    netLabelBg: string;
+    /** Opacity 0–1 of the net-label background box. */
+    netLabelBgOpacity: number;
   };
 
   /**
@@ -93,6 +98,8 @@ export const THEMES: Record<string, Theme> = {
       labelText:          '#ffffff',
       labelPart:          '#cccccc',
       labelNet:           '#88ccff',
+      netLabelBg:         '#000000',
+      netLabelBgOpacity:  0.6,
     },
     // Default theme = no overrides. Whatever the user has configured wins.
   },
@@ -125,6 +132,8 @@ export const THEMES: Record<string, Theme> = {
       labelText:          '#ffffff',
       labelPart:          '#ffffff',
       labelNet:           '#ffffff',
+      netLabelBg:         '#000000',
+      netLabelBgOpacity:  0.6,
     },
     // Landrex supermode — strip every source of board-content color.
     // User keeps their saved settings; these layer on top while Landrex is
@@ -134,7 +143,9 @@ export const THEMES: Record<string, Theme> = {
       showPin1Marker:      false,    // no red pin-1 dot
       defaultPinColorTop:    '#ffffff',
       defaultPinColorBottom: '#ffffff',
-      netColorRules:       [],       // no GND/VCC/PP color rules
+      netColorRules:       [],       // legacy (no longer read by the resolver)
+      pinGroups:           [],       // clear net-class groups → every pin falls
+                                     // to the white default (true monochrome)
       showSelectionHalo:   false,    // suppress yellow pin-halo overlay
     },
   },
@@ -173,6 +184,8 @@ export const THEMES: Record<string, Theme> = {
       labelText:          '#2b2722',
       labelPart:          '#5b4f3c',
       labelNet:           '#7a5a2a',
+      netLabelBg:         '#fbfaf6',
+      netLabelBgOpacity:  0.72,
     },
   },
   daylight: {
@@ -198,6 +211,8 @@ export const THEMES: Record<string, Theme> = {
       labelText:          '#1f2329',
       labelPart:          '#4a5560',
       labelNet:           '#2f6db5',
+      netLabelBg:         '#f8f9fb',
+      netLabelBgOpacity:  0.72,
     },
   },
   'blueprint-light': {
@@ -223,6 +238,8 @@ export const THEMES: Record<string, Theme> = {
       labelText:          '#16263a',
       labelPart:          '#2c4663',
       labelNet:           '#1f5fa8',
+      netLabelBg:         '#f3f7fc',
+      netLabelBgOpacity:  0.72,
     },
   },
 };

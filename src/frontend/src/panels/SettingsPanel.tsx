@@ -2331,9 +2331,9 @@ function ThemeBoardColorsEditor() {
       <MiniColorRow label="Butterfly" value={board.butterflySelection} onChange={(h) => setBoard('butterflySelection', h)} />
       <MiniColorRow label="Pin labels" value={board.labelText} onChange={(h) => setBoard('labelText', h)} />
       <MiniColorRow label="Part labels" value={board.labelPart} onChange={(h) => setBoard('labelPart', h)} />
-      <MiniColorRow label="Net labels" value={board.labelNet} onChange={(h) => setBoard('labelNet', h)} />
       <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.7, padding: '2px 0' }}>
-        Body text and the secondary surface/border tiers are derived automatically for contrast.
+        Net-label colours are under “Net labels” below. Body text and the
+        secondary surface/border tiers are derived automatically for contrast.
       </div>
     </div>
   );
@@ -2463,6 +2463,37 @@ function ThemePinGroupsEditor() {
         onChange={(h) => { if (gateThemeEdit()) themeStore.setCustomOverride('defaultPinColorTop', h); }} />
       <MiniColorRow label="Bottom side" value={settings.defaultPinColorBottom}
         onChange={(h) => { if (gateThemeEdit()) themeStore.setCustomOverride('defaultPinColorBottom', h); }} />
+
+      <ThemeNetLabelEditor />
+    </div>
+  );
+}
+
+/** Net-name label styling — font colour + background colour & opacity. Lives
+ *  with the net colours (Pin colours section). Font is theme.board.labelNet;
+ *  the background box (shown when the per-side bg toggle is on) is
+ *  theme.board.netLabelBg / netLabelBgOpacity. All route through the gate. */
+function ThemeNetLabelEditor() {
+  useThemeId();
+  const board = themeStore.activeTheme().board;
+  const opacity = board.netLabelBgOpacity ?? 0.6;
+  return (
+    <div>
+      <div style={GROUP_LABEL}>Net labels</div>
+      <MiniColorRow label="Font" value={board.labelNet}
+        onChange={(h) => { if (gateThemeEdit()) themeStore.updateCustom({ board: { labelNet: h } }); }} />
+      <MiniColorRow label="Background" value={board.netLabelBg ?? '#000000'}
+        onChange={(h) => { if (gateThemeEdit()) themeStore.updateCustom({ board: { netLabelBg: h } }); }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 104 }}>Bg opacity</span>
+        <input type="range" min={0} max={1} step={0.05} value={opacity}
+          onChange={(e) => { if (gateThemeEdit()) themeStore.updateCustom({ board: { netLabelBgOpacity: parseFloat(e.target.value) } }); }}
+          style={{ flex: 1, accentColor: 'var(--accent)' }} />
+        <code style={{ fontSize: 10.5, color: 'var(--text-secondary)', fontFamily: MONO, minWidth: 28, textAlign: 'right' }}>{Math.round(opacity * 100)}%</code>
+      </div>
+      <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.7, padding: '2px 0' }}>
+        The background box appears when net-label backgrounds are enabled (Board ▸ Labels).
+      </div>
     </div>
   );
 }

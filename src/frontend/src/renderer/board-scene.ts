@@ -51,6 +51,10 @@ export const BOARD_COLORS = {
   get labelPin()           { return hexToInt(themeStore.activeTheme().board.labelText); },
   get labelPart()          { return hexToInt(themeStore.activeTheme().board.labelPart); },
   get labelNet()           { return hexToInt(themeStore.activeTheme().board.labelNet); },
+  // Net-label background box. Fallbacks cover custom themes persisted before
+  // these fields existed (old JSON has no netLabelBg/netLabelBgOpacity).
+  get netLabelBg()         { return hexToInt(themeStore.activeTheme().board.netLabelBg ?? '#000000'); },
+  get netLabelBgAlpha()    { return themeStore.activeTheme().board.netLabelBgOpacity ?? 0.6; },
   get boardFillDefault()   { return hexToInt(themeStore.activeTheme().board.boardFill); },
   // Palette entries below are not theme slots in v1 — they remain static.
   partBoundsTop:     0x336633,
@@ -1490,7 +1494,7 @@ export function buildBoardScene(
               const estH = netFontSize * 1.1;
               const bg = new Graphics();
               bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
-              bg.fill({ color: 0x000000, alpha: 0.6 });
+              bg.fill({ color: BOARD_COLORS.netLabelBg, alpha: BOARD_COLORS.netLabelBgAlpha });
               netLabel.x = 0; netLabel.y = 0;
               const wrapper = new Container();
               wrapper.x = nx; wrapper.y = ny;
@@ -1510,7 +1514,7 @@ export function buildBoardScene(
               const estH = netFontSize * 1.1;
               const bg = new Graphics();
               bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
-              bg.fill({ color: 0x000000, alpha: 0.6 });
+              bg.fill({ color: BOARD_COLORS.netLabelBg, alpha: BOARD_COLORS.netLabelBgAlpha });
               netLabel.x = 0; netLabel.y = 0;
               const wrapper = new Container();
               wrapper.x = nx; wrapper.y = ny;
