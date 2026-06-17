@@ -364,8 +364,11 @@ export const DEFAULT_PIN_GROUPS: PinGroup[] = [
   {
     id: 'ground', label: 'Ground', outlineOnly: false,
     rules: [
-      { id: 'gnd', keywords: 'GND', color: '#666666' },
-      { id: 'vss', keywords: 'VSS', color: '#9a9a9a' },
+      // Separate / analog grounds get the lighter shade. Listed BEFORE the
+      // main GND rule because substring matching would otherwise let AGND fall
+      // into GND first (AGND contains "GND"). AGND ≡ VSS per spec.
+      { id: 'gnd-sep', keywords: 'AGND, VSS', color: '#9a9a9a' },
+      { id: 'gnd',     keywords: 'GND',       color: '#666666' },
     ],
   },
   {

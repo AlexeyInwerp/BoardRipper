@@ -653,6 +653,23 @@ class ThemeStore extends Emitter {
     this.notify();
   }
 
+  /**
+   * Overwrite the custom slot with a clone of the currently-active theme and
+   * switch to it. The copy-to-custom-on-edit entry point: lets the colour
+   * editors fork whatever built-in theme is active (preserving its palette)
+   * into the single editable slot, rather than seeding from default.
+   */
+  forkToCustom(): void {
+    this._customTheme = seedCustomFrom(this.activeTheme());
+    saveCustomTheme(this._customTheme);
+    if (this._activeId !== CUSTOM_ID) {
+      this._activeId = CUSTOM_ID;
+      saveToStorage(CUSTOM_ID);
+    }
+    this.applyAll();
+    this.notify();
+  }
+
   /** Delete the custom theme and, if it was active, fall back to default. */
   resetCustom(): void {
     this._customTheme = null;

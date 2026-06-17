@@ -98,7 +98,7 @@ test.describe('Themes', () => {
     await expect(tabsRow.getByText('System', { exact: true })).toBeVisible();
   });
 
-  test('custom theme editor: Create button appears on the Theme tab', async ({ page }) => {
+  test('Theme tab shows the board + pin-group colour editors', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.removeItem('boardripper-theme');
       localStorage.removeItem('boardripper-custom-theme');
@@ -111,10 +111,12 @@ test.describe('Themes', () => {
     const panel = page.locator('[data-testid="settings-panel"]');
     await expect(panel).toBeVisible();
 
-    // Make sure the Theme sub-tab is active, then assert the custom editor's
-    // create affordance is present (proves CustomThemeEditor mounted).
+    // The board + pin colour editors (carried by theme) live on the Theme tab.
+    // Creation of the custom slot is implicit on first edit (no Create button).
     const tabsRow = panel.locator('.settings-tabs-row, .library-tabs-row').first();
     await tabsRow.getByText('Theme', { exact: true }).click();
-    await expect(panel.getByRole('button', { name: /create custom theme/i })).toBeVisible();
+    await expect(panel.getByText('Pin colours (by net group)')).toBeVisible();
+    await expect(panel.getByText('Power', { exact: true })).toBeVisible();
+    await expect(panel.getByText('Component fills')).toBeVisible();
   });
 });

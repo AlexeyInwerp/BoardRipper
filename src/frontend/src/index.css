@@ -5835,6 +5835,12 @@ body {
   gap: 6px;
   min-height: 26px;
 }
+/* Compact variant (Theme tab component-fills editor): Pad/Body shape columns
+ * hidden, so the grid drops to Type / Prefixes / Fill / Hide / Bridge. */
+.part-types.compact .part-types-header,
+.part-types.compact .part-type-row {
+  grid-template-columns: 70px 1fr 26px 26px 40px;
+}
 
 .part-types-header {
   font-size: 0.72em;

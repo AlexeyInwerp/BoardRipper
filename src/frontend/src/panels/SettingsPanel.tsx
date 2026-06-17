@@ -12,7 +12,7 @@ import {
   useSettingsSearch,
   recordRenderedField,
 } from './settings/SettingsSearch';
-import type { RenderSettings, NetColorRule, PartType, PadShape, BodyShape } from '../store/render-settings';
+import type { RenderSettings, PartType, PadShape, BodyShape, PinGroup, PinGroupRule } from '../store/render-settings';
 import { SettingsMockup } from './SettingsMockup';
 import { InterfaceScaleSlider } from '../components/InterfaceScaleSlider';
 import type { MockupSectionId } from './SettingsMockup';
@@ -136,11 +136,6 @@ function saveOpenSections(tab: SettingsTabId, sections: Set<SectionId>) {
 }
 
 type DraftUpdater = (partial: Partial<RenderSettings>) => void;
-type RuleUpdater = {
-  add: (pattern: string, color: string) => void;
-  update: (id: string, updates: Partial<NetColorRule>) => void;
-  remove: (id: string) => void;
-};
 
 // ---- Collapsible section ----
 
@@ -237,98 +232,6 @@ function Toggle({ label, value, field, onUpdate, title }: ToggleProps) {
   );
 }
 
-// ---- Net color rules ----
-
-function NetColorRuleRow({ rule, rules: ruleActions }: { rule: NetColorRule; rules: RuleUpdater }) {
-  return (
-    <div className="color-rule-row">
-      <input
-        type="checkbox" checked={rule.enabled}
-        onChange={(e) => ruleActions.update(rule.id, { enabled: e.target.checked })}
-        title="Enable/disable"
-      />
-      <input
-        type="text" className="color-rule-pattern" value={rule.pattern}
-        onChange={(e) => ruleActions.update(rule.id, { pattern: e.target.value })}
-        placeholder="Keyword"
-      />
-      <input
-        type="color" className="color-rule-color" value={rule.color}
-        onChange={(e) => ruleActions.update(rule.id, { color: e.target.value })}
-      />
-      <button className="color-rule-remove" onClick={() => ruleActions.remove(rule.id)} title="Remove rule">×</button>
-    </div>
-  );
-}
-
-function NetColorRulesSection({ rules, ruleActions }: { rules: NetColorRule[]; ruleActions: RuleUpdater }) {
-  const [newPattern, setNewPattern] = useState('');
-  const [newColor, setNewColor] = useState('#ff6600');
-
-  const addRule = () => {
-    const trimmed = newPattern.trim();
-    if (!trimmed) return;
-    ruleActions.add(trimmed, newColor);
-    setNewPattern('');
-  };
-
-  return (
-    <>
-      <div className="color-rules-list">
-        {rules.map((rule) => <NetColorRuleRow key={rule.id} rule={rule} rules={ruleActions} />)}
-      </div>
-      <div className="color-rule-add">
-        <input
-          type="text" className="color-rule-pattern" value={newPattern}
-          onChange={(e) => setNewPattern(e.target.value)}
-          placeholder="Keyword (e.g. SDA)"
-          onKeyDown={(e) => { if (e.key === 'Enter') addRule(); }}
-        />
-        <input type="color" className="color-rule-color" value={newColor} onChange={(e) => setNewColor(e.target.value)} />
-        <button className="color-rule-add-btn" onClick={addRule}>+</button>
-      </div>
-      <div className="color-rule-hint">First matching rule wins. Case-insensitive substring match.</div>
-    </>
-  );
-}
-
-// ---- NC net patterns ----
-
-function NcNetPatternsSection({ patterns, onChange }: { patterns: string[]; onChange: (p: string[]) => void }) {
-  const [newPat, setNewPat] = useState('');
-
-  const add = () => {
-    const trimmed = newPat.trim();
-    if (!trimmed || patterns.includes(trimmed)) return;
-    onChange([...patterns, trimmed]);
-    setNewPat('');
-  };
-
-  const remove = (idx: number) => onChange(patterns.filter((_, i) => i !== idx));
-
-  return (
-    <>
-      <div className="nc-patterns-list">
-        {patterns.map((pat, i) => (
-          <div key={i} className="nc-pattern-row">
-            <span className="nc-pattern-text">{pat}</span>
-            <button className="color-rule-remove" onClick={() => remove(i)} title="Remove pattern">×</button>
-          </div>
-        ))}
-      </div>
-      <div className="color-rule-add">
-        <input
-          type="text" className="color-rule-pattern" value={newPat}
-          onChange={(e) => setNewPat(e.target.value)}
-          placeholder="e.g. NC_*"
-          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
-        />
-        <button className="color-rule-add-btn" onClick={add}>+</button>
-      </div>
-      <div className="color-rule-hint">Outline-only pins, no fill or labels. Case-insensitive. Trailing * = prefix match.</div>
-    </>
-  );
-}
 
 // ---- Part types (grouped component categories, issue #10) ----
 
@@ -339,7 +242,7 @@ type PartTypeActions = {
 const PAD_SHAPES: PadShape[]  = ['natural', 'round', 'square'];
 const BODY_SHAPES: BodyShape[] = ['natural', 'rect', 'square'];
 
-function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeActions }) {
+function PartTypeRow({ type: t, actions, hideShapes }: { type: PartType; actions: PartTypeActions; hideShapes?: boolean }) {
   // Track the prefix text locally so the user can type commas/spaces freely.
   const [editPrefixes, setEditPrefixes] = useState(t.prefixes.join(', '));
 
@@ -382,6 +285,7 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
         title="Comma-separated prefixes (e.g. R, PR, PH)"
         placeholder="R, PR, PH"
       />
+      {!hideShapes && (
       <div className="pt-col-pad settings-btn-group">
         {PAD_SHAPES.map(shape => (
           <button key={shape}
@@ -393,6 +297,8 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
           </button>
         ))}
       </div>
+      )}
+      {!hideShapes && (
       <div className="pt-col-body settings-btn-group">
         {BODY_SHAPES.map(shape => (
           <button key={shape}
@@ -404,6 +310,7 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
           </button>
         ))}
       </div>
+      )}
       <span className="pt-col-color">
         <input type="color" className="pto-color-input"
           value={t.color || '#000000'}
@@ -424,20 +331,20 @@ function PartTypeRow({ type: t, actions }: { type: PartType; actions: PartTypeAc
   );
 }
 
-function PartTypesSection({ types, actions }: { types: PartType[]; actions: PartTypeActions }) {
+function PartTypesSection({ types, actions, hideShapes }: { types: PartType[]; actions: PartTypeActions; hideShapes?: boolean }) {
   return (
-    <div className="part-types">
+    <div className={`part-types${hideShapes ? ' compact' : ''}`}>
       <div className="part-types-header">
         <span>Type</span>
         <span>Prefixes</span>
-        <span>Pads</span>
-        <span>Body</span>
+        {!hideShapes && <span>Pads</span>}
+        {!hideShapes && <span>Body</span>}
         <span>Fill</span>
         <span>Hide</span>
         <span title="Bridge nets through this type in hierarchical net lines, even with >2 pins.">Bridge</span>
       </div>
       {types.map(t => (
-        <PartTypeRow key={t.id} type={t} actions={actions} />
+        <PartTypeRow key={t.id} type={t} actions={actions} hideShapes={hideShapes} />
       ))}
       <div className="color-rule-hint">Longest prefix wins across all types (e.g. FB beats F for FB1).</div>
       <div className="color-rule-hint">Bridge: carry hierarchical (chain + adjacent) net lines through &gt;2-pin parts of this type (e.g. current-sense resistors, transistors).</div>
@@ -1648,53 +1555,8 @@ export function SettingsPanel() {
     });
   }, [isBoardMode]);
 
-  const ruleActions: RuleUpdater = useMemo(() => ({
-    add(pattern, color) {
-      setDraft(prev => {
-        const next = { ...prev, netColorRules: [...prev.netColorRules, { id: `rule_${Date.now()}`, pattern, color, enabled: true }] };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-    update(id, updates) {
-      setDraft(prev => {
-        const next = { ...prev, netColorRules: prev.netColorRules.map(r => r.id === id ? { ...r, ...updates } : r) };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-    remove(id) {
-      setDraft(prev => {
-        const next = { ...prev, netColorRules: prev.netColorRules.filter(r => r.id !== id) };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-  }), []);
-
-  const onNcPatternsChange = useCallback((patterns: string[]) => {
-    setDraft(prev => {
-      const next = { ...prev, ncNetPatterns: patterns };
-      if (previewingRef.current) renderSettingsStore.applySettings(next);
-      return next;
-    });
-    setDirty(true);
-  }, []);
-
-  const partTypeActions: PartTypeActions = useMemo(() => ({
-    update(id, patch) {
-      setDraft(prev => {
-        const partTypes = prev.partTypes.map(t => t.id === id ? { ...t, ...patch } : t);
-        const next = { ...prev, partTypes };
-        if (previewingRef.current) renderSettingsStore.applySettings(next);
-        return next;
-      });
-      setDirty(true);
-    },
-  }), []);
+  // Pin-colour rules, NC patterns and component fills moved to the Theme tab
+  // (carried by the theme), so their Board-tab edit handlers were removed.
 
   const handleApply = () => {
     if (isBoardMode) {
@@ -2004,32 +1866,21 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={partTypeOverridesRef} isFocused={focusedSection === 'partTypeOverrides'}>
         <Slider label="Hierarchy Depth" value={draft.hierarchyDepth} min={1} max={4} step={1} field="hierarchyDepth" onUpdate={updateDraft}
           title="How many hops the hierarchical (chain + adjacent) net-line mode follows through bridging parts. 1 = immediate neighbours; up to 4 follows longer series chains." />
-        <PartTypesSection types={draft.partTypes} actions={partTypeActions} />
+        <div className="color-rule-hint" style={{ padding: '4px 0' }}>
+          Component fill colours &amp; prefixes are carried by the theme — edit
+          them under <strong>Settings ▸ Theme ▸ Board &amp; pin colours</strong>.
+        </div>
       </CollapsibleSection>
       )}
 
       {activeTab === SECTION_TO_TAB.netColors && (
       <CollapsibleSection id="netColors" title="Pin Color Rules" isOpen={openSections.has('netColors')}
         onToggle={toggleSection} sectionRef={netColorsRef} isFocused={focusedSection === 'netColors'}>
-        <div className="settings-subsection-label">Default pin color (no rule matched)</div>
-        <div className="color-rule-row">
-          <span className="color-rule-pattern" style={{ flex: 1 }}>Top side</span>
-          <input type="color" className="color-rule-color"
-            value={draft.defaultPinColorTop}
-            onChange={(e) => updateDraft({ defaultPinColorTop: e.target.value })}
-            title="Fill color for top-side pins whose net does not match any rule" />
+        <div className="color-rule-hint" style={{ padding: '4px 0' }}>
+          Pin colours are now grouped by net class (Power / Ground / Datalines /
+          Logical / Misc) and carried by the theme. Edit them under{' '}
+          <strong>Settings ▸ Theme ▸ Board &amp; pin colours</strong>.
         </div>
-        <div className="color-rule-row">
-          <span className="color-rule-pattern" style={{ flex: 1 }}>Bottom side</span>
-          <input type="color" className="color-rule-color"
-            value={draft.defaultPinColorBottom}
-            onChange={(e) => updateDraft({ defaultPinColorBottom: e.target.value })}
-            title="Fill color for bottom-side pins whose net does not match any rule" />
-        </div>
-        <div className="settings-subsection-label">Rules</div>
-        <NetColorRulesSection rules={draft.netColorRules} ruleActions={ruleActions} />
-        <div className="settings-subsection-label">No-Connect Patterns</div>
-        <NcNetPatternsSection patterns={draft.ncNetPatterns} onChange={onNcPatternsChange} />
       </CollapsibleSection>
       )}
 
@@ -2462,111 +2313,179 @@ const GROUP_LABEL: React.CSSProperties = { fontSize: 10.5, textTransform: 'upper
  * exactly the "global settings + overrides if set" model. Lives at the bottom
  * of the Theme tab; creating it adds a "Custom" entry to the board-theme list.
  */
-function CustomThemeEditor() {
-  // Subscribe to theme changes so edits re-render live.
+/** Board-canvas colour editor (Theme tab). Reads the active theme's board
+ *  palette; edits route through the copy-to-custom gate. */
+function ThemeBoardColorsEditor() {
   useThemeId();
-  const overrides = useThemeOverrides();
-  const custom = themeStore.customTheme;
-  const isActive = themeStore.isCustomActive;
-
-  if (!custom) {
-    return (
-      <div>
-        <div style={GROUP_LABEL}>Custom theme</div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 0 8px' }}>
-          Create an editable theme seeded from the current one — then tune every
-          interface and board colour, and override pin colours per theme.
-        </div>
-        <button
-          type="button"
-          className="settings-apply-btn"
-          onClick={() => { themeStore.ensureCustom(); themeStore.setTheme('custom'); }}
-        >
-          Create custom theme
-        </button>
-      </div>
-    );
-  }
-
-  const ov = custom.boardOverrides ?? {};
-  const pinOverrideOn = ov.defaultPinColorTop != null || ov.defaultPinColorBottom != null;
-  const globalTop = renderSettingsStore.globalSettings.defaultPinColorTop;
-  const globalBottom = renderSettingsStore.globalSettings.defaultPinColorBottom;
-
-  const setUi = (k: keyof Theme['ui'], hex: string) => themeStore.updateCustom({ ui: { [k]: hex } });
-  const setBoard = (k: keyof Theme['board'], hex: string) => themeStore.updateCustom({ board: { [k]: hex } });
-
-  // A ui colour is visually masked when the matching interface knob override
-  // is set (knob wins) — surface that so edits don't look like no-ops.
-  const maskedNote = (masked: boolean) => (masked ? <em>overridden by picker above</em> : undefined);
-
+  const board = themeStore.activeTheme().board;
+  const setBoard = (k: keyof Theme['board'], hex: string) => {
+    if (gateThemeEdit()) themeStore.updateCustom({ board: { [k]: hex } });
+  };
   return (
     <div>
-      <div style={{ ...GROUP_LABEL, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span>Custom theme</span>
-        {!isActive && (
-          <button
-            type="button"
-            onClick={() => themeStore.setTheme('custom')}
-            style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}
-          >
-            Activate to preview
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => { if (confirm('Delete the custom theme?')) themeStore.resetCustom(); }}
-          style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border)', color: 'var(--danger)', fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}
-          title="Delete the custom theme"
-        >
-          Delete
-        </button>
-      </div>
-
-      <div style={GROUP_LABEL}>Interface</div>
-      <MiniColorRow label="Background" value={custom.ui.bgPrimary} onChange={(h) => setUi('bgPrimary', h)} note={maskedNote(overrides.background != null)} />
-      <MiniColorRow label="Chrome" value={custom.ui.bgTertiary} onChange={(h) => setUi('bgTertiary', h)} note={maskedNote(overrides.chrome != null)} />
-      <MiniColorRow label="Accent" value={custom.ui.accent} onChange={(h) => setUi('accent', h)} note={maskedNote(overrides.accent != null)} />
+      <div style={GROUP_LABEL}>Board canvas</div>
+      <MiniColorRow label="Canvas" value={board.canvasBackground} onChange={(h) => setBoard('canvasBackground', h)} />
+      <MiniColorRow label="Board fill" value={board.boardFill} onChange={(h) => setBoard('boardFill', h)} />
+      <MiniColorRow label="Outline" value={board.outline} onChange={(h) => setBoard('outline', h)} />
+      <MiniColorRow label="Selection" value={board.selection} onChange={(h) => setBoard('selection', h)} />
+      <MiniColorRow label="Butterfly" value={board.butterflySelection} onChange={(h) => setBoard('butterflySelection', h)} />
+      <MiniColorRow label="Pin labels" value={board.labelText} onChange={(h) => setBoard('labelText', h)} />
+      <MiniColorRow label="Part labels" value={board.labelPart} onChange={(h) => setBoard('labelPart', h)} />
+      <MiniColorRow label="Net labels" value={board.labelNet} onChange={(h) => setBoard('labelNet', h)} />
       <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.7, padding: '2px 0' }}>
         Body text and the secondary surface/border tiers are derived automatically for contrast.
       </div>
+    </div>
+  );
+}
 
-      <div style={GROUP_LABEL}>Board canvas</div>
-      <MiniColorRow label="Canvas" value={custom.board.canvasBackground} onChange={(h) => setBoard('canvasBackground', h)} />
-      <MiniColorRow label="Board fill" value={custom.board.boardFill} onChange={(h) => setBoard('boardFill', h)} />
-      <MiniColorRow label="Outline" value={custom.board.outline} onChange={(h) => setBoard('outline', h)} />
-      <MiniColorRow label="Selection" value={custom.board.selection} onChange={(h) => setBoard('selection', h)} />
-      <MiniColorRow label="Butterfly" value={custom.board.butterflySelection} onChange={(h) => setBoard('butterflySelection', h)} />
-      <MiniColorRow label="Pin labels" value={custom.board.labelText} onChange={(h) => setBoard('labelText', h)} />
-      <MiniColorRow label="Part labels" value={custom.board.labelPart} onChange={(h) => setBoard('labelPart', h)} />
-      <MiniColorRow label="Net labels" value={custom.board.labelNet} onChange={(h) => setBoard('labelNet', h)} />
+/** Component fill-colour editor (Theme tab) — the part-type list with
+ *  per-type fill colour, carried by the theme. Pad/Body shape columns are
+ *  hidden (rarely used; data + code retained). Edits route through the gate. */
+function ThemeComponentFillsEditor() {
+  useThemeId();
+  const settings = useEffectiveSettings();
+  const types = settings.partTypes;
+  // PartTypeActions only exposes update — the theme editor retints / re-prefixes
+  // the standard type set; add/remove of types isn't offered here.
+  const actions: PartTypeActions = {
+    update: (id, patch) => {
+      if (!gateThemeEdit()) return;
+      themeStore.setCustomOverride('partTypes', renderSettingsStore.settings.partTypes.map(t => t.id === id ? { ...t, ...patch } : t));
+    },
+  };
+  return (
+    <div>
+      <div style={GROUP_LABEL}>Component fills</div>
+      <PartTypesSection types={types} actions={actions} hideShapes />
+    </div>
+  );
+}
 
-      <div style={GROUP_LABEL}>Pin colours (override)</div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px 0' }}>
-        <input
-          type="checkbox"
-          checked={pinOverrideOn}
-          onChange={(e) => {
-            if (e.target.checked) {
-              themeStore.setCustomOverride('defaultPinColorTop', globalTop);
-              themeStore.setCustomOverride('defaultPinColorBottom', globalBottom);
-            } else {
-              themeStore.setCustomOverride('defaultPinColorTop', null);
-              themeStore.setCustomOverride('defaultPinColorBottom', null);
-            }
-          }}
-        />
-        Override default pin colours for this theme
-      </label>
-      {pinOverrideOn && (
-        <>
-          <MiniColorRow label="Top pins" value={ov.defaultPinColorTop ?? globalTop} onChange={(h) => themeStore.setCustomOverride('defaultPinColorTop', h)} onClear={() => themeStore.setCustomOverride('defaultPinColorTop', null)} />
-          <MiniColorRow label="Bottom pins" value={ov.defaultPinColorBottom ?? globalBottom} onChange={(h) => themeStore.setCustomOverride('defaultPinColorBottom', h)} onClear={() => themeStore.setCustomOverride('defaultPinColorBottom', null)} />
-          <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.7, padding: '2px 0' }}>
-            These override the global pin colours (Board ▸ Pins) only while the custom theme is active. Net-name colour rules stay global.
+/** Custom-theme management strip — delete the single custom slot. Shown only
+ *  when a custom theme exists. Creation happens implicitly on first edit. */
+function CustomThemeStrip() {
+  useThemeId();
+  if (!themeStore.customTheme) return null;
+  return (
+    <div style={{ ...GROUP_LABEL, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span>Custom theme {themeStore.isCustomActive ? '(active)' : ''}</span>
+      <button
+        type="button"
+        onClick={() => { if (confirm('Delete the custom theme? This reverts to BoardRipper Default.')) themeStore.resetCustom(); }}
+        style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--border)', color: 'var(--danger)', fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}
+        title="Delete the custom theme"
+      >
+        Delete custom
+      </button>
+    </div>
+  );
+}
+
+/** Live effective render settings (global ⊕ board ⊕ theme overrides). */
+function useEffectiveSettings(): RenderSettings {
+  return useSyncExternalStore(
+    (cb) => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.settings,
+  );
+}
+
+/**
+ * Gate a theme-colour edit. If the custom theme is already active, runs the
+ * edit directly. Otherwise asks once to fork the current theme into the
+ * single custom slot (overwriting it if one exists) and switches to it, then
+ * runs the edit. Returns true if the edit should proceed. Editing built-in
+ * themes is never destructive — it always forks to custom first.
+ */
+function gateThemeEdit(): boolean {
+  if (themeStore.isCustomActive) return true;
+  const had = !!themeStore.customTheme;
+  const ok = confirm(
+    had
+      ? 'Editing colours here will overwrite your existing custom theme with the current theme + this change, and switch to it. Continue?'
+      : 'Editing colours here will create a custom theme from the current one and switch to it. Continue?',
+  );
+  if (!ok) return false;
+  // Fork the currently-active theme (preserving its palette) into the custom
+  // slot and switch to it.
+  themeStore.forkToCustom();
+  return true;
+}
+
+/** Pin-group colour editor (Theme tab). Reads the effective pinGroups and
+ *  writes the whole array to the active theme via the copy-to-custom gate. */
+function ThemePinGroupsEditor() {
+  useThemeId(); // re-render on theme switch
+  const settings = useEffectiveSettings();
+  const groups = settings.pinGroups ?? [];
+
+  // Commit a transformed copy of the groups through the gate.
+  const commit = (next: PinGroup[]) => {
+    if (!gateThemeEdit()) return;
+    themeStore.setCustomOverride('pinGroups', next);
+  };
+  const editRule = (gi: number, ri: number, patch: Partial<PinGroupRule>) =>
+    commit(groups.map((g, i) => i !== gi ? g : { ...g, rules: g.rules.map((r, j) => j !== ri ? r : { ...r, ...patch }) }));
+  const removeRule = (gi: number, ri: number) =>
+    commit(groups.map((g, i) => i !== gi ? g : { ...g, rules: g.rules.filter((_, j) => j !== ri) }));
+  const addRule = (gi: number) =>
+    commit(groups.map((g, i) => i !== gi ? g : { ...g, rules: [...g.rules, { id: `r${Date.now()}`, keywords: '', color: '#888888' }] }));
+  const setOutline = (gi: number, on: boolean) =>
+    commit(groups.map((g, i) => i !== gi ? g : { ...g, outlineOnly: on }));
+
+  return (
+    <div>
+      <div style={GROUP_LABEL}>Pin colours (by net group)</div>
+      <div style={{ fontSize: 10.5, color: 'var(--text-secondary)', opacity: 0.75, padding: '0 0 6px' }}>
+        Keywords are comma-separated, matched case-insensitively (substring; <code style={{ fontFamily: MONO }}>*</code> = wildcard, <code style={{ fontFamily: MONO }}>#</code> = digits). First match across groups wins, in order.
+      </div>
+      {groups.map((g, gi) => (
+        <div key={g.id} style={{ marginBottom: 8, border: '1px solid var(--border)', borderRadius: 5, padding: '6px 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>{g.label}</span>
+            <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-secondary)', cursor: 'pointer' }}
+              title="Render matching pins as outline-only circles (no fill / no labels) — e.g. no-connect pins.">
+              <input type="checkbox" checked={g.outlineOnly} onChange={(e) => setOutline(gi, e.target.checked)} />
+              outline-only
+            </label>
           </div>
-        </>
-      )}
+          {g.rules.map((r, ri) => (
+            <PinGroupRuleRow key={r.id} rule={r}
+              onKeywords={(kw) => editRule(gi, ri, { keywords: kw })}
+              onColor={(c) => editRule(gi, ri, { color: c })}
+              onRemove={() => removeRule(gi, ri)} />
+          ))}
+          <button type="button" className="color-rule-add-btn" style={{ marginTop: 2 }} onClick={() => addRule(gi)} title="Add a keyword→colour rule to this group">+ rule</button>
+        </div>
+      ))}
+      <div style={GROUP_LABEL}>Default pin colour (no group matched)</div>
+      <MiniColorRow label="Top side" value={settings.defaultPinColorTop}
+        onChange={(h) => { if (gateThemeEdit()) themeStore.setCustomOverride('defaultPinColorTop', h); }} />
+      <MiniColorRow label="Bottom side" value={settings.defaultPinColorBottom}
+        onChange={(h) => { if (gateThemeEdit()) themeStore.setCustomOverride('defaultPinColorBottom', h); }} />
+    </div>
+  );
+}
+
+/** One pin-group rule row: keywords (commit on blur) + colour (live) + remove. */
+function PinGroupRuleRow({ rule, onKeywords, onColor, onRemove }: {
+  rule: PinGroupRule;
+  onKeywords: (kw: string) => void;
+  onColor: (c: string) => void;
+  onRemove: () => void;
+}) {
+  const [text, setText] = useState(rule.keywords);
+  const [prev, setPrev] = useState(rule.keywords);
+  if (prev !== rule.keywords) { setPrev(rule.keywords); setText(rule.keywords); }
+  const commit = () => { if (text !== rule.keywords) onKeywords(text); };
+  return (
+    <div className="color-rule-row">
+      <input type="text" className="color-rule-pattern" value={text}
+        onChange={(e) => setText(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        placeholder="VCC, 3V3, …" title="Comma-separated keywords" />
+      <input type="color" className="color-rule-color" value={rule.color} onChange={(e) => onColor(e.target.value)} />
+      <button className="color-rule-remove" onClick={onRemove} title="Remove rule">×</button>
     </div>
   );
 }
@@ -2690,7 +2609,17 @@ function ThemeTab() {
       </div>
       <InterfaceScaleSlider />
 
-      <CustomThemeEditor />
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-secondary)', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        Board & pin colours
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: '0 0 2px' }}>
+        These are carried by the theme. Editing any of them copies the current
+        theme into your custom theme (one slot) and switches to it.
+      </div>
+      <CustomThemeStrip />
+      <ThemeBoardColorsEditor />
+      <ThemePinGroupsEditor />
+      <ThemeComponentFillsEditor />
 
     </div>
   );
