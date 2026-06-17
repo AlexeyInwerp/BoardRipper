@@ -1,5 +1,32 @@
 # BoardRipper changelog
 
+## v0.31.22 — 2026-06-18
+
+A theming overhaul: three light themes, an editable custom theme, and a
+net-class pin-colour system — all carried by the theme — plus the cleanup
+that makes light themes genuinely readable.
+
+### Features
+
+- **Light themes.** Three new themes — Drafting Paper, Daylight and Blueprint (light) — join the dark set. Body text now auto-flips to a dark graphite pair on light backgrounds, the secondary surface/border tiers shade the right direction (lighten on dark, darken on light), and a semantic token layer (scrims, tooltips, hover/active surfaces, highlight washes, the neon binding chips) tracks the theme instead of baking in dark literals. A WCAG visibility test guards every theme against unreadable / white-on-white text. (`5273252`)
+- **Custom theme editor.** A single editable theme: tune the interface, the board canvas, the pin-group colours, the net-label styling and the component fills, all in Settings ▸ Theme. Editing any colour while a built-in theme is active forks it into your custom slot (one confirm) and switches to it — built-in themes are never mutated. (`0f80877`, `d8878f1`)
+- **Pin colours by net class.** Pin fill colours are now grouped — Power / Ground / Datalines / Logical / Misc — each an editable list of keyword→colour rules (comma-separated, with `*` and `#` wildcards). Analog ground gets its own shade (AGND ≡ VSS), the Misc group is "outline-only" for no-connects, and the whole palette is carried by the theme. Component fill colours and the per-side default pin colour ride along too; the Pad/Body shape columns were retired from the editor. (`1052c3b`, `d8878f1`)
+- **Editable net-label background + shadow toggle.** The net-name label background box (previously a hardcoded black at 60%) is now an editable colour + opacity, sitting next to the net-label font colour in the Theme tab. A new "Pin Label Shadow" toggle (Board ▸ Labels) controls the drop shadow on pin numbers and net names — net names were previously always shadowed with no way to turn it off. (`c1be911`, `3c89432`)
+
+### Changes
+
+- **Landrex is a true black-and-white theme.** It now behaves like any other theme (selectable, editable, forks-to-custom) but renders fully monochrome: greyscale pins/parts, no net/component colour, white labels on a black board. Readable — no more white-on-white — and one pin-group edit away from colour if you want it. (`9e3cea6`, `6c22b0b`)
+
+### Fixes
+
+- **Board labels re-tint live on a theme switch.** Switching to a theme that changed no render setting (the light themes) updated the canvas background but left the already-drawn pin/net/part labels their old colour, because the scene rebuild was gated on render-settings the light themes don't touch. (`c269ffd`)
+- **Dockview tab strip stayed dark on light themes.** Dockview silently adds its built-in "abyss" theme class, whose hardcoded dark variables out-specificity ours and froze the tab header dark. (`c35f666`)
+- **Theme overrides now apply on board load.** A board opened under a saved override-theme (Landrex, or a custom theme carrying pin colours) rendered with un-merged settings until the next theme switch — `setActiveBoard` only recomputed for per-board overrides, not theme ones. (`6c22b0b`)
+
+### Performance
+
+- **Colour editing no longer blocks the UI.** Each colour-picker change forced a synchronous full scene rebuild on every drag-frame; rebuilds now coalesce ~140 ms after the last change and run off the input handler, so the picker stays responsive on dense boards. (`6883f17`)
+
 ## v0.31.21 — 2026-06-16
 
 Two features: PDF orientation controls and a diode-value channel for XZZ
