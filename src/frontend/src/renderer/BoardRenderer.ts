@@ -454,6 +454,10 @@ export class BoardRenderer {
   /** Snapshot of settings at the last onSettingsUpdate — enables a cheap diff
    *  to skip full scene rebuilds when only interaction-only fields changed. */
   private lastSettingsSnapshot: import('../store/render-settings').RenderSettings | null = null;
+  /** JSON of the active theme's board palette at the last theme-driven rebuild.
+   *  Lets onThemeUpdate rebuild only when board-side colours actually change,
+   *  not on every accent / background / chrome knob tweak. */
+  private _lastBoardColorKey = '';
   /** Reference snapshot of `boardStore.partOverrides`. The store replaces the
    *  Map on every change, so an identity-equality compare in `onBoardUpdate`
    *  detects right-click hide/send-to-back actions without a deep diff. */
@@ -2902,12 +2906,29 @@ export class BoardRenderer {
   }
 
   private onThemeUpdate(): void {
+    const board = themeStore.activeTheme().board;
     if (this.app && this.app.renderer) {
-      this.app.renderer.background.color = hexToInt(themeStore.activeTheme().board.canvasBackground);
+      this.app.renderer.background.color = hexToInt(board.canvasBackground);
     }
-    // Reuse the settings-change rebuild path — drops the cached scene and
-    // rebuilds with the new BOARD_COLORS values on next activate.
-    this.onSettingsUpdate();
+    // A theme change alters BOARD_COLORS (outline / selection / pin+net+part
+    // label colours, board fill) even when NO render-setting changed — and the
+    // light themes carry no boardOverrides, so routing through onSettingsUpdate
+    // would hit its "nothing changed" fast path and skip the rebuild, leaving
+    // the already-built BitmapText labels their old colour ("labels staying the
+    // same" on a theme switch). Rebuild here whenever the board palette differs.
+    // Pure UI-knob / accent changes (theme.board unchanged) skip the rebuild;
+    // boardOverride themes (Landrex, custom pin overrides) still rebuild via the
+    // render-settings re-merge path wired in themes.ts.
+    const key = JSON.stringify(board);
+    if (key === this._lastBoardColorKey) return;
+    this._lastBoardColorKey = key;
+    if (!this.board || this.contextLost || this.reinitializing) return;
+    this.saveViewportState();
+    this.invalidateAllScenes();
+    this.activateScene(this.board);
+    this.renderSelection();
+    this.lastLodScale = -1;
+    this.needsRender = true;
   }
 
   // --- Selection spotlight (radial darkening around selected part) ---
