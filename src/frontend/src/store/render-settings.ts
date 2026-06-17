@@ -92,6 +92,10 @@ export interface RenderSettings {
   partPadding: number;
   showPartLabels: boolean;
   partLabelShadow: boolean;
+  /** Drop shadow on on-pin labels (pin numbers + net names). Net names were
+   *  previously always shadowed with no toggle; this exposes it. Default true
+   *  preserves the net-label look. */
+  pinLabelShadow: boolean;
   /** Minimum label font size (board mils). Acts as a floor on the
    *  auto-computed size, so tiny parts still get a readable label. */
   labelMinSize: number;
@@ -467,6 +471,7 @@ export const DEFAULTS: RenderSettings = {
   partPadding: 4,
   showPartLabels: true,
   partLabelShadow: false,
+  pinLabelShadow: true,
   labelMinSize: 3,
   labelHideThreshold: 2,
 

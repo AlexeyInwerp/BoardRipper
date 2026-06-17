@@ -1410,7 +1410,7 @@ export function buildBoardScene(
         if (pinFontSize >= s.labelHideThreshold) {
           const pinLabel = new BitmapText({
             text: numStr,
-            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: ensurePinFont(pinFontSize, s.labelAtlasResolution) },
+            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
           });
           pinLabel.anchor.set(0.5, numAnchorY);
           pinLabel.x = pinX;
@@ -1481,7 +1481,7 @@ export function buildBoardScene(
         if (netFontSize >= s.labelHideThreshold) {
           const netLabel = new BitmapText({
             text: pin.net,
-            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: ensureShadowFont(netFontSize, s.labelAtlasResolution) },
+            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(netFontSize, s.labelAtlasResolution) },
           });
           netLabel.anchor.set(anchorX, anchorY);
           netLabel.x = nx;
