@@ -4011,8 +4011,16 @@ body {
   outline: none;
 }
 
-/* Dockview theme overrides */
-.dockview-theme-dark {
+/* Dockview theme overrides.
+ * DockviewReact is given className="dockview-theme-dark" but no `theme` prop,
+ * so dockview ALSO appends its built-in `dockview-theme-abyss` class, whose
+ * hardcoded dark --dv-* values (e.g. #1c1c2a tab strip) out-specificity a
+ * bare `.dockview-theme-dark`. That froze the tab header dark on light themes.
+ * The compound `.dockview-theme-dark.dockview-theme-abyss` selector (0,2,0)
+ * beats abyss's single-class rule (0,1,0) so OUR theme-tracking vars win; the
+ * bare selector keeps it working if dockview ever stops adding abyss. */
+.dockview-theme-dark,
+.dockview-theme-dark.dockview-theme-abyss {
   --dv-background-color: var(--bg-primary);
   --dv-paneview-header-border-color: var(--border);
   --dv-tabs-and-actions-container-background-color: var(--bg-tertiary);
