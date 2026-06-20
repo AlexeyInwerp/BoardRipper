@@ -118,6 +118,19 @@ function findPart(b: BoardData, refdes: string) {
   return b.parts.find((pt) => pt.name.toLowerCase() === want);
 }
 
+// Compact part row including the descriptive metadata (value/serial often hold
+// the real part name/number) — used by list_parts and find_parts.
+function partSummary(pt: BoardData['parts'][number]) {
+  return {
+    refdes: pt.name,
+    side: pt.side,
+    value: pt.meta?.value ?? null,
+    serial: pt.meta?.serial ?? null,
+    package: pt.meta?.package ?? null,
+    part_type: pt.meta?.partType ?? null,
+  };
+}
+
 function netPins(b: BoardData, netName: string) {
   const net = b.nets.get(netName);
   if (!net) return null;
@@ -149,7 +162,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       const out = b.parts
         .filter((pt) => (side ? pt.side === side : true))
         .filter((pt) => (f ? pt.name.toLowerCase().includes(f) : true))
-        .map((pt) => ({ refdes: pt.name, side: pt.side }));
+        .map(partSummary);
       const { total, offset, has_more, page } = paginate(out, p.limit, p.offset);
       return { parts: page, total, offset, has_more };
     }
@@ -183,12 +196,30 @@ async function dispatch(op: string, p: any): Promise<any> {
         refdes: part.name,
         side: part.side,
         type: part.type,
+        // Descriptive metadata the boardview carried. value/serial frequently
+        // hold the real part name/number — invaluable when no schematic exists.
         value: part.meta?.value ?? null,
+        serial: part.meta?.serial ?? null,
         package: part.meta?.package ?? null,
         part_type: part.meta?.partType ?? null,
+        height_mils: part.meta?.heightMils ?? null,
+        angle_deg: part.meta?.angleDeg ?? null,
+        mechanical: !!part.mechanical,
         pin_count: part.pins.length,
         pins: part.pins.map((pn) => ({ name: pn.name, number: pn.number, net: pn.net })),
       };
+    }
+    case 'find_parts': {
+      const b = requireBoard();
+      const q = String(p.query ?? '').toLowerCase().trim();
+      if (!q) throw new Error('find_parts: query required');
+      const hits = b.parts.filter((pt) => {
+        const hay = [pt.name, pt.meta?.value, pt.meta?.serial, pt.meta?.package, pt.meta?.partType]
+          .filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      }).map(partSummary);
+      const { total, offset, has_more, page } = paginate(hits, p.limit, p.offset);
+      return { query: p.query, parts: page, total, offset, has_more };
     }
     default:
       return dispatchDrive(op, p);

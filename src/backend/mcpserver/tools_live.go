@@ -78,6 +78,18 @@ type partsFilterArgs struct {
 
 func (a partsFilterArgs) session() string { return a.Session }
 
+// findPartsArgs is find_parts: free-text search across refdes + part metadata
+// (value/serial/package/part-type). Surfaces part descriptions when no
+// schematic PDF is available.
+type findPartsArgs struct {
+	Query   string `json:"query" jsonschema:"text to find in refdes or part description (value/serial/package/type)"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max items (default 200, cap 1000)"`
+	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset (default 0)"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a findPartsArgs) session() string { return a.Session }
+
 type netArgs struct {
 	Net     string `json:"net" jsonschema:"net name"`
 	Session string `json:"session,omitempty"`
@@ -153,7 +165,8 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[netArgs](s, b, "net_info", "List the pins and parts that belong to a given net.", "net_info", true, nil)
 	liveTool[netNeighborsArgs](s, b, "net_neighbors", "Find nets adjacent to an anchor net through 2-pin components (computeAdjacentNets); good for tracing power sequences.", "net_neighbors", true, nil)
 	liveTool[pinArgs](s, b, "pin_connectivity", "Given a part and pin, return its net and the other pins on that net.", "pin_connectivity", true, nil)
-	liveTool[partArgs](s, b, "part_info", "Return a component's pins, value, package, side, and bounds.", "part_info", true, nil)
+	liveTool[partArgs](s, b, "part_info", "Return a component's full info: pins, and any descriptive metadata the boardview carried — value, serial (these often hold the real part name/number), package, part-type, side, height, angle.", "part_info", true, nil)
+	liveTool[findPartsArgs](s, b, "find_parts", "Search parts by free text across refdes + description fields (value/serial/package/part-type). Use this to locate a component by name/number when no schematic PDF is available — many boardviews store the real part name in the description. Returns {parts:[{refdes,side,value,serial,package,part_type}],total,has_more,offset}.", "find_parts", true, nil)
 
 	// --- drive-UI tools (always registered; gated per-call on DriveUI()) ---
 	gate := func() bool { return deps.State != nil && deps.State.DriveUI() }
