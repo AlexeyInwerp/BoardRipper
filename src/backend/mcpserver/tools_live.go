@@ -60,10 +60,23 @@ func (a emptyArgs) session() string { return a.Session }
 
 type filterArgs struct {
 	Filter  string `json:"filter,omitempty" jsonschema:"optional case-insensitive substring filter"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max items to return (default 200, cap 1000)"`
+	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset (default 0)"`
 	Session string `json:"session,omitempty"`
 }
 
 func (a filterArgs) session() string { return a.Session }
+
+// partsFilterArgs is list_parts: substring + side filter + pagination.
+type partsFilterArgs struct {
+	Filter  string `json:"filter,omitempty" jsonschema:"optional case-insensitive substring filter on refdes"`
+	Side    string `json:"side,omitempty" jsonschema:"filter by side: top or bottom"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max items to return (default 200, cap 1000)"`
+	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset (default 0)"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a partsFilterArgs) session() string { return a.Session }
 
 type netArgs struct {
 	Net     string `json:"net" jsonschema:"net name"`
@@ -134,9 +147,9 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	})
 
 	// --- read tools ---
-	liveTool[emptyArgs](s, b, "board_active", "Describe the active board: name, format, part/net counts, and shown side.", "board_active", true, nil)
-	liveTool[filterArgs](s, b, "list_nets", "List net names on the active board (optional substring filter).", "list_nets", true, nil)
-	liveTool[filterArgs](s, b, "list_parts", "List component reference designators on the active board (optional substring filter).", "list_parts", true, nil)
+	liveTool[emptyArgs](s, b, "board_active", "Describe the active board: name, part/net counts, shown side, plus a session id and a generation token that changes when the open board changes (re-read your data when it changes).", "board_active", true, nil)
+	liveTool[filterArgs](s, b, "list_nets", "List net names on the active board. Supports a substring filter and limit/offset pagination; returns {nets,total,has_more,offset}. Filter before paging — don't enumerate thousands.", "list_nets", true, nil)
+	liveTool[partsFilterArgs](s, b, "list_parts", "List component reference designators on the active board. Supports substring + side (top|bottom) filters and limit/offset pagination; returns {parts:[{refdes,side}],total,has_more,offset}.", "list_parts", true, nil)
 	liveTool[netArgs](s, b, "net_info", "List the pins and parts that belong to a given net.", "net_info", true, nil)
 	liveTool[netNeighborsArgs](s, b, "net_neighbors", "Find nets adjacent to an anchor net through 2-pin components (computeAdjacentNets); good for tracing power sequences.", "net_neighbors", true, nil)
 	liveTool[pinArgs](s, b, "pin_connectivity", "Given a part and pin, return its net and the other pins on that net.", "pin_connectivity", true, nil)

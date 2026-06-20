@@ -24,7 +24,18 @@ function boardDescriptor() {
     name: tab?.fileName ?? null,
     parts: b ? b.parts.length : 0,
     nets: b ? b.nets.size : 0,
+    // Changes iff the active board changes; the helper re-reads when it differs.
+    generation: `${boardStore.activeTabId ?? ''}:${tab?.fileName ?? ''}`,
   };
+}
+
+/** Apply substring filter + limit/offset pagination, returning a page envelope. */
+function paginate<T>(items: T[], limit: number, offset: number) {
+  const total = items.length;
+  const lim = limit > 0 && limit <= 1000 ? limit : 200;
+  const off = offset > 0 ? offset : 0;
+  const page = items.slice(off, off + lim);
+  return { total, offset: off, has_more: off + page.length < total, page };
 }
 
 function send(obj: any) {
@@ -125,16 +136,22 @@ async function dispatch(op: string, p: any): Promise<any> {
     }
     case 'list_nets': {
       const b = requireBoard();
-      const names = Array.from(b.nets.keys());
       const f = (p.filter ?? '').toLowerCase();
+      const names = Array.from(b.nets.keys());
       const out = f ? names.filter((n) => n.toLowerCase().includes(f)) : names;
-      return { nets: out.slice(0, 5000), total: out.length };
+      const { total, offset, has_more, page } = paginate(out, p.limit, p.offset);
+      return { nets: page, total, offset, has_more };
     }
     case 'list_parts': {
       const b = requireBoard();
       const f = (p.filter ?? '').toLowerCase();
-      const out = b.parts.map((pt) => pt.name).filter((n) => (f ? n.toLowerCase().includes(f) : true));
-      return { parts: out.slice(0, 5000), total: out.length };
+      const side = (p.side ?? '').toLowerCase();
+      const out = b.parts
+        .filter((pt) => (side ? pt.side === side : true))
+        .filter((pt) => (f ? pt.name.toLowerCase().includes(f) : true))
+        .map((pt) => ({ refdes: pt.name, side: pt.side }));
+      const { total, offset, has_more, page } = paginate(out, p.limit, p.offset);
+      return { parts: page, total, offset, has_more };
     }
     case 'net_info': {
       const b = requireBoard();
