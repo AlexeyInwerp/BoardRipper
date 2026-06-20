@@ -57,6 +57,15 @@ func withCSRFCheck(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// MCP + its OAuth handshake are authenticated by Authorization header
+		// (bearer / OAuth access token) or are the OAuth bootstrap itself — they
+		// are not cookie-authenticated, so the cookie-oriented CSRF check does
+		// not apply and would wrongly reject the OAuth client's cross-origin
+		// register/token POSTs (which carry the client's loopback callback Origin).
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/mcp") || strings.HasPrefix(p, "/.well-known/oauth-") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		origin := r.Header.Get("Origin")
 		referer := r.Header.Get("Referer")
 		if origin == "" && referer == "" {

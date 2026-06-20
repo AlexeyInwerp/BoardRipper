@@ -19,6 +19,7 @@ import (
 	"boardripper/databank"
 	"boardripper/handlers"
 	"boardripper/librarysync"
+	"boardripper/mcpserver"
 	"boardripper/obd"
 	"boardripper/pdfindex"
 	"boardripper/updater"
@@ -300,6 +301,41 @@ func main() {
 			}
 		}
 	}
+
+	// --- MCP server (off by default; enabled via Settings ▸ Integrations) ---
+	mcpSecret, err := mcpserver.EnsureSecret(dataDir)
+	if err != nil {
+		log.Fatalf("mcp secret: %v", err)
+	}
+	mcpState := mcpserver.NewState(db)
+	mcpBridge := mcpserver.NewBridge()
+	mcpDeps := &mcpserver.Deps{
+		State:  mcpState,
+		Bridge: mcpBridge,
+		Files:  db,
+		Boards: bdb,
+		OBD:    obdStore,
+	}
+	if pdfIndex != nil {
+		mcpDeps.PDF = pdfIndex // avoid typed-nil in the PDFSearcher interface
+	}
+	mcpSrv := mcpserver.New(mcpDeps)
+	mcpOAuth := mcpserver.NewOAuth()
+	mux.Handle("/api/mcp", mcpserver.GateAuto(mcpState, mcpSecret, mcpOAuth, mcpSrv.Handler()))
+	mux.Handle("/api/mcp/", mcpserver.GateAuto(mcpState, mcpSecret, mcpOAuth, mcpSrv.Handler()))
+	mux.HandleFunc("/api/mcp/bridge", mcpBridge.ServeWS)
+	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge, mcpSrv))
+	mux.HandleFunc("GET /api/mcp/token", mcpserver.TokenHandler(mcpState, mcpSecret))
+	mux.HandleFunc("POST /api/mcp/selftest", mcpserver.SelfTestHandler(mcpState, mcpSrv))
+	// OAuth 2.1 onboarding (active when mcp_auth_mode=oauth): discovery + the
+	// embedded authorization server. Discovery is unauthenticated (clients fetch
+	// it pre-auth); the more-specific patterns win over the /api/mcp/ subtree.
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource", mcpOAuth.ProtectedResourceMetadata)
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", mcpOAuth.AuthServerMetadata)
+	mux.HandleFunc("GET /api/mcp/oauth/jwks", mcpOAuth.JWKS)
+	mux.HandleFunc("POST /api/mcp/oauth/register", mcpOAuth.Register)
+	mux.HandleFunc("/api/mcp/oauth/authorize", mcpOAuth.Authorize)
+	mux.HandleFunc("POST /api/mcp/oauth/token", mcpOAuth.Token)
 
 	// Serve static frontend files.
 	//

@@ -86,6 +86,7 @@ const SCOPE_COLORS: Record<LogScope, string> = {
   obd:    '#86efac',
   cloud:  '#a5b4fc',
   twoWindow: '#fb923c',
+  mcp:    '#e879f9',
 };
 
 interface SampleRow {
