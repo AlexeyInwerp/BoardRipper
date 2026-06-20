@@ -1,5 +1,19 @@
 # BoardRipper changelog
 
+## v0.31.23 — 2026-06-19
+
+BoardRipper can now be driven by an AI agent: a built-in MCP server exposes the
+open board — its connectivity, the schematic PDFs, OpenBoardData and the board
+database — to Claude Code (or any MCP client), and a bundled repair-helper skill
+turns that into a hands-on bench copilot.
+
+### Features
+
+- **MCP server — analyse and drive a board from an AI agent.** A standards-compliant Model Context Protocol server (Streamable HTTP at `/api/mcp`), **off by default**, enabled in a new **Settings ▸ Integrations** tab. 21 tools: PDF full-text search, OpenBoardData diode/voltage/resistance readings, board-reference resolve, and file inventory answered by the backend; plus — over a WebSocket bridge to the board open in your browser — live connectivity (list/inspect nets and parts, pin-to-pin, net-neighbour power-sequence tracing) and **drive-UI** (highlight a net, select a part, flip the side, jump a linked PDF) so the agent narrates *and* shows the answer on your screen. (`74dfdb4`, `6ea651c`, `e742cdf`)
+- **Part info over MCP, including descriptions.** `part_info` returns a component's full metadata — value, serial, package, type, side — and a new **`find_parts`** free-text-searches reference designators *and* those description fields, so a component can be located by its real name/number even when no schematic PDF is available. `list_parts`/`list_nets` gained substring/side filters + pagination, and `board_active` reports a generation token so the helper notices when you switch boards. (`b936dc0`, `bf45adc`)
+- **Repair-helper skill.** A bundled Claude Code skill (`boardripper-repair-helper`) that turns the raw tools into a structured copilot with playbooks for find-a-component-by-function (evidence order PDF → part descriptions → OpenBoardData → connectivity), power-rail / no-power triage, signal tracing, and short-to-ground hunts. (`b936dc0`, `bf45adc`)
+- **One-click connect + OAuth onboarding.** Connect with a bearer token or zero-token **OAuth 2.1** (approve in the browser, nothing to copy). The Integrations tab has per-client connect cards (Claude Code, Claude Desktop, Cursor), a live status line with connected-page and tool-call counts, and a **Test connection** button. (`e9e8556`, `ed9ff71`, `5de9a60`)
+
 ## v0.31.22 — 2026-06-18
 
 A theming overhaul: three light themes, an editable custom theme, and a
