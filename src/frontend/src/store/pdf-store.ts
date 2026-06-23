@@ -7,6 +7,7 @@ import { Emitter } from './emitter';
 import { PdfLinks } from './pdf-links';
 import { log } from './log-store';
 import { ensureIndexed } from '../pdf/pdf-index-client';
+import { scoreLookupCandidates, type LookupCandidate, type LookupContextHit } from './pdf-lookup-score';
 
 // Polyfills for Electron (Chrome 134) — pdfjs v5.5+ uses Chrome 136+ APIs.
 // TS lib doesn't ship the Stage-3 prototype additions yet; declare them for the typechecker.
@@ -454,6 +455,15 @@ export interface FollowTarget {
   items: PdfTextItem[];  // text items to zoom to (bounding box)
 }
 
+/** One disambiguating context term for a heuristic lookup — a net name on the
+ *  component's pins, or a pin number/name (or, for a net lookup, a connected
+ *  component designator). Used by `lookupEntity` to pick the occurrence with
+ *  the most context AROUND it (the schematic symbol placement). */
+export interface LookupContextTerm {
+  text: string;
+  kind: 'net' | 'pin';
+}
+
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
   private _links = new PdfLinks();
@@ -462,6 +472,14 @@ class PdfStore extends Emitter {
   private _multiTermYGap = 4;
   /** Horizontal tolerance multiplier for multi-term search (fontSize × this) */
   private _multiTermXGap = 3;
+  /** Context-lookup proximity window (fontSize × this) — how far AROUND a
+   *  designator/net occurrence to look for its context terms. Generous on
+   *  purpose so a symbol's radiating net labels / pin numbers count; tunable
+   *  against real schematics. */
+  private _lookupXGap = 18;
+  private _lookupYGap = 14;
+  /** Max occurrences of one context term scanned per page (pathological-table guard). */
+  private _lookupTermCap = 20;
   private _loading = false;
   /** Consumable follow target — PDF viewer zooms to this location without highlighting */
   private _followTarget: FollowTarget | null = null;
@@ -948,6 +966,23 @@ class PdfStore extends Emitter {
   }
 
   /**
+   * Heuristic lookup of a component designator or net name into a specific PDF.
+   * Searches `primary` (so EVERY occurrence is highlighted), then re-picks the
+   * active occurrence by scoring how much of `context` (the entity's nets +
+   * pin tokens, or a net's connected designators) sits around each occurrence —
+   * the schematic symbol placement wins over BOM / cross-reference rows. Falls
+   * back to the plain page-proximity pick when there is no context signal.
+   */
+  lookupEntity(fileName: string, primary: string, context: LookupContextTerm[], source: 'lookup' = 'lookup') {
+    const doc = this._documents.get(fileName);
+    if (!doc || !primary.trim()) return;
+    this._runSearch(doc, primary, source, false);
+    if (context.length > 0 && doc.matches.length > 1) {
+      this._applyContextScoring(doc, context);
+    }
+  }
+
+  /**
    * Run a search against a specific document (not necessarily the active one).
    * useClickedLocation: when true, prefer the exact match at the last clicked
    * (pageIndex,itemIndex) IF that click was in this same doc — used by in-doc
@@ -1038,6 +1073,93 @@ class PdfStore extends Emitter {
     } else {
       d.activeMatchIndicesCache = new Set();
     }
+  }
+
+  /**
+   * Re-pick the active match among already-found `primary` occurrences using
+   * the geometric scorer in pdf-lookup-score. Only scans pages that contain a
+   * match (few) and a capped number of context-term hits — no extra
+   * full-document passes. Nets are matched in cross-item dense text; pin tokens
+   * are matched as discrete glyph-run items (their own text items), which also
+   * sidesteps dense-text concatenation false-positives like "1"+"2" → "12".
+   */
+  private _applyContextScoring(doc: PdfDocument, context: LookupContextTerm[]) {
+    if (doc.matches.length === 0) return;
+
+    const nets: string[] = [];
+    const pins: string[] = [];
+    for (const t of context) {
+      const norm = t.text.trim().toLowerCase();
+      if (!norm) continue;
+      if (t.kind === 'net') nets.push(norm);
+      else if (!/^\d$/.test(norm)) pins.push(norm); // drop 1-char numeric pins (noise)
+    }
+    if (nets.length === 0 && pins.length === 0) return;
+
+    const candidates: LookupCandidate[] = doc.matches.map((m, i) => ({
+      matchIndex: i,
+      page: m.pageIndex,
+      x: m.item.transform[4],
+      y: m.item.transform[5],
+      fontSize: pdfFontSize(m.item.transform) || 10,
+    }));
+
+    const pages = new Set<number>();
+    for (const m of doc.matches) pages.add(m.pageIndex);
+
+    const pinSet = new Set(pins);
+    const contextHits: LookupContextHit[] = [];
+    for (const pi of pages) {
+      const items = doc.textPages[pi];
+      if (!items) continue;
+      const lines = mergeItemsIntoLines(items);
+      // Nets — cross-item dense-text substring (an identifier may be split).
+      for (const net of nets) {
+        let count = 0;
+        for (const line of lines) {
+          if (count >= this._lookupTermCap) break;
+          const lower = line.denseText.toLowerCase();
+          let pos = 0;
+          while ((pos = lower.indexOf(net, pos)) !== -1 && count < this._lookupTermCap) {
+            let ii = -1;
+            for (let c = pos; c < pos + net.length; c++) {
+              if (line.denseCharToItem[c] >= 0) { ii = line.denseCharToItem[c]; break; }
+            }
+            if (ii >= 0) {
+              const it = items[ii];
+              contextHits.push({ page: pi, x: it.transform[4], y: it.transform[5], term: 'net:' + net, weight: 2 });
+              count++;
+            }
+            pos += net.length;
+          }
+        }
+      }
+      // Pins — discrete glyph-run items (pin numbers are their own text items).
+      if (pinSet.size > 0) {
+        for (const it of items) {
+          const s = it.str.trim().toLowerCase();
+          if (s && pinSet.has(s)) {
+            contextHits.push({ page: pi, x: it.transform[4], y: it.transform[5], term: 'pin:' + s, weight: 1 });
+          }
+        }
+      }
+    }
+
+    if (contextHits.length === 0) return;
+
+    const result = scoreLookupCandidates(
+      candidates, contextHits,
+      { xGapMul: this._lookupXGap, yGapMul: this._lookupYGap },
+      doc.currentPage - 1,
+    );
+    if (result.bestMatchIndex < 0) return; // no signal — keep proximity pick
+
+    doc.activeMatchIndex = result.bestMatchIndex;
+    doc.activeGroupIndex = -1;
+    doc.currentPage = doc.matches[result.bestMatchIndex].pageIndex + 1;
+    this._rebuildActiveIndicesCache(doc);
+    log.pdf.log(`lookup context-score: best match #${result.bestMatchIndex} on page ${doc.currentPage} (${contextHits.length} ctx hits)`);
+    this.notify();
   }
 
   /** TERM1@TERM2 syntax: whole-page co-occurrence, one group per page where all terms appear.

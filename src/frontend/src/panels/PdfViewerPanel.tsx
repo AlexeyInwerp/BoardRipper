@@ -2203,8 +2203,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // different visible match on the same page (handles "multiple U5
       // instances on the page, user is looking at one of them" when Cmd+F
       // runs a lookup from a selection). NOT on stepwise navigation — that
-      // would bounce back and forth as the user presses Down.
-      if (isNewSearch && !alreadyInView && matchPageNow === currentPage && !activeGroup) {
+      // would bounce back and forth as the user presses Down. Skipped for
+      // 'lookup' searches: lookupEntity already context-scored the best
+      // occurrence, so don't second-guess it by snapping to whatever is in view.
+      const isContextLookup = pdfStore.getDocSearchSource(pdfFileName) === 'lookup';
+      if (isNewSearch && !isContextLookup && !alreadyInView && matchPageNow === currentPage && !activeGroup) {
         for (let i = 0; i < matches.length; i++) {
           if (i === activeMatchIndex) continue;
           if (matches[i].pageIndex !== match.pageIndex) continue;

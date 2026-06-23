@@ -18,7 +18,7 @@ import { pinDisplayId } from '../parsers/types';
 import { boardStore } from '../store/board-store';
 import type { SelectionState, NetLineMode } from '../store/board-store';
 import { databankStore } from '../store/databank-store';
-import { pdfStore } from '../store/pdf-store';
+import { pdfStore, type LookupContextTerm } from '../store/pdf-store';
 import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRenderBounds, computePartRenderPoly, isOutlineOnlyNet, resolvePartType } from '../store/render-settings';
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
@@ -2397,8 +2397,14 @@ export class BoardRenderer {
         // 25% would leave a 16-pin connector occupying half the screen
         // visually and feel under-zoomed.
         const s = renderSettingsStore.settings;
-        const target = focus.partIndex != null ? s.navTargetSize : 0.6;
-        this.zoomToBounds(focus.bounds, focusRoot, target, { zoomMode: s.navZoomMode });
+        const isNet = focus.partIndex == null;
+        const target = isNet ? 0.6 : s.navTargetSize;
+        // Net focus always frames the WHOLE net: a net spans the board, so
+        // honouring 'keep'/'auto' would centre it without unzooming and leave
+        // most pins off-screen. Force a fit (snap) for nets; parts still obey
+        // the user's navZoomMode.
+        const zoomMode = isNet ? 'always' : s.navZoomMode;
+        this.zoomToBounds(focus.bounds, focusRoot, target, { zoomMode });
         this.startSelectionBlink();
       }
     } catch (err) {
@@ -2555,8 +2561,23 @@ export class BoardRenderer {
           upper === 'V5S' || upper === 'V3S' || upper === '5V' || upper === '3V3' ||
           upper === '12V' || upper === '1V8' || upper === '1V05') continue;
       nets.add(pin.net);
-      if (nets.size >= 3) break; // limit to 3 distinctive nets
+      if (nets.size >= 4) break; // limit to 4 distinctive nets
     }
+
+    // Pin numbers/names as extra disambiguating context (printed on the symbol
+    // body). Drop 1-char pure-numeric tokens — too short / collision-prone.
+    const pinTokens = new Set<string>();
+    for (const pin of part.pins) {
+      const t = (pin.number || pin.name || '').trim();
+      if (!t || /^\d$/.test(t)) continue;
+      pinTokens.add(t);
+      if (pinTokens.size >= 4) break;
+    }
+
+    const lookupContext: LookupContextTerm[] = [
+      ...[...nets].map((text): LookupContextTerm => ({ text, kind: 'net' })),
+      ...[...pinTokens].map((text): LookupContextTerm => ({ text, kind: 'pin' })),
+    ];
 
     // Use @-syntax: net@component (find net on same page as component)
     const navQuery = nets.size > 0
@@ -2576,10 +2597,12 @@ export class BoardRenderer {
     const searchSource = pdfStore.getDocSearchSource(pdfName);
 
     if (force || searchSource !== 'user') {
-      // Empty, lookup-filled, or force → overwrite search with component name
-      // searchText handles page navigation to first match; no selection rectangle needed.
-      log.render.log(`triggerFollowPdf: search query="${part.name}" pdf="${pdfName}" force=${force}`);
-      pdfStore.searchText(part.name, 'lookup');
+      // Empty, lookup-filled, or force → overwrite search with component name and
+      // disambiguate by the part's nets + pin numbers. lookupEntity highlights
+      // every occurrence and picks/zooms the best-scored one (the schematic
+      // symbol placement), handling page navigation itself.
+      log.render.log(`triggerFollowPdf: lookup="${part.name}" ctx=${lookupContext.length} pdf="${pdfName}" force=${force}`);
+      pdfStore.lookupEntity(pdfName, part.name, lookupContext, 'lookup');
     } else {
       // User-typed search → navigate + selection rectangle + tooltip for double-click
       log.render.log(`triggerFollowPdf: navigate-only query="${navQuery}" pdf="${pdfName}" (user search preserved)`);
