@@ -1,8 +1,13 @@
-# Worklist unification — per-net measurements (single surface)
+# Worklist v2 — unified surface, per-net measurements, device binding (export-ready)
 
 **Date:** 2026-06-23
-**Status:** Design approved, pre-implementation
+**Status:** Design in review, pre-implementation
 **Supersedes the UI split introduced by:** `docs/specs/2026-06-16-worklist-ai-mode-feedback-loop-design.md` (the data/loop semantics from that spec stay; only the separate measurement surface is folded in)
+
+**Implemented in two independently-shippable phases** (see "Phasing"):
+Phase 1 = unified worklist + per-net measurements + bidirectional review;
+Phase 2 = device binding to the boards.db reference DB + export-readiness fields.
+The server-side worklist/case DB *export* itself is a later increment (contribdb).
 
 ## Problem
 
@@ -40,6 +45,17 @@ separate future increment).
 - **Nets only.** Part rows keep mark + note, unchanged.
 - **Part/pin measurement asks degrade to a relay message** — no structured row.
 - **Keep the relay** (transcript + prompt box) as the only AI-specific surface.
+- **Each worklist is bound to a device** from the boards.db reference DB
+  (brand → family → model → board). Resolve the open board and store the
+  `DeviceRef` now (Phase 2). When the board can't be resolved (drag-drop, not in
+  DB, no backend) the worklist works **unbound**, with a "Set device" picker to
+  bind it manually or later. Device = **board-level** (the specific PCB), with
+  model/family/brand carried for grouping.
+- **The server-side worklist/case DB export is deferred** (contribdb increment).
+  The data model is made export-ready now (`schemaVersion`, per-case `updatedAt`,
+  populated `device`, `contentHash`, structured measurements/marks); the upload
+  pipeline, server schema, and richer case fields (structured symptom/outcome)
+  are out of scope here. See "Device binding" and "Export-readiness" below.
 - **The worklist is a source-agnostic shared artifact.** The agent can pick up a
   fully *user-built* worklist as the input to its analysis — not only ones it
   populated itself. The read tools must return user-origin entries, notes, and
@@ -109,6 +125,75 @@ the active model. `messages?` and `aiOrigin?` are unchanged.
 ### Default unit per kind
 `voltage → "V"`, `diode → "V"` (diode drop is a voltage), `resistance → "Ω"`.
 Editable, so probes reading mV/kΩ are expressible.
+
+## Device binding (Phase 2)
+
+The north star (ties to contribdb) is a server-side database of worklists grouped
+**by device and by case** — "this fault on this board, here's how it was solved."
+A worklist *is* a case; the boards.db reference DB is the device spine. So each
+worklist is tied to a device identity resolved from boards.db.
+
+### Device record on the worklist
+`BoardWorklistes` (the per-board container) gains a populated `device`:
+
+```ts
+export interface DeviceRef {
+  boardDbId?: string;     // boards.db board UUID — the canonical device key
+  boardNumber?: string;   // "820-02016", "NM-A251" — the PCB number
+  model?: string;         // "MacBook Pro 16\" 2019"
+  modelNumber?: string;   // "A2141"
+  brand?: string;         // "Apple"
+  family?: string;        // "MacBook Pro"
+  resolution: 'resolved' | 'pattern_matched' | 'manual' | 'unbound';
+  resolvedAt?: number;
+}
+
+// BoardWorklistes gains:  device?: DeviceRef;  schemaVersion: number;
+```
+
+`device` lives on `BoardWorklistes`, not per-worklist — every case on the same
+opened board shares one device. (A worklist moved/copied to another board re-binds
+on hydration against the new board.)
+
+### Resolution sources (in order, best-effort, on first worklist creation for a board)
+1. **Library-opened board** — the databank file already carries `board_uuid` +
+   `board_number` + `resolution_status`. Use directly; no extra call. → `resolved`
+   / `pattern_matched`.
+2. **Otherwise** — call `GET /api/boards/resolve?q=<fileName or board number/metadata>`;
+   on a `match`, populate `DeviceRef` from it. → `resolved` / `pattern_matched`.
+3. **No match / no backend (Electron) / offline** — leave `device.resolution =
+   'unbound'`. The worklist is fully usable.
+
+### "Set device" affordance
+A small control in the worklist header shows the bound device (`Brand · Model ·
+Board#`) or "Set device" when unbound. Clicking opens a picker backed by
+`GET /api/boards/hierarchy` (Brand → Family → Model → Board) to bind/correct
+manually → `resolution = 'manual'`. This is the only new device UI; it reuses the
+hierarchy already consumed by the Database Editor panel.
+
+### Out of scope (kept minimal)
+No automatic re-resolution churn (resolve once per board, cache on the record),
+no device-level aggregation UI, no cross-board case browsing — those belong to the
+export/contribdb increment.
+
+## Export-readiness (Phase 2, structural only — no export built)
+
+The export pipeline, server schema, auth, and richer case fields (structured
+symptom / root-cause / explicit solved-unsolved beyond marks) are a **later
+increment**. This spec only guarantees the local record is export-ready:
+
+- `BoardWorklistes.schemaVersion: number` — starts at `1`, bumped on structural
+  change; lets a future server ingest / local migration branch safely.
+- `Worklist.updatedAt: number` — per-case modified time (today only the
+  board-level record has one); needed for export dedup / sync.
+- `BoardWorklistes.contentHash?: string` — board-file content hash when cheaply
+  available; a device fingerprint that survives filename changes.
+- **Invariants:** stable ids (`id` / `refdes` / `netName` / board key never reused);
+  structured enumerable data (measurements `{kind,value,unit,expected,source,at}`,
+  marks a fixed enum); self-contained record (carries fileName, contentHash,
+  device, schemaVersion, entries, measurements, notes, timestamps — shippable
+  without the original file). These are exactly why per-net measurements beat the
+  flat array for aggregation.
 
 ### Migration (on hydration / load)
 For each persisted worklist that still has a `measurements[]` array:
@@ -201,12 +286,39 @@ rule:
    on a net appears as a requested field on its row → confirms the review loop
    closes on a previously non-AI worklist.
 
+4. **Device binding (Phase 2):** open a library-resolved board → assert the
+   worklist header shows the bound `Brand · Model · Board#` and the persisted
+   record has `device.resolution === 'resolved'` with a `boardDbId`. Open a
+   drag-dropped/unknown board → assert `unbound` + a working "Set device" picker
+   that binds via the hierarchy (`resolution === 'manual'`). Backend:
+   `boards_test.go` already covers `Resolve`; add a worklist-store unit test that
+   a hydrated record stamps `schemaVersion` and carries `device`.
+
 Backend: `go test ./mcpserver/` covering `request_measurement` net vs part/pin
 routing, `get_measurements` shape + source-agnostic return, and `worklist_get`
 on a user-built worklist.
 
+## Phasing
+
+Two independently-shippable phases off `main`:
+
+- **Phase 1 — unified worklist (the core refactor).** Per-net measurement model +
+  net-row UI, drop the standalone measurement list, source-agnostic
+  `get_measurements`, bidirectional review, relay-only AI section, the migration,
+  and the MCP tool changes. Plus the cheap structural export-readiness fields
+  (`schemaVersion`, `updatedAt`) since they touch the same persisted shape.
+  Ships as its own point release.
+- **Phase 2 — device binding.** Resolve the open board → `DeviceRef`, the
+  "Set device" picker, `contentHash`. Depends on Phase 1's record shape but is
+  otherwise self-contained; ships as a following point release.
+
+Splitting keeps each change reviewable and lets the measurement win land without
+waiting on resolver wiring. Each phase gets its own implementation plan from the
+writing-plans step.
+
 ## Rollout
 
-Single feature branch off `main` (currently `v0.31.24`). Build + tsc + go test +
-the Playwright specs gate it. Ships as the next point release once verified on
-the dev NAS container; the live instance self-updates.
+Feature branch per phase off `main` (currently `v0.31.24`; note the branch base
+also carries an unmerged CAD-OOM fix to reconcile at merge time). Build + tsc +
+go test + the Playwright specs gate each. Each phase ships as a point release once
+verified on the dev NAS container; the live instance self-updates.
