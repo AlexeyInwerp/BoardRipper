@@ -5,29 +5,34 @@ import { fileURLToPath } from 'url';
 
 /**
  * "Test criteria on parser update" — a machine-checkable guard for the class of
- * regression that data-only checks (part counts, no-OOM) miss: a part that
- * renders as a GIANT solid box covering much of the board.
+ * regression that data-only checks (part counts, no-OOM) miss: a multi-pin
+ * component that renders far larger than physically possible because the parser
+ * mangled its coordinates.
  *
- * Real components never exceed ~13% of board area (largest seen: heatsinks).
- * The TESTCAD/IMPACT ASUS exports bundle scattered pads/vias into aggregate
- * pseudo-components (e.g. FA506QR `VU1_B` = 2714 pins over 72 mm, 54% of the
- * board). Those MUST be flagged `mechanical` so the scene builder skips their
- * fill + border (FlexBV treatment) instead of painting a board-spanning box.
+ * Two real bugs this guards (both in the ASUS TESTCAD/IMPACT .cad exports —
+ * FA506QR, X415JA, G513IM):
+ *   1. Shape RE-CENTERING applied to world-coordinate-shape files. Those files
+ *      encode each part's true position in its SHAPE pins and use PLACE only as
+ *      a tiny nudge; recentering subtracted each shape's centroid and collapsed
+ *      every part onto PLACE, crushing the board to a fraction of its size and
+ *      leaving components 5–50× oversized (VU1_B = 54% of the board vs 3% real,
+ *      cross-checked against the FZ export of the same chassis).
+ *   2. The N² pin explosion (see cad-duplicate-component-collapse.spec.ts).
  *
- * Invariant: after flagMechanicalParts(), NO part whose bbox exceeds
- * MAX_BODY_PCT of the board area may remain unflagged. A parser change that
- * reintroduces a giant solid component fails here.
+ * Invariant: NO part with >= MIN_PINS pins may have a bbox larger than
+ * MAX_BODY_PCT of the board area. Real multi-pin parts top out near 8%; the
+ * pin floor exempts legitimately board-spanning ZERO-pin mechanicals
+ * (heatsink / shield frames, e.g. MEC2 at 87%).
  *
- * The synthetic case below runs everywhere (no fixtures). The optional sweep
- * over real CAD samples runs only when samples/cad/ is populated (gitignored),
- * matching the skip idiom used by tvw-parser.spec.ts / allegro specs.
+ * The synthetic cases run everywhere; the optional sweep over samples/cad
+ * (gitignored) runs only when populated, matching tvw-parser / allegro specs.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SAMPLES_DIR = path.resolve(__dirname, '../../../samples/cad');
 
-/** A part bbox larger than this fraction of the board area must be flagged. */
-const MAX_BODY_PCT = 20;
+const MAX_BODY_PCT = 25;
+const MIN_PINS = 30;
 
 function partBboxPct(p: { bounds: { minX: number; minY: number; maxX: number; maxY: number } }, boardArea: number): number {
   const w = p.bounds.maxX - p.bounds.minX;
@@ -35,89 +40,79 @@ function partBboxPct(p: { bounds: { minX: number; minY: number; maxX: number; ma
   return (w * h) / boardArea * 100;
 }
 
-/** Build a degenerate .cad mirroring the real FA506QR/X415JA pathology: one
- *  shape whose pins are scattered across a board-spanning region, listed once
- *  per pin — and (as on a real board) a scatter of normal small parts sitting
- *  WITHIN that region, so the containment signal can recognise the aggregate. */
-function aggregateCad(): string {
-  const pins: string[] = [];
+function oversizedMultiPinParts(board: { parts: any[]; bounds: any }): string[] {
+  const bb = board.bounds;
+  const boardArea = (bb.maxX - bb.minX) * (bb.maxY - bb.minY) || 1;
+  return board.parts
+    .filter(p => p.pins.length >= MIN_PINS && partBboxPct(p, boardArea) > MAX_BODY_PCT)
+    .map(p => `${p.name} ${partBboxPct(p, boardArea).toFixed(0)}% (pins=${p.pins.length})`);
+}
+
+/**
+ * Reproduce the world-coordinate-shape pathology: shapes hold ABSOLUTE board
+ * positions, PLACE is a tiny nudge. A compact 100-pin BGA sits at world
+ * (10000, 6000); passives spread the board out to ~20000×12000. If the parser
+ * wrongly recenters, the BGA collapses onto PLACE while the board collapses to
+ * the (tiny) PLACE spread — making the BGA a board-spanning giant. Correct
+ * handling keeps the BGA at ~1% of the board.
+ */
+function worldCoordCad(): string {
+  const shapes: string[] = [];
   const comps: string[] = [];
-  // 300 pins scattered over a ~10000×6000 mil region (an aggregate, not a chip).
-  for (let i = 0; i < 300; i++) {
-    const x = 2000 + (i * 331) % 10000;
-    const y = 2000 + (i * 211) % 6000;
-    pins.push(`PIN P${i} PAD ${x} ${y} BOTTOM 0.000 0`);
-    comps.push(`COMPONENT AGG1\nPLACE 0 0\nLAYER BOTTOM\nROTATION 0.000\nSHAPE AGG1 0 0\nDEVICE AGG1_${i}`);
+  // Compact 10×10 BGA at world (10000, 6000), 40-mil pitch → 360×360 mils.
+  const bgaPins: string[] = [];
+  for (let r = 0; r < 10; r++)
+    for (let c = 0; c < 10; c++)
+      bgaPins.push(`PIN ${r}_${c} PAD ${10000 + c * 40} ${6000 + r * 40} BOTTOM 0.000 0`);
+  shapes.push(`SHAPE BGA\n${bgaPins.join('\n')}\nINSERT SMD`);
+  comps.push(`COMPONENT U1\nPLACE 3 3\nLAYER BOTTOM\nROTATION 0.000\nSHAPE BGA 0 0\nDEVICE U1`);
+  // 60 passives whose 2-pin shapes carry their own world positions, spreading
+  // the board across 0..20000 × 0..12000.
+  for (let i = 0; i < 60; i++) {
+    const x = (i * 331) % 20000;
+    const y = (i * 211) % 12000;
+    shapes.push(`SHAPE R${i}\nPIN 1 PAD ${x} ${y} BOTTOM 0.000 0\nPIN 2 PAD ${x + 30} ${y} BOTTOM 0.000 0\nINSERT SMD`);
+    comps.push(`COMPONENT R${i}\nPLACE 2 2\nLAYER BOTTOM\nROTATION 0.000\nSHAPE R${i} 0 0\nDEVICE R${i}`);
   }
-  // Normal small parts dotted across the same area (the real components the
-  // aggregate visually covers) + corner parts to give the board a margin.
-  const small: [number, number][] = [
-    [3000, 3000], [5000, 4000], [7000, 5000], [9000, 3500], [11000, 6000],
-    [4000, 6500], [13000, 9000], [500, 500],
-  ];
-  small.forEach(([bx, by], r) => {
-    comps.push(`COMPONENT R${r}\nPLACE ${bx} ${by}\nLAYER BOTTOM\nROTATION 0.000\nSHAPE RES 0 0\nDEVICE R${r}`);
-  });
   return (
     `$HEADER\nGENCAD 1.4\nUNITS USER 1000\n$ENDHEADER\n` +
-    `$SHAPES\nSHAPE AGG1\n${pins.join('\n')}\nINSERT SMD\n` +
-    `SHAPE RES\nPIN 1 PAD 0 0 BOTTOM 0.000 0\nPIN 2 PAD 20 0 BOTTOM 0.000 0\nINSERT SMD\n$ENDSHAPES\n` +
+    `$SHAPES\n${shapes.join('\n')}\n$ENDSHAPES\n` +
     `$COMPONENTS\n${comps.join('\n')}\n$ENDCOMPONENTS\n$SIGNALS\n$ENDSIGNALS\n`
   );
 }
 
-test.describe('CAD component-size invariant (no giant solid components)', () => {
-  test('aggregate pseudo-components are flagged mechanical (synthetic)', async () => {
+test.describe('CAD component-size invariant (no impossibly-large components)', () => {
+  test('world-coordinate-shape files are NOT recentered into giant parts', async () => {
     const { parseCAD } = await import('../src/parsers/cad-parser');
-    const { flagMechanicalParts } = await import('../src/parsers/types');
-    const board = parseCAD(new TextEncoder().encode(aggregateCad()).buffer as ArrayBuffer);
-    flagMechanicalParts(board.parts);
+    const board = parseCAD(new TextEncoder().encode(worldCoordCad()).buffer as ArrayBuffer);
 
-    const bb = board.bounds;
-    const boardArea = (bb.maxX - bb.minX) * (bb.maxY - bb.minY) || 1;
+    // Board must span the world coordinates (~20000×12000), not collapse to the
+    // tiny PLACE spread.
+    expect(board.bounds.maxX - board.bounds.minX, 'board width').toBeGreaterThan(15000);
 
-    const giantUnflagged = board.parts.filter(
-      p => !p.mechanical && partBboxPct(p, boardArea) > MAX_BODY_PCT,
-    );
-    expect(
-      giantUnflagged.map(p => `${p.name} ${partBboxPct(p, boardArea).toFixed(0)}%`),
-      'parts larger than MAX_BODY_PCT of the board must be flagged mechanical',
-    ).toEqual([]);
-
-    // And the aggregate must actually exist + be the flagged one (guards against
-    // a future "collapse" that silently drops it).
-    const agg = board.parts.find(p => p.name === 'AGG1');
-    expect(agg, 'aggregate part AGG1 should survive parsing').toBeTruthy();
-    expect(agg!.mechanical, 'AGG1 should be flagged mechanical').toBe(true);
+    // The 100-pin BGA must be a small fraction of the board, not board-spanning.
+    expect(oversizedMultiPinParts(board), 'oversized multi-pin parts').toEqual([]);
+    const u1 = board.parts.find(p => p.name === 'U1')!;
+    const boardArea = (board.bounds.maxX - board.bounds.minX) * (board.bounds.maxY - board.bounds.minY);
+    expect(partBboxPct(u1, boardArea), 'U1 bbox % of board').toBeLessThan(5);
   });
 
-  test('real CAD samples: no unflagged board-spanning component', async () => {
+  test('real CAD samples: no impossibly-large multi-pin component', async () => {
     test.skip(!fs.existsSync(SAMPLES_DIR), 'samples/cad not present');
     const entries = fs.readdirSync(SAMPLES_DIR).filter(f => f.toLowerCase().endsWith('.cad'));
     test.skip(entries.length === 0, 'samples/cad empty');
 
     const { parseCAD } = await import('../src/parsers/cad-parser');
-    const { flagMechanicalParts } = await import('../src/parsers/types');
-
     const offenders: string[] = [];
     for (const f of entries) {
       const buf = fs.readFileSync(path.join(SAMPLES_DIR, f));
-      let board;
       try {
-        board = parseCAD(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+        const board = parseCAD(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+        for (const o of oversizedMultiPinParts(board)) offenders.push(`${f}: ${o}`);
       } catch (e) {
         offenders.push(`${f}: parse threw ${(e as Error).message.slice(0, 60)}`);
-        continue;
-      }
-      flagMechanicalParts(board.parts);
-      const bb = board.bounds;
-      const boardArea = (bb.maxX - bb.minX) * (bb.maxY - bb.minY) || 1;
-      for (const p of board.parts) {
-        if (!p.mechanical && partBboxPct(p, boardArea) > MAX_BODY_PCT) {
-          offenders.push(`${f}: ${p.name} = ${partBboxPct(p, boardArea).toFixed(0)}% (pins=${p.pins.length})`);
-        }
       }
     }
-    expect(offenders, 'unflagged board-spanning components').toEqual([]);
+    expect(offenders, 'impossibly-large multi-pin components').toEqual([]);
   });
 });

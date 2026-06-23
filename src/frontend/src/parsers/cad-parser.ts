@@ -853,13 +853,58 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     if (!list) { list = []; shapeUsers.set(c.shapeName, list); }
     list.push(c);
   }
+
+  // Some TESTCAD/IMPACT exports (ASUS laptop boards: FA506QR, X415JA, G513IM…)
+  // encode each component's TRUE world position directly in its SHAPE pin
+  // coordinates and use PLACE only as a small per-part nudge — the inverse of
+  // the V382 "stale leaked coords" case the recentering below targets. There,
+  // PLACE carries the layout and a stray shape leaked absolute coords; here
+  // EVERY shape is in absolute coords and PLACE is near-zero. Recentering such
+  // a file subtracts each shape's (large, position-bearing) centroid and
+  // collapses every part onto its ~zero PLACE — crushing the board to a
+  // fraction of its true extent and piling all parts on the origin (the
+  // "giant overlapping components" symptom). Detect the convention file-wide:
+  // when the span of all SHAPE pins clearly exceeds the span of all PLACE
+  // values in BOTH axes, the shapes hold the layout, so recentering is skipped
+  // and the shape coordinates are used as-is (+ the small PLACE nudge). Clean
+  // GenCAD and V382 keep the layout in PLACE (placeExtent ≥ shapeExtent) and
+  // are unaffected.
+  let shMinX = Infinity, shMinY = Infinity, shMaxX = -Infinity, shMaxY = -Infinity;
+  for (const shape of shapes.values()) {
+    for (const p of shape.pins) {
+      if (p.x < shMinX) shMinX = p.x;
+      if (p.x > shMaxX) shMaxX = p.x;
+      if (p.y < shMinY) shMinY = p.y;
+      if (p.y > shMaxY) shMaxY = p.y;
+    }
+  }
+  let plMinX = Infinity, plMinY = Infinity, plMaxX = -Infinity, plMaxY = -Infinity;
+  for (const c of components) {
+    if (c.placeX < plMinX) plMinX = c.placeX;
+    if (c.placeX > plMaxX) plMaxX = c.placeX;
+    if (c.placeY < plMinY) plMinY = c.placeY;
+    if (c.placeY > plMaxY) plMaxY = c.placeY;
+  }
+  const shapeExtentX = shMaxX - shMinX, shapeExtentY = shMaxY - shMinY;
+  const placeExtentX = plMaxX - plMinX, placeExtentY = plMaxY - plMinY;
+  const worldCoordShapes =
+    shapeExtentX > 0 && shapeExtentY > 0 &&
+    shapeExtentX > 2 * placeExtentX && shapeExtentY > 2 * placeExtentY;
+  if (worldCoordShapes) {
+    log.parser.log(
+      `CAD world-coordinate shapes detected (shapeExtent ${shapeExtentX.toFixed(0)}×` +
+      `${shapeExtentY.toFixed(0)} ≫ placeExtent ${placeExtentX.toFixed(0)}×` +
+      `${placeExtentY.toFixed(0)}); skipping shape recentering.`,
+    );
+  }
+
   // A shape qualifies for recentering when its pin centroid sits clearly
   // off-origin — more than 2× the shape's own half-extent in at least one
   // axis. This catches shapes with stale world coordinates from concatenated
   // exports (common in Teradyne GenCAM files) regardless of package size.
   // Connectors and mechanical parts with legitimately asymmetric pin layouts
   // have centroids close to their extent, so the ratio check leaves them alone.
-  for (const [name, shape] of shapes.entries()) {
+  for (const [name, shape] of worldCoordShapes ? [] : shapes.entries()) {
     if (shape.pins.length === 0) continue;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of shape.pins) {

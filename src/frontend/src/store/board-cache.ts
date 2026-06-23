@@ -27,7 +27,10 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 // 75: GenCAD parser collapses consecutive byte-identical COMPONENT records
 //     (Mentor/CAMCAD per-device-record exports), fixing an N² pin explosion
 //     that OOM'd on load (e.g. ASUS FA506QR_..._MB1501.cad → 9.1M pins).
-const PARSER_VERSION = 75;
+// 76: GenCAD parser skips shape-recentering for world-coordinate-shape exports
+//     (TESTCAD/IMPACT ASUS boards); recentering was crushing the board to a
+//     fraction of its size and rendering components 5-50× oversized.
+const PARSER_VERSION = 76;
 
 interface CachedBoard {
   key: string;
