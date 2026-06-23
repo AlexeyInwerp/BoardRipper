@@ -301,7 +301,7 @@ interface ParsedComponents {
 }
 
 function parseComponents(lines: string[]): ParsedComponents {
-  const components: Component[] = [];
+  let components: Component[] = [];
   let current: Partial<Component> | null = null;
 
   for (const raw of lines) {
@@ -340,6 +340,45 @@ function parseComponents(lines: string[]): ParsedComponents {
     }
   }
   if (current?.name) components.push(current as Component);
+
+  // Collapse consecutive runs of geometrically-identical COMPONENT records.
+  //
+  // Some Mentor/CAMCAD exports (e.g. ASUS FA506QR_..._MB1501.cad) emit ONE
+  // COMPONENT block per device/net record rather than one per physical part,
+  // so a single big BGA is re-listed back-to-back hundreds or thousands of
+  // times — same refdes, same PLACE, same SHAPE, same ROTATION/LAYER, with
+  // only the (rendering-irrelevant) DEVICE field varying. Because that BGA's
+  // SHAPE genuinely carries N pins, instantiating it N times produces N²
+  // pins, which exhausts the heap (FA506QR: VU1_B alone = 2714² ≈ 7.3M pins).
+  //
+  // A back-to-back record that is identical in every placement field is pure
+  // redundancy — there is no physical or revision meaning to drawing the same
+  // part at the same place with the same shape twice in a row. We compare
+  // against the LAST KEPT record only (consecutive runs), which is provably
+  // safe for genuine multi-revision files: those concatenate COMPLETE board
+  // snapshots, so a repeated refdes is always separated by other refdes (and
+  // typically differs in shape/place anyway — e.g. V382_20 has zero
+  // consecutive duplicates and its 3-revision structure is untouched).
+  // DEVICE is intentionally excluded from the identity — it is the only field
+  // these redundant records vary, and the first record's BOM info is kept.
+  const deduped: Component[] = [];
+  for (const c of components) {
+    const prev = deduped[deduped.length - 1];
+    if (
+      prev &&
+      prev.name === c.name &&
+      prev.placeX === c.placeX &&
+      prev.placeY === c.placeY &&
+      prev.layer === c.layer &&
+      prev.rotation === c.rotation &&
+      prev.shapeName === c.shapeName &&
+      prev.mirror === c.mirror
+    ) {
+      continue;
+    }
+    deduped.push(c);
+  }
+  components = deduped;
 
   // Some exporters accumulate every prior revision of the board into the
   // same .cad file as a sequence of concatenated passes. Example:

@@ -24,7 +24,10 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     the post-v6 diode reading table onto pins (Pin.diode + diodeReference).
 // 74: cache serialize/deserialize now persist diodeReference (v73 stripped it,
 //     so the on-pin overlay's UI vanished on cache hit) — bust those entries.
-const PARSER_VERSION = 74;
+// 75: GenCAD parser collapses consecutive byte-identical COMPONENT records
+//     (Mentor/CAMCAD per-device-record exports), fixing an N² pin explosion
+//     that OOM'd on load (e.g. ASUS FA506QR_..._MB1501.cad → 9.1M pins).
+const PARSER_VERSION = 75;
 
 interface CachedBoard {
   key: string;
