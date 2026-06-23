@@ -96,6 +96,24 @@ test('equal context → bigger font breaks the tie', async () => {
   expect(r.bestMatchIndex).toBe(1); // same context, bigger font
 });
 
+test('big-font symbol page beats a context-denser small-font table page', async () => {
+  // Mirrors UF400/UF500 on 820-02020: a shared pin/connector TABLE (small font,
+  // lots of the part's nets on the page) vs the real schematic SYMBOL (big font,
+  // nets on the page but not adjacent to the centred designator → local 0).
+  // The symbol must win on font even though the table has a higher page score.
+  const { scoreLookupCandidates } = await load();
+  const table = cand(0, 0, 100, 500, 10);   // small font
+  const symbol = cand(1, 1, 100, 500, 17.5); // big font
+  const ctx = [
+    // table page 0: 3 distinct nets present on the page but FAR from the designator
+    netHit(0, 9000, 9000, 'n1'), netHit(0, 9100, 9000, 'n2'), netHit(0, 9200, 9000, 'n3'),
+    // symbol page 1: 1 net present, also far from the designator (local 0)
+    netHit(1, 9000, 9000, 'n1'),
+  ];
+  const r = scoreLookupCandidates([table, symbol], ctx, PARAMS, 0);
+  expect(r.bestMatchIndex).toBe(1); // the big-font symbol page, not the dense table
+});
+
 test('distinct terms counted once; more distinct nearby nets wins', async () => {
   const { scoreLookupCandidates } = await load();
   const candidates = [cand(0, 0, 100, 500), cand(1, 0, 2000, 500)];

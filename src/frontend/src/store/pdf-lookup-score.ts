@@ -52,6 +52,13 @@ export interface LookupScoreResult {
 /** Local proximity dominates; page-level presence only breaks ties. */
 const LOCAL_DOMINANCE = 1000;
 
+/** An occurrence counts as a "prominent" (symbol-grade) designator when its
+ *  font is at least this fraction of the largest designator font seen for the
+ *  lookup. Schematic symbol refdes are a notably bigger glyph than the body
+ *  font used in pin / connector / BOM tables, so this separates the real
+ *  placement from a dense table that happens to list the same nets. */
+const PROMINENCE = 0.85;
+
 /** Bucket font size to nearest 0.5 so float noise in PDF transforms doesn't
  *  make near-equal fonts arbitrarily win the tiebreak. */
 function fontBucket(fontSize: number): number {
@@ -97,7 +104,7 @@ export function scoreLookupCandidates(
     arr.push(h);
   }
 
-  // Score each candidate; rank by (context, font, page-proximity, order).
+  // Score each candidate.
   const entries = candidates.map(c => {
     const base = pageScore.get(c.page) ?? 0;
 
@@ -112,35 +119,42 @@ export function scoreLookupCandidates(
     let local = 0;
     for (const w of nearTerms.values()) local += w;
 
-    const total = local * LOCAL_DOMINANCE + base;
-    scoreByMatch.set(c.matchIndex, total);
-    return { c, total, font: fontBucket(c.fontSize) };
+    scoreByMatch.set(c.matchIndex, local * LOCAL_DOMINANCE + base);
+    return { c, local, base, font: fontBucket(c.fontSize), hasCtx: base > 0 ? 1 : 0 };
   });
 
-  const bestContext = entries.reduce((m, e) => Math.max(m, e.total), 0);
+  const maxFont = entries.reduce((m, e) => Math.max(m, e.font), 0);
+  const fontThreshold = maxFont * PROMINENCE;
+  const tier = (font: number) => (font >= fontThreshold ? 1 : 0);
 
-  // No context anywhere: font is the only signal. If every occurrence shares
-  // the same font there is nothing to choose, so defer to the caller's own
-  // page-proximity pick (-1). Otherwise prefer the biggest font.
-  if (bestContext <= 0) {
-    const maxFont = entries.reduce((m, e) => Math.max(m, e.font), -Infinity);
-    if (entries.every(e => e.font === maxFont)) {
-      return { bestMatchIndex: -1, scoreByMatch };
-    }
-  }
-
-  // Pick best: context first, then bigger font, then nearer the current page,
-  // then earlier in reading order. Font is additive — it never overrides a
-  // stronger context score, only breaks ties beneath it.
+  // Rank, in order of decreasing priority:
+  //   1. page carries some of the part's context (excludes title/cross-ref
+  //      pages that merely name the part with none of its nets nearby);
+  //   2. local proximity — context terms hugging the designator (the decisive
+  //      signal for small parts and same-page disambiguation);
+  //   3. font tier — a symbol-grade (big) designator beats a small-font table
+  //      when local proximity can't separate them (the big-BGA case);
+  //   4. page-level context amount;
+  //   5. nearer the current page, then earlier in reading order.
   let best = entries[0];
   for (const e of entries) {
     if (e === best) continue;
-    if (e.total !== best.total) { if (e.total > best.total) best = e; continue; }
-    if (e.font !== best.font) { if (e.font > best.font) best = e; continue; }
+    if (e.hasCtx !== best.hasCtx) { if (e.hasCtx > best.hasCtx) best = e; continue; }
+    if (e.local !== best.local) { if (e.local > best.local) best = e; continue; }
+    const te = tier(e.font), tb = tier(best.font);
+    if (te !== tb) { if (te > tb) best = e; continue; }
+    if (e.base !== best.base) { if (e.base > best.base) best = e; continue; }
     const dCur = Math.abs(e.c.page - currentPageIndex);
     const dBest = Math.abs(best.c.page - currentPageIndex);
     if (dCur !== dBest) { if (dCur < dBest) best = e; continue; }
     if (e.c.matchIndex < best.c.matchIndex) best = e;
+  }
+
+  // No discriminating signal at all (no context, uniform font) → let the caller
+  // keep its own page-proximity pick.
+  const uniformFont = entries.every(e => e.font === best.font);
+  if (best.base === 0 && best.local === 0 && uniformFont) {
+    return { bestMatchIndex: -1, scoreByMatch };
   }
 
   return { bestMatchIndex: best.c.matchIndex, scoreByMatch };

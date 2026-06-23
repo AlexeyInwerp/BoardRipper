@@ -1094,7 +1094,10 @@ class PdfStore extends Emitter {
       const norm = t.text.trim().toLowerCase();
       if (!norm) continue;
       if (t.kind === 'net') nets.push(norm);
-      else if (!/^\d$/.test(norm)) pins.push(norm); // drop 1-char numeric pins (noise)
+      // Keep only distinctive pin names (ball coords like "A1"); drop purely
+      // numeric pin numbers — they are sequential, non-distinctive, and appear
+      // densely in pin/connector tables, biasing the pick toward those tables.
+      else if (!/^\d+$/.test(norm)) pins.push(norm);
     }
 
     const candidates: LookupCandidate[] = doc.matches.map((m, i) => ({

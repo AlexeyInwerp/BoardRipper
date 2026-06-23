@@ -2564,12 +2564,14 @@ export class BoardRenderer {
       if (nets.size >= 4) break; // limit to 4 distinctive nets
     }
 
-    // Pin numbers/names as extra disambiguating context (printed on the symbol
-    // body). Drop 1-char pure-numeric tokens — too short / collision-prone.
+    // Pin names as extra disambiguating context (printed on the symbol body).
+    // Keep only distinctive alphanumeric ball names (e.g. "A1"); drop purely
+    // numeric pin numbers — sequential and non-distinctive, they appear densely
+    // in pin/connector tables and bias the lookup toward those tables.
     const pinTokens = new Set<string>();
     for (const pin of part.pins) {
       const t = (pin.number || pin.name || '').trim();
-      if (!t || /^\d$/.test(t)) continue;
+      if (!t || /^\d+$/.test(t)) continue;
       pinTokens.add(t);
       if (pinTokens.size >= 4) break;
     }

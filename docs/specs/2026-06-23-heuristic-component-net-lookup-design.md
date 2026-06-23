@@ -85,14 +85,31 @@ then replaces the page-proximity "best" pick with a **context score**:
    `_multiTermXGap` / `_multiTermYGap` constants for the window). This separates
    the real symbol placement from a stray same-page mention.
 
-**Selection:** ranked by `(context score → font size → page proximity →
-reading order)`. **Font size is additive** — the schematic symbol designator is
-usually a larger glyph than BOM/index table text, so a bigger font breaks ties
-beneath the context score and, when there is *no* context signal at all, becomes
-the deciding factor (bucketed to nearest 0.5 to ignore float noise). **Only when
-context is zero everywhere AND every occurrence shares one font size** does the
-scorer return -1, and the caller then keeps the current page-proximity pick —
-zero regression for the genuinely ambiguous case.
+**Selection** (refined against 820-02020 — see below) ranks by:
+`has-page-context → local proximity → font tier → page-context amount → page
+proximity → reading order`.
+
+- **has-page-context** (page carries ≥1 of the part's nets) drops title-block /
+  cross-reference pages that merely name the part with none of its nets.
+- **local proximity** — context terms hugging the designator — is decisive for
+  small parts and for same-page disambiguation.
+- **font tier** — a *prominent* (symbol-grade) designator, font ≥ 85% of the
+  largest designator font seen for this lookup, beats a small-font table when
+  local proximity can't separate them. This is the **big-BGA fix**: a big part's
+  designator sits far from its radiating net labels, so local proximity is ~0 on
+  the real symbol sheet; without the font tier a dense pin/connector *table*
+  (small font, all the nets listed compactly) out-scores the symbol.
+
+**`-1` (caller keeps page-proximity) only when** there is no page context, no
+local proximity, and a single uniform font across all occurrences.
+
+**Big-BGA finding (820-02020):** the BVR exposes *sequential integer* pin
+numbers (`10,11,12,…`), not ball names. These are non-distinctive and dense in
+tables, so they were both noise and a false local signal that pulled UF400/UF500
+onto a shared connector table (p55) instead of their symbols (p57/p58).
+**Purely-numeric pin tokens are now dropped** — only alphanumeric ball-style
+names are kept as pin context. With that plus the font tier, all eight largest
+BGAs on 820-02020 select the schematic symbol page.
 
 The chosen occurrence sets `activeMatchIndex` and the `_followTarget`
 (`{ pageIndex, items }`) so the PDF zooms to the **best** hit, not `items[0]` of
