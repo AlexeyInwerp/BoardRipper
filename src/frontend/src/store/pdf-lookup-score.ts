@@ -52,6 +52,12 @@ export interface LookupScoreResult {
 /** Local proximity dominates; page-level presence only breaks ties. */
 const LOCAL_DOMINANCE = 1000;
 
+/** Bucket font size to nearest 0.5 so float noise in PDF transforms doesn't
+ *  make near-equal fonts arbitrarily win the tiebreak. */
+function fontBucket(fontSize: number): number {
+  return Math.round(fontSize * 2) / 2;
+}
+
 /**
  * Per page: weight of each distinct context term present anywhere on it.
  * A term seen multiple times still counts once (its weight).
@@ -91,10 +97,8 @@ export function scoreLookupCandidates(
     arr.push(h);
   }
 
-  let best: LookupCandidate | null = null;
-  let bestTotal = -1;
-
-  for (const c of candidates) {
+  // Score each candidate; rank by (context, font, page-proximity, order).
+  const entries = candidates.map(c => {
     const base = pageScore.get(c.page) ?? 0;
 
     // Local: distinct context terms with ≥1 occurrence inside the window.
@@ -110,18 +114,34 @@ export function scoreLookupCandidates(
 
     const total = local * LOCAL_DOMINANCE + base;
     scoreByMatch.set(c.matchIndex, total);
+    return { c, total, font: fontBucket(c.fontSize) };
+  });
 
-    if (total > bestTotal) {
-      best = c; bestTotal = total;
-    } else if (total === bestTotal && best) {
-      // Tie-break: nearer the current page, then earlier in reading order.
-      const dCur = Math.abs(c.page - currentPageIndex);
-      const dBest = Math.abs(best.page - currentPageIndex);
-      if (dCur < dBest || (dCur === dBest && c.matchIndex < best.matchIndex)) best = c;
+  const bestContext = entries.reduce((m, e) => Math.max(m, e.total), 0);
+
+  // No context anywhere: font is the only signal. If every occurrence shares
+  // the same font there is nothing to choose, so defer to the caller's own
+  // page-proximity pick (-1). Otherwise prefer the biggest font.
+  if (bestContext <= 0) {
+    const maxFont = entries.reduce((m, e) => Math.max(m, e.font), -Infinity);
+    if (entries.every(e => e.font === maxFont)) {
+      return { bestMatchIndex: -1, scoreByMatch };
     }
   }
 
-  // Zero total everywhere → no usable signal; let the caller fall back.
-  if (!best || bestTotal <= 0) return { bestMatchIndex: -1, scoreByMatch };
-  return { bestMatchIndex: best.matchIndex, scoreByMatch };
+  // Pick best: context first, then bigger font, then nearer the current page,
+  // then earlier in reading order. Font is additive — it never overrides a
+  // stronger context score, only breaks ties beneath it.
+  let best = entries[0];
+  for (const e of entries) {
+    if (e === best) continue;
+    if (e.total !== best.total) { if (e.total > best.total) best = e; continue; }
+    if (e.font !== best.font) { if (e.font > best.font) best = e; continue; }
+    const dCur = Math.abs(e.c.page - currentPageIndex);
+    const dBest = Math.abs(best.c.page - currentPageIndex);
+    if (dCur !== dBest) { if (dCur < dBest) best = e; continue; }
+    if (e.c.matchIndex < best.c.matchIndex) best = e;
+  }
+
+  return { bestMatchIndex: best.c.matchIndex, scoreByMatch };
 }

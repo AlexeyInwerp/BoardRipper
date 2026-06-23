@@ -977,7 +977,9 @@ class PdfStore extends Emitter {
     const doc = this._documents.get(fileName);
     if (!doc || !primary.trim()) return;
     this._runSearch(doc, primary, source, false);
-    if (context.length > 0 && doc.matches.length > 1) {
+    if (doc.matches.length > 1) {
+      // Re-pick among occurrences by context proximity + biggest font (the
+      // scorer falls back to font, then page-proximity, when context is sparse).
       this._applyContextScoring(doc, context);
     }
   }
@@ -1094,7 +1096,6 @@ class PdfStore extends Emitter {
       if (t.kind === 'net') nets.push(norm);
       else if (!/^\d$/.test(norm)) pins.push(norm); // drop 1-char numeric pins (noise)
     }
-    if (nets.length === 0 && pins.length === 0) return;
 
     const candidates: LookupCandidate[] = doc.matches.map((m, i) => ({
       matchIndex: i,
@@ -1109,7 +1110,9 @@ class PdfStore extends Emitter {
 
     const pinSet = new Set(pins);
     const contextHits: LookupContextHit[] = [];
-    for (const pi of pages) {
+    // Skip the page scans entirely when there is no net/pin context — the
+    // scorer still runs (below) and falls back to biggest-font / proximity.
+    for (const pi of (nets.length || pinSet.size) ? pages : []) {
       const items = doc.textPages[pi];
       if (!items) continue;
       const lines = mergeItemsIntoLines(items);
@@ -1145,20 +1148,19 @@ class PdfStore extends Emitter {
       }
     }
 
-    if (contextHits.length === 0) return;
-
     const result = scoreLookupCandidates(
       candidates, contextHits,
       { xGapMul: this._lookupXGap, yGapMul: this._lookupYGap },
       doc.currentPage - 1,
     );
-    if (result.bestMatchIndex < 0) return; // no signal — keep proximity pick
+    // -1 → no context AND no font signal; keep _runSearch's page-proximity pick.
+    if (result.bestMatchIndex < 0) return;
 
     doc.activeMatchIndex = result.bestMatchIndex;
     doc.activeGroupIndex = -1;
     doc.currentPage = doc.matches[result.bestMatchIndex].pageIndex + 1;
     this._rebuildActiveIndicesCache(doc);
-    log.pdf.log(`lookup context-score: best match #${result.bestMatchIndex} on page ${doc.currentPage} (${contextHits.length} ctx hits)`);
+    log.pdf.log(`lookup score: best match #${result.bestMatchIndex} on page ${doc.currentPage} (${contextHits.length} ctx hits)`);
     this.notify();
   }
 

@@ -12,8 +12,8 @@ async function load(): Promise<Mod> {
 
 const PARAMS = { xGapMul: 12, yGapMul: 12 };
 
-function cand(matchIndex: number, page: number, x: number, y: number) {
-  return { matchIndex, page, x, y, fontSize: 10 };
+function cand(matchIndex: number, page: number, x: number, y: number, fontSize = 10) {
+  return { matchIndex, page, x, y, fontSize };
 }
 function netHit(page: number, x: number, y: number, term: string) {
   return { page, x, y, term, weight: 2 };
@@ -64,6 +64,36 @@ test('context on page but far from any candidate still selects via page score (n
   const ctx = [netHit(0, 99999, 99999, 'n1')]; // page 0, but nowhere near candidate
   const r = scoreLookupCandidates(candidates, ctx, PARAMS, 1);
   expect(r.bestMatchIndex).toBe(0);
+});
+
+test('no context + different fonts → biggest font wins (not -1)', async () => {
+  const { scoreLookupCandidates } = await load();
+  const candidates = [cand(0, 0, 100, 500, 8), cand(1, 0, 200, 500, 14)];
+  const r = scoreLookupCandidates(candidates, [], PARAMS, 0);
+  expect(r.bestMatchIndex).toBe(1); // bigger font
+});
+
+test('no context + uniform font → -1 (caller keeps page-proximity)', async () => {
+  const { scoreLookupCandidates } = await load();
+  const candidates = [cand(0, 0, 100, 500, 10), cand(1, 1, 100, 500, 10)];
+  const r = scoreLookupCandidates(candidates, [], PARAMS, 0);
+  expect(r.bestMatchIndex).toBe(-1);
+});
+
+test('context outranks a bigger font (font is only additive)', async () => {
+  const { scoreLookupCandidates } = await load();
+  const candidates = [cand(0, 0, 100, 500, 10), cand(1, 0, 2000, 500, 20)];
+  const ctx = [netHit(0, 105, 500, 'n1')]; // near small-font candidate 0 only
+  const r = scoreLookupCandidates(candidates, ctx, PARAMS, 0);
+  expect(r.bestMatchIndex).toBe(0); // context beats the bigger font
+});
+
+test('equal context → bigger font breaks the tie', async () => {
+  const { scoreLookupCandidates } = await load();
+  const candidates = [cand(0, 0, 100, 500, 10), cand(1, 0, 100, 500, 16)];
+  const ctx = [netHit(0, 100, 500, 'n1')]; // within window of both
+  const r = scoreLookupCandidates(candidates, ctx, PARAMS, 0);
+  expect(r.bestMatchIndex).toBe(1); // same context, bigger font
 });
 
 test('distinct terms counted once; more distinct nearby nets wins', async () => {

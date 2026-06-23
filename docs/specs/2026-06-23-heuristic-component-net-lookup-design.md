@@ -85,10 +85,14 @@ then replaces the page-proximity "best" pick with a **context score**:
    `_multiTermXGap` / `_multiTermYGap` constants for the window). This separates
    the real symbol placement from a stray same-page mention.
 
-**Selection:** `best = argmax(score)`; ties broken by the existing rule
-(proximity to current page → reading order). **If `contextTerms` is empty or all
-scores are zero, fall back to the current page-proximity pick exactly** — zero
-regression for context-less lookups.
+**Selection:** ranked by `(context score → font size → page proximity →
+reading order)`. **Font size is additive** — the schematic symbol designator is
+usually a larger glyph than BOM/index table text, so a bigger font breaks ties
+beneath the context score and, when there is *no* context signal at all, becomes
+the deciding factor (bucketed to nearest 0.5 to ignore float noise). **Only when
+context is zero everywhere AND every occurrence shares one font size** does the
+scorer return -1, and the caller then keeps the current page-proximity pick —
+zero regression for the genuinely ambiguous case.
 
 The chosen occurrence sets `activeMatchIndex` and the `_followTarget`
 (`{ pageIndex, items }`) so the PDF zooms to the **best** hit, not `items[0]` of
