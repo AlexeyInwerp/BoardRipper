@@ -1,5 +1,15 @@
 # BoardRipper changelog
 
+## v0.31.24 — 2026-06-23
+
+Extends the MCP integration with a two-way **worklist AI-mode loop** — an
+agent (e.g. Claude Code via the BoardRipper MCP) and the bench technician
+collaborate on the same worklist, no in-app LLM required.
+
+### Features
+
+- **Worklist AI-mode feedback loop (agent ↔ worklist ↔ user).** The agent writes worklist entries, marks, and list notes, *requests specific measurements*, and posts relay messages; the user answers (or skips) each measurement inline and types back through a prompt box the agent reads. New live MCP tools — `worklist_get` / `worklist_get_measurements` / `worklist_get_user_messages` (read) and `worklist_add` / `worklist_update` / `worklist_set_list_note` / `request_measurement` / `post_message` (write, gated on the `mcp_drive_ui` toggle) — plus matching bridge dispatch handlers. The WorklistPanel grows an AI section: measurement rows with answer/skip, a relay transcript with a prompt box, and clickable `[n:]` / `[p:]` net/part chips (the `DiagnosisNotes` note renderer is now exported and reused). The `boardripper-repair-helper` skill gains a guided worklist-loop playbook and tool quick-reference. Design spec: `docs/specs/2026-06-16-worklist-ai-mode-feedback-loop-design.md`. (`a2d21b3`, `f77eb38`)
+
 ## v0.31.23 — 2026-06-19
 
 BoardRipper can now be driven by an AI agent: a built-in MCP server exposes the
