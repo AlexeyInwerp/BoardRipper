@@ -40,6 +40,41 @@ separate future increment).
 - **Nets only.** Part rows keep mark + note, unchanged.
 - **Part/pin measurement asks degrade to a relay message** — no structured row.
 - **Keep the relay** (transcript + prompt box) as the only AI-specific surface.
+- **The worklist is a source-agnostic shared artifact.** The agent can pick up a
+  fully *user-built* worklist as the input to its analysis — not only ones it
+  populated itself. The read tools must return user-origin entries, notes, and
+  measurements, not just agent-origin ones.
+
+## Bidirectional review: agent picks up a user-built worklist
+
+The primary flow so far is agent → worklist → user (agent populates, user
+answers). This must also work in reverse: the technician does the work by hand —
+marks parts replaced/reworked, marks nets, records V/Diode/Ω readings, writes
+notes — gets stuck, and asks the agent (from the Claude Code side) to **review
+the worklist and suggest further steps**.
+
+What this requires (mostly already present; the gaps are called out):
+
+- **The agent reads the whole worklist, source-agnostic.** `worklist_get`
+  already returns all part/net entries with marks + notes + ticket note.
+  `get_measurements` must now return **user-recorded** net measurements too
+  (`source: 'user'`), not only agent-requested ones — otherwise the agent can't
+  see the readings the tech already took. This is the one real behavioural change
+  the per-net model introduces, and it is what makes "review my work" possible.
+- **The agent writes its review back through the same surfaces** that render
+  inline: a relay `post_message` for reasoning / the summary, new
+  `request_measurement` calls for the next probes to take (appear as requested
+  fields on the relevant net rows), and `worklist_update` / `worklist_set_list_note`
+  for mark or note suggestions. No new tool is needed.
+- **No "AI mode" gate.** A worklist built entirely by hand is fully agent-readable
+  whenever MCP is connected. The relay section appears once the agent posts its
+  first message (`messages.length > 0`) or MCP is connected, so the review
+  surfaces even on a worklist that had no agent involvement before.
+- **In-app trigger:** none added (YAGNI). The agent acts when the user asks it in
+  the Claude Code chat; the existing relay prompt box is the in-app channel to
+  nudge it ("review this worklist and suggest next steps" → `get_user_messages`).
+  An explicit "Ask AI to review" button is out of scope — it can't summon an
+  agent that isn't already listening.
 
 ## Data model
 
@@ -134,8 +169,11 @@ visibility gate stays: shown when MCP is connected or `messages.length > 0`.
   - target is a **part/pin** (or unknown) → `post_message` (role agent) with the
     ask text. Tool description updated to say part/pin asks land in the relay.
 - `get_measurements`: returns net measurements (netName, kind, status, value,
-  unit, expected) read off net entries; optional `status` filter maps to
-  `requested|recorded`.
+  unit, expected, **source**) read off net entries — **including user-recorded
+  ones** (`source: 'user'`), so the agent sees readings the tech already took
+  when reviewing a user-built worklist. Optional `status` filter maps to
+  `requested|recorded`; an optional `source` filter is available but unset by
+  default (returns both).
 - `worklist_get`: its measurement section now reads inline net measurements.
 - `worklist_add`/`worklist_update`/`worklist_set_list_note`/`post_message`/
   `get_user_messages`: unchanged.
@@ -156,8 +194,16 @@ rule:
    exists; record a value → assert it flips to recorded and `get_measurements`
    returns it.
 
+3. **Bidirectional review (store + backend):** build a worklist by hand
+   (net entries + a user-recorded `Ω` reading, no agent involvement) → assert
+   `get_measurements` returns the user reading with `source: 'user'`, and
+   `worklist_get` returns the full hand-built picture. Then a `request_measurement`
+   on a net appears as a requested field on its row → confirms the review loop
+   closes on a previously non-AI worklist.
+
 Backend: `go test ./mcpserver/` covering `request_measurement` net vs part/pin
-routing and `get_measurements` shape.
+routing, `get_measurements` shape + source-agnostic return, and `worklist_get`
+on a user-built worklist.
 
 ## Rollout
 
