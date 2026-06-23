@@ -7,6 +7,7 @@
 
 import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
+import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
 
@@ -221,6 +222,22 @@ async function dispatch(op: string, p: any): Promise<any> {
       const { total, offset, has_more, page } = paginate(hits, p.limit, p.offset);
       return { query: p.query, parts: page, total, offset, has_more };
     }
+    // ── worklist read ops (AI-mode feedback loop) ──
+    case 'worklist_get': {
+      const s = worklistStore.aiSnapshot();
+      if (!s) throw new Error('no active worklist (open a board)');
+      return s;
+    }
+    case 'get_measurements': {
+      const s = worklistStore.aiSnapshot();
+      const ms = ((s?.measurements as any[]) ?? []);
+      const st = p.status;
+      return { measurements: st ? ms.filter((m) => m.status === st) : ms };
+    }
+    case 'get_user_messages': {
+      const msgs = worklistStore.consumeUserMessages(p.only_unread !== false);
+      return { messages: msgs.map((m) => ({ text: m.text, at: m.at })) };
+    }
     default:
       return dispatchDrive(op, p);
   }
@@ -262,6 +279,36 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
       if (typeof p.page === 'number' && p.page > 0) pdfStore.goToPage(p.page);
       toast(`Agent navigated PDF${p.page ? ` to page ${p.page}` : ''}`);
       return { ok: true, page: p.page ?? null };
+    }
+    // ── worklist write ops (AI-mode feedback loop; gated on mcp_drive_ui backend-side) ──
+    case 'worklist_add':
+    case 'worklist_update': {
+      requireBoard();
+      const ok = p.kind === 'net'
+        ? worklistStore.aiAddNet(String(p.id), p.mark, p.note)
+        : worklistStore.aiAddPart(String(p.id), p.mark, p.note);
+      if (!ok) throw new Error('could not write worklist (no board?)');
+      toast(`Agent ${op === 'worklist_add' ? 'added' : 'updated'} ${p.id} in the worklist`);
+      return { ok: true };
+    }
+    case 'worklist_set_list_note': {
+      requireBoard();
+      worklistStore.aiSetListNote(String(p.note ?? ''));
+      toast('Agent updated the worklist note');
+      return { ok: true };
+    }
+    case 'request_measurement': {
+      requireBoard();
+      const id = worklistStore.aiRequestMeasurement({ target: String(p.target), kind: p.kind, prompt: String(p.prompt ?? ''), expected: p.expected });
+      if (!id) throw new Error('could not add measurement (no board?)');
+      toast(`Agent requested a measurement on ${p.target}`);
+      return { id };
+    }
+    case 'post_message': {
+      requireBoard();
+      worklistStore.addMessage('agent', String(p.text ?? ''));
+      toast('Agent posted a message to the worklist');
+      return { ok: true };
     }
     default:
       throw new Error(`unknown op: ${op}`);

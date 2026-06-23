@@ -98,8 +98,9 @@ function DiagnosisNoteView({ note, board }: { note: ObdNote; board: BoardData | 
 }
 
 /** Tokenises the note body, replacing [n:NET] / [p:PART] / [p:PART:PIN]
- *  with clickable chips. Plain text is preserved with whitespace as-is. */
-function NoteBody({ body, board }: { body: string; board: BoardData | null }) {
+ *  with clickable chips. Plain text is preserved with whitespace as-is.
+ *  Exported so the worklist AI-mode transcript reuses the same chips. */
+export function NoteBody({ body, board }: { body: string; board: BoardData | null }) {
   // Build a part-name → index lookup once per body.
   const partIndex = useMemo(() => {
     const map = new Map<string, number>();

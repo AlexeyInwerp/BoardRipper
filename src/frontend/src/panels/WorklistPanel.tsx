@@ -4,7 +4,8 @@ import type { ComponentType } from 'react';
 import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
 import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS } from '../store/worklist-store';
-import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark } from '../store/worklist-store';
+import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist, MeasurementEntry } from '../store/worklist-store';
+import { NoteBody } from '../components/DiagnosisNotes';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
 import { useWorklist } from '../hooks/useWorklist';
@@ -391,9 +392,124 @@ function ActiveWorklistView() {
           <WorklistNetRow key={'net:' + entry.netName} worklistId={activeWorklist.id} entry={entry} />
         ))}
       </div>
+      <AiWorklistSection worklist={activeWorklist} />
     </>
   );
 }
+
+// ── AI mode: the agent feedback loop surface (measurements + relay transcript) ──
+// Shown when the MCP server is connected, or whenever the worklist already
+// carries AI data, so the loop is always visible once started.
+function AiWorklistSection({ worklist }: { worklist: Worklist }) {
+  const [connected, setConnected] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const probe = () => fetch('/api/mcp/status')
+      .then(r => r.ok ? r.json() : null)
+      .then(s => { if (live) setConnected(!!s?.enabled); })
+      .catch(() => { if (live) setConnected(false); });
+    probe();
+    const t = setInterval(probe, 5000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+
+  const measurements = worklist.measurements ?? [];
+  const messages = worklist.messages ?? [];
+  const pending = measurements.filter(m => m.status === 'pending');
+  if (!connected && measurements.length === 0 && messages.length === 0) return null;
+
+  return (
+    <div style={aiSectionStyle}>
+      <div style={aiHeadingStyle}>
+        <IconSparkles size={13} /> AI assist{connected ? '' : ' (MCP offline)'}
+        {pending.length > 0 && <span style={aiPendingBadge}>{pending.length} to measure</span>}
+      </div>
+
+      {measurements.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+          {measurements.map(m => <MeasurementRow key={m.id} worklistId={worklist.id} m={m} />)}
+        </div>
+      )}
+
+      {messages.length > 0 && (
+        <div style={aiTranscriptStyle}>
+          {messages.map(msg => (
+            <div key={msg.id} style={{ marginBottom: 3 }}>
+              <span style={{ color: msg.role === 'agent' ? '#7cc' : '#aa8', fontWeight: 600, fontSize: 10 }}>
+                {msg.role === 'agent' ? 'AI' : 'You'}:
+              </span>{' '}
+              <span style={{ fontSize: 11 }}><NoteBody body={msg.text} board={boardStore.board} /></span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <AiPromptBox worklistId={worklist.id} disabled={!connected} />
+    </div>
+  );
+}
+
+function MeasurementRow({ m }: { worklistId: string; m: MeasurementEntry }) {
+  const [val, setVal] = useState('');
+  const [unit, setUnit] = useState(m.unit ?? '');
+  if (m.status !== 'pending') {
+    return (
+      <div style={measurementRowStyle}>
+        <span style={{ color: m.status === 'answered' ? '#9d9' : '#888' }}>
+          {m.status === 'answered' ? `✓ ${m.target}: ${m.value ?? ''} ${m.unit ?? ''}` : `— ${m.target}: skipped`}
+        </span>
+      </div>
+    );
+  }
+  const submit = () => {
+    if (!val.trim()) return;
+    worklistStore.answerMeasurement(m.id, val.trim(), unit.trim() || undefined);
+    setVal('');
+  };
+  return (
+    <div style={measurementRowStyle}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 11, color: '#cda' }}>
+          <b>{m.target}</b> · {m.kind}{m.expected ? ` · exp ${m.expected}` : ''}
+        </div>
+        <div style={{ fontSize: 10, opacity: 0.75 }}><NoteBody body={m.prompt} board={boardStore.board} /></div>
+      </div>
+      <input value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
+        placeholder="value" style={measureInputStyle} />
+      <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="unit" style={{ ...measureInputStyle, width: 38 }} />
+      <button onClick={submit} title="Send measurement to the agent" style={miniBtnStyle}>✓</button>
+      <button onClick={() => worklistStore.skipMeasurement(m.id)} title="Skip" style={miniBtnStyle}>✕</button>
+    </div>
+  );
+}
+
+function AiPromptBox({ disabled }: { worklistId: string; disabled: boolean }) {
+  const [text, setText] = useState('');
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    worklistStore.addMessage('user', t);
+    setText('');
+  };
+  return (
+    <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+      <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()}
+        placeholder={disabled ? 'Connect an MCP agent to chat…' : 'Message the agent (it reads this)…'}
+        style={aiPromptInputStyle} />
+      <button onClick={send} disabled={!text.trim()} style={aiSendBtnStyle}>Send</button>
+    </div>
+  );
+}
+
+const aiSectionStyle: React.CSSProperties = { borderTop: '1px solid var(--border, #333)', marginTop: 6, padding: '6px 8px', background: 'var(--panel-alt, rgba(120,140,255,0.05))' };
+const aiHeadingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#9af', marginBottom: 5 };
+const aiPendingBadge: React.CSSProperties = { marginLeft: 'auto', fontSize: 10, color: '#fc8', background: 'rgba(255,180,80,0.12)', borderRadius: 8, padding: '0 6px' };
+const aiTranscriptStyle: React.CSSProperties = { maxHeight: 160, overflowY: 'auto', fontSize: 11, marginBottom: 4, padding: '2px 0' };
+const measurementRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.03)', borderRadius: 4, padding: '3px 5px' };
+const measureInputStyle: React.CSSProperties = { width: 60, fontSize: 11, padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
+const miniBtnStyle: React.CSSProperties = { fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: 'transparent', color: '#ccc', cursor: 'pointer' };
+const aiPromptInputStyle: React.CSSProperties = { flex: 1, fontSize: 11, padding: '4px 6px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
+const aiSendBtnStyle: React.CSSProperties = { fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid #557', background: 'rgba(120,140,255,0.15)', color: '#bcf', cursor: 'pointer' };
 
 interface WorklistRowProps {
   worklistId: string;

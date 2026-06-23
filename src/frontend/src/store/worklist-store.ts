@@ -73,6 +73,33 @@ export interface NetWorklistEntry {
   surge?: boolean;
 }
 
+/** A measurement the agent asked the user to take, and the value they returned.
+ *  Drives the AI-mode feedback loop: agent requests → user answers → agent reads. */
+export interface MeasurementEntry {
+  id: string;
+  target: string;                 // "D4200" | "PPBUS_AON" | "U7000.12"
+  kind: 'diode' | 'voltage' | 'resistance' | 'continuity' | 'other';
+  prompt: string;                 // what the agent asked
+  expected?: string;              // agent's spec/expected value
+  value?: string;                 // user-entered result
+  unit?: string;
+  status: 'pending' | 'answered' | 'skipped';
+  source: 'agent' | 'user';
+  requestedAt: number;
+  answeredAt?: number;
+}
+
+/** A line in the AI-mode relay transcript between the agent and the user. */
+export interface WorklistMessage {
+  id: string;
+  role: 'agent' | 'user';
+  text: string;
+  at: number;
+  /** True until the agent has read it (for user messages) — lets get_user_messages
+   *  return only fresh ones without a cursor. */
+  unread?: boolean;
+}
+
 export interface Worklist {
   id: string;
   name: string;
@@ -86,6 +113,12 @@ export interface Worklist {
    *  active worklist. Roundtrips through clipboard via `> `-prefixed lines
    *  immediately after the `-[name]-` header. */
   note?: string;
+  /** AI-mode feedback-loop fields (v0.31.24+). All optional + default-empty so
+   *  pre-existing persisted worklists hydrate unchanged. */
+  measurements?: MeasurementEntry[];
+  messages?: WorklistMessage[];
+  /** Keys (`p:REFDES` / `n:NET`) the agent added, so the row can show an AI badge. */
+  aiOrigin?: Record<string, true>;
 }
 
 export interface BoardWorklistes {
@@ -619,6 +652,143 @@ class WorklistStore {
    *  `[mark]` is omitted when 'none', `[water]` is only present when the
    *  waterdamage flag is set, and ` (note)` is omitted when empty.
    *  The marker doubles as the import header — see `parseWorklistText`. */
+  // ── AI mode: MCP-agent feedback loop ───────────────────────────────────
+  // All of these target the ACTIVE board's ACTIVE worklist (created on demand),
+  // so the agent operates on "the board the user has open" without an id.
+
+  private aiTarget(): { cur: BoardWorklistes; w: Worklist } | null {
+    if (!boardStore.board) return null;
+    const cur = this.current ?? this.getOrInit();
+    if (!cur) return null;
+    if (!cur.activeWorklistId || !cur.worklistes.some(x => x.id === cur.activeWorklistId)) {
+      const created = this.createWorklist();
+      if (created) cur.activeWorklistId = created.id;
+    }
+    const w = cur.worklistes.find(x => x.id === cur.activeWorklistId);
+    return w ? { cur, w } : null;
+  }
+
+  private static newId(prefix: string): string {
+    return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  /** Agent adds (or updates) a part entry; tags it as AI-originated. */
+  aiAddPart(refdes: string, mark?: WorklistMark, note?: string): boolean {
+    const t = this.aiTarget();
+    if (!t) return false;
+    const board = boardStore.board;
+    const idx = board ? board.parts.findIndex(p => p?.name === refdes) : -1;
+    if (idx >= 0) this.pushParts(t.w.id, [idx]);
+    else if (!t.w.entries.some(e => e.refdes === refdes))
+      t.w.entries.push({ partIndex: -1, refdes, mark: 'none', note: '', unresolved: true });
+    const e = t.w.entries.find(x => x.refdes === refdes);
+    if (e) {
+      if (mark) e.mark = mark;
+      if (note != null) e.note = note.slice(0, 4000);
+    }
+    (t.w.aiOrigin ??= {})[`p:${refdes}`] = true;
+    this.save(t.cur);
+    return true;
+  }
+
+  /** Agent adds (or updates) a net entry; tags it as AI-originated. */
+  aiAddNet(netName: string, mark?: NetWorklistMark, note?: string): boolean {
+    const t = this.aiTarget();
+    if (!t) return false;
+    if (!t.w.netEntries.some(n => n.netName === netName)) this.pushNets(t.w.id, [netName]);
+    const e = t.w.netEntries.find(x => x.netName === netName);
+    if (e) {
+      if (mark) e.mark = mark;
+      if (note != null) e.note = note.slice(0, 4000);
+    } else if (!t.w.netEntries.some(n => n.netName === netName)) {
+      t.w.netEntries.push({ netName, mark: mark ?? 'none', note: note ?? '', unresolved: true });
+    }
+    (t.w.aiOrigin ??= {})[`n:${netName}`] = true;
+    this.save(t.cur);
+    return true;
+  }
+
+  /** Agent sets the ticket/diagnosis note on the active worklist. */
+  aiSetListNote(note: string): boolean {
+    const t = this.aiTarget();
+    if (!t) return false;
+    this.setWorklistNote(t.w.id, note);
+    return true;
+  }
+
+  /** Agent requests a measurement; returns the row id (read back later). */
+  aiRequestMeasurement(m: { target: string; kind?: MeasurementEntry['kind']; prompt: string; expected?: string }): string | null {
+    const t = this.aiTarget();
+    if (!t) return null;
+    const id = WorklistStore.newId('m');
+    (t.w.measurements ??= []).push({
+      id, target: m.target, kind: m.kind ?? 'other', prompt: m.prompt.slice(0, 1000),
+      expected: m.expected, status: 'pending', source: 'agent', requestedAt: Date.now(),
+    });
+    this.save(t.cur);
+    return id;
+  }
+
+  /** User (or UI) answers a measurement. */
+  answerMeasurement(id: string, value: string, unit?: string): boolean {
+    const t = this.aiTarget();
+    if (!t?.w.measurements) return false;
+    const m = t.w.measurements.find(x => x.id === id);
+    if (!m) return false;
+    m.value = String(value).slice(0, 200);
+    if (unit != null) m.unit = unit.slice(0, 16);
+    m.status = 'answered';
+    m.answeredAt = Date.now();
+    this.save(t.cur);
+    return true;
+  }
+
+  skipMeasurement(id: string): boolean {
+    const t = this.aiTarget();
+    if (!t?.w.measurements) return false;
+    const m = t.w.measurements.find(x => x.id === id);
+    if (!m) return false;
+    m.status = 'skipped';
+    this.save(t.cur);
+    return true;
+  }
+
+  /** Post a message into the relay transcript. User messages start unread so the
+   *  agent's get_user_messages can return only fresh ones. */
+  addMessage(role: WorklistMessage['role'], text: string): string | null {
+    const t = this.aiTarget();
+    if (!t) return null;
+    const id = WorklistStore.newId('msg');
+    (t.w.messages ??= []).push({ id, role, text: text.slice(0, 4000), at: Date.now(), unread: role === 'user' });
+    this.save(t.cur);
+    return id;
+  }
+
+  /** Return user messages (optionally only unread) and mark them read. */
+  consumeUserMessages(onlyUnread = true): WorklistMessage[] {
+    const t = this.aiTarget();
+    if (!t?.w.messages) return [];
+    const out = t.w.messages.filter(m => m.role === 'user' && (!onlyUnread || m.unread));
+    let changed = false;
+    for (const m of out) if (m.unread) { delete m.unread; changed = true; }
+    if (changed) this.save(t.cur);
+    return out;
+  }
+
+  /** Full active-worklist snapshot for the agent's worklist_get. */
+  aiSnapshot(): Record<string, unknown> | null {
+    const w = this.activeWorklist;
+    if (!w) return null;
+    return {
+      name: w.name,
+      note: w.note ?? '',
+      parts: w.entries.map(e => ({ refdes: e.refdes, mark: e.mark, note: e.note, waterdamage: !!e.waterdamage, unresolved: !!e.unresolved, ai: !!w.aiOrigin?.[`p:${e.refdes}`] })),
+      nets: w.netEntries.map(n => ({ net: n.netName, mark: n.mark, note: n.note, surge: !!n.surge, unresolved: !!n.unresolved, ai: !!w.aiOrigin?.[`n:${n.netName}`] })),
+      measurements: (w.measurements ?? []).map(m => ({ id: m.id, target: m.target, kind: m.kind, prompt: m.prompt, expected: m.expected ?? null, value: m.value ?? null, unit: m.unit ?? null, status: m.status })),
+      messages: (w.messages ?? []).map(m => ({ role: m.role, text: m.text, at: m.at })),
+    };
+  }
+
   formatWorklistForClipboard(worklistId: string): string {
     const cur = this.current;
     if (!cur) return '';

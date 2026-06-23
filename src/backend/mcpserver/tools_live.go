@@ -175,4 +175,64 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[partArgs](s, b, "select_part", "Select and centre a component by reference designator on the live board.", "select_part", false, gate)
 	liveTool[sideArgs](s, b, "set_side", "Show the top or bottom side of the live board.", "set_side", false, gate)
 	liveTool[pdfGotoArgs](s, b, "pdf_goto", "Navigate the open PDF to a page (optionally jumping to a search term).", "pdf_goto", false, gate)
+
+	// ── Worklist AI-mode feedback loop ──
+	// Reads: the agent sees what's on the worklist + measurement results + user prompts.
+	liveTool[emptyArgs](s, b, "worklist_get", "Read the active board's worklist: part/net entries (with repair marks + notes + ai flag), the ticket note, measurement requests+results, and the message transcript.", "worklist_get", true, nil)
+	liveTool[getMeasurementsArgs](s, b, "get_measurements", "Read measurement rows on the active worklist (optionally filter by status: pending|answered|skipped). Use to pick up readings the user took after request_measurement.", "get_measurements", true, nil)
+	liveTool[getUserMessagesArgs](s, b, "get_user_messages", "Read the user's relay-prompt messages (defaults to only-unread, marking them read). This is how the user talks back to you from the worklist panel.", "get_user_messages", true, nil)
+	// Writes: the agent populates the worklist + requests measurements + posts notes (gated on drive-UI).
+	liveTool[worklistAddArgs](s, b, "worklist_add", "Add/update a part or net on the active worklist (kind=part|net, id=refdes|net), with an optional repair mark + note. Note text may use [n:NET] / [p:REFDES:PIN] chips (clickable on the board).", "worklist_add", false, gate)
+	liveTool[worklistAddArgs](s, b, "worklist_update", "Update a part/net entry's mark or note on the active worklist (same args as worklist_add).", "worklist_update", false, gate)
+	liveTool[worklistNoteArgs](s, b, "worklist_set_list_note", "Set the worklist's ticket/diagnosis note (compressed summary of your finding; may use [n:]/[p:] chips).", "worklist_set_list_note", false, gate)
+	liveTool[requestMeasurementArgs](s, b, "request_measurement", "Ask the user to take a measurement on a target (target=refdes/net/pin, kind=diode|voltage|resistance|continuity|other, prompt=what+how, expected=spec). Adds a pending row; read the result later with get_measurements.", "request_measurement", false, gate)
+	liveTool[postMessageArgs](s, b, "post_message", "Post a short message into the worklist transcript (your compressed answer; full prose stays in chat). May use [n:]/[p:] chips.", "post_message", false, gate)
 }
+
+type getMeasurementsArgs struct {
+	Status  string `json:"status,omitempty" jsonschema:"optional filter: pending | answered | skipped"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a getMeasurementsArgs) session() string { return a.Session }
+
+type getUserMessagesArgs struct {
+	OnlyUnread *bool  `json:"only_unread,omitempty" jsonschema:"default true: return only messages you haven't read yet"`
+	Session    string `json:"session,omitempty"`
+}
+
+func (a getUserMessagesArgs) session() string { return a.Session }
+
+type worklistAddArgs struct {
+	Kind    string `json:"kind" jsonschema:"part or net"`
+	ID      string `json:"id" jsonschema:"reference designator (kind=part) or net name (kind=net)"`
+	Mark    string `json:"mark,omitempty" jsonschema:"part: replaced|reworked|cleaned; net: short|solved|absent"`
+	Note    string `json:"note,omitempty"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a worklistAddArgs) session() string { return a.Session }
+
+type worklistNoteArgs struct {
+	Note    string `json:"note"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a worklistNoteArgs) session() string { return a.Session }
+
+type requestMeasurementArgs struct {
+	Target   string `json:"target" jsonschema:"what to measure on: refdes, net, or REFDES.PIN"`
+	Kind     string `json:"kind,omitempty" jsonschema:"diode|voltage|resistance|continuity|other"`
+	Prompt   string `json:"prompt" jsonschema:"what to measure and how (probe placement, range)"`
+	Expected string `json:"expected,omitempty" jsonschema:"the spec/expected value, if known"`
+	Session  string `json:"session,omitempty"`
+}
+
+func (a requestMeasurementArgs) session() string { return a.Session }
+
+type postMessageArgs struct {
+	Text    string `json:"text"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a postMessageArgs) session() string { return a.Session }
