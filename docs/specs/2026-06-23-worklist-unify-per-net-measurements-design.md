@@ -226,6 +226,43 @@ Replace the measurement methods that operated on the flat array:
     row's ✕ / "skip").
 - `aiSnapshot()` returns net measurements inline under each net entry.
 
+## Highlight system (re-evaluated — Phase 1)
+
+Today there are **two overlapping** board-highlight systems for the worklist,
+which is confusing:
+
+1. **Always-on mark outlines** — `redrawMultiHighlight()` outlines *every* active-
+   worklist part in its repair-mark colour, permanently, with no toggle. This is
+   the "highlight works all the time" clutter.
+2. **The "Connections" button** — adds the worklist parts to the cyan
+   `selectionSetStore` (which **overrides** the mark colours → "only makes them
+   blue") and glows the nets shared by ≥2 worklist parts
+   (`computeSharedSelectionNets` → `SHARED_NET_GLOW`).
+
+Investigation (commit `aad93b1`): the Connections button's *real* purpose is the
+**shared-net glow** — "which nets do these suspect parts have in common." The
+blue recolour is incidental (it reuses the selection-set machinery to feed the
+shared-net computation).
+
+**Re-evaluated model — one toggle, off by default:**
+
+- A single **"Highlight"** toggle in the worklist header (replaces "Connections").
+  **Off by default** — no permanent board clutter.
+- When **on**: outline the worklist parts **in their per-mark colours** (keep the
+  repair-status info — do *not* flatten to cyan) **and** glow the shared nets.
+  One action, both cues, mark colours preserved.
+- Drop the always-on path: `redrawMultiHighlight` only paints worklist outlines
+  when the toggle is on. The ephemeral multi-select cyan set (non-worklist) is
+  unchanged. `connectionHighlight` is repurposed as this single toggle; the
+  shared-net glow no longer needs the parts in the cyan selection set, so mark
+  colours survive.
+- Tooltip clarifies the dual effect: "Show this worklist on the board (mark
+  colours) and glow the nets its parts share."
+
+This removes the always-on clutter, fixes the flat-blue override, and keeps the
+Connections feature's actual value. Folded into Phase 1 since it touches the same
+`WorklistPanel` header + `redrawMultiHighlight`.
+
 ## Net row UI (`WorklistPanel.tsx` → `WorklistNetRow`)
 
 The net row keeps name + mark + surge + note, and gains a compact measurement
@@ -305,9 +342,11 @@ Two independently-shippable phases off `main`:
 - **Phase 1 — unified worklist (the core refactor).** Per-net measurement model +
   net-row UI, drop the standalone measurement list, source-agnostic
   `get_measurements`, bidirectional review, relay-only AI section, the migration,
-  and the MCP tool changes. Plus the cheap structural export-readiness fields
-  (`schemaVersion`, `updatedAt`) since they touch the same persisted shape.
-  Ships as its own point release.
+  and the MCP tool changes. **Plus the highlight re-evaluation** (one off-by-
+  default "Highlight" toggle, mark colours preserved + shared-net glow) since it
+  touches the same header + `redrawMultiHighlight`. Plus the cheap structural
+  export-readiness fields (`schemaVersion`, `updatedAt`). Ships as its own point
+  release; subsumes the live v0.31.24 scroll bug (the standalone list is removed).
 - **Phase 2 — device binding.** Resolve the open board → `DeviceRef`, the
   "Set device" picker, `contentHash`. Depends on Phase 1's record shape but is
   otherwise self-contained; ships as a following point release.
