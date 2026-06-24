@@ -230,9 +230,34 @@ async function dispatch(op: string, p: any): Promise<any> {
     }
     case 'get_measurements': {
       const s = worklistStore.aiSnapshot();
-      const ms = ((s?.measurements as any[]) ?? []);
-      const st = p.status;
-      return { measurements: st ? ms.filter((m) => m.status === st) : ms };
+      const netEntries = (s?.netEntries ?? []) as Array<{
+        netName: string;
+        measurement?: {
+          kind: string;
+          value?: string;
+          unit?: string;
+          status: string;
+          prompt?: string;
+          expected?: string;
+          source: string;
+        };
+      }>;
+      let ms = netEntries
+        .filter((n) => n.measurement != null)
+        .map((n) => ({
+          netName: n.netName,
+          kind: n.measurement!.kind,
+          status: n.measurement!.status,
+          value: n.measurement!.value ?? null,
+          unit: n.measurement!.unit ?? null,
+          expected: n.measurement!.expected ?? null,
+          source: n.measurement!.source,
+        }));
+      const statusFilter = String(p.status ?? '');
+      const sourceFilter = String(p.source ?? '');
+      if (statusFilter) ms = ms.filter((m) => m.status === statusFilter);
+      if (sourceFilter) ms = ms.filter((m) => m.source === sourceFilter);
+      return { measurements: ms };
     }
     case 'get_user_messages': {
       const msgs = worklistStore.consumeUserMessages(p.only_unread !== false);
@@ -299,10 +324,28 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     }
     case 'request_measurement': {
       requireBoard();
-      const id = worklistStore.aiRequestMeasurement({ target: String(p.target), kind: p.kind, prompt: String(p.prompt ?? ''), expected: p.expected });
-      if (!id) throw new Error('could not add measurement (no board?)');
-      toast(`Agent requested a measurement on ${p.target}`);
-      return { id };
+      const target = String(p.target ?? '');
+      const kind = String(p.kind ?? '');
+      const prompt = String(p.prompt ?? '');
+      const expected = p.expected != null ? String(p.expected) : undefined;
+      const NET_KINDS = new Set(['voltage', 'diode', 'resistance']);
+      const isNet = !!(boardStore.board?.nets.has(target));
+      if (isNet && NET_KINDS.has(kind)) {
+        const ok = worklistStore.requestNetMeasurement(target, {
+          kind: kind as 'voltage' | 'diode' | 'resistance',
+          prompt,
+          expected,
+        });
+        if (!ok) throw new Error('could not add measurement request (no board?)');
+        toast(`Agent requested ${kind} measurement on net ${target}`);
+        return { ok: true, routed: 'net' };
+      } else {
+        // Part/pin targets, unknown nets, or non-net-supported kinds → relay
+        const relayText = `Measure ${kind} on ${target}${prompt ? ': ' + prompt : ''}`;
+        worklistStore.addMessage('agent', relayText);
+        toast(`Agent posted measurement request for ${target} to relay`);
+        return { ok: true, routed: 'relay' };
+      }
     }
     case 'post_message': {
       requireBoard();

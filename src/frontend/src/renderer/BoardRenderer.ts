@@ -1241,16 +1241,16 @@ export class BoardRenderer {
     this.unsubscribeObd = obdStore.subscribe(() => this.onObdUpdate());
     this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
       this.redrawMultiHighlight();
-      // When "highlight connections" is on, the shared-net glow is derived from
-      // the selection set, so a membership change must re-run the net highlight.
-      // Guard on active tab — renderSelection reads active-tab-scoped state.
-      if (boardStore.connectionHighlight && (this.tabId === null || boardStore.activeTabId === this.tabId)) {
-        this.renderSelection();
-      }
       this.needsRender = true;
     });
     this.unsubscribeWorklist = worklistStore.subscribe(() => {
       this.redrawMultiHighlight();
+      // When "highlight connections" is on, the shared-net glow is now derived
+      // from the active worklist (not the selection set), so a worklist change
+      // must re-run the net highlight. Guard on active tab.
+      if (boardStore.connectionHighlight && (this.tabId === null || boardStore.activeTabId === this.tabId)) {
+        this.renderSelection();
+      }
       this.needsRender = true;
     });
     this.unsubscribeViewCommands = viewCommands.subscribe((cmd, payload) => {
@@ -3356,12 +3356,14 @@ export class BoardRenderer {
         }
       }
     }
-    // "Highlight connections": glow nets shared by ≥2 multi-selected parts (the
-    // cyan selection set, typically a worklist). These get the same per-net
-    // highlight treatment below but are deliberately NOT fed into the net-line
-    // recompute — only an explicitly-selected net draws connecting lines.
+    // "Highlight connections": glow nets shared by ≥2 active-worklist parts.
+    // These get the same per-net highlight treatment below but are deliberately
+    // NOT fed into the net-line recompute — only an explicitly-selected net
+    // draws connecting lines. Computed from the worklist directly so the parts
+    // no longer need to be in the cyan selectionSetStore (which would override
+    // their mark colours).
     if (boardStore.connectionHighlight) {
-      for (const netName of this.computeSharedSelectionNets()) {
+      for (const netName of this.computeSharedWorklistNets()) {
         if (activeNetNames.has(netName)) continue;
         activeNetNames.add(netName);
         activeNets.push({ name: netName, glowColor: SHARED_NET_GLOW });
@@ -3972,22 +3974,22 @@ export class BoardRenderer {
     this.selectionOverlayEl.style.display = '';
   }
 
-  /** Nets shared by ≥2 parts in the cyan multi-select set — the basis for
-   *  "highlight connections". GND and no-connect nets are excluded (they wire
-   *  to half the board and aren't meaningful connections); power rails are
-   *  kept since "which selected parts share +1V8" is genuinely useful. Returns
-   *  [] when fewer than 2 parts are selected. */
-  private computeSharedSelectionNets(): string[] {
+  /** Nets shared by ≥2 parts in the **active worklist** — used when the
+   *  Highlight toggle is on. Resolves refdes → partIndex against the live board
+   *  so fold-mode / sub-board changes don't stale-index. Same exclusion rules
+   *  as the former selection-set glow (GND / outline-only filtered out). Returns
+   *  [] when the worklist has fewer than 2 resolved parts. */
+  private computeSharedWorklistNets(): string[] {
     if (!this.board) return [];
-    const sel = selectionSetStore.current;
-    if (sel.ordered.length < 2) return [];
+    const worklist = worklistStore.activeWorklist;
+    if (!worklist || worklist.entries.length < 2) return [];
     const s = renderSettingsStore.settings;
     const count = new Map<string, number>();
-    for (const partIdx of sel.ordered) {
+    for (const e of worklist.entries) {
+      const partIdx = this.board.parts.findIndex(p => p?.name === e.refdes);
+      if (partIdx < 0) continue;
       const part = this.board.parts[partIdx];
       if (!part) continue;
-      // Count each net once per part — a part with both pins on the same net
-      // shouldn't satisfy the ≥2 threshold on its own.
       const seen = new Set<string>();
       for (const pin of part.pins) {
         const net = pin.net;
@@ -4935,10 +4937,12 @@ export class BoardRenderer {
       const n = board.parts[i]?.name;
       if (n) byRefdes.set(n, i);
     }
-    // Active worklist first; ephemeral selection drawn over the top so a
-    // part in both retains the brighter cyan cue.
+    // Active worklist outlines — only when the Highlight toggle is on so the
+    // board is uncluttered by default. Mark colours are preserved (no cyan
+    // override). Ephemeral selection drawn over the top so a part in both
+    // retains the brighter cyan cue.
     const worklist = worklistStore.activeWorklist;
-    if (worklist) {
+    if (worklist && boardStore.connectionHighlight) {
       for (const e of worklist.entries) {
         const idx = byRefdes.get(e.refdes);
         if (idx == null) continue;

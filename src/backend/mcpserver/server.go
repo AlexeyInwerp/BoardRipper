@@ -46,6 +46,21 @@ func (a *activity) snapshot() ActivitySnapshot {
 // nowFunc is overridable in tests.
 var nowFunc = time.Now
 
+// boardripperInstructions is the server-level orientation sent in the MCP
+// initialize response so every client (not just Claude Code users) understands
+// the available workflow and how to drive the worklist loop.
+const boardripperInstructions = `BoardRipper exposes the PCB board open in the user's browser, plus a shared repair "worklist". Tools act on the most-recently-focused browser tab (list tabs with board_sessions; every live tool takes an optional session). Many read tools work with no board too (pdf_search, obd_match/obd_data, board_resolve, file_list/file_get).
+
+Inspect the board: list_parts / list_nets / find_parts (by description), part_info, net_info, net_neighbors, pin_connectivity. Drive the UI (only when the user enabled drive-UI; otherwise these no-op): highlight_net, clear_highlight, select_part, set_side, pdf_goto.
+
+The worklist is a shared, two-way repair record — a "case" the user and you build together. It is source-agnostic: you can populate it OR review one the user built by hand and suggest next steps.
+- Read it: worklist_get (parts/nets with repair marks + notes, ticket note, measurements, transcript). get_measurements returns net readings — BOTH user-recorded and agent-requested (filter by status=requested|recorded or source=agent|user).
+- Build it: worklist_add / worklist_update (parts or nets, with a repair mark + note), worklist_set_list_note (your diagnosis summary). Notes accept [n:NET] and [p:REFDES:PIN] chips that are clickable on the board.
+- Measurements: request_measurement asks the user to probe a target. target=net shows an inline V/Diode/Ω field on that net's row (kind=voltage|diode|resistance); target=part/pin is posted to the relay transcript. The user fills it in; read the result later with get_measurements.
+- Talk to the user: post_message (a short note into the worklist transcript — keep full prose in chat), get_user_messages (what the user typed back; defaults to unread).
+
+Typical loop: read the worklist / measurements -> add suspect parts+nets with marks -> request the measurements you need -> wait, then get_measurements -> narrow down -> worklist_set_list_note with the conclusion. To review a user-built worklist, start by reading worklist_get + get_measurements (you will see their source='user' readings), then suggest next probes via request_measurement and a post_message summary.`
+
 // Deps is the set of backend stores the tools read from. Optional stores
 // (PDF/Boards/OBD) may be left nil — the corresponding tools are then skipped.
 // IMPORTANT: pass an untyped nil (do not assign a typed-nil pointer) so the
@@ -75,7 +90,7 @@ type pingResult struct {
 // New builds the MCP server and registers all tools.
 func New(deps *Deps) *Server {
 	s := &Server{deps: deps, act: &activity{}}
-	s.mcp = mcp.NewServer(&mcp.Implementation{Name: "boardripper", Version: "1"}, nil)
+	s.mcp = mcp.NewServer(&mcp.Implementation{Name: "boardripper", Version: "1"}, &mcp.ServerOptions{Instructions: boardripperInstructions})
 
 	// Record tool usage centrally for the Settings live-status panel.
 	s.mcp.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {

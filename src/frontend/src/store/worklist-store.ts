@@ -1,6 +1,7 @@
 import { boardStore } from './board-store';
 import { selectionSetStore } from './selection-set-store';
 import { log } from './log-store';
+import type { BoardData } from '../parsers/types';
 
 /** Persistent per-board "worklist" — named collections of parts a repair-tech
  *  is tracking (water damage candidates, ticket worklists, etc). Survives
@@ -62,6 +63,23 @@ export interface WorklistEntry {
  *  `waterdamage` — the analogue for a signal is "this net saw an over-current
  *  / ESD event", flagged with the lightning-bolt icon. Per-board key is the
  *  net name (case-preserved). */
+export interface NetMeasurement {
+  kind: 'voltage' | 'diode' | 'resistance';
+  value?: string;
+  unit?: string;
+  status: 'requested' | 'recorded';
+  prompt?: string;
+  expected?: string;
+  source: 'agent' | 'user';
+  at: number;
+}
+
+export const NET_MEASUREMENT_UNITS: Record<NetMeasurement['kind'], string> = {
+  voltage: 'V',
+  diode: 'V',
+  resistance: 'Ω',
+};
+
 export interface NetWorklistEntry {
   netName: string;
   mark: NetWorklistMark;
@@ -71,6 +89,8 @@ export interface NetWorklistEntry {
   unresolved?: boolean;
   /** Lightning-bolt surge / over-current flag. Omitted when false. */
   surge?: boolean;
+  /** Measurement data for the net (agent feedback loop). */
+  measurement?: NetMeasurement;
 }
 
 /** A measurement the agent asked the user to take, and the value they returned.
@@ -104,6 +124,7 @@ export interface Worklist {
   id: string;
   name: string;
   createdAt: number;
+  updatedAt: number;
   entries: WorklistEntry[];
   /** Pinned nets — independent from `entries` so the existing part API and
    *  persisted format stay byte-stable. Defaults to `[]` on hydration of
@@ -130,6 +151,7 @@ export interface BoardWorklistes {
   activeWorklistId: string | null;
   worklistes: Worklist[];
   updatedAt: number;
+  schemaVersion: number;
 }
 
 const DB_NAME = 'boardripper-worklist';
@@ -141,6 +163,8 @@ class WorklistStore {
   private byKey = new Map<string, BoardWorklistes>();
   private hydrating = new Map<string, Promise<void>>();
   private listeners = new Set<() => void>();
+  /** Test-only fallback active key — set by TEST_NEW_WORKLIST when no board is loaded. */
+  private _testActiveKey: string | null = null;
 
   subscribe(cb: () => void): () => void {
     this.listeners.add(cb);
@@ -200,6 +224,45 @@ class WorklistStore {
    *  freshly-loaded board. Rows whose refdes / netName is gone are flagged
    *  unresolved. Also back-fills `netEntries: []` for records persisted
    *  before nets-in-worklist was added. */
+  private migrateLegacyMeasurements(w: Worklist, _board: BoardData | null): void {
+    const legacy = (w as Worklist & { measurements?: MeasurementEntry[] }).measurements;
+    if (!Array.isArray(legacy) || legacy.length === 0) {
+      delete (w as { measurements?: unknown }).measurements;
+      if (w.updatedAt == null) w.updatedAt = w.createdAt ?? Date.now();
+      return;
+    }
+    const netByName = new Map<string, NetWorklistEntry>();
+    for (const e of w.netEntries) netByName.set(e.netName.toLowerCase(), e);
+    for (const m of legacy) {
+      if (m.status === 'skipped') continue;
+      const net = netByName.get(m.target.toLowerCase());
+      const kind = (m.kind === 'voltage' || m.kind === 'diode' || m.kind === 'resistance') ? m.kind : null;
+      if (net && kind) {
+        const next: NetMeasurement = {
+          kind,
+          value: m.value,
+          unit: m.unit ?? NET_MEASUREMENT_UNITS[kind],
+          status: m.status === 'answered' ? 'recorded' : 'requested',
+          prompt: m.prompt || undefined,
+          expected: m.expected,
+          source: m.source ?? 'agent',
+          at: m.answeredAt ?? m.requestedAt ?? Date.now(),
+        };
+        // Keep the most recent if a net already got one.
+        if (!net.measurement || (net.measurement.at ?? 0) < next.at) net.measurement = next;
+      } else {
+        // Part/pin/unknown-net or unsupported kind → preserve as a relay message.
+        (w.messages ??= []).push({
+          id: `mig_${m.id}`, role: 'agent',
+          text: `Measurement (${m.kind}) on ${m.target}: ${m.value ? `${m.value} ${m.unit ?? ''}`.trim() : m.prompt}`,
+          at: m.requestedAt ?? Date.now(),
+        });
+      }
+    }
+    delete (w as { measurements?: unknown }).measurements;
+    if (w.updatedAt == null) w.updatedAt = w.createdAt ?? Date.now();
+  }
+
   private resolveEntries(worklistes: Worklist[]): void {
     const board = boardStore.board;
     const validNetMarks: ReadonlySet<NetWorklistMark> = new Set(['none', 'short', 'solved', 'absent']);
@@ -210,6 +273,8 @@ class WorklistStore {
       for (const e of s.netEntries) {
         if (!validNetMarks.has(e.mark)) e.mark = 'none';
       }
+      // Migrate any persisted legacy measurements[] array onto net rows / relay.
+      this.migrateLegacyMeasurements(s, board);
     }
     if (!board) {
       for (const s of worklistes) {
@@ -266,7 +331,10 @@ class WorklistStore {
         activeWorklistId: null,
         worklistes: [],
         updatedAt: Date.now(),
+        schemaVersion: 1,
       };
+      // Stamp schemaVersion for records persisted before it was introduced.
+      if (value.schemaVersion == null) value.schemaVersion = 1;
       this.resolveEntries(value.worklistes);
       this.byKey.set(key, value);
       this.notify();
@@ -290,10 +358,12 @@ class WorklistStore {
    *  the fallback, `createWorklist` silently no-ops on those boards. */
   get activeKey(): string | null {
     const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
-    if (!tab) return null;
-    if (tab.cacheKey) return tab.cacheKey;
-    if (tab.fileName) return `noCache:${tab.fileName}`;
-    return null;
+    if (tab) {
+      if (tab.cacheKey) return tab.cacheKey;
+      if (tab.fileName) return `noCache:${tab.fileName}`;
+    }
+    // Fall back to test key when no board tab is active (TEST_NEW_WORKLIST).
+    return this._testActiveKey;
   }
 
   get activeWorklist(): Worklist | null {
@@ -303,18 +373,19 @@ class WorklistStore {
   }
 
   private getOrInit(): BoardWorklistes | null {
-    const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
-    if (!tab) return null;
     const key = this.activeKey;
     if (!key) return null;
     let cur = this.byKey.get(key);
     if (!cur) {
+      const tab = boardStore.tabs.find(t => t.id === boardStore.activeTabId);
+      // Allow synthetic/test keys when no real board tab is active.
       cur = {
         key,
-        fileName: tab.fileName,
+        fileName: tab?.fileName ?? key,
         activeWorklistId: null,
         worklistes: [],
         updatedAt: Date.now(),
+        schemaVersion: 1,
       };
       this.byKey.set(key, cur);
     }
@@ -343,10 +414,12 @@ class WorklistStore {
     if (!cur) return null;
     const id = 'st-' + Math.random().toString(36).slice(2, 10);
     const trimmed = (name ?? '').trim();
+    const now = Date.now();
     const worklist: Worklist = {
       id,
       name: trimmed || `Worklist ${cur.worklistes.length + 1}`,
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
       entries: [],
       netEntries: [],
     };
@@ -537,7 +610,6 @@ class WorklistStore {
     const cur = this.getOrInit();
     if (!cur) return 0;
     const board = boardStore.board;
-    if (!board) return 0;
     let worklist: Worklist | null = null;
     if (worklistId) {
       worklist = cur.worklistes.find(s => s.id === worklistId) ?? null;
@@ -554,7 +626,7 @@ class WorklistStore {
       // Case-insensitive resolve to the board's canonical net name so the
       // entry stays in sync with the board's casing.
       let canonical = name;
-      if (!board.nets.has(name)) {
+      if (board && !board.nets.has(name)) {
         const upper = name.toUpperCase();
         for (const k of board.nets.keys()) {
           if (k.toUpperCase() === upper) { canonical = k; break; }
@@ -657,7 +729,8 @@ class WorklistStore {
   // so the agent operates on "the board the user has open" without an id.
 
   private aiTarget(): { cur: BoardWorklistes; w: Worklist } | null {
-    if (!boardStore.board) return null;
+    // Allow test mode (TEST_NEW_WORKLIST) to proceed without a real board.
+    if (!boardStore.board && !this._testActiveKey) return null;
     const cur = this.current ?? this.getOrInit();
     if (!cur) return null;
     if (!cur.activeWorklistId || !cur.worklistes.some(x => x.id === cur.activeWorklistId)) {
@@ -716,41 +789,46 @@ class WorklistStore {
     return true;
   }
 
-  /** Agent requests a measurement; returns the row id (read back later). */
-  aiRequestMeasurement(m: { target: string; kind?: MeasurementEntry['kind']; prompt: string; expected?: string }): string | null {
-    const t = this.aiTarget();
-    if (!t) return null;
-    const id = WorklistStore.newId('m');
-    (t.w.measurements ??= []).push({
-      id, target: m.target, kind: m.kind ?? 'other', prompt: m.prompt.slice(0, 1000),
-      expected: m.expected, status: 'pending', source: 'agent', requestedAt: Date.now(),
-    });
-    this.save(t.cur);
-    return id;
+  /** Set a net measurement directly (user source, recorded status). Auto-adds the
+   *  net to the worklist if it isn't there yet. */
+  setNetMeasurement(worklistId: string, netName: string, kind: NetMeasurement['kind'], value: string, unit?: string): boolean {
+    const cur = this.current; if (!cur) return false;
+    const s = cur.worklistes.find(x => x.id === worklistId); if (!s) return false;
+    if (!s.netEntries.some(n => n.netName === netName)) this.pushNets(worklistId, [netName]);
+    const e = s.netEntries.find(n => n.netName === netName); if (!e) return false;
+    e.measurement = { kind, value, unit: unit ?? NET_MEASUREMENT_UNITS[kind], status: 'recorded', source: 'user', at: Date.now() };
+    s.updatedAt = Date.now();
+    this.save(cur); return true;
   }
 
-  /** User (or UI) answers a measurement. */
-  answerMeasurement(id: string, value: string, unit?: string): boolean {
-    const t = this.aiTarget();
-    if (!t?.w.measurements) return false;
-    const m = t.w.measurements.find(x => x.id === id);
-    if (!m) return false;
-    m.value = String(value).slice(0, 200);
-    if (unit != null) m.unit = unit.slice(0, 16);
-    m.status = 'answered';
-    m.answeredAt = Date.now();
-    this.save(t.cur);
-    return true;
+  /** Agent requests a net measurement (source 'agent', status 'requested').
+   *  Auto-adds the net to the active worklist if absent. */
+  requestNetMeasurement(netName: string, opts: { kind: NetMeasurement['kind']; prompt?: string; expected?: string }): boolean {
+    const t = this.aiTarget(); if (!t) return false;
+    if (!t.w.netEntries.some(n => n.netName === netName)) this.pushNets(t.w.id, [netName]);
+    const e = t.w.netEntries.find(n => n.netName === netName); if (!e) return false;
+    e.measurement = { kind: opts.kind, status: 'requested', prompt: opts.prompt, expected: opts.expected,
+      unit: NET_MEASUREMENT_UNITS[opts.kind], source: 'agent', at: Date.now() };
+    (t.w.aiOrigin ??= {})[`n:${netName}`] = true;
+    t.w.updatedAt = Date.now();
+    this.save(t.cur); return true;
   }
 
-  skipMeasurement(id: string): boolean {
-    const t = this.aiTarget();
-    if (!t?.w.measurements) return false;
-    const m = t.w.measurements.find(x => x.id === id);
-    if (!m) return false;
-    m.status = 'skipped';
-    this.save(t.cur);
-    return true;
+  /** Fill a previously-requested net measurement with the user's reading. */
+  recordNetMeasurement(netName: string, value: string, unit?: string): boolean {
+    const t = this.aiTarget(); if (!t) return false;
+    const e = t.w.netEntries.find(n => n.netName === netName); if (!e || !e.measurement) return false;
+    e.measurement = { ...e.measurement, value, unit: unit ?? e.measurement.unit, status: 'recorded', at: Date.now() };
+    t.w.updatedAt = Date.now();
+    this.save(t.cur); return true;
+  }
+
+  /** Remove the measurement from a net entry. */
+  clearNetMeasurement(worklistId: string, netName: string): void {
+    const cur = this.current; if (!cur) return;
+    const s = cur.worklistes.find(x => x.id === worklistId); if (!s) return;
+    const e = s.netEntries.find(n => n.netName === netName); if (!e || !e.measurement) return;
+    delete e.measurement; s.updatedAt = Date.now(); this.save(cur);
   }
 
   /** Post a message into the relay transcript. User messages start unread so the
@@ -783,8 +861,11 @@ class WorklistStore {
       name: w.name,
       note: w.note ?? '',
       parts: w.entries.map(e => ({ refdes: e.refdes, mark: e.mark, note: e.note, waterdamage: !!e.waterdamage, unresolved: !!e.unresolved, ai: !!w.aiOrigin?.[`p:${e.refdes}`] })),
-      nets: w.netEntries.map(n => ({ net: n.netName, mark: n.mark, note: n.note, surge: !!n.surge, unresolved: !!n.unresolved, ai: !!w.aiOrigin?.[`n:${n.netName}`] })),
-      measurements: (w.measurements ?? []).map(m => ({ id: m.id, target: m.target, kind: m.kind, prompt: m.prompt, expected: m.expected ?? null, value: m.value ?? null, unit: m.unit ?? null, status: m.status })),
+      netEntries: w.netEntries.map(n => ({
+        netName: n.netName, mark: n.mark, note: n.note, surge: !!n.surge, unresolved: !!n.unresolved,
+        ai: !!w.aiOrigin?.[`n:${n.netName}`],
+        ...(n.measurement ? { measurement: n.measurement } : {}),
+      })),
       messages: (w.messages ?? []).map(m => ({ role: m.role, text: m.text, at: m.at })),
     };
   }
@@ -898,6 +979,36 @@ class WorklistStore {
     return { name, note, entries };
   }
 
+  /** Test helper: create a fresh worklist under a throwaway board container,
+   *  bypassing the board-tab requirement so store tests run without a real board. */
+  TEST_NEW_WORKLIST(name: string): string {
+    let cur = this.getOrInit();
+    if (!cur) {
+      // No active board tab — inject a synthetic in-memory container.
+      this._testActiveKey = 'test:';
+      cur = {
+        key: 'test:',
+        fileName: 'test:',
+        activeWorklistId: null,
+        worklistes: [],
+        updatedAt: Date.now(),
+        schemaVersion: 1,
+      };
+      this.byKey.set('test:', cur);
+    }
+    const w = this.createWorklist(name);
+    return w!.id;
+  }
+
+  /** Probe method for tests: return the NET_MEASUREMENT_UNITS constant. */
+  NET_MEASUREMENT_UNITS_PROBE(): Record<NetMeasurement['kind'], string> {
+    return NET_MEASUREMENT_UNITS;
+  }
+
+  /** Probe method for tests: exercise migrateLegacyMeasurements against the
+   *  supplied worklist object in-place, using the current board (if any). */
+  MIGRATE_PROBE(w: Worklist): void { this.migrateLegacyMeasurements(w, boardStore.board); }
+
   /** Import a worklist from raw text (typically the clipboard). Returns
    *  - `{ created, total, resolved }` on success
    *  - `null` if the text isn't a valid worklist (no `-[name]-` header).
@@ -914,10 +1025,12 @@ class WorklistStore {
     const cur = this.getOrInit();
     if (!cur) return null;
     const id = 'wl-' + Math.random().toString(36).slice(2, 10);
+    const now = Date.now();
     const worklist: Worklist = {
       id,
       name: parsed.name,
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
       entries: [],
       netEntries: [],
     };
@@ -944,3 +1057,8 @@ class WorklistStore {
 }
 
 export const worklistStore = new WorklistStore();
+
+// Expose for integration tests (Playwright) — DEV builds only
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  (window as { __worklistStore?: typeof worklistStore }).__worklistStore = worklistStore;
+}

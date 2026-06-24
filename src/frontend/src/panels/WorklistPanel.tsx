@@ -4,7 +4,7 @@ import type { ComponentType } from 'react';
 import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
 import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS } from '../store/worklist-store';
-import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist, MeasurementEntry } from '../store/worklist-store';
+import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist, NetMeasurement } from '../store/worklist-store';
 import { NoteBody } from '../components/DiagnosisNotes';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
@@ -97,9 +97,6 @@ export function WorklistPanel() {
 
   const onClearSelection = () => {
     if (activeTabId != null) selectionSetStore.clear(activeTabId);
-    // Clearing the cyan set also leaves "highlight connections" with nothing
-    // to glow — turn the toggle off so its button state stays honest.
-    boardStore.setConnectionHighlight(false);
   };
 
   const onCreateWorklist = () => {
@@ -168,7 +165,7 @@ export function WorklistPanel() {
             <button style={{ ...subtleBtnStyle, marginLeft: 'auto' }} onClick={onClearSelection} title="Clear the cyan canvas highlight + connection glow (parts stay on the board, worklist untouched)">Clear</button>
           </div>
           <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-            Loaded by <b>Connections</b> on a worklist below. Visual only — has no effect on the worklist contents.
+            Loaded by multi-select on the canvas. Visual only — has no effect on the worklist contents.
           </div>
         </section>
       )}
@@ -281,30 +278,11 @@ function ActiveWorklistView() {
     worklistStore.setWorklistNote(activeWorklist.id, ticketDraft);
   };
 
-  // "Connections" toggle: ON selects every worklist part on the canvas (cyan)
-  // and glows the nets they share; OFF clears both. Single button so there's
-  // an obvious un-highlight (the previous one-way "Highlight" had none here).
+  // "Highlight" toggle: ON outlines every worklist part in its mark colour and
+  // glows the nets they share; OFF clears both. Parts are no longer pushed into
+  // the cyan selectionSetStore so mark colours are preserved.
   const onToggleConnections = () => {
-    const tabId = boardStore.activeTabId;
-    if (tabId == null) return;
-    if (boardStore.connectionHighlight) {
-      selectionSetStore.clear(tabId);
-      boardStore.setConnectionHighlight(false);
-      return;
-    }
-    const board = boardStore.board;
-    if (!board) return;
-    // Re-resolve refdes → partIndex against the *current* derived board so
-    // fold-mode / sub-board changes since hydration don't paint highlights
-    // on the wrong components.
-    const indices: number[] = [];
-    for (const e of activeWorklist.entries) {
-      const idx = board.parts.findIndex(p => p?.name === e.refdes);
-      if (idx >= 0) indices.push(idx);
-    }
-    selectionSetStore.replaceWith(tabId, indices);
-    boardStore.setConnectionHighlight(true);
-    boardStore.addToast(`Highlighting ${indices.length} part${indices.length === 1 ? '' : 's'} + shared nets`, 'info');
+    boardStore.setConnectionHighlight(!boardStore.connectionHighlight);
   };
 
   return (
@@ -337,10 +315,10 @@ function ActiveWorklistView() {
           disabled={activeWorklist.entries.length === 0}
           aria-pressed={connectionHighlight}
           title={connectionHighlight
-            ? 'Connections ON — click to clear the cyan highlight and shared-net glow'
-            : 'Highlight every part in this worklist (cyan) and glow the nets they share. No connecting lines are drawn.'}
+            ? 'Highlight ON — click to hide worklist outlines and shared-net glow'
+            : 'Show this worklist on the board (mark colours) and glow the nets its parts share.'}
         >
-          Connections
+          Highlight
         </button>
         <button style={subtleBtnStyle} onClick={onCopyAll} disabled={activeWorklist.entries.length === 0} title="Copy all rows to clipboard">Copy</button>
         <button style={subtleBtnStyle} onClick={onWipe} disabled={activeWorklist.entries.length === 0} title="Wipe all entries (keeps the worklist)">Wipe</button>
@@ -397,9 +375,9 @@ function ActiveWorklistView() {
   );
 }
 
-// ── AI mode: the agent feedback loop surface (measurements + relay transcript) ──
+// ── AI relay: transcript + prompt box for the agent feedback loop ──────────
 // Shown when the MCP server is connected, or whenever the worklist already
-// carries AI data, so the loop is always visible once started.
+// carries relay messages, so the transcript is always visible once started.
 function AiWorklistSection({ worklist }: { worklist: Worklist }) {
   const [connected, setConnected] = useState(false);
   useEffect(() => {
@@ -413,23 +391,14 @@ function AiWorklistSection({ worklist }: { worklist: Worklist }) {
     return () => { live = false; clearInterval(t); };
   }, []);
 
-  const measurements = worklist.measurements ?? [];
   const messages = worklist.messages ?? [];
-  const pending = measurements.filter(m => m.status === 'pending');
-  if (!connected && measurements.length === 0 && messages.length === 0) return null;
+  if (!connected && messages.length === 0) return null;
 
   return (
     <div style={aiSectionStyle}>
       <div style={aiHeadingStyle}>
-        <IconSparkles size={13} /> AI assist{connected ? '' : ' (MCP offline)'}
-        {pending.length > 0 && <span style={aiPendingBadge}>{pending.length} to measure</span>}
+        <IconSparkles size={13} /> AI relay{connected ? '' : ' (MCP offline)'}
       </div>
-
-      {measurements.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
-          {measurements.map(m => <MeasurementRow key={m.id} worklistId={worklist.id} m={m} />)}
-        </div>
-      )}
 
       {messages.length > 0 && (
         <div style={aiTranscriptStyle}>
@@ -445,40 +414,6 @@ function AiWorklistSection({ worklist }: { worklist: Worklist }) {
       )}
 
       <AiPromptBox worklistId={worklist.id} disabled={!connected} />
-    </div>
-  );
-}
-
-function MeasurementRow({ m }: { worklistId: string; m: MeasurementEntry }) {
-  const [val, setVal] = useState('');
-  const [unit, setUnit] = useState(m.unit ?? '');
-  if (m.status !== 'pending') {
-    return (
-      <div style={measurementRowStyle}>
-        <span style={{ color: m.status === 'answered' ? '#9d9' : '#888' }}>
-          {m.status === 'answered' ? `✓ ${m.target}: ${m.value ?? ''} ${m.unit ?? ''}` : `— ${m.target}: skipped`}
-        </span>
-      </div>
-    );
-  }
-  const submit = () => {
-    if (!val.trim()) return;
-    worklistStore.answerMeasurement(m.id, val.trim(), unit.trim() || undefined);
-    setVal('');
-  };
-  return (
-    <div style={measurementRowStyle}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 11, color: '#cda' }}>
-          <b>{m.target}</b> · {m.kind}{m.expected ? ` · exp ${m.expected}` : ''}
-        </div>
-        <div style={{ fontSize: 10, opacity: 0.75 }}><NoteBody body={m.prompt} board={boardStore.board} /></div>
-      </div>
-      <input value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
-        placeholder="value" style={measureInputStyle} />
-      <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="unit" style={{ ...measureInputStyle, width: 38 }} />
-      <button onClick={submit} title="Send measurement to the agent" style={miniBtnStyle}>✓</button>
-      <button onClick={() => worklistStore.skipMeasurement(m.id)} title="Skip" style={miniBtnStyle}>✕</button>
     </div>
   );
 }
@@ -503,9 +438,7 @@ function AiPromptBox({ disabled }: { worklistId: string; disabled: boolean }) {
 
 const aiSectionStyle: React.CSSProperties = { borderTop: '1px solid var(--border, #333)', marginTop: 6, padding: '6px 8px', background: 'var(--panel-alt, rgba(120,140,255,0.05))' };
 const aiHeadingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#9af', marginBottom: 5 };
-const aiPendingBadge: React.CSSProperties = { marginLeft: 'auto', fontSize: 10, color: '#fc8', background: 'rgba(255,180,80,0.12)', borderRadius: 8, padding: '0 6px' };
 const aiTranscriptStyle: React.CSSProperties = { maxHeight: 160, overflowY: 'auto', fontSize: 11, marginBottom: 4, padding: '2px 0' };
-const measurementRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(255,255,255,0.03)', borderRadius: 4, padding: '3px 5px' };
 const measureInputStyle: React.CSSProperties = { width: 60, fontSize: 11, padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
 const miniBtnStyle: React.CSSProperties = { fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: 'transparent', color: '#ccc', cursor: 'pointer' };
 const aiPromptInputStyle: React.CSSProperties = { flex: 1, fontSize: 11, padding: '4px 6px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
@@ -691,7 +624,7 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
   };
 
   return (
-    <div style={{ ...rowStyle, opacity: entry.unresolved ? 0.45 : 1 }}>
+    <div style={{ ...rowStyle, opacity: entry.unresolved ? 0.45 : 1 }} data-testid="worklist-net-row">
       <div style={rowMainStyle} onClick={onFocus}>
         <button
           style={{
@@ -754,6 +687,56 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
           onBlur={onCommitNote}
         />
       )}
+      <NetMeasurementStrip worklistId={worklistId} entry={entry} />
+    </div>
+  );
+}
+
+// ── Measurement strip for net rows ──────────────────────────────────────────
+
+function labelFor(k: NetMeasurement['kind']): string {
+  return k === 'voltage' ? 'V' : k === 'diode' ? 'Diode' : 'Ω';
+}
+
+function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry: NetWorklistEntry }) {
+  const m = entry.measurement;
+  const [draftKind, setDraftKind] = useState<NetMeasurement['kind'] | null>(m && m.status === 'requested' ? m.kind : null);
+  const [val, setVal] = useState(m?.value ?? '');
+  const kind = m?.kind ?? draftKind;
+  const commit = () => {
+    if (!kind || !val.trim()) return;
+    if (m && m.status === 'requested') worklistStore.recordNetMeasurement(entry.netName, val.trim());
+    else worklistStore.setNetMeasurement(worklistId, entry.netName, kind, val.trim());
+    setDraftKind(null);
+  };
+  if (m && m.status === 'recorded') {
+    return (
+      <div style={netMeasRecordedStyle} data-testid="net-meas-recorded">
+        <span>{labelFor(m.kind)}: <b>{m.value}</b> {m.unit}</span>
+        <button style={miniBtnStyle} title="Edit" onClick={() => { setDraftKind(m.kind); setVal(m.value ?? ''); worklistStore.clearNetMeasurement(worklistId, entry.netName); }}>✎</button>
+        <button style={miniBtnStyle} title="Clear" onClick={() => worklistStore.clearNetMeasurement(worklistId, entry.netName)}>✕</button>
+      </div>
+    );
+  }
+  const requested = m && m.status === 'requested';
+  return (
+    <div style={netMeasStripStyle} data-testid="net-meas-strip">
+      {(['voltage', 'diode', 'resistance'] as const).map(k => (
+        <button key={k}
+          data-testid={`net-meas-chip-${k}`}
+          style={kind === k ? netMeasChipActiveStyle : netMeasChipStyle}
+          title={requested ? 'Agent requested this measurement' : `Record ${labelFor(k)}`}
+          onClick={() => setDraftKind(k)}>{labelFor(k)}</button>
+      ))}
+      {kind && (
+        <input data-testid="net-meas-value" value={val}
+          placeholder={requested ? (m?.expected ? `exp ${m.expected}` : 'value') : 'value'}
+          onChange={e => setVal(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commit()}
+          onBlur={commit}
+          style={measureInputStyle} />
+      )}
+      {requested && m?.prompt && <span style={{ fontSize: 10, opacity: 0.7 }} title={m.prompt}>· {m.prompt.slice(0, 24)}</span>}
     </div>
   );
 }
@@ -1061,5 +1044,38 @@ const noteAreaStyle: React.CSSProperties = {
 const emptyStyle: React.CSSProperties = {
   padding: '24px 16px',
   textAlign: 'center',
+  fontSize: 12,
+};
+
+const netMeasStripStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 4,
+  padding: '3px 10px 5px 10px',
+};
+
+const netMeasChipStyle: React.CSSProperties = {
+  fontSize: 10,
+  padding: '1px 6px',
+  borderRadius: 4,
+  border: '1px solid var(--border, #444)',
+  background: 'transparent',
+  color: 'var(--muted, #888)',
+  cursor: 'pointer',
+};
+
+const netMeasChipActiveStyle: React.CSSProperties = {
+  ...netMeasChipStyle,
+  borderColor: 'var(--accent, #00e5ff)',
+  color: 'var(--accent, #00e5ff)',
+  background: 'var(--accent-dim, #1a2e33)',
+};
+
+const netMeasRecordedStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '3px 10px 5px 10px',
   fontSize: 12,
 };

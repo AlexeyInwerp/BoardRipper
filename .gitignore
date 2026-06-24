@@ -80,3 +80,4 @@ out/
 import-staging/
 **/__pycache__/
 .tavily-env
+.superpowers/

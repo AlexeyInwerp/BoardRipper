@@ -257,6 +257,96 @@ func TestServer_SelfTestAndActivity(t *testing.T) {
 	}
 }
 
+// --- measurement tool schema assertions ---
+
+func TestRequestMeasurementDescription(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}), Bridge: NewBridge()}
+	sess := connectClient(t, deps)
+	defer sess.Close()
+
+	lt, err := sess.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+
+	var rmDesc string
+	var gmSchema any
+	for _, tool := range lt.Tools {
+		switch tool.Name {
+		case "request_measurement":
+			rmDesc = tool.Description
+		case "get_measurements":
+			gmSchema = tool.InputSchema
+		}
+	}
+
+	if rmDesc == "" {
+		t.Fatal("request_measurement tool not found")
+	}
+	if !contains(rmDesc, "relay") {
+		t.Errorf("request_measurement description should mention 'relay', got: %s", rmDesc)
+	}
+
+	if gmSchema == nil {
+		t.Fatal("get_measurements tool not found")
+	}
+	// InputSchema comes back as map[string]any from the client.
+	schemaBytes, err := json.Marshal(gmSchema)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	if !contains(string(schemaBytes), `"source"`) {
+		t.Errorf("get_measurements schema should have a 'source' arg, got: %s", schemaBytes)
+	}
+}
+
+// TestServerInstructions verifies that the package const is non-trivial and
+// that it is wired into the MCP server so the initialize response carries it.
+func TestServerInstructions(t *testing.T) {
+	// Assert the const itself covers the worklist workflow.
+	if boardripperInstructions == "" {
+		t.Fatal("boardripperInstructions is empty")
+	}
+	if !contains(boardripperInstructions, "worklist") {
+		t.Error("boardripperInstructions should mention 'worklist'")
+	}
+	if !contains(boardripperInstructions, "request_measurement") {
+		t.Error("boardripperInstructions should mention 'request_measurement'")
+	}
+
+	// Assert the instructions are wired into the server via a real in-memory
+	// connection: the initialize response carries ServerInfo.Instructions.
+	deps := &Deps{
+		State:  NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		Bridge: NewBridge(),
+	}
+	srv := New(deps)
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := srv.mcp.Connect(context.Background(), st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	clientImpl := &mcp.Implementation{Name: "instructions-test", Version: "1"}
+	client := mcp.NewClient(clientImpl, nil)
+	cs, err := client.Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	// InitializeResult() carries the instructions the server advertised during
+	// the MCP initialize handshake.
+	initResult := cs.InitializeResult()
+	if initResult == nil || initResult.Instructions == "" {
+		t.Fatalf("InitializeResult().Instructions is empty — instructions not wired; result=%v", initResult)
+	}
+	if !contains(initResult.Instructions, "worklist") {
+		t.Errorf("server instructions missing 'worklist': %s", initResult.Instructions)
+	}
+	if !contains(initResult.Instructions, "request_measurement") {
+		t.Errorf("server instructions missing 'request_measurement': %s", initResult.Instructions)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

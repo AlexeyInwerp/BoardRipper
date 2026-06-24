@@ -84,13 +84,23 @@ the **compressed, actionable result into the worklist**.
    chips in notes — they render clickable on the user's board.
 2. **Summarise** with `worklist_set_list_note` (the diagnosis in a few lines, chips for refs)
    and/or `post_message` for a running comment. The tab shows this; the long reasoning stays here.
-3. **Ask for measurements** you need: `request_measurement(target, kind, prompt, expected?)` —
-   e.g. `request_measurement("D4200","diode","Vf in-circuit, black→GND","~0.4V")`. Adds a pending
-   row; do **not** assume a value.
-4. **Read back** next turn: `get_measurements(status:"answered")` for the readings the user took,
-   and `get_user_messages` for anything they typed. Reason over the real values, update marks/notes
-   (`worklist_update`), and converge — record the fix in the note.
+3. **Ask for measurements** you need: `request_measurement(target, kind, prompt, expected?)`.
+   - **Net target** (e.g. `"PPBUS_G3H"`) → populates the inline V/Diode/Ω field on that net's
+     worklist row; the user fills it directly in the row.
+   - **Part or pin target** (e.g. `"D4200"` or `"U1:A3"`) → appears in the AI relay section
+     as a pending row the user answers or skips.
+   - Do **not** assume a value; wait for the user's reading.
+4. **Read back** next turn: `get_measurements()` returns **all readings** regardless of origin —
+   values the user recorded themselves on net rows *and* values they entered in response to your
+   requests. Filter with `status:"answered"` (or `"pending"`) and `source:"user"` / `source:"agent"`
+   as needed. Also call `get_user_messages` for anything the user typed in the relay prompt box.
+   Reason over the real values, update marks/notes (`worklist_update`), and converge — record the
+   fix in the note.
 5. `worklist_get` returns the whole worklist any time you need to re-sync.
+6. **Highlight** — the worklist has a single **Highlight** button (off by default). When on, it
+   outlines worklist parts in their mark colours and glows any net shared by two or more worklist
+   parts. You don't control this toggle directly; tell the user to enable it when you want the
+   worklist cluster visible on the board.
 
 Drive-UI + worklist writes need the user's "Allow agents to control the UI" toggle on; reads
 always work. Never fabricate a measured value — request it and wait for the user's reading.
@@ -98,7 +108,7 @@ always work. Never fabricate a measured value — request it and wait for the us
 ## Tool quick-reference
 
 Read: `board_active`, `board_sessions`, `board_resolve`, `list_nets(filter,limit,offset)`, `list_parts(filter,side,limit,offset)`, `find_parts(query,limit,offset)`, `net_info(net)`, `net_neighbors(net,depth)`, `pin_connectivity(part,pin)`, `part_info(refdes)`, `pdf_search(query)`, `obd_match(board_number)`, `obd_data(bpath)`, `file_list`/`file_get`.
-Worklist read: `worklist_get`, `get_measurements(status?)`, `get_user_messages(only_unread?)`.
+Worklist read: `worklist_get`, `get_measurements(status?,source?)`, `get_user_messages(only_unread?)`.
 Drive-UI (only when enabled; on by default): `highlight_net(net)`, `clear_highlight`, `select_part(refdes)`, `set_side(top|bottom)`, `pdf_goto(page,term)`, `worklist_add/worklist_update(kind,id,mark?,note?)`, `worklist_set_list_note(note)`, `request_measurement(target,kind,prompt,expected?)`, `post_message(text)`.
 
 ## Universal rules

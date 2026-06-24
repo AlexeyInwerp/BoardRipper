@@ -1,5 +1,36 @@
 # BoardRipper changelog
 
+## v0.31.26 — 2026-06-24
+
+Worklist v2 Phase 1: measurements move inline onto net rows, the AI section
+becomes a relay-only transcript, and the Highlight button replaces the old
+automatic outlines.
+
+### Features
+
+- **Per-net inline measurements on worklist rows.** Each net row now carries a
+  V / Diode / Ω strip where the technician types a reading directly — no separate
+  "to measure" list. Values are stored as `NetMeasurement` objects with unit,
+  value, timestamp, and source (`user` | `agent`). (`a288871`, `4a73959`)
+- **Relay-only AI section.** The AI section in the worklist panel is now a relay
+  transcript (messages + prompt box) only — measurement requests that target a
+  **net** route to the net row's inline field, while part/pin targets land in the
+  relay as a pending row the user answers or skips. (`1b7902c`, `7429650`)
+- **Source-agnostic `get_measurements`.** The MCP `get_measurements` tool returns
+  all net readings regardless of who recorded them — the technician typing a value
+  directly on a net row and the agent requesting it via `request_measurement` both
+  appear in the same snapshot. Optional `status` (`pending` | `answered` | `skipped`)
+  and `source` (`user` | `agent`) filters narrow the result. (`7429650`)
+- **Single off-by-default Highlight toggle.** One **Highlight** button replaces the
+  old always-on automatic outlines: when on, worklist parts render in their mark
+  colours and any net shared by two or more worklist parts glows; when off, the
+  board is unaffected. The Clear button is decoupled from the toggle. (`b200bb6`,
+  `85a00f9`)
+- **Hydrate-time migration of legacy measurements.** Opening a worklist saved before
+  Phase 1 migrates any flat-array AI measurement entries onto the corresponding net
+  rows automatically, so existing worklists carry forward without data loss.
+  (`7f2e5cc`)
+
 ## v0.31.25 — 2026-06-24
 
 Smarter schematic lookup, and two fixes that make ASUS laptop `.cad`
