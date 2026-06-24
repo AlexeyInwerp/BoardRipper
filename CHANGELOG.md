@@ -1,5 +1,19 @@
 # BoardRipper changelog
 
+## v0.31.25 — 2026-06-24
+
+Smarter schematic lookup, and two fixes that make ASUS laptop `.cad`
+boardviews open correctly.
+
+### Features
+
+- **Context-scored schematic lookup.** Double-clicking a component or net to find it in a linked schematic PDF now picks the *best* occurrence instead of the first. A scorer ranks every match by page context (the net/pin labels around it), then designator font size, then on-page proximity — so a large BGA lands on its **schematic symbol sheet** rather than a shared pin/connector index table, even though its reference designator sits far from the radiating net labels. Purely-numeric pin tokens (the sequential 10, 11, 12… a BVR exposes) are dropped from matching since they pack tables and carry no signal; ball-style alphanumeric names are kept. Verified across the 8 largest BGAs on an Apple M1 820-02020. (`9b6996b`, `2bc2cb4`, `84a1548`)
+
+### Fixes
+
+- **ASUS `.cad` boards no longer open as a pile of giant overlapping components.** TESTCAD/IMPACT exports (FA506QR, X415JA, G513IM…) store each part's true position in its shape coordinates and use PLACE only as a tiny nudge — the inverse of the case the shape-recentering logic was built for. Recentering crushed the board to a fraction of its size and left components 5–50× oversized (one part covering half the board). BoardRipper now detects this convention file-wide and skips recentering, restoring the real layout — cross-checked against the FZ export of the same chassis. Clean GenCAD, multi-revision V382, and Quanta files are untouched. (`6310b1a`)
+- **ASUS `.cad` boards that froze the tab on open now load.** The same exports re-list each component once per net/device record, so a large BGA listed thousands of times over a full-footprint shape produced millions of phantom pins and exhausted memory (FA506QR ≈ 9.1M pins). Consecutive byte-identical component records are now collapsed to one; genuine multi-revision files are unaffected. (`7e878aa`)
+
 ## v0.31.24 — 2026-06-23
 
 Extends the MCP integration with a two-way **worklist AI-mode loop** — an
