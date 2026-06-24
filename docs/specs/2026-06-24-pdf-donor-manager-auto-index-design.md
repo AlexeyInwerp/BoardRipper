@@ -45,6 +45,7 @@ Indexing internals (`src/backend/pdfindex/`):
 - A discoverable donor manager in the Library PDF-search tab: list every donor with filename, path, **index-status badge**, and a remove button — available regardless of the search box state.
 - Marking a file as a donor **triggers indexing** of exactly that file (server-side, so any caller benefits).
 - A **one-time backfill** indexes existing donors that are not yet indexed.
+- The donor list **survives "Reset Database"** via a path-keyed snapshot backup (auto-snapshot before Reset + one-click restore + manual export/import).
 - Graceful degradation when pdfindex is unavailable.
 
 ## Non-goals
@@ -53,6 +54,8 @@ Indexing internals (`src/backend/pdfindex/`):
 - De-indexing on donor removal (removal leaves the index intact — the file simply exits donor *search scope*).
 - Changing the bulk-index policy (`pdf_index_auto_run`) or the open-PDF `ensureIndexed` fast-path.
 - A "remove all donors" bulk action (deferred; YAGNI unless requested).
+- **Schema re-keying** of `pdf_donors` (it keeps its `file_id` PK + CASCADE) and any reconcile-on-scan pass — durability is delivered purely by the snapshot layer below.
+- Durability for **bindings or per-file metadata edits** — out of scope for this pass; the snapshot covers donors only. (These remain vulnerable to a full Reset, as today.)
 
 ## Design
 
@@ -113,7 +116,39 @@ Mark donor (UI / MCP / script)
 Boot → background goroutine → EnsureIndexed(DonorFileIDs())   [non-blocking, any auto_run]
 View → GET /api/databank/donors → rows + index_status badge (auto-poll while non-terminal)
 Remove → DELETE /api/databank/donors/{id}                     [index left intact]
+
+Reset DB → snapshot donors → <dataDir>/backups/donors-<unixsecs>.json  [BEFORE DELETE FROM files]
+        → scanner.ResetAll()  → (rescan reassigns file IDs)
+        → Settings prompt "Donor backup available (N) — Restore"
+        → POST /api/databank/donors/restore → resolve path→new id → AddDonor (re-triggers index)
 ```
+
+## Durability — surviving "Reset Database"
+
+**What's at risk.** `ResetAll` (`db.go:607`) runs `DELETE FROM bindings; DELETE FROM files`, which cascades through `pdf_donors.file_id ON DELETE CASCADE` and **wipes the donor list**; the subsequent rescan reassigns `files.id` (a normal rescan preserves IDs by matching path — `scanner.go:223` — but Reset deletes every row, so re-inserts get fresh autoincrement IDs). Any `file_id`-keyed data is therefore unrecoverable by ID after a Reset. **Re-index / Reset PDF Text do not touch `pdf_donors`** (separate table) and need no protection.
+
+**Approach (chosen): snapshot-based export/import, donors only.** No schema change to `pdf_donors`, no reconcile-on-scan. Durability comes from a **path-keyed JSON snapshot** that survives the wipe and is restored by re-resolving paths to the new file IDs.
+
+Snapshot shape:
+```json
+{ "version": 1, "created_at": 1750000000,
+  "donors": [ { "path": "sub/dir/board.pdf", "added_at": 1749000000, "content_hash": "…or omitted" } ] }
+```
+`path` is the relative library path — the stable identity and **primary resolver** (covers the Reset case). `content_hash` is included when known (the dedup layer computes it only for size-collision files) as a **secondary resolver** that also survives file *moves/renames*.
+
+**Auto-snapshot before Reset.** `DatabankHandler.Reset` (`databank.go:78`) serializes the current donor list (via `db.ListDonors()`, which already carries `path`) to `<dataDir>/backups/donors-<unixsecs>.json` **before** calling `scanner.ResetAll()` — the read happens prior to the delete. Retain the most recent N (5) snapshots; prune older. Payload is tiny and synchronous; no boot/health impact. A Reset with zero donors writes no snapshot.
+
+**Restore prompt.** After a Reset, Settings ▸ Database info surfaces "Donor backup available (N) — Restore". Restore reads the latest server-side snapshot and, per entry, resolves `path` (then `content_hash`) to a current `type='pdf'` file row and re-adds it through the existing `AddDonor` path — which re-triggers auto-indexing via the `DonorIndexer` hook. Idempotent (safe to re-run once the rescan finishes); entries whose file is not yet present are returned as `skipped`.
+
+**Manual export / import.** Settings ▸ Database info also exposes "Export donors" (download the snapshot JSON for portability/cross-install transfer) and "Import donors" (upload a snapshot). Import shares the path→id resolution + `AddDonor` re-trigger with Restore.
+
+**Endpoints** (`src/backend/`):
+- `GET /api/databank/donors/export` → snapshot JSON (download).
+- `POST /api/databank/donors/import` → body = snapshot JSON; resolves paths→ids, re-adds donors (triggers auto-index); returns `{restored, skipped:[paths]}`.
+- `GET /api/databank/donors/backups` → `[{name, created_at, count}]` (server-side snapshots under `<dataDir>/backups/`).
+- `POST /api/databank/donors/restore` → body `{name}` (default: latest); applies a server-side snapshot; same return shape as import.
+
+Resolution helper (shared by import + restore): `GetFileByPath(path)` (no FK dependency) → if a `type='pdf'` row exists, `AddDonor(id)`; else, if the entry carries a `content_hash`, match a current file by hash; else add the entry to `skipped`.
 
 ## Edge cases
 
@@ -122,6 +157,10 @@ Remove → DELETE /api/databank/donors/{id}                     [index left inta
 - **Sweep already running** when marking — `RunFiles` → `ErrAlreadyRunning` (ignored); `Enqueue` bumps the file into the active sweep's priority lane (processed if in scope; otherwise covered by the next mark/backfill).
 - **Duplicate PDFs** — unchanged: a non-canonical duplicate is marked `duplicate` and skipped; its hits resolve via the canonical. Badge shows `duplicate`.
 - **Backfill vs. boot** — background goroutine; never blocks `/api/health`.
+- **Re-index / Reset PDF Text** — donor membership is untouched (separate table); only extracted text regenerates, which auto-index re-creates. No snapshot needed for these.
+- **Restore before rescan completes** — files not yet re-inserted resolve to `skipped`; restore is idempotent, so the user re-runs it after the scan finishes. The prompt stays available while a backup exists.
+- **Empty donor list at Reset** — no snapshot file written; nothing to restore.
+- **Snapshot retention** — keep the latest 5 under `<dataDir>/backups/`; older pruned. `<dataDir>` is always writable across container updates.
 
 ## Testing
 
@@ -131,13 +170,15 @@ Go (`src/backend/`):
 - `ListDonors` merges `index_status` correctly, including `unknown` when `donorIndexer == nil`.
 - Backfill enqueues only un-indexed donors; idempotent on re-run.
 - Nil-`donorIndexer` safety across add / remove / list.
+- **Snapshot/restore:** Reset with donors writes a path-keyed snapshot before the wipe; restore re-resolves paths to new IDs and re-adds donors (skipping missing paths); content_hash fallback resolves a moved file; idempotent re-run; retention prunes to 5.
 
 Playwright (`src/frontend/tests/`):
 - Mark a never-opened PDF as a donor → its badge transitions to `Indexed` → *Donors only* search now returns it.
 - Manage list is visible with a query typed in the box.
 - Remove deletes the row and drops it from donor-scoped results.
+- **Reset → restore round-trip:** mark donors → Reset Database → rescan → "Restore" reinstates the donor list (and re-indexes them).
 
 ## Rollout
 
-- Backend-only behavioural change is additive; no schema migration (reuses `pdf_donors`, `pdf_index_status`). `DonorEntry` gains one optional JSON field.
+- Backend-only behavioural change is additive; no schema migration (reuses `pdf_donors`, `pdf_index_status`). `DonorEntry` gains one optional JSON field; a new `<dataDir>/backups/` directory holds donor snapshots.
 - Version bump per project convention at release time (out of scope for this design).
