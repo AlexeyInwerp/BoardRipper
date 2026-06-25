@@ -539,6 +539,26 @@ class BoardStore extends Emitter {
     return this._tabs.find(t => t.id === this._activeTabId) ?? null;
   }
 
+  /** Identity of every open board tab, for session persistence. fileSize /
+   *  lastModified come from the in-memory File when present, else from the
+   *  cacheKey (`${fileName}:${size}:${lastModified}`). */
+  openBoardEntries(): { fileName: string; fileSize: number; fileLastModified: number; active: boolean }[] {
+    return this._tabs.map(t => {
+      const f = this._openFiles.get(t.fileName);
+      let size = f?.size ?? 0;
+      let modified = f?.lastModified ?? 0;
+      if ((!size || !modified) && t.cacheKey) {
+        const lastColon = t.cacheKey.lastIndexOf(':');
+        const prevColon = t.cacheKey.lastIndexOf(':', lastColon - 1);
+        if (lastColon > 0 && prevColon > 0) {
+          size = size || Number(t.cacheKey.slice(prevColon + 1, lastColon)) || 0;
+          modified = modified || Number(t.cacheKey.slice(lastColon + 1)) || 0;
+        }
+      }
+      return { fileName: t.fileName, fileSize: size, fileLastModified: modified, active: t.id === this._activeTabId };
+    });
+  }
+
   get board(): BoardData | null {
     const tab = this.activeTab;
     if (!tab?.board) return null;

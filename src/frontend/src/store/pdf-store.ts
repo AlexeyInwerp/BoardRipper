@@ -539,6 +539,16 @@ class PdfStore extends Emitter {
   /** All loaded PDF filenames */
   get loadedFileNames(): string[] { return [...this._documents.keys()]; }
 
+  /** Identity of every open PDF document, for session persistence. */
+  openPdfEntries(): { fileName: string; fileSize: number; fileLastModified: number; fileId?: number }[] {
+    return [...this._documents.values()].map(d => ({
+      fileName: d.fileName,
+      fileSize: d.fileSize,
+      fileLastModified: d.fileLastModified,
+      fileId: d.fileId,
+    }));
+  }
+
   /** Per-document accessors — allow panels to render without being the "active" doc */
   getDocPageCount(fileName: string): number { return this._documents.get(fileName)?.pageCount ?? 0; }
   getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }
