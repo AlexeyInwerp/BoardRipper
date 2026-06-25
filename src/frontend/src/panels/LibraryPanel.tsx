@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
 import { databankStore, contentCollapsePlan } from '../store/databank-store';
-import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
+import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorBackupInfo, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
@@ -290,32 +290,29 @@ export function LibraryPanel() {
   const donorResults = useMemo(() => pdfResults.filter(r => r.is_donor), [pdfResults]);
   const otherResults = useMemo(() => pdfResults.filter(r => !r.is_donor), [pdfResults]);
 
-  // Donor manager: an explicit, always-available list (no longer gated on an
-  // empty query). Open via the "Manage donors" button in the search header.
-  const [showDonorManager, setShowDonorManager] = useState(false);
+  // Bench tab — donor management state.
   const [donorList, setDonorList] = useState<DonorEntry[]>([]);
-  const isDonorManageMode = viewMode === 'search' && showDonorManager;
+  const [donorBackups, setDonorBackups] = useState<DonorBackupInfo[]>([]);
 
   const refreshDonorList = useCallback(() => {
     databankStore.listDonors().then(setDonorList);
   }, []);
 
-  // Load count on mount so button shows non-zero count immediately.
-  useEffect(() => { refreshDonorList(); }, []);
-
+  // Load donor list + backups when the Bench tab is shown.
   useEffect(() => {
-    if (isDonorManageMode) refreshDonorList();
-  }, [isDonorManageMode, refreshDonorList]);
+    if (viewMode !== 'bench') return;
+    refreshDonorList();
+    databankStore.listDonorBackups().then(setDonorBackups);
+  }, [viewMode, refreshDonorList]);
 
-  // While the manager is open and any donor is still indexing/pending, poll so
-  // the badge advances to its terminal state.
+  // Poll while any donor is still indexing/pending so the badge advances to its terminal state.
   useEffect(() => {
-    if (!isDonorManageMode) return;
+    if (viewMode !== 'bench') return;
     const pending = donorList.some(d => d.index_status === 'pending' || d.index_status === 'indexing');
     if (!pending) return;
     const t = setInterval(refreshDonorList, 2000);
     return () => clearInterval(t);
-  }, [isDonorManageMode, donorList, refreshDonorList]);
+  }, [viewMode, donorList, refreshDonorList]);
 
   // Pick up a pending PDF search set by ContextMenu "Search in donors/PDFs".
   // Keyed on the reactive `pendingPdfSearch` snapshot value (not viewMode), so
@@ -841,6 +838,14 @@ export function LibraryPanel() {
           >
             <IconFolder size={14} />
           </button>
+          <button
+            className={`library-tab ${viewMode === 'bench' ? 'active' : ''}`}
+            data-testid="bench-tab"
+            onClick={() => handleSetViewMode('bench')}
+            title="Bench — manage donor PDFs"
+          >
+            Bench
+          </button>
         </div>
         {viewMode === 'folders' && (
           <div className="library-browse-pill" role="tablist" aria-label="Folder source">
@@ -873,8 +878,8 @@ export function LibraryPanel() {
        *  live under Settings ▸ Library; the gear icon on the right jumps there. */}
       {statsBar}
 
-      {/* Filter (all tabs except PDF, which has its own search inside content) */}
-      {viewMode !== 'search' && (
+      {/* Filter (all tabs except PDF and Bench, which have their own content) */}
+      {viewMode !== 'search' && viewMode !== 'bench' && (
         <div className="library-search">
           <input
             type="text"
@@ -925,7 +930,77 @@ export function LibraryPanel() {
 
       {/* Content */}
       <div className="library-content">
-        {viewMode === 'search' ? (
+        {viewMode === 'bench' ? (
+          <div className="library-bench">
+            <div className="library-bench-header">Donors ({donorList.length})</div>
+            <div className="library-donor-list">
+              {donorList.length === 0
+                ? <div className="library-empty">No donor PDFs yet. Mark a PDF as a donor from its details to add it here.</div>
+                : donorList.map(d => (
+                    <div key={d.file_id} className="library-donor-row" data-testid="donor-row">
+                      <span className="library-donor-name" title={d.path || d.filename}>{d.filename}</span>
+                      <span
+                        className={`library-donor-status status-${d.index_status ?? 'unknown'}`}
+                        data-testid="donor-status"
+                      >
+                        {donorStatusLabel(d.index_status)}
+                      </span>
+                      <button
+                        className="library-donor-remove"
+                        title="Remove from donor list"
+                        onClick={async () => { await databankStore.removeDonor(d.file_id); refreshDonorList(); }}
+                      >×</button>
+                    </div>
+                  ))}
+            </div>
+            <div className="library-bench-actions">
+              <a
+                className="library-bench-btn"
+                data-testid="donor-export-link"
+                href="/api/databank/donors/export"
+                title="Download the donor list as a JSON backup"
+              >
+                Export
+              </a>
+              <label className="library-bench-btn" title="Import a donor backup JSON">
+                Import
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  data-testid="donor-import-input"
+                  style={{ display: 'none' }}
+                  onChange={async e => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      try {
+                        const snap = JSON.parse(await f.text()) as unknown;
+                        await databankStore.importDonors(snap);
+                        refreshDonorList();
+                      } catch (err) {
+                        log.ui.warn('donor import failed', err);
+                      }
+                    }
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              {donorBackups.length > 0 && (
+                <button
+                  className="library-bench-btn"
+                  data-testid="donor-restore-btn"
+                  onClick={async () => {
+                    await databankStore.restoreDonors();
+                    setDonorBackups(await databankStore.listDonorBackups());
+                    refreshDonorList();
+                  }}
+                  title={`Restore ${donorBackups[0].count} donor(s) from the latest backup`}
+                >
+                  Restore ({donorBackups[0].count})
+                </button>
+              )}
+            </div>
+          </div>
+        ) : viewMode === 'search' ? (
           <div className="library-pdf-search">
             <div className="library-search" style={{ borderBottom: 'none', padding: '6px 8px 4px' }}>
               <input
@@ -945,14 +1020,6 @@ export function LibraryPanel() {
               </label>
               <button
                 className="library-search-btn"
-                data-testid="manage-donors-btn"
-                onClick={() => setShowDonorManager(v => !v)}
-                title="View and remove donor PDFs"
-              >
-                {showDonorManager ? 'Done' : `Manage donors (${donorList.length})`}
-              </button>
-              <button
-                className="library-search-btn"
                 onClick={() => runPdfSearch()}
                 disabled={pdfSearching}
               >
@@ -966,63 +1033,40 @@ export function LibraryPanel() {
                 >x</button>
               )}
             </div>
-            {isDonorManageMode ? (
-              <div className="library-donor-list">
-                {donorList.length === 0
-                  ? <div className="library-empty">No donor PDFs yet. Mark PDFs as donors to build this list.</div>
-                  : donorList.map(d => (
-                      <div key={d.file_id} className="library-donor-row" data-testid="donor-row">
-                        <span className="library-donor-name" title={d.path || d.filename}>{d.filename}</span>
-                        <span
-                          className={`library-donor-status status-${d.index_status ?? 'unknown'}`}
-                          data-testid="donor-status"
-                        >
-                          {donorStatusLabel(d.index_status)}
-                        </span>
-                        <button
-                          className="library-donor-remove"
-                          title="Remove from donor list"
-                          onClick={async () => { await databankStore.removeDonor(d.file_id); refreshDonorList(); }}
-                        >×</button>
-                      </div>
-                    ))}
-              </div>
-            ) : (
-              <>
-                {donorResults.length > 0 && (
-                  <details className="library-donor-spoiler" open>
-                    <summary>Donors ({donorResults.length})</summary>
-                    <SearchResultsView
-                      results={donorResults}
-                      selectedFileId={selectedFileId}
-                      onSelectResult={handleSelectResult}
-                      onOpenResult={handleOpenSearchHit}
-                      searching={pdfSearching}
-                    />
-                  </details>
-                )}
-                {otherResults.length > 0 && (
+            <>
+              {donorResults.length > 0 && (
+                <details className="library-donor-spoiler" open>
+                  <summary>Donors ({donorResults.length})</summary>
                   <SearchResultsView
-                    results={otherResults}
+                    results={donorResults}
                     selectedFileId={selectedFileId}
                     onSelectResult={handleSelectResult}
                     onOpenResult={handleOpenSearchHit}
                     searching={pdfSearching}
                   />
-                )}
-                {pdfResults.length === 0 && pdfSearching && (
-                  <div className="library-search-results-header">
-                    Searching… <span className="library-search-spinner" aria-hidden />
-                  </div>
-                )}
-                {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
-                  <div className="library-empty">No results for "{pdfQuery}"</div>
-                )}
-                {pdfResults.length === 0 && !pdfQuery.trim() && (
-                  <div className="library-empty">Enter a query and press Search or Enter</div>
-                )}
-              </>
-            )}
+                </details>
+              )}
+              {otherResults.length > 0 && (
+                <SearchResultsView
+                  results={otherResults}
+                  selectedFileId={selectedFileId}
+                  onSelectResult={handleSelectResult}
+                  onOpenResult={handleOpenSearchHit}
+                  searching={pdfSearching}
+                />
+              )}
+              {pdfResults.length === 0 && pdfSearching && (
+                <div className="library-search-results-header">
+                  Searching… <span className="library-search-spinner" aria-hidden />
+                </div>
+              )}
+              {pdfResults.length === 0 && !pdfSearching && pdfQuery.trim() && (
+                <div className="library-empty">No results for "{pdfQuery}"</div>
+              )}
+              {pdfResults.length === 0 && !pdfQuery.trim() && (
+                <div className="library-empty">Enter a query and press Search or Enter</div>
+              )}
+            </>
           </div>
         ) : loadStatus === 'loading' && files.length === 0 ? (
           <div className="library-empty">Loading library…</div>

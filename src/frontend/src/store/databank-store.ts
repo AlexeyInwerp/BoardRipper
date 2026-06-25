@@ -199,7 +199,7 @@ export interface BrowseResult {
 }
 
 export type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
-export type ViewMode = 'history' | 'metadata' | 'folders' | 'model' | 'search';
+export type ViewMode = 'history' | 'metadata' | 'folders' | 'model' | 'search' | 'bench';
 
 /** Entry in the recently-opened history */
 export interface RecentItem {

@@ -5456,6 +5456,13 @@ body {
 .library-donor-status.status-pending,
 .library-donor-status.status-indexing { color: #dda000; }
 
+/* Bench tab */
+.library-bench { padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.library-bench-header { font-weight: 600; opacity: 0.85; padding: 2px 4px; }
+.library-bench-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px; border-top: 1px solid var(--border); }
+.library-bench-btn { cursor: pointer; padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary); color: inherit; font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; }
+.library-bench-btn:hover { border-color: var(--accent); }
+
 /* Preview Thumbnails */
 .library-preview-thumb {
   width: 28px;
