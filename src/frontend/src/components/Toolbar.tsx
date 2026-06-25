@@ -56,6 +56,7 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
   return (
     <div className="update-badge-wrap" ref={ref}>
       <button
+        data-testid="update-badge"
         className={`toolbar-btn toolbar-update-badge${state.has_update ? ' has-update' : ''}${isImportant ? ' is-important' : ''}${updating ? ' is-updating' : ''}`}
         onClick={() => {
           // Mid-update the badge becomes a shortcut to the live progress
