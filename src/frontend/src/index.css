@@ -7613,3 +7613,10 @@ body {
 .session-restore-btn { cursor: pointer; padding: 5px 14px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: inherit; font-size: 13px; }
 .session-restore-btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .session-restore-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Update dropdown — What's-new spoiler ────────────────────────────────── */
+.update-dropdown-notes { border-top: 1px solid var(--border); }
+.update-dropdown-notes > summary { cursor: pointer; padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary); user-select: none; }
+.update-dropdown-notes > summary:hover { color: var(--text-primary); }
+.update-dropdown-notes[open] > summary { color: var(--accent); }
+.update-dropdown-notes > .update-dropdown-body { max-height: 240px; overflow-y: auto; }

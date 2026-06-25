@@ -47,7 +47,11 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
 
   const manifest = state.manifest;
   const isImportant = manifest?.important === true;
-  const bodyLines: string[] = [];
+  // Release notes for an available update, embedded in the signed manifest.
+  // Empty (→ spoiler not shown) when the manifest carries no notes.
+  const bodyLines: string[] = (state.has_update && manifest?.notes)
+    ? manifest.notes.split('\n')
+    : [];
 
   return (
     <div className="update-badge-wrap" ref={ref}>
@@ -80,16 +84,18 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
           </div>
 
           {bodyLines.length > 0 && (
-            <div className="update-dropdown-body">
-              {!state.has_update && !updating && <h4>What&apos;s in this version</h4>}
-              {bodyLines.map((line, i) => {
-                if (line.startsWith('## ')) return <h3 key={i}>{line.slice(3)}</h3>;
-                if (line.startsWith('### ')) return <h4 key={i}>{line.slice(4)}</h4>;
-                if (line.startsWith('- ')) return <li key={i}>{line.slice(2)}</li>;
-                if (line.startsWith('| ') || line.startsWith('---')) return null;
-                return <p key={i}>{line}</p>;
-              })}
-            </div>
+            <details className="update-dropdown-notes" data-testid="update-whats-new">
+              <summary>What&apos;s new</summary>
+              <div className="update-dropdown-body">
+                {bodyLines.map((line, i) => {
+                  if (line.startsWith('## ')) return <h3 key={i}>{line.slice(3)}</h3>;
+                  if (line.startsWith('### ')) return <h4 key={i}>{line.slice(4)}</h4>;
+                  if (line.startsWith('- ')) return <li key={i}>{line.slice(2)}</li>;
+                  if (line.startsWith('| ') || line.startsWith('---')) return null;
+                  return <p key={i}>{line}</p>;
+                })}
+              </div>
+            </details>
           )}
 
           {!state.has_update && !updating && bodyLines.length === 0 && (

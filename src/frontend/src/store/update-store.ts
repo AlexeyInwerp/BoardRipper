@@ -46,6 +46,7 @@ export interface Manifest {
   important: boolean;
   important_reason?: string;
   notes_url?: string;
+  notes?: string;
   tarball: { url_primary: string; sha256: string; size_bytes: number };
   image: { registry: string; tag: string; digest: string };
 }
