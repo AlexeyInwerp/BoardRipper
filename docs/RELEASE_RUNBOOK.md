@@ -253,7 +253,7 @@ in the release step.
 
 After a successful release, the following are uploaded to `ftp.ripperdoc.de:/public_html/boardripper/`:
 
-- `manifest.json` (signed)
+- `manifest.json` (signed) — carries a `notes` field = the `## vX.Y.Z` CHANGELOG section (shown in-app under the update dropdown's "What's new" spoiler), populated from the same `awk` slice as the GitHub Release body.
 - `manifest.json.minisig` (Ed25519 signature)
 - `index.html` (landing page with version-block templated)
 - `changelog.html` (rendered from CHANGELOG.md)

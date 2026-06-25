@@ -337,6 +337,25 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   echo "    sha256: $TARBALL_SHA"
   echo "    size:   $TARBALL_SIZE bytes"
 
+  # --- Slice the v$VERSION section out of CHANGELOG.md ---
+  # Done here (before manifest build) so it feeds BOTH the manifest's `notes`
+  # field (signed, shown in-app) and the GitHub Release body below — identical
+  # by construction.
+  NOTES_FILE="$(mktemp -t boardripper-release-notes)"
+  awk -v v="$VERSION" '
+    BEGIN { in_section = 0 }
+    /^## v/ {
+      if (in_section) exit
+      if ($0 ~ "^## " v "( |$|—| —)") { in_section = 1; print; next }
+    }
+    in_section { print }
+  ' "$REPO_ROOT/CHANGELOG.md" > "$NOTES_FILE"
+  if [ ! -s "$NOTES_FILE" ]; then
+    echo "WARN: extracted CHANGELOG section is empty; using generic body" >&2
+    printf "Release %s\n\nSee https://www.ripperdoc.de/boardripper/changelog.html#%s\n" \
+      "$VERSION" "$VERSION" > "$NOTES_FILE"
+  fi
+
   # --- Generate manifest.json ---
   RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   NOT_AFTER="$(date -u -v+90d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+90 days' +%Y-%m-%dT%H:%M:%SZ)"
@@ -350,6 +369,7 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   "important": $IMPORTANT_FLAG,
   "important_reason": $(jq -Rn --arg s "$IMPORTANT_REASON" '$s'),
   "notes_url": "https://www.ripperdoc.de/boardripper/changelog.html#$VERSION",
+  "notes": $(jq -Rs . < "$NOTES_FILE"),
   "tarball": {
     "url_primary": "https://www.ripperdoc.de/boardripper/releases/boardripper-$VERSION.tar.gz",
     "url_mirrors": [],
@@ -613,23 +633,7 @@ elif [ "$NO_PUSH" = "true" ]; then
   echo ">>> Skipping GitHub Release (can't reference an unpushed tag)."
 else
   echo ">>> Creating GitHub Release $VERSION"
-  NOTES_FILE="$(mktemp -t boardripper-release-notes)"
-  # Slice the v$VERSION section out of CHANGELOG.md.
-  awk -v v="$VERSION" '
-    BEGIN { in_section = 0 }
-    /^## v/ {
-      if (in_section) exit
-      if ($0 ~ "^## " v "( |$|—| —)") { in_section = 1; print; next }
-    }
-    in_section { print }
-  ' "$REPO_ROOT/CHANGELOG.md" > "$NOTES_FILE"
-
-  if [ ! -s "$NOTES_FILE" ]; then
-    echo "WARN: extracted CHANGELOG section is empty; using generic body" >&2
-    printf "Release %s\n\nSee https://www.ripperdoc.de/boardripper/changelog.html#%s\n" \
-      "$VERSION" "$VERSION" > "$NOTES_FILE"
-  fi
-
+  # NOTES_FILE was already sliced earlier (before manifest build) — reuse it.
   GH_ARGS=(--title "BoardRipper $VERSION" --notes-file "$NOTES_FILE")
   if [ "$PRERELEASE" = "true" ]; then
     GH_ARGS+=(--prerelease)
@@ -642,7 +646,6 @@ else
   gh release create "$VERSION" "${GH_ARGS[@]}"
   GH_RELEASE_URL="https://github.com/AlexeyInwerp/BoardRipper/releases/tag/$VERSION"
   echo "    $GH_RELEASE_URL"
-  rm -f "$NOTES_FILE"
 fi
 
 # ════════════════════════════════════════════════════════════════════════
@@ -665,3 +668,5 @@ if [ ${#DESKTOP_ZIPS[@]} -gt 0 ]; then
   for z in "${DESKTOP_ZIPS[@]}"; do echo "    - $(basename "$z")"; done
 fi
 echo
+
+rm -f "${NOTES_FILE:-}"
