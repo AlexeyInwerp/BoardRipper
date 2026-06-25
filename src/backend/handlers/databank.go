@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -729,7 +730,9 @@ func (h *DatabankHandler) resolveDonorPath(e databank.DonorSnapshotEntry) (int64
 	if e.ContentHash != "" {
 		if hb, err := hex.DecodeString(e.ContentHash); err == nil {
 			if id, err := h.db.CanonicalForHash(hb); err == nil && id != 0 {
-				return id, true
+				if f, err := h.db.GetFileByID(context.Background(), id); err == nil && f != nil && f.FileType == "pdf" {
+					return id, true
+				}
 			}
 		}
 	}

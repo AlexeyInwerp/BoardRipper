@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
@@ -165,5 +166,80 @@ func TestImportSkipsMissingPath(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &res)
 	if res.Restored != 1 || len(res.Skipped) != 1 || res.Skipped[0] != "gone/missing.pdf" {
 		t.Fatalf("import result = %+v, want restored 1 / skipped [gone/missing.pdf]", res)
+	}
+}
+
+// TestImportContentHashNonPdfSkipped verifies that the content_hash fallback in
+// resolveDonorPath refuses to resolve when the canonical file for that hash is
+// not a PDF. We insert the non-PDF first so it gets the lower id (MIN) and
+// becomes the canonical; the PDF gets a higher id. The snapshot entry has a
+// missing path and a content_hash pointing at that shared hash. The import must
+// skip the entry (canonical is brd, not pdf). We also confirm the donor list
+// never contains the non-pdf file id.
+func TestImportContentHashNonPdfSkipped(t *testing.T) {
+	db, err := databank.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.MigratePdfIndexV1(); err != nil {
+		t.Fatalf("MigratePdfIndexV1: %v", err)
+	}
+
+	// Insert non-PDF first → lower id → becomes canonical (MIN id).
+	brdID, err := db.InsertFile(&databank.FileRecord{
+		Path: "boards/x.brd", Filename: "x.brd", Extension: ".brd", FileType: "brd",
+	})
+	if err != nil {
+		t.Fatalf("InsertFile brd: %v", err)
+	}
+	// Insert PDF second → higher id.
+	pdfID, err := db.InsertFile(&databank.FileRecord{
+		Path: "docs/x.pdf", Filename: "x.pdf", Extension: ".pdf", FileType: "pdf",
+	})
+	if err != nil {
+		t.Fatalf("InsertFile pdf: %v", err)
+	}
+	if brdID >= pdfID {
+		t.Fatalf("expected brdID(%d) < pdfID(%d) for canonical test", brdID, pdfID)
+	}
+
+	// Give both files the same content_hash.
+	sharedHash := []byte("deadbeefdeadbeefdeadbeef12345678") // 32-byte arbitrary
+	if err := db.SetContentHash(brdID, sharedHash); err != nil {
+		t.Fatalf("SetContentHash brd: %v", err)
+	}
+	if err := db.SetContentHash(pdfID, sharedHash); err != nil {
+		t.Fatalf("SetContentHash pdf: %v", err)
+	}
+
+	h := NewDatabankHandler(db, nil, t.TempDir())
+	h.SetDonorIndexer(&fakeDonorIndexer{})
+
+	// Snapshot entry: missing path (forces hash fallback), hash points to shared hash.
+	hashHex := fmt.Sprintf("%x", sharedHash)
+	body := `{"version":1,"created_at":1,"donors":[{"path":"gone/missing.pdf","content_hash":"` + hashHex + `","added_at":1}]}`
+	rec := httptest.NewRecorder()
+	h.ImportDonors(rec, httptest.NewRequest("POST", "/api/databank/donors/import", strings.NewReader(body)))
+
+	var res struct {
+		Restored int      `json:"restored"`
+		Skipped  []string `json:"skipped"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if res.Restored != 0 {
+		t.Fatalf("restored = %d, want 0 (canonical is non-pdf, must skip)", res.Restored)
+	}
+
+	// Confirm the non-pdf file id was never added as a donor.
+	donors, err := db.ListDonors()
+	if err != nil {
+		t.Fatalf("ListDonors: %v", err)
+	}
+	for _, d := range donors {
+		if d.FileID == brdID {
+			t.Fatalf("donor list contains brd file id %d — non-pdf must never be a donor", brdID)
+		}
 	}
 }
