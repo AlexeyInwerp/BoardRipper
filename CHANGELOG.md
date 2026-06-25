@@ -1,5 +1,30 @@
 # BoardRipper changelog
 
+## v0.31.27 — 2026-06-25
+
+Reload no longer loses your work, and the update dropdown now shows what's new
+before you update.
+
+### Features
+
+- **Session restore — reopen your boards + PDFs after a reload or update.** When
+  boards/PDFs were open and the page reloads (manually or after a self-update),
+  BoardRipper now asks whether to **Reopen** or **Discard** the previous session.
+  It never auto-restores — so if you reloaded *because* something hung, you just
+  discard and nothing reloads. The open set is persisted continuously (so even a
+  hard hang/crash leaves a record). On Reopen, library files re-fetch from the
+  server, dropped files come back via the library's `incoming/` folder, and a
+  dropped board that isn't on the server falls back to the local parsed-board
+  cache; anything genuinely unavailable is reported. (`188e3c6`, `28d9b13`,
+  `c7d7802`, `b2fbb48`)
+- **"What's new" in the update dropdown.** The update badge now shows the new
+  release's notes inline, under a collapsible **What's new** spoiler, instead of
+  only linking out. The notes are embedded in the **signed** update manifest
+  (sliced from this changelog at release time), so they're trustworthy and work
+  offline; releases without embedded notes fall back to the "Release notes ↗"
+  link. (Appears for updates *to* releases cut from here on.) (`94108dc`,
+  `e7d88c0`, `65fb86d`, `5afddcc`)
+
 ## v0.31.26 — 2026-06-25
 
 Two new features — a **Donor boards** library tab that turns marked PDFs into a
