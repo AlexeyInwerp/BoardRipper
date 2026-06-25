@@ -165,17 +165,10 @@ body {
   justify-content: center;
 }
 
-/* Instant custom tooltips via data-tooltip attribute */
-.toolbar [data-tooltip] {
-  position: relative;
-}
-.toolbar [data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-top: 8px;
+/* Custom tooltips via data-tooltip — positioned + viewport-clamped in JS
+   (Toolbar.tsx showTip/hideTip). The old pure-CSS ::after couldn't clamp, so
+   buttons near the right/left edge spilled off-screen. */
+.toolbar-tooltip {
   padding: 10px 18px;
   background: var(--tooltip-bg);
   color: var(--tooltip-fg);
@@ -184,12 +177,7 @@ body {
   border-radius: 6px;
   white-space: nowrap;
   pointer-events: none;
-  opacity: 0;
   z-index: 9999;
-  transition: opacity 0.08s;
-}
-.toolbar [data-tooltip]:hover::after {
-  opacity: 1;
 }
 
 .toolbar-btn:hover:not(:disabled) {

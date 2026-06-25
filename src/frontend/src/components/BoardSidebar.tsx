@@ -29,7 +29,6 @@ const EMPTY_SELECTION: SelectionState = {
 
 interface BoardSidebarProps {
   visible: boolean;
-  onClose: () => void;
   /** The board tab this sidebar belongs to */
   tabId: number;
   /** One-shot tab switch request (cleared after applying) */
@@ -47,7 +46,7 @@ function loadBoardSidebarWidth(): number {
   return Number.isFinite(v) && v >= BOARD_SIDEBAR_MIN ? v : BOARD_SIDEBAR_DEFAULT;
 }
 
-export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
+export function BoardSidebar({ visible, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
   const board = tab?.board ?? null;
@@ -193,9 +192,6 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
             Worklist
           </button>
         </div>
-        <button className="board-sidebar-close" onClick={onClose} title="Close sidebar">
-          ×
-        </button>
       </div>
       <div className="board-sidebar-content">
         {activeTab === 'layers' && <LayersTab tabId={tabId} />}

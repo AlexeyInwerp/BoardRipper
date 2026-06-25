@@ -1,4 +1,5 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -345,8 +346,54 @@ export function Toolbar() {
     e.target.value = '';
   };
 
+  // Delegated, viewport-clamped tooltip for [data-tooltip] buttons. Replaces a
+  // pure-CSS ::after, which couldn't clamp and spilled off-screen for buttons
+  // near the toolbar's right/left edge.
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+
+  const showTip = useCallback((e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest('[data-tooltip]') as HTMLElement | null;
+    const text = el?.getAttribute('data-tooltip');
+    if (!el || !text) return;
+    const r = el.getBoundingClientRect();
+    setTip({ text, x: r.left + r.width / 2, y: r.bottom + 8 });
+  }, []);
+  const hideTip = useCallback((e: React.MouseEvent) => {
+    const from = (e.target as HTMLElement).closest('[data-tooltip]');
+    const to = e.relatedTarget instanceof HTMLElement ? e.relatedTarget.closest('[data-tooltip]') : null;
+    if (from && from !== to) setTip(null);
+  }, []);
+
+  // After render, nudge the tooltip back inside the viewport (horizontal clamp;
+  // flip above the button if it would overflow the bottom).
+  useLayoutEffect(() => {
+    const el = tipRef.current;
+    if (!el || !tip) return;
+    const pad = 8;
+    el.style.left = `${tip.x}px`;
+    el.style.top = `${tip.y}px`;
+    el.style.transform = 'translateX(-50%)';
+    const r = el.getBoundingClientRect();
+    let dx = 0;
+    if (r.right > window.innerWidth - pad) dx = (window.innerWidth - pad) - r.right;
+    else if (r.left < pad) dx = pad - r.left;
+    if (dx) el.style.transform = `translateX(calc(-50% + ${Math.round(dx)}px))`;
+    if (r.bottom > window.innerHeight - pad) el.style.top = `${tip.y - r.height - 16}px`;
+  }, [tip]);
+
   return (
-    <div className="toolbar" data-testid="toolbar">
+    <div className="toolbar" data-testid="toolbar" onMouseOver={showTip} onMouseOut={hideTip}>
+      {tip && createPortal(
+        <div
+          ref={tipRef}
+          className="toolbar-tooltip"
+          style={{ position: 'fixed', left: tip.x, top: tip.y, transform: 'translateX(-50%)' }}
+        >
+          {tip.text}
+        </div>,
+        document.body,
+      )}
       <input
         ref={fileInputRef}
         type="file"
