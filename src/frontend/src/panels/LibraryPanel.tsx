@@ -533,6 +533,15 @@ export function LibraryPanel() {
     databankStore.fetchFileDetail(file.id);
   }, []);
 
+  /** Open a donor PDF (double-click / Enter). Synthesizes a DatabankFile when
+   *  the donor isn't in the loaded file list, mirroring handleOpenSearchHit. */
+  const handleOpenDonor = useCallback(async (d: DonorEntry) => {
+    const file: DatabankFile = databankStore.fileById(d.file_id) ?? ({
+      id: d.file_id, path: d.path, filename: d.filename, file_type: 'pdf', mod_time: 0,
+    } as DatabankFile);
+    await handleOpenFile(file);
+  }, [handleOpenFile]);
+
   const handleCreateBinding = useCallback(async (
     boardFileId: number,
     pdfFileId: number,
@@ -835,9 +844,9 @@ export function LibraryPanel() {
             className={`library-tab ${viewMode === 'bench' ? 'active' : ''}`}
             data-testid="bench-tab"
             onClick={() => handleSetViewMode('bench')}
-            title="Bench — manage donor PDFs"
+            title="Donor boards — donor PDFs and their linked boards"
           >
-            Bench
+            Donor boards
           </button>
           <button
             className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
@@ -932,12 +941,22 @@ export function LibraryPanel() {
       <div className="library-content">
         {viewMode === 'bench' ? (
           <div className="library-bench">
-            <div className="library-bench-header">Donors ({donorList.length})</div>
+            <div className="library-bench-header">Donor boards ({donorList.length})</div>
             <div className="library-donor-list">
               {donorList.length === 0
-                ? <div className="library-empty">No donor PDFs yet. Mark a PDF as a donor from its details to add it here.</div>
+                ? <div className="library-empty">No donor boards yet. Mark a PDF as a donor from its details to add it here.</div>
                 : donorList.map(d => (
-                    <div key={d.file_id} className="library-donor-row" data-testid="donor-row">
+                    <div
+                      key={d.file_id}
+                      className={`library-donor-row${selectedFileId === d.file_id ? ' selected' : ''}`}
+                      data-testid="donor-row"
+                      role="button"
+                      tabIndex={0}
+                      title="Click to show its linked board · double-click to open the PDF"
+                      onClick={() => handleSelectResult(d.file_id)}
+                      onDoubleClick={() => handleOpenDonor(d)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleOpenDonor(d); } }}
+                    >
                       <span className="library-donor-name" title={d.path || d.filename}>{d.filename}</span>
                       <span
                         className={`library-donor-status status-${d.index_status ?? 'unknown'}`}
@@ -948,7 +967,7 @@ export function LibraryPanel() {
                       <button
                         className="library-donor-remove"
                         title="Remove from donor list"
-                        onClick={async () => { await databankStore.removeDonor(d.file_id); refreshDonorList(); }}
+                        onClick={async (e) => { e.stopPropagation(); await databankStore.removeDonor(d.file_id); refreshDonorList(); }}
                       >×</button>
                     </div>
                   ))}

@@ -5453,7 +5453,9 @@ body {
 
 /* Donor list manage mode */
 .library-donor-list { padding: 4px 0; }
-.library-donor-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border); gap: 6px; }
+.library-donor-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border); gap: 6px; cursor: pointer; }
+.library-donor-row:hover { background: var(--bg-hover); }
+.library-donor-row.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .library-donor-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-primary); }
 .library-donor-remove { flex-shrink: 0; background: none; border: 1px solid transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px; border-radius: 3px; }
 .library-donor-remove:hover { border-color: var(--border); color: var(--accent); background: var(--bg-hover); }

@@ -77,10 +77,10 @@ test('Bench tab renders the donor manager structure', async ({ page }) => {
   await openLibrary(page);
   await openBenchTab(page);
 
-  // Header must mention "Donors"
+  // Header must mention the donor list
   const header = page.locator('.library-bench-header');
   await expect(header).toBeVisible();
-  await expect(header).toContainText('Donors');
+  await expect(header).toContainText('Donor boards');
 
   // With no backend / no donors: empty-state copy
   const emptyMsg = page.locator('.library-empty');
