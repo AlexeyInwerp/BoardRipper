@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -88,16 +90,6 @@ func (h *DatabankHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
-}
-
-// Reset wipes all scan data.
-func (h *DatabankHandler) Reset(w http.ResponseWriter, r *http.Request) {
-	if err := h.scanner.ResetAll(); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 }
 
 // Browse returns a live filesystem directory listing.
@@ -703,5 +695,139 @@ func (h *DatabankHandler) RemoveDonor(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+// Reset wipes all scan data, snapshotting donors first (best-effort).
+func (h *DatabankHandler) Reset(w http.ResponseWriter, r *http.Request) {
+	// Best-effort donor snapshot BEFORE the wipe (read happens before delete).
+	// Never blocks the reset: failures are logged, not fatal.
+	if snap, err := h.db.DonorSnapshot(); err == nil && len(snap.Donors) > 0 {
+		dir := filepath.Join(h.dataDir, "backups")
+		if _, werr := databank.WriteDonorSnapshot(dir, snap); werr == nil {
+			_ = databank.PruneDonorSnapshots(dir, 5)
+			log.Printf("donor snapshot written before reset: %d donor(s)", len(snap.Donors))
+		} else {
+			log.Printf("donor snapshot before reset failed: %v", werr)
+		}
+	}
+
+	if err := h.scanner.ResetAll(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
+}
+
+// resolveDonorPath maps a snapshot entry to a current PDF file id: first by
+// relative path, then by content_hash (survives moves). Returns (0,false) if
+// no current PDF row matches.
+func (h *DatabankHandler) resolveDonorPath(e databank.DonorSnapshotEntry) (int64, bool) {
+	if f, err := h.db.GetFileByPath(e.Path); err == nil && f != nil && f.FileType == "pdf" {
+		return f.ID, true
+	}
+	if e.ContentHash != "" {
+		if hb, err := hex.DecodeString(e.ContentHash); err == nil {
+			if id, err := h.db.CanonicalForHash(hb); err == nil && id != 0 {
+				return id, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// restoreSnapshot re-adds each resolvable donor (triggering auto-index) and
+// returns counts. Idempotent — AddDonor is ON CONFLICT DO NOTHING.
+func (h *DatabankHandler) restoreSnapshot(snap *databank.DonorSnapshot) (int, []string) {
+	restored := 0
+	skipped := []string{}
+	for _, e := range snap.Donors {
+		id, ok := h.resolveDonorPath(e)
+		if !ok {
+			skipped = append(skipped, e.Path)
+			continue
+		}
+		if err := h.db.AddDonor(id); err != nil {
+			skipped = append(skipped, e.Path)
+			continue
+		}
+		if h.donorIndexer != nil {
+			h.donorIndexer.EnsureIndexed([]int64{id})
+		}
+		restored++
+	}
+	return restored, skipped
+}
+
+// ExportDonors returns the current donor list as a downloadable snapshot.
+// GET /api/databank/donors/export
+func (h *DatabankHandler) ExportDonors(w http.ResponseWriter, r *http.Request) {
+	snap, err := h.db.DonorSnapshot()
+	if err != nil {
+		http.Error(w, "snapshot: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="boardripper-donors.json"`)
+	json.NewEncoder(w).Encode(snap)
+}
+
+// ImportDonors applies an uploaded snapshot.
+// POST /api/databank/donors/import
+func (h *DatabankHandler) ImportDonors(w http.ResponseWriter, r *http.Request) {
+	var snap databank.DonorSnapshot
+	if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
+		http.Error(w, "bad snapshot: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	restored, skipped := h.restoreSnapshot(&snap)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"restored": restored, "skipped": skipped})
+}
+
+// ListDonorBackups returns server-side snapshot metadata, newest first.
+// GET /api/databank/donors/backups
+func (h *DatabankHandler) ListDonorBackups(w http.ResponseWriter, r *http.Request) {
+	infos, err := databank.ListDonorSnapshots(filepath.Join(h.dataDir, "backups"))
+	if err != nil {
+		http.Error(w, "list backups: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if infos == nil {
+		infos = []databank.DonorBackupInfo{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(infos)
+}
+
+// RestoreDonors applies a server-side snapshot by name (empty name → newest).
+// POST /api/databank/donors/restore
+func (h *DatabankHandler) RestoreDonors(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&req) // empty body OK → latest
+	dir := filepath.Join(h.dataDir, "backups")
+	name := req.Name
+	if name == "" {
+		infos, err := databank.ListDonorSnapshots(dir)
+		if err != nil || len(infos) == 0 {
+			http.Error(w, "no donor backup available", http.StatusNotFound)
+			return
+		}
+		name = infos[0].Name
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.Error(w, "bad name", http.StatusBadRequest)
+		return
+	}
+	snap, err := databank.ReadDonorSnapshot(filepath.Join(dir, name))
+	if err != nil {
+		http.Error(w, "read backup: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	restored, skipped := h.restoreSnapshot(snap)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"restored": restored, "skipped": skipped})
 }
 

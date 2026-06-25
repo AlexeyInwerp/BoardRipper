@@ -170,6 +170,10 @@ func main() {
 	mux.HandleFunc("GET /api/databank/donors", read(dbHandler.ListDonors))
 	mux.HandleFunc("PUT /api/databank/donors/{id}", write(dbHandler.AddDonor))
 	mux.HandleFunc("DELETE /api/databank/donors/{id}", write(dbHandler.RemoveDonor))
+	mux.HandleFunc("GET /api/databank/donors/export", read(dbHandler.ExportDonors))
+	mux.HandleFunc("POST /api/databank/donors/import", write(dbHandler.ImportDonors))
+	mux.HandleFunc("GET /api/databank/donors/backups", read(dbHandler.ListDonorBackups))
+	mux.HandleFunc("POST /api/databank/donors/restore", write(dbHandler.RestoreDonors))
 
 	// Content dedup ("Find duplicates") API routes
 	dedupRunner := databank.NewDedupRunner(db, scanner.ScanRoot)
