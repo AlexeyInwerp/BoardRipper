@@ -13,6 +13,17 @@ import (
 	"boardripper/databank"
 )
 
+// DonorIndexer lets the databank handler drive PDF indexing without importing
+// the pdfindex package (wired from main.go after the indexer exists). All
+// methods are safe to call when the implementation is present; the handler
+// guards on a nil interface for degraded boots where pdfindex is unavailable.
+type DonorIndexer interface {
+	// EnsureIndexed kicks a scoped index of exactly these file IDs (fire-and-forget).
+	EnsureIndexed(ids []int64)
+	// StatusFor returns file_id → pdf index status ("indexed"/"pending"/…).
+	StatusFor(ids []int64) map[int64]string
+}
+
 // allowedConfigKeys is the set of config keys that can be set via the API.
 //
 // Library Sync owns the `sync_*` namespace. The secret password key
@@ -42,15 +53,20 @@ var allowedConfigKeys = map[string]bool{
 
 // DatabankHandler serves all /api/databank/* endpoints.
 type DatabankHandler struct {
-	db      *databank.DB
-	scanner *databank.Scanner
-	dataDir string
+	db           *databank.DB
+	scanner      *databank.Scanner
+	dataDir      string
+	donorIndexer DonorIndexer // nil when pdfindex is unavailable
 }
 
 // NewDatabankHandler creates a new handler with the given database, scanner, and data directory.
 func NewDatabankHandler(db *databank.DB, scanner *databank.Scanner, dataDir string) *DatabankHandler {
 	return &DatabankHandler{db: db, scanner: scanner, dataDir: dataDir}
 }
+
+// SetDonorIndexer wires the PDF indexer used to auto-index donors and to
+// enrich the donor list with index status. Optional — nil disables both.
+func (h *DatabankHandler) SetDonorIndexer(di DonorIndexer) { h.donorIndexer = di }
 
 // Scan triggers a background file scan and returns immediately.
 func (h *DatabankHandler) Scan(w http.ResponseWriter, r *http.Request) {
@@ -623,6 +639,18 @@ func (h *DatabankHandler) ListDonors(w http.ResponseWriter, r *http.Request) {
 	if donors == nil {
 		donors = []databank.DonorEntry{}
 	}
+	if h.donorIndexer != nil && len(donors) > 0 {
+		ids := make([]int64, len(donors))
+		for i := range donors {
+			ids[i] = donors[i].FileID
+		}
+		statuses := h.donorIndexer.StatusFor(ids)
+		for i := range donors {
+			if s, ok := statuses[donors[i].FileID]; ok {
+				donors[i].IndexStatus = s
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(donors)
 }
@@ -649,6 +677,10 @@ func (h *DatabankHandler) AddDonor(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.AddDonor(id); err != nil {
 		http.Error(w, "Failed to add donor: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if h.donorIndexer != nil {
+		h.donorIndexer.EnsureIndexed([]int64{id})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

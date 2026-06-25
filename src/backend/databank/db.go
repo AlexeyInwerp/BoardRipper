@@ -1479,10 +1479,11 @@ func (db *DB) SearchMeta(fileIDs []int64) (map[int64]SearchMetaRow, error) {
 
 // DonorEntry is a donor-list row joined to its file.
 type DonorEntry struct {
-	FileID   int64  `json:"file_id"`
-	Filename string `json:"filename"`
-	Path     string `json:"path"`
-	AddedAt  int64  `json:"added_at"`
+	FileID      int64  `json:"file_id"`
+	Filename    string `json:"filename"`
+	Path        string `json:"path"`
+	AddedAt     int64  `json:"added_at"`
+	IndexStatus string `json:"index_status,omitempty"` // enriched by the handler from pdfindex
 }
 
 // AddDonor adds a file to the donor list. Idempotent: re-adding the same
