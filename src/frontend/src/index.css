@@ -2609,8 +2609,8 @@ body {
   position: absolute;
   top: 0;
   right: 0;
-  width: 300px;
-  max-width: 50%;
+  width: 300px; /* fallback; the component sets an explicit resizable width inline */
+  max-width: 60%;
   height: 100%;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
@@ -2620,11 +2620,30 @@ body {
   box-shadow: -4px 0 12px rgba(0, 0, 0, 0.3);
 }
 
+/* Drag handle pinned to the sidebar's left edge (the side facing the board). */
+.board-sidebar-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 16;
+  touch-action: none;
+}
+.board-sidebar-resize-handle:hover {
+  background: var(--accent);
+  opacity: 0.35;
+}
+
 .board-sidebar-header {
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  /* Reserve room on the right so tab labels never slide under the floating
+   * board-sidebar-toggle (☰) that sits at the panel's top-right corner. */
+  padding-right: 38px;
 }
 
 .board-sidebar-tabs {
@@ -5445,7 +5464,7 @@ body {
 .library-variants-spoiler[open] > summary::before { content: '▼ '; }
 
 /* Donor list manage mode */
-.library-donor-list { overflow-y: auto; flex: 1 1 0; min-height: 0; padding: 4px 0; }
+.library-donor-list { padding: 4px 0; }
 .library-donor-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border); gap: 6px; }
 .library-donor-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-primary); }
 .library-donor-remove { flex-shrink: 0; background: none; border: 1px solid transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; line-height: 1; padding: 1px 5px; border-radius: 3px; }
@@ -5457,7 +5476,7 @@ body {
 .library-donor-status.status-indexing { color: #dda000; }
 
 /* Bench tab */
-.library-bench { padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.library-bench { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .library-bench-header { font-weight: 600; opacity: 0.85; padding: 2px 4px; }
 .library-bench-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px; border-top: 1px solid var(--border); }
 .library-bench-btn { cursor: pointer; padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary); color: inherit; font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; }

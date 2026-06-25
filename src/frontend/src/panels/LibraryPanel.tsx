@@ -832,19 +832,19 @@ export function LibraryPanel() {
             PDF
           </button>
           <button
-            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => handleSetViewMode('folders')}
-            title="Browse folders"
-          >
-            <IconFolder size={14} />
-          </button>
-          <button
             className={`library-tab ${viewMode === 'bench' ? 'active' : ''}`}
             data-testid="bench-tab"
             onClick={() => handleSetViewMode('bench')}
             title="Bench — manage donor PDFs"
           >
             Bench
+          </button>
+          <button
+            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
+            onClick={() => handleSetViewMode('folders')}
+            title="Browse folders"
+          >
+            <IconFolder size={14} />
           </button>
         </div>
         {viewMode === 'folders' && (
@@ -1371,6 +1371,32 @@ function DonorToggle({ fileId }: { fileId: number }) {
   const { donorIds } = useDatabank();
   const isDonor = donorIds.has(fileId);
   const [busy, setBusy] = useState(false);
+  const [indexing, setIndexing] = useState(false);
+
+  // While this PDF is a donor but not yet terminally indexed, poll its index
+  // status so the button reads "Indexing…" until extraction finishes, then
+  // settles to "Remove donor". Bounded so a stuck/disabled indexer can't spin
+  // forever.
+  useEffect(() => {
+    if (!isDonor) { setIndexing(false); return; }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const terminal = new Set(['indexed', 'empty', 'failed', 'duplicate']);
+    const poll = async () => {
+      const st = await pdfIndexClient.status(fileId);
+      if (cancelled) return;
+      if (!st || terminal.has(st.status) || tries >= 40) {
+        setIndexing(false);
+      } else {
+        setIndexing(true);
+        tries++;
+        timer = setTimeout(poll, 1500);
+      }
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [isDonor, fileId]);
 
   const handleToggle = async () => {
     setBusy(true);
@@ -1379,22 +1405,31 @@ function DonorToggle({ fileId }: { fileId: number }) {
         await databankStore.removeDonor(fileId);
       } else {
         await databankStore.addDonor(fileId);
+        setIndexing(true); // optimistic — the poll effect confirms/clears it
       }
     } finally {
       setBusy(false);
     }
   };
 
+  const label = busy
+    ? (isDonor ? 'Removing…' : 'Marking…')
+    : indexing
+      ? 'Indexing…'
+      : isDonor ? 'Remove donor' : 'Mark as donor';
+
   return (
     <button
-      className={`library-donor-toggle-btn${isDonor ? ' is-donor' : ''}`}
+      className={`library-donor-toggle-btn${isDonor ? ' is-donor' : ''}${indexing ? ' is-indexing' : ''}`}
       onClick={handleToggle}
       disabled={busy}
       title={isDonor
-        ? 'Remove this PDF from the donor pool (will no longer appear in donor searches)'
+        ? (indexing
+            ? 'Indexing this donor PDF… (click to remove it from the donor pool)'
+            : 'Remove this PDF from the donor pool (will no longer appear in donor searches)')
         : 'Mark this PDF as a donor (makes it appear in donor-scoped searches)'}
     >
-      {busy ? '…' : isDonor ? 'Remove donor' : 'Mark as donor'}
+      {label}
     </button>
   );
 }

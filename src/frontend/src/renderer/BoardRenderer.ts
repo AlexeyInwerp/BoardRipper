@@ -4773,8 +4773,14 @@ export class BoardRenderer {
     const tw = el.offsetWidth;
     const th = el.offsetHeight;
     const offset = 14;
-    const left = Math.max(2, Math.min(x - tw / 2, this.containerEl.clientWidth - tw - 2));
-    const top = y - th - offset < 2 ? y + offset : y - th - offset;
+    const cw = this.containerEl.clientWidth;
+    const ch = this.containerEl.clientHeight;
+    const left = Math.max(2, Math.min(x - tw / 2, cw - tw - 2));
+    // Prefer above the cursor; drop below if there's no room; then clamp inside
+    // the container so the tooltip never spills off the top or bottom edge.
+    let top = y - th - offset;
+    if (top < 2) top = y + offset;
+    top = Math.max(2, Math.min(top, ch - th - 2));
     el.style.left = left + 'px';
     el.style.top = top + 'px';
   }

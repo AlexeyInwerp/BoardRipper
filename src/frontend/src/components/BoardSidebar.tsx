@@ -38,6 +38,15 @@ interface BoardSidebarProps {
   opacity?: number;
 }
 
+const BOARD_SIDEBAR_W_KEY = 'boardripper.boardSidebar.width';
+const BOARD_SIDEBAR_MIN = 240;
+const BOARD_SIDEBAR_MAX_RATIO = 0.6;
+const BOARD_SIDEBAR_DEFAULT = 300;
+function loadBoardSidebarWidth(): number {
+  const v = parseInt(localStorage.getItem(BOARD_SIDEBAR_W_KEY) || '', 10);
+  return Number.isFinite(v) && v >= BOARD_SIDEBAR_MIN ? v : BOARD_SIDEBAR_DEFAULT;
+}
+
 export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabApplied, opacity = 1 }: BoardSidebarProps) {
   const { tabs } = useBoardStore();
   const tab = tabs.find(t => t.id === tabId);
@@ -99,10 +108,48 @@ export function BoardSidebar({ visible, onClose, tabId, requestedTab, onTabAppli
     }
   }, [activeTab, showRevisionsTab, hasLayers]);
 
+  // Drag-to-resize for the right-anchored overlay sidebar: dragging the left
+  // handle leftward widens it. Width persists to localStorage. Mirrors the
+  // main Sidebar's resize pattern.
+  const [sbWidth, setSbWidth] = useState(loadBoardSidebarWidth);
+  const sbDragging = useRef(false);
+  const sbStartX = useRef(0);
+  const sbStartW = useRef(0);
+  const clampSbWidth = useCallback((raw: number) => {
+    const maxPx = Math.round(window.innerWidth * BOARD_SIDEBAR_MAX_RATIO);
+    return Math.min(maxPx, Math.max(BOARD_SIDEBAR_MIN, raw));
+  }, []);
+  const onSbResizeDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    sbDragging.current = true;
+    sbStartX.current = e.clientX;
+    sbStartW.current = sbWidth;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [sbWidth]);
+  const onSbResizeMove = useCallback((e: React.PointerEvent) => {
+    if (!sbDragging.current) return;
+    setSbWidth(clampSbWidth(sbStartW.current + (sbStartX.current - e.clientX)));
+  }, [clampSbWidth]);
+  const onSbResizeUp = useCallback((e: React.PointerEvent) => {
+    if (!sbDragging.current) return;
+    sbDragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    const w = clampSbWidth(sbStartW.current + (sbStartX.current - e.clientX));
+    setSbWidth(w);
+    localStorage.setItem(BOARD_SIDEBAR_W_KEY, String(w));
+  }, [clampSbWidth]);
+
   if (!visible) return null;
 
   return (
-    <div className="board-sidebar" style={{ opacity }}>
+    <div className="board-sidebar" style={{ opacity, width: sbWidth }}>
+      <div
+        className="board-sidebar-resize-handle"
+        onPointerDown={onSbResizeDown}
+        onPointerMove={onSbResizeMove}
+        onPointerUp={onSbResizeUp}
+        title="Drag to resize"
+      />
       <div className="board-sidebar-header">
         <div className="board-sidebar-tabs">
           <button
