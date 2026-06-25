@@ -131,6 +131,38 @@ func (ix *Indexer) RunFolder(prefix string) error {
 	})
 }
 
+// RunFiles starts a sweep limited to the given file IDs (resolved against
+// Source.ListPDFs). Like Run/RunFolder it runs one background sweep and
+// filters out already done/active files; it is a no-op returning nil if a
+// sweep is already in progress or ids is empty. Used for on-demand indexing
+// of a known set (e.g. donor membership) without sweeping the whole library.
+func (ix *Indexer) RunFiles(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	want := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	err := ix.startScoped(func() ([]PdfFile, error) {
+		all, err := ix.src.ListPDFs()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]PdfFile, 0, len(want))
+		for _, f := range all {
+			if want[f.ID] {
+				out = append(out, f)
+			}
+		}
+		return out, nil
+	})
+	if errors.Is(err, ErrAlreadyRunning) {
+		return nil // stay idempotent like Run()
+	}
+	return err
+}
+
 // startScoped is the shared sweep-start helper. It:
 //  1. Does a speculative (pre-IO) running check.
 //  2. Calls list() to enumerate candidates.

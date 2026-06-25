@@ -202,6 +202,42 @@ func (f *fakeSourceDedup) CanonicalFor(fileID int64) (int64, bool, error) {
 	return c, ok, nil
 }
 
+func TestRunFilesIndexesOnlyListed(t *testing.T) {
+	db := openTestDB(t)
+	src := &fakeSource{
+		files: []PdfFile{{ID: 1, Path: "a.pdf"}, {ID: 2, Path: "b.pdf"}, {ID: 3, Path: "c.pdf"}},
+		data:  map[string][]byte{"a.pdf": []byte("alpha"), "b.pdf": []byte("beta"), "c.pdf": []byte("gamma")},
+	}
+	ix := NewIndexer(db, fakeExtractor{}, src, func() []string { return nil }, 2)
+
+	if err := ix.RunFiles([]int64{1, 3}); err != nil {
+		t.Fatalf("RunFiles: %v", err)
+	}
+	waitFor(t, func() bool { return !ix.Progress().Running })
+
+	if s, _ := db.Status(1); s.Status != "indexed" {
+		t.Errorf("file 1 status = %q, want indexed", s.Status)
+	}
+	if s, _ := db.Status(3); s.Status != "indexed" {
+		t.Errorf("file 3 status = %q, want indexed", s.Status)
+	}
+	// File 2 was never listed → no status row → empty status string.
+	if s, _ := db.Status(2); s.Status != "" {
+		t.Errorf("file 2 status = %q, want \"\" (untouched)", s.Status)
+	}
+}
+
+func TestRunFilesEmptyIsNoop(t *testing.T) {
+	db := openTestDB(t)
+	ix := NewIndexer(db, fakeExtractor{}, &fakeSource{}, func() []string { return nil }, 1)
+	if err := ix.RunFiles(nil); err != nil {
+		t.Fatalf("RunFiles(nil): %v", err)
+	}
+	if ix.Progress().Running {
+		t.Error("RunFiles(nil) should not start a sweep")
+	}
+}
+
 func TestIndexerSkipsDuplicate(t *testing.T) {
 	db := openTestDB(t)
 	src := &fakeSourceDedup{
