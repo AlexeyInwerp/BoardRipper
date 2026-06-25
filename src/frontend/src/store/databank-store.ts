@@ -245,6 +245,13 @@ export interface DonorEntry {
   filename: string;
   path: string;
   added_at: string;
+  index_status?: string;
+}
+
+export interface DonorBackupInfo {
+  name: string;
+  created_at: number;
+  count: number;
 }
 
 /**
@@ -476,6 +483,28 @@ class DatabankStore extends Emitter {
   async listDonors(): Promise<DonorEntry[]> {
     const list = await this.apiFetch<DonorEntry[]>('/api/databank/donors');
     return list ?? [];
+  }
+
+  async importDonors(snapshot: unknown): Promise<{ restored: number; skipped: string[] }> {
+    const r = await this.apiFetch<{ restored: number; skipped: string[] }>(
+      '/api/databank/donors/import',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) },
+    );
+    await this.refreshDonors();
+    return r ?? { restored: 0, skipped: [] };
+  }
+
+  async listDonorBackups(): Promise<DonorBackupInfo[]> {
+    return (await this.apiFetch<DonorBackupInfo[]>('/api/databank/donors/backups')) ?? [];
+  }
+
+  async restoreDonors(name?: string): Promise<{ restored: number; skipped: string[] }> {
+    const r = await this.apiFetch<{ restored: number; skipped: string[] }>(
+      '/api/databank/donors/restore',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name ?? '' }) },
+    );
+    await this.refreshDonors();
+    return r ?? { restored: 0, skipped: [] };
   }
 
   get metadataTree(): MetadataGroup[] {
