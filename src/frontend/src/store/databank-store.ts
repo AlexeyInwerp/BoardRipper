@@ -344,6 +344,20 @@ class DatabankStore extends Emitter {
     for (const f of this._files) if (f.filename === name) return f;
     return undefined;
   }
+
+  /** Find a loaded databank file by exact filename, disambiguating same-name
+   *  files by size when provided. Used by session restore to resolve a file
+   *  (incl. a dropped one now living under incoming/) back to a fetchable entry. */
+  findFileByName(fileName: string, fileSize?: number): DatabankFile | null {
+    const matches = this._files.filter(f => f.filename === fileName);
+    if (matches.length === 0) return null;
+    if (fileSize != null) {
+      const exact = matches.find(f => f.size === fileSize);
+      if (exact) return exact;
+    }
+    return matches[0];
+  }
+
   private _folderTree: FolderNode | null = null;
   private _scanStatus: ScanStatus | null = (() => {
     try {
