@@ -19,7 +19,7 @@ import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut } from '../store/keyboard-shortcuts';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
-import { startMcpBridge } from '../store/mcp-bridge';
+import { startMcpBridge, stopMcpBridge } from '../store/mcp-bridge';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
@@ -552,7 +552,10 @@ function IntegrationsSection() {
         body: JSON.stringify({ key, value: on ? 'true' : '' }),
       });
     } catch { /* ignore */ }
-    if (key === 'mcp_enabled' && on) startMcpBridge();
+    if (key === 'mcp_enabled') {
+      if (on) startMcpBridge();
+      else stopMcpBridge(); // tear the bridge down immediately; don't reconnect
+    }
     refresh();
   };
 

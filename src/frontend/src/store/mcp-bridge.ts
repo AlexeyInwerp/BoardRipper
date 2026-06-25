@@ -16,6 +16,9 @@ type Frame = { id: number; op: string; params: any };
 let socket: WebSocket | null = null;
 let sessionId = '';
 let started = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let focusHandler: (() => void) | null = null;
+let visHandler: (() => void) | null = null;
 
 function boardDescriptor() {
   const b = boardStore.board;
@@ -48,11 +51,31 @@ export function startMcpBridge() {
   if (started) return;
   started = true;
   sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  focusHandler = () => send({ type: 'focus', session: sessionId });
+  visHandler = () => { if (!document.hidden) send({ type: 'focus', session: sessionId }); };
+  window.addEventListener('focus', focusHandler);
+  document.addEventListener('visibilitychange', visHandler);
   connect();
-  window.addEventListener('focus', () => send({ type: 'focus', session: sessionId }));
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) send({ type: 'focus', session: sessionId });
-  });
+}
+
+/** Stop the bridge for good: cancel any pending reconnect, close the socket
+ *  without re-opening, and drop listeners. Idempotent. Call when MCP is
+ *  disabled so a disconnected bridge stays gone instead of retrying forever. */
+export function stopMcpBridge() {
+  if (!started && socket === null && reconnectTimer === null) return;
+  started = false;
+  if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (focusHandler) { window.removeEventListener('focus', focusHandler); focusHandler = null; }
+  if (visHandler) { document.removeEventListener('visibilitychange', visHandler); visHandler = null; }
+  if (socket) {
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;  // critical: stop onclose from scheduling a reconnect
+    socket.onerror = null;
+    try { socket.close(); } catch { /* ignore */ }
+    socket = null;
+  }
+  log.mcp.log('bridge stopped (MCP disabled)');
 }
 
 /** Check whether MCP is enabled on the backend and, if so, start the bridge. */
@@ -87,10 +110,31 @@ function connect() {
     void handle(frame);
   };
   socket.onclose = () => {
-    log.mcp.warn('bridge closed; reconnecting in 3s');
-    setTimeout(connect, 3000);
+    socket = null;
+    if (!started) return; // intentional stop — do not reconnect
+    log.mcp.warn('bridge closed; re-checking MCP status before reconnect');
+    scheduleReconnect();
   };
   socket.onerror = () => socket?.close();
+}
+
+/** Reconnect after a delay, but first re-verify MCP is still enabled. If it was
+ *  disabled (toggled off / removed) we stop for good rather than looping. Only a
+ *  genuinely unreachable status endpoint (e.g. server restart) keeps retrying. */
+function scheduleReconnect() {
+  if (!started || reconnectTimer !== null) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!started) return;
+    fetch('/api/mcp/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (!started) return;
+        if (s && s.enabled) connect();
+        else stopMcpBridge();
+      })
+      .catch(() => { if (started) connect(); });
+  }, 3000);
 }
 
 /** Push a fresh board descriptor (call when the active board changes). */
