@@ -1546,6 +1546,25 @@ func (db *DB) ListDonors() ([]DonorEntry, error) {
 	return out, rows.Err()
 }
 
+// DonorSnapshot builds a path-keyed backup of the current donor list, stamping
+// CreatedAt with the current time. content_hash is included when known (hex)
+// as a secondary resolver that survives file moves.
+func (db *DB) DonorSnapshot() (*DonorSnapshot, error) {
+	donors, err := db.ListDonors()
+	if err != nil {
+		return nil, err
+	}
+	out := &DonorSnapshot{Version: donorSnapshotVersion, CreatedAt: time.Now().Unix()}
+	for _, d := range donors {
+		e := DonorSnapshotEntry{Path: d.Path, AddedAt: d.AddedAt}
+		if hash, err := db.ContentHashOf(d.FileID); err == nil && len(hash) > 0 {
+			e.ContentHash = hex.EncodeToString(hash)
+		}
+		out.Donors = append(out.Donors, e)
+	}
+	return out, nil
+}
+
 // setConfigLocked writes a config key-value pair without acquiring db.mu.
 // Only call this when db.mu is already held by the caller.
 func (db *DB) setConfigLocked(key, value string) error {
