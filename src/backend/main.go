@@ -293,6 +293,24 @@ func main() {
 			mux.HandleFunc("GET /api/databank/search/stream", pdfIdxHandler.SearchStream)
 			mux.HandleFunc("POST /api/databank/reset-pdf", write(pdfIdxHandler.ResetPdf))
 
+			// Donors: server-side index trigger + status enrichment, and a
+			// one-time background backfill of any donor not yet indexed.
+			// Runs regardless of pdf_index_auto_run (donors must be searchable)
+			// and off the boot path so it never delays /api/health.
+			donorIdx := handlers.NewPdfDonorIndexer(indexer, pdfIndex)
+			dbHandler.SetDonorIndexer(donorIdx)
+			go func() {
+				ids, err := db.DonorFileIDs()
+				if err != nil {
+					log.Printf("donor backfill: list donors: %v", err)
+					return
+				}
+				if len(ids) > 0 {
+					log.Printf("donor backfill: ensuring %d donor(s) indexed", len(ids))
+					donorIdx.EnsureIndexed(ids)
+				}
+			}()
+
 			if v, _ := db.GetConfig("pdf_index_auto_run"); v == "true" {
 				go func() {
 					log.Println("pdfindex: auto-run enabled — starting bulk sweep")
