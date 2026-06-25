@@ -1,6 +1,7 @@
 import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
 import { log } from './log-store';
+import { databankStore } from './databank-store';
 
 const SESSION_KEY = 'boardripper-session';
 const DEBOUNCE_MS = 500;
@@ -82,4 +83,61 @@ export function initSessionStore(): void {
   boardStore.subscribe(scheduleCapture);
   pdfStore.subscribe(scheduleCapture);
   window.addEventListener('beforeunload', captureNow);
+}
+
+/** Reopen every entry in a saved session, then focus the previously-active
+ *  board. Resolves databank-first (dropped files live under incoming/), with
+ *  the IndexedDB board cache as a board-only fallback. Collects unavailable
+ *  files into one summary toast. Never called automatically — the restore
+ *  prompt invokes it on the user's explicit Reopen. */
+export async function restoreSession(session: SavedSession): Promise<void> {
+  await databankStore.ensureLoaded();
+  const unavailable: string[] = [];
+  let activeBoardName: string | null = null;
+
+  for (const e of session.entries) {
+    try {
+      const dbFile =
+        (e.fileId != null ? databankStore.fileById(e.fileId) : undefined) ??
+        databankStore.findFileByName(e.fileName, e.fileSize) ??
+        null;
+
+      if (e.kind === 'board') {
+        if (dbFile && dbFile.file_type === 'board') {
+          const file = await databankStore.fetchFileBuffer(dbFile);
+          await boardStore.loadFile(file);
+        } else if (!(await boardStore.loadFromCache(e.fileName, e.fileSize, e.fileLastModified))) {
+          unavailable.push(e.fileName);
+          continue;
+        }
+        if (e.active) activeBoardName = e.fileName;
+      } else {
+        // pdf
+        if (dbFile && dbFile.file_type === 'pdf') {
+          const file = await databankStore.fetchFileBuffer(dbFile);
+          await pdfStore.loadFile(file, dbFile.id);
+        } else {
+          unavailable.push(e.fileName); // local-drop PDF with no databank entry → no binary cache
+        }
+      }
+    } catch (err) {
+      log.ui.warn(`session restore: ${e.fileName} failed`, err);
+      unavailable.push(e.fileName);
+    }
+  }
+
+  if (activeBoardName) {
+    const tab = boardStore.tabs.find(t => t.fileName === activeBoardName);
+    if (tab) boardStore.switchTab(tab.id);
+  }
+
+  const restored = session.entries.length - unavailable.length;
+  if (restored > 0 && unavailable.length === 0) {
+    boardStore.addToast(`Reopened ${restored} item${restored > 1 ? 's' : ''} from your last session`, 'info');
+  } else if (unavailable.length > 0) {
+    boardStore.addToast(
+      `Reopened ${restored} · ${unavailable.length} unavailable (re-drop): ${unavailable.slice(0, 3).join(', ')}${unavailable.length > 3 ? '…' : ''}`,
+      'error',
+    );
+  }
 }
