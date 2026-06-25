@@ -221,6 +221,7 @@ echo "    package.json -> $PKG_VERSION"
 # Intentionally unconditional: feeds BOTH the manifest's `notes` field
 # (Docker/standard path) and the GitHub Release body (all paths, incl. --desktop-only).
 NOTES_FILE="$(mktemp -t boardripper-release-notes)"
+trap 'rm -f "${NOTES_FILE:-}"' EXIT  # cleanup on every exit path (--dry-run, error gates, normal)
 awk -v v="$VERSION" '
   BEGIN { in_section = 0 }
   /^## v/ {
@@ -668,4 +669,3 @@ if [ ${#DESKTOP_ZIPS[@]} -gt 0 ]; then
 fi
 echo
 
-rm -f "${NOTES_FILE:-}"
