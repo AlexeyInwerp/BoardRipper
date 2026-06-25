@@ -1,13 +1,27 @@
 # BoardRipper changelog
 
-## v0.31.26 — 2026-06-24
+## v0.31.26 — 2026-06-25
 
-Worklist v2 Phase 1: measurements move inline onto net rows, the AI section
-becomes a relay-only transcript, and the Highlight button replaces the old
-automatic outlines.
+Two new features — a **Donor boards** library tab that turns marked PDFs into a
+managed, auto-indexed, reset-proof donor pool, and **Worklist v2 Phase 1**
+(inline per-net measurements + a relay-only AI section) — plus interface and MCP
+fixes.
 
 ### Features
 
+- **Donor boards.** A new Library tab gathers every PDF marked as a donor, each
+  row showing its live index status and linked board. Click a row to open its
+  detail (bindings + Open); double-click to open the PDF. Export / Import /
+  Restore controls manage the pool. (`e562176`, `212e08e`)
+- **Marking a donor guarantees it gets indexed.** Adding a PDF to the donor pool
+  triggers a scoped backend pdfium index of exactly that file (server-side, so the
+  UI, an MCP tool, or a script all benefit), plus a boot-time backfill of any
+  donors that weren't indexed yet — so "search donors only" no longer silently
+  misses a never-opened PDF. (`b4367c4`, `af499d2`, `e148eae`)
+- **The donor pool survives "Reset Database".** A path-keyed JSON snapshot is
+  auto-written before a reset and restorable in one click, with manual
+  Export / Import for portability — wiping the scan no longer loses your donors;
+  they re-resolve to the rescanned files by path. (`98308fd`, `e9c8cc5`, `0df3351`)
 - **Per-net inline measurements on worklist rows.** Each net row now carries a
   V / Diode / Ω strip where the technician types a reading directly — no separate
   "to measure" list. Values are stored as `NetMeasurement` objects with unit,
@@ -30,6 +44,22 @@ automatic outlines.
   Phase 1 migrates any flat-array AI measurement entries onto the corresponding net
   rows automatically, so existing worklists carry forward without data loss.
   (`7f2e5cc`)
+
+### Fixes
+
+- **Toolbar tooltips no longer spill off-screen.** The top-bar tooltips were
+  pure-CSS pseudo-elements that couldn't clamp to the viewport, so buttons near
+  the right edge ran off the screen. They're now a single JS-positioned tooltip
+  that clamps horizontally and flips above the button when it would overflow the
+  bottom; the board hover tooltip also clamps on every edge. (`8e97b36`, `be1c442`)
+- **Board info sidebar is drag-resizable.** A left-edge handle resizes the overlay
+  sidebar (width persisted to localStorage), its tab labels no longer sit under the
+  ☰ toggle, and the redundant `×` close button was removed — the ☰ toggle is the
+  single close affordance. (`be1c442`, `8e97b36`)
+- **MCP bridge stops when MCP is disabled.** Turning MCP off (or removing it by any
+  means) now tears the WebSocket bridge down instead of reconnecting to a dead
+  endpoint every three seconds forever; each reconnect re-checks that MCP is still
+  enabled before retrying. (`526f0a7`)
 
 ## v0.31.25 — 2026-06-24
 
