@@ -754,6 +754,98 @@ class BoardStore extends Emitter {
     Object.assign(tab, patch);
   }
 
+  /** Build a fresh BoardTab with default view state, register it as the active
+   *  tab, and notify. Shared by loadFile and loadFromCache. */
+  private makeTab(fileName: string): BoardTab {
+    const id = nextTabId++;
+    const vp = loadViewPrefs();
+    const tab: BoardTab = {
+      id,
+      fileName,
+      board: null,
+      selection: { ...emptySelection, adjacentNets: new Set<string>() },
+      showTop: true,
+      showBottom: false,
+      butterfly: false,
+      searchQuery: '',
+      rotation: 0,
+      mirrorX: false,
+      mirrorY: false,
+      flipAxis: 'x',
+      netLineMode: vp.netLineMode,
+      connectionHighlight: false,
+      dimMode: vp.dimMode,
+      showHoverInfo: vp.showHoverInfo,
+      followPdf: vp.followPdf,
+      showTraces: true,
+      showComponents: true,
+      showVias: false,
+      showSilkscreen: true,
+      showPads: true,
+      showCopperDrops: false,
+      showSurfaces: false,
+      showPins: true,
+      showOutlines: true,
+      showLabels: true,
+      ghostMode: 'ghosts',
+      layerStates: [],
+      selectedLayerIndex: null,
+      fixatedLayerIndex: null,
+      pdfFileNames: [],
+      cacheKey: '',
+      hideGhosts: false,
+      swappedGhostPairs: new Set<string>(),
+      showBomAlternates: false,
+      bomClusterSelections: new Map<string, string>(),
+      partOverrides: new Map(),
+      foldMode: 'suggested',
+      selectedBoardIndex: null,
+      searchSelectionActive: false,
+    };
+    this._tabs.push(tab);
+    this._activeTabId = id;
+    this.notify();
+    return tab;
+  }
+
+  /** Apply a cached BoardData onto a freshly-made tab (rotation, sides, layers,
+   *  filters, parser-note toasts, auto-bind). Shared by loadFile's cache-hit
+   *  path and loadFromCache. Does NOT touch _openFiles or applySavedViewPrefs. */
+  private applyCachedBoard(tab: BoardTab, cached: BoardData, fileName: string, fileSize: number, lastModified: number): void {
+    flagMechanicalParts(cached.parts);
+    tab.board = cached;
+    invalidateDerivedBoard(tab);
+    applyBoardFilters(tab);
+    tab.cacheKey = boardCache.makeCacheKey(fileName, fileSize, lastModified);
+    tab.rotation = this.autoRotation(cached);
+    tab.flipAxis = flipAxisForRotation(tab.rotation);
+    if (cached.flipAxis) tab.flipAxis = cached.flipAxis;
+    const cachedFmt = getFormat(cached.format);
+    // Initial side = user's perception of "top". For inverted files
+    // (primarySide='bottom'), the user's "Top" button is mapped to the
+    // file's side='bottom' in selectTop, so set showBottom=true on open.
+    const wantsBottomOnOpen = cachedFmt?.swapSides || cached.primarySide === 'bottom';
+    if (wantsBottomOnOpen) {
+      tab.showTop = false;
+      tab.showBottom = true;
+    }
+    // Trace-layer default is always TOP regardless of primarySide. The
+    // primarySide swap drives only the user-facing side toggle (which
+    // happened above); the layer list represents the file's etch stack
+    // so users expect TOP-of-stack visible on first open.
+    if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
+    const vp = loadViewPrefs();
+    if (vp.defaultButterfly && !(cached.layerNames && cached.layerNames.length > 0)) {
+      tab.butterfly = true;
+      tab.showTop = true;
+      tab.showBottom = true;
+    }
+    if (cached.parserNotes) {
+      for (const note of cached.parserNotes) this.addToast(note, 'info');
+    }
+    this.autoBindBoard(fileName);
+  }
+
   async loadFile(file: File) {
     const existing = this._tabs.find(t => t.fileName === file.name);
     if (existing) {
@@ -779,55 +871,9 @@ class BoardStore extends Emitter {
     this._loading.add(file.name);
 
     try {
-      const id = nextTabId++;
-      const vp = loadViewPrefs();
-      const tab: BoardTab = {
-        id,
-        fileName: file.name,
-        board: null,
-        selection: { ...emptySelection, adjacentNets: new Set<string>() },
-        showTop: true,
-        showBottom: false,
-        butterfly: false,
-        searchQuery: '',
-        rotation: 0,
-        mirrorX: false,
-        mirrorY: false,
-        flipAxis: 'x',
-        netLineMode: vp.netLineMode,
-        connectionHighlight: false,
-        dimMode: vp.dimMode,
-        showHoverInfo: vp.showHoverInfo,
-        followPdf: vp.followPdf,
-        showTraces: true,
-        showComponents: true,
-        showVias: false,
-        showSilkscreen: true,
-        showPads: true,
-        showCopperDrops: false,
-        showSurfaces: false,
-        showPins: true,
-        showOutlines: true,
-        showLabels: true,
-        ghostMode: 'ghosts',
-        layerStates: [],
-        selectedLayerIndex: null,
-        fixatedLayerIndex: null,
-        pdfFileNames: [],
-        cacheKey: '',
-        hideGhosts: false,
-        swappedGhostPairs: new Set<string>(),
-        showBomAlternates: false,
-        bomClusterSelections: new Map<string, string>(),
-        partOverrides: new Map(),
-        foldMode: 'suggested',
-        selectedBoardIndex: null,
-        searchSelectionActive: false,
-      };
-
-      this._tabs.push(tab);
-      this._activeTabId = id;
-      this.notify(); // notify immediately so existing renderers know the active tab changed
+      const tab = this.makeTab(file.name);
+      const id = tab.id;
+      // makeTab already called notify() — the tab is visible from this point.
 
       try {
         loadProgressStore.start(file.name, file.size);
@@ -837,44 +883,12 @@ class BoardStore extends Emitter {
         if (cached) {
           loadProgressStore.pushLog(`Cache hit: ${cached.parts.length} parts, ${cached.nets.size} nets`);
           log.cache.log(`Loaded from cache: ${file.name} (${cached.parts.length} parts, ${cached.nets.size} nets)`);
-          // Mechanical-flag pass is cheap and side-effect-only on parts[i].mechanical;
-          // cached boards may pre-date this flag so always re-run on load.
-          flagMechanicalParts(cached.parts);
-          tab.board = cached;
-          invalidateDerivedBoard(tab);
-          applyBoardFilters(tab);
-          tab.cacheKey = boardCache.makeCacheKey(file.name, file.size, file.lastModified);
-          tab.rotation = this.autoRotation(cached);
-          tab.flipAxis = flipAxisForRotation(tab.rotation);
-          if (cached.flipAxis) tab.flipAxis = cached.flipAxis;
+          this.applyCachedBoard(tab, cached, file.name, file.size, file.lastModified);
           // Per-file user overrides win over both auto-rotation and the
           // parser-supplied flipAxis. Async fetch — we apply once the
           // record lands. The board is already visible by then; the
           // applyPrefs call only does work if at least one override is set.
           void this.applySavedViewPrefs(tab, file);
-          const cachedFmt = getFormat(cached.format);
-          // Initial side = user's perception of "top". For inverted files
-          // (primarySide='bottom'), the user's "Top" button is mapped to the
-          // file's side='bottom' in selectTop, so set showBottom=true on open.
-          const wantsBottomOnOpen = cachedFmt?.swapSides || cached.primarySide === 'bottom';
-          if (wantsBottomOnOpen) {
-            tab.showTop = false;
-            tab.showBottom = true;
-          }
-          // Trace-layer default is always TOP regardless of primarySide. The
-          // primarySide swap drives only the user-facing side toggle (which
-          // happened above); the layer list represents the file's etch stack
-          // so users expect TOP-of-stack visible on first open.
-          if (cached.layerNames) tab.layerStates = createLayerStates(cached.layerNames);
-          if (vp.defaultButterfly && !(cached.layerNames && cached.layerNames.length > 0)) {
-            tab.butterfly = true;
-            tab.showTop = true;
-            tab.showBottom = true;
-          }
-          if (cached.parserNotes) {
-            for (const note of cached.parserNotes) this.addToast(note, 'info');
-          }
-          this.autoBindBoard(file.name);
           // Hand off to the renderer. Don't finish() here — buildBoardScene
           // runs inside BoardRenderer.activateScene which is what the user
           // is actually waiting on, especially on cold-cache opens of large
@@ -944,6 +958,7 @@ class BoardStore extends Emitter {
           tab.showBottom = true;
         }
         if (board.layerNames) tab.layerStates = createLayerStates(board.layerNames);
+        const vp = loadViewPrefs();
         if (vp.defaultButterfly && !(board.layerNames && board.layerNames.length > 0)) {
           tab.butterfly = true;
           tab.showTop = true;
@@ -980,6 +995,22 @@ class BoardStore extends Emitter {
     } finally {
       this._loading.delete(file.name);
     }
+  }
+
+  /** Open a board tab directly from the IndexedDB cache, without an original
+   *  File — used by session restore when a dropped board never reached the
+   *  databank (Electron / upload failed / file removed). Re-parse is unavailable
+   *  for such a tab until the user drags the file in again. Returns false if the
+   *  cache has no current entry (parser-version checked). */
+  async loadFromCache(fileName: string, fileSize: number, lastModified: number): Promise<boolean> {
+    if (this._tabs.some(t => t.fileName === fileName)) return true; // already open
+    const cached = await boardCache.get(fileName, fileSize, lastModified);
+    if (!cached) return false;
+    const tab = this.makeTab(fileName);
+    this.applyCachedBoard(tab, cached, fileName, fileSize, lastModified);
+    this.onTabCreated?.(tab.id, fileName);
+    this.notify();
+    return true;
   }
 
   private autoRotation(board: BoardData): number {
