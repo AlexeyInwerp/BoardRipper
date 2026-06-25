@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +127,20 @@ type containerInfo struct {
 	Mounts  []mount
 	Ports   map[string][]portBinding
 	Restart string
+	// Issue #21: the swap must preserve these or the new container silently
+	// lands on the default bridge with no Compose ownership and no limits.
+	Labels      map[string]string  // incl. com.docker.compose.* — restores Compose ownership
+	Networks    []containerNetwork // user-defined networks (e.g. reverse-proxy net), sorted by name
+	NetworkMode string             // "host"/"none"/"container:…" are exclusive and bypass EndpointsConfig
+	Memory      int64              // bytes; 0 = unset
+	NanoCpus    int64              // 1e9 = 1 CPU; 0 = unset
+}
+
+// containerNetwork is one network attachment carried across the update swap.
+type containerNetwork struct {
+	Name    string
+	ID      string
+	Aliases []string
 }
 
 type mount struct {
@@ -195,9 +210,10 @@ func findSelfContainer() (*containerInfo, error) {
 		ID     string `json:"Id"`
 		Name   string `json:"Name"`
 		Config struct {
-			Image string   `json:"Image"`
-			Env   []string `json:"Env"`
-			User  string   `json:"User"`
+			Image  string            `json:"Image"`
+			Env    []string          `json:"Env"`
+			User   string            `json:"User"`
+			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
 		HostConfig struct {
 			Binds       []string                       `json:"Binds"`
@@ -205,22 +221,45 @@ func findSelfContainer() (*containerInfo, error) {
 			RestartPolicy struct {
 				Name string `json:"Name"`
 			} `json:"RestartPolicy"`
+			NetworkMode string `json:"NetworkMode"`
+			Memory      int64  `json:"Memory"`
+			NanoCpus    int64  `json:"NanoCpus"`
 		} `json:"HostConfig"`
-		Mounts []mount `json:"Mounts"`
+		Mounts          []mount `json:"Mounts"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				NetworkID string   `json:"NetworkID"`
+				Aliases   []string `json:"Aliases"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
 	}
 	if err := json.NewDecoder(resp2.Body).Decode(&inspect); err != nil {
 		return nil, fmt.Errorf("failed to parse container inspect: %w", err)
 	}
 
+	// Flatten the network map into a name-sorted slice so the "primary" network
+	// (attached at container-create) is deterministic across updates. Issue #21:
+	// without this the recreated container lands on the default bridge only.
+	networks := make([]containerNetwork, 0, len(inspect.NetworkSettings.Networks))
+	for name, n := range inspect.NetworkSettings.Networks {
+		networks = append(networks, containerNetwork{Name: name, ID: n.NetworkID, Aliases: n.Aliases})
+	}
+	sort.Slice(networks, func(i, j int) bool { return networks[i].Name < networks[j].Name })
+
 	return &containerInfo{
-		ID:      inspect.ID,
-		Name:    strings.TrimPrefix(inspect.Name, "/"),
-		Image:   inspect.Config.Image,
-		Env:     inspect.Config.Env,
-		User:    inspect.Config.User,
-		Mounts:  inspect.Mounts,
-		Ports:   inspect.HostConfig.PortBindings,
-		Restart: inspect.HostConfig.RestartPolicy.Name,
+		ID:          inspect.ID,
+		Name:        strings.TrimPrefix(inspect.Name, "/"),
+		Image:       inspect.Config.Image,
+		Env:         inspect.Config.Env,
+		User:        inspect.Config.User,
+		Mounts:      inspect.Mounts,
+		Ports:       inspect.HostConfig.PortBindings,
+		Restart:     inspect.HostConfig.RestartPolicy.Name,
+		Labels:      inspect.Config.Labels,
+		Networks:    networks,
+		NetworkMode: inspect.HostConfig.NetworkMode,
+		Memory:      inspect.HostConfig.Memory,
+		NanoCpus:    inspect.HostConfig.NanoCpus,
 	}, nil
 }
 
@@ -434,6 +473,12 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 
 	logFn(fmt.Sprintf("Self container: name=%s id=%s image=%s restart=%s", self.Name, shortID(self.ID), self.Image, self.Restart), "info")
 	logFn(fmt.Sprintf("Mounts: %d, env vars: %d, port bindings: %d", len(self.Mounts), len(self.Env), len(self.Ports)), "info")
+	netNames := make([]string, len(self.Networks))
+	for i, n := range self.Networks {
+		netNames[i] = n.Name
+	}
+	logFn(fmt.Sprintf("Preserving across swap — networks: [%s] mode=%s, labels: %d, mem: %dMiB, nanocpus: %d",
+		strings.Join(netNames, " "), self.NetworkMode, len(self.Labels), self.Memory/(1024*1024), self.NanoCpus), "info")
 
 	// Determine the orchestrator image. The manifest pins a content-addressed
 	// digest for reproducibility; fall back to alpine:latest for dev builds
@@ -468,17 +513,15 @@ func (u *Updater) orchestrateRestart(m *Manifest) error {
 	// /data files that the root-running OLD container had written, and the
 	// orchestrator would time out on /api/health and roll back. Image-default
 	// USER installs (self.User == "") fall through unchanged.
-	createBody := map[string]interface{}{
-		"Image": newImage,
-		"User":  self.User,
-		"Env":   self.Env,
-		"HostConfig": map[string]interface{}{
-			"Binds":         bindsFromMounts(self.Mounts),
-			"PortBindings":  self.Ports,
-			"RestartPolicy": map[string]string{"Name": self.Restart},
-		},
-	}
+	//
+	// buildCreateBody additionally carries (issue #21) the container's Compose
+	// labels, resource limits, and primary network attachment so the recreated
+	// container stays reachable on the user's reverse-proxy network and owned by
+	// Docker Compose. Networks beyond the first are reconnected post-create via
+	// networkConnectScript (Docker's create only honors one EndpointsConfig).
+	createBody := buildCreateBody(self, newImage)
 	bodyJSON, _ := json.Marshal(createBody)
+	connectScript := networkConnectScript(self)
 
 	// Shell script for the orchestrator to execute. self.Name and self.ID
 	// come in via $BR_NAME / $BR_ID environment variables (set on the
@@ -524,6 +567,10 @@ if [ -z "$NEW_ID" ]; then
   exit 1
 fi
 
+# Issue #21: reattach any additional user-defined networks (beyond the primary,
+# attached at create) before start, so the app is reachable on every network the
+# instant it comes up. Empty when the container had <=1 network or host mode.
+%s
 echo "[orchestrator] Starting new container $NEW_ID..."
 START_CODE=$(dapi -o /dev/null -w "%%{http_code}" -X POST "$API/containers/$NEW_ID/start")
 if [ "$START_CODE" != "204" ] && [ "$START_CODE" != "304" ]; then
@@ -583,6 +630,7 @@ exit 1
 		dockerAPI(),       // API= path version
 		newImage,          // create-log line: human-readable image reference
 		string(bodyJSON),  // CREATE_BODY heredoc (JSON produced by this binary, not user-derived)
+		connectScript,     // post-create network reattach (issue #21); "" for single-network/host
 	)
 
 	client := dockerClient()
@@ -721,4 +769,110 @@ func bindsFromMounts(mounts []mount) []string {
 		binds = append(binds, b)
 	}
 	return binds
+}
+
+// ─── Issue #21: preserve networks / labels / limits across the update swap ───
+
+// isExclusiveNetMode reports whether a NetworkMode is one of the special modes
+// that cannot be expressed via NetworkingConfig.EndpointsConfig and instead
+// must be propagated verbatim as HostConfig.NetworkMode (and excludes any
+// per-network connect calls). "host"/"none"/"container:<id>" are mutually
+// exclusive with user-defined network attachments.
+func isExclusiveNetMode(mode string) bool {
+	return mode == "host" || mode == "none" || strings.HasPrefix(mode, "container:")
+}
+
+// filterStaleAliases drops the auto-injected short container-ID alias that
+// Docker reports in a running container's NetworkSettings.Networks[].Aliases.
+// Re-applying the OLD container's short ID to the new container (which has a
+// different ID) is harmless but stale; user/compose aliases (the proxy's DNS
+// name) must survive.
+func filterStaleAliases(containerID string, aliases []string) []string {
+	out := make([]string, 0, len(aliases))
+	for _, a := range aliases {
+		if len(a) >= 12 && strings.HasPrefix(containerID, a) {
+			continue // the short-ID alias for this very container
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// buildCreateBody assembles the POST /containers/create payload for the new
+// container. Beyond the original Image/User/Env/Binds/Ports/Restart it now
+// carries — issue #21 — the Compose labels, resource limits, and the primary
+// network attachment (with aliases), so the recreated container is reachable
+// on the same user-defined network(s) and stays owned by Docker Compose.
+func buildCreateBody(self *containerInfo, newImage string) map[string]interface{} {
+	hostConfig := map[string]interface{}{
+		"Binds":         bindsFromMounts(self.Mounts),
+		"PortBindings":  self.Ports,
+		"RestartPolicy": map[string]string{"Name": self.Restart},
+	}
+	if self.Memory > 0 {
+		hostConfig["Memory"] = self.Memory
+	}
+	if self.NanoCpus > 0 {
+		hostConfig["NanoCpus"] = self.NanoCpus
+	}
+
+	body := map[string]interface{}{
+		"Image":      newImage,
+		"User":       self.User,
+		"Env":        self.Env,
+		"HostConfig": hostConfig,
+	}
+	if len(self.Labels) > 0 {
+		body["Labels"] = self.Labels
+	}
+
+	// Exclusive network modes (host/none/container:) can't use EndpointsConfig;
+	// pass them through HostConfig.NetworkMode and skip the per-network attach.
+	if isExclusiveNetMode(self.NetworkMode) {
+		hostConfig["NetworkMode"] = self.NetworkMode
+		return body
+	}
+
+	// Docker's container-create reliably attaches only ONE network from
+	// EndpointsConfig; the rest are reconnected post-create (networkConnectScript).
+	// Attaching the primary here also suppresses the implicit default-bridge
+	// attachment, so the new container's network set matches the old one's.
+	if len(self.Networks) > 0 {
+		primary := self.Networks[0]
+		ep := map[string]interface{}{}
+		if aliases := filterStaleAliases(self.ID, primary.Aliases); len(aliases) > 0 {
+			ep["Aliases"] = aliases
+		}
+		body["NetworkingConfig"] = map[string]interface{}{
+			"EndpointsConfig": map[string]interface{}{primary.Name: ep},
+		}
+	}
+	return body
+}
+
+// networkConnectScript emits the shell lines (run by the orchestrator between
+// container-create and container-start) that reattach every network BEYOND the
+// primary one, since container-create only honors a single EndpointsConfig
+// entry. Returns "" when there's nothing to do (≤1 network, or an exclusive
+// network mode). The connect body references $NEW_ID (the just-created
+// container) — the JSON fragments are produced here, not from user input.
+func networkConnectScript(self *containerInfo) string {
+	if isExclusiveNetMode(self.NetworkMode) || len(self.Networks) <= 1 {
+		return ""
+	}
+	var b strings.Builder
+	for _, n := range self.Networks[1:] {
+		epJSON := "{}"
+		if aliases := filterStaleAliases(self.ID, n.Aliases); len(aliases) > 0 {
+			j, _ := json.Marshal(map[string]interface{}{"Aliases": aliases})
+			epJSON = string(j)
+		}
+		// Quoting: single-quoted literals around a double-quoted "$NEW_ID" so the
+		// shell expands the container id but nothing else. Network ID goes in the
+		// URL path (hex, safe); aliases are DNS labels (no shell metacharacters).
+		fmt.Fprintf(&b, `echo "[orchestrator] Reattaching to network %s..."
+dapi -X POST -H "Content-Type: application/json" -d '{"Container":"'"$NEW_ID"'","EndpointConfig":%s}' "$API/networks/%s/connect" >/dev/null 2>&1 || echo "[orchestrator] WARN: could not reattach to network %s — reverse proxy on it may 502 until reconnected"
+`, n.Name, epJSON, n.ID, n.Name)
+	}
+	return b.String()
 }
