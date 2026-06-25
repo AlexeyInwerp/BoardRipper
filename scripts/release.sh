@@ -217,6 +217,24 @@ jq --arg v "$PKG_VERSION" '.version = $v' "$PKG_FILE" > "$TMP_PKG"
 mv "$TMP_PKG" "$PKG_FILE"
 echo "    package.json -> $PKG_VERSION"
 
+# --- Slice the v$VERSION section out of CHANGELOG.md ---
+# Intentionally unconditional: feeds BOTH the manifest's `notes` field
+# (Docker/standard path) and the GitHub Release body (all paths, incl. --desktop-only).
+NOTES_FILE="$(mktemp -t boardripper-release-notes)"
+awk -v v="$VERSION" '
+  BEGIN { in_section = 0 }
+  /^## v/ {
+    if (in_section) exit
+    if ($0 ~ "^## " v "( |$|—| —)") { in_section = 1; print; next }
+  }
+  in_section { print }
+' "$REPO_ROOT/CHANGELOG.md" > "$NOTES_FILE"
+if [ ! -s "$NOTES_FILE" ]; then
+  echo "WARN: extracted CHANGELOG section is empty; using generic body" >&2
+  printf "Release %s\n\nSee https://www.ripperdoc.de/boardripper/changelog.html#%s\n" \
+    "$VERSION" "$VERSION" > "$NOTES_FILE"
+fi
+
 # ════════════════════════════════════════════════════════════════════════
 #   DOCKER PIPELINE (skipped in --desktop-only)
 # ════════════════════════════════════════════════════════════════════════
@@ -336,25 +354,6 @@ if [ "$IS_DESKTOP_ONLY" = "false" ]; then
   TARBALL_SIZE="$(stat -f %z "$TARBALL" 2>/dev/null || stat -c %s "$TARBALL")"
   echo "    sha256: $TARBALL_SHA"
   echo "    size:   $TARBALL_SIZE bytes"
-
-  # --- Slice the v$VERSION section out of CHANGELOG.md ---
-  # Done here (before manifest build) so it feeds BOTH the manifest's `notes`
-  # field (signed, shown in-app) and the GitHub Release body below — identical
-  # by construction.
-  NOTES_FILE="$(mktemp -t boardripper-release-notes)"
-  awk -v v="$VERSION" '
-    BEGIN { in_section = 0 }
-    /^## v/ {
-      if (in_section) exit
-      if ($0 ~ "^## " v "( |$|—| —)") { in_section = 1; print; next }
-    }
-    in_section { print }
-  ' "$REPO_ROOT/CHANGELOG.md" > "$NOTES_FILE"
-  if [ ! -s "$NOTES_FILE" ]; then
-    echo "WARN: extracted CHANGELOG section is empty; using generic body" >&2
-    printf "Release %s\n\nSee https://www.ripperdoc.de/boardripper/changelog.html#%s\n" \
-      "$VERSION" "$VERSION" > "$NOTES_FILE"
-  fi
 
   # --- Generate manifest.json ---
   RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
