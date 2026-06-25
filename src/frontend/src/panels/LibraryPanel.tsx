@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
 import { databankStore, contentCollapsePlan } from '../store/databank-store';
-import type { CollapsedFileInfo, DatabankBinding, DatabankFile, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
+import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
@@ -79,6 +79,18 @@ function tailTruncate(s: string, max = 60) {
  *  auto-escapes — wrapping the marked segments in <b> elements. The only
  *  HTML that ever ends up in the DOM is the literal <b>; nothing the
  *  attacker controls. */
+function donorStatusLabel(s?: string): string {
+  switch (s) {
+    case 'indexed': return 'Indexed';
+    case 'indexing': return 'Indexing…';
+    case 'pending': return 'Pending';
+    case 'failed': return 'Failed';
+    case 'empty': return 'No text';
+    case 'duplicate': return 'Duplicate';
+    default: return 'Unknown';
+  }
+}
+
 function renderSnippet(snippet: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let rest = snippet;
@@ -278,13 +290,32 @@ export function LibraryPanel() {
   const donorResults = useMemo(() => pdfResults.filter(r => r.is_donor), [pdfResults]);
   const otherResults = useMemo(() => pdfResults.filter(r => !r.is_donor), [pdfResults]);
 
-  // Donor list for manage mode: shown when scope=donor and no query entered
-  const [donorList, setDonorList] = useState<{ file_id: number; filename: string; path?: string }[]>([]);
-  const isDonorManageMode = viewMode === 'search' && pdfScope === 'donor' && !pdfQuery.trim();
+  // Donor manager: an explicit, always-available list (no longer gated on an
+  // empty query). Open via the "Manage donors" button in the search header.
+  const [showDonorManager, setShowDonorManager] = useState(false);
+  const [donorList, setDonorList] = useState<DonorEntry[]>([]);
+  const isDonorManageMode = viewMode === 'search' && showDonorManager;
+
+  const refreshDonorList = useCallback(() => {
+    databankStore.listDonors().then(setDonorList);
+  }, []);
+
+  // Load count on mount so button shows non-zero count immediately.
+  useEffect(() => { refreshDonorList(); }, []);
+
+  useEffect(() => {
+    if (isDonorManageMode) refreshDonorList();
+  }, [isDonorManageMode, refreshDonorList]);
+
+  // While the manager is open and any donor is still indexing/pending, poll so
+  // the badge advances to its terminal state.
   useEffect(() => {
     if (!isDonorManageMode) return;
-    databankStore.listDonors().then(setDonorList);
-  }, [isDonorManageMode]);
+    const pending = donorList.some(d => d.index_status === 'pending' || d.index_status === 'indexing');
+    if (!pending) return;
+    const t = setInterval(refreshDonorList, 2000);
+    return () => clearInterval(t);
+  }, [isDonorManageMode, donorList, refreshDonorList]);
 
   // Pick up a pending PDF search set by ContextMenu "Search in donors/PDFs".
   // Keyed on the reactive `pendingPdfSearch` snapshot value (not viewMode), so
@@ -914,6 +945,14 @@ export function LibraryPanel() {
               </label>
               <button
                 className="library-search-btn"
+                data-testid="manage-donors-btn"
+                onClick={() => setShowDonorManager(v => !v)}
+                title="View and remove donor PDFs"
+              >
+                {showDonorManager ? 'Done' : `Manage donors (${donorList.length})`}
+              </button>
+              <button
+                className="library-search-btn"
                 onClick={() => runPdfSearch()}
                 disabled={pdfSearching}
               >
@@ -932,12 +971,18 @@ export function LibraryPanel() {
                 {donorList.length === 0
                   ? <div className="library-empty">No donor PDFs yet. Mark PDFs as donors to build this list.</div>
                   : donorList.map(d => (
-                      <div key={d.file_id} className="library-donor-row">
+                      <div key={d.file_id} className="library-donor-row" data-testid="donor-row">
                         <span className="library-donor-name" title={d.path || d.filename}>{d.filename}</span>
+                        <span
+                          className={`library-donor-status status-${d.index_status ?? 'unknown'}`}
+                          data-testid="donor-status"
+                        >
+                          {donorStatusLabel(d.index_status)}
+                        </span>
                         <button
                           className="library-donor-remove"
                           title="Remove from donor list"
-                          onClick={async () => { await databankStore.removeDonor(d.file_id); setDonorList(await databankStore.listDonors()); }}
+                          onClick={async () => { await databankStore.removeDonor(d.file_id); refreshDonorList(); }}
                         >×</button>
                       </div>
                     ))}
