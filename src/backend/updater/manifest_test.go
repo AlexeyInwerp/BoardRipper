@@ -1,6 +1,8 @@
 package updater
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,5 +160,38 @@ func TestVerifyTarballSHA256_AcceptsUppercaseExpected(t *testing.T) {
 	sum := "B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9"
 	if err := VerifyTarballSHA256(data, sum); err != nil {
 		t.Errorf("expected uppercase to be normalized, got: %v", err)
+	}
+}
+
+func TestManifest_NotesRoundTripsAndIsSigned(t *testing.T) {
+	pub, priv, err := minisign.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	m := freshManifest("v0.8.0", 1)
+	m.Notes = "## v0.8.0\n\n### Features\n- Something new"
+
+	manifestBytes, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	// notes must be present in the serialized JSON that gets signed.
+	if !strings.Contains(string(manifestBytes), `"notes":"## v0.8.0`) {
+		t.Fatalf("serialized manifest missing notes field: %s", manifestBytes)
+	}
+
+	// Round-trips back into the struct.
+	var back Manifest
+	if err := json.Unmarshal(manifestBytes, &back); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if back.Notes != m.Notes {
+		t.Errorf("notes round-trip mismatch: got %q want %q", back.Notes, m.Notes)
+	}
+
+	// The signature covers the bytes that include notes.
+	sig := minisign.Sign(priv, manifestBytes)
+	if err := VerifyManifest(manifestBytes, sig, pub.String()); err != nil {
+		t.Errorf("VerifyManifest rejected a notes-bearing manifest: %v", err)
 	}
 }

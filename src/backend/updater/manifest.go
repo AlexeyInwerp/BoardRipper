@@ -21,6 +21,7 @@ type Manifest struct {
 	Important           bool            `json:"important"`
 	ImportantReason     string          `json:"important_reason,omitempty"`
 	NotesURL            string          `json:"notes_url,omitempty"`
+	Notes               string          `json:"notes,omitempty"`
 	Tarball             ManifestTarball `json:"tarball"`
 	Image               ManifestImage   `json:"image"`
 	MinSupportedVersion string          `json:"min_supported_version"`
