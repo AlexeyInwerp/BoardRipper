@@ -12,6 +12,7 @@ When an update is available, the toolbar update badge → dropdown ([Toolbar.tsx
 
 - The signed `Manifest` ([src/backend/updater/manifest.go](../../src/backend/updater/manifest.go)) carries `notes_url` (= `https://www.ripperdoc.de/boardripper/changelog.html#<version>`) but **no note text**.
 - The update badge dropdown ([Toolbar.tsx:74-150](../../src/frontend/src/components/Toolbar.tsx)) renders the version tag, `important_reason` (when important), the Update-Now button, and the external "Release notes ↗" link.
+- **A dead notes renderer already exists in the dropdown:** `const bodyLines: string[] = []` (Toolbar.tsx:50) is never populated, but a full line-renderer gated on `bodyLines.length > 0` (Toolbar.tsx:82-94) turns `## `/`### `/`- ` prefixes into `<h3>`/`<h4>`/`<li>` and other lines into `<p>`. It is an un-wired stub for exactly this feature — wiring it to the manifest notes gives light-markdown formatting for free.
 - `release.sh` already **slices the `## vX.Y.Z` section out of `CHANGELOG.md`** into a temp `NOTES_FILE` and passes it to `gh release create --notes-file` (release.sh ~line 616-633). It builds the manifest JSON (where `notes_url` is set, ~line 352) and signs it (Ed25519/minisign). The whole manifest JSON is covered by the signature.
 
 ## Goals
@@ -23,7 +24,7 @@ When an update is available, the toolbar update badge → dropdown ([Toolbar.tsx
 ## Non-goals
 
 - Retroactive notes for already-published manifests (the current v0.31.26 manifest has no `notes`). The feature appears for releases cut **after** this change ships.
-- Markdown rendering — the changelog section renders as **plain, whitespace-preserved text** (it reads fine as-is); no markdown library is added.
+- A **new** markdown library — none is added. The notes reuse the dropdown's **existing** line renderer (`## `/`### `/`- ` → `<h3>`/`<h4>`/`<li>`), which is already in the code. (This supersedes the original "plain preformatted" rendering choice: since a light-markdown renderer already exists as a dead stub, reusing it is DRY and nicer at zero extra cost — the reason plain-text was preferred, "avoid adding a renderer," no longer applies.)
 - Changing `notes_url` (the external link stays as a "full changelog" affordance).
 - Fetching `notes_url` client-side (rejected: cross-origin/CORS, HTML parsing, breaks offline).
 
@@ -43,19 +44,17 @@ No verification change is needed: the minisign signature covers the entire manif
 
 `release.sh` already extracts the `## $VERSION` changelog section into `NOTES_FILE`. When it builds the manifest JSON, inject that file's contents into the `notes` field **as a JSON-safe string** before signing — reuse the same slice that feeds the GitHub release so the in-app notes and the GH release body are identical by construction. Use `jq --rawfile notes "$NOTES_FILE" '.notes = $notes'` (or equivalent) so multi-line markdown with quotes/newlines is correctly escaped. If the slice is empty, leave `notes` unset (the `omitempty` + frontend fallback handle it). The `RELEASE_RUNBOOK` note for the manifest is updated to mention the field.
 
-### Frontend — type + spoiler
+### Frontend — type + spoiler (reuse the existing renderer)
 
 - Add `notes?: string` to the `Manifest` interface ([update-store.ts](../../src/frontend/src/store/update-store.ts)).
-- In the update dropdown ([Toolbar.tsx](../../src/frontend/src/components/Toolbar.tsx)), when `manifest?.notes` is a non-empty string, render a collapsible spoiler **above** the "Release notes ↗" link:
+- In the update dropdown ([Toolbar.tsx](../../src/frontend/src/components/Toolbar.tsx)), **wire the existing `bodyLines` stub** to the manifest notes for the available-update case:
+  - `const bodyLines: string[] = (state.has_update && manifest?.notes) ? manifest.notes.split('\n') : [];`
+  - Wrap the existing `bodyLines.length > 0` render block in a collapsible **`<details>`** with `<summary>What's new</summary>`, **collapsed by default** (the user opts in to reading). The block's existing line-rendering map (the `## `/`### `/`- `/`<p>` logic) is reused unchanged inside the spoiler.
+  - The body scrolls (`max-height` + `overflow-y: auto`) so a long changelog doesn't blow out the dropdown.
+- Drop the now-obsolete `{!state.has_update && <h4>What's in this version</h4>}` sub-header inside that block (it only made sense for a never-reached not-`has_update` case). The "You are on the latest version." fallback for not-`has_update` (Toolbar.tsx:95-99) is unchanged.
+- When `manifest.notes` is absent/empty, `bodyLines` is `[]` → the spoiler is not rendered; the existing "Release notes ↗" link remains the only notes affordance.
 
-```
-<details class="update-dropdown-notes">
-  <summary>What's new</summary>
-  <div class="update-dropdown-notes-body">{manifest.notes}</div>   // whitespace-preserved, scrollable
-</details>
-```
-
-The spoiler is **collapsed by default** (the user opts in to reading). The body preserves whitespace (`white-space: pre-wrap`) and scrolls (`max-height` + `overflow-y: auto`) so a long changelog doesn't blow out the dropdown. When `notes` is absent/empty the `<details>` is not rendered at all — the existing link is the only notes affordance. New CSS is small (≤ ~12 lines), reusing existing dropdown variables.
+New CSS is small (≤ ~12 lines) for the `<details>`/`<summary>` + scroll, reusing existing dropdown variables.
 
 ## Edge cases
 
