@@ -1428,3 +1428,15 @@ git commit -m "test(donors): e2e mark→index, manager visibility, reset→resto
 **3. Type consistency** — `DonorIndexer.{EnsureIndexed,StatusFor}` identical across Tasks 2/3. `DonorSnapshot` / `DonorSnapshotEntry` / `DonorBackupInfo` field names match between Go (Task 4) and the JSON consumed by TS (`DonorBackupInfo{name,created_at,count}`, Task 6). `index_status` string used consistently (backend `IndexStatus json:"index_status"`, TS `index_status?`). `RunFiles(ids []int64) error` consistent between Tasks 1 and 3. Status values (`indexed/indexing/pending/failed/empty/duplicate`) match between adapter mapping (Task 3) and `donorStatusLabel` (Task 7).
 
 **4. Open verifications folded into steps** (each flagged at point of use, not left as silent assumptions): go.mod module path for test imports (Tasks 2/3); `databank.NewScanner` signature (Task 5); `apiFetch(url, init)` and the API-base constant name (Tasks 6/8). These are confirm-and-adjust, not design gaps.
+
+---
+
+## Amendment (2026-06-25): donor manager → "Bench" Library tab
+
+**User directive mid-execution:** the donor manager should NOT be embedded in the PDF-search tab (the original Task 7 / spec "improve search tab" decision). Instead, add a new **generic Library tab "Bench"** that for now holds ONLY donor management — a prototype container with room for worklists later. This consolidates the UI work:
+
+- **Task 7 (revised → Bench tab):** add `'bench'` to `ViewMode`; add a "Bench" tab button + render branch hosting the donor list (badges, remove, auto-poll) **and** the Export / Import / Restore controls; **remove** the donor embedding the original Task 7 added to the PDF-search tab (keep the "Donors only" search scope checkbox). Brief: `.superpowers/sdd/task-7-bench-brief.md`.
+- **Task 8 (Settings export/import): SUPERSEDED.** All donor management moves into the Bench tab; `SettingsPanel.tsx` gets no donor controls. The Task 6 store methods are unchanged and now consumed by the Bench tab.
+- **Task 9 (e2e):** selectors target the Bench tab — `bench-tab`, `donor-row`, `donor-status`, `donor-export-link`, `donor-import-input`, `donor-restore-btn`.
+
+The export link uses a same-origin relative href `/api/databank/donors/export` (the store's `apiFetch` already uses relative `/api/...` URLs), resolving the Task 6/8 API-base verification.
