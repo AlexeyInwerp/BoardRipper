@@ -987,6 +987,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!container) return;
     const containerW = container.clientWidth;
     const containerH = container.clientHeight;
+    // Issue #20: Dockview's onlyWhenVisible renderer collapses a hidden panel's
+    // container to 0×0, which fires the ResizeObserver → syncTransform → here.
+    // With containerW=0 the X branch below would recenter pan.x to 0 (pageW=0 ≤
+    // containerW=0), silently losing the horizontal scroll position the moment
+    // you switch to another tab. Never clamp against a degenerate viewport —
+    // leave pan untouched until the panel is laid out again with a real size.
+    if (containerW === 0 || containerH === 0) return;
     const zoom = zoomRef.current;
     const cssH = pageCssHRef.current;
     let { x, y } = panRef.current;
