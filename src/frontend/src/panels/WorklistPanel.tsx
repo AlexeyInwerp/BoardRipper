@@ -135,14 +135,15 @@ export function WorklistPanel() {
       );
       return;
     }
-    const missing = r.total - r.resolved;
+    const missing = r.parts - r.resolved;
+    const netSuffix = r.nets > 0 ? `, ${r.nets} net${r.nets === 1 ? '' : 's'}` : '';
     if (missing > 0) {
       boardStore.addToast(
-        `Imported "${r.created}": ${r.resolved}/${r.total} parts found on this board (${missing} missing).`,
+        `Imported "${r.created}": ${r.resolved}/${r.parts} parts found on this board (${missing} missing)${netSuffix}.`,
         'info',
       );
     } else {
-      boardStore.addToast(`Imported "${r.created}" (${r.total} parts).`, 'info');
+      boardStore.addToast(`Imported "${r.created}" (${r.parts} part${r.parts === 1 ? '' : 's'}${netSuffix}).`, 'info');
     }
   };
 
