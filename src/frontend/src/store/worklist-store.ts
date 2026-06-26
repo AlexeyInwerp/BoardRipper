@@ -81,6 +81,15 @@ export const NET_MEASUREMENT_UNITS: Record<NetMeasurement['kind'], string> = {
   resistance: 'Ω',
 };
 
+/** Compact display symbol per measurement mode — V and Ω are their own units;
+ *  diode mode uses the multimeter diode glyph. Single source of truth shared by
+ *  the worklist panel chips and the canvas hover tooltip so they never drift. */
+export const MEAS_SYMBOL: Record<NetMeasurement['kind'], string> = {
+  voltage: 'V',
+  diode: '▷|',
+  resistance: 'Ω',
+};
+
 export interface NetWorklistEntry {
   netName: string;
   mark: NetWorklistMark;

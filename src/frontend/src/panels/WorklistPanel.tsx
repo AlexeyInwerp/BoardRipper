@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
 import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
-import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS, MEAS_SYMBOL } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist, NetMeasurement } from '../store/worklist-store';
 import { NoteBody } from '../components/DiagnosisNotes';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -695,13 +695,10 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
 
 // ── Measurement strip for net rows ──────────────────────────────────────────
 
-// Display label for a measurement kind. Diode mode uses the multimeter diode
-// glyph (▷|) rather than the word — V and Ω are already symbols, so this keeps
-// the three chips symbol-only. (The clipboard format still spells out "Diode"
-// so the copied text stays human- and parser-readable.)
-function labelFor(k: NetMeasurement['kind']): string {
-  return k === 'voltage' ? 'V' : k === 'diode' ? '▷|' : 'Ω';
-}
+// Display label for a measurement kind — the shared symbol map (diode mode uses
+// the ▷| glyph, V/Ω are their own units). Keeps the chips symbol-only. (The
+// clipboard format still spells out "Diode" so copied text stays parser-readable.)
+const labelFor = (k: NetMeasurement['kind']): string => MEAS_SYMBOL[k];
 
 function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry: NetWorklistEntry }) {
   const m = entry.measurement;

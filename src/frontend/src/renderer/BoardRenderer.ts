@@ -25,7 +25,7 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
-import { worklistStore, MARK_COLOR_HEX, MARK_COLOR_CSS } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_HEX, MARK_COLOR_CSS, NET_MARK_COLOR_CSS, MEAS_SYMBOL } from '../store/worklist-store';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -330,8 +330,9 @@ export class BoardRenderer {
   private tooltipNetSpan: HTMLSpanElement | null = null;
   private tooltipDetailSpan: HTMLSpanElement | null = null;
   private tooltipMetaSpan: HTMLSpanElement | null = null;   // value / package (TVW + parsers that fill PartMeta)
-  private tooltipObdSpan: HTMLSpanElement | null = null;  // OBD diode/V/Ω line
+  private tooltipObdSpan: HTMLSpanElement | null = null;  // OBD diode/V/Ω line (separate pipeline)
   private tooltipWorklistSpan: HTMLSpanElement | null = null;  // worklist mark/note for the hovered part
+  private tooltipWorklistNetSpan: HTMLSpanElement | null = null;  // worklist mark/reading for the hovered net
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
   private boundHideTooltip: (() => void) | null = null;
@@ -1189,7 +1190,16 @@ export class BoardRenderer {
     this.tooltipWorklistSpan.style.fontSize = '11px';
     this.tooltipWorklistSpan.style.fontWeight = '600';
     this.tooltipWorklistSpan.style.marginTop = '2px';
-    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipObdSpan);
+    // Net-level worklist line. Sits directly above the OBD line and is fully
+    // independent of it — OBD is a separate pipeline that may be removed later,
+    // so the worklist reading must never depend on it.
+    this.tooltipWorklistNetSpan = document.createElement('span');
+    this.tooltipWorklistNetSpan.className = 'pnt-worklist-net';
+    this.tooltipWorklistNetSpan.style.display = 'none';
+    this.tooltipWorklistNetSpan.style.fontSize = '11px';
+    this.tooltipWorklistNetSpan.style.fontWeight = '600';
+    this.tooltipWorklistNetSpan.style.marginTop = '2px';
+    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipWorklistNetSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     this.boundHover = (e: PointerEvent) => this.handleHover(e);
@@ -4784,6 +4794,14 @@ export class BoardRenderer {
       this.tooltipWorklistSpan.style.color = wl ? wl.color : '';
       this.tooltipWorklistSpan.style.display = wl ? '' : 'none';
     }
+    // Net-level worklist line (mark / surge / recorded reading / note) — parallel
+    // to and independent of the OBD line above.
+    if (this.tooltipWorklistNetSpan) {
+      const wn = hasNet ? this.formatWorklistForNet(info.net) : null;
+      this.tooltipWorklistNetSpan.textContent = wn ? wn.text : '';
+      this.tooltipWorklistNetSpan.style.color = wn ? wn.color : '';
+      this.tooltipWorklistNetSpan.style.display = wn ? '' : 'none';
+    }
 
     el.style.display = 'block';
     el.style.left = '0';
@@ -4823,6 +4841,26 @@ export class BoardRenderer {
     return {
       text: '📋 ' + (bits.length ? bits.join(' · ') : 'on worklist'),
       color: e.mark !== 'none' ? MARK_COLOR_CSS[e.mark] : '#ffd479',
+    };
+  }
+
+  /** Worklist line for a hovered net: mark, surge flag, recorded reading (using
+   *  the shared measurement glyph, e.g. ▷| for diode), and note. Returns null
+   *  when the net isn't on the active worklist. Independent of the OBD line. */
+  private formatWorklistForNet(net: string): { text: string; color: string } | null {
+    const wl = worklistStore.activeWorklist;
+    if (!wl || !net) return null;
+    const e = wl.netEntries?.find(x => x.netName === net);
+    if (!e) return null;
+    const bits: string[] = [];
+    if (e.mark !== 'none') bits.push(e.mark.charAt(0).toUpperCase() + e.mark.slice(1));
+    if (e.surge) bits.push('⚡ surge');
+    const m = e.measurement;
+    if (m && m.status === 'recorded' && m.value) bits.push(`${MEAS_SYMBOL[m.kind]} ${m.value}`);
+    if (e.note?.trim()) bits.push(e.note.trim());
+    return {
+      text: '📋 ' + (bits.length ? bits.join(' · ') : 'on worklist'),
+      color: e.mark !== 'none' ? NET_MARK_COLOR_CSS[e.mark] : '#ffd479',
     };
   }
 
