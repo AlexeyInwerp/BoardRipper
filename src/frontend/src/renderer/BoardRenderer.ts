@@ -25,7 +25,7 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
-import { worklistStore, MARK_COLOR_HEX } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_HEX, MARK_COLOR_CSS } from '../store/worklist-store';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -331,6 +331,7 @@ export class BoardRenderer {
   private tooltipDetailSpan: HTMLSpanElement | null = null;
   private tooltipMetaSpan: HTMLSpanElement | null = null;   // value / package (TVW + parsers that fill PartMeta)
   private tooltipObdSpan: HTMLSpanElement | null = null;  // OBD diode/V/Ω line
+  private tooltipWorklistSpan: HTMLSpanElement | null = null;  // worklist mark/note for the hovered part
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
   private boundHideTooltip: (() => void) | null = null;
@@ -1180,7 +1181,15 @@ export class BoardRenderer {
     this.tooltipObdSpan.style.fontSize = '11px';
     this.tooltipObdSpan.style.color = '#9f9';
     this.tooltipObdSpan.style.marginTop = '2px';
-    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipMetaSpan, this.tooltipObdSpan);
+    // Worklist line: if the hovered part is pinned in the active worklist, show
+    // its mark + note (coloured to match the mark, like the panel).
+    this.tooltipWorklistSpan = document.createElement('span');
+    this.tooltipWorklistSpan.className = 'pnt-worklist';
+    this.tooltipWorklistSpan.style.display = 'none';
+    this.tooltipWorklistSpan.style.fontSize = '11px';
+    this.tooltipWorklistSpan.style.fontWeight = '600';
+    this.tooltipWorklistSpan.style.marginTop = '2px';
+    this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
     this.boundHover = (e: PointerEvent) => this.handleHover(e);
@@ -4766,6 +4775,15 @@ export class BoardRenderer {
       this.tooltipObdSpan.textContent = combined;
       this.tooltipObdSpan.style.display = combined ? '' : 'none';
     }
+    // Worklist enrichment: if the hovered part is on the active worklist, show
+    // its mark / water flag / note so the tech sees prior work without opening
+    // the panel. Part-level only (info.part); traces have no worklist entry.
+    if (this.tooltipWorklistSpan) {
+      const wl = this.formatWorklistForPart(info.part);
+      this.tooltipWorklistSpan.textContent = wl ? wl.text : '';
+      this.tooltipWorklistSpan.style.color = wl ? wl.color : '';
+      this.tooltipWorklistSpan.style.display = wl ? '' : 'none';
+    }
 
     el.style.display = 'block';
     el.style.left = '0';
@@ -4787,6 +4805,25 @@ export class BoardRenderer {
 
   private hideTooltip() {
     if (this.tooltipEl) this.tooltipEl.style.display = 'none';
+  }
+
+  /** Compose the worklist line for a hovered part. Returns null when the part
+   *  isn't on the active worklist (caller hides the span). A pinned part with
+   *  no mark/note/water still shows a minimal "📋 on worklist" so the user
+   *  knows it's tracked. */
+  private formatWorklistForPart(refdes: string): { text: string; color: string } | null {
+    const wl = worklistStore.activeWorklist;
+    if (!wl || !refdes) return null;
+    const e = wl.entries.find(x => x.refdes === refdes);
+    if (!e) return null;
+    const bits: string[] = [];
+    if (e.mark !== 'none') bits.push(e.mark.charAt(0).toUpperCase() + e.mark.slice(1));
+    if (e.waterdamage) bits.push('💧 water');
+    if (e.note?.trim()) bits.push(e.note.trim());
+    return {
+      text: '📋 ' + (bits.length ? bits.join(' · ') : 'on worklist'),
+      color: e.mark !== 'none' ? MARK_COLOR_CSS[e.mark] : '#ffd479',
+    };
   }
 
   /** Compose the OBD reading line for the currently-hovered net. Empty

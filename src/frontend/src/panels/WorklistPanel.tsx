@@ -695,8 +695,12 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
 
 // ── Measurement strip for net rows ──────────────────────────────────────────
 
+// Display label for a measurement kind. Diode mode uses the multimeter diode
+// glyph (▷|) rather than the word — V and Ω are already symbols, so this keeps
+// the three chips symbol-only. (The clipboard format still spells out "Diode"
+// so the copied text stays human- and parser-readable.)
 function labelFor(k: NetMeasurement['kind']): string {
-  return k === 'voltage' ? 'V' : k === 'diode' ? 'Diode' : 'Ω';
+  return k === 'voltage' ? 'V' : k === 'diode' ? '▷|' : 'Ω';
 }
 
 function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry: NetWorklistEntry }) {
@@ -726,7 +730,7 @@ function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry:
         <button key={k}
           data-testid={`net-meas-chip-${k}`}
           style={kind === k ? netMeasChipActiveStyle : netMeasChipStyle}
-          title={requested ? 'Agent requested this measurement' : `Record ${labelFor(k)}`}
+          title={requested ? 'Agent requested this measurement' : `Record ${k}`}
           onClick={() => setDraftKind(k)}>{labelFor(k)}</button>
       ))}
       {kind && (
