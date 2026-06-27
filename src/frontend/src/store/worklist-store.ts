@@ -2,6 +2,7 @@ import { boardStore } from './board-store';
 import { selectionSetStore } from './selection-set-store';
 import { log } from './log-store';
 import type { BoardData } from '../parsers/types';
+import { formatWorklist, parseWorklistText as parseClipboard, type ClipWorklist } from './worklist-clipboard';
 
 /** Persistent per-board "worklist" — named collections of parts a repair-tech
  *  is tracking (water damage candidates, ticket worklists, etc). Survives
@@ -77,6 +78,15 @@ export interface NetMeasurement {
 export const NET_MEASUREMENT_UNITS: Record<NetMeasurement['kind'], string> = {
   voltage: 'V',
   diode: 'V',
+  resistance: 'Ω',
+};
+
+/** Compact display symbol per measurement mode — V and Ω are their own units;
+ *  diode mode uses the multimeter diode glyph. Single source of truth shared by
+ *  the worklist panel chips and the canvas hover tooltip so they never drift. */
+export const MEAS_SYMBOL: Record<NetMeasurement['kind'], string> = {
+  voltage: 'V',
+  diode: '▷|',
   resistance: 'Ω',
 };
 
@@ -875,108 +885,40 @@ class WorklistStore {
     if (!cur) return '';
     const s = cur.worklistes.find(x => x.id === worklistId);
     if (!s) return '';
-    const lines: string[] = [`-[${s.name}]-`];
-    if (s.note && s.note.trim()) {
-      for (const noteLine of s.note.split('\n')) {
-        lines.push(`> ${noteLine}`);
-      }
-    }
-    for (const e of s.entries) {
-      let line = e.refdes;
-      if (e.mark !== 'none') line += `[${e.mark}]`;
-      if (e.waterdamage) line += `[water]`;
-      if (e.note.trim()) line += ` (${e.note.trim()})`;
-      lines.push(line);
-    }
-    return lines.join('\n');
+    return formatWorklist(WorklistStore.toClip(s));
   }
 
-  /** Try to parse text as a worklist. Designed to be safe against arbitrary
-   *  clipboard contents — refuses oversize input, requires a proper
-   *  `-[name]-` header, and only accepts refdes tokens that look like real
-   *  PCB designators (`[A-Z][A-Z0-9_\-./]{0,31}`). When the header matches
-   *  but none of the trailing non-empty lines parse as entries, returns
-   *  null — so a coincidental `-[…]-` line at the top of an arbitrary log
-   *  or source file doesn't get silently imported as a worklist of garbage.
-   *
-   *  Caps:
-   *    text          ≤ 256 KiB
-   *    lines scanned ≤ 2000
-   *    entries kept  ≤ 1000
-   *    name length   ≤ 200 chars
-   *    note length   ≤ 500 chars (per entry, post-trim) */
-  static parseWorklistText(text: string): {
-    name: string;
-    note: string;
-    entries: Array<{ refdes: string; mark: WorklistMark; note: string; waterdamage: boolean }>;
-  } | null {
-    if (typeof text !== 'string' || text.length === 0) return null;
-    if (text.length > 256 * 1024) return null;
-    const lines = text.split(/\r?\n/, 2001); // hard cap on line scan
-    let i = 0;
-    while (i < lines.length && lines[i].trim() === '') i++;
-    if (i >= lines.length) return null;
-    const headerMatch = lines[i].trim().match(/^-\[(.+)\]-$/);
-    if (!headerMatch) return null;
-    const name = headerMatch[1].trim().slice(0, 200);
-    // Reject names containing control chars — those don't survive clipboard
-    // roundtrips cleanly and usually signal binary garbage masquerading as
-    // text.
-    // eslint-disable-next-line no-control-regex
-    if (!name || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(name)) return null;
-    i++;
-    // Worklist-level ticket note: contiguous `> ` lines immediately after
-    // the header. Empty lines end the note block.
-    const noteLines: string[] = [];
-    while (i < lines.length) {
-      const raw = lines[i];
-      const m = raw.match(/^>\s?(.*)$/);
-      if (!m) break;
-      noteLines.push(m[1]);
-      i++;
-      if (noteLines.length > 200) break; // safety cap
-    }
-    const note = noteLines.join('\n').slice(0, 4000);
-    // Refdes shape: starts with uppercase letter, then up to 31 chars of
-    // [A-Z0-9_.\/-]. Filters out source-code identifiers like `function`,
-    // `import`, `const` that would otherwise match the lenient row regex
-    // and pollute the imported worklist with fake entries.
-    const refdesRe = /^[A-Z][A-Z0-9_\-./]{0,31}$/;
-    // Row shape: REFDES followed by 0+ `[token]` chunks (mark and/or water),
-    // optional ` (note)`. Tokens parsed below.
-    const rowRe = /^\s*(\S+?)((?:\[[a-z]+\])*)\s*(?:\(([^)]*)\))?\s*$/i;
-    const tokenRe = /\[([a-z]+)\]/gi;
-    const knownMarks = new Set<WorklistMark>(['none', 'replaced', 'reworked', 'cleaned']);
-    const entries: Array<{ refdes: string; mark: WorklistMark; note: string; waterdamage: boolean }> = [];
-    let trailingNonEmpty = 0;
-    for (; i < lines.length && entries.length < 1000; i++) {
-      const raw = lines[i].trim();
-      if (!raw) continue;
-      trailingNonEmpty++;
-      const m = raw.match(rowRe);
-      if (!m) continue;
-      const refdes = m[1];
-      if (!refdesRe.test(refdes)) continue;
-      let mark: WorklistMark = 'none';
-      let waterdamage = false;
-      const tokenBlock = m[2] ?? '';
-      tokenRe.lastIndex = 0;
-      let tm: RegExpExecArray | null;
-      while ((tm = tokenRe.exec(tokenBlock)) !== null) {
-        const tok = tm[1].toLowerCase();
-        if (tok === 'water') waterdamage = true;
-        else if (knownMarks.has(tok as WorklistMark)) mark = tok as WorklistMark;
-      }
-      const noteStr = (m[3] ?? '').trim().slice(0, 500);
-      entries.push({ refdes, mark, note: noteStr, waterdamage });
-    }
-    // False-positive guard: header matched but no entries parsed AND there
-    // was meaningful content after the header → likely a coincidence (e.g.
-    // a markdown line that happens to be `-[heading]-` followed by prose).
-    // Empty worklists (header + nothing, optionally with a ticket note) are
-    // allowed through.
-    if (entries.length === 0 && trailingNonEmpty >= 5) return null;
-    return { name, note, entries };
+  /** Map a live Worklist onto the browser-free clipboard shape. Only nets with
+   *  an actual recorded value carry a measurement (a still-pending agent
+   *  request has no reading to serialize). */
+  private static toClip(s: Worklist): ClipWorklist {
+    return {
+      name: s.name,
+      note: s.note ?? '',
+      parts: s.entries.map(e => ({
+        refdes: e.refdes,
+        mark: e.mark,
+        note: e.note,
+        waterdamage: !!e.waterdamage,
+      })),
+      nets: (s.netEntries ?? []).map(n => ({
+        netName: n.netName,
+        mark: n.mark,
+        surge: !!n.surge,
+        note: n.note,
+        measurement: n.measurement && n.measurement.value && n.measurement.value.trim()
+          ? { kind: n.measurement.kind, value: n.measurement.value.trim() }
+          : null,
+      })),
+    };
+  }
+
+  /** Parse clipboard text into a worklist. Safe against arbitrary input
+   *  (size-capped, requires a `-[name]-` header, refdes/net shape filtering,
+   *  rejects a coincidental header followed by prose). Delegates to the pure,
+   *  unit-tested `worklist-clipboard` module — see it for the format + caps. */
+  static parseWorklistText(text: string): ClipWorklist | null {
+    return parseClipboard(text);
   }
 
   /** Test helper: create a fresh worklist under a throwaway board container,
@@ -1018,7 +960,7 @@ class WorklistStore {
    *  panel and skip the canvas highlight, so the user sees what's missing
    *  without losing the marks/notes the sender attached. The name is
    *  reused as-is — duplicates are allowed (rename inline if you care). */
-  importFromText(text: string): { created: string; total: number; resolved: number } | null {
+  importFromText(text: string): { created: string; parts: number; nets: number; resolved: number } | null {
     const parsed = WorklistStore.parseWorklistText(text);
     if (!parsed) return null;
     const board = boardStore.board;
@@ -1036,7 +978,7 @@ class WorklistStore {
     };
     if (parsed.note) worklist.note = parsed.note;
     let resolved = 0;
-    for (const p of parsed.entries) {
+    for (const p of parsed.parts) {
       const idx = board ? board.parts.findIndex(x => x?.name === p.refdes) : -1;
       const entry: WorklistEntry = {
         partIndex: idx >= 0 ? idx : 0,
@@ -1049,10 +991,39 @@ class WorklistStore {
       else resolved++;
       worklist.entries.push(entry);
     }
+    for (const n of parsed.nets) {
+      // Case-insensitive resolve to the board's canonical net name; flag
+      // unresolved if the net isn't present (greyed-out, same as parts).
+      let canonical = n.netName;
+      let found = false;
+      if (board) {
+        if (board.nets.has(n.netName)) found = true;
+        else {
+          const upper = n.netName.toUpperCase();
+          for (const k of board.nets.keys()) {
+            if (k.toUpperCase() === upper) { canonical = k; found = true; break; }
+          }
+        }
+      }
+      const netEntry: NetWorklistEntry = { netName: canonical, mark: n.mark, note: n.note };
+      if (n.surge) netEntry.surge = true;
+      if (!found) netEntry.unresolved = true;
+      if (n.measurement) {
+        netEntry.measurement = {
+          kind: n.measurement.kind,
+          value: n.measurement.value,
+          unit: NET_MEASUREMENT_UNITS[n.measurement.kind],
+          status: 'recorded',
+          source: 'user',
+          at: now,
+        };
+      }
+      worklist.netEntries.push(netEntry);
+    }
     cur.worklistes.push(worklist);
     cur.activeWorklistId = id;
     this.save(cur);
-    return { created: parsed.name, total: parsed.entries.length, resolved };
+    return { created: parsed.name, parts: parsed.parts.length, nets: parsed.nets.length, resolved };
   }
 }
 

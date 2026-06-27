@@ -130,3 +130,23 @@ test('net row: record an Ω value inline; renders on the row, not a separate lis
   expect(recBox!.y).toBeGreaterThanOrEqual(rowBox!.y - 1);
   expect(recBox!.y + recBox!.height).toBeLessThanOrEqual(rowBox!.y + rowBox!.height + 1);
 });
+
+test('net row: diode chip shows the diode glyph, not the word "Diode"', async ({ page }) => {
+  test.skip(!haveBrd, 'sample brd missing');
+  await page.goto('/');
+  await page.getByTestId('file-input').setInputFiles(BRD);
+  await expect(page.locator('.dv-tab', { hasText: '.brd' }).first()).toBeVisible({ timeout: 15000 });
+  await page.waitForFunction(() => !!(window as any).__boardStore?.board, { timeout: 20000 });
+  await page.evaluate(() => {
+    // @ts-expect-error DEV global
+    window.__worklistStore.pushNetToActive('GND');
+  });
+  await page.locator('.board-sidebar-toggle').first().click();
+  await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
+  const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
+  await expect(netRow).toBeVisible();
+  const diodeChip = netRow.locator('[data-testid="net-meas-chip-diode"]');
+  await expect(diodeChip).toHaveText('▷|');
+  await expect(netRow.locator('[data-testid="net-meas-chip-voltage"]')).toHaveText('V');
+  await expect(netRow.locator('[data-testid="net-meas-chip-resistance"]')).toHaveText('Ω');
+});
