@@ -131,7 +131,7 @@ test('net row: record an Ω value inline; renders on the row, not a separate lis
   expect(recBox!.y + recBox!.height).toBeLessThanOrEqual(rowBox!.y + rowBox!.height + 1);
 });
 
-test('net row: diode chip shows the diode glyph, not the word "Diode"', async ({ page }) => {
+test('net row: diode chip shows the circuit-diode icon, not the word "Diode"', async ({ page }) => {
   test.skip(!haveBrd, 'sample brd missing');
   await page.goto('/');
   await page.getByTestId('file-input').setInputFiles(BRD);
@@ -146,7 +146,8 @@ test('net row: diode chip shows the diode glyph, not the word "Diode"', async ({
   const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
   await expect(netRow).toBeVisible();
   const diodeChip = netRow.locator('[data-testid="net-meas-chip-diode"]');
-  await expect(diodeChip).toHaveText('▷|');
+  await expect(diodeChip.locator('svg.tabler-icon-circuit-diode')).toBeVisible();
+  await expect(diodeChip).not.toContainText('Diode');
   await expect(netRow.locator('[data-testid="net-meas-chip-voltage"]')).toHaveText('V');
   await expect(netRow.locator('[data-testid="net-meas-chip-resistance"]')).toHaveText('Ω');
 });
