@@ -39,7 +39,7 @@ export interface ClipNet {
   mark: NetWorklistMark;
   surge: boolean;
   note: string;
-  measurement: ClipNetMeas | null;
+  measurements: ClipNetMeas[]; // 0–3 readings, one per kind, in V→diode→Ω order
 }
 export interface ClipWorklist {
   name: string;
@@ -76,7 +76,7 @@ export function formatWorklist(w: ClipWorklist): string {
       let s = `  ${n.netName}`;
       if (n.mark !== 'none') s += ` [${n.mark}]`;
       if (n.surge) s += ` surge`;
-      if (n.measurement) s += ` — ${MEAS_LABEL[n.measurement.kind]} ${n.measurement.value}`;
+      if (n.measurements.length) s += ` — ${n.measurements.map(m => `${MEAS_LABEL[m.kind]} ${m.value}`).join(', ')}`;
       if (n.note.trim()) s += ` (${n.note.trim()})`;
       lines.push(s);
     }
@@ -113,11 +113,14 @@ function parsePartRow(raw: string): ClipPart | null {
 
 function parseNetRow(raw: string): ClipNet | null {
   let [s, note] = splitNote(raw.trim());
-  // measurement: — <label> <value>
-  let measurement: ClipNetMeas | null = null;
-  const mm = s.match(/—\s*(Diode|V|Ω)\s+(.+?)\s*$/);
+  // measurements: — <label> <value>[, <label> <value>…]
+  const measurements: ClipNetMeas[] = [];
+  const mm = s.match(/—\s*(.+?)\s*$/);
   if (mm) {
-    measurement = { kind: LABEL_MEAS[mm[1]], value: mm[2].trim().slice(0, 64) };
+    for (const part of mm[1].split(',')) {
+      const pm = part.trim().match(/^(Diode|V|Ω)\s+(.+?)\s*$/);
+      if (pm) measurements.push({ kind: LABEL_MEAS[pm[1]], value: pm[2].trim().slice(0, 64) });
+    }
     s = s.slice(0, mm.index).trim();
   }
   // surge (bare word)
@@ -132,7 +135,7 @@ function parseNetRow(raw: string): ClipNet | null {
   s = s.replace(/\[[a-z]+\]/g, '').trim();
   const netName = s.split(/\s+/)[0] ?? '';
   if (!NETNAME_RE.test(netName)) return null;
-  return { netName, mark, surge, note, measurement };
+  return { netName, mark, surge, note, measurements };
 }
 
 export function parseWorklistText(text: string): ClipWorklist | null {
