@@ -276,7 +276,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       const s = worklistStore.aiSnapshot();
       const netEntries = (s?.netEntries ?? []) as Array<{
         netName: string;
-        measurement?: {
+        measurements?: Array<{
           kind: string;
           value?: string;
           unit?: string;
@@ -284,19 +284,20 @@ async function dispatch(op: string, p: any): Promise<any> {
           prompt?: string;
           expected?: string;
           source: string;
-        };
+        }>;
       }>;
-      let ms = netEntries
-        .filter((n) => n.measurement != null)
-        .map((n) => ({
+      // One row per (net, kind) — a net can carry up to three readings.
+      let ms = netEntries.flatMap((n) =>
+        (n.measurements ?? []).map((m) => ({
           netName: n.netName,
-          kind: n.measurement!.kind,
-          status: n.measurement!.status,
-          value: n.measurement!.value ?? null,
-          unit: n.measurement!.unit ?? null,
-          expected: n.measurement!.expected ?? null,
-          source: n.measurement!.source,
-        }));
+          kind: m.kind,
+          status: m.status,
+          value: m.value ?? null,
+          unit: m.unit ?? null,
+          expected: m.expected ?? null,
+          source: m.source,
+        })),
+      );
       const statusFilter = String(p.status ?? '');
       const sourceFilter = String(p.source ?? '');
       if (statusFilter) ms = ms.filter((m) => m.status === statusFilter);

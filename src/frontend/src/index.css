@@ -3211,6 +3211,12 @@ body {
   line-height: 1.3;
   margin-top: 2px;
 }
+.pin-net-tooltip .pnt-worklist svg,
+.pin-net-tooltip .pnt-worklist-net svg {
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+}
 
 /* Selection overlay (big centered component/net name) — sits just below
    the .board-status-indicators pill. Centered horizontally so it stays

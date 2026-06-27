@@ -32,7 +32,7 @@ test('migration: legacy net-targeted measurement moves onto the net row; part ta
       ],
     };
     ws.MIGRATE_PROBE(w);
-    return { net: w.netEntries[0].measurement, msgs: (w.messages ?? []).length, hasArray: 'measurements' in w };
+    return { net: w.netEntries[0].measurements?.voltage, msgs: (w.messages ?? []).length, hasArray: 'measurements' in w };
   });
   expect(out.net).toMatchObject({ kind: 'voltage', value: '12.4', unit: 'V', status: 'recorded', source: 'agent' });
   expect(out.msgs).toBe(1);        // D4200 (part) → relay message
@@ -49,14 +49,14 @@ test('store: user records a net measurement; agent requests one; clear removes i
     ws.setNetMeasurement(id, 'PP3V3', 'resistance', '47', 'Ω');
     ws.requestNetMeasurement('PPBUS', { kind: 'voltage', prompt: 'main rail?' });
     const snap = ws.aiSnapshot();
-    ws.clearNetMeasurement(id, 'PP3V3');
+    ws.clearNetMeasurement(id, 'PP3V3', 'resistance');
     const after = ws.aiSnapshot();
-    return { snap, afterHasPP3V3Meas: !!after.netEntries.find((n: any) => n.netName === 'PP3V3')?.measurement };
+    return { snap, afterHasPP3V3Meas: (after.netEntries.find((n: any) => n.netName === 'PP3V3')?.measurements?.length ?? 0) > 0 };
   });
   const pp3v3 = out.snap.netEntries.find((n: any) => n.netName === 'PP3V3');
   const ppbus = out.snap.netEntries.find((n: any) => n.netName === 'PPBUS');
-  expect(pp3v3.measurement).toMatchObject({ kind: 'resistance', value: '47', unit: 'Ω', status: 'recorded', source: 'user' });
-  expect(ppbus.measurement).toMatchObject({ kind: 'voltage', status: 'requested', source: 'agent' });
+  expect(pp3v3.measurements[0]).toMatchObject({ kind: 'resistance', value: '47', unit: 'Ω', status: 'recorded', source: 'user' });
+  expect(ppbus.measurements[0]).toMatchObject({ kind: 'voltage', status: 'requested', source: 'agent' });
   expect('measurements' in out.snap).toBe(false);
   expect(out.afterHasPP3V3Meas).toBe(false);
 });
@@ -71,7 +71,7 @@ test('bidirectional: user reading is visible via aiSnapshot with source user', a
     ws.setNetMeasurement(id, 'PP1V8', 'voltage', '1.79');
     const snap = ws.aiSnapshot();
     const n = snap.netEntries.find((x: any) => x.netName === 'PP1V8');
-    return n?.measurement?.source;
+    return n?.measurements?.[0]?.source;
   });
   expect(found).toBe('user');
 });
@@ -101,7 +101,7 @@ test('highlight: worklist outlines only when toggle on; button relabeled', async
   expect(on2).toBe(true);
 });
 
-test('net row: record an Ω value inline; renders on the row, not a separate list', async ({ page }) => {
+test('net row: records V + diode + Ω independently (three values coexist)', async ({ page }) => {
   test.skip(!haveBrd, 'sample brd missing');
   await page.goto('/');
   await page.getByTestId('file-input').setInputFiles(BRD);
@@ -119,16 +119,22 @@ test('net row: record an Ω value inline; renders on the row, not a separate lis
   await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
   const netRow = page.locator('[data-testid="worklist-net-row"]', { hasText: 'GND' }).first();
   await expect(netRow).toBeVisible();
-  await netRow.locator('[data-testid="net-meas-chip-resistance"]').click();
-  const input = netRow.locator('[data-testid="net-meas-value"]');
-  await input.fill('47');
-  await input.press('Enter');
-  // recorded text shows on the row
-  await expect(netRow.getByText('47', { exact: false })).toBeVisible();
-  const rowBox = await netRow.boundingBox();
-  const recBox = await netRow.locator('[data-testid="net-meas-recorded"]').boundingBox();
-  expect(recBox!.y).toBeGreaterThanOrEqual(rowBox!.y - 1);
-  expect(recBox!.y + recBox!.height).toBeLessThanOrEqual(rowBox!.y + rowBox!.height + 1);
+  // Fill all three slots independently — they coexist (no type switch).
+  const vIn = netRow.locator('[data-testid="net-meas-input-voltage"]');
+  const dIn = netRow.locator('[data-testid="net-meas-input-diode"]');
+  const rIn = netRow.locator('[data-testid="net-meas-input-resistance"]');
+  await vIn.fill('12.6'); await vIn.blur();
+  await dIn.fill('0.5'); await dIn.blur();
+  await rIn.fill('47'); await rIn.blur();
+  await expect(vIn).toHaveValue('12.6');
+  await expect(dIn).toHaveValue('0.5');
+  await expect(rIn).toHaveValue('47');
+  const stored = await page.evaluate(() => {
+    // @ts-expect-error DEV global
+    return window.__worklistStore.aiSnapshot().netEntries
+      .find((x: any) => x.netName === 'GND').measurements.map((m: any) => `${m.kind}:${m.value}`).sort();
+  });
+  expect(stored).toEqual(['diode:0.5', 'resistance:47', 'voltage:12.6']);
 });
 
 test('net row: diode chip shows the circuit-diode icon, not the word "Diode"', async ({ page }) => {

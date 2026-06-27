@@ -25,7 +25,8 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
-import { worklistStore, MARK_COLOR_HEX } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
+import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, PINNED_SVG, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -4785,14 +4786,14 @@ export class BoardRenderer {
     // the panel. Part-level only (info.part); traces have no worklist entry.
     if (this.tooltipWorklistSpan) {
       const wl = this.formatWorklistForPart(info.part);
-      this.tooltipWorklistSpan.textContent = wl ?? '';
+      this.tooltipWorklistSpan.innerHTML = wl ?? '';   // icons are trusted SVG; text is escaped
       this.tooltipWorklistSpan.style.display = wl ? '' : 'none';
     }
-    // Net-level worklist line (mark / surge / recorded reading / note) — parallel
+    // Net-level worklist line (mark / surge / recorded readings / note) — parallel
     // to and independent of the OBD line above.
     if (this.tooltipWorklistNetSpan) {
       const wn = hasNet ? this.formatWorklistForNet(info.net) : null;
-      this.tooltipWorklistNetSpan.textContent = wn ?? '';
+      this.tooltipWorklistNetSpan.innerHTML = wn ?? '';
       this.tooltipWorklistNetSpan.style.display = wn ? '' : 'none';
     }
 
@@ -4818,35 +4819,38 @@ export class BoardRenderer {
     if (this.tooltipEl) this.tooltipEl.style.display = 'none';
   }
 
-  /** Worklist line for a hovered part: "<worklist name>: <mark>, <note>" (or
-   *  just the name when pinned with no detail). Plain text — the .pnt-worklist
-   *  CSS styles it like the other tooltip lines. Null when not on the list. */
+  /** Worklist line (HTML) for a hovered part: mark icon (or a pinned icon),
+   *  water icon, and the note — no worklist name (only the active worklist is
+   *  ever shown). Note text is HTML-escaped; the icon SVGs are trusted. Null
+   *  when the part isn't on the active worklist. */
   private formatWorklistForPart(refdes: string): string | null {
     const wl = worklistStore.activeWorklist;
     if (!wl || !refdes) return null;
     const e = wl.entries.find(x => x.refdes === refdes);
     if (!e) return null;
-    const bits: string[] = [];
-    if (e.mark !== 'none') bits.push(e.mark);
-    if (e.waterdamage) bits.push('water');
-    if (e.note?.trim()) bits.push(e.note.trim());
-    return bits.length ? `${wl.name}: ${bits.join(', ')}` : wl.name;
+    const html: string[] = [e.mark !== 'none' ? PART_MARK_SVG[e.mark] : PINNED_SVG];
+    if (e.waterdamage) html.push(WATER_SVG);
+    if (e.note?.trim()) html.push(escapeHtml(e.note.trim()));
+    return html.join(' ');
   }
 
-  /** Worklist line for a hovered net: "<worklist name>: <mark>, <reading>, …".
-   *  Plain text; independent of the OBD line. Null when not on the list. */
+  /** Worklist line (HTML) for a hovered net: mark icon, surge icon, every
+   *  recorded reading (kind icon/letter + value, V→diode→Ω), and the note —
+   *  no worklist name. Independent of the OBD line. Null when not on the list. */
   private formatWorklistForNet(net: string): string | null {
     const wl = worklistStore.activeWorklist;
     if (!wl || !net) return null;
     const e = wl.netEntries?.find(x => x.netName === net);
     if (!e) return null;
-    const bits: string[] = [];
-    if (e.mark !== 'none') bits.push(e.mark);
-    if (e.surge) bits.push('surge');
-    const m = e.measurement;
-    if (m && m.status === 'recorded' && m.value) bits.push(m.unit ? `${m.value} ${m.unit}` : m.value);
-    if (e.note?.trim()) bits.push(e.note.trim());
-    return bits.length ? `${wl.name}: ${bits.join(', ')}` : wl.name;
+    const html: string[] = [e.mark !== 'none' ? NET_MARK_SVG[e.mark] : PINNED_SVG];
+    if (e.surge) html.push(SURGE_SVG);
+    const readings = MEAS_KINDS
+      .map(k => e.measurements?.[k])
+      .filter((m): m is NetMeasurement => !!m && m.status === 'recorded' && !!m.value)
+      .map(m => `${MEAS_SVG[m.kind] ?? escapeHtml(MEAS_LETTER[m.kind])} ${escapeHtml(m.value!)}`);
+    if (readings.length) html.push(readings.join(' · '));
+    if (e.note?.trim()) html.push(escapeHtml(e.note.trim()));
+    return html.join(' ');
   }
 
   /** Compose the OBD reading line for the currently-hovered net. Empty

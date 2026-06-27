@@ -17,10 +17,11 @@ const sample: ClipWorklist = {
     { refdes: 'U5000', mark: 'none', note: 'got hot', waterdamage: true },
   ],
   nets: [
-    { netName: 'PP3V3_S5', mark: 'short', surge: true, note: 'short to GND', measurement: { kind: 'diode', value: '0.000' } },
-    { netName: 'PPVIN', mark: 'solved', surge: false, note: '', measurement: { kind: 'voltage', value: '12.6' } },
-    { netName: 'PPBUS_G3H', mark: 'absent', surge: false, note: '', measurement: null },
-    { netName: 'PP1V8', mark: 'none', surge: false, note: '', measurement: { kind: 'resistance', value: '1.2k' } },
+    // multiple readings on one net (the point of the change)
+    { netName: 'PP3V3_S5', mark: 'short', surge: true, note: 'short to GND', measurements: [{ kind: 'voltage', value: '0.81' }, { kind: 'diode', value: '0.000' }] },
+    { netName: 'PPVIN', mark: 'solved', surge: false, note: '', measurements: [{ kind: 'voltage', value: '12.6' }] },
+    { netName: 'PPBUS_G3H', mark: 'absent', surge: false, note: '', measurements: [] },
+    { netName: 'PP1V8', mark: 'none', surge: false, note: '', measurements: [{ kind: 'resistance', value: '1.2k' }] },
   ],
 };
 
@@ -32,7 +33,7 @@ test('worklist format matches the sectioned layout', () => {
   expect(text).toContain('\n  C7100 [replaced]\n');
   expect(text).toContain('\n  U5000 [water] (got hot)\n');
   expect(text).toContain('\nNets\n');
-  expect(text).toContain('\n  PP3V3_S5 [short] surge — Diode 0.000 (short to GND)\n');
+  expect(text).toContain('\n  PP3V3_S5 [short] surge — V 0.81, Diode 0.000 (short to GND)\n');
   expect(text).toContain('\n  PPVIN [solved] — V 12.6\n');
   expect(text).toContain('\n  PPBUS_G3H [absent]\n');
   expect(text.endsWith('\n  PP1V8 — Ω 1.2k')).toBe(true);

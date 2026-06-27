@@ -81,6 +81,13 @@ export const NET_MEASUREMENT_UNITS: Record<NetMeasurement['kind'], string> = {
   resistance: 'Ω',
 };
 
+/** Fixed display/serialization order for the three measurement kinds. */
+export const MEAS_KINDS: readonly NetMeasurement['kind'][] = ['voltage', 'diode', 'resistance'];
+
+/** Up to three independent readings per net, one per kind (V + diode + Ω can
+ *  all be recorded at once — no switch-of-type). */
+export type NetMeasurements = Partial<Record<NetMeasurement['kind'], NetMeasurement>>;
+
 export interface NetWorklistEntry {
   netName: string;
   mark: NetWorklistMark;
@@ -90,8 +97,9 @@ export interface NetWorklistEntry {
   unresolved?: boolean;
   /** Lightning-bolt surge / over-current flag. Omitted when false. */
   surge?: boolean;
-  /** Measurement data for the net (agent feedback loop). */
-  measurement?: NetMeasurement;
+  /** Up to three readings (V / diode / Ω), keyed by kind, recorded
+   *  independently. Omitted when none. (Replaced the single `measurement`.) */
+  measurements?: NetMeasurements;
 }
 
 /** A measurement the agent asked the user to take, and the value they returned.
@@ -226,6 +234,15 @@ class WorklistStore {
    *  unresolved. Also back-fills `netEntries: []` for records persisted
    *  before nets-in-worklist was added. */
   private migrateLegacyMeasurements(w: Worklist, _board: BoardData | null): void {
+    // v0.31.x → multi: a persisted single `measurement` becomes a one-entry
+    // `measurements` map keyed by kind.
+    for (const n of w.netEntries) {
+      const single = (n as NetWorklistEntry & { measurement?: NetMeasurement }).measurement;
+      if (single) {
+        (n.measurements ??= {})[single.kind] = single;
+        delete (n as { measurement?: unknown }).measurement;
+      }
+    }
     const legacy = (w as Worklist & { measurements?: MeasurementEntry[] }).measurements;
     if (!Array.isArray(legacy) || legacy.length === 0) {
       delete (w as { measurements?: unknown }).measurements;
@@ -249,8 +266,9 @@ class WorklistStore {
           source: m.source ?? 'agent',
           at: m.answeredAt ?? m.requestedAt ?? Date.now(),
         };
-        // Keep the most recent if a net already got one.
-        if (!net.measurement || (net.measurement.at ?? 0) < next.at) net.measurement = next;
+        // Keep the most recent per kind if the net already got one.
+        const slot = (net.measurements ??= {});
+        if (!slot[kind] || (slot[kind]!.at ?? 0) < next.at) slot[kind] = next;
       } else {
         // Part/pin/unknown-net or unsupported kind → preserve as a relay message.
         (w.messages ??= []).push({
@@ -797,7 +815,7 @@ class WorklistStore {
     const s = cur.worklistes.find(x => x.id === worklistId); if (!s) return false;
     if (!s.netEntries.some(n => n.netName === netName)) this.pushNets(worklistId, [netName]);
     const e = s.netEntries.find(n => n.netName === netName); if (!e) return false;
-    e.measurement = { kind, value, unit: unit ?? NET_MEASUREMENT_UNITS[kind], status: 'recorded', source: 'user', at: Date.now() };
+    (e.measurements ??= {})[kind] = { kind, value, unit: unit ?? NET_MEASUREMENT_UNITS[kind], status: 'recorded', source: 'user', at: Date.now() };
     s.updatedAt = Date.now();
     this.save(cur); return true;
   }
@@ -808,28 +826,39 @@ class WorklistStore {
     const t = this.aiTarget(); if (!t) return false;
     if (!t.w.netEntries.some(n => n.netName === netName)) this.pushNets(t.w.id, [netName]);
     const e = t.w.netEntries.find(n => n.netName === netName); if (!e) return false;
-    e.measurement = { kind: opts.kind, status: 'requested', prompt: opts.prompt, expected: opts.expected,
+    (e.measurements ??= {})[opts.kind] = { kind: opts.kind, status: 'requested', prompt: opts.prompt, expected: opts.expected,
       unit: NET_MEASUREMENT_UNITS[opts.kind], source: 'agent', at: Date.now() };
     (t.w.aiOrigin ??= {})[`n:${netName}`] = true;
     t.w.updatedAt = Date.now();
     this.save(t.cur); return true;
   }
 
-  /** Fill a previously-requested net measurement with the user's reading. */
-  recordNetMeasurement(netName: string, value: string, unit?: string): boolean {
+  /** Fill a previously-requested net measurement with the user's reading. When
+   *  `kind` is omitted, targets the net's sole requested reading (the AI flow
+   *  requests one at a time); ambiguous if more than one is pending. */
+  recordNetMeasurement(netName: string, value: string, unit?: string, kind?: NetMeasurement['kind']): boolean {
     const t = this.aiTarget(); if (!t) return false;
-    const e = t.w.netEntries.find(n => n.netName === netName); if (!e || !e.measurement) return false;
-    e.measurement = { ...e.measurement, value, unit: unit ?? e.measurement.unit, status: 'recorded', at: Date.now() };
+    const e = t.w.netEntries.find(n => n.netName === netName); if (!e || !e.measurements) return false;
+    let k = kind;
+    if (!k) {
+      const pending = MEAS_KINDS.filter(kk => e.measurements![kk]?.status === 'requested');
+      if (pending.length !== 1) return false;
+      k = pending[0];
+    }
+    const prev = e.measurements[k]; if (!prev) return false;
+    e.measurements[k] = { ...prev, value, unit: unit ?? prev.unit, status: 'recorded', at: Date.now() };
     t.w.updatedAt = Date.now();
     this.save(t.cur); return true;
   }
 
-  /** Remove the measurement from a net entry. */
-  clearNetMeasurement(worklistId: string, netName: string): void {
+  /** Remove one reading (by kind) from a net entry; drops the map when empty. */
+  clearNetMeasurement(worklistId: string, netName: string, kind: NetMeasurement['kind']): void {
     const cur = this.current; if (!cur) return;
     const s = cur.worklistes.find(x => x.id === worklistId); if (!s) return;
-    const e = s.netEntries.find(n => n.netName === netName); if (!e || !e.measurement) return;
-    delete e.measurement; s.updatedAt = Date.now(); this.save(cur);
+    const e = s.netEntries.find(n => n.netName === netName); if (!e || !e.measurements) return;
+    delete e.measurements[kind];
+    if (Object.keys(e.measurements).length === 0) delete e.measurements;
+    s.updatedAt = Date.now(); this.save(cur);
   }
 
   /** Post a message into the relay transcript. User messages start unread so the
@@ -865,7 +894,7 @@ class WorklistStore {
       netEntries: w.netEntries.map(n => ({
         netName: n.netName, mark: n.mark, note: n.note, surge: !!n.surge, unresolved: !!n.unresolved,
         ai: !!w.aiOrigin?.[`n:${n.netName}`],
-        ...(n.measurement ? { measurement: n.measurement } : {}),
+        measurements: MEAS_KINDS.map(k => n.measurements?.[k]).filter(Boolean),
       })),
       messages: (w.messages ?? []).map(m => ({ role: m.role, text: m.text, at: m.at })),
     };
@@ -897,9 +926,12 @@ class WorklistStore {
         mark: n.mark,
         surge: !!n.surge,
         note: n.note,
-        measurement: n.measurement && n.measurement.value && n.measurement.value.trim()
-          ? { kind: n.measurement.kind, value: n.measurement.value.trim() }
-          : null,
+        // All recorded readings (kind order V→diode→Ω); pending requests with
+        // no value are skipped.
+        measurements: MEAS_KINDS
+          .map(k => n.measurements?.[k])
+          .filter((m): m is NetMeasurement => !!m && !!m.value && !!m.value.trim())
+          .map(m => ({ kind: m.kind, value: m.value!.trim() })),
       })),
     };
   }
@@ -999,11 +1031,11 @@ class WorklistStore {
       const netEntry: NetWorklistEntry = { netName: canonical, mark: n.mark, note: n.note };
       if (n.surge) netEntry.surge = true;
       if (!found) netEntry.unresolved = true;
-      if (n.measurement) {
-        netEntry.measurement = {
-          kind: n.measurement.kind,
-          value: n.measurement.value,
-          unit: NET_MEASUREMENT_UNITS[n.measurement.kind],
+      for (const m of n.measurements) {
+        (netEntry.measurements ??= {})[m.kind] = {
+          kind: m.kind,
+          value: m.value,
+          unit: NET_MEASUREMENT_UNITS[m.kind],
           status: 'recorded',
           source: 'user',
           at: now,

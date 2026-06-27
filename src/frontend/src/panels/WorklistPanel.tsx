@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
 import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink, IconCircuitDiode } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
-import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS, MEAS_KINDS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist, NetMeasurement } from '../store/worklist-store';
 import { NoteBody } from '../components/DiagnosisNotes';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -440,8 +440,9 @@ function AiPromptBox({ disabled }: { worklistId: string; disabled: boolean }) {
 const aiSectionStyle: React.CSSProperties = { borderTop: '1px solid var(--border, #333)', marginTop: 6, padding: '6px 8px', background: 'var(--panel-alt, rgba(120,140,255,0.05))' };
 const aiHeadingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#9af', marginBottom: 5 };
 const aiTranscriptStyle: React.CSSProperties = { maxHeight: 160, overflowY: 'auto', fontSize: 11, marginBottom: 4, padding: '2px 0' };
-const measureInputStyle: React.CSSProperties = { width: 60, fontSize: 11, padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
-const miniBtnStyle: React.CSSProperties = { fontSize: 11, padding: '2px 6px', borderRadius: 4, border: '1px solid #444', background: 'transparent', color: '#ccc', cursor: 'pointer' };
+const measureInputStyle: React.CSSProperties = { width: 46, fontSize: 11, padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
+const netMeasInputRequestedStyle: React.CSSProperties = { ...measureInputStyle, borderColor: 'var(--accent, #00e5ff)' };
+const netMeasSlotStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 3 };
 const aiPromptInputStyle: React.CSSProperties = { flex: 1, fontSize: 11, padding: '4px 6px', background: 'rgba(0,0,0,0.3)', border: '1px solid #444', borderRadius: 4, color: '#eee' };
 const aiSendBtnStyle: React.CSSProperties = { fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid #557', background: 'rgba(120,140,255,0.15)', color: '#bcf', cursor: 'pointer' };
 
@@ -703,46 +704,46 @@ function MeasLabel({ k }: { k: NetMeasurement['kind'] }) {
   return <>{k === 'voltage' ? 'V' : 'Ω'}</>;
 }
 
+// Three independent reading slots (V / diode / Ω) — all coexist, no type switch.
 function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry: NetWorklistEntry }) {
-  const m = entry.measurement;
-  const [draftKind, setDraftKind] = useState<NetMeasurement['kind'] | null>(m && m.status === 'requested' ? m.kind : null);
-  const [val, setVal] = useState(m?.value ?? '');
-  const kind = m?.kind ?? draftKind;
-  const commit = () => {
-    if (!kind || !val.trim()) return;
-    if (m && m.status === 'requested') worklistStore.recordNetMeasurement(entry.netName, val.trim());
-    else worklistStore.setNetMeasurement(worklistId, entry.netName, kind, val.trim());
-    setDraftKind(null);
-  };
-  if (m && m.status === 'recorded') {
-    return (
-      <div style={netMeasRecordedStyle} data-testid="net-meas-recorded">
-        <span><MeasLabel k={m.kind} />: <b>{m.value}</b> {m.unit}</span>
-        <button style={miniBtnStyle} title="Edit" onClick={() => { setDraftKind(m.kind); setVal(m.value ?? ''); worklistStore.clearNetMeasurement(worklistId, entry.netName); }}>✎</button>
-        <button style={miniBtnStyle} title="Clear" onClick={() => worklistStore.clearNetMeasurement(worklistId, entry.netName)}>✕</button>
-      </div>
-    );
-  }
-  const requested = m && m.status === 'requested';
   return (
     <div style={netMeasStripStyle} data-testid="net-meas-strip">
-      {(['voltage', 'diode', 'resistance'] as const).map(k => (
-        <button key={k}
-          data-testid={`net-meas-chip-${k}`}
-          style={kind === k ? netMeasChipActiveStyle : netMeasChipStyle}
-          title={requested ? 'Agent requested this measurement' : `Record ${k}`}
-          onClick={() => setDraftKind(k)}><MeasLabel k={k} /></button>
+      {MEAS_KINDS.map(k => (
+        <NetMeasSlot key={k} worklistId={worklistId} netName={entry.netName} kind={k} m={entry.measurements?.[k]} />
       ))}
-      {kind && (
-        <input data-testid="net-meas-value" value={val}
-          placeholder={requested ? (m?.expected ? `exp ${m.expected}` : 'value') : 'value'}
-          onChange={e => setVal(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && commit()}
-          onBlur={commit}
-          style={measureInputStyle} />
-      )}
-      {requested && m?.prompt && <span style={{ fontSize: 10, opacity: 0.7 }} title={m.prompt}>· {m.prompt.slice(0, 24)}</span>}
     </div>
+  );
+}
+
+function NetMeasSlot({ worklistId, netName, kind, m }: {
+  worklistId: string; netName: string; kind: NetMeasurement['kind']; m: NetMeasurement | undefined;
+}) {
+  const [val, setVal] = useState(m?.value ?? '');
+  // Reflect external changes (agent records a value, another tab edits, clear).
+  useEffect(() => { setVal(m?.value ?? ''); }, [m?.value]);
+  const requested = m?.status === 'requested';
+  const commit = () => {
+    const v = val.trim();
+    if (v) {
+      if (requested) worklistStore.recordNetMeasurement(netName, v, undefined, kind);
+      else worklistStore.setNetMeasurement(worklistId, netName, kind, v);
+    } else if (m) {
+      worklistStore.clearNetMeasurement(worklistId, netName, kind);
+    }
+  };
+  return (
+    <span style={netMeasSlotStyle} data-testid={`net-meas-slot-${kind}`}>
+      <span style={netMeasChipStyle} data-testid={`net-meas-chip-${kind}`}
+        title={requested ? `Agent requested ${kind}${m?.prompt ? `: ${m.prompt}` : ''}` : `Record ${kind}`}>
+        <MeasLabel k={kind} />
+      </span>
+      <input data-testid={`net-meas-input-${kind}`} value={val}
+        placeholder={requested && m?.expected ? `exp ${m.expected}` : ''}
+        onChange={e => setVal(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        onBlur={commit}
+        style={requested ? netMeasInputRequestedStyle : measureInputStyle} />
+    </span>
   );
 }
 
@@ -1061,26 +1062,12 @@ const netMeasStripStyle: React.CSSProperties = {
 };
 
 const netMeasChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
   fontSize: 10,
-  padding: '1px 6px',
+  padding: '1px 5px',
   borderRadius: 4,
   border: '1px solid var(--border, #444)',
   background: 'transparent',
   color: 'var(--muted, #888)',
-  cursor: 'pointer',
-};
-
-const netMeasChipActiveStyle: React.CSSProperties = {
-  ...netMeasChipStyle,
-  borderColor: 'var(--accent, #00e5ff)',
-  color: 'var(--accent, #00e5ff)',
-  background: 'var(--accent-dim, #1a2e33)',
-};
-
-const netMeasRecordedStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  padding: '3px 10px 5px 10px',
-  fontSize: 12,
 };
