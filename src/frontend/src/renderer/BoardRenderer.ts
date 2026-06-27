@@ -26,7 +26,7 @@ import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
-import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, PINNED_SVG, escapeHtml } from './worklist-tooltip-icons';
+import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, MULTIMETER_SVG, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -4828,10 +4828,11 @@ export class BoardRenderer {
     if (!wl || !refdes) return null;
     const e = wl.entries.find(x => x.refdes === refdes);
     if (!e) return null;
-    const html: string[] = [e.mark !== 'none' ? PART_MARK_SVG[e.mark] : PINNED_SVG];
+    const html: string[] = [];
+    if (e.mark !== 'none') html.push(PART_MARK_SVG[e.mark]);
     if (e.waterdamage) html.push(WATER_SVG);
     if (e.note?.trim()) html.push(escapeHtml(e.note.trim()));
-    return html.join(' ');
+    return html.length ? html.join(' ') : null;   // nothing to show → hide the line
   }
 
   /** Worklist line (HTML) for a hovered net: mark icon, surge icon, every
@@ -4842,15 +4843,16 @@ export class BoardRenderer {
     if (!wl || !net) return null;
     const e = wl.netEntries?.find(x => x.netName === net);
     if (!e) return null;
-    const html: string[] = [e.mark !== 'none' ? NET_MARK_SVG[e.mark] : PINNED_SVG];
+    const html: string[] = [];
+    if (e.mark !== 'none') html.push(NET_MARK_SVG[e.mark]);
     if (e.surge) html.push(SURGE_SVG);
     const readings = MEAS_KINDS
       .map(k => e.measurements?.[k])
       .filter((m): m is NetMeasurement => !!m && m.status === 'recorded' && !!m.value)
       .map(m => `${MEAS_SVG[m.kind] ?? escapeHtml(MEAS_LETTER[m.kind])} ${escapeHtml(m.value!)}`);
-    if (readings.length) html.push(readings.join(' · '));
+    if (readings.length) html.push(`${MULTIMETER_SVG} ${readings.join(' · ')}`);
     if (e.note?.trim()) html.push(escapeHtml(e.note.trim()));
-    return html.join(' ');
+    return html.length ? html.join(' ') : null;   // nothing to show → hide the line
   }
 
   /** Compose the OBD reading line for the currently-hovered net. Empty
