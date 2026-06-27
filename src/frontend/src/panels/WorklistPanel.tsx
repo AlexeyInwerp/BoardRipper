@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
-import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink } from '@tabler/icons-react';
+import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink, IconCircuitDiode } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
-import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS, MEAS_SYMBOL } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_CSS, NET_MARK_COLOR_CSS } from '../store/worklist-store';
 import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Worklist, NetMeasurement } from '../store/worklist-store';
 import { NoteBody } from '../components/DiagnosisNotes';
 import { selectionSetStore } from '../store/selection-set-store';
@@ -695,10 +695,13 @@ function WorklistNetRow({ worklistId, entry }: WorklistNetRowProps) {
 
 // ── Measurement strip for net rows ──────────────────────────────────────────
 
-// Display label for a measurement kind — the shared symbol map (diode mode uses
-// the ▷| glyph, V/Ω are their own units). Keeps the chips symbol-only. (The
-// clipboard format still spells out "Diode" so copied text stays parser-readable.)
-const labelFor = (k: NetMeasurement['kind']): string => MEAS_SYMBOL[k];
+// Display label for a measurement kind: V / Ω are their own unit symbols; diode
+// mode uses the Tabler circuit-diode icon. (The clipboard format still spells
+// out "Diode" so copied text stays parser-readable.)
+function MeasLabel({ k }: { k: NetMeasurement['kind'] }) {
+  if (k === 'diode') return <IconCircuitDiode size={15} stroke={2} style={{ verticalAlign: 'middle' }} />;
+  return <>{k === 'voltage' ? 'V' : 'Ω'}</>;
+}
 
 function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry: NetWorklistEntry }) {
   const m = entry.measurement;
@@ -714,7 +717,7 @@ function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry:
   if (m && m.status === 'recorded') {
     return (
       <div style={netMeasRecordedStyle} data-testid="net-meas-recorded">
-        <span>{labelFor(m.kind)}: <b>{m.value}</b> {m.unit}</span>
+        <span><MeasLabel k={m.kind} />: <b>{m.value}</b> {m.unit}</span>
         <button style={miniBtnStyle} title="Edit" onClick={() => { setDraftKind(m.kind); setVal(m.value ?? ''); worklistStore.clearNetMeasurement(worklistId, entry.netName); }}>✎</button>
         <button style={miniBtnStyle} title="Clear" onClick={() => worklistStore.clearNetMeasurement(worklistId, entry.netName)}>✕</button>
       </div>
@@ -728,7 +731,7 @@ function NetMeasurementStrip({ worklistId, entry }: { worklistId: string; entry:
           data-testid={`net-meas-chip-${k}`}
           style={kind === k ? netMeasChipActiveStyle : netMeasChipStyle}
           title={requested ? 'Agent requested this measurement' : `Record ${k}`}
-          onClick={() => setDraftKind(k)}>{labelFor(k)}</button>
+          onClick={() => setDraftKind(k)}><MeasLabel k={k} /></button>
       ))}
       {kind && (
         <input data-testid="net-meas-value" value={val}

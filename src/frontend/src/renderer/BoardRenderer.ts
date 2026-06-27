@@ -25,7 +25,7 @@ import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
-import { worklistStore, MARK_COLOR_HEX, MARK_COLOR_CSS, NET_MARK_COLOR_CSS, MEAS_SYMBOL } from '../store/worklist-store';
+import { worklistStore, MARK_COLOR_HEX } from '../store/worklist-store';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -1184,21 +1184,16 @@ export class BoardRenderer {
     this.tooltipObdSpan.style.marginTop = '2px';
     // Worklist line: if the hovered part is pinned in the active worklist, show
     // its mark + note (coloured to match the mark, like the panel).
+    // Worklist lines (part + net). Plain text, styled like the other tooltip
+    // lines via the .pnt-worklist* CSS — no colour/weight/emoji.
     this.tooltipWorklistSpan = document.createElement('span');
     this.tooltipWorklistSpan.className = 'pnt-worklist';
     this.tooltipWorklistSpan.style.display = 'none';
-    this.tooltipWorklistSpan.style.fontSize = '11px';
-    this.tooltipWorklistSpan.style.fontWeight = '600';
-    this.tooltipWorklistSpan.style.marginTop = '2px';
-    // Net-level worklist line. Sits directly above the OBD line and is fully
-    // independent of it — OBD is a separate pipeline that may be removed later,
-    // so the worklist reading must never depend on it.
+    // Net-level line sits directly above the OBD line and is fully independent
+    // of it — OBD is a separate pipeline that may be removed later.
     this.tooltipWorklistNetSpan = document.createElement('span');
     this.tooltipWorklistNetSpan.className = 'pnt-worklist-net';
     this.tooltipWorklistNetSpan.style.display = 'none';
-    this.tooltipWorklistNetSpan.style.fontSize = '11px';
-    this.tooltipWorklistNetSpan.style.fontWeight = '600';
-    this.tooltipWorklistNetSpan.style.marginTop = '2px';
     this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipWorklistNetSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
@@ -4790,16 +4785,14 @@ export class BoardRenderer {
     // the panel. Part-level only (info.part); traces have no worklist entry.
     if (this.tooltipWorklistSpan) {
       const wl = this.formatWorklistForPart(info.part);
-      this.tooltipWorklistSpan.textContent = wl ? wl.text : '';
-      this.tooltipWorklistSpan.style.color = wl ? wl.color : '';
+      this.tooltipWorklistSpan.textContent = wl ?? '';
       this.tooltipWorklistSpan.style.display = wl ? '' : 'none';
     }
     // Net-level worklist line (mark / surge / recorded reading / note) — parallel
     // to and independent of the OBD line above.
     if (this.tooltipWorklistNetSpan) {
       const wn = hasNet ? this.formatWorklistForNet(info.net) : null;
-      this.tooltipWorklistNetSpan.textContent = wn ? wn.text : '';
-      this.tooltipWorklistNetSpan.style.color = wn ? wn.color : '';
+      this.tooltipWorklistNetSpan.textContent = wn ?? '';
       this.tooltipWorklistNetSpan.style.display = wn ? '' : 'none';
     }
 
@@ -4825,43 +4818,35 @@ export class BoardRenderer {
     if (this.tooltipEl) this.tooltipEl.style.display = 'none';
   }
 
-  /** Compose the worklist line for a hovered part. Returns null when the part
-   *  isn't on the active worklist (caller hides the span). A pinned part with
-   *  no mark/note/water still shows a minimal "📋 on worklist" so the user
-   *  knows it's tracked. */
-  private formatWorklistForPart(refdes: string): { text: string; color: string } | null {
+  /** Worklist line for a hovered part: "<worklist name>: <mark>, <note>" (or
+   *  just the name when pinned with no detail). Plain text — the .pnt-worklist
+   *  CSS styles it like the other tooltip lines. Null when not on the list. */
+  private formatWorklistForPart(refdes: string): string | null {
     const wl = worklistStore.activeWorklist;
     if (!wl || !refdes) return null;
     const e = wl.entries.find(x => x.refdes === refdes);
     if (!e) return null;
     const bits: string[] = [];
-    if (e.mark !== 'none') bits.push(e.mark.charAt(0).toUpperCase() + e.mark.slice(1));
-    if (e.waterdamage) bits.push('💧 water');
+    if (e.mark !== 'none') bits.push(e.mark);
+    if (e.waterdamage) bits.push('water');
     if (e.note?.trim()) bits.push(e.note.trim());
-    return {
-      text: '📋 ' + (bits.length ? bits.join(' · ') : 'on worklist'),
-      color: e.mark !== 'none' ? MARK_COLOR_CSS[e.mark] : '#ffd479',
-    };
+    return bits.length ? `${wl.name}: ${bits.join(', ')}` : wl.name;
   }
 
-  /** Worklist line for a hovered net: mark, surge flag, recorded reading (using
-   *  the shared measurement glyph, e.g. ▷| for diode), and note. Returns null
-   *  when the net isn't on the active worklist. Independent of the OBD line. */
-  private formatWorklistForNet(net: string): { text: string; color: string } | null {
+  /** Worklist line for a hovered net: "<worklist name>: <mark>, <reading>, …".
+   *  Plain text; independent of the OBD line. Null when not on the list. */
+  private formatWorklistForNet(net: string): string | null {
     const wl = worklistStore.activeWorklist;
     if (!wl || !net) return null;
     const e = wl.netEntries?.find(x => x.netName === net);
     if (!e) return null;
     const bits: string[] = [];
-    if (e.mark !== 'none') bits.push(e.mark.charAt(0).toUpperCase() + e.mark.slice(1));
-    if (e.surge) bits.push('⚡ surge');
+    if (e.mark !== 'none') bits.push(e.mark);
+    if (e.surge) bits.push('surge');
     const m = e.measurement;
-    if (m && m.status === 'recorded' && m.value) bits.push(`${MEAS_SYMBOL[m.kind]} ${m.value}`);
+    if (m && m.status === 'recorded' && m.value) bits.push(m.unit ? `${m.value} ${m.unit}` : m.value);
     if (e.note?.trim()) bits.push(e.note.trim());
-    return {
-      text: '📋 ' + (bits.length ? bits.join(' · ') : 'on worklist'),
-      color: e.mark !== 'none' ? NET_MARK_COLOR_CSS[e.mark] : '#ffd479',
-    };
+    return bits.length ? `${wl.name}: ${bits.join(', ')}` : wl.name;
   }
 
   /** Compose the OBD reading line for the currently-hovered net. Empty
