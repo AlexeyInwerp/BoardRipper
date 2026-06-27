@@ -12,14 +12,10 @@ import {
   IconDroplet, IconBolt, IconCircuitDiode,
 } from '@tabler/icons-react';
 import { IconSolderingIron } from '../icons/IconSolderingIron';
-import { IconMultimeter } from '../icons/IconMultimeter';
 import type { WorklistMark, NetWorklistMark, NetMeasurement } from '../store/worklist-store';
 
 type IconC = ComponentType<{ size?: number; stroke?: number }>;
 const svg = (C: IconC): string => renderToStaticMarkup(createElement(C, { size: 13, stroke: 2 }));
-
-/** Prefixes the net's recorded readings so they read as meter measurements. */
-export const MULTIMETER_SVG = svg(IconMultimeter as IconC);
 
 export const PART_MARK_SVG: Record<Exclude<WorklistMark, 'none'>, string> = {
   replaced: svg(IconReplace),

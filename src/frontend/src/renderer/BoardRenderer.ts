@@ -26,7 +26,7 @@ import { contextMenuStore } from '../store/context-menu-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
-import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, MULTIMETER_SVG, escapeHtml } from './worklist-tooltip-icons';
+import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -4850,7 +4850,7 @@ export class BoardRenderer {
       .map(k => e.measurements?.[k])
       .filter((m): m is NetMeasurement => !!m && m.status === 'recorded' && !!m.value)
       .map(m => `${MEAS_SVG[m.kind] ?? escapeHtml(MEAS_LETTER[m.kind])} ${escapeHtml(m.value!)}`);
-    if (readings.length) html.push(`${MULTIMETER_SVG} ${readings.join(' · ')}`);
+    if (readings.length) html.push(readings.join(' · '));
     if (e.note?.trim()) html.push(escapeHtml(e.note.trim()));
     return html.length ? html.join(' ') : null;   // nothing to show → hide the line
   }
