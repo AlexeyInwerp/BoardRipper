@@ -1,5 +1,50 @@
 # BoardRipper changelog
 
+## v0.31.28 — 2026-06-30
+
+Board↔PDF links now persist across reloads, the worklist records full multimeter
+readings per net, two reported bugs (#20, #21) are fixed, and the tab/tooltip
+chrome got a round of polish.
+
+### Features
+
+- **Board↔PDF links persist.** Linking a board and a PDF from the tab `∞` now
+  writes a durable backend binding — a single row no matter which side you link
+  from — so the link survives a reload + reopen, and auto-open / auto-switch keep
+  working. Unlinking *demotes* the link (it won't auto-open or get resurrected)
+  instead of destroying it. Dropped files are ingested into the library with a
+  real id at drop time, so they bind and restore just like library files.
+  (`9b18933`, `bc2855a`, `7ed1c8a`)
+- **Worklist records all three measurements per net.** A net can hold a voltage,
+  a diode drop, *and* a resistance reading at once — three independent slots
+  instead of one value you had to switch the type of. Copying a worklist carries
+  the nets and their readings as round-trippable text. (`c869aaa`, `62ea78d`,
+  `8d06ceb`)
+- **Worklist info in the board hover tooltip.** Hovering a part or net that's on
+  the active worklist shows its mark + note inline; net readings render with the
+  diode glyph. (`e459913`, `69bee13`)
+
+### Fixes
+
+- **#21 — self-update no longer drops Docker networks.** The in-app update only
+  preserved image/env/mounts/ports; it now also re-attaches the container's
+  user-defined networks (with aliases), Compose labels, and memory/CPU limits —
+  fixing the reverse-proxy **502** that hit networked deployments after updating.
+  (`cd95a7d`)
+- **#20 — PDF pan/zoom is kept when switching PDF tabs.** Switching away and back
+  no longer snaps the view to the top-left. (`8b8dc67`)
+- **Session restore reopens PDFs.** A restored session reopened boards but loaded
+  PDFs invisibly (no panel); they now reopen, and the "reopened N" toast counts
+  what actually opened. (`f2cf83c`)
+- **Link indicator + tab polish.** The `∞` / `○○` glyph is now proper link /
+  link-off icons (identical size on Chrome and Safari). Long file names in tabs
+  are truncated with a hover tooltip. Tab colours no longer flip when a group
+  loses focus, so board↔PDF switching is visually stable. (`bc2855a`, `f2cf83c`,
+  `af1731b`, `0f7609d`)
+- **Clearer menu wording.** Right-click "Donor PDFs" → **"Search in PDF files"**,
+  and the PDF `∞` "auto-open boardview" toggle is renamed **"auto switch
+  boardview"**. (`f2cf83c`, `bc2855a`)
+
 ## v0.31.27 — 2026-06-25
 
 Reload no longer loses your work, and the update dropdown now shows what's new
