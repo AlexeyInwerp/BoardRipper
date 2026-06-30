@@ -109,6 +109,7 @@ export async function restoreSession(session: SavedSession): Promise<void> {
         if (dbFile && dbFile.file_type === 'board') {
           const file = await databankStore.fetchFileBuffer(dbFile);
           await boardStore.loadFile(file);
+          boardStore.setTabFileId(e.fileName, dbFile.id);   // tag for binding rehydration below
         } else if (!(await boardStore.loadFromCache(e.fileName, e.fileSize, e.fileLastModified))) {
           unavailable.push(e.fileName);
           continue;
@@ -131,6 +132,25 @@ export async function restoreSession(session: SavedSession): Promise<void> {
     } catch (err) {
       log.ui.warn(`session restore: ${e.fileName} failed`, err);
       unavailable.push(e.fileName);
+    }
+  }
+
+  // Re-establish the runtime board↔PDF link from the durable backend bindings, so
+  // a reloaded board shows its ∞ link (and auto-switch works) without re-opening
+  // it from the Library. Only auto_open rows + PDFs that actually reopened are
+  // linked (a ∞-unlink demotes auto_open=false, so it stays unlinked).
+  for (const tab of boardStore.tabs) {
+    if (tab.fileId == null) continue;
+    try {
+      for (const b of await databankStore.getBindingsFor(tab.fileId)) {
+        if (!b.auto_open) continue;
+        const pdf = databankStore.fileById(b.pdf_file_id);
+        if (pdf && pdfStore.loadedFileNames.includes(pdf.filename)) {
+          boardStore.addPdfBinding(tab.id, pdf.filename);
+        }
+      }
+    } catch (err) {
+      log.ui.warn(`session restore: binding rehydrate for ${tab.fileName} failed`, err);
     }
   }
 
