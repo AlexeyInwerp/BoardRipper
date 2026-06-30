@@ -1578,6 +1578,35 @@ class DatabankStore extends Emitter {
     await this.apiFetch<{ status: string }>(`/api/databank/bindings/${id}`, { method: 'DELETE' });
   }
 
+  /** Promote/demote a runtime board↔PDF link to the durable backend `bindings`
+   *  table. Always canonical (board, pdf) order, so the same link created from
+   *  the board tab ∞ or the PDF tab ∞ resolves to the SAME row — never doubled
+   *  (UNIQUE(board_file_id, pdf_file_id) is the backstop). Resolves both sides
+   *  by filename against the databank; returns 'local-only' when a side isn't
+   *  in the databank yet (e.g. a drop still being ingested) so the caller can
+   *  keep the in-memory link for the session. */
+  async setBoardPdfBinding(
+    boardFileName: string,
+    pdfFileName: string,
+    linked: boolean,
+  ): Promise<'persisted' | 'local-only' | 'noop'> {
+    const board = this.fileByFilename(boardFileName);
+    const pdf = this.fileByFilename(pdfFileName);
+    if (!board || board.file_type !== 'board' || !pdf || pdf.file_type !== 'pdf') return 'local-only';
+    const detail = await this.fetchFileDetail(board.id);
+    const existing = detail?.bindings.find(b => b.pdf_file_id === pdf.id);
+    if (linked) {
+      if (existing) return 'noop';
+      await this.createBinding(board.id, pdf.id, 'schematic', true);
+    } else {
+      if (!existing) return 'noop';
+      await this.deleteBinding(existing.id);
+    }
+    // Refresh the open file-detail view (Library) if one is showing.
+    if (this.selectedFileId) void this.fetchFileDetail(this.selectedFileId);
+    return 'persisted';
+  }
+
   // --- Previews ---
 
   /** Generate and upload a PDF preview thumbnail for a file */

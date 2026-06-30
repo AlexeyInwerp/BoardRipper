@@ -20,8 +20,10 @@ type ScanRootFunc func() string
 
 // IndexFileFunc indexes a single file (given as a scan-root-relative,
 // forward-slash path) into the databank so it appears in the library
-// without a full rescan. May be nil (indexing is then skipped).
-type IndexFileFunc func(relPath string) error
+// without a full rescan, and returns the resulting file record (so the
+// upload response can hand the caller a real databank id). May be nil
+// (indexing is then skipped).
+type IndexFileFunc func(relPath string) (*databank.FileRecord, error)
 
 // ExtractMetadataFunc runs the resolver / pattern-matcher used by the
 // scanner so the upload handler can pre-route the file into a brand /
@@ -199,19 +201,26 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := filepath.ToSlash(filepath.Join(incomingSubdir, subDir, safeName))
+	resp := map[string]any{
+		"name":   safeName,
+		"path":   relPath,
+		"status": "ok",
+	}
 	if h.indexFn != nil {
-		if err := h.indexFn(relPath); err != nil {
+		// Return the ingested databank record so the client can tag the open
+		// board/PDF with a real file id immediately (no name+size fallback).
+		rec, err := h.indexFn(relPath)
+		if err != nil {
 			// File is saved; indexing failure is non-fatal (next scan picks it up).
 			log.Printf("Upload: saved %s but indexing failed: %v", relPath, err)
+		} else if rec != nil {
+			resp["id"] = rec.ID
+			resp["file_type"] = rec.FileType
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"name":   safeName,
-		"path":   relPath,
-		"status": "ok",
-	})
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {

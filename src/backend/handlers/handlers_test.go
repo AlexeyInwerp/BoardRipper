@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"boardripper/databank"
 )
 
 func newTestFileHandler(t *testing.T) *FileHandler {
@@ -37,9 +40,9 @@ func multipartUpload(t *testing.T, filename string, content []byte) *http.Reques
 func TestUpload_SavesBoardToIncomingAndIndexes(t *testing.T) {
 	root := t.TempDir()
 	var indexed []string
-	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string) error {
+	h := NewFileHandler(root, func() string { return root }, nil, func(relPath string) (*databank.FileRecord, error) {
 		indexed = append(indexed, relPath)
-		return nil
+		return &databank.FileRecord{ID: 99, FileType: "board", Path: relPath}, nil
 	})
 
 	req := multipartUpload(t, "820-02016.bvr", []byte("BVRAW_FORMAT_3\n"))
@@ -55,6 +58,18 @@ func TestUpload_SavesBoardToIncomingAndIndexes(t *testing.T) {
 	}
 	if len(indexed) != 1 || indexed[0] != "incoming/820-02016.bvr" {
 		t.Fatalf("expected index call with incoming/820-02016.bvr, got %v", indexed)
+	}
+	// The upload response carries the ingested databank id + type so the client
+	// can tag the open file without a name+size fallback.
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if resp["id"] != float64(99) {
+		t.Fatalf("expected id 99 in upload response, got %v", resp["id"])
+	}
+	if resp["file_type"] != "board" {
+		t.Fatalf("expected file_type board, got %v", resp["file_type"])
 	}
 }
 

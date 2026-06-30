@@ -549,6 +549,12 @@ class PdfStore extends Emitter {
     }));
   }
 
+  /** Tag an open PDF doc with its databank file id (after a drop is ingested). */
+  setDocFileId(fileName: string, fileId: number): void {
+    const d = this._documents.get(fileName);
+    if (d && d.fileId !== fileId) { d.fileId = fileId; this.notify(); }
+  }
+
   /** Per-document accessors — allow panels to render without being the "active" doc */
   getDocPageCount(fileName: string): number { return this._documents.get(fileName)?.pageCount ?? 0; }
   getDocCurrentPage(fileName: string): number { return this._documents.get(fileName)?.currentPage ?? 1; }

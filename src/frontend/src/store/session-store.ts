@@ -29,6 +29,7 @@ function snapshot(): SessionEntry[] {
     fileName: b.fileName,
     fileSize: b.fileSize,
     fileLastModified: b.fileLastModified,
+    fileId: b.fileId,
     active: b.active || undefined,
   }));
   const pdfs: SessionEntry[] = pdfStore.openPdfEntries().map(p => ({
