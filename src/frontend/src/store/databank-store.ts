@@ -1220,6 +1220,14 @@ class DatabankStore extends Emitter {
     return out;
   }
 
+  /** Get a board's binding rows (incl. auto_open) by its file id — non-mutating
+   *  (does NOT touch the selected-file detail pane). Used by session restore to
+   *  re-establish the runtime board↔PDF link from the durable backend rows. */
+  async getBindingsFor(boardFileId: number): Promise<DatabankBinding[]> {
+    const detail = await this.apiFetch<FileDetail>(`/api/databank/files/${boardFileId}`);
+    return detail?.bindings ?? [];
+  }
+
   private _scanPollTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── PDF index polling ───────────────────────────────────────────────
