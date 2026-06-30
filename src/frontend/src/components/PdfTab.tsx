@@ -81,12 +81,13 @@ export function PdfTab(props: IDockviewPanelHeaderProps<{ pdfFileName?: string }
   const handleBindBoard = useCallback((boardFileName: string | null) => {
     const bound = tabs.filter(t => t.pdfFileNames.includes(pdfFileName));
     for (const tab of bound) {
+      if (tab.fileName === boardFileName) continue;   // keep the board being (re)picked — don't churn its row
       boardStore.removePdfBinding(tab.id, pdfFileName);
       void databankStore.setBoardPdfBinding(tab.fileName, pdfFileName, false).catch(() => {});
     }
     if (boardFileName !== null) {
       const target = tabs.find(t => t.fileName === boardFileName);
-      if (target) {
+      if (target && !target.pdfFileNames.includes(pdfFileName)) {   // only if not already bound
         boardStore.addPdfBinding(target.id, pdfFileName);
         void databankStore.setBoardPdfBinding(target.fileName, pdfFileName, true).catch(() => {});
       }
@@ -128,7 +129,7 @@ export function PdfTab(props: IDockviewPanelHeaderProps<{ pdfFileName?: string }
               ? `Board: ${boundBoardTabs.map(t => t.fileName).join(', ')} — click to manage`
               : 'Link this PDF to a boardview'}
             headerItem={boardTabNames.length > 0 ? {
-              label: 'auto-open boardview',
+              label: 'auto switch boardview',
               checked: autoSwitchLinked,
               onChange: setAutoSwitchLinked,
             } : undefined}

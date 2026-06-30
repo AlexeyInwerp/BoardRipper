@@ -352,11 +352,10 @@ body {
   background: none;
   border: none;
   cursor: pointer;
-  /* Fixed px + inherited font: a <button>'s `em` is relative to the UA button
-     default font, which differs between Safari and Chrome — making the ∞ / ○○
-     glyph render at the wrong size in Safari. */
-  font-family: inherit;
-  font-size: 14px;
+  /* SVG link/link-off icons (sized by the component) — no font-size glyph, so
+     it renders identically across Chrome/Safari. */
+  display: inline-flex;
+  align-items: center;
   line-height: 1;
   padding: 0 3px;
   color: var(--text-secondary);
@@ -4067,6 +4066,11 @@ body {
   --dv-tab-divider-color: var(--border);
   --dv-activegroup-visiblepanel-tab-color: var(--text-primary);
   --dv-activegroup-hiddenpanel-tab-color: var(--text-secondary);
+  /* When a group is INACTIVE (e.g. you're on the PDF, so the board group lost
+     focus) dockview leaves these unset → its default low-contrast text, which
+     reads as "weird / not clear". Define them so the board tab stays legible. */
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-secondary);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-secondary);
   --dv-separator-border: var(--border);
   --dv-group-view-background-color: var(--bg-primary);
 }
