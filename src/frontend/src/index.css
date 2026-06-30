@@ -4059,21 +4059,19 @@ body {
   --dv-background-color: var(--bg-primary);
   --dv-paneview-header-border-color: var(--border);
   --dv-tabs-and-actions-container-background-color: var(--bg-tertiary);
-  /* Selection bg is CONSISTENT across focus: the selected tab keeps --bg-secondary
-     whether or not its group is focused, so switching board↔PDF doesn't make the
-     still-selected tab blend into the container (the old "inverse selection" — the
-     inactive group's selected tab was --bg-tertiary = container, while its UNselected
-     tabs were the darker --bg-primary, so they looked more selected than the
-     selection). Group focus is conveyed by the tab TEXT colour only (primary vs
-     secondary), not by dropping the selection highlight. */
+  /* Tabs look IDENTICAL whether or not their group is focused — board↔PDF
+     switching must not recolour the tabs at all. Selection is the ONLY thing the
+     colours encode: selected tab = --bg-secondary + --text-primary; unselected =
+     --bg-tertiary + --text-secondary. (We deliberately don't dim the inactive
+     group — that per-focus difference is what read as the "inverse" weirdness.) */
   --dv-activegroup-visiblepanel-tab-background-color: var(--bg-secondary);
   --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-tertiary);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-secondary);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-primary);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-tertiary);
   --dv-tab-divider-color: var(--border);
   --dv-activegroup-visiblepanel-tab-color: var(--text-primary);
   --dv-activegroup-hiddenpanel-tab-color: var(--text-secondary);
-  --dv-inactivegroup-visiblepanel-tab-color: var(--text-secondary);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-primary);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--text-secondary);
   --dv-separator-border: var(--border);
   --dv-group-view-background-color: var(--bg-primary);
