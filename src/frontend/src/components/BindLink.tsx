@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { IconLink, IconLinkOff } from '@tabler/icons-react';
 
 interface BindLinkProps {
   /** Currently bound target names */
@@ -21,7 +22,7 @@ interface BindLinkProps {
    *  position:fixed alone resolves against the transformed ancestor, not the
    *  viewport, so it lands in the wrong place. */
   fixedDropdown?: boolean;
-  /** Optional header item shown above the bindings list (e.g. "auto-open boardview" toggle) */
+  /** Optional header item shown above the bindings list (e.g. "auto switch boardview" toggle) */
   headerItem?: {
     label: string;
     checked: boolean;
@@ -176,7 +177,7 @@ export function BindLink({ boundNames, options, onToggle, title, primaryLabel, u
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         title={title ?? (linked ? `Linked: ${boundNames.join(', ')}` : 'Not linked')}
       >
-        {linked ? '∞' : '○○'}
+        {linked ? <IconLink size={16} stroke={2} /> : <IconLinkOff size={16} stroke={2} />}
         {!linked && unlinkedLabel && (
           <span className="bind-link-unlinked-label">{unlinkedLabel}</span>
         )}

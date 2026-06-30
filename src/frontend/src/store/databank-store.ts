@@ -1593,17 +1593,22 @@ class DatabankStore extends Emitter {
     const board = this.fileByFilename(boardFileName);
     const pdf = this.fileByFilename(pdfFileName);
     if (!board || board.file_type !== 'board' || !pdf || pdf.file_type !== 'pdf') return 'local-only';
-    const detail = await this.fetchFileDetail(board.id);
+    // Non-mutating GET (do NOT clobber the Library's selected-file detail pane).
+    const detail = await this.apiFetch<FileDetail>(`/api/databank/files/${board.id}`);
     const existing = detail?.bindings.find(b => b.pdf_file_id === pdf.id);
     if (linked) {
-      if (existing) return 'noop';
-      await this.createBinding(board.id, pdf.id, 'schematic', true);
+      if (!existing) await this.createBinding(board.id, pdf.id, 'schematic', true);
+      else if (!existing.auto_open) await this.updateBinding(existing.id, { auto_open: true });
+      else return 'noop';
     } else {
-      if (!existing) return 'noop';
-      await this.deleteBinding(existing.id);
+      // Demote, don't DELETE: keeps the association, stops auto-open, and prevents
+      // the Library re-open from resurrecting the runtime link. Deleting here would
+      // destroy the auto_open row that board→PDF auto-open relies on.
+      if (!existing || !existing.auto_open) return 'noop';
+      await this.updateBinding(existing.id, { auto_open: false });
     }
-    // Refresh the open file-detail view (Library) if one is showing.
-    if (this.selectedFileId) void this.fetchFileDetail(this.selectedFileId);
+    // Refresh the Library detail pane only if it's currently showing this board.
+    if (this.selectedFileId === board.id) void this.fetchFileDetail(board.id);
     return 'persisted';
   }
 
