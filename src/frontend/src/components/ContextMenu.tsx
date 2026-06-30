@@ -699,7 +699,7 @@ export function ContextMenu() {
 
     const groups: Array<[string, string, React.ReactElement[]]> = [
       ['bound-pdfs', 'Bound PDFs', boundOpen.map(name => pdfRowFor(name, 'bound-pdf'))],
-      ['donor-pdfs', 'Donor PDFs', otherDonorPdfNames.map(name => pdfRowFor(name, 'donor-pdf'))],
+      ['donor-pdfs', 'Search in PDF files', otherDonorPdfNames.map(name => pdfRowFor(name, 'donor-pdf'))],
       ['other-pdfs', 'Other PDFs', otherNonDonorPdfNames.map(name => pdfRowFor(name, 'other-pdf'))],
       ['other-boards', 'Other Boards', otherBoardTabs.map(tab => boardRowFor(tab, 'other-board'))],
     ];

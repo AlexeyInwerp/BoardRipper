@@ -111,7 +111,7 @@ export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number 
           />
         </span>
       )}
-      <span className="dv-default-tab-content">{title}</span>
+      <span className="dv-default-tab-content" title={title}>{title}</span>
       <div
         className="dv-default-tab-action"
         onPointerDown={onBtnPointerDown}

@@ -352,7 +352,11 @@ body {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.05em;
+  /* Fixed px + inherited font: a <button>'s `em` is relative to the UA button
+     default font, which differs between Safari and Chrome — making the ∞ / ○○
+     glyph render at the wrong size in Safari. */
+  font-family: inherit;
+  font-size: 14px;
   line-height: 1;
   padding: 0 3px;
   color: var(--text-secondary);
@@ -716,6 +720,18 @@ body {
 .tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Cap long file names in board/PDF tabs so they don't eat the whole tab bar;
+   the native `title` attr on the span shows the full name on hover (with the
+   browser's built-in delay). */
+.dv-default-tab-content {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .tab-close {
@@ -3171,11 +3187,9 @@ body {
   pointer-events: none;
   z-index: 200;
   padding: 5px 9px;
-  background: rgba(10, 12, 18, 0.92);
-  border: 1px solid rgba(136, 204, 255, 0.3);
-  border-radius: 4px;
+  background: rgba(12, 14, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   white-space: nowrap;
-  backdrop-filter: blur(4px);
   min-width: 60px;
 }
 .pin-net-tooltip .pnt-net {
