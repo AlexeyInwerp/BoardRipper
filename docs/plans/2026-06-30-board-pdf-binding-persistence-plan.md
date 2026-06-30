@@ -52,11 +52,16 @@ Logic (extracted from the existing LibraryPanel promotion):
 ### 3.3 Refactor LibraryPanel to use the helper
 Replace the inline promotion block ([LibraryPanel.tsx:455-470](src/frontend/src/panels/LibraryPanel.tsx#L455)) with a call to `setBoardPdfBinding(...)`. One code path → consistent behavior; removes duplication.
 
-### 3.4 Survive reload for non-databank (drag-dropped) links
-For boards/PDFs not in the databank, the backend can't hold the binding (no `file.id`). Persist the runtime link in the session instead:
-- `openBoardEntries()` ([board-store.ts:545](src/frontend/src/store/board-store.ts#L545)): add `pdfFileNames: t.pdfFileNames` to each entry.
-- `SessionEntry` / snapshot: carry `pdfFileNames?` for board entries.
-- `restoreSession` ([session-store.ts](src/frontend/src/store/session-store.ts)): after a board's PDFs are (re)opened, re-apply `boardStore.addPdfBinding(tabId, pdfName)` for each persisted name. (Backend bindings already rehydrate via the Library/board-open path; this covers the non-databank gap.)
+### 3.4 Reliable databank ingestion of drag-dropped files (the real fix — replaces the session fallback)
+Drops are **already saved server-side AND ingested**: `POST /api/upload` ([main.go:138](src/backend/main.go#L138)) writes to `incoming/` and calls `Scanner.IndexFile` ([scanner.go:200](src/backend/databank/scanner.go#L200)), which inserts the file into the databank `files` table and queues PDFs for text extraction. So a dropped file **does get a databank id** — meaning bindings + session restore can be fully uniform through the databank, with **no per-file session fallback needed**. Two real gaps to close:
+
+1. **Fire-and-forget race.** `saveDroppedToIncoming` is called as `void` ([App.tsx:242](src/frontend/src/App.tsx#L242)); the in-memory open happens independently. If the user creates a binding or reloads before upload+index+`fetchFiles({force})` completes, the row isn't resolvable yet. Fix: track ingestion completion (a promise/`ingesting` state keyed by name) so binding/session ops can await it, and re-resolve once it lands.
+2. **No id returned.** The upload response doesn't return the inserted file id ([incoming-upload.ts comment](src/frontend/src/store/incoming-upload.ts)), so the open board tab / PDF doc is never tagged with its databank `fileId`; resolution falls back to `findFileByName(name, size)` after a forced refresh. Fix: have `Upload` ([handlers/files.go `Upload`]) **return the ingested `files` row (id, file_type, …)** from `IndexFile`, and have `saveDroppedToIncoming` set that `fileId` onto the open board tab (`cacheKey`/tab) and PDF doc, and into `openBoardEntries()`/`openPdfEntries()` so the session snapshot carries the real id.
+
+Net effect: after a drop, the board/PDF have a real databank id within one round-trip → the tab `∞` promotes to a backend binding (§3.1) exactly like a Library-opened file, and session restore (#3) resolves by id with no "unavailable (re-drop)" gap. **Drop §3 of the original session fallback** (no `pdfFileNames` in the snapshot).
+
+### 3.6 Binding uniqueness — bidirectional, one row
+The `bindings` table is `UNIQUE(board_file_id, pdf_file_id)` ([db.go:170](src/backend/databank/db.go#L170)). The shared helper takes **canonical (board, pdf) order**, so a link created from the board tab `∞` and the same link created from the PDF tab `∞` resolve to the **same pair → exactly one row** (the `alreadyBound` guard prevents a duplicate INSERT, and the UNIQUE constraint is the backstop). The "bidirectional" display (board shows its PDFs, PDF shows its board) is two *reads* of the one row, not two rows. ✅ no doubling.
 
 ### 3.5 Make removal authoritative (no resurrection)
 Because 3.2 now deletes the backend row on tab-`∞` unlink, the Library re-open path ([LibraryPanel.tsx:405-412](src/frontend/src/panels/LibraryPanel.tsx#L405)) won't find an `auto_open` row to resurrect. No extra work beyond 3.1's delete — verify with the test in §6.
@@ -68,12 +73,14 @@ Because 3.2 now deletes the backend row on tab-`∞` unlink, the Library re-open
 | `components/BoardTab.tsx` | `handleToggle` → call helper after runtime mutation |
 | `components/PdfTab.tsx` | `handleBindBoard` → call helper |
 | `panels/LibraryPanel.tsx` | replace inline promotion with helper (dedup) |
-| `store/board-store.ts` | `openBoardEntries()` include `pdfFileNames` |
-| `store/session-store.ts` | `SessionEntry.pdfFileNames`; rehydrate runtime bindings |
+| `backend handlers/files.go` (`Upload`) | return the ingested `files` row (id, file_type) from `IndexFile` |
+| `store/incoming-upload.ts` | capture returned id(s); tag the open board tab + PDF doc; expose an "ingesting"/awaitable state |
+| `store/board-store.ts` | accept + store a databank `fileId` on the open tab; include it in `openBoardEntries()` |
+| `store/pdf-store.ts` | accept + store `fileId` on the open doc; include it in `openPdfEntries()` |
 
 ## 5. Open questions (confirm before coding)
 1. **Unlink semantics:** on tab-`∞` unlink, **delete** the backend row (plan's choice — the toggle is binary "linked or not"), or keep the row and set `auto_open=false`? Delete is simpler and matches the glyph's meaning; downside is a Library-set `category` is lost.
-2. **Drag-dropped persistence:** OK to persist `pdfFileNames` in the local session (survives reload on this browser, not cross-device)? It's the only option without databank ids.
+2. **Drag-dropped ingestion (RESOLVED per your note):** dropped files are already saved to `incoming/` and indexed; we now also return + capture the databank id so they behave exactly like Library files (permanent library entry, searchable, bindable). One thing to confirm: returning the id from `Upload` is enough, or do you also want the drop to **await** ingestion before allowing a binding (vs optimistic + reconcile when the id lands)? Plan: optimistic, reconcile on land.
 3. **Promote on any board open?** Today A→B hydration only runs on **Library** board open. Should a drag-dropped board that name-matches a databank file also hydrate its backend bindings on open? (Nice-to-have; can defer.)
 4. **Failure UX:** tab-`∞` backend write is fire-and-forget. Surface a toast on failure, or stay silent (log only)? Plan: silent log; the runtime link still works for the session.
 
