@@ -51,6 +51,10 @@ export interface BoardTab {
   id: number;
   fileName: string;
   board: BoardData | null;
+  /** Databank file id once this board is known to the server library (set when
+   *  opened from the Library or after a drop is ingested). Lets session restore
+   *  and board↔PDF binding resolve by id instead of name+size. */
+  fileId?: number;
   /** Cache key used to load this board (empty string if loaded fresh from file) */
   cacheKey: string;
   selection: SelectionState;
@@ -542,7 +546,7 @@ class BoardStore extends Emitter {
   /** Identity of every open board tab, for session persistence. fileSize /
    *  lastModified come from the in-memory File when present, else from the
    *  cacheKey (`${fileName}:${size}:${lastModified}`). */
-  openBoardEntries(): { fileName: string; fileSize: number; fileLastModified: number; active: boolean }[] {
+  openBoardEntries(): { fileName: string; fileSize: number; fileLastModified: number; fileId?: number; active: boolean }[] {
     return this._tabs.map(t => {
       const f = this._openFiles.get(t.fileName);
       let size = f?.size ?? 0;
@@ -555,8 +559,15 @@ class BoardStore extends Emitter {
           modified = modified || Number(t.cacheKey.slice(lastColon + 1)) || 0;
         }
       }
-      return { fileName: t.fileName, fileSize: size, fileLastModified: modified, active: t.id === this._activeTabId };
+      return { fileName: t.fileName, fileSize: size, fileLastModified: modified, fileId: t.fileId, active: t.id === this._activeTabId };
     });
+  }
+
+  /** Tag an open board tab with its databank file id (after a drop is ingested
+   *  or when opened from the Library). No-op if no tab matches the name. */
+  setTabFileId(fileName: string, fileId: number) {
+    const tab = this._tabs.find(t => t.fileName === fileName);
+    if (tab && tab.fileId !== fileId) { tab.fileId = fileId; this.notify(); }
   }
 
   get board(): BoardData | null {

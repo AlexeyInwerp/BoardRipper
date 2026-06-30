@@ -202,15 +202,15 @@ func (s *Scanner) ExtractMetadata(relPath string) Metadata {
 // are intentionally NOT run here — that pass is O(boards×pdfs) and is left
 // to the next full scan; the frontend already binds the open board↔PDF in
 // memory for the current session.
-func (s *Scanner) IndexFile(relPath string) error {
+func (s *Scanner) IndexFile(relPath string) (*FileRecord, error) {
 	relPath = filepath.ToSlash(filepath.Clean(relPath))
 	abs := filepath.Join(s.ScanRoot(), filepath.FromSlash(relPath))
 	info, err := os.Stat(abs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if info.IsDir() || !IsSupportedFile(info.Name()) {
-		return fmt.Errorf("not a supported file: %s", relPath)
+		return nil, fmt.Errorf("not a supported file: %s", relPath)
 	}
 	size := info.Size()
 	modTime := info.ModTime().Unix()
@@ -223,11 +223,11 @@ func (s *Scanner) IndexFile(relPath string) error {
 	if existing, err := s.db.GetFileByPath(relPath); err == nil && existing != nil {
 		if existing.Size != size || existing.ModTime != modTime {
 			if err := s.db.UpdateFileScan(existing.ID, size, modTime, time.Now().Unix()); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		log.Printf("Scanner: indexed (update) %s", relPath)
-		return nil
+		return existing, nil
 	}
 
 	meta := ExtractMetadataWithBoardDB(relPath, bdb)
@@ -250,7 +250,7 @@ func (s *Scanner) IndexFile(relPath string) error {
 	}
 	id, err := s.db.InsertFile(&rec)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rec.ID = id
 	log.Printf("Scanner: indexed (new) %s [%s] %s", rec.Path, rec.FileType, formatSize(rec.Size))
@@ -259,7 +259,7 @@ func (s *Scanner) IndexFile(relPath string) error {
 	// pdfindex pipeline (wazero/pdfium). A dropped PDF gets indexed via the
 	// on-open fast-path or the next pdfindex run; IndexFile only ensures the
 	// file is present in the databank immediately.
-	return nil
+	return &rec, nil
 }
 
 // Status returns the current scan status.

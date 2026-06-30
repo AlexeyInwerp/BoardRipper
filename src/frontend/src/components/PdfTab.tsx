@@ -3,6 +3,7 @@ import type { IDockviewPanelHeaderProps } from 'dockview-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { usePdfDoc } from '../hooks/usePdfStore';
 import { boardStore } from '../store/board-store';
+import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
 import { isAutoSwitchLinked, setAutoSwitchLinked, onAutoSwitchChange } from '../store/dockview-api';
 import { BindLink } from './BindLink';
@@ -79,10 +80,16 @@ export function PdfTab(props: IDockviewPanelHeaderProps<{ pdfFileName?: string }
   // Bind this PDF to a board (single-select: unbind current, bind selected).
   const handleBindBoard = useCallback((boardFileName: string | null) => {
     const bound = tabs.filter(t => t.pdfFileNames.includes(pdfFileName));
-    for (const tab of bound) boardStore.removePdfBinding(tab.id, pdfFileName);
+    for (const tab of bound) {
+      boardStore.removePdfBinding(tab.id, pdfFileName);
+      void databankStore.setBoardPdfBinding(tab.fileName, pdfFileName, false).catch(() => {});
+    }
     if (boardFileName !== null) {
       const target = tabs.find(t => t.fileName === boardFileName);
-      if (target) boardStore.addPdfBinding(target.id, pdfFileName);
+      if (target) {
+        boardStore.addPdfBinding(target.id, pdfFileName);
+        void databankStore.setBoardPdfBinding(target.fileName, pdfFileName, true).catch(() => {});
+      }
     }
   }, [tabs, pdfFileName]);
 
@@ -134,7 +141,7 @@ export function PdfTab(props: IDockviewPanelHeaderProps<{ pdfFileName?: string }
           />
         </span>
       )}
-      <span className="dv-default-tab-content">{title}</span>
+      <span className="dv-default-tab-content" title={title}>{title}</span>
       <div
         className="dv-default-tab-action"
         onPointerDown={onBtnPointerDown}

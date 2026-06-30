@@ -1,4 +1,5 @@
 import { boardStore } from './board-store';
+import { pdfStore } from './pdf-store';
 import { databankStore, isElectron } from './databank-store';
 import { log } from './log-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
@@ -31,6 +32,15 @@ export async function saveDroppedToIncoming(files: File[]): Promise<void> {
         continue;
       }
       saved++;
+      // Tag the already-open board tab / PDF doc with its fresh databank id so
+      // board↔PDF binding and session restore resolve by id (no name+size race).
+      try {
+        const body = await res.json() as { id?: number; file_type?: string };
+        if (typeof body.id === 'number') {
+          if (body.file_type === 'pdf') pdfStore.setDocFileId(file.name, body.id);
+          else boardStore.setTabFileId(file.name, body.id);
+        }
+      } catch { /* response not JSON — non-critical */ }
     } catch (err) {
       failures.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
     }

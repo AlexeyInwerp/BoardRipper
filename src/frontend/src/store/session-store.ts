@@ -2,6 +2,7 @@ import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
 import { log } from './log-store';
 import { databankStore } from './databank-store';
+import { ensurePdfPanel } from './dockview-api';
 
 const SESSION_KEY = 'boardripper-session';
 const DEBOUNCE_MS = 500;
@@ -28,6 +29,7 @@ function snapshot(): SessionEntry[] {
     fileName: b.fileName,
     fileSize: b.fileSize,
     fileLastModified: b.fileLastModified,
+    fileId: b.fileId,
     active: b.active || undefined,
   }));
   const pdfs: SessionEntry[] = pdfStore.openPdfEntries().map(p => ({
@@ -94,6 +96,7 @@ export async function restoreSession(session: SavedSession): Promise<void> {
   await databankStore.ensureLoaded();
   const unavailable: string[] = [];
   let activeBoardName: string | null = null;
+  let opened = 0;   // count only items that genuinely opened (a panel/tab), not just loaded
 
   for (const e of session.entries) {
     try {
@@ -110,12 +113,17 @@ export async function restoreSession(session: SavedSession): Promise<void> {
           unavailable.push(e.fileName);
           continue;
         }
+        opened++;
         if (e.active) activeBoardName = e.fileName;
       } else {
-        // pdf
+        // pdf — must replicate openPdfFiles' full sequence (addPdf + loadFile +
+        // ensurePdfPanel), otherwise the doc loads invisibly and never opens a panel.
         if (dbFile && dbFile.file_type === 'pdf') {
           const file = await databankStore.fetchFileBuffer(dbFile);
+          boardStore.addPdf(file);
           await pdfStore.loadFile(file, dbFile.id);
+          ensurePdfPanel(file.name);
+          opened++;
         } else {
           unavailable.push(e.fileName); // local-drop PDF with no databank entry → no binary cache
         }
@@ -131,12 +139,11 @@ export async function restoreSession(session: SavedSession): Promise<void> {
     if (tab) boardStore.switchTab(tab.id);
   }
 
-  const restored = session.entries.length - unavailable.length;
-  if (restored > 0 && unavailable.length === 0) {
-    boardStore.addToast(`Reopened ${restored} item${restored > 1 ? 's' : ''} from your last session`, 'info');
+  if (opened > 0 && unavailable.length === 0) {
+    boardStore.addToast(`Reopened ${opened} item${opened > 1 ? 's' : ''} from your last session`, 'info');
   } else if (unavailable.length > 0) {
     boardStore.addToast(
-      `Reopened ${restored} · ${unavailable.length} unavailable (re-drop): ${unavailable.slice(0, 3).join(', ')}${unavailable.length > 3 ? '…' : ''}`,
+      `Reopened ${opened} · ${unavailable.length} unavailable (re-drop): ${unavailable.slice(0, 3).join(', ')}${unavailable.length > 3 ? '…' : ''}`,
       'error',
     );
   }

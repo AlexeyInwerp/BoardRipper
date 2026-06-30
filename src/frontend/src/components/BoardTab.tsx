@@ -2,6 +2,7 @@ import { useCallback, useRef, useSyncExternalStore } from 'react';
 import type { IDockviewPanelHeaderProps } from 'dockview-react';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
+import { databankStore } from '../store/databank-store';
 import { pdfStore } from '../store/pdf-store';
 import { BindLink } from './BindLink';
 
@@ -77,9 +78,16 @@ export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number 
   const handleToggle = useCallback((name: string | null) => {
     if (!tab) return;
     if (name === null) {
-      for (const p of tab.pdfFileNames) boardStore.removePdfBinding(tab.id, p);
+      for (const p of [...tab.pdfFileNames]) {   // copy: removePdfBinding splices the array
+        boardStore.removePdfBinding(tab.id, p);
+        void databankStore.setBoardPdfBinding(tab.fileName, p, false).catch(() => {});
+      }
     } else {
+      const linked = !tab.pdfFileNames.includes(name);   // state after the toggle
       boardStore.togglePdfBinding(tab.id, name);
+      // Persist the link to the backend so it survives reload (no-op / local-only
+      // when the files aren't in the databank yet).
+      void databankStore.setBoardPdfBinding(tab.fileName, name, linked).catch(() => {});
     }
   }, [tab]);
 
@@ -111,7 +119,7 @@ export function BoardTab(props: IDockviewPanelHeaderProps<{ boardTabId?: number 
           />
         </span>
       )}
-      <span className="dv-default-tab-content">{title}</span>
+      <span className="dv-default-tab-content" title={title}>{title}</span>
       <div
         className="dv-default-tab-action"
         onPointerDown={onBtnPointerDown}
