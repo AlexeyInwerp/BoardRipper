@@ -127,6 +127,60 @@ test('session-restore prompt is visible with correct geometry for a board+PDF se
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Test 1b: Checkbox picker — one row per entry, de-select updates the button
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('checkbox picker lists every entry and de-selecting updates the Reopen button', async ({ page }) => {
+  const entries = [
+    { kind: 'board', fileName: 'alpha.bvr', fileSize: 100, fileLastModified: 1700000000000, active: true },
+    { kind: 'pdf', fileName: 'beta-manual.pdf', fileSize: 200, fileLastModified: 1700000001000, fileId: 7 },
+    { kind: 'board', fileName: 'gamma.brd', fileSize: 300, fileLastModified: 1700000002000 },
+  ];
+
+  await seedSession(page, entries);
+  await gotoApp(page);
+
+  const prompt = page.getByTestId('session-restore-prompt');
+  await expect(prompt).toBeVisible({ timeout: 5_000 });
+
+  // One checkbox per entry, all checked by default.
+  const checks = page.getByTestId('session-restore-check');
+  await expect(checks).toHaveCount(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    await expect(checks.nth(i)).toBeChecked();
+  }
+
+  // All checked → button reads the plain "Reopen" (no count suffix).
+  const reopenBtn = page.getByTestId('session-reopen');
+  await expect(reopenBtn).toHaveText('Reopen');
+  await expect(reopenBtn).toBeEnabled();
+
+  // Each entry's file name is shown.
+  await expect(prompt).toContainText('alpha.bvr');
+  await expect(prompt).toContainText('beta-manual.pdf');
+  await expect(prompt).toContainText('gamma.brd');
+
+  // Uncheck one → button switches to the count form "Reopen (2)".
+  await checks.nth(1).uncheck();
+  await expect(checks.nth(1)).not.toBeChecked();
+  await expect(reopenBtn).toHaveText('Reopen (2)');
+  await expect(reopenBtn).toBeEnabled();
+
+  // Uncheck the rest → button disabled (nothing to reopen).
+  await checks.nth(0).uncheck();
+  await checks.nth(2).uncheck();
+  await expect(reopenBtn).toBeDisabled();
+
+  // Re-check one → enabled again with a count of 1.
+  await checks.nth(0).check();
+  await expect(reopenBtn).toHaveText('Reopen (1)');
+  await expect(reopenBtn).toBeEnabled();
+
+  // Discard is always available regardless of selection.
+  await expect(page.getByTestId('session-discard')).toBeEnabled();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test 2: Discard clears the session key + no prompt on subsequent reload
 // ─────────────────────────────────────────────────────────────────────────────
 

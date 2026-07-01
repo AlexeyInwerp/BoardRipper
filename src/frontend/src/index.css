@@ -7641,9 +7641,16 @@ body {
 
 /* ── Session-restore boot prompt ─────────────────────────────────────────── */
 .session-restore-backdrop { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); }
-.session-restore-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; min-width: 320px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.session-restore-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; min-width: 380px; max-width: min(520px, 90vw); box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
 .session-restore-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
-.session-restore-body { color: var(--text-secondary); font-size: 13px; margin-bottom: 14px; }
+.session-restore-body { color: var(--text-secondary); font-size: 13px; margin-bottom: 10px; }
+.session-restore-list { max-height: 240px; overflow-y: auto; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 5px; }
+.session-restore-item { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+.session-restore-item:hover { background: var(--bg-tertiary); }
+.session-restore-item + .session-restore-item { border-top: 1px solid var(--border); }
+.session-restore-item input { flex: none; cursor: pointer; }
+.session-restore-item-kind { flex: none; width: 34px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-secondary); }
+.session-restore-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-restore-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .session-restore-btn { cursor: pointer; padding: 5px 14px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: inherit; font-size: 13px; }
 .session-restore-btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
