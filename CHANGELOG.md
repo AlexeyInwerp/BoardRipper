@@ -1,5 +1,18 @@
 # BoardRipper changelog
 
+## v0.31.29 — 2026-07-01
+
+The session-restore boot prompt now lets you pick which boards and PDFs to reopen
+instead of restoring all-or-nothing.
+
+### Features
+
+- **Session-restore file picker.** The "Reopen your last session?" prompt now
+  lists every board and PDF that was open with a per-file checkbox (all checked
+  by default). Uncheck any you don't want and only the rest reopen; the primary
+  button reflects the count ("Reopen (N)") and disables when nothing is selected.
+  Discard still clears the whole saved session. (`e4ca016`)
+
 ## v0.31.28 — 2026-06-30
 
 Board↔PDF links now persist across reloads, the worklist records full multimeter
