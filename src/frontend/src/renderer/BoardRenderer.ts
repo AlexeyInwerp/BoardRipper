@@ -4587,7 +4587,7 @@ export class BoardRenderer {
     }
 
     const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
-    const hits: { partIndex: number; pinIndex: number; area: number }[] = [];
+    const hits: { partIndex: number; pinIndex: number; area: number; sub: number }[] = [];
 
     for (const pi of candidateSet) {
       const part = this.board.parts[pi];
@@ -4634,12 +4634,24 @@ export class BoardRenderer {
         local.y >= rb.py && local.y <= rb.py + rb.ph;
 
       // Part is "under the point" if its body contains it or a pad/pin was hit.
-      if (pinIndex < 0 && !bodyContains) continue;
-      hits.push({ partIndex: pi, pinIndex, area: rb.pw * rb.ph });
+      const area = rb.pw * rb.ph;
+      if (pinIndex >= 0) {
+        // Pin/pad hit → default to the pin (net highlight, as before). `sub`
+        // keeps the pin entry ahead of the body entry for the same part.
+        hits.push({ partIndex: pi, pinIndex, area, sub: 0 });
+        // On 2-pin parts the two pads cover the whole footprint, so the body is
+        // otherwise unreachable — offer the WHOLE COMPONENT as the next cycle
+        // step so the part itself can be selected (no net). (#23 follow-up)
+        if (part.pins.length === 2 && bodyContains) {
+          hits.push({ partIndex: pi, pinIndex: -1, area, sub: 1 });
+        }
+      } else if (bodyContains) {
+        hits.push({ partIndex: pi, pinIndex: -1, area, sub: 0 });
+      }
     }
 
-    // Smallest render area first; ties keep candidate-enumeration order (stable).
-    hits.sort((a, b) => a.area - b.area);
+    // Smallest render area first; within a part, pin before whole-body.
+    hits.sort((a, b) => a.area - b.area || a.sub - b.sub);
     return hits.map(h => ({ partIndex: h.partIndex, pinIndex: h.pinIndex }));
   }
 
@@ -5127,10 +5139,14 @@ export class BoardRenderer {
     const pinId = pin ? pinDisplayId(pin, top.pinIndex) : null;
     const netName = pin?.net || null;
     // Every part under the point, smallest-first — the menu repeats its action
-    // row per part so any stacked part can be pinned / looked up (#23).
-    const overlap = stack
-      .map(h => this.board!.parts[h.partIndex]?.name)
-      .filter((n): n is string => !!n);
+    // row per part so any stacked part can be pinned / looked up (#23). Dedupe
+    // by refdes: 2-pin parts contribute both a pin and a whole-part cycle entry,
+    // but the menu only needs one row per component.
+    const overlap = [...new Set(
+      stack
+        .map(h => this.board!.parts[h.partIndex]?.name)
+        .filter((n): n is string => !!n),
+    )];
     contextMenuStore.showBoard(e.clientX, e.clientY, part.name, pinId, netName, overlap);
   }
 
