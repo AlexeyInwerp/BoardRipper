@@ -52,6 +52,39 @@ test.describe('BDV plain-text parser — correction heuristics', () => {
     expect(board.primarySide).toBe('bottom');
   });
 
+  test('All-zero part bounds (ASUS X540 writer): origin/box derived from pins, not pinned to (0,0)', async () => {
+    // This ASUS BDV writer stores `0 0 0 0` for every part's x1 y1 x2 y2, so
+    // the file carries no per-part geometry. The parser must fall back to
+    // pin-derived origin+bounds; otherwise every part's label collapses to
+    // (0,0) and its outline stretches from its pins to the origin, misaligning
+    // every silk element from the (correctly placed) pins.
+    const board = await parseFile('X540UV 2.0 60NB0HF0-MB1020 X540UA MAIN_BD._4G_I3-6006U_AS__R2.0.brd');
+    expect(board.format).toBe('BDV');
+
+    // U4201 is a 6-pin part whose pins sit near (-490, 6960) — far from origin.
+    const u = board.parts.find(p => p.name === 'U4201');
+    expect(u).toBeTruthy();
+    // Origin (label anchor) must track the pins, not collapse to (0,0).
+    const pinCx = u!.pins.reduce((a, p) => a + p.position.x, 0) / u!.pins.length;
+    const pinCy = u!.pins.reduce((a, p) => a + p.position.y, 0) / u!.pins.length;
+    expect(Math.abs(u!.origin.x - pinCx)).toBeLessThan(200);
+    expect(Math.abs(u!.origin.y - pinCy)).toBeLessThan(200);
+    // Box must hug the pins, never reach down to y=0 / x=0.
+    expect(u!.bounds.minY).toBeGreaterThan(6000);
+    expect(u!.bounds.minX).toBeLessThan(0); // pins are in negative-X space here
+
+    // No part should have its box stretched to the origin: the box must not
+    // contain (0,0) unless the part's own pins are actually near it.
+    const stretched = board.parts.filter(p =>
+      p.pins.length > 0 &&
+      p.bounds.minX <= 0 && p.bounds.maxX >= 0 &&
+      p.bounds.minY <= 0 && p.bounds.maxY >= 0 &&
+      // a genuinely origin-spanning part would have pins on both sides of 0
+      !p.pins.some(pin => pin.position.y < 200),
+    );
+    expect(stretched.length).toBe(0);
+  });
+
   test('Side=0 through-hole pins use BRDOUT height as mirror axis', async () => {
     const board = await parseFile('BROKEN/BRD/LA-L978P_r1A_IH50A.brd');
     // Mounting hole H2: file stores part at Y=166 (top) with side=0 pin at

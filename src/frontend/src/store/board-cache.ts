@@ -30,7 +30,12 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 // 76: GenCAD parser skips shape-recentering for world-coordinate-shape exports
 //     (TESTCAD/IMPACT ASUS boards); recentering was crushing the board to a
 //     fraction of its size and rendering components 5-50× oversized.
-const PARSER_VERSION = 76;
+// 77: BDV parser derives part origin/bounds from pins when the file supplies
+//     all-zero part corners (ASUS X540 60NB0HF0 writer stores `0 0 0 0` for
+//     every part); previously every part's label collapsed to (0,0) and its
+//     outline stretched from its pins to the origin, misaligning all silk
+//     elements from the correctly-placed pins.
+const PARSER_VERSION = 77;
 
 interface CachedBoard {
   key: string;

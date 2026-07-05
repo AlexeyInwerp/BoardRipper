@@ -14,8 +14,8 @@
  * Coordinates are in mils (thousandths of an inch).
  */
 
-import type { BoardData, Part, Pin, Nail, Point } from './types';
-import { computeBBox, buildNets, generateSyntheticOutline } from './types';
+import type { BoardData, Part, Pin, Nail, Point, BBox } from './types';
+import { computeBBox, buildNets, generateSyntheticOutline, computePartGeometry } from './types';
 import { applyXMirrorInPlace } from './mirror-detect';
 import { log } from '../store/log-store';
 
@@ -235,19 +235,32 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
       });
     }
 
-    const origin: Point = {
-      x: (rp.x1 + rp.x2) / 2,
-      y: (rp.y1 + rp.y2) / 2,
-    };
+    // Some BDV writers (notably the ASUS X540 family, 60NB0HF0-MB1020) store
+    // `0 0 0 0` for every part's x1/y1/x2/y2 — the file carries NO per-part
+    // geometry. Folding those all-zero corners into origin/bounds collapses
+    // every part's label to (0,0) and stretches every outline from its pins to
+    // the origin, so all silk elements misalign from the (correctly placed)
+    // pins. When the file corners are degenerate, derive geometry from the pins
+    // alone (matching brd-parser's computePartGeometry). A part that supplies a
+    // real position (even a zero-height box like `5424 3451 5455 3451`) is left
+    // on the file-bounds path.
+    const noFileGeometry = rp.x1 === 0 && rp.y1 === 0 && rp.x2 === 0 && rp.y2 === 0;
 
-    // Use file-provided part bounds so outlier pins don't stretch the box
-    const fileBounds = {
-      minX: Math.min(rp.x1, rp.x2), minY: Math.min(rp.y1, rp.y2),
-      maxX: Math.max(rp.x1, rp.x2), maxY: Math.max(rp.y1, rp.y2),
-    };
-    const bounds = pins.length > 0
-      ? computeBBox([...pins.map(p => p.position), { x: fileBounds.minX, y: fileBounds.minY }, { x: fileBounds.maxX, y: fileBounds.maxY }])
-      : fileBounds;
+    let origin: Point;
+    let bounds: BBox;
+    if (noFileGeometry) {
+      ({ origin, bounds } = computePartGeometry(pins));
+    } else {
+      origin = { x: (rp.x1 + rp.x2) / 2, y: (rp.y1 + rp.y2) / 2 };
+      // Use file-provided part bounds so outlier pins don't stretch the box
+      const fileBounds = {
+        minX: Math.min(rp.x1, rp.x2), minY: Math.min(rp.y1, rp.y2),
+        maxX: Math.max(rp.x1, rp.x2), maxY: Math.max(rp.y1, rp.y2),
+      };
+      bounds = pins.length > 0
+        ? computeBBox([...pins.map(p => p.position), { x: fileBounds.minX, y: fileBounds.minY }, { x: fileBounds.maxX, y: fileBounds.maxY }])
+        : fileBounds;
+    }
 
     parts.push({ name: rp.name, side, type: 'smd', origin, pins, bounds });
   }
