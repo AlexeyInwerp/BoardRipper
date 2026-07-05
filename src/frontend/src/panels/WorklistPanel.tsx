@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ComponentType } from 'react';
 import { IconReplace, IconSparkles, IconClipboardText, IconDroplet, IconBolt, IconAlertTriangle, IconCheck, IconUnlink, IconCircuitDiode } from '@tabler/icons-react';
@@ -214,9 +214,26 @@ export function WorklistPanel() {
   );
 }
 
+// Remembered scroll offset of the worklist list, keyed by worklist id. Lives
+// at module scope so it survives not just re-renders but a full remount of
+// ActiveWorklistView (issue #22: selecting a component on the board must not
+// snap a long worklist back to the top). Restored on mount / worklist switch,
+// saved on every scroll.
+const worklistScrollTop = new Map<string, number>();
+
 function ActiveWorklistView() {
   const { activeWorklist } = useWorklist();
   const { connectionHighlight } = useBoardStore();
+  const listRef = useRef<HTMLDivElement>(null);
+  // Restore the saved scroll offset for this worklist after every mount and on
+  // worklist switch. A plain re-render preserves scrollTop natively; this makes
+  // the position durable even if the container is remounted underneath us.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el || !activeWorklist) return;
+    const saved = worklistScrollTop.get(activeWorklist.id);
+    if (saved != null && saved !== el.scrollTop) el.scrollTop = saved;
+  }, [activeWorklist?.id]);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
@@ -355,7 +372,12 @@ function ActiveWorklistView() {
           />
         )}
       </div>
-      <div style={listStyle}>
+      <div
+        ref={listRef}
+        style={listStyle}
+        data-testid="worklist-scroll"
+        onScroll={e => worklistScrollTop.set(activeWorklist.id, e.currentTarget.scrollTop)}
+      >
         {activeWorklist.entries.length === 0 && (activeWorklist.netEntries?.length ?? 0) === 0 && (
           <div style={emptyStyle}>
             <div style={{ opacity: 0.55 }}>Empty. Shift-click parts on the board, or hit the pin button in the Search tab.</div>
