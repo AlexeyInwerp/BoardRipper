@@ -471,30 +471,41 @@ export function ContextMenu() {
       if (!compName) return null;
       const pinId = state.pinId?.trim() ?? '';
       const netName = state.netName?.trim() ?? '';
+      // Every part under the click, smallest-first. One header row per part so
+      // any stacked/overlapping component can be pinned / copied / looked up
+      // directly (#23). Non-overlapping menus get a single row as before.
+      const overlap = state.overlap.length > 0 ? state.overlap : [compName];
       // Lit iff the part is already in the active worklist for this board.
       // Read synchronously at render — menu re-opens always re-evaluate so
       // the icon state reflects the current store.
-      const isInActiveWorklist =
-        !!worklistStore.activeWorklist?.entries.some(e => e.refdes === compName);
+      const litFor = (refdes: string) =>
+        !!worklistStore.activeWorklist?.entries.some(e => e.refdes === refdes);
       const isNetInActiveWorklist = !!(
         netName && worklistStore.activeWorklist?.netEntries?.some(e => e.netName === netName)
       );
       return (
-        <div className="context-menu-header" data-testid="context-menu-header">
-          {renderValueChip(compName, { search: true, worklist: true, worklistLit: isInActiveWorklist, testKind: 'part' })}
-          {pinId && (
-            <>
-              <span className="ctxmenu-chip-sep">·</span>
-              {renderValueChip(pinId, { testKind: 'text' })}
-            </>
-          )}
-          {netName && (
-            <>
-              <span className="ctxmenu-chip-sep">·</span>
-              {renderValueChip(netName, { search: true, worklist: true, worklistLit: isNetInActiveWorklist, testKind: 'net' })}
-            </>
-          )}
-        </div>
+        <>
+          {overlap.map((refdes, i) => (
+            <div className="context-menu-header" data-testid="context-menu-header" key={`hdr-${refdes}-${i}`}>
+              {renderValueChip(refdes, { search: true, worklist: true, worklistLit: litFor(refdes), testKind: 'part' })}
+              {/* Pin + net chips belong to the top hit only (the pin the user
+                  actually right-clicked); the stacked parts just expose their
+                  own name/pin/copy/search row. */}
+              {i === 0 && pinId && (
+                <>
+                  <span className="ctxmenu-chip-sep">·</span>
+                  {renderValueChip(pinId, { testKind: 'text' })}
+                </>
+              )}
+              {i === 0 && netName && (
+                <>
+                  <span className="ctxmenu-chip-sep">·</span>
+                  {renderValueChip(netName, { search: true, worklist: true, worklistLit: isNetInActiveWorklist, testKind: 'net' })}
+                </>
+              )}
+            </div>
+          ))}
+        </>
       );
     }
     const q = state.query.trim();

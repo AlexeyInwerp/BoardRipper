@@ -320,6 +320,20 @@ export class BoardRenderer {
    *  handleClick (pixi-viewport's "clicked" event fires on pointerup but
    *  doesn't carry the down-time modifier reliably across browsers). */
   private lastPointerShift = false;
+  /** Click-cycle state for stacked/overlapping component selection (#23).
+   *  `key` is the ordered set of part indices under the anchor; `index` is the
+   *  current position in the smallest-first stack. Reset to null on pointer
+   *  move so the next click starts fresh at the smallest part. */
+  private clickCycle: { x: number; y: number; key: string; index: number } | null = null;
+  /** Pending deferred cycle advance — a same-spot repeat click schedules the
+   *  advance so a following double-click (PDF lookup) can cancel it. */
+  private pendingCycleAdvance: ReturnType<typeof setTimeout> | null = null;
+  /** Same-spot tolerance for cycling, in screen pixels (converted to world). */
+  private static readonly CYCLE_TOLERANCE_PX = 6;
+  /** Guard window: a same-spot repeat click's advance waits this long so a
+   *  double-click can cancel it. Longer than the browser's dblclick dispatch,
+   *  shorter than a deliberate re-click cadence. */
+  private static readonly CYCLE_DBL_GUARD_MS = 250;
   /** Bound pointerdown handler that captures shift state. */
   private boundShiftCapture: ((e: PointerEvent) => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -675,6 +689,8 @@ export class BoardRenderer {
   private teardownForReinit() {
     log.render.log('teardownForReinit', 'tab=' + this.tabId);
     if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
+    this.clickCycle = null;
+    this.clearPendingCycleAdvance();
 
     // Save viewport state
     if (this.board && this.viewport) {
@@ -4538,106 +4554,93 @@ export class BoardRenderer {
     return this.activeScene.root;
   }
 
-  /** Find the part (and optionally pin) under a world-space point */
+  /** Find the part (and optionally pin) under a world-space point. Returns the
+   *  smallest part in the overlap stack — see hitTestStack. Used by hover,
+   *  double-click PDF lookup, and as the default pick. */
   private hitTest(world: Point): { partIndex: number; pinIndex: number } | null {
-    // hitTest logging removed — fires on every pointer interaction, too noisy
-    if (!this.board) return null;
+    return this.hitTestStack(world)[0] ?? null;
+  }
+
+  /** Every part under a world-space point, ranked SMALLEST render-area first
+   *  (most specific = most likely intended). Each entry carries the pin index
+   *  when a pad/pin under the point belongs to that part, else -1. This is the
+   *  basis for smallest-wins selection, click-cycling through stacked parts,
+   *  and the per-part right-click menu (#23). Non-overlapping parts return a
+   *  single-entry array, so all existing callers are unaffected. */
+  private hitTestStack(world: Point): { partIndex: number; pinIndex: number }[] {
+    if (!this.board) return [];
 
     const s = renderSettingsStore.settings;
     const butterfly = boardStore.butterfly && this.activeScene?.butterflyRoot;
 
-    // In butterfly mode, we need to convert world coords per-part using the correct root.
-    // Pre-compute local coords for top and bottom roots.
+    // In butterfly mode, convert world coords per-part using the correct root.
     const localTop = this.worldToScene(world, this.activeScene?.root);
     const localBot = butterfly
       ? this.worldToScene(world, this.activeScene!.butterflyRoot!)
       : localTop;
 
-    // Use spatial hash to get candidate parts near the pointer (O(1) vs O(N))
-    // Query both top and bottom local coords to cover butterfly mode
+    // Spatial hash → candidate parts near the pointer (both roots for butterfly)
     const candidateSet = new Set<number>();
     for (const pi of this.hitGridCandidates(localTop.x, localTop.y)) candidateSet.add(pi);
     if (butterfly) {
       for (const pi of this.hitGridCandidates(localBot.x, localBot.y)) candidateSet.add(pi);
     }
 
-    // First pass: try to hit a specific pin
-    let bestDist = Infinity;
-    let bestPartIdx = -1;
-    let bestPinIdx = -1;
+    const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
+    const hits: { partIndex: number; pinIndex: number; area: number }[] = [];
 
     for (const pi of candidateSet) {
       const part = this.board.parts[pi];
       if (!this.isPartVisible(part)) continue;
 
       const local = part.side === 'bottom' ? localBot : localTop;
-      // Use stored pad polygons for 2-pin parts (both axis-aligned and diagonal)
-      const padPolys = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(pi) : null;
 
+      // Best pin/pad under the point for THIS part (pad-exact where available,
+      // else within click threshold). Same detection as before, per-part.
+      let pinIndex = -1;
+      let pinDist2 = Infinity;
+      const padPolys = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(pi) : null;
       if (padPolys) {
         for (let pni = 0; pni < 2; pni++) {
           const poly = padPolys[pni];
           if (pointInConvexPoly(local.x, local.y, poly)) {
-            const cx = poly.reduce((s: number, p: [number, number]) => s + p[0], 0) / poly.length;
-            const cy = poly.reduce((s: number, p: [number, number]) => s + p[1], 0) / poly.length;
-            const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
-            if (dist < bestDist) {
-              bestDist = dist;
-              bestPartIdx = pi;
-              bestPinIdx = pni;
-            }
+            const cx = poly.reduce((a: number, p: [number, number]) => a + p[0], 0) / poly.length;
+            const cy = poly.reduce((a: number, p: [number, number]) => a + p[1], 0) / poly.length;
+            const d2 = (local.x - cx) ** 2 + (local.y - cy) ** 2;
+            if (d2 < pinDist2) { pinDist2 = d2; pinIndex = pni; }
           }
         }
       } else {
-        const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
         for (let pni = 0; pni < part.pins.length; pni++) {
           const pin = part.pins[pni];
-          // Prefer the actual copper-pad bbox when the parser exposes one —
-          // gives a tap anywhere on the pad the same effect as tapping the pin
-          // sprite, which matches what users expect after seeing the pad layer.
           const pb = pin.padBounds;
-          if (pb && local.x >= pb.minX && local.x <= pb.maxX
-                 && local.y >= pb.minY && local.y <= pb.maxY) {
-            const cx = (pb.minX + pb.maxX) / 2;
-            const cy = (pb.minY + pb.maxY) / 2;
-            const dist = Math.sqrt((local.x - cx) ** 2 + (local.y - cy) ** 2);
-            if (dist < bestDist) {
-              bestDist = dist;
-              bestPartIdx = pi;
-              bestPinIdx = pni;
+          if (pb) {
+            if (local.x >= pb.minX && local.x <= pb.maxX && local.y >= pb.minY && local.y <= pb.maxY) {
+              const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
+              const d2 = (local.x - cx) ** 2 + (local.y - cy) ** 2;
+              if (d2 < pinDist2) { pinDist2 = d2; pinIndex = pni; }
             }
-            continue;
-          }
-          const dx = pin.position.x - local.x;
-          const dy = pin.position.y - local.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < bestDist && dist < threshold) {
-            bestDist = dist;
-            bestPartIdx = pi;
-            bestPinIdx = pni;
+          } else {
+            const dx = pin.position.x - local.x, dy = pin.position.y - local.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < pinDist2 && d2 < threshold * threshold) { pinDist2 = d2; pinIndex = pni; }
           }
         }
       }
-    }
 
-    if (bestPartIdx >= 0) {
-      return { partIndex: bestPartIdx, pinIndex: bestPinIdx };
-    }
-
-    // Second pass: check part bounds (same candidate set)
-    for (const pi of candidateSet) {
-      const part = this.board.parts[pi];
-      if (!this.isPartVisible(part)) continue;
-
-      const local = part.side === 'bottom' ? localBot : localTop;
       const rb = computePartRenderBounds(part, s);
-      if (local.x >= rb.px && local.x <= rb.px + rb.pw &&
-          local.y >= rb.py && local.y <= rb.py + rb.ph) {
-        return { partIndex: pi, pinIndex: -1 };
-      }
+      const bodyContains =
+        local.x >= rb.px && local.x <= rb.px + rb.pw &&
+        local.y >= rb.py && local.y <= rb.py + rb.ph;
+
+      // Part is "under the point" if its body contains it or a pad/pin was hit.
+      if (pinIndex < 0 && !bodyContains) continue;
+      hits.push({ partIndex: pi, pinIndex, area: rb.pw * rb.ph });
     }
 
-    return null;
+    // Smallest render area first; ties keep candidate-enumeration order (stable).
+    hits.sort((a, b) => a.area - b.area);
+    return hits.map(h => ({ partIndex: h.partIndex, pinIndex: h.pinIndex }));
   }
 
   /** Find the trace segment closest to a world-space point, respecting layer visibility */
@@ -4692,6 +4695,18 @@ export class BoardRenderer {
   // --- Click handling ---
 
   private handleHover(e: PointerEvent) {
+    // Any real pointer movement beyond the tolerance ends a click-cycle, so the
+    // next click starts fresh at the smallest part and hover shows it (#23).
+    // Runs before the hover-info gate so it applies even with tooltips off.
+    if (this.board && this.clickCycle) {
+      const w = this.viewport.toWorld(e.offsetX, e.offsetY);
+      const tol = BoardRenderer.CYCLE_TOLERANCE_PX / Math.abs(this.viewport.scale.x);
+      if (Math.abs(this.clickCycle.x - w.x) > tol || Math.abs(this.clickCycle.y - w.y) > tol) {
+        this.clickCycle = null;
+        this.clearPendingCycleAdvance();
+      }
+    }
+
     if (!this.board || !this.activeScene || !boardStore.showHoverInfo) {
       this.hideTooltip();
       this.setHoverNet(null);
@@ -4912,40 +4927,51 @@ export class BoardRenderer {
     }
     const shift = this.lastPointerShift;
     this.lastPointerShift = false;
-    const hit = this.hitTest(world);
-    if (hit) {
+
+    const stack = this.hitTestStack(world);
+    if (stack.length > 0) {
       if (shift) {
-        // Shift+click goes straight to the active worklist (auto-creates one
-        // on first shift-click). Both directions toast — the sidebar may be
-        // closed, and silent add/remove loses the user's place mid-probe.
-        // The sidebar only force-opens on the very first shift-click (when
-        // the worklist is auto-created), so the user learns where rows go;
-        // after that the toast is the feedback channel.
-        const board = boardStore.board;
-        const refdes = board?.parts[hit.partIndex]?.name;
-        if (refdes) {
-          const wl = worklistStore.activeWorklist;
-          if (wl && wl.entries.some(e => e.refdes === refdes)) {
-            worklistStore.removeEntry(wl.id, refdes);
-            boardStore.addToast(`Removed '${refdes}' from ${wl.name}`, 'info');
-          } else {
-            const firstUse = !wl;
-            worklistStore.pushRefdesToActive(refdes);
-            const name = worklistStore.activeWorklist?.name ?? 'worklist';
-            boardStore.addToast(`Added '${refdes}' to ${name}`, 'info');
-            if (firstUse) openBoardSidebarTab('worklist');
-          }
-        }
+        // Shift+click adds the smallest part under the cursor to the worklist.
+        this.clickCycle = null;
+        this.clearPendingCycleAdvance();
+        this.shiftClickToWorklist(stack[0].partIndex);
         return;
       }
-      if (hit.pinIndex >= 0) {
-        boardStore.selectPin(hit.partIndex, hit.pinIndex);
-      } else {
-        boardStore.selectPart(hit.partIndex);
+
+      // Stacked-selection cycling (#23): the first click at a spot selects the
+      // smallest overlapping part; clicking again at the same spot advances
+      // through the stack (smallest-first, wrapping).
+      const tol = BoardRenderer.CYCLE_TOLERANCE_PX / Math.abs(this.viewport.scale.x);
+      const key = stack.map(h => h.partIndex).join(',');
+      const cyc = this.clickCycle;
+      const sameSpot = !!cyc && cyc.key === key &&
+        Math.abs(cyc.x - world.x) <= tol && Math.abs(cyc.y - world.y) <= tol;
+
+      if (!sameSpot) {
+        this.clearPendingCycleAdvance();
+        this.clickCycle = { x: world.x, y: world.y, key, index: 0 };
+        this.selectStackEntry(stack[0]);
+        return;
+      }
+
+      // Same spot again → advance to the next part, but DEFER the advance so a
+      // following double-click (PDF lookup) can cancel it and stay put.
+      if (stack.length > 1) {
+        this.clearPendingCycleAdvance();
+        this.pendingCycleAdvance = setTimeout(() => {
+          this.pendingCycleAdvance = null;
+          const c = this.clickCycle;
+          if (!c || c.key !== key) return;
+          c.index = (c.index + 1) % stack.length;
+          this.selectStackEntry(stack[c.index]);
+        }, BoardRenderer.CYCLE_DBL_GUARD_MS);
       }
       return;
     }
-    // Fallback: click on trace → highlight its net
+
+    // No part hit → fall back to trace highlight, else clear selection.
+    this.clickCycle = null;
+    this.clearPendingCycleAdvance();
     const traceHit = this.traceHitTest(world);
     if (traceHit && traceHit.net) {
       boardStore.highlightNet(
@@ -4954,6 +4980,41 @@ export class BoardRenderer {
       return;
     }
     if (!shift) boardStore.selectPart(null);
+  }
+
+  /** Select a stack entry — a pin selection when a pad/pin was hit, else the
+   *  whole part. */
+  private selectStackEntry(hit: { partIndex: number; pinIndex: number }) {
+    if (hit.pinIndex >= 0) boardStore.selectPin(hit.partIndex, hit.pinIndex);
+    else boardStore.selectPart(hit.partIndex);
+  }
+
+  /** Shift+click → toggle a part in the active worklist (auto-creates one on
+   *  first use). Both directions toast; the sidebar force-opens only on the
+   *  very first add so the user learns where rows go. */
+  private shiftClickToWorklist(partIndex: number) {
+    const refdes = boardStore.board?.parts[partIndex]?.name;
+    if (!refdes) return;
+    const wl = worklistStore.activeWorklist;
+    if (wl && wl.entries.some(e => e.refdes === refdes)) {
+      worklistStore.removeEntry(wl.id, refdes);
+      boardStore.addToast(`Removed '${refdes}' from ${wl.name}`, 'info');
+    } else {
+      const firstUse = !wl;
+      worklistStore.pushRefdesToActive(refdes);
+      const name = worklistStore.activeWorklist?.name ?? 'worklist';
+      boardStore.addToast(`Added '${refdes}' to ${name}`, 'info');
+      if (firstUse) openBoardSidebarTab('worklist');
+    }
+  }
+
+  /** Cancel a pending deferred cycle advance (used by pointer-move reset and by
+   *  double-click, which must never cycle). */
+  private clearPendingCycleAdvance() {
+    if (this.pendingCycleAdvance != null) {
+      clearTimeout(this.pendingCycleAdvance);
+      this.pendingCycleAdvance = null;
+    }
   }
 
   /** Redraw the multi-select + active-worklist outline overlay.
@@ -5033,12 +5094,20 @@ export class BoardRenderer {
 
   /** Double-click on a component → force-search it in the linked PDF (overwrites user search). */
   private handleDblClick(e: MouseEvent) {
+    // A double-click drives PDF lookup, never the click-cycle — cancel any
+    // pending same-spot advance the two clicks scheduled (#23).
+    this.clearPendingCycleAdvance();
     if (!this.board) return;
-    const rect = this.containerEl.getBoundingClientRect();
-    const worldPoint = this.viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
-    const hit = this.hitTest(worldPoint);
-    if (!hit) return;
-    const part = this.board.parts[hit.partIndex];
+    // Look up the currently-selected part (what the user sees highlighted, incl.
+    // a part they cycled to), falling back to the smallest under the cursor.
+    let partIndex = boardStore.selection.partIndex;
+    if (partIndex == null) {
+      const rect = this.containerEl.getBoundingClientRect();
+      const worldPoint = this.viewport.toWorld(e.clientX - rect.left, e.clientY - rect.top);
+      partIndex = this.hitTest(worldPoint)?.partIndex ?? null;
+    }
+    if (partIndex == null) return;
+    const part = this.board.parts[partIndex];
     if (part) this.triggerFollowPdf(part, true);
   }
 
@@ -5049,16 +5118,20 @@ export class BoardRenderer {
       e.clientX - rect.left,
       e.clientY - rect.top,
     );
-    const hit = this.hitTest(worldPoint);
-    if (hit) {
-      const part = this.board.parts[hit.partIndex];
-      if (part) {
-        const pin = hit.pinIndex >= 0 ? part.pins[hit.pinIndex] : null;
-        const pinId = pin ? pinDisplayId(pin, hit.pinIndex) : null;
-        const netName = pin?.net || null;
-        contextMenuStore.showBoard(e.clientX, e.clientY, part.name, pinId, netName);
-      }
-    }
+    const stack = this.hitTestStack(worldPoint);
+    if (stack.length === 0) return;
+    const top = stack[0];
+    const part = this.board.parts[top.partIndex];
+    if (!part) return;
+    const pin = top.pinIndex >= 0 ? part.pins[top.pinIndex] : null;
+    const pinId = pin ? pinDisplayId(pin, top.pinIndex) : null;
+    const netName = pin?.net || null;
+    // Every part under the point, smallest-first — the menu repeats its action
+    // row per part so any stacked part can be pinned / looked up (#23).
+    const overlap = stack
+      .map(h => this.board!.parts[h.partIndex]?.name)
+      .filter((n): n is string => !!n);
+    contextMenuStore.showBoard(e.clientX, e.clientY, part.name, pinId, netName, overlap);
   }
 
   /**

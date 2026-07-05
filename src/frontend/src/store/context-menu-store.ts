@@ -8,6 +8,10 @@ export interface ContextMenuState {
   source: 'board' | 'pdf';
   // Board-mode fields
   componentName: string;
+  /** Every component under the click, smallest-first (includes componentName as
+   *  [0]). One header action-row is rendered per entry so any stacked/overlapping
+   *  part can be pinned or looked up directly (#23). */
+  overlap: string[];
   /** Set when right-clicking a specific pin — enables chip+pin PDF search */
   pinId: string | null;
   /** Net name of the right-clicked pin */
@@ -25,6 +29,7 @@ const emptyState: ContextMenuState = {
   screenY: 0,
   source: 'board',
   componentName: '',
+  overlap: [],
   pinId: null,
   netName: null,
   query: '',
@@ -44,6 +49,7 @@ class ContextMenuStore extends Emitter {
     componentName: string,
     pinId: string | null = null,
     netName: string | null = null,
+    overlap: string[] = [],
   ) {
     this._state = {
       ...emptyState,
@@ -52,6 +58,7 @@ class ContextMenuStore extends Emitter {
       screenY,
       source: 'board',
       componentName,
+      overlap: overlap.length > 0 ? overlap : [componentName],
       pinId,
       netName,
     };
