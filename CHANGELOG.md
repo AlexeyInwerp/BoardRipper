@@ -1,5 +1,38 @@
 # BoardRipper changelog
 
+## v0.31.30 — 2026-07-06
+
+Select components hidden under others, and get a clearer read on what's selected
+versus what's merely on the same net.
+
+### Features
+
+- **Select stacked / overlapping components.** When parts overlap (alternates on
+  shared pads, a small part on a big pad, a component under a shield), a click
+  now selects the smallest part under the cursor; clicking the same spot again
+  cycles through the stack. On 2-pin parts the second click selects the whole
+  component — the first still selects the pin/net. Right-clicking a stack lists
+  every overlapping part so any of them can be pinned to a worklist or looked up
+  directly. (`be05bef`, `0358378`, `6ec512b`)
+
+### Fixes
+
+- **Clearer selected-component highlight.** The clicked part now draws a bold
+  white outline with a white name label — distinct from the net-member parts it
+  shares a net with (which stay in the net colour) and from the worklist mark
+  colours. The selected name stays white at every zoom. (`6ec512b`, `aeeaced`,
+  `9142a7d`)
+- **Worklist mark highlights repaint on toggle.** Turning the worklist Highlight
+  on/off now updates the on-board outlines immediately instead of waiting for the
+  next pan or zoom. (`aeeaced`)
+- **Worklist scroll stays put.** A long worklist no longer jumps back to the top
+  when you click the board or switch the sidebar tab away and back. (#22,
+  `6961bb8`)
+- **ASUS X540 BDV boards align to their pins.** Boards whose file supplies no
+  per-part geometry (all-zero part corners, e.g. X540UV 60NB0HF0-MB1020) had
+  every part's outline and label pulled toward the board origin; parts now derive
+  their box from their pins. (`e8aa6b7`)
+
 ## v0.31.29 — 2026-07-01
 
 The session-restore boot prompt now lets you pick which boards and PDFs to reopen
