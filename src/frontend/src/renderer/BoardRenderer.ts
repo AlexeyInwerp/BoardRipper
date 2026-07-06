@@ -3867,19 +3867,14 @@ export class BoardRenderer {
     const part = this.board.parts[sel.partIndex];
     if (!part) return;
 
-    // Once pin numbers start rendering at the current zoom the bright-white
-    // part-name clone would otherwise cover the pins and pin-number labels
-    // beneath it, so fade it to 0.55 alpha at that threshold. A read-under
-    // blend (difference / exclusion) would be ideal but advanced blend modes
-    // don't take effect for renderables attached to a RenderLayer — see
-    // `docs/research/threejs-webgpu-vs-pixi.md` § "Label blending options".
+    // The selected part's name must read clearly WHITE at every zoom. The clone
+    // sits directly over the (same-size) base part label, so keeping it opaque
+    // covers no more pins than the base label already did — the old fade to 0.55
+    // only let the grey base show through, making the name look grey when zoomed
+    // in. Keep it fully white.
     const clone = this.selectedPartLabelClone;
     if (clone && clone.visible) {
-      const fadeScale = Math.abs(this.viewport.scale.x);
-      const zoomOk = s.labelZoomHide <= 0 || fadeScale >= s.labelZoomHide;
-      const groups = this.activeScene.circleFontSizeGroups;
-      const pinNumbersVisible = zoomOk && groups.some(g => g.minSize * fadeScale >= s.circleLabelMinScreenPx);
-      clone.alpha = pinNumbersVisible ? 0.55 : 1;
+      clone.alpha = 1;
     }
 
     // Font size is constant in screen pixels — divide by viewport scale to get world units
