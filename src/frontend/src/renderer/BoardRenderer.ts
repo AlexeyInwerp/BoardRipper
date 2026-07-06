@@ -3327,11 +3327,16 @@ export class BoardRenderer {
         } else {
           drawPartOutline(gfx, part, s, s.selectionPadding);
         }
-        gfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        // Blink red on odd phases, orange on even (0 = no blink = normal orange)
+        // Primary (clicked) part: bold WHITE accent + stronger fill so it is
+        // unmistakably THE selection amid muted net-members (#23). White stays
+        // distinct from the yellow members, the worklist mark colours
+        // (amber/red/green) and the cyan selection-set, and matches the white
+        // selected-part name label. Focus-blink still flashes red.
+        const PRIMARY_SEL = 0xffffff;
         const blinkRed = this.selectionBlinkPhase > 0 && this.selectionBlinkPhase % 2 === 1;
-        const selColor = blinkRed ? 0xcc2222 : COLORS.partSelected;
-        gfx.stroke({ width: s.selectionWidth, color: selColor, alpha: 0.9 });
+        const selColor = blinkRed ? 0xcc2222 : PRIMARY_SEL;
+        gfx.fill({ color: PRIMARY_SEL, alpha: Math.min(0.22, s.selectionFillAlpha * 3 + 0.08) });
+        gfx.stroke({ width: s.selectionWidth * 1.7, color: selColor, alpha: 1.0 });
       }
 
       // Raise the selected part's pin labels into netLabelLayer so they render
@@ -3549,8 +3554,13 @@ export class BoardRenderer {
           }
 
           if (s.showSelectionHalo) {
+            // The clicked ("primary") part is drawn separately below with a bold
+            // white accent (see the `sel.partIndex` block), so keep it OUT of the
+            // muted net-member batch — otherwise it gets both treatments. (#23)
+            if (ref.partIndex === sel.partIndex) continue;
             const gfx = gfxFor(part);
-            const outlines = gfx === this.butterflySelectionGfx ? botPartOutlines : topPartOutlines;
+            const isBot = gfx === this.butterflySelectionGfx;
+            const outlines = isBot ? botPartOutlines : topPartOutlines;
             if (part.pins.length === 1) {
               const pin = part.pins[0];
               const r = computePinRadius(s, pin.radius) + s.selectionPadding;
@@ -3634,15 +3644,20 @@ export class BoardRenderer {
       }
 
       // ── Drain accumulated outlines + glow (once per frame) ───────────
+      // Net-member parts: muted (thin, faint net colour) so they read as the
+      // quiet context around the bold-white primary selection (drawn in the
+      // `sel.partIndex` block above), rather than competing with it. (#23)
+      const memberWidth = Math.max(1, s.selectionWidth * 0.6);
+      const memberStrokeAlpha = 0.45;
       for (const fn of topPartOutlines) fn();
       if (topPartOutlines.length > 0) {
         this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        this.selectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
+        this.selectionGfx.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
       }
       for (const fn of botPartOutlines) fn();
       if (botPartOutlines.length > 0) {
         this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        this.butterflySelectionGfx.stroke({ width: s.selectionWidth, color: COLORS.netHighlight, alpha: 0.7 });
+        this.butterflySelectionGfx.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
       }
 
       // Re-clone affected labels above the dim overlay.
