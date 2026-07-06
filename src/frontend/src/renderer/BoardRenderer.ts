@@ -424,6 +424,11 @@ export class BoardRenderer {
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
+  // Track the worklist Highlight toggle so a change repaints the worklist
+  // outline overlay (multiHighlightGfx) — boardStore notifies don't otherwise
+  // reach redrawMultiHighlight, so the marks appeared/disappeared only on the
+  // next pan/zoom.
+  private prevConnectionHighlight = false;
   // Track previous rotation so we can keep the viewport-center world point
   // anchored across rotation changes (rotation pivot at board center would
   // otherwise drag the user's focus off-screen on non-centered views).
@@ -2228,6 +2233,15 @@ export class BoardRenderer {
       log.render.log('onBoardUpdate SKIP: tab mismatch', 'mine=' + this.tabId, 'active=' + boardStore.activeTabId);
       return;
     }
+    // The worklist Highlight toggle lives on boardStore; redrawMultiHighlight is
+    // otherwise only reached via worklist / selection-set / viewport-move
+    // subscriptions, so a bare toggle left the overlay stale until the next
+    // pan/zoom. Repaint it as soon as the toggle changes.
+    if (boardStore.connectionHighlight !== this.prevConnectionHighlight) {
+      this.prevConnectionHighlight = boardStore.connectionHighlight;
+      this.redrawMultiHighlight();
+      this.needsRender = true;
+    }
     // boardStore.board now returns a DERIVED BoardData (filtered/folded) —
     // its reference changes whenever foldMode or selectedBoardIndex changes,
     // so the `boardStore.board !== this.board` check below naturally triggers
@@ -3272,7 +3286,11 @@ export class BoardRenderer {
     this.selectedPartLabelClone = null;
     if (sel.partIndex !== null && this.activeScene) {
       const lbl = this.activeScene.partLabelByIndex.get(sel.partIndex);
-      if (lbl && lbl.visible) {
+      // Clone even when the base label is zoom-CULLED (visible=false): the
+      // selected part's name should always read white so it's obvious what's
+      // selected, regardless of zoom. (Was gated on `lbl.visible`, which made
+      // the white name appear only when zoomed in far enough.)
+      if (lbl) {
         this.acquireNetLabel(lbl);
         // The selected part's name clone is always the first pool entry consumed
         // in this pass. Track it so updateSelectedPartLabelAlpha() can fade it
@@ -3644,11 +3662,12 @@ export class BoardRenderer {
       }
 
       // ── Drain accumulated outlines + glow (once per frame) ───────────
-      // Net-member parts: muted (thin, faint net colour) so they read as the
-      // quiet context around the bold-white primary selection (drawn in the
-      // `sel.partIndex` block above), rather than competing with it. (#23)
-      const memberWidth = Math.max(1, s.selectionWidth * 0.6);
-      const memberStrokeAlpha = 0.45;
+      // Net-member parts stay clearly visible (full net colour) so it's obvious
+      // which parts are connected; the distinction from the primary comes from
+      // the primary's bold WHITE outline (drawn in the `sel.partIndex` block
+      // above), not from dimming the members. (#23)
+      const memberWidth = s.selectionWidth;
+      const memberStrokeAlpha = 0.85;
       for (const fn of topPartOutlines) fn();
       if (topPartOutlines.length > 0) {
         this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
