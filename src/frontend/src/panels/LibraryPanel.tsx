@@ -129,6 +129,10 @@ export function fmtIndexEta(p: { running: boolean; total: number; done: number; 
   return `${(rate * 60).toFixed(1)}/min · ETA ${eta}`;
 }
 
+/** How long the folder-source dropdown stays open after the Folders tab is
+ *  clicked before it auto-dismisses (hover over it to pause). */
+const SOURCE_MENU_MS = 4000;
+
 export function LibraryPanel() {
   const {
     files, folderTree, folderTreeLoading, scanStatus, viewMode, selectedFileId,
@@ -173,9 +177,31 @@ export function LibraryPanel() {
   const [failedListLoading, setFailedListLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
   // Status bar collapse (single-row by default; auto-expands while an operation
-  // is pending, or on click). Folder-source popup (DB / Live filesystem).
+  // is pending, or on click).
   const [statusOpen, setStatusOpen] = useState(false);
+  // Folder-source (DB / Live) dropdown: pops open when the Folders tab is
+  // clicked and auto-dismisses after a short window — no permanent toolbar row.
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const sourceMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourceMenuWrapRef = useRef<HTMLDivElement>(null);
+  const armSourceMenuTimeout = useCallback(() => {
+    if (sourceMenuTimerRef.current) clearTimeout(sourceMenuTimerRef.current);
+    sourceMenuTimerRef.current = setTimeout(() => setSourceMenuOpen(false), SOURCE_MENU_MS);
+  }, []);
+  const closeSourceMenu = useCallback(() => {
+    if (sourceMenuTimerRef.current) clearTimeout(sourceMenuTimerRef.current);
+    setSourceMenuOpen(false);
+  }, []);
+  // Dismiss on outside click; always clear the timer on unmount.
+  useEffect(() => {
+    if (!sourceMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (sourceMenuWrapRef.current && !sourceMenuWrapRef.current.contains(e.target as Node)) closeSourceMenu();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [sourceMenuOpen, closeSourceMenu]);
+  useEffect(() => () => { if (sourceMenuTimerRef.current) clearTimeout(sourceMenuTimerRef.current); }, []);
   // Focus targets so switching tabs drops the caret into the relevant field.
   const filterInputRef = useRef<HTMLInputElement>(null);
   const pdfSearchInputRef = useRef<HTMLInputElement>(null);
@@ -390,6 +416,14 @@ export function LibraryPanel() {
 
   const handleSetViewMode = useCallback((mode: ViewMode, focusInput = true) => {
     databankStore.setViewMode(mode);
+    // Entering Folders (incl. re-clicking the already-active tab) briefly pops
+    // the DB/Live source dropdown so it can be switched, then auto-dismisses.
+    if (mode === 'folders') {
+      setSourceMenuOpen(true);
+      armSourceMenuTimeout();
+    } else {
+      closeSourceMenu();
+    }
     if (!focusInput) return;
     // Focus the relevant search field on an explicit tab switch so the user can
     // type-to-filter / search immediately. rAF: the target input for the new
@@ -398,6 +432,8 @@ export function LibraryPanel() {
       if (mode === 'search') pdfSearchInputRef.current?.focus();
       else if (mode !== 'bench') filterInputRef.current?.focus();
     });
+    // armSourceMenuTimeout/closeSourceMenu are stable useCallback refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Model tab is hidden (Board# now groups by model). If a user's persisted
@@ -814,51 +850,39 @@ export function LibraryPanel() {
     </div>
   );
 
-  // Folder-source picker — a light icon-menu button (reflects the current
-  // source; opens a popup to switch DB ↔ Live). Replaces the inline pill that
-  // used to sit in the tab row and shift it when the Folders tab was active.
+  // Folder-source dropdown (DB / Live) — the popup content only. It renders
+  // under the Folders tab (see the tab row) while sourceMenuOpen, and is
+  // dismissed by the auto-timeout, an outside click, or a selection. Hovering
+  // pauses the auto-dismiss so there's time to pick.
   const folderSourceMenu = (
-    <div className="library-source-menu">
+    <div
+      className="library-source-popup"
+      role="menu"
+      onMouseEnter={() => { if (sourceMenuTimerRef.current) clearTimeout(sourceMenuTimerRef.current); }}
+      onMouseLeave={armSourceMenuTimeout}
+    >
       <button
         type="button"
-        className="library-source-btn"
-        onClick={() => setSourceMenuOpen(o => !o)}
-        aria-haspopup="menu"
-        aria-expanded={sourceMenuOpen}
-        title={`Folder source: ${browseMode === 'live' ? 'Live filesystem' : 'Database'}`}
+        role="menuitemradio"
+        aria-checked={browseMode === 'database'}
+        className={`library-source-item ${browseMode === 'database' ? 'active' : ''}`}
+        onClick={() => { databankStore.setBrowseMode('database'); closeSourceMenu(); }}
       >
-        {browseMode === 'live' ? <IconDeviceDesktop size={14} /> : <IconDatabase size={14} />}
-        <IconChevronDown size={11} />
+        <IconDatabase size={14} />
+        <span>Database</span>
+        {browseMode === 'database' && <IconCheck size={13} className="library-source-check" />}
       </button>
-      {sourceMenuOpen && (
-        <>
-          <div className="library-source-backdrop" onClick={() => setSourceMenuOpen(false)} />
-          <div className="library-source-popup" role="menu">
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={browseMode === 'database'}
-              className={`library-source-item ${browseMode === 'database' ? 'active' : ''}`}
-              onClick={() => { databankStore.setBrowseMode('database'); setSourceMenuOpen(false); }}
-            >
-              <IconDatabase size={14} />
-              <span>Database</span>
-              {browseMode === 'database' && <IconCheck size={13} className="library-source-check" />}
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={browseMode === 'live'}
-              className={`library-source-item ${browseMode === 'live' ? 'active' : ''}`}
-              onClick={() => { databankStore.setBrowseMode('live'); setSourceMenuOpen(false); }}
-            >
-              <IconDeviceDesktop size={14} />
-              <span>Live filesystem</span>
-              {browseMode === 'live' && <IconCheck size={13} className="library-source-check" />}
-            </button>
-          </div>
-        </>
-      )}
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={browseMode === 'live'}
+        className={`library-source-item ${browseMode === 'live' ? 'active' : ''}`}
+        onClick={() => { databankStore.setBrowseMode('live'); closeSourceMenu(); }}
+      >
+        <IconDeviceDesktop size={14} />
+        <span>Live filesystem</span>
+        {browseMode === 'live' && <IconCheck size={13} className="library-source-check" />}
+      </button>
     </div>
   );
 
@@ -921,13 +945,16 @@ export function LibraryPanel() {
           >
             Board #
           </button>
-          <button
-            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => handleSetViewMode('folders')}
-            title="Browse folders"
-          >
-            <IconFolder size={14} />
-          </button>
+          <div className="library-tab-folder-wrap" ref={sourceMenuWrapRef}>
+            <button
+              className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
+              onClick={() => handleSetViewMode('folders')}
+              title="Browse folders"
+            >
+              <IconFolder size={14} />
+            </button>
+            {sourceMenuOpen && viewMode === 'folders' && folderSourceMenu}
+          </div>
           {/* Model tab hidden — Board# now groups by model. Code kept (ModelView/modelTree) for future re-enable.
           <button
             className={`library-tab ${viewMode === 'model' ? 'active' : ''}`}
@@ -1206,26 +1233,21 @@ export function LibraryPanel() {
             onOpenFile={handleOpenFile}
             registerCollapseAll={registerTreeCollapseAll}
           />
+        ) : viewMode === 'folders' && browseMode === 'live' ? (
+          /* Folders — source (DB / Live) chosen via the dropdown under the Folders tab. */
+          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} onIndexFolder={handleIndexFolder} />
         ) : (
-          /* Folders — source (DB / Live) chosen via the icon menu in the toolbar. */
-          <div className="library-folder-wrap">
-            <div className="library-folder-toolbar">{folderSourceMenu}</div>
-            {browseMode === 'live' ? (
-              <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} onIndexFolder={handleIndexFolder} />
-            ) : (
-              <FolderView
-                tree={folderTree}
-                treeLoading={folderTreeLoading}
-                selectedFileId={selectedFileId}
-                filterFile={filterFile}
-                searchFilter={debouncedSearch}
-                onSelectFile={handleSelectFile}
-                onOpenFile={handleOpenFile}
-                onIndexFolder={handleIndexFolder}
-                registerCollapseAll={registerTreeCollapseAll}
-              />
-            )}
-          </div>
+          <FolderView
+            tree={folderTree}
+            treeLoading={folderTreeLoading}
+            selectedFileId={selectedFileId}
+            filterFile={filterFile}
+            searchFilter={debouncedSearch}
+            onSelectFile={handleSelectFile}
+            onOpenFile={handleOpenFile}
+            onIndexFolder={handleIndexFolder}
+            registerCollapseAll={registerTreeCollapseAll}
+          />
         )}
       </div>
 

@@ -46,27 +46,40 @@ test.describe('Library panel layout', () => {
     await page.locator('.library-panel').first().screenshot({ path: 'test-results/library-layout-default.png' });
   });
 
-  test('folder source is an icon-menu popup with DB + Live', async ({ page }) => {
+  test('folder source dropdown opens on Folders-tab click and switches source', async ({ page }) => {
     await openLibrary(page);
-    await page.locator('.library-tab[title="Browse folders"]').click();
-    const srcBtn = page.locator('.library-source-btn');
-    await expect(srcBtn).toBeVisible();
-    // Popup closed initially.
+    // No persistent source button or toolbar row.
+    await expect(page.locator('.library-source-btn')).toHaveCount(0);
+    await expect(page.locator('.library-folder-toolbar')).toHaveCount(0);
+    // Not folders yet → no dropdown.
     await expect(page.locator('.library-source-popup')).toHaveCount(0);
-    await srcBtn.click();
+
+    // Clicking the Folders tab drops the source menu open automatically.
+    const folderTab = page.locator('.library-tab[title="Browse folders"]');
+    await folderTab.click();
     const popup = page.locator('.library-source-popup');
     await expect(popup).toBeVisible();
     await expect(popup.locator('.library-source-item')).toHaveCount(2);
-    // Popup stays within the viewport horizontally.
+
+    // Anchored under the Folders tab, within the viewport.
+    const tabBox = await folderTab.boundingBox();
     const pb = await popup.boundingBox();
     const vw = page.viewportSize()!.width;
     expect(pb!.x).toBeGreaterThanOrEqual(0);
     expect(pb!.x + pb!.width).toBeLessThanOrEqual(vw + 1);
+    expect(pb!.y).toBeGreaterThanOrEqual(tabBox!.y + tabBox!.height - 2); // drops below the tab
     await page.locator('.library-panel').first().screenshot({ path: 'test-results/library-folder-source.png' });
+
     // Selecting an option switches source and closes the popup.
     await popup.getByText('Live filesystem').click();
     await expect(page.locator('.library-source-popup')).toHaveCount(0);
-    await expect(srcBtn).toHaveAttribute('title', /Live filesystem/);
+    // Re-clicking the Folders tab reopens it, now with Live checked.
+    await folderTab.click();
+    await expect(page.locator('.library-source-item', { hasText: 'Live filesystem' })).toHaveClass(/active/);
+
+    // Outside click dismisses it.
+    await page.locator('.library-tab', { hasText: 'Board #' }).click();
+    await expect(page.locator('.library-source-popup')).toHaveCount(0);
   });
 
   test('switching tabs focuses the relevant search field', async ({ page }) => {

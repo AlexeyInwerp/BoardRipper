@@ -4652,53 +4652,18 @@ body {
   box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.04) inset;
 }
 
-/* Folders view — sticky toolbar hosting the source (DB / Live) icon menu.
- * Replaces the old inline DB/Live pill that used to shift the tab row. */
-.library-folder-wrap {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-.library-folder-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 3px 6px;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border);
-}
-.library-source-menu { position: relative; display: inline-flex; }
-.library-source-btn {
+/* Folders view — the DB/Live source is a transient dropdown that drops from the
+ * Folders tab (opened on click, auto-dismissed). No persistent toolbar row. */
+.library-tab-folder-wrap {
+  position: relative;
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  padding: 3px 5px;
-  cursor: pointer;
-  transition: color 0.08s ease, background 0.08s ease, border-color 0.08s ease;
-}
-.library-source-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-}
-/* Transparent full-screen catcher so an outside click dismisses the popup. */
-.library-source-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
 }
 .library-source-popup {
   position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 41;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  z-index: 50;
   min-width: 168px;
   display: flex;
   flex-direction: column;
