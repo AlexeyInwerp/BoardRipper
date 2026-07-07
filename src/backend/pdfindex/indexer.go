@@ -324,12 +324,16 @@ func (ix *Indexer) process(f PdfFile) {
 		}
 		pages = append(pages, Page{Num: i + 1, Text: clean})
 	}
-	if len(pages) > 0 {
-		if err := ix.store.UpsertPages(f.ID, pages); err != nil {
-			log.Printf("pdfindex: FAIL store file_id=%d path=%q pages=%d: %v", f.ID, f.Path, len(pages), err)
-			ix.fail(f.ID, "store: "+err.Error())
-			return
-		}
+	// ReplacePages runs even when len(pages)==0: it deletes any prior pages for
+	// this file (reversing stale FTS postings from an earlier index) before
+	// inserting the fresh set. Without this a re-index left the old pages in
+	// place — so a re-save that dropped its text kept stale search hits, and a
+	// watermark re-index never stripped the watermark rows. Finalize then
+	// counts the fresh set and marks 'indexed' or (zero pages) 'empty'.
+	if err := ix.store.ReplacePages(f.ID, pages); err != nil {
+		log.Printf("pdfindex: FAIL store file_id=%d path=%q pages=%d: %v", f.ID, f.Path, len(pages), err)
+		ix.fail(f.ID, "store: "+err.Error())
+		return
 	}
 	if _, err := ix.store.Finalize(f.ID); err != nil {
 		log.Printf("pdfindex: FAIL finalize file_id=%d path=%q: %v", f.ID, f.Path, err)

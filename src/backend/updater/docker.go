@@ -109,10 +109,40 @@ func (u *Updater) dockerLoad(tarPath string) error {
 		return fmt.Errorf("docker image load failed: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) // drain response
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("docker image load returned %d", resp.StatusCode)
+	}
+
+	// /images/load returns HTTP 200 and then streams newline-delimited JSON that
+	// can STILL carry a terminal errorDetail (corrupt layer, image-format /
+	// version mismatch, out-of-space). Draining to io.Discard would swallow that
+	// and let applyTarball/ApplyBundle proceed — Apply() would persist the new
+	// counter and swap onto an image that never actually loaded. Scan the stream
+	// exactly like the pull path (pullDockerImage/dockerPullByDigest) and fail if
+	// any line reports an error, so the caller aborts BEFORE the counter is
+	// written.
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var loadErr string
+	for scanner.Scan() {
+		var msg struct {
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+		if msg.ErrorDetail.Message != "" {
+			loadErr = msg.ErrorDetail.Message
+		} else if msg.Error != "" {
+			loadErr = msg.Error
+		}
+	}
+	if loadErr != "" {
+		return fmt.Errorf("docker image load stream error: %s", loadErr)
 	}
 	return nil
 }

@@ -189,6 +189,25 @@ func (u *Updater) Check() (*UpdateState, error) {
 			u.state.Manifest = m
 			return &u.state, nil
 		}
+		// Rolled-back update — re-offer it. Apply() persists the manifest's
+		// counter to .update-counter BEFORE the health-gated swap, so a release
+		// that failed its 60s health check (and was rolled back to the OLD image)
+		// leaves installedCounter == m.Counter while the running binary is still
+		// the OLD version (m.Version != Version). The plain counter-monotonicity
+		// rule then rejects that manifest forever ("counter not greater than
+		// installed") and the release can never be retried. Equal counter + a
+		// differing running version means "counter advanced but the image never
+		// came up", not a replay — so offer the update again. We re-run
+		// ValidateManifest with counter-1 to confirm the counter check was the
+		// SOLE failure (expiry / freshness / min_supported_version all still bind);
+		// otherwise we fall through to the normal error.
+		if m.Counter == installedCtr && m.Version != Version && ValidateManifest(m, installedCtr-1, Version) == nil {
+			u.state.Error = ""
+			u.state.LatestVersion = m.Version
+			u.state.HasUpdate = true
+			u.state.Manifest = m
+			return &u.state, nil
+		}
 		u.state.Error = validateErr.Error()
 		u.state.HasUpdate = false
 		return &u.state, validateErr
@@ -285,8 +304,32 @@ func (u *Updater) Apply() error {
 // applyTarball downloads, verifies, and docker-loads the release tarball.
 func (u *Updater) applyTarball(m *Manifest) error {
 	dest := filepath.Join(u.dataDir, "boardripper-"+m.Version+".tar.gz")
-	if err := downloadAssetVerified(m.Tarball.URLPrimary, dest, m.Tarball.SizeBytes, m.Tarball.SHA256); err != nil {
-		return fmt.Errorf("download: %w", err)
+	// Try the primary URL first, then each mirror in turn. Every candidate's
+	// bytes flow through downloadAssetVerified, which enforces the manifest's
+	// size cap AND the signed SHA-256, so falling through to a mirror can never
+	// widen the trust surface — a corrupt or malicious mirror fails the gate and
+	// we move on to the next source. (release.sh currently emits an empty
+	// url_mirrors, so the loop degenerates to the primary alone today.)
+	sources := append([]string{m.Tarball.URLPrimary}, m.Tarball.URLMirrors...)
+	var downloaded bool
+	var lastErr error
+	for _, src := range sources {
+		if src == "" {
+			continue
+		}
+		if err := downloadAssetVerified(src, dest, m.Tarball.SizeBytes, m.Tarball.SHA256); err != nil {
+			lastErr = err
+			u.logProgress("Tarball source failed ("+src+"): "+err.Error(), "info")
+			continue
+		}
+		downloaded = true
+		break
+	}
+	if !downloaded {
+		if lastErr == nil {
+			lastErr = errors.New("manifest has no tarball URL")
+		}
+		return fmt.Errorf("download: %w", lastErr)
 	}
 	if err := u.dockerLoad(dest); err != nil {
 		return fmt.Errorf("docker load: %w", err)

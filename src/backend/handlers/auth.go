@@ -34,6 +34,21 @@ type BootstrapHandler struct{ secret string }
 
 func NewBootstrapHandler(secret string) *BootstrapHandler { return &BootstrapHandler{secret: secret} }
 
+// Serve sets the br_update_token cookie.
+//
+// Threat model (L1, deep-audit 2026-07-07): a same-origin guard was considered
+// here to stop a bare non-browser client from minting the cookie, but no safe
+// predicate exists for THIS endpoint. The frontend fetches it same-origin with
+// GET (update-store.ts: fetch('/api/update/bootstrap', {credentials:'same-origin'}));
+// browsers omit the Origin header on same-origin GET, and withSecurityHeaders
+// sets Referrer-Policy: no-referrer which strips Referer too — so the legit
+// browser flow sends NEITHER header. Requiring Origin would break the update UI,
+// while accepting an empty Origin (withCSRFCheck's posture) would not block the
+// bare client this guard is meant to stop. Left unguarded deliberately: the
+// worst a cookie holder can reach is /api/update/*, whose Apply path is bounded
+// by signed-manifest verification (Ed25519/minisign) — a forced restart into an
+// already-signed image, not RCE. The mutating /api/update/* POSTs are
+// additionally same-origin-gated by withCSRFCheck (main.go).
 func (h *BootstrapHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{

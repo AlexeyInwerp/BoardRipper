@@ -52,6 +52,16 @@ type ErrorEntry struct {
 
 const maxRecentErrors = 50
 
+// Manifest ingestion caps. A compromised or misbehaving mirror must not be able
+// to stream an unbounded manifest.txt into an ever-growing []string and OOM the
+// container before parsing finishes. maxManifestBytes bounds the total body
+// (matches the LimitReader caps in updater/sources.go and obd/scraper.go);
+// maxManifestEntries bounds the accepted path count.
+const (
+	maxManifestBytes   = 16 << 20 // 16 MiB total manifest body
+	maxManifestEntries = 200_000  // accepted path ceiling
+)
+
 // Engine performs library sync runs in a background goroutine, mirroring the
 // scanner.Status pattern for thread-safe progress reporting and cancellation.
 type Engine struct {
@@ -61,6 +71,13 @@ type Engine struct {
 	status  Status
 	cancel  context.CancelFunc
 	running bool
+
+	// zeroByteSkip remembers entry paths whose source served an empty body
+	// (errSkippedZeroByte) so the diff phase doesn't re-queue and re-fetch these
+	// placeholders every single run. In-memory: reset on restart (so a
+	// later-materialised source is eventually re-checked) and pruned each run of
+	// any path that has left the manifest. Guarded by mu.
+	zeroByteSkip map[string]bool
 }
 
 // New constructs an Engine bound to the databank.DB. The DB is used for the
@@ -308,14 +325,24 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 		info, err := os.Stat(local)
 		if err == nil && !info.IsDir() {
 			// Already present locally (any size). The manifest carries no size
-			// column, so we can't tell whether a non-zero local file is stale
-			// vs the source — and crucially, some source files legitimately
-			// have content-length 0 (placeholders), so requiring `Size() > 0`
-			// would cause those to be re-queued every single run.
+			// column, so we can't tell whether a local file is stale vs the
+			// source, and we don't re-download an existing file on that basis.
+			continue
+		}
+		// Not present locally. downloadFile skips zero-byte sources WITHOUT
+		// writing a file (errSkippedZeroByte), so os.Stat keeps failing for a
+		// known-empty placeholder and it would otherwise be re-queued and
+		// re-fetched every run forever. Consult the skip-set built from prior
+		// runs and don't re-queue a source we already know is empty.
+		if e.isZeroByteSkip(entry) {
 			continue
 		}
 		queue = append(queue, queueEntry{path: entry})
 	}
+
+	// Drop skip-set entries no longer in the manifest so a path that returns
+	// later (possibly now materialised) is fetched again.
+	e.pruneZeroByteSkip(manifestSet)
 
 	e.mu.Lock()
 	e.status.FilesTotal = int64(len(queue))
@@ -349,7 +376,9 @@ func (e *Engine) run(ctx context.Context, cfg runConfig) {
 		written, err := e.downloadFile(ctx, cfg, item.path)
 		if errors.Is(err, errSkippedZeroByte) {
 			// Empty source — intentionally skipped, not a failure. Don't count
-			// it as done and don't surface it as an error.
+			// it as done and don't surface it as an error. Remember it so the
+			// next diff phase doesn't re-queue this placeholder every run.
+			e.markZeroByteSkip(item.path)
 			continue
 		}
 		if err != nil {
@@ -413,6 +442,37 @@ func (e *Engine) recordError(path string, err error) {
 	e.mu.Unlock()
 }
 
+// isZeroByteSkip reports whether entry is a known empty-source placeholder that
+// the diff phase should not re-queue.
+func (e *Engine) isZeroByteSkip(path string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.zeroByteSkip[path]
+}
+
+// markZeroByteSkip records that entry's source served an empty body, so the
+// next diff phase skips it instead of re-fetching a placeholder every run.
+func (e *Engine) markZeroByteSkip(path string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.zeroByteSkip == nil {
+		e.zeroByteSkip = make(map[string]bool)
+	}
+	e.zeroByteSkip[path] = true
+}
+
+// pruneZeroByteSkip drops skip-set entries absent from the current manifest, so
+// a path that reappears later (possibly now materialised) is fetched again.
+func (e *Engine) pruneZeroByteSkip(manifest map[string]bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for p := range e.zeroByteSkip {
+		if !manifest[p] {
+			delete(e.zeroByteSkip, p)
+		}
+	}
+}
+
 // fetchManifest downloads <url>/manifest.txt and parses it into a slice of
 // path entries. Comment lines (#…) and blanks are skipped. Per the contract,
 // each line is a single path; if a line includes whitespace-separated extras
@@ -428,7 +488,8 @@ func (e *Engine) fetchManifest(ctx context.Context, cfg runConfig) ([]string, er
 	}
 
 	var entries []string
-	scanner := bufio.NewScanner(resp.Body)
+	// Bound the total body before it reaches the scanner (see maxManifestBytes).
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxManifestBytes))
 	// PCB schematic paths can be long — bump the line buffer to 1 MiB.
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1<<20)
@@ -454,6 +515,9 @@ func (e *Engine) fetchManifest(ctx context.Context, cfg runConfig) ([]string, er
 			continue
 		}
 		entries = append(entries, clean)
+		if len(entries) > maxManifestEntries {
+			return nil, fmt.Errorf("manifest exceeds %d entries — refusing", maxManifestEntries)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err

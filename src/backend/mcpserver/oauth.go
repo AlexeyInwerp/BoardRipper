@@ -44,6 +44,8 @@ type oauthClient struct {
 	ID           string
 	Name         string
 	RedirectURIs []string
+	createdAt    time.Time
+	lastUsed     time.Time // touched on each authorize; drives LRU eviction + sweep
 }
 
 type authCode struct {
@@ -61,25 +63,108 @@ type accessToken struct {
 }
 
 const (
-	oauthScope       = "boardripper"
-	codeTTL          = 5 * time.Minute
-	accessTokenTTL   = 24 * time.Hour
-	oauthBasePath    = "/api/mcp/oauth"
-	authorizePath    = oauthBasePath + "/authorize"
-	tokenPath        = oauthBasePath + "/token"
-	registerPath     = oauthBasePath + "/register"
-	jwksPath         = oauthBasePath + "/jwks"
-	prmWellKnown     = "/.well-known/oauth-protected-resource"
-	asmWellKnown     = "/.well-known/oauth-authorization-server"
-	mcpResourcePath  = "/api/mcp"
+	oauthScope      = "boardripper"
+	codeTTL         = 5 * time.Minute
+	accessTokenTTL  = 24 * time.Hour
+	oauthBasePath   = "/api/mcp/oauth"
+	authorizePath   = oauthBasePath + "/authorize"
+	tokenPath       = oauthBasePath + "/token"
+	registerPath    = oauthBasePath + "/register"
+	jwksPath        = oauthBasePath + "/jwks"
+	prmWellKnown    = "/.well-known/oauth-protected-resource"
+	asmWellKnown    = "/.well-known/oauth-authorization-server"
+	mcpResourcePath = "/api/mcp"
+
+	// In-memory reclamation bounds (L6): dynamic client registration is
+	// unauthenticated on a trusted LAN, so cap the client table and let a
+	// periodic sweeper drop expired codes/tokens and idle clients.
+	maxClients  = 128             // hard ceiling; oldest (LRU) evicted on overflow
+	clientTTL   = 24 * time.Hour  // drop clients unused this long
+	sweepPeriod = 10 * time.Minute
 )
 
 func NewOAuth() *OAuth {
-	return &OAuth{
+	o := &OAuth{
 		scope:   oauthScope,
 		clients: map[string]*oauthClient{},
 		codes:   map[string]*authCode{},
 		tokens:  map[string]*accessToken{},
+	}
+	// Single lifetime sweeper: reclaim expired codes/tokens and idle clients so
+	// the in-memory tables can't grow unbounded (L6). One goroutine per process.
+	go o.sweepLoop()
+	return o
+}
+
+// GateOAuth serves next only when MCP is enabled AND the auth mode is "oauth";
+// otherwise 404 — so every OAuth endpoint (discovery + registration + the AS)
+// is invisible when the feature is off or the deployment uses static-token auth,
+// matching the invisibility of the main /api/mcp handler.
+func GateOAuth(st *State, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if st == nil || !st.Enabled() || st.AuthMode() != "oauth" {
+			http.NotFound(w, r)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// sweepLoop periodically reclaims stale in-memory OAuth state for the process
+// lifetime.
+func (o *OAuth) sweepLoop() {
+	t := time.NewTicker(sweepPeriod)
+	defer t.Stop()
+	for range t.C {
+		o.sweep()
+	}
+}
+
+// sweep drops expired authorization codes, expired access tokens, and clients
+// that have been idle longer than clientTTL.
+func (o *OAuth) sweep() {
+	now := time.Now()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for k, c := range o.codes {
+		if now.After(c.expiry) {
+			delete(o.codes, k)
+		}
+	}
+	for k, t := range o.tokens {
+		if now.After(t.expiry) {
+			delete(o.tokens, k)
+		}
+	}
+	for k, c := range o.clients {
+		if now.Sub(clientLastRef(c)) > clientTTL {
+			delete(o.clients, k)
+		}
+	}
+}
+
+// clientLastRef is the client's most recent activity timestamp (falling back to
+// creation time), used for both LRU eviction and the idle sweep.
+func clientLastRef(c *oauthClient) time.Time {
+	if !c.lastUsed.IsZero() {
+		return c.lastUsed
+	}
+	return c.createdAt
+}
+
+// evictOldestClientLocked drops the least-recently-referenced client. Caller
+// must hold o.mu.
+func (o *OAuth) evictOldestClientLocked() {
+	var oldestKey string
+	var oldest time.Time
+	for k, c := range o.clients {
+		ref := clientLastRef(c)
+		if oldestKey == "" || ref.Before(oldest) {
+			oldestKey, oldest = k, ref
+		}
+	}
+	if oldestKey != "" {
+		delete(o.clients, oldestKey)
 	}
 }
 
@@ -162,8 +247,12 @@ func (o *OAuth) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := randToken(16)
+	now := time.Now()
 	o.mu.Lock()
-	o.clients[id] = &oauthClient{ID: id, Name: req.ClientName, RedirectURIs: req.RedirectURIs}
+	if len(o.clients) >= maxClients {
+		o.evictOldestClientLocked()
+	}
+	o.clients[id] = &oauthClient{ID: id, Name: req.ClientName, RedirectURIs: req.RedirectURIs, createdAt: now, lastUsed: now}
 	o.mu.Unlock()
 	oauthJSON(w, 201, map[string]any{
 		"client_id":                  id,
@@ -195,6 +284,9 @@ func (o *OAuth) Authorize(w http.ResponseWriter, r *http.Request) {
 
 	o.mu.Lock()
 	client := o.clients[clientID]
+	if client != nil {
+		client.lastUsed = time.Now() // mark active so the sweeper keeps it
+	}
 	o.mu.Unlock()
 	if client == nil || !slices.Contains(client.RedirectURIs, redirectURI) {
 		http.Error(w, "invalid client_id or redirect_uri", http.StatusBadRequest)

@@ -203,11 +203,13 @@ func (db *DB) migrateV1() error {
 		}
 	}
 
-	// Set schema version
+	// Stamp the version migrateV1 actually applied (1), NOT schemaVersion.
+	// Binding schemaVersion here made an interrupted V2..V10 chain read 10 on
+	// the next boot and skip every remaining migration.
 	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, schemaVersion); err != nil {
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 1); err != nil {
 		return err
 	}
 
@@ -763,15 +765,16 @@ func (db *DB) SetHasPreview(id int64, has bool) error {
 	return err
 }
 
-// DeleteFile removes a file record by ID. Cascades to bindings and pdf_pages.
+// DeleteFile removes a file record by ID. foreign_keys=on + ON DELETE CASCADE
+// removes the file's bindings and pdf_donors rows automatically. The legacy
+// in-process pdf_text/pdf_pages tables are gone (their content moved to
+// pdfindex.db), so no manual FTS5 cleanup is needed here — and attempting a
+// `DELETE FROM pdf_text` after CleanupLegacyPdfTables drops it fails with
+// "no such table", which used to abort the whole delete and orphan the row.
 func (db *DB) DeleteFile(id int64) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	// Delete FTS5 entries (no cascade support for virtual tables)
-	if _, err := db.writer.Exec(`DELETE FROM pdf_text WHERE file_id = ?`, id); err != nil {
-		return err
-	}
 	_, err := db.writer.Exec(`DELETE FROM files WHERE id = ?`, id)
 	return err
 }

@@ -94,6 +94,7 @@ func (h *PdfIndexHandler) Reindex(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Scope string `json:"scope"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	n, err := h.db.ResetForReindex(body.Scope)
 	if err != nil {
@@ -219,6 +220,7 @@ func (h *PdfIndexHandler) FailEndpoint(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Error string `json:"error"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if err := h.db.Fail(id, body.Error); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -266,6 +268,7 @@ func (h *PdfIndexHandler) IndexFolder(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Path string `json:"path"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if err := h.ix.RunFolder(body.Path); err != nil {
 		if errors.Is(err, pdfindex.ErrAlreadyRunning) {

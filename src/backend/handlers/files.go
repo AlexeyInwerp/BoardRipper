@@ -145,6 +145,11 @@ func (h *FileHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read file: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// r.MultipartForm is non-nil once FormFile succeeds. RemoveAll unlinks
+	// the on-disk temp files the multipart reader spilled for uploads over
+	// the 32 MiB in-memory threshold (mirrors update.go ApplyBundle).
+	// Registered before file.Close() so Close runs first (defers are LIFO).
+	defer r.MultipartForm.RemoveAll()
 	defer file.Close()
 
 	// Accept any supported board or PDF format.
@@ -262,6 +267,14 @@ func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent directory traversal
 	safeName := filepath.Base(name)
+	// Confine this endpoint to user board/PDF files: reject dotfiles
+	// (.update-secret, .mcp-secret, .update-counter) and anything that isn't
+	// a supported board/PDF (e.g. *.db). Mirrors the allowlist List()/Upload()
+	// already apply, keeping the data-dir's private state files unreachable.
+	if strings.HasPrefix(safeName, ".") || !databank.IsSupportedFile(safeName) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
 	filePath := filepath.Join(h.dataDir, safeName)
 
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -468,6 +481,14 @@ func (h *FileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	safeName := filepath.Base(name)
+	// Same allowlist as Get(): only user board/PDF files are removable via
+	// this endpoint. Reject dotfiles (.update-secret, .mcp-secret,
+	// .update-counter) and non-supported files (e.g. *.db) so the data-dir's
+	// private state files can't be deleted through it.
+	if strings.HasPrefix(safeName, ".") || !databank.IsSupportedFile(safeName) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
 	filePath := filepath.Join(h.dataDir, safeName)
 
 	if err := os.Remove(filePath); err != nil {

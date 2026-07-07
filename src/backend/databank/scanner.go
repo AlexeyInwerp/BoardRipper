@@ -46,12 +46,20 @@ type ScanStatus struct {
 // nil means "no PDF index wired" — scanner silently skips the notification.
 type PdfModifiedHook func(fileID int64) error
 
+// PdfDeleteHook is fired for every file the Phase-4 prune removes from the
+// databank (vanished from disk) so the SEPARATE pdfindex.db can drop its
+// matching rows too — otherwise those rows leak forever. Called for every
+// pruned file, not just PDFs; the wired pdfindex.DB.DeleteFile is a cheap
+// no-op for non-PDF ids. nil means "no PDF index wired" — scanner skips it.
+type PdfDeleteHook func(fileID int64) error
+
 // Scanner walks DATA_DIR and syncs findings with the database.
 type Scanner struct {
-	db         *DB
-	dataDir    string
-	libraryDir string // optional separate library directory
-	boardDB    *boarddb.DB // optional board reference database
+	db          *DB
+	dataDir     string
+	libraryDir  string      // optional separate library directory
+	boardDB     *boarddb.DB // optional board reference database
+	boardDBPath string      // on-disk path of boards.db, for the resolve-fingerprint gate
 
 	mu             sync.Mutex
 	status         ScanStatus
@@ -59,6 +67,7 @@ type Scanner struct {
 	cancelCh       chan struct{} // closed on cancel
 	activeOp       string       // "", "file"
 	onPdfModified  PdfModifiedHook // optional — re-queues modified PDFs into pdf_index_status
+	onPdfDeleted   PdfDeleteHook   // optional — drops pruned files from the PDF index
 }
 
 // SetPdfModifiedHook registers the callback the scanner fires when a PDF
@@ -70,11 +79,30 @@ func (s *Scanner) SetPdfModifiedHook(fn PdfModifiedHook) {
 	s.onPdfModified = fn
 }
 
+// SetPdfDeleteHook registers the callback the scanner fires for every file it
+// prunes in Phase-4 (removed from disk). Wire pdfindex.DB's DeleteFile here so
+// the separate PDF index doesn't retain rows for files the databank dropped.
+func (s *Scanner) SetPdfDeleteHook(fn PdfDeleteHook) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onPdfDeleted = fn
+}
+
 // SetBoardDB registers the board reference database for ODM-aware metadata extraction.
 func (s *Scanner) SetBoardDB(bdb *boarddb.DB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.boardDB = bdb
+}
+
+// SetBoardDBPath records the on-disk path of boards.db so scanWorker can
+// fingerprint it (mtime+size) and skip the per-file re-resolve pass on
+// disk-unchanged files while neither the reference DB nor the resolver logic
+// (resolverLogicVersion) has changed since the last completed scan.
+func (s *Scanner) SetBoardDBPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.boardDBPath = path
 }
 
 // ActiveOp returns the currently running operation ("", "file", or "pdf").
@@ -318,8 +346,41 @@ func (s *Scanner) Scan() ScanStatus {
 	return s.Status()
 }
 
+// resolverLogicVersion is bumped whenever the metadata resolver logic
+// (boarddb/resolve.go or databank/metadata.go) changes in a way that could
+// re-categorise an already-scanned file. It is mixed into the resolve
+// fingerprint so a code update forces exactly one re-resolve pass over
+// disk-unchanged files even when boards.db itself is byte-identical.
+// Mirrors the frontend PARSER_VERSION pattern.
+const resolverLogicVersion = 1
+
+// resolveFingerprint is the value stored under config key "resolve_fingerprint".
+// It changes when boards.db changes on disk (mtime+size) or resolverLogicVersion
+// bumps. When the stored fingerprint matches the current one, scanWorker skips
+// the ExtractMetadataWithBoardDB re-resolve on every disk-unchanged file (up to
+// ~5 boards.db JOINs each) — which otherwise ran on every unchanged file on
+// every scan.
+func (s *Scanner) resolveFingerprint() string {
+	s.mu.Lock()
+	path := s.boardDBPath
+	s.mu.Unlock()
+	var dataFP string
+	if path != "" {
+		if info, err := os.Stat(path); err == nil {
+			dataFP = fmt.Sprintf("%d:%d", info.ModTime().UnixNano(), info.Size())
+		}
+	}
+	return fmt.Sprintf("v%d|%s", resolverLogicVersion, dataFP)
+}
+
 func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 	start := time.Now()
+
+	// Resolve-fingerprint gate (M11): only re-resolve disk-unchanged files when
+	// boards.db or the resolver logic changed since the last completed scan.
+	curResolveFP := s.resolveFingerprint()
+	storedResolveFP, _ := s.db.GetConfig("resolve_fingerprint")
+	reresolveUnchanged := curResolveFP != storedResolveFP
 
 	cancelled := func() bool {
 		if cancel == nil {
@@ -485,7 +546,12 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 				// UUID-only gate skipped exactly the rows that needed the
 				// re-categorisation. Idempotent on a stable resolver +
 				// stable boards.db.
-				if s.boardDB != nil && s.boardDB.Available() {
+				//
+				// The whole re-resolve is skipped unless the resolve
+				// fingerprint changed (reresolveUnchanged) — otherwise it ran
+				// up to ~5 boards.db JOINs on every unchanged file every scan
+				// even though nothing could have changed the result.
+				if reresolveUnchanged && s.boardDB != nil && s.boardDB.Available() {
 					meta := ExtractMetadataWithBoardDB(df.relPath, s.boardDB)
 					if meta.BoardUUID != rec.BoardUUID ||
 						meta.Manufacturer != rec.Manufacturer ||
@@ -569,6 +635,17 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 					continue
 				}
 				atomic.AddInt64(&deleted, 1)
+				// Drop the pruned file's rows in the SEPARATE pdfindex.db too;
+				// otherwise those rows leak forever. The hook is wired to
+				// pdfindex.DB.DeleteFile in main.go; a nil hook (degraded boot
+				// without pdfindex) silently skips. Errors are logged but don't
+				// fail the prune — the databank row is already gone and a stale
+				// pdfindex row is harmless (self-heals on the next reindex).
+				if s.onPdfDeleted != nil {
+					if err := s.onPdfDeleted(rec.ID); err != nil {
+						log.Printf("Scanner: drop PDF index for %s failed: %v", path, err)
+					}
+				}
 			}
 		}
 
@@ -590,6 +667,17 @@ func (s *Scanner) scanWorker(cancel <-chan struct{}) {
 				s.status.Phase = "Auto-matching bindings"
 				s.mu.Unlock()
 				s.autoMatchBindings()
+			}
+		}
+
+		// Stamp the resolve fingerprint so the next scan can skip the per-file
+		// re-resolve pass until boards.db or the resolver logic changes again.
+		// Only on a full (non-cancelled) scan: Phase-3 completed for every file,
+		// so all disk-unchanged rows were re-resolved. A no-op when the stored
+		// value already matches.
+		if reresolveUnchanged {
+			if err := s.db.SetConfig("resolve_fingerprint", curResolveFP); err != nil {
+				log.Printf("Scanner: failed to persist resolve fingerprint: %v", err)
 			}
 		}
 	}

@@ -129,8 +129,20 @@ func (u *Updater) ApplyBundle(bundleBytes []byte) error {
 	// 3. Validate counter / expiry / min-version.
 	installedCtr := u.readInstalledCounter()
 	if err := ValidateManifest(&m, installedCtr, Version); err != nil {
-		u.logProgress("Manifest validation failed: "+err.Error(), "error")
-		return fmt.Errorf("validate: %w", err)
+		// Rolled-back-update leniency, identical to Check() (see updater.go):
+		// Apply()/ApplyBundle() persist the counter to .update-counter BEFORE the
+		// health-gated swap, so a release that rolled back leaves installedCounter
+		// == m.Counter while the running binary is still the OLD version. Without
+		// this the drop-to-update escape hatch — the last resort when GHCR and
+		// ripperdoc.de are both unreachable — could never re-apply a rolled-back
+		// release. Only the counter-monotonicity failure is forgiven: re-running
+		// ValidateManifest with counter-1 confirms every other gate (expiry /
+		// freshness / min_supported_version) still passes.
+		if !(m.Counter == installedCtr && m.Version != Version && ValidateManifest(&m, installedCtr-1, Version) == nil) {
+			u.logProgress("Manifest validation failed: "+err.Error(), "error")
+			return fmt.Errorf("validate: %w", err)
+		}
+		u.logProgress(fmt.Sprintf("Re-applying rolled-back release %s (counter %d unchanged since the prior attempt)", m.Version, m.Counter), "info")
 	}
 	u.logProgress(fmt.Sprintf("Manifest OK: %s (counter %d)", m.Version, m.Counter), "info")
 

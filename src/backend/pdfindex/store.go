@@ -92,6 +92,44 @@ func (db *DB) UpsertPages(fileID int64, pages []Page) error {
 	return tx.Commit()
 }
 
+// ReplacePages atomically replaces ALL stored pages for fileID with the given
+// set, inside one transaction. Unlike UpsertPages (incremental page uploads),
+// this is the full-file re-index path: the DELETE runs UNCONDITIONALLY — even
+// when len(pages)==0 — so the FTS5 external-content _ad trigger reverses the
+// old postings before any fresh insert. Fresh pages are added with a plain
+// INSERT (not ON CONFLICT DO UPDATE): after the clean delete there is no
+// conflict, and a plain INSERT fires the _ai trigger correctly. Empty-text
+// pages carry no FTS content and are skipped. A re-save that dropped its text
+// (image-only) therefore clears its stale rows and Finalize marks it 'empty'.
+func (db *DB) ReplacePages(fileID int64, pages []Page) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM pdf_pages WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+	for _, p := range pages {
+		if p.Text == "" {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO pdf_pages(file_id, page_num, text_content) VALUES(?, ?, ?)`,
+			fileID, p.Num, p.Text); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(
+		`UPDATE pdf_index_status SET attempted_at = ? WHERE file_id = ?`,
+		time.Now().Unix(), fileID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // Finalize sets terminal status by counting stored pages.
 func (db *DB) Finalize(fileID int64) (StatusRow, error) {
 	db.mu.Lock()

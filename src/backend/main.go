@@ -78,6 +78,11 @@ func main() {
 	libraryDir := os.Getenv("LIBRARY_DIR")
 	scanner := databank.NewScanner(db, dataDir, libraryDir)
 	scanner.SetBoardDB(bdb)
+	// Record the boards.db path so the scanner can fingerprint it (mtime+size)
+	// and skip re-resolving unchanged files unless the reference DB or resolver
+	// logic changed. bdb is nil when boards.db is absent; the path is still
+	// harmless (stat fails → empty data fingerprint).
+	scanner.SetBoardDBPath(boardDBPath)
 
 	// PDF-index migration (v0→v1) runs against databank.db before opening the
 	// separate index DB. Only the FAST half runs here (create pdf_donors);
@@ -275,6 +280,16 @@ func main() {
 			scanner.SetPdfModifiedHook(func(fileID int64) error {
 				return pdfIndex.MarkPending(fileID)
 			})
+			// Symmetric drop: when the Phase-4 prune removes a file that
+			// vanished from disk, drop its rows in the separate pdfindex.db too
+			// (pdf_pages + pdf_index_status) so they don't leak.
+			scanner.SetPdfDeleteHook(func(id int64) error {
+				return pdfIndex.DeleteFile(id)
+			})
+			// Cascade a full databank wipe (POST /api/databank/reset) to
+			// pdfindex.db as well, so a reset doesn't leave orphaned pages/FTS
+			// rows that later mis-attribute snippets to reused file ids.
+			dbHandler.SetPdfIndexReset(pdfIndex.ResetAll)
 			mux.HandleFunc("GET /api/pdfindex/status/{id}", read(pdfIdxHandler.Status))
 			mux.HandleFunc("GET /api/pdfindex/stats", read(pdfIdxHandler.Stats))
 			mux.HandleFunc("POST /api/pdfindex/run", pdfIdxHandler.Run)
@@ -345,19 +360,24 @@ func main() {
 	mcpOAuth := mcpserver.NewOAuth()
 	mux.Handle("/api/mcp", mcpserver.GateAuto(mcpState, mcpSecret, mcpOAuth, mcpSrv.Handler()))
 	mux.Handle("/api/mcp/", mcpserver.GateAuto(mcpState, mcpSecret, mcpOAuth, mcpSrv.Handler()))
-	mux.HandleFunc("/api/mcp/bridge", mcpBridge.ServeWS)
+	// Bridge is authenticated + gated inside ServeWS: 404 when MCP is off, and
+	// the first frame must carry the per-install MCP secret (M14).
+	mux.Handle("/api/mcp/bridge", mcpBridge.ServeWS(mcpState, mcpSecret))
 	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge, mcpSrv))
 	mux.HandleFunc("GET /api/mcp/token", mcpserver.TokenHandler(mcpState, mcpSecret))
 	mux.HandleFunc("POST /api/mcp/selftest", mcpserver.SelfTestHandler(mcpState, mcpSrv))
-	// OAuth 2.1 onboarding (active when mcp_auth_mode=oauth): discovery + the
-	// embedded authorization server. Discovery is unauthenticated (clients fetch
-	// it pre-auth); the more-specific patterns win over the /api/mcp/ subtree.
-	mux.HandleFunc("GET /.well-known/oauth-protected-resource", mcpOAuth.ProtectedResourceMetadata)
-	mux.HandleFunc("GET /.well-known/oauth-authorization-server", mcpOAuth.AuthServerMetadata)
-	mux.HandleFunc("GET /api/mcp/oauth/jwks", mcpOAuth.JWKS)
-	mux.HandleFunc("POST /api/mcp/oauth/register", mcpOAuth.Register)
-	mux.HandleFunc("/api/mcp/oauth/authorize", mcpOAuth.Authorize)
-	mux.HandleFunc("POST /api/mcp/oauth/token", mcpOAuth.Token)
+	// OAuth 2.1 onboarding: discovery + the embedded authorization server. Every
+	// endpoint (discovery, dynamic registration, authorize, token) is gated by
+	// GateOAuth so it returns 404 unless MCP is enabled AND mcp_auth_mode=oauth —
+	// invisible when the feature is off or the deployment uses static-token auth
+	// (L6). Discovery is unauthenticated (clients fetch it pre-auth); the
+	// more-specific patterns win over the /api/mcp/ subtree.
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource", mcpserver.GateOAuth(mcpState, mcpOAuth.ProtectedResourceMetadata))
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", mcpserver.GateOAuth(mcpState, mcpOAuth.AuthServerMetadata))
+	mux.HandleFunc("GET /api/mcp/oauth/jwks", mcpserver.GateOAuth(mcpState, mcpOAuth.JWKS))
+	mux.HandleFunc("POST /api/mcp/oauth/register", mcpserver.GateOAuth(mcpState, mcpOAuth.Register))
+	mux.HandleFunc("/api/mcp/oauth/authorize", mcpserver.GateOAuth(mcpState, mcpOAuth.Authorize))
+	mux.HandleFunc("POST /api/mcp/oauth/token", mcpserver.GateOAuth(mcpState, mcpOAuth.Token))
 
 	// Serve static frontend files.
 	//

@@ -56,10 +56,11 @@ var allowedConfigKeys = map[string]bool{
 
 // DatabankHandler serves all /api/databank/* endpoints.
 type DatabankHandler struct {
-	db           *databank.DB
-	scanner      *databank.Scanner
-	dataDir      string
-	donorIndexer DonorIndexer // nil when pdfindex is unavailable
+	db            *databank.DB
+	scanner       *databank.Scanner
+	dataDir       string
+	donorIndexer  DonorIndexer  // nil when pdfindex is unavailable
+	pdfIndexReset func() error  // nil when pdfindex is unavailable; wipes pdfindex.db on full reset
 }
 
 // NewDatabankHandler creates a new handler with the given database, scanner, and data directory.
@@ -70,6 +71,12 @@ func NewDatabankHandler(db *databank.DB, scanner *databank.Scanner, dataDir stri
 // SetDonorIndexer wires the PDF indexer used to auto-index donors and to
 // enrich the donor list with index status. Optional — nil disables both.
 func (h *DatabankHandler) SetDonorIndexer(di DonorIndexer) { h.donorIndexer = di }
+
+// SetPdfIndexReset wires the callback that wipes pdfindex.db when the databank
+// is fully reset, so a wipe does not leave orphaned pages/FTS rows behind (the
+// databank and pdfindex live in separate SQLite files). Optional — nil when
+// pdfindex is unavailable (degraded boot).
+func (h *DatabankHandler) SetPdfIndexReset(fn func() error) { h.pdfIndexReset = fn }
 
 // Scan triggers a background file scan and returns immediately.
 func (h *DatabankHandler) Scan(w http.ResponseWriter, r *http.Request) {
@@ -716,6 +723,15 @@ func (h *DatabankHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
+	// Cascade the wipe to pdfindex.db (separate SQLite file). Best-effort: the
+	// databank wipe already committed, so a pdfindex failure is logged, not
+	// fatal. Without this, files get new autoincrement ids on rescan and the
+	// stale pdfindex rows become permanent orphans (wrong search enrichment).
+	if h.pdfIndexReset != nil {
+		if err := h.pdfIndexReset(); err != nil {
+			log.Printf("pdfindex reset after databank wipe failed: %v", err)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 }
@@ -779,6 +795,10 @@ func (h *DatabankHandler) ExportDonors(w http.ResponseWriter, r *http.Request) {
 // POST /api/databank/donors/import
 func (h *DatabankHandler) ImportDonors(w http.ResponseWriter, r *http.Request) {
 	var snap databank.DonorSnapshot
+	// Cap the body before decoding: the snapshot decodes into an unbounded
+	// Donors slice, so an unbounded body could amplify into heap. 8 MiB is
+	// generous for any real donor snapshot.
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
 		http.Error(w, "bad snapshot: "+err.Error(), http.StatusBadRequest)
 		return
@@ -809,6 +829,7 @@ func (h *DatabankHandler) RestoreDonors(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Name string `json:"name"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	json.NewDecoder(r.Body).Decode(&req) // empty body OK → latest
 	dir := filepath.Join(h.dataDir, "backups")
 	name := req.Name

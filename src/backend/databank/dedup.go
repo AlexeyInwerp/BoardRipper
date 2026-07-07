@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -230,4 +231,14 @@ func (r *DedupRunner) sweep(ctx context.Context, files []CollisionFile) {
 	r.running = false
 	r.cancel = nil
 	r.mu.Unlock()
+
+	// A dedup sweep flips content_hash on size-colliding rows, which the
+	// content-collapsed views (Board#/Model, PDF Search) depend on. Bump the
+	// same config key the scanner stamps at end of a full scan so FilesETag /
+	// signatureFor change and every client (in-memory, IDB, folder-tree caches)
+	// invalidates. Runs even on a cancelled sweep — hashes written before the
+	// cancel already changed the data.
+	if err := r.db.SetConfig("last_file_scan_at", fmt.Sprintf("%d", time.Now().Unix())); err != nil {
+		log.Printf("dedup: failed to bump last_file_scan_at: %v", err)
+	}
 }
