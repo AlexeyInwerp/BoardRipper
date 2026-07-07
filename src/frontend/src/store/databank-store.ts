@@ -436,6 +436,12 @@ class DatabankStore extends Emitter {
   })();
 
   get files() { return this._files; }
+  /** Monotonic counter bumped on every `_files` mutation (append / reset /
+   *  finalize / replace). Because streaming appends push into `_files`
+   *  in place, the array *reference* is stable across a load — consumers that
+   *  need to react to content changes (memoised trees, count strips) must key
+   *  on this version, not on the array identity. */
+  get filesVersion() { return this._filesVersion; }
   get filesComplete() { return this._filesComplete; }
   get folderTree() { return this._folderTree; }
   get scanStatus() { return this._scanStatus; }
@@ -1324,6 +1330,13 @@ class DatabankStore extends Emitter {
         // even if the last tick raced the completion.
         const final = await this.apiFetch<DedupStats>('/api/databank/dedup/stats');
         if (final) { this._dedupStats = final; this.notify(); }
+        // Belt-and-suspenders: the dedup pass wrote new `content_hash` values
+        // server-side, so the client's cached file list is stale and the
+        // Board#/Model content-collapse views would keep showing the copies.
+        // The backend bumps last_file_scan_at to invalidate caches, but force
+        // a re-fetch here too so the collapse shows immediately without a
+        // reload. `force` clears _filesComplete/_filesSignature + libraryCache.
+        await this.fetchFiles({ force: true });
       }
     };
     void tick();

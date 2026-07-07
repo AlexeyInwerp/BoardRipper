@@ -53,6 +53,16 @@ const DEFAULT_MAX_ATTEMPTS = 6;
 const DEFAULT_RETRY_SECONDS = 10;
 const DEFAULT_MAX_TOTAL_SECONDS = 180;
 
+/** Cloud-error codes that can NEVER be resolved by waiting/retrying, so we
+ *  bail out of the retry loop on the first 503 that carries one. Currently
+ *  just 'edeadlk' — the read hit EDEADLK because the file is a Docker
+ *  bind-mount placeholder the container can't drive materialization for; the
+ *  backend body says "materialize on host first", so retrying for ~3 min only
+ *  delays that actionable toast. Transient codes ('deadline','short-read') are
+ *  deliberately NOT here — those can succeed once the cloud provider finishes
+ *  materializing, so they keep retrying. Add future permanent codes here. */
+const NON_RETRYABLE_CLOUD_CODES = new Set<string>(['edeadlk']);
+
 export async function fetchWithCloudRetry(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -79,6 +89,18 @@ export async function fetchWithCloudRetry(
       if (attempt > 1 || cloudCode || !res.ok) {
         log.cloud.log(`${label}: attempt ${attempt} → ${res.status}${cloudCode ? ` cloud=${cloudCode}` : ''} (${reqMs} ms)`);
       }
+      return res;
+    }
+
+    // Some 503s are permanent — a bind-mount placeholder that Docker can't
+    // materialize (edeadlk) will fail identically forever. Return the response
+    // immediately (skipping the wait/retry loop) so the caller can surface the
+    // actionable toast at once instead of after ~3 min of pointless retries.
+    if (cloudCode && NON_RETRYABLE_CLOUD_CODES.has(cloudCode)) {
+      log.cloud.warn(
+        `${label}: attempt ${attempt} → 503 cloud=${cloudCode}` +
+        ` (permanent — not retryable, surfacing now) (${reqMs} ms)`,
+      );
       return res;
     }
 

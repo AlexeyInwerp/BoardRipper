@@ -9,6 +9,10 @@ import type { DatabankFile, FileDetail, FolderNode, ScanStatus, SearchResult, Vi
 // that actually needs them.
 interface DatabankSnapshot {
   files: DatabankFile[];
+  /** Monotonic version bumped on every `files` mutation. `files` is appended
+   *  in place during streaming so its reference is stable — consumers that
+   *  must react to content changes key on this instead of the array identity. */
+  filesVersion: number;
   filesComplete: boolean;
   folderTree: FolderNode | null;
   folderTreeLoading: boolean;
@@ -44,6 +48,7 @@ interface DatabankSnapshot {
 
 export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () => ({
   files: databankStore.files,
+  filesVersion: databankStore.filesVersion,
   filesComplete: databankStore.filesComplete,
   folderTree: databankStore.folderTree,
   folderTreeLoading: databankStore.folderTreeLoading,

@@ -137,6 +137,7 @@ export function LibraryPanel() {
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
     stats, filesComplete,
+    filesVersion,
     donorIds,
     pdfIndexProgress, pdfIndexStats,
     pendingPdfSearch,
@@ -147,25 +148,25 @@ export function LibraryPanel() {
   // Tree groupings are O(N) at 100k entries — only compute the one the user
   // is actually looking at. Each is internally version-cached in the store
   // (keyed on _filesVersion), so flipping back to a previously-rendered tab
-  // is free. Reading `files` (even though unused in the callback body) is the
-  // load-bearing signal that forces re-grab when the store data mutates —
-  // useDatabank re-renders this component on file changes, but useMemo only
-  // re-runs when a dep reference changes.
+  // is free. We key these memos on `filesVersion` (a monotonic counter bumped
+  // on every mutation), NOT on `files`: streaming/cache-restore appends push
+  // into the store's array in place, so its reference is stable across a load
+  // and a `[viewMode, files]` dep would short-circuit — returning the tree
+  // captured when the array was still empty (stale/empty trees on first load
+  // or any rescan). `filesVersion` changes on every batch, forcing a re-grab.
   const metadataTree = useMemo(
     () => viewMode === 'metadata' ? databankStore.metadataTree : null,
-    [viewMode, files],
+    [viewMode, filesVersion],
   );
   // Sidecar folder-tree of files the resolver couldn't categorise (no brand
   // AND no ODM). Renders under "---unrecognized---" separator in MetadataView.
   const unrecognizedFolderTree = useMemo(
     () => viewMode === 'metadata' ? databankStore.unrecognizedFolderTree : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viewMode, files],
+    [viewMode, filesVersion],
   );
   const modelTree = useMemo(
     () => viewMode === 'model' ? databankStore.modelTree : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viewMode, files],
+    [viewMode, filesVersion],
   );
   const [localSearch, setLocalSearch] = useState('');
   const [failedList, setFailedList] = useState<PdfIndexFailedEntry[] | null>(null);
@@ -590,7 +591,10 @@ export function LibraryPanel() {
     let b = 0, p = 0;
     for (const f of files) { if (f.file_type === 'board') b++; else if (f.file_type === 'pdf') p++; }
     return { boardCount: b, pdfCount: p };
-  }, [files, stats]);
+    // `files` is read in the body but mutated in place during streaming, so
+    // its reference is stable — key on `filesVersion` to re-count each batch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filesVersion, stats]);
 
   // Stats bar — moved to the panel bottom for visual consistency with
   // SettingsPanel and to keep the tabs row at the natural top of the view.
