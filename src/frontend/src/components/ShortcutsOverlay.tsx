@@ -1,14 +1,5 @@
 import { useEffect, useState } from 'react';
-import { shortcuts, formatShortcut, type Shortcut } from '../store/keyboard-shortcuts';
-
-const CATEGORY_LABELS: Record<Shortcut['category'], string> = {
-  file: 'File',
-  view: 'Board',
-  wsad: 'WSAD Navigation',
-  navigation: 'Navigation',
-  pdf: 'PDF (when panel is active)',
-};
-const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'wsad', 'navigation', 'pdf'];
+import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../store/keyboard-shortcuts';
 
 /**
  * Press `?` (Shift+/) anywhere outside a text field to toggle a keyboard-

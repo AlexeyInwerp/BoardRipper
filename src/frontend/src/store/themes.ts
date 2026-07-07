@@ -6,6 +6,7 @@ import {
   shadeToward,
   pickAccentFg,
   pickTextColors,
+  accentTextColor,
 } from './color-math';
 
 // Re-exported for existing call sites that imported these from themes.ts.
@@ -493,6 +494,12 @@ export function applyThemeToDOM(theme: Theme, overrides: Partial<UiOverrides> = 
   // white text would blend in (yellow / gold / lime / pale teal). Replaces
   // the previously hardcoded `color: #fff` paired with accent backgrounds.
   root.style.setProperty('--accent-fg', pickAccentFg(effAccent));
+  // --accent-text = the accent shaded (only when needed) to stay legible as
+  // *text* on the effective background. Bright accents (Atari yellow, acid
+  // lime) plus a light theme would otherwise render near-invisible accent
+  // text; foreground `color:` sites in index.css read --accent-text, while
+  // accent-as-background / border / glow sites keep the pure --accent hue.
+  root.style.setProperty('--accent-text', accentTextColor(effAccent, effBg));
   // --accent-hover is derived from --accent in index.css via color-mix.
   root.style.setProperty('--canvas-bg',      theme.board.canvasBackground);
   root.style.setProperty('--icon-board-bg',  theme.ui.iconBoardBg);

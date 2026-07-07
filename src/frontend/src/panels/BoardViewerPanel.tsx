@@ -90,7 +90,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const linkedPdfs = thisTab?.pdfFileNames ?? [];
 
   // Auto-load OpenBoardData for this tab's board so the canvas hover
-  // tooltip + ComponentInfoPanel surface readings without requiring the
+  // tooltip + sidebar Info tab surface readings without requiring the
   // user to detour through the Library detail pane. Best-effort: when the
   // backend has no library_dir or no index, this no-ops cleanly.
   const tabFileName = thisTab?.fileName ?? '';

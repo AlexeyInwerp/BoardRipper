@@ -92,6 +92,26 @@ export function pickAccentFg(bgHex: string): string {
 }
 
 /**
+ * Accent colour tuned to stay legible as *text* on a given background. Bright
+ * accents (Atari yellow #f4e325, Acid lime #b8ff2b) sit near-invisible as text
+ * on a light background; here the accent is shaded away from the background's
+ * luminance pole (darken on light bg, lighten on dark bg) just enough to reach
+ * AA-normal contrast (4.5:1), capped at ~66% so the accent hue stays
+ * recognisable. Returns the accent unchanged when it already has adequate
+ * contrast — the common dark-theme case, so existing themes are untouched.
+ */
+export function accentTextColor(accentHex: string, bgHex: string, minContrast = 4.5): string {
+  if (contrastRatio(accentHex, bgHex) >= minContrast) return accentHex;
+  const bgLight = relativeLuminance(bgHex) > 0.5;
+  let best = accentHex;
+  for (let amount = 0.06; amount <= 0.66; amount += 0.06) {
+    best = bgLight ? darkenHex(accentHex, amount) : lightenHex(accentHex, amount);
+    if (contrastRatio(best, bgHex) >= minContrast) break;
+  }
+  return best;
+}
+
+/**
  * Body-text pair chosen for contrast against the effective background. Keeps
  * the historical #e0e0e0 / #a0a0b0 on dark backgrounds so existing dark themes
  * are unchanged; flips to graphite on light backgrounds so text stays readable

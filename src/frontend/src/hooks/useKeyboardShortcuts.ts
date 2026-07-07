@@ -304,35 +304,48 @@ export function useKeyboardShortcuts() {
             // Handled via flipBoard case above (same key, context-dependent)
             break;
 
-          case 'rotateCW':
+          case 'rotateCW': {
+            const kind = activePanelKind();
+            if (kind === null) return;
             e.preventDefault();
-            if (activePanelKind() === 'pdf') pdfStore.rotateActive('cw');
+            if (kind === 'pdf') pdfStore.rotateActive('cw');
             else boardStore.rotateCW();
             return;
-          case 'rotateCCW':
+          }
+          case 'rotateCCW': {
+            const kind = activePanelKind();
+            if (kind === null) return;
             e.preventDefault();
-            if (activePanelKind() === 'pdf') pdfStore.rotateActive('ccw');
+            if (kind === 'pdf') pdfStore.rotateActive('ccw');
             else boardStore.rotateCCW();
             return;
-          case 'mirrorBoard':
+          }
+          case 'mirrorBoard': {
+            const kind = activePanelKind();
+            if (kind === null) return;
             e.preventDefault();
-            if (activePanelKind() === 'pdf') pdfStore.mirrorActive();
+            if (kind === 'pdf') pdfStore.mirrorActive();
             else boardStore.flipHorizontal();
             return;
+          }
 
           case 'panLeft':
+            if (activePanelKind() === null) return;
             e.preventDefault();
             viewCommands.pan('left');
             return;
           case 'panRight':
+            if (activePanelKind() === null) return;
             e.preventDefault();
             viewCommands.pan('right');
             return;
           case 'panUp':
+            if (activePanelKind() === null) return;
             e.preventDefault();
             viewCommands.pan('up');
             return;
           case 'panDown':
+            if (activePanelKind() === null) return;
             e.preventDefault();
             viewCommands.pan('down');
             return;

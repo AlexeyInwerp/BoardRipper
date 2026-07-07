@@ -314,6 +314,19 @@ export const shortcuts: Shortcut[] = [
   },
 ];
 
+/** Display labels for each shortcut category — the single source of truth for
+ *  every cheat sheet (home backdrop, `?` overlay, Settings ▸ Keyboard). */
+export const CATEGORY_LABELS: Record<Shortcut['category'], string> = {
+  file: 'File',
+  view: 'Board',
+  wsad: 'WSAD Navigation',
+  navigation: 'Navigation',
+  pdf: 'PDF (when panel is active)',
+};
+
+/** Order categories are rendered in across all cheat sheets. */
+export const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'wsad', 'navigation', 'pdf'];
+
 /** Find a shortcut by id */
 export function getShortcut(id: string): Shortcut | undefined {
   return shortcuts.find(s => s.id === id);

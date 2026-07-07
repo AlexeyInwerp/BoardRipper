@@ -117,7 +117,7 @@ class ObdStore extends Emitter {
       }
       this._bump();
       // Auto-load already-fetched payloads from disk so the BoardViewer's
-      // tooltip + ComponentInfoPanel surfaces have data without forcing
+      // tooltip + sidebar Info-tab surfaces have data without forcing
       // the user back to the Library detail panel to click "Fetch".
       // Fire-and-forget; the bump on each cached load triggers re-renders.
       for (const m of json.matches) {
@@ -295,7 +295,7 @@ function buildNetIndex(snap: ReturnType<ObdStore['getSnapshot']>, boardNumber: s
 
 /** React hook: net-keyed lookup for the active board. Returns a function
  *  `(netName) => ObdNet[]` plus the count of fetched variants (useful for
- *  showing a small badge). Used by ComponentInfoPanel and BoardRenderer.
+ *  showing a small badge). Used by ComponentInfoBody and BoardRenderer.
  *  Also returns `loadedVariants` so callers that want the full ObdData
  *  payload (e.g. to render the DIAGNOSIS sections) can read it without a
  *  second snapshot subscription. */

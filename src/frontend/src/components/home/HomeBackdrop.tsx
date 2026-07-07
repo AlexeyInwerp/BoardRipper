@@ -15,8 +15,7 @@ import {
 } from '../../store/dockview-api';
 import { showSidebarTab } from '../Sidebar.utils';
 import { welcomeStore } from '../../store/welcome-store';
-import { shortcuts, formatShortcut } from '../../store/keyboard-shortcuts';
-import type { Shortcut } from '../../store/keyboard-shortcuts';
+import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../../store/keyboard-shortcuts';
 import {
   SCROLL_BINDINGS_KEY,
   SCROLL_ACTIONS,
@@ -955,16 +954,6 @@ function QuickSettings() {
 // ─────────────────────────────────────────────────────────────
 // Keyboard shortcuts (display-only, grouped by category)
 // ─────────────────────────────────────────────────────────────
-
-const CATEGORY_LABELS: Record<Shortcut['category'], string> = {
-  file: 'File',
-  view: 'Board',
-  wsad: 'WSAD Navigation',
-  navigation: 'Navigation',
-  pdf: 'PDF (when panel is active)',
-};
-
-const CATEGORY_ORDER: Shortcut['category'][] = ['file', 'view', 'wsad', 'navigation', 'pdf'];
 
 function ShortcutList() {
   return (

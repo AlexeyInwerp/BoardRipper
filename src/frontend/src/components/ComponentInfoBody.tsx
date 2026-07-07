@@ -1,21 +1,21 @@
 /**
- * ComponentInfoBody — the single source of truth for the component-inspection
- * UI rendered in BOTH the floating Component Info panel
- * (`panels/ComponentInfoPanel.tsx`) and the board sidebar's Info tab
+ * ComponentInfoBody — the source of truth for the component-inspection UI.
+ * It has a single live surface: the board sidebar's Info tab
  * (`components/BoardSidebar.tsx` → InfoTab).
  *
- * These two surfaces were near-duplicate copies that had functionally
- * diverged (the sidebar lacked the BOM-alternates switcher, they disagreed on
- * whether to show board-level OBD diagnosis when nothing is selected, and they
- * carried two slightly-different copies of the OBD cell). They now both render
- * this component so they can't drift again — keep all inspection logic HERE,
- * not in either call site.
+ * It was extracted to unify two near-duplicate copies that had functionally
+ * diverged (one lacked the BOM-alternates switcher, they disagreed on whether
+ * to show board-level OBD diagnosis when nothing is selected, and they carried
+ * two slightly-different copies of the OBD cell). The second surface (a
+ * standalone Component Info panel) has since been removed, but keep all
+ * inspection logic HERE, not in the call site, so the sidebar stays the
+ * single owner and can't drift.
  *
- * Behavior unified here:
- *   - The BOM-alternates switcher (BomClusterSection) is available in both.
+ * Behavior owned here:
+ *   - The BOM-alternates switcher (BomClusterSection).
  *   - Board-level OBD DIAGNOSIS notes render regardless of whether a part is
  *     selected (they are board-scoped, not pin-scoped).
- *   - A single ObdCell renders the per-pin diode/V/Ω readings in both.
+ *   - A single ObdCell renders the per-pin diode/V/Ω readings.
  */
 import { useEffect } from 'react';
 import { bomReasonLabel, type BoardData, type BomAlternateCluster } from '../parsers';

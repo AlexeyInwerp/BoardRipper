@@ -13,8 +13,8 @@ import type { BoardData } from '../parsers';
  *   [p:U7701:3]               — part + pin; click → select part, pin, highlight net
  *
  * The component is small and self-contained so the same UI can be
- * embedded by both the BoardSidebar InfoTab and the ComponentInfoPanel
- * without coupling.
+ * embedded by the BoardSidebar InfoTab (via ComponentInfoBody) without
+ * coupling.
  */
 export function DiagnosisNotes({
   sections,
