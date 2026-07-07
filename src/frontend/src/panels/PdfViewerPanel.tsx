@@ -332,6 +332,15 @@ function putPageCache(key: string, entry: CachedRender): void {
     old.bitmap.close();
     _pageCache.delete(oldest);
   }
+  // Replace existing entry for same key — the key omits containerWidth, so a
+  // post-resize re-render lands on the same key with a new bitmap. Close the
+  // old bitmap + subtract its pixels first, or it leaks and inflates the
+  // running pixel total (mirrors putTileCached / putPreviewCache).
+  const existing = _pageCache.get(key);
+  if (existing) {
+    _pageCacheTotalPixels -= existing.width * existing.height;
+    existing.bitmap.close();
+  }
   _pageCacheTotalPixels += entryPixels;
   _pageCache.set(key, entry);
 }
@@ -1307,9 +1316,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     setError(null);
 
     const renderId = ++renderIdRef.current;
-    const maxTier = qcfgRef.current.maxMainTier;
+    // forceFullTier (set by the crisp-settle timer) lifts the preset tier cap
+    // for exactly one render so the final settled frame is at full zoom
+    // resolution. Consume it right after the tier is computed so interactive
+    // zoom keeps the cap.
+    const maxTier = forceFullTierRef.current ? Infinity : qcfgRef.current.maxMainTier;
     const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoomRef.current, maxTier)));
     renderTierRef.current = resTier;
+    forceFullTierRef.current = false;
     const t0 = performance.now();
 
     try {
@@ -1359,7 +1373,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
       const dpr = window.devicePixelRatio || 1;
       let hiresScale = baseScale * resTier * dpr;
-      hiresScale = clampFullPageScale(unscaledViewport.width, unscaledViewport.height, hiresScale, qcfgRef.current.maxCanvasDim);
+      // Sanity clamp: when the tier cap is lifted (maxTier===Infinity) the
+      // requested scale is bounded only by zoom, so also cap the canvas dim by
+      // √cacheMaxPixels — a single over-budget page-cache bitmap would keep the
+      // LRU permanently "over budget" and disable the cache. The normal capped
+      // path is unaffected (maxTier finite → plain maxCanvasDim).
+      const fpMaxDim = maxTier === Infinity
+        ? Math.min(qcfgRef.current.maxCanvasDim, Math.floor(Math.sqrt(qcfgRef.current.cacheMaxPixels)))
+        : qcfgRef.current.maxCanvasDim;
+      hiresScale = clampFullPageScale(unscaledViewport.width, unscaledViewport.height, hiresScale, fpMaxDim);
       const viewport = page.getViewport({ scale: hiresScale, rotation: rot });
       const cssW = containerWidth;
       const cssH = unscaledViewport.height * baseScale;
@@ -1539,9 +1561,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
     const tileRenderId = ++tileRenderIdRef.current;
     const zoom = zoomRef.current;
-    const maxTier = qcfgRef.current.maxMainTier;
+    // forceFullTier (crisp-settle timer) lifts the preset tier cap for exactly
+    // one render; consume it right after the tier is computed so interactive
+    // zoom keeps the cap.
+    const maxTier = forceFullTierRef.current ? Infinity : qcfgRef.current.maxMainTier;
     const resTier = hysteresisFilter(quantiseTier(mainTierFromZoom(zoom, maxTier)));
     renderTierRef.current = resTier;
+    forceFullTierRef.current = false;
 
     const container = containerRef.current;
     const wrapper = wrapperRef.current;
@@ -1603,7 +1629,15 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       // past Safari's silent canvas limit.
       const highlight = highlightRef.current;
       if (highlight) {
-        const hlScale = clampFullPageScale(unscaledVp.width, unscaledVp.height, renderScale, qcfgRef.current.maxCanvasDim);
+        // Sanity clamp: when the tier cap is lifted (maxTier===Infinity),
+        // renderScale is bounded only by zoom, so cap the full-page-sized
+        // highlight canvas by √cacheMaxPixels as well as maxCanvasDim. Tiles
+        // themselves stay TILE_SIZE-bounded and viewport-culled. The normal
+        // capped path is unaffected.
+        const hlMaxDim = maxTier === Infinity
+          ? Math.min(qcfgRef.current.maxCanvasDim, Math.floor(Math.sqrt(qcfgRef.current.cacheMaxPixels)))
+          : qcfgRef.current.maxCanvasDim;
+        const hlScale = clampFullPageScale(unscaledVp.width, unscaledVp.height, renderScale, hlMaxDim);
         highlight.width = Math.ceil(unscaledVp.width * hlScale);
         highlight.height = Math.ceil(unscaledVp.height * hlScale);
         highlight.style.width = `${cssW * zCommit}px`;
@@ -2329,10 +2363,14 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     if (!containerRef.current) return;
     const observer = new ResizeObserver(() => {
       // Container size changed → fit-to-width baseScale changes too, so tiles
-      // cached at the old containerWidth would blit at the wrong size. Drop
-      // them. Re-clamp pan/zoom against the new bounds so the page doesn't
-      // sit off-screen until the next user input.
+      // AND full-page bitmaps cached at the old containerWidth would blit at
+      // the wrong size. The page-cache key omits containerWidth, so a stale
+      // entry would be found-then-rejected (cssW mismatch) and its bitmap
+      // leaked when the re-render overwrites the same key — drop the whole doc
+      // from both caches here. Re-clamp pan/zoom against the new bounds so the
+      // page doesn't sit off-screen until the next user input.
       invalidateTileCache(pdfFileName);
+      invalidatePageCache(pdfFileName);
       renderPageRef.current();
       syncTransform();
     });

@@ -167,6 +167,24 @@ function mergeItemsIntoLines(items: PdfTextItem[]): MergedLine[] {
   return lines;
 }
 
+/** Memoized merged-lines accessor keyed off the page's items-array REFERENCE.
+ *  `textPages[pageIndex]` arrays are immutable once extracted, so the merged
+ *  result is stable and safe to cache. Search/count/navigate re-run this for
+ *  every page on every query; without memoization each is an O(n log n) sort +
+ *  dense-map rebuild. The WeakMap key is the items array itself: when a page is
+ *  re-extracted its array is replaced (new reference) so this misses and
+ *  recomputes, and a dropped page array is collected together with its cached
+ *  lines (no leak). */
+const _mergedLineCache = new WeakMap<PdfTextItem[], MergedLine[]>();
+function getMergedLines(items: PdfTextItem[]): MergedLine[] {
+  let cached = _mergedLineCache.get(items);
+  if (!cached) {
+    cached = mergeItemsIntoLines(items);
+    _mergedLineCache.set(items, cached);
+  }
+  return cached;
+}
+
 function buildLine(lineItems: { item: PdfTextItem; idx: number; x: number; y: number; fontSize: number }[]): MergedLine {
   // Sort by X within line
   lineItems.sort((a, b) => a.x - b.x);
@@ -1134,7 +1152,7 @@ class PdfStore extends Emitter {
     for (const pi of (nets.length || pinSet.size) ? pages : []) {
       const items = doc.textPages[pi];
       if (!items) continue;
-      const lines = mergeItemsIntoLines(items);
+      const lines = getMergedLines(items);
       // Nets — cross-item dense-text substring (an identifier may be split).
       for (const net of nets) {
         let count = 0;
@@ -1191,7 +1209,7 @@ class PdfStore extends Emitter {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
-      const lines = mergeItemsIntoLines(items);
+      const lines = getMergedLines(items);
       const pageMatches: PdfTextMatch[] = [];
       let allFound = true;
 
@@ -1234,7 +1252,7 @@ class PdfStore extends Emitter {
     // reported gap between "-" and "PWRSW_EC".
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
-      const lines = mergeItemsIntoLines(items);
+      const lines = getMergedLines(items);
       for (const line of lines) {
         const lower = line.denseText.toLowerCase();
         let pos = 0;
@@ -1275,7 +1293,7 @@ class PdfStore extends Emitter {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
-      const lines = mergeItemsIntoLines(items);
+      const lines = getMergedLines(items);
 
       // Find all hits per term using dense line text (each term is split on
       // \s+ so it never contains whitespace — identifiers split across items
@@ -1518,7 +1536,7 @@ class PdfStore extends Emitter {
     const ql = query.toLowerCase();
     let count = 0;
     for (const pageItems of doc.textPages) {
-      const lines = mergeItemsIntoLines(pageItems);
+      const lines = getMergedLines(pageItems);
       for (const line of lines) {
         const text = line.denseText.toLowerCase();
         let pos = 0;
@@ -1552,7 +1570,7 @@ class PdfStore extends Emitter {
     let pagesSinceYield = 0;
     for (const pageItems of doc.textPages) {
       if (signal?.aborted) return -1;
-      const lines = mergeItemsIntoLines(pageItems);
+      const lines = getMergedLines(pageItems);
       for (const line of lines) {
         const text = line.denseText.toLowerCase();
         let pos = 0;
@@ -1597,7 +1615,7 @@ class PdfStore extends Emitter {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
-      const lines = mergeItemsIntoLines(items);
+      const lines = getMergedLines(items);
 
       // Check mandatory primary term (component name) first — dense text so
       // identifiers split across items by pdf.js still match.
@@ -1777,7 +1795,7 @@ class PdfStore extends Emitter {
 
     for (let pi = 0; pi < d.textPages.length; pi++) {
       const items = d.textPages[pi];
-      const merged = mergeItemsIntoLines(items);
+      const merged = getMergedLines(items);
       lines.push(`<h2>Page ${pi + 1} (${items.length} items → ${merged.length} lines)</h2>`);
 
       // Merged lines view
