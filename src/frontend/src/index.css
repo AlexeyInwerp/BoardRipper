@@ -4464,16 +4464,57 @@ body {
  * (tabs at top, status at bottom, mirroring SettingsPanel). */
 .library-statsbar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px 8px;
+  flex-direction: column;
+  gap: 4px;
   padding: 4px 8px;
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
   background: var(--bg-tertiary);
   flex-shrink: 0;
-  min-height: 22px;
+}
+/* Single-row summary (always visible) + optional detail (expanded state). */
+.library-statsbar-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+}
+.library-statsbar-summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.library-statsbar-summary:disabled { cursor: default; }
+.library-statsbar-summary:not(:disabled):hover { color: var(--text-primary); }
+.library-statsbar-summary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-statsbar-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.library-statsbar-caret.open { transform: rotate(0deg); }
+.library-statsbar-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 18px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
 }
 
 /* Library load progress strip — sits in the statsbar above the normal
@@ -4558,12 +4599,6 @@ body {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
-.library-statsbar-text {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
 .library-statsbar-actions {
   display: flex;
   align-items: center;
@@ -4571,7 +4606,7 @@ body {
   flex-shrink: 0;
 }
 
-/* Row 2 — tabs + (conditional) DB/Live pill */
+/* Row 2 — tabs */
 .library-tabs-row {
   display: flex;
   align-items: stretch;
@@ -4617,54 +4652,81 @@ body {
   box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.04) inset;
 }
 
-/* DB/Live — compound-tab sub-selector. Shares the raised surface of the active
- * Folders tab and continues its accent underline, so Folders + DB/Live read as
- * a single tab with a sub-choice. Selected option uses a filled pill
- * (segmented-control convention) — distinct from the underline-based main-tab
- * selection to make the hierarchy obvious at a glance. */
-.library-browse-pill {
-  display: inline-flex;
-  align-self: stretch;
+/* Folders view — sticky toolbar hosting the source (DB / Live) icon menu.
+ * Replaces the old inline DB/Live pill that used to shift the tab row. */
+.library-folder-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.library-folder-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
-  margin-bottom: -1px;
+  padding: 3px 6px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+}
+.library-source-menu { position: relative; display: inline-flex; }
+.library-source-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   background: var(--bg-secondary);
-  border-bottom: 3px solid var(--accent);
-  border-top-right-radius: 4px;
-  padding-right: 3px;
-  /* Thin inset divider between the folder icon and the sub-toggle —
-   * preserves the compound-tab surface without visually splitting it. */
-  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 55%, transparent);
-  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  padding: 3px 5px;
+  cursor: pointer;
+  transition: color 0.08s ease, background 0.08s ease, border-color 0.08s ease;
 }
-/* Clip the Folders tab's right top-radius when the pill follows so the two
- * surfaces form a continuous raised panel. */
-.library-tabs-row:has(.library-browse-pill) .library-tabs > .library-tab:last-child {
-  border-top-right-radius: 0;
+.library-source-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
-.library-browse-pill-btn {
+/* Transparent full-screen catcher so an outside click dismisses the popup. */
+.library-source-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.library-source-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 41;
+  min-width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.library-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.4px;
-  padding: 4px 9px;
-  margin: 3px 2px;
-  cursor: pointer;
-  border-radius: 3px;
-  line-height: 1.2;
-  transition: color 0.08s ease, background 0.08s ease;
-}
-.library-browse-pill-btn:hover:not(.active) {
+  border-radius: 4px;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.library-browse-pill-btn.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-weight: 600;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
-}
+.library-source-item:hover { background: var(--bg-tertiary); }
+.library-source-item.active { color: var(--accent-text); }
+.library-source-item > span { flex: 1; }
+.library-source-check { color: var(--accent); flex-shrink: 0; }
 
 /* Scan buttons — same visuals, compact padding now that they share a row with stats */
 .library-scan-btn {

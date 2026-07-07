@@ -9,7 +9,7 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
@@ -139,7 +139,7 @@ export function LibraryPanel() {
     stats, filesComplete,
     filesVersion,
     donorIds,
-    pdfIndexProgress, pdfIndexStats,
+    pdfIndexProgress, pdfIndexStats, dedupProgress,
     pendingPdfSearch,
   } = useDatabank();
   const libraryLoad = useLibraryLoad();
@@ -172,6 +172,13 @@ export function LibraryPanel() {
   const [failedList, setFailedList] = useState<PdfIndexFailedEntry[] | null>(null);
   const [failedListLoading, setFailedListLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // Status bar collapse (single-row by default; auto-expands while an operation
+  // is pending, or on click). Folder-source popup (DB / Live filesystem).
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  // Focus targets so switching tabs drops the caret into the relevant field.
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  const pdfSearchInputRef = useRef<HTMLInputElement>(null);
 
   // Active tree's collapse-all fn registered into this ref by whichever view
   // is currently rendered (FolderView / MetadataView / ModelView). The chrome
@@ -381,15 +388,23 @@ export function LibraryPanel() {
     databankStore.fetchTree();
   }, [viewMode, browseMode, folderTree, electronMode]);
 
-  const handleSetViewMode = useCallback((mode: ViewMode) => {
+  const handleSetViewMode = useCallback((mode: ViewMode, focusInput = true) => {
     databankStore.setViewMode(mode);
+    if (!focusInput) return;
+    // Focus the relevant search field on an explicit tab switch so the user can
+    // type-to-filter / search immediately. rAF: the target input for the new
+    // tab may not be mounted until after this render commits.
+    requestAnimationFrame(() => {
+      if (mode === 'search') pdfSearchInputRef.current?.focus();
+      else if (mode !== 'bench') filterInputRef.current?.focus();
+    });
   }, []);
 
   // Model tab is hidden (Board# now groups by model). If a user's persisted
   // viewMode is the now-unreachable 'model', fall back to Board# once on mount
   // so they aren't stuck on a view with no tab to leave it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (viewMode === 'model') handleSetViewMode('metadata'); }, []);
+  useEffect(() => { if (viewMode === 'model') handleSetViewMode('metadata', false); }, []);
 
   const handleOpenFile = useCallback(async (file: DatabankFile, pageNum?: number) => {
     databankStore.selectFile(file.id);
@@ -687,86 +702,163 @@ export function LibraryPanel() {
     </div>
   );
 
+  // Single-row status by default; auto-expands to the verbose breakdown while a
+  // scan / PDF-index / dedup / library-load is in flight, or when the user
+  // clicks the summary. The "N failed" button stays reachable in either state.
+  const opPending =
+    scanning
+    || !!pdfIndexProgress?.running
+    || !!dedupProgress?.running
+    || showLoadStrip
+    || isIncomplete;
+  const statusExpanded = opPending || statusOpen;
+  const summaryText = scanning
+    ? `Indexing ${scanStatus && scanStatus.total > 0 ? `${scanStatus.scanned}/${scanStatus.total}` : ''}${scanStatus?.phase ? ` — ${scanStatus.phase}` : '…'}`
+    : dedupProgress?.running
+      ? `Finding duplicates ${dedupProgress.total > 0 ? `${dedupProgress.done}/${dedupProgress.total}` : ''}`
+      : pdfIndexProgress?.running
+        ? `Indexing PDFs ${pdfIndexProgress.done}/${pdfIndexProgress.total}`
+        : `${boardCount} boards · ${pdfCount} PDFs${pdfIndexStats ? ` · ${pdfIndexStats.indexed} indexed` : ''}`;
   const statsBar = (
-    <div className="library-statsbar">
-      {loadStrip}
-      {incompleteStrip}
-      <div className="library-statsbar-text">
-        {scanning ? (
-          <>
-            <span className="library-indexing">
-              Indexing{scanStatus && scanStatus.total > 0
-                ? ` ${scanStatus.scanned}/${scanStatus.total}`
-                : ''}
-              {scanStatus?.phase ? ` — ${scanStatus.phase}` : '...'}
-            </span>
-            {scanStatus?.last_file && (
+    <div className={`library-statsbar ${statusExpanded ? 'expanded' : 'collapsed'}`}>
+      {statusExpanded && loadStrip}
+      {statusExpanded && incompleteStrip}
+      <div className="library-statsbar-main">
+        <button
+          type="button"
+          className="library-statsbar-summary"
+          onClick={() => { if (!opPending) setStatusOpen(o => !o); }}
+          disabled={opPending}
+          aria-expanded={statusExpanded}
+          title={opPending ? undefined : (statusOpen ? 'Hide details' : 'Show details')}
+        >
+          {!opPending && (
+            <IconChevronDown size={13} className={`library-statsbar-caret ${statusOpen ? 'open' : ''}`} />
+          )}
+          <span className="library-statsbar-summary-text">{summaryText}</span>
+        </button>
+        {/* Failed PDFs — reachable even when the status is collapsed. */}
+        {!pdfIndexProgress?.running && pdfIndexStats && pdfIndexStats.failed > 0 && (
+          <button
+            className="library-scan-btn"
+            style={{ padding: '0 5px', fontSize: 10 }}
+            onClick={failedListLoading ? undefined : showFailedList}
+            disabled={failedListLoading}
+            title="Show failed PDF files"
+          >
+            {failedListLoading ? '…' : `${pdfIndexStats.failed} failed`}
+          </button>
+        )}
+        <div className="library-statsbar-actions">
+          {treeHasExpanded && (
+            <button
+              className="library-scan-btn library-scan-icon"
+              onClick={() => treeCollapseAllRef.current?.()}
+              title="Collapse all open folders in the current view"
+            >
+              <IconChevronsUp size={14} />
+            </button>
+          )}
+          <button
+            className="library-scan-btn library-scan-icon"
+            onClick={() => showSidebarTab('settings')}
+            title="Open Library settings (scan, index, …)"
+          >
+            <IconSettings size={14} />
+          </button>
+        </div>
+      </div>
+      {statusExpanded && (
+        <div className="library-statsbar-detail">
+          {scanning ? (
+            scanStatus?.last_file && (
               <div className="library-indexing-file" title={scanStatus.last_file}>
                 {tailTruncate(scanStatus.last_file)}
               </div>
-            )}
-          </>
-        ) : (
-          <>
-            {boardCount} boards, {pdfCount} PDFs
-            {scanStatus && scanStatus.duration_ms > 0 && (
-              <span className="library-scan-result">
-                {` — +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
-              </span>
-            )}
-            {pdfIndexProgress?.running && (
-              <span className="library-indexing" style={{ marginLeft: 8 }}>
-                {' · '}Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
-                {pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : ''}
-                {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
-                {fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}
-              </span>
-            )}
-            {pdfIndexProgress?.running && pdfIndexProgress.current_file && (
-              <div className="library-indexing-file" title={pdfIndexProgress.current_file}>
-                {tailTruncate(pdfIndexProgress.current_file)}
-              </div>
-            )}
-            {!pdfIndexProgress?.running && pdfIndexStats && (
-              <span className="library-scan-result" style={{ marginLeft: 8 }}>
-                {' · '}{pdfIndexStats.indexed} indexed · {pdfIndexStats.pages} pages
-                {pdfIndexStats.failed > 0 && (
-                  <>
-                    {' · '}
-                    <button
-                      className="library-scan-btn"
-                      style={{ marginLeft: 4, padding: '0 5px', fontSize: 10 }}
-                      onClick={failedListLoading ? undefined : showFailedList}
-                      disabled={failedListLoading}
-                      title="Show failed PDF files"
-                    >
-                      {failedListLoading ? '…' : `${pdfIndexStats.failed} failed`}
-                    </button>
-                  </>
-                )}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-      <div className="library-statsbar-actions">
-        {treeHasExpanded && (
-          <button
-            className="library-scan-btn library-scan-icon"
-            onClick={() => treeCollapseAllRef.current?.()}
-            title="Collapse all open folders in the current view"
-          >
-            <IconChevronsUp size={14} />
-          </button>
-        )}
-        <button
-          className="library-scan-btn library-scan-icon"
-          onClick={() => showSidebarTab('settings')}
-          title="Open Library settings (scan, index, …)"
-        >
-          <IconSettings size={14} />
-        </button>
-      </div>
+            )
+          ) : (
+            <>
+              {scanStatus && scanStatus.duration_ms > 0 && (
+                <div className="library-scan-result">
+                  {`Last scan: +${scanStatus.added} -${scanStatus.deleted} ~${scanStatus.updated} (${scanStatus.scanned}/${scanStatus.total}, ${scanStatus.duration_ms}ms)`}
+                </div>
+              )}
+              {pdfIndexProgress?.running && (
+                <div className="library-indexing">
+                  Indexing {pdfIndexProgress.done}/{pdfIndexProgress.total}
+                  {pdfIndexProgress.workers > 0 ? ` · ${pdfIndexProgress.active_workers}/${pdfIndexProgress.workers} threads` : ''}
+                  {pdfIndexProgress.errors > 0 ? ` (${pdfIndexProgress.errors} err)` : ''}
+                  {fmtIndexEta(pdfIndexProgress) ? ` · ${fmtIndexEta(pdfIndexProgress)}` : ''}
+                </div>
+              )}
+              {pdfIndexProgress?.running && pdfIndexProgress.current_file && (
+                <div className="library-indexing-file" title={pdfIndexProgress.current_file}>
+                  {tailTruncate(pdfIndexProgress.current_file)}
+                </div>
+              )}
+              {dedupProgress?.running && (
+                <div className="library-indexing">
+                  Finding duplicates {dedupProgress.done}/{dedupProgress.total}
+                  {dedupProgress.errors > 0 ? ` (${dedupProgress.errors} err)` : ''}
+                </div>
+              )}
+              {!pdfIndexProgress?.running && pdfIndexStats && (
+                <div className="library-scan-result">
+                  {pdfIndexStats.indexed} indexed · {pdfIndexStats.pages} pages
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  // Folder-source picker — a light icon-menu button (reflects the current
+  // source; opens a popup to switch DB ↔ Live). Replaces the inline pill that
+  // used to sit in the tab row and shift it when the Folders tab was active.
+  const folderSourceMenu = (
+    <div className="library-source-menu">
+      <button
+        type="button"
+        className="library-source-btn"
+        onClick={() => setSourceMenuOpen(o => !o)}
+        aria-haspopup="menu"
+        aria-expanded={sourceMenuOpen}
+        title={`Folder source: ${browseMode === 'live' ? 'Live filesystem' : 'Database'}`}
+      >
+        {browseMode === 'live' ? <IconDeviceDesktop size={14} /> : <IconDatabase size={14} />}
+        <IconChevronDown size={11} />
+      </button>
+      {sourceMenuOpen && (
+        <>
+          <div className="library-source-backdrop" onClick={() => setSourceMenuOpen(false)} />
+          <div className="library-source-popup" role="menu">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={browseMode === 'database'}
+              className={`library-source-item ${browseMode === 'database' ? 'active' : ''}`}
+              onClick={() => { databankStore.setBrowseMode('database'); setSourceMenuOpen(false); }}
+            >
+              <IconDatabase size={14} />
+              <span>Database</span>
+              {browseMode === 'database' && <IconCheck size={13} className="library-source-check" />}
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={browseMode === 'live'}
+              className={`library-source-item ${browseMode === 'live' ? 'active' : ''}`}
+              onClick={() => { databankStore.setBrowseMode('live'); setSourceMenuOpen(false); }}
+            >
+              <IconDeviceDesktop size={14} />
+              <span>Live filesystem</span>
+              {browseMode === 'live' && <IconCheck size={13} className="library-source-check" />}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -829,6 +921,13 @@ export function LibraryPanel() {
           >
             Board #
           </button>
+          <button
+            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
+            onClick={() => handleSetViewMode('folders')}
+            title="Browse folders"
+          >
+            <IconFolder size={14} />
+          </button>
           {/* Model tab hidden — Board# now groups by model. Code kept (ModelView/modelTree) for future re-enable.
           <button
             className={`library-tab ${viewMode === 'model' ? 'active' : ''}`}
@@ -852,49 +951,14 @@ export function LibraryPanel() {
           >
             Donor boards
           </button>
-          <button
-            className={`library-tab ${viewMode === 'folders' ? 'active' : ''}`}
-            onClick={() => handleSetViewMode('folders')}
-            title="Browse folders"
-          >
-            <IconFolder size={14} />
-          </button>
         </div>
-        {viewMode === 'folders' && (
-          <div className="library-browse-pill" role="tablist" aria-label="Folder source">
-            <button
-              className={`library-browse-pill-btn ${browseMode === 'database' ? 'active' : ''}`}
-              onClick={() => databankStore.setBrowseMode('database')}
-              role="tab"
-              aria-selected={browseMode === 'database'}
-              title="Show folders from the indexed database"
-            >
-              DB
-            </button>
-            <button
-              className={`library-browse-pill-btn ${browseMode === 'live' ? 'active' : ''}`}
-              onClick={() => databankStore.setBrowseMode('live')}
-              role="tab"
-              aria-selected={browseMode === 'live'}
-              title="Browse the live filesystem"
-            >
-              Live
-            </button>
-          </div>
-        )}
       </div>
-
-      {/* Stats + progress bar — pinned directly under the tab row so its
-       *  position is identical on every tab. (Previously it sat below the
-       *  filter input, which only renders on non-PDF tabs, so the stats line
-       *  jumped up a row when switching to the PDF tab.) Scan/index actions
-       *  live under Settings ▸ Library; the gear icon on the right jumps there. */}
-      {statsBar}
 
       {/* Filter (all tabs except PDF and Bench, which have their own content) */}
       {viewMode !== 'search' && viewMode !== 'bench' && (
         <div className="library-search">
           <input
+            ref={filterInputRef}
             type="text"
             placeholder="Filter files..."
             className="library-search-input"
@@ -1027,6 +1091,7 @@ export function LibraryPanel() {
           <div className="library-pdf-search">
             <div className="library-search" style={{ borderBottom: 'none', padding: '6px 8px 4px' }}>
               <input
+                ref={pdfSearchInputRef}
                 className="library-search-input"
                 placeholder="Search PDF text (e.g. 10UF 25V)…"
                 value={pdfQuery}
@@ -1141,20 +1206,26 @@ export function LibraryPanel() {
             onOpenFile={handleOpenFile}
             registerCollapseAll={registerTreeCollapseAll}
           />
-        ) : viewMode === 'folders' && browseMode === 'live' ? (
-          <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} onIndexFolder={handleIndexFolder} />
         ) : (
-          <FolderView
-            tree={folderTree}
-            treeLoading={folderTreeLoading}
-            selectedFileId={selectedFileId}
-            filterFile={filterFile}
-            searchFilter={debouncedSearch}
-            onSelectFile={handleSelectFile}
-            onOpenFile={handleOpenFile}
-            onIndexFolder={handleIndexFolder}
-            registerCollapseAll={registerTreeCollapseAll}
-          />
+          /* Folders — source (DB / Live) chosen via the icon menu in the toolbar. */
+          <div className="library-folder-wrap">
+            <div className="library-folder-toolbar">{folderSourceMenu}</div>
+            {browseMode === 'live' ? (
+              <LiveBrowser browseResult={browseResult} browsing={browsing} searchFilter={debouncedSearch} onIndexFolder={handleIndexFolder} />
+            ) : (
+              <FolderView
+                tree={folderTree}
+                treeLoading={folderTreeLoading}
+                selectedFileId={selectedFileId}
+                filterFile={filterFile}
+                searchFilter={debouncedSearch}
+                onSelectFile={handleSelectFile}
+                onOpenFile={handleOpenFile}
+                onIndexFolder={handleIndexFolder}
+                registerCollapseAll={registerTreeCollapseAll}
+              />
+            )}
+          </div>
         )}
       </div>
 
@@ -1171,6 +1242,10 @@ export function LibraryPanel() {
         />
       )}
 
+      {/* Status bar — pinned at the bottom (single row; expands while an
+       *  operation is pending or on click). Scan/index actions live under
+       *  Settings ▸ Library; the gear icon jumps there. */}
+      {statsBar}
     </div>
   );
 }
