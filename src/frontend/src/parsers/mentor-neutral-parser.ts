@@ -404,6 +404,7 @@ export function parseMentorNeutral(buffer: ArrayBuffer): BoardData {
       origin,
       pins,
       bounds,
+      ...(c.rotation !== 0 ? { angleDeg: c.rotation } : {}),
       meta: {
         value:    c.device || undefined,
         package:  c.shape || undefined,

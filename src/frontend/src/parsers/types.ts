@@ -81,10 +81,20 @@ export interface DiodeReferenceChannel {
 export interface Part {
   name: string;
   side: 'top' | 'bottom' | 'both';
-  type: 'smd' | 'throughhole';
+  /** Mounting style. `'smd'` / `'throughhole'` are emitted only when the
+   *  source format carries a real signal; `'unknown'` when the format records
+   *  no through-hole/SMD distinction, so the viewer and MCP `part_info` don't
+   *  present a guess as authoritative. */
+  type: 'smd' | 'throughhole' | 'unknown';
   origin: Point;
   pins: Pin[];
   bounds: BBox;
+  /** Canonical part rotation in degrees CCW, when the source format records
+   *  it. Read by `computePartRenderPoly` (render-settings) to build an
+   *  oriented selection-highlight box without PCA; multiples of 90° stay
+   *  axis-aligned and fall through to the heuristic path. Parsers that also
+   *  surface it in the Component Info panel keep a copy in `meta.angleDeg`. */
+  angleDeg?: number;
   /** Layer index for multi-layer boards (0-based). Undefined = single-layer. */
   layer?: number;
   /** Present only on the `deriveBoardView()` output when a board-selection

@@ -27,6 +27,18 @@ export class AllegroDb {
   readonly strings: Map<number, string>;
   readonly blocks: Map<number, AllegroBlock>;
 
+  /**
+   * Non-fatal parse warning set when the interleaved (v16+) block walk breaks
+   * early on a malformed/unknown block. The stream has no length prefixes, so
+   * we can't resync past a bad record — every later object (parts, nets,
+   * traces) is silently lost. When that happens and we end up materially short
+   * of the header's object count, this holds a human-readable warning that
+   * `assembleBoard` surfaces via `board.parserNotes` (a load-time toast), so an
+   * incomplete board is flagged instead of returning "successfully". Undefined
+   * = clean parse.
+   */
+  parseWarning?: string;
+
   constructor(buffer: ArrayBuffer) {
     const stream = new AllegroStream(buffer);
 
@@ -125,6 +137,8 @@ export class AllegroDb {
     const ver = this.header.fmtVer;
     const x27End = this.header.x27End;
     const isV180 = ver >= FmtVer.V_180;
+    // Set when a bad block aborts the walk — used below to surface truncation.
+    let abortedAt: string | null = null;
 
     while (!stream.eof) {
       // V180: skip zero-padded gaps
@@ -164,12 +178,27 @@ export class AllegroDb {
         if (block === null) break; // end marker (0x00 type)
         map.set(block.key, block);
       } catch (e) {
-        // Log and stop — don't crash the whole parse on a single bad block
-        dbg.warn(
-          `Block parse error at offset 0x${stream.position.toString(16)}: ${e instanceof Error ? e.message : e}`
-        );
+        // Log and stop — don't crash the whole parse on a single bad block.
+        // The stream has no length prefixes, so we can't resync past the bad
+        // record; every later object is lost. Recorded here and reconciled
+        // against the header's object count after the loop.
+        abortedAt = `0x${stream.position.toString(16)}: ${e instanceof Error ? e.message : e}`;
         break;
       }
+    }
+
+    // Surface truncation: an aborted walk drops every subsequent object. If we
+    // broke on a bad block AND ended up short of the header's object count,
+    // flag a degraded parse (visible warning + parseWarning for the assembler)
+    // rather than silently returning an incomplete board.
+    if (abortedAt !== null && map.size < this.header.objectCount) {
+      dbg.warn(
+        `Block stream aborted at ${abortedAt} — parsed ${map.size} of ` +
+        `${this.header.objectCount} objects; remaining objects were dropped.`,
+      );
+      this.parseWarning =
+        `Incomplete parse: only ${map.size} of ${this.header.objectCount} board objects were ` +
+        `read before a malformed block stopped the walk. Some parts, nets, or traces may be missing.`;
     }
 
     return map;

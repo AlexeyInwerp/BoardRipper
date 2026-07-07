@@ -10,8 +10,11 @@
  *   $DEVICES   — part descriptions (BOM info)
  *   $SIGNALS   — net connectivity (signal → component.pin nodes)
  *
- * Coordinates: GenCAD uses "UNITS USER <n>" where n is a divisor.
- * UNITS USER 1000 means raw coords are in mils × 1 (divisor applied at parse).
+ * Coordinates: GenCAD declares its coordinate unit via a single `UNITS` record
+ * in $HEADER (INCH / THOU / MM / USER <n>). Every raw coordinate is scaled to
+ * our internal mils system at parse time by a mils-per-unit factor derived from
+ * that record (see parseUnitsFactor). Absent/unrecognised units fall back to
+ * factor 1 (treat-as-mils, the historical behaviour) with a warning.
  *
  * Reference: GenCAD 1.4 specification, OpenBoardView GenCADFile.cpp
  */
@@ -43,6 +46,57 @@ function extractSection(lines: string[], name: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Units
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the mils-per-unit scale factor from the $HEADER `UNITS` record.
+ *
+ * GenCAD stores every coordinate in a design-defined unit; our internal
+ * coordinate system is mils, so every parsed coordinate is multiplied by this
+ * factor at parse time.
+ *
+ *   UNITS INCH        → 1000        (1 inch = 1000 mils)
+ *   UNITS THOU / MIL  → 1           (already mils)
+ *   UNITS MM          → 1000/25.4   (≈ 39.37 mils per mm)
+ *   UNITS USER <n>    → 1000/n      (n user-units per inch; USER 1000 = mils)
+ *
+ * When the record is absent, malformed, or an unrecognised keyword, we return
+ * factor 1 (the historical treat-as-mils behaviour) and warn — we never
+ * silently rescale a file whose units we don't understand.
+ */
+function parseUnitsFactor(headerLines: string[]): number {
+  for (const raw of headerLines) {
+    const line = raw.trim();
+    if (!/^UNITS\b/i.test(line)) continue;
+    const tok = line.split(/\s+/);
+    const kind = (tok[1] ?? '').toUpperCase();
+    switch (kind) {
+      case 'INCH':
+        return 1000;
+      case 'THOU':
+      case 'MIL':
+        return 1;
+      case 'MM':
+        return 1000 / 25.4;
+      case 'USER': {
+        const n = parseFloat(tok[2] ?? '');
+        if (isFinite(n) && n > 0) return 1000 / n;
+        log.parser.warn(
+          `CAD UNITS USER has invalid divisor "${tok[2] ?? ''}"; treating coordinates as mils (factor 1).`,
+        );
+        return 1;
+      }
+      default:
+        log.parser.warn(`CAD UNITS "${kind}" unrecognized; treating coordinates as mils (factor 1).`);
+        return 1;
+    }
+  }
+  log.parser.warn('CAD file has no $HEADER UNITS record; treating coordinates as mils (factor 1).');
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // Shape parsing (pin templates)
 // ---------------------------------------------------------------------------
 
@@ -59,7 +113,7 @@ interface Shape {
   insertType: 'smd' | 'throughhole';
 }
 
-function parseShapes(lines: string[]): Map<string, Shape> {
+function parseShapes(lines: string[], factor: number): Map<string, Shape> {
   const shapes = new Map<string, Shape>();
   let current: Shape | null = null;
 
@@ -77,8 +131,8 @@ function parseShapes(lines: string[]): Map<string, Shape> {
       const parts = line.split(/\s+/);
       if (parts.length >= 6) {
         const pinName = parts[1];
-        const x = parseFloat(parts[3]);
-        const y = parseFloat(parts[4]);
+        const x = parseFloat(parts[3]) * factor;
+        const y = parseFloat(parts[4]) * factor;
         const sideStr = (parts[5] ?? '').toUpperCase();
         const side: 'top' | 'bottom' = sideStr === 'BOTTOM' ? 'bottom' : 'top';
         if (!isNaN(x) && !isNaN(y)) {
@@ -300,7 +354,7 @@ interface ParsedComponents {
   passCount: number;
 }
 
-function parseComponents(lines: string[]): ParsedComponents {
+function parseComponents(lines: string[], factor: number): ParsedComponents {
   let components: Component[] = [];
   let current: Partial<Component> | null = null;
 
@@ -319,8 +373,8 @@ function parseComponents(lines: string[]): ParsedComponents {
     } else if (current) {
       if (line.startsWith('PLACE ')) {
         const parts = line.split(/\s+/);
-        current.placeX = parseFloat(parts[1] ?? '0');
-        current.placeY = parseFloat(parts[2] ?? '0');
+        current.placeX = parseFloat(parts[1] ?? '0') * factor;
+        current.placeY = parseFloat(parts[2] ?? '0') * factor;
       } else if (line.startsWith('LAYER ')) {
         current.layer = line.substring(6).trim().toUpperCase() === 'BOTTOM' ? 'bottom' : 'top';
       } else if (line.startsWith('ROTATION ')) {
@@ -508,7 +562,7 @@ function buildPartMeta(
 // Track width table ($TRACKS)
 // ---------------------------------------------------------------------------
 
-function parseTracks(lines: string[]): Map<string, number> {
+function parseTracks(lines: string[], factor: number): Map<string, number> {
   const tracks = new Map<string, number>();
   for (const raw of lines) {
     const line = raw.trim();
@@ -516,7 +570,7 @@ function parseTracks(lines: string[]): Map<string, number> {
     const parts = line.split(/\s+/);
     if (parts.length >= 3) {
       const width = parseFloat(parts[2]);
-      if (!isNaN(width)) tracks.set(parts[1], width);
+      if (!isNaN(width)) tracks.set(parts[1], width * factor);
     }
   }
   return tracks;
@@ -532,7 +586,7 @@ interface RoutesResult {
   layerNames: string[];
 }
 
-function parseRoutes(lines: string[], tracks: Map<string, number>, passCount: number): RoutesResult {
+function parseRoutes(lines: string[], tracks: Map<string, number>, passCount: number, factor: number): RoutesResult {
   // Multi-revision CAD files (e.g. V382_20) concatenate each revision's
   // route data WITHIN each ROUTE block. A single ROUTE block for net X
   // contains [rev1 VIAs+traces][rev2 VIAs+traces][rev3 VIAs+traces].
@@ -668,8 +722,8 @@ function parseRoutes(lines: string[], tracks: Map<string, number>, passCount: nu
       } else if (line.startsWith('LINE ')) {
         const p = line.split(/\s+/);
         if (p.length >= 5) {
-          const x1 = parseFloat(p[1]), y1 = parseFloat(p[2]);
-          const x2 = parseFloat(p[3]), y2 = parseFloat(p[4]);
+          const x1 = parseFloat(p[1]) * factor, y1 = parseFloat(p[2]) * factor;
+          const x2 = parseFloat(p[3]) * factor, y2 = parseFloat(p[4]) * factor;
           if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2)) {
             allTraces.push({
               start: { x: x1, y: y1 },
@@ -683,9 +737,9 @@ function parseRoutes(lines: string[], tracks: Map<string, number>, passCount: nu
       } else if (line.startsWith('ARC ')) {
         const p = line.split(/\s+/);
         if (p.length >= 7) {
-          const x1 = parseFloat(p[1]), y1 = parseFloat(p[2]);
-          const x2 = parseFloat(p[3]), y2 = parseFloat(p[4]);
-          const cx = parseFloat(p[5]), cy = parseFloat(p[6]);
+          const x1 = parseFloat(p[1]) * factor, y1 = parseFloat(p[2]) * factor;
+          const x2 = parseFloat(p[3]) * factor, y2 = parseFloat(p[4]) * factor;
+          const cx = parseFloat(p[5]) * factor, cy = parseFloat(p[6]) * factor;
           if (!isNaN(x1) && !isNaN(cx)) {
             tessellateArc(x1, y1, x2, y2, cx, cy, currentWidth, block.net, currentLayerIdx, allTraces);
           }
@@ -694,7 +748,7 @@ function parseRoutes(lines: string[], tracks: Map<string, number>, passCount: nu
         const p = line.split(/\s+/);
         if (p.length >= 4) {
           const padstack = p[1];
-          const x = parseFloat(p[2]), y = parseFloat(p[3]);
+          const x = parseFloat(p[2]) * factor, y = parseFloat(p[3]) * factor;
           if (!isNaN(x) && !isNaN(y)) {
             const diameter = drillFromPadstack(padstack);
             allVias.push({
@@ -767,7 +821,7 @@ function tessellateArc(
 // Test pins + power pins ($TESTPINS, $POWERPINS)
 // ---------------------------------------------------------------------------
 
-function parseTestpins(lines: string[]): Nail[] {
+function parseTestpins(lines: string[], factor: number): Nail[] {
   const nails: Nail[] = [];
   for (const raw of lines) {
     const line = raw.trim();
@@ -775,7 +829,7 @@ function parseTestpins(lines: string[]): Nail[] {
     const p = line.split(/\s+/);
     // TESTPIN <name> <x> <y> <net> <altName> <code> <type> <side>
     if (p.length >= 5) {
-      const x = parseFloat(p[2]), y = parseFloat(p[3]);
+      const x = parseFloat(p[2]) * factor, y = parseFloat(p[3]) * factor;
       const net = p[4] ?? '';
       const sideStr = (p[p.length - 1] ?? '').toUpperCase();
       const side: 'top' | 'bottom' = sideStr === 'TOP' ? 'top' : 'bottom';
@@ -791,15 +845,15 @@ function parseTestpins(lines: string[]): Nail[] {
 // Mechanical features ($MECH)
 // ---------------------------------------------------------------------------
 
-function parseMech(lines: string[]): Via[] {
+function parseMech(lines: string[], factor: number): Via[] {
   const holes: Via[] = [];
   for (const raw of lines) {
     const line = raw.trim();
     if (!line.startsWith('FHOLE ')) continue;
     const p = line.split(/\s+/);
     if (p.length >= 4) {
-      const x = parseFloat(p[1]), y = parseFloat(p[2]);
-      const diameter = parseFloat(p[3]);
+      const x = parseFloat(p[1]) * factor, y = parseFloat(p[2]) * factor;
+      const diameter = parseFloat(p[3]) * factor;
       if (!isNaN(x) && !isNaN(y) && !isNaN(diameter)) {
         holes.push({ position: { x, y }, diameter, net: '', layers: [] });
       }
@@ -827,11 +881,17 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // Derive the mils-per-unit scale factor from the $HEADER UNITS record and
+  // apply it to every parsed coordinate below. factor 1 (mils / UNITS USER 1000)
+  // reproduces the historical behaviour exactly; INCH/MM/USER<n> files that
+  // previously rendered sub-pixel now scale correctly. The mils-space heuristics
+  // downstream (V382/TESTCAD recenter, world-coord detection, mirror check) are
+  // ratio-based and stay valid once every coordinate is in mils.
+  const unitFactor = parseUnitsFactor(headerLines);
+
   // Parse sections
-  // Note: UNITS USER 1000 means "1000 units per inch" = coordinates are in mils.
-  // Our internal coordinate system is mils, so no conversion needed.
-  const shapes     = parseShapes(extractSection(lines, 'SHAPES'));
-  const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'));
+  const shapes     = parseShapes(extractSection(lines, 'SHAPES'), unitFactor);
+  const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'), unitFactor);
   const components = parsedComps.components;
   const pinNetMap  = parseSignals(extractSection(lines, 'SIGNALS'));
   const devicePartMap = parseDevices(extractSection(lines, 'DEVICES'));
@@ -1005,11 +1065,11 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   }
 
   // Multilayer data (additive — no-ops for files without these sections)
-  const trackWidths = parseTracks(extractSection(lines, 'TRACKS'));
-  const routes      = parseRoutes(extractSection(lines, 'ROUTES'), trackWidths, parsedComps.passCount);
-  const testpins    = parseTestpins(extractSection(lines, 'TESTPINS'));
-  const powerpins   = parseTestpins(extractSection(lines, 'POWERPINS'));
-  const mechHoles   = parseMech(extractSection(lines, 'MECH'));
+  const trackWidths = parseTracks(extractSection(lines, 'TRACKS'), unitFactor);
+  const routes      = parseRoutes(extractSection(lines, 'ROUTES'), trackWidths, parsedComps.passCount, unitFactor);
+  const testpins    = parseTestpins(extractSection(lines, 'TESTPINS'), unitFactor);
+  const powerpins   = parseTestpins(extractSection(lines, 'POWERPINS'), unitFactor);
+  const mechHoles   = parseMech(extractSection(lines, 'MECH'), unitFactor);
 
   const nails: Nail[] = [...testpins, ...powerpins];
 

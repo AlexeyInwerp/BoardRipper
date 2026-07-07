@@ -209,6 +209,10 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
     const side = sideStr(rp.side);
 
     const pins: Pin[] = [];
+    // A side=0 pin is a through-hole pin (exits the opposite copper side), so
+    // any part carrying one is a through-hole part; absent that signal BDV
+    // records no mount style, so we leave it 'unknown' rather than assert 'smd'.
+    let hasThruPin = false;
     for (let j = rp.pinStart; j < pinEnd && j < rawPins.length; j++) {
       const rpin = rawPins[j];
       // side=0 encodes a through-hole pin exiting on the opposite side of the
@@ -218,6 +222,7 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
       let pinY = rpin.y;
       let pinSide: 'top' | 'bottom' = side;
       if (rpin.side === 0) {
+        hasThruPin = true;
         if (rp.side === 1 && mirrorY > 0) {
           pinY = mirrorY - rpin.y;
           pinSide = 'bottom';
@@ -262,7 +267,7 @@ export function parseBDV(buffer: ArrayBuffer): BoardData {
         : fileBounds;
     }
 
-    parts.push({ name: rp.name, side, type: 'smd', origin, pins, bounds });
+    parts.push({ name: rp.name, side, type: hasThruPin ? 'throughhole' : 'unknown', origin, pins, bounds });
   }
 
   // ---- Nails / test points -------------------------------------------------

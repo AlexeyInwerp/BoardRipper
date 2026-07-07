@@ -294,7 +294,8 @@ export function parseBRD(buffer: ArrayBuffer): BoardData {
     parts.push({
       name:   partNames[i],
       side,
-      type:   'smd',
+      // BRD carries no through-hole/SMD distinction — don't assert 'smd'.
+      type:   'unknown',
       origin,
       pins,
       bounds,

@@ -181,6 +181,9 @@ export function assembleBoard(db: AllegroDb): BoardData {
     pads: pads.length > 0 ? pads : undefined,
     layerNames: layerNames.length > 0 ? layerNames : undefined,
     primarySide: primarySide === 'bottom' ? 'bottom' : undefined,
+    // Surface a truncated block-stream parse (see AllegroDb.parseWarning) as a
+    // load-time note so an incomplete board is flagged, not silent.
+    parserNotes: db.parseWarning ? [db.parseWarning] : undefined,
   };
 }
 
@@ -267,8 +270,14 @@ function extractComponents(
     // Walk 0x2D instance chain
     let instKey = fpDef.firstInstPtr;
     const MAX_INST = 1_000_000;
+    // Guard against a self-referential inst.next chain (mirrors extractPads /
+    // extractPins) — otherwise a cyclic instance list re-emits parts until the
+    // MAX_INST cap. Both advance sites below (skip + normal) are covered.
+    const visitedInst = new Set<number>();
 
     for (let ii = 0; ii < MAX_INST && instKey !== 0; ii++) {
+      if (visitedInst.has(instKey)) break;
+      visitedInst.add(instKey);
       const inst = db.getBlockAs<Blk0x2DFootprintInst>(instKey, 0x2D);
       if (!inst) break;
 
@@ -292,7 +301,7 @@ function extractComponents(
       const side = footprintSide(db, inst);
 
       // Extract pins for this footprint instance
-      const pins = extractPins(db, inst, ver, div, netAssignMap);
+      const { pins, hasThru } = extractPins(db, inst, ver, div, netAssignMap);
       for (const pin of pins) {
         allPinPositions.push(pin.position);
       }
@@ -302,8 +311,9 @@ function extractComponents(
       pinPts.push(origin);
       const bounds = computeBBox(pinPts);
 
-      // Determine type from pins — if any pin has a through-hole pad, it's throughhole
-      const partType: 'smd' | 'throughhole' = 'smd';
+      // Through-hole when any resolved pin's padstack spans multiple etch
+      // layers / carries a drill (same criterion as extractPads' side='both').
+      const partType: 'smd' | 'throughhole' = hasThru ? 'throughhole' : 'smd';
 
       parts.push({
         name: refdes,
@@ -548,12 +558,21 @@ function extractPins(
   ver: FmtVer,
   div: number,
   netAssignMap: Map<number, string>,
-): Pin[] {
+): { pins: Pin[]; hasThru: boolean } {
   const pins: Pin[] = [];
   let padKey = fpInst.firstPadPtr;
   const MAX_PADS = 1_000_000;
+  // Guard against a self-referential nextInFp chain (mirrors extractPads) —
+  // a corrupt/cyclic pad ring would otherwise spin to MAX_PADS re-pushing the
+  // same pins.
+  const visited = new Set<number>();
+  // True once any resolved pin sits on a through-hole padstack (multi-layer /
+  // drilled), so the caller can tag the part 'throughhole'.
+  let hasThru = false;
 
   for (let i = 0; i < MAX_PADS && padKey !== 0; i++) {
+    if (visited.has(padKey)) break;
+    visited.add(padKey);
     const pad = db.getBlockAs<Blk0x32PlacedPad>(padKey, 0x32);
     if (!pad) break;
 
@@ -615,6 +634,10 @@ function extractPins(
     if (padBlock) {
       const ps = db.getBlockAs<Blk0x1CPadstack>(padBlock.padStack, 0x1C);
       if (ps) {
+        // Through-hole padstacks span multiple etch layers (side='both' in
+        // extractPads) and usually carry a drill — reuse that criterion so the
+        // part type reflects real THT pins instead of the old hardcoded 'smd'.
+        if (ps.layerCount > 1 || ps.drill > 0) hasThru = true;
         const resolved = resolvePadShape(ps);
         if (resolved) {
           padShape = resolved.shape;
@@ -655,7 +678,7 @@ function extractPins(
     padKey = pad.nextInFp;
   }
 
-  return pins;
+  return { pins, hasThru };
 }
 
 // ── Traces ────────────────────────────────────────────────────────────────────

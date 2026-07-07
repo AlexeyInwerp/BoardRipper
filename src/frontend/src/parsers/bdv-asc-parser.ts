@@ -68,6 +68,9 @@ interface RawPart {
   name: string;
   side: 'top' | 'bottom';
   pins: Pin[];
+  /** True once any pin reports layer 0 (through-hole). BDV ASC carries no
+   *  other mount-style signal, so parts without a layer-0 pin stay 'unknown'. */
+  hasThru: boolean;
 }
 
 function parsePartsPins(body: string): RawPart[] {
@@ -80,6 +83,7 @@ function parsePartsPins(body: string): RawPart[] {
         name: headerMatch[1],
         side: headerMatch[2] === 'T' ? 'top' : 'bottom',
         pins: [],
+        hasThru: false,
       };
       parts.push(cur);
       continue;
@@ -99,6 +103,7 @@ function parsePartsPins(body: string): RawPart[] {
     // through-hole pins fall back to the part's declared side.
     const pinSide: 'top' | 'bottom' =
       layer === 1 ? 'top' : layer === 2 ? 'bottom' : cur.side;
+    if (layer === 0) cur.hasThru = true;
     cur.pins.push({
       name,
       number,
@@ -171,7 +176,9 @@ export function parseBDVAsc(buffer: ArrayBuffer): BoardData {
     return {
       name: rp.name,
       side: rp.side,
-      type: 'smd' as const,
+      // Derive through-hole from a layer-0 pin; else leave unknown (BDV ASC
+      // records no SMD marker, so asserting 'smd' would be a guess).
+      type: rp.hasThru ? 'throughhole' as const : 'unknown' as const,
       origin: geom.origin,
       pins: rp.pins,
       bounds: geom.bounds,

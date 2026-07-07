@@ -35,7 +35,12 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     every part); previously every part's label collapsed to (0,0) and its
 //     outline stretched from its pins to the origin, misaligning all silk
 //     elements from the correctly-placed pins.
-const PARSER_VERSION = 77;
+// 78: audit 2026-07-07 parser-output changes — CAD honours the GenCAD UNITS
+//     directive (non-mils files rescaled to mils; M16); Part.angleDeg now
+//     populated by TVW/Mentor/FZ for oriented selection boxes (M8); Part.type
+//     widened to include 'unknown' and no-signal parsers stop claiming 'smd'
+//     (L5); Allegro v16/17/18 derive through-hole part.type from padstacks (L7).
+const PARSER_VERSION = 78;
 
 interface CachedBoard {
   key: string;

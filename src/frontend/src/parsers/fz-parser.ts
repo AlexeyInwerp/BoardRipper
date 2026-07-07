@@ -180,6 +180,9 @@ interface FZNail {
 interface FZPart {
   name: string;
   side: 'top' | 'bottom';
+  /** Placement rotation in degrees CCW, from the REFDES record's `rotate`
+   *  field. Undefined / omitted when absent or zero. */
+  rotation?: number;
 }
 
 /**
@@ -230,10 +233,12 @@ function parseContent(text: string, unitIsMm: boolean): { parts: FZPart[]; pins:
       // S!<name>!<cic>!<sname>!<mirror>!<rotate>!
       const name   = fields[1] ?? '';
       const mirror = fields[4] ?? '';
+      const rotate = parseFloat(fields[5] ?? '');
       if (name) {
         parts.push({
           name,
           side: mirror.toUpperCase() === 'YES' ? 'top' : 'bottom',
+          ...(Number.isFinite(rotate) && rotate !== 0 ? { rotation: rotate } : {}),
         });
       }
     } else if (currentBlock === 'NET_NAME') {
@@ -337,13 +342,18 @@ function assembleBoardData(
 
     const { origin, bounds } = computePartGeometry(pins);
 
+    // FZ records no through-hole/SMD distinction, so leave `type` unknown
+    // rather than assert 'smd'. Rotation (when present) drives the oriented
+    // selection box and is surfaced in the Component Info panel via meta.
+    const rotation = fzPart.rotation ?? 0;
     parts.push({
       name:   fzPart.name,
       side:   fzPart.side,
-      type:   'smd',
+      type:   'unknown',
       origin,
       pins,
       bounds,
+      ...(rotation !== 0 ? { angleDeg: rotation, meta: { angleDeg: rotation } } : {}),
     });
   }
 

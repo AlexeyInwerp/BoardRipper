@@ -67,7 +67,8 @@ export function parseBVR1(text: string): BoardData {
           part = {
             name: partName,
             side,
-            type: 'smd',
+            // BVR1 records no through-hole/SMD distinction — don't assert 'smd'.
+            type: 'unknown',
             origin: { x: 0, y: 0 },
             pins: [],
             bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },

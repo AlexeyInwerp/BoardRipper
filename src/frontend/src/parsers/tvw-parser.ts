@@ -1601,6 +1601,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         bounds: computeBBox(primaryPins.map(p => p.position)),
         layer: col,
         ...(hasMeta ? { meta } : {}),
+        ...(tvwPart.angle !== 0 ? { angleDeg: tvwPart.angle } : {}),
       });
     }
 
@@ -1615,6 +1616,7 @@ export function parseTVW(buffer: ArrayBuffer): BoardData {
         pins: extPins,
         bounds: computeBBox(extPins.map(p => p.position)),
         ...(hasMeta ? { meta } : {}),
+        ...(tvwPart.angle !== 0 ? { angleDeg: tvwPart.angle } : {}),
         layer: oppCol ?? col,
       });
     }
