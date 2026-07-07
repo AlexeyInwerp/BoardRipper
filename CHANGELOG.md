@@ -1,5 +1,67 @@
 # BoardRipper changelog
 
+## v0.31.31 — 2026-07-08
+
+A broad correctness-and-hardening pass from a full multi-directional audit, plus
+a Library panel cleanup.
+
+### Fixes
+
+- **Removed / renamed library files get pruned again.** A deletion-path bug meant
+  files that vanished from disk were never removed from the database after the
+  first restart, so the folder tree, file list, and duplicate groups slowly
+  filled with ghost entries. (`1227506`)
+- **PDF text search no longer returns stale hits.** Re-indexing a changed PDF now
+  clears its old pages first, so search never surfaces text from a previous
+  version of a file, and the watermark re-index reliably strips added watermark
+  terms. (`1227506`)
+- **A failed or rolled-back update can be retried.** An update that rolled back
+  (slow boot, transient Docker error) used to consume the release and could never
+  be re-applied from the in-app updater; it now re-offers the same release, and a
+  Docker image-load error is detected instead of being reported as success.
+  (`1227506`)
+- **Tighter file serving.** The legacy file endpoints now only serve or delete
+  actual board and PDF files, closing an over-broad path that could reach other
+  files in the data directory. (`1227506`)
+- **GenCAD boards in non-mil units render correctly.** Files authored in inches or
+  millimetres are scaled properly instead of collapsing to an invisible speck.
+  (`409f570`)
+- **Better part orientation, honest part types.** Rotated parts from more formats
+  get a correctly-oriented outline box, and formats that can't distinguish SMD
+  from through-hole now report "unknown" rather than guessing "SMD". (`409f570`)
+- **More robust AI-copilot worklist entries.** Net or part names with different
+  casing no longer create duplicate "(missing)" rows, an out-of-range repair mark
+  can't corrupt the board highlight, and measurement requests reach the right
+  net. (`c5d4d3a`)
+- **PDF viewer memory and speed.** Fixed a decoded-page memory leak on panel
+  resize and made in-document search noticeably faster on large schematics.
+  (`7efd5b3`)
+- **Library trees fill in during the first load.** On a fresh load or rescan the
+  Board# and Model views no longer stay empty while files stream in. (`90ac02a`)
+- **Cloud-storage placeholders fail fast.** Opening a not-yet-materialised cloud
+  file surfaces the "materialize on host" message immediately instead of retrying
+  for three minutes. (`90ac02a`)
+- **Keyboard and theming polish.** Board rotate/mirror/pan shortcuts no longer
+  fire while a list panel is focused, and bright accent colours stay legible as
+  text on light themes. (`8357207`)
+
+### Library panel
+
+- **Reorganised for less clutter.** The Folder tab now sits next to Board #; the
+  status line is a single row pinned at the bottom that expands — on click, or
+  while a scan/index is running — to the full breakdown, keeping the "view failed"
+  button; and switching tabs focuses the search field so you can type straight
+  away. (`d45d37c`)
+- **DB / Live folder source is a quick dropdown.** Clicking the Folder tab drops a
+  small Database / Live menu that auto-dismisses, instead of taking a permanent
+  row for one control. (`8248438`)
+
+### Under the hood
+
+- The MCP live-board bridge is now authenticated and gated, and its OAuth surface
+  is bounded and hidden when the integration is off. Renderer pan/zoom hot paths
+  shed redundant per-frame work. (`1227506`, `c5d4d3a`)
+
 ## v0.31.30 — 2026-07-06
 
 Select components hidden under others, and get a clearer read on what's selected
