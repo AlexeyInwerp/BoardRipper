@@ -19,6 +19,31 @@ let started = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let focusHandler: (() => void) | null = null;
 let visHandler: (() => void) | null = null;
+let boardUnsub: (() => void) | null = null;
+let lastBoardGen = '';
+/** Cached per-install MCP bearer secret. `null` = not yet successfully fetched
+ *  (so the next connect re-fetches); a string (possibly '') = fetched. */
+let mcpSecret: string | null = null;
+let secretInFlight: Promise<string> | null = null;
+
+/** Fetch (and cache) the per-install MCP bearer secret from /api/mcp/token so
+ *  the bridge handshake can authenticate (M14). Returns '' when the token can't
+ *  be fetched yet — the caller sends an empty secret, the backend rejects it,
+ *  and the reconnect loop retries once the token is reachable. On a fetch error
+ *  `mcpSecret` stays null so the next connect re-fetches. */
+function fetchMcpSecret(): Promise<string> {
+  if (mcpSecret !== null) return Promise.resolve(mcpSecret);
+  if (secretInFlight) return secretInFlight;
+  secretInFlight = fetch('/api/mcp/token')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j: { token?: unknown } | null) => {
+      if (j && typeof j.token === 'string') mcpSecret = j.token;
+      return mcpSecret ?? '';
+    })
+    .catch(() => '')
+    .finally(() => { secretInFlight = null; });
+  return secretInFlight;
+}
 
 function boardDescriptor() {
   const b = boardStore.board;
@@ -55,6 +80,16 @@ export function startMcpBridge() {
   visHandler = () => { if (!document.hidden) send({ type: 'focus', session: sessionId }); };
   window.addEventListener('focus', focusHandler);
   document.addEventListener('visibilitychange', visHandler);
+  // Push a fresh board descriptor whenever the active board changes (M13) so
+  // board_sessions / board_active never report a stale or empty descriptor.
+  // Track the last-sent generation string and push only on change to avoid spam.
+  lastBoardGen = boardDescriptor().generation;
+  boardUnsub = boardStore.subscribe(() => {
+    const gen = boardDescriptor().generation;
+    if (gen === lastBoardGen) return;
+    lastBoardGen = gen;
+    notifyBoardChanged();
+  });
   connect();
 }
 
@@ -67,6 +102,7 @@ export function stopMcpBridge() {
   if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (focusHandler) { window.removeEventListener('focus', focusHandler); focusHandler = null; }
   if (visHandler) { document.removeEventListener('visibilitychange', visHandler); visHandler = null; }
+  if (boardUnsub) { boardUnsub(); boardUnsub = null; }
   if (socket) {
     socket.onopen = null;
     socket.onmessage = null;
@@ -98,7 +134,13 @@ function connect() {
   }
   socket.onopen = () => {
     log.mcp.log(`bridge connected (session ${sessionId})`);
-    send({ type: 'hello', session: sessionId, board: boardDescriptor() });
+    // Authenticate the handshake (M14): the backend requires the per-install MCP
+    // secret in the first frame. Fetch it (cached), then send hello. `send`
+    // no-ops if the socket already closed; if the token wasn't reachable we send
+    // an empty secret and the reconnect loop retries once it is.
+    void fetchMcpSecret().then((secret) => {
+      send({ type: 'hello', session: sessionId, secret, board: boardDescriptor() });
+    });
   };
   socket.onmessage = (ev) => {
     let frame: Frame;
@@ -374,18 +416,32 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
       const prompt = String(p.prompt ?? '');
       const expected = p.expected != null ? String(p.expected) : undefined;
       const NET_KINDS = new Set(['voltage', 'diode', 'resistance']);
-      const isNet = !!(boardStore.board?.nets.has(target));
-      if (isNet && NET_KINDS.has(kind)) {
-        const ok = worklistStore.requestNetMeasurement(target, {
+      // Resolve target against the board's nets case-insensitively (mirror
+      // board-store focusNet): try exact, else scan keys for a toUpperCase match
+      // and rebind to the canonical key. A case-mismatched net must create the
+      // inline field, not fall through to the relay transcript.
+      const board = boardStore.board;
+      let netTarget: string | null = null;
+      if (board) {
+        if (board.nets.has(target)) netTarget = target;
+        else {
+          const upper = target.toUpperCase();
+          for (const k of board.nets.keys()) {
+            if (k.toUpperCase() === upper) { netTarget = k; break; }
+          }
+        }
+      }
+      if (netTarget && NET_KINDS.has(kind)) {
+        const ok = worklistStore.requestNetMeasurement(netTarget, {
           kind: kind as 'voltage' | 'diode' | 'resistance',
           prompt,
           expected,
         });
         if (!ok) throw new Error('could not add measurement request (no board?)');
-        toast(`Agent requested ${kind} measurement on net ${target}`);
+        toast(`Agent requested ${kind} measurement on net ${netTarget}`);
         return { ok: true, routed: 'net' };
       } else {
-        // Part/pin targets, unknown nets, or non-net-supported kinds → relay
+        // Genuine part/pin targets, truly-unknown nets, or non-net kinds → relay
         const relayText = `Measure ${kind} on ${target}${prompt ? ': ' + prompt : ''}`;
         worklistStore.addMessage('agent', relayText);
         toast(`Agent posted measurement request for ${target} to relay`);

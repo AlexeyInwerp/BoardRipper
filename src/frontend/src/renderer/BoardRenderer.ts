@@ -572,7 +572,10 @@ export class BoardRenderer {
         a.fromY + (a.toY - a.fromY) * e,
       );
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // No netLinesDirty here: net-line segments are world-space, so an animated
+      // zoom never changes their geometry. onZoomFrame hides them during the
+      // anim and the settle timer redraws from the cached segments at the new
+      // scale (renderNetLines re-derives the zoom-dependent draw params).
       if (t >= 1) this.zoomAnim = null;
     }
 
@@ -913,7 +916,12 @@ export class BoardRenderer {
     this.installDragZoomHandler();
     this.viewport.on('moved', () => {
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // Do NOT mark netLinesDirty here. Net-line segments are world-space and
+      // the viewport transforms netLinesGfx on the GPU, so pan/zoom never
+      // invalidates the geometry. Genuine changes (selection/flip/rotation)
+      // set netLinesDirty at their own sites; the idle-settle path re-derives
+      // the zoom-dependent draw params. Firing a full O(K^2 log K) recompute on
+      // every 'moved' frame produced byte-identical segments — pure waste.
       this.viewportMovingUntil = performance.now() + 100;
       this.scheduleFollowDebounce();
       // Keep multi-select / worklist outline thickness ~constant in screen
@@ -1077,7 +1085,12 @@ export class BoardRenderer {
     // Viewport pan/zoom/decelerate → mark dirty so we render
     this.viewport.on('moved', () => {
       this.needsRender = true;
-      this.netLinesDirty = true;
+      // Do NOT mark netLinesDirty here. Net-line segments are world-space and
+      // the viewport transforms netLinesGfx on the GPU, so pan/zoom never
+      // invalidates the geometry. Genuine changes (selection/flip/rotation)
+      // set netLinesDirty at their own sites; the idle-settle path re-derives
+      // the zoom-dependent draw params. Firing a full O(K^2 log K) recompute on
+      // every 'moved' frame produced byte-identical segments — pure waste.
       this.viewportMovingUntil = performance.now() + 100;
       this.scheduleFollowDebounce();
       // Keep multi-select / worklist outline thickness ~constant in screen
@@ -1465,7 +1478,11 @@ export class BoardRenderer {
       }
       if (this.netLinesHiddenForZoom) {
         this.netLinesHiddenForZoom = false;
-        this.netLinesDirty = true;
+        // Redraw from the cached world-space segments — renderNetLines
+        // re-derives the zoom-dependent draw params (lineW/dashLen/fadeDist)
+        // from the settled scale. No segment recompute: geometry is
+        // zoom-invariant, so forcing netLinesDirty here just rebuilt identical
+        // segments. Genuine changes set netLinesDirty at their own sites.
         this.renderNetLines();
         if (this.crossSideGhostParts.size > 0) this.renderCrossSideGhosts();
       }
@@ -4034,6 +4051,22 @@ export class BoardRenderer {
     this.selectionOverlayEl.style.display = '';
   }
 
+  /** Build a refdes → partIndex map for the current board in a single O(N)
+   *  pass. Shared by the worklist-resolution sites (computeSharedWorklistNets
+   *  and redrawMultiHighlight) so both re-resolve stored entries identically.
+   *  Last-write-wins on duplicate refdes (matches redrawMultiHighlight's prior
+   *  inline loop). Empty map when there's no board. */
+  private buildRefdesIndex(): Map<string, number> {
+    const byRefdes = new Map<string, number>();
+    const parts = this.board?.parts;
+    if (!parts) return byRefdes;
+    for (let i = 0; i < parts.length; i++) {
+      const n = parts[i]?.name;
+      if (n) byRefdes.set(n, i);
+    }
+    return byRefdes;
+  }
+
   /** Nets shared by ≥2 parts in the **active worklist** — used when the
    *  Highlight toggle is on. Resolves refdes → partIndex against the live board
    *  so fold-mode / sub-board changes don't stale-index. Same exclusion rules
@@ -4044,10 +4077,12 @@ export class BoardRenderer {
     const worklist = worklistStore.activeWorklist;
     if (!worklist || worklist.entries.length < 2) return [];
     const s = renderSettingsStore.settings;
+    // O(1) refdes lookup instead of a findIndex per entry (was O(entries × parts)).
+    const byRefdes = this.buildRefdesIndex();
     const count = new Map<string, number>();
     for (const e of worklist.entries) {
-      const partIdx = this.board.parts.findIndex(p => p?.name === e.refdes);
-      if (partIdx < 0) continue;
+      const partIdx = byRefdes.get(e.refdes);
+      if (partIdx === undefined) continue;
       const part = this.board.parts[partIdx];
       if (!part) continue;
       const seen = new Set<string>();
@@ -5107,24 +5142,24 @@ export class BoardRenderer {
     };
     const tabId = boardStore.activeTabId;
     if (tabId == null) return;
-    // Build refdes → partIndex once per frame so we can re-resolve stored
-    // worklist entries (whose cached partIndex may be stale after a
-    // fold-mode change re-derived the board).
-    const byRefdes = new Map<string, number>();
-    for (let i = 0; i < board.parts.length; i++) {
-      const n = board.parts[i]?.name;
-      if (n) byRefdes.set(n, i);
-    }
     // Active worklist outlines — only when the Highlight toggle is on so the
     // board is uncluttered by default. Mark colours are preserved (no cyan
     // override). Ephemeral selection drawn over the top so a part in both
     // retains the brighter cyan cue.
     const worklist = worklistStore.activeWorklist;
     if (worklist && boardStore.connectionHighlight) {
+      // Build refdes → partIndex only inside this branch (the Highlight toggle
+      // is off by default) so we can re-resolve stored worklist entries whose
+      // cached partIndex may be stale after a fold-mode change re-derived the
+      // board. Keeps the per-frame 'moved' path allocation-free when off.
+      const byRefdes = this.buildRefdesIndex();
       for (const e of worklist.entries) {
         const idx = byRefdes.get(e.refdes);
         if (idx == null) continue;
-        drawOutline(idx, MARK_COLOR_HEX[e.mark], 0.95);
+        // `?? MARK_COLOR_HEX.none` guards an out-of-vocab mark from a stale /
+        // malformed stored entry — Color conversion of `undefined` would throw
+        // inside this unguarded 'moved' handler.
+        drawOutline(idx, MARK_COLOR_HEX[e.mark] ?? MARK_COLOR_HEX.none, 0.95);
       }
     }
     const sel = selectionSetStore.current;

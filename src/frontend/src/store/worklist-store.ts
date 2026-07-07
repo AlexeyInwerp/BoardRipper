@@ -41,6 +41,12 @@ export const NET_MARK_COLOR_CSS: Record<NetWorklistMark, string> = {
   absent: '#8899aa',     // muted slate — disconnected / not on this board
 };
 
+/** Runtime-checkable mark vocabularies. Agent writes arrive as untyped strings
+ *  over MCP, so we clamp anything outside these sets to 'none' at write time and
+ *  self-heal already-persisted bad marks in `resolveEntries`. */
+const VALID_PART_MARKS: ReadonlySet<WorklistMark> = new Set<WorklistMark>(['none', 'replaced', 'reworked', 'cleaned']);
+const VALID_NET_MARKS: ReadonlySet<NetWorklistMark> = new Set<NetWorklistMark>(['none', 'short', 'solved', 'absent']);
+
 export interface WorklistEntry {
   /** Resolved part index in the currently-loaded board. May go stale on
    *  re-parse — re-resolve from `refdes` on load. */
@@ -172,8 +178,20 @@ class WorklistStore {
   private byKey = new Map<string, BoardWorklistes>();
   private hydrating = new Map<string, Promise<void>>();
   private listeners = new Set<() => void>();
+  /** Cross-tab reconciliation channel (L17): after we persist a record, sibling
+   *  tabs on the same board reload it so two open pages don't clobber each other. */
+  private channel: BroadcastChannel | null = null;
   /** Test-only fallback active key — set by TEST_NEW_WORKLIST when no board is loaded. */
   private _testActiveKey: string | null = null;
+
+  constructor() {
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        this.channel = new BroadcastChannel('boardripper-worklist');
+        this.channel.onmessage = (ev) => { void this.onBroadcast(ev.data); };
+      } catch { this.channel = null; }
+    }
+  }
 
   subscribe(cb: () => void): () => void {
     this.listeners.add(cb);
@@ -224,9 +242,28 @@ class WorklistStore {
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
       });
+      // Tell sibling tabs to reload this record (L17). BroadcastChannel does not
+      // deliver to the posting instance, so there's no self-feedback here.
+      try { this.channel?.postMessage({ key: value.key }); } catch { /* ignore */ }
     } catch (e) {
       log.cache?.warn('worklist: persist failed', e);
     }
+  }
+
+  /** Handle a sibling-tab persist notification (L17): reload the record from
+   *  IndexedDB, re-resolve against the current board, and notify subscribers.
+   *  Deliberately does NOT persist or re-broadcast — the reload-driven notify()
+   *  is the end of the chain, so no feedback loop can form. Only records this
+   *  tab already has in memory are reloaded (others aren't our concern). */
+  private async onBroadcast(data: unknown): Promise<void> {
+    const key = (data as { key?: unknown } | null)?.key;
+    if (typeof key !== 'string' || !this.byKey.has(key)) return;
+    const loaded = await this.loadFromDb(key);
+    if (!loaded) return;
+    if (loaded.schemaVersion == null) loaded.schemaVersion = 1;
+    this.resolveEntries(loaded.worklistes);
+    this.byKey.set(key, loaded);
+    this.notify();
   }
 
   /** Re-resolve partIndex from refdes (and existence of net names) for the
@@ -284,13 +321,17 @@ class WorklistStore {
 
   private resolveEntries(worklistes: Worklist[]): void {
     const board = boardStore.board;
-    const validNetMarks: ReadonlySet<NetWorklistMark> = new Set(['none', 'short', 'solved', 'absent']);
     for (const s of worklistes) {
       if (!Array.isArray(s.netEntries)) s.netEntries = [];
       // Sanitise legacy net marks that briefly shipped with the part vocab
       // (replaced / reworked / cleaned) in v0.31.5 → reset to 'none'.
       for (const e of s.netEntries) {
-        if (!validNetMarks.has(e.mark)) e.mark = 'none';
+        if (!VALID_NET_MARKS.has(e.mark)) e.mark = 'none';
+      }
+      // Same self-heal for PART marks: an unvalidated agent write could have
+      // persisted a bogus mark that would later break the renderer/tooltip.
+      for (const e of s.entries) {
+        if (!VALID_PART_MARKS.has(e.mark)) e.mark = 'none';
       }
       // Migrate any persisted legacy measurements[] array onto net rows / relay.
       this.migrateLegacyMeasurements(s, board);
@@ -299,29 +340,101 @@ class WorklistStore {
       for (const s of worklistes) {
         for (const e of s.entries) e.unresolved = true;
         for (const e of s.netEntries) e.unresolved = true;
+        this.dedupPartEntries(s);
+        this.dedupNetEntries(s);
       }
       return;
     }
+    // Case-insensitive refdes → index map (first occurrence wins, mirroring the
+    // MCP findPart / focusPart `.find` convention) so an agent that used a
+    // different casing than the board doesn't strand a phantom '(missing)' row.
     const byRefdes = new Map<string, number>();
     for (let i = 0; i < board.parts.length; i++) {
       const name = board.parts[i]?.name;
-      if (name) byRefdes.set(name, i);
+      if (name) { const k = name.toUpperCase(); if (!byRefdes.has(k)) byRefdes.set(k, i); }
     }
     for (const s of worklistes) {
       for (const e of s.entries) {
-        const idx = byRefdes.get(e.refdes);
+        const idx = byRefdes.get(e.refdes.toUpperCase());
         if (idx == null) {
           e.unresolved = true;
         } else {
+          // Rewrite refdes to the board's canonical casing so later exact-match
+          // reconciles line up and duplicate rows can't accrete.
+          const canon = board.parts[idx]?.name;
+          if (canon) e.refdes = canon;
           e.partIndex = idx;
           delete e.unresolved;
         }
       }
       for (const e of s.netEntries) {
+        const canonical = this.canonicalNetName(board, e.netName);
+        if (canonical !== e.netName) e.netName = canonical;
         if (board.nets.has(e.netName)) delete e.unresolved;
         else e.unresolved = true;
       }
+      this.dedupPartEntries(s);
+      this.dedupNetEntries(s);
     }
+  }
+
+  /** Resolve `name` to the board's canonical net-name casing (case-insensitive).
+   *  Returns `name` unchanged when the board is null or has no case-insensitive
+   *  match. Shared by pushNets / aiAddNet / resolveEntries so a case-mismatched
+   *  net can never produce a resolved entry PLUS a phantom '(missing)' one. */
+  private canonicalNetName(board: BoardData | null, name: string): string {
+    if (!board || board.nets.has(name)) return name;
+    const upper = name.toUpperCase();
+    for (const k of board.nets.keys()) {
+      if (k.toUpperCase() === upper) return k;
+    }
+    return name;
+  }
+
+  /** Collapse case-insensitive duplicate part entries (legacy phantoms from the
+   *  pre-fix aiAddPart path). Keeps the first entry per uppercased refdes,
+   *  preferring the resolved casing and merging any non-default
+   *  mark/note/waterdamage from the collapsed duplicates so nothing is lost. */
+  private dedupPartEntries(s: Worklist): void {
+    const byUpper = new Map<string, WorklistEntry>();
+    let changed = false;
+    for (const e of s.entries) {
+      const key = e.refdes.toUpperCase();
+      const keep = byUpper.get(key);
+      if (!keep) { byUpper.set(key, e); continue; }
+      changed = true;
+      if (keep.unresolved && !e.unresolved) {
+        keep.refdes = e.refdes; keep.partIndex = e.partIndex; delete keep.unresolved;
+      }
+      if (keep.mark === 'none' && e.mark !== 'none') keep.mark = e.mark;
+      if (!keep.note && e.note) keep.note = e.note;
+      if (!keep.waterdamage && e.waterdamage) keep.waterdamage = true;
+    }
+    if (changed) s.entries = Array.from(byUpper.values());
+  }
+
+  /** Net-entry analogue of `dedupPartEntries`. Merges non-default
+   *  mark/note/surge and any per-kind measurements from collapsed duplicates. */
+  private dedupNetEntries(s: Worklist): void {
+    const byUpper = new Map<string, NetWorklistEntry>();
+    let changed = false;
+    for (const e of s.netEntries) {
+      const key = e.netName.toUpperCase();
+      const keep = byUpper.get(key);
+      if (!keep) { byUpper.set(key, e); continue; }
+      changed = true;
+      if (keep.unresolved && !e.unresolved) { keep.netName = e.netName; delete keep.unresolved; }
+      if (keep.mark === 'none' && e.mark !== 'none') keep.mark = e.mark;
+      if (!keep.note && e.note) keep.note = e.note;
+      if (!keep.surge && e.surge) keep.surge = true;
+      if (e.measurements) {
+        keep.measurements ??= {};
+        for (const k of MEAS_KINDS) {
+          if (!keep.measurements[k] && e.measurements[k]) keep.measurements[k] = e.measurements[k];
+        }
+      }
+    }
+    if (changed) s.netEntries = Array.from(byUpper.values());
   }
 
   /** Hydrate the worklist for the current active board tab (idempotent). Called
@@ -638,21 +751,16 @@ class WorklistStore {
       if (!worklist) return 0;
     }
     if (!Array.isArray(worklist.netEntries)) worklist.netEntries = [];
-    const seen = new Set(worklist.netEntries.map(e => e.netName));
+    // Case-insensitive dedup so a case-mismatched net can't be added twice.
+    const seen = new Set(worklist.netEntries.map(e => e.netName.toUpperCase()));
     let added = 0;
     for (const name of netNames) {
-      if (!name || seen.has(name)) continue;
-      // Case-insensitive resolve to the board's canonical net name so the
-      // entry stays in sync with the board's casing.
-      let canonical = name;
-      if (board && !board.nets.has(name)) {
-        const upper = name.toUpperCase();
-        for (const k of board.nets.keys()) {
-          if (k.toUpperCase() === upper) { canonical = k; break; }
-        }
-      }
-      if (seen.has(canonical)) continue;
-      seen.add(canonical);
+      if (!name) continue;
+      // Resolve to the board's canonical net-name casing (shared helper).
+      const canonical = this.canonicalNetName(board, name);
+      const upper = canonical.toUpperCase();
+      if (seen.has(upper)) continue;
+      seen.add(upper);
       worklist.netEntries.push({ netName: canonical, mark: 'none', note: '' });
       added++;
     }
@@ -769,16 +877,23 @@ class WorklistStore {
     const t = this.aiTarget();
     if (!t) return false;
     const board = boardStore.board;
-    const idx = board ? board.parts.findIndex(p => p?.name === refdes) : -1;
+    // Resolve refdes case-insensitively (same convention as MCP findPart /
+    // focusPart) and store the board's canonical casing so the reconcile pass
+    // matches on reload instead of stranding a phantom '(missing)' row.
+    const upper = refdes.toUpperCase();
+    const idx = board ? board.parts.findIndex(p => p?.name?.toUpperCase() === upper) : -1;
+    const canonical = idx >= 0 ? (board!.parts[idx]?.name ?? refdes) : refdes;
     if (idx >= 0) this.pushParts(t.w.id, [idx]);
-    else if (!t.w.entries.some(e => e.refdes === refdes))
-      t.w.entries.push({ partIndex: -1, refdes, mark: 'none', note: '', unresolved: true });
-    const e = t.w.entries.find(x => x.refdes === refdes);
+    else if (!t.w.entries.some(e => e.refdes.toUpperCase() === upper))
+      t.w.entries.push({ partIndex: -1, refdes: canonical, mark: 'none', note: '', unresolved: true });
+    const e = t.w.entries.find(x => x.refdes.toUpperCase() === upper);
     if (e) {
-      if (mark) e.mark = mark;
+      // Clamp untyped agent marks to the vocabulary; a bad value would persist
+      // to IndexedDB and later break the renderer/tooltip.
+      if (mark) e.mark = VALID_PART_MARKS.has(mark) ? mark : 'none';
       if (note != null) e.note = note.slice(0, 4000);
     }
-    (t.w.aiOrigin ??= {})[`p:${refdes}`] = true;
+    (t.w.aiOrigin ??= {})[`p:${canonical}`] = true;
     this.save(t.cur);
     return true;
   }
@@ -787,15 +902,23 @@ class WorklistStore {
   aiAddNet(netName: string, mark?: NetWorklistMark, note?: string): boolean {
     const t = this.aiTarget();
     if (!t) return false;
-    if (!t.w.netEntries.some(n => n.netName === netName)) this.pushNets(t.w.id, [netName]);
-    const e = t.w.netEntries.find(x => x.netName === netName);
+    // Canonicalize to the board's casing FIRST so the presence check, the
+    // pushNets insert, and the follow-up find all operate on the same name —
+    // otherwise a case-mismatched net gets a resolved entry AND a phantom one.
+    const board = boardStore.board;
+    const canonical = this.canonicalNetName(board, netName);
+    const upper = canonical.toUpperCase();
+    // Clamp untyped agent marks to the net vocabulary (self-heals on read too).
+    const safeMark: NetWorklistMark = mark && VALID_NET_MARKS.has(mark) ? mark : 'none';
+    if (!t.w.netEntries.some(n => n.netName.toUpperCase() === upper)) this.pushNets(t.w.id, [canonical]);
+    const e = t.w.netEntries.find(x => x.netName.toUpperCase() === upper);
     if (e) {
-      if (mark) e.mark = mark;
+      if (mark) e.mark = safeMark;
       if (note != null) e.note = note.slice(0, 4000);
-    } else if (!t.w.netEntries.some(n => n.netName === netName)) {
-      t.w.netEntries.push({ netName, mark: mark ?? 'none', note: note ?? '', unresolved: true });
+    } else {
+      t.w.netEntries.push({ netName: canonical, mark: safeMark, note: note ?? '', unresolved: true });
     }
-    (t.w.aiOrigin ??= {})[`n:${netName}`] = true;
+    (t.w.aiOrigin ??= {})[`n:${canonical}`] = true;
     this.save(t.cur);
     return true;
   }
@@ -874,12 +997,15 @@ class WorklistStore {
 
   /** Return user messages (optionally only unread) and mark them read. */
   consumeUserMessages(onlyUnread = true): WorklistMessage[] {
-    const t = this.aiTarget();
-    if (!t?.w.messages) return [];
-    const out = t.w.messages.filter(m => m.role === 'user' && (!onlyUnread || m.unread));
+    // READ-only on the CREATE axis (L16): never materialize + persist an empty
+    // worklist just to read messages. Only touch a pre-existing active worklist,
+    // and only save when we actually cleared an unread flag.
+    const w = this.activeWorklist;
+    if (!w?.messages) return [];
+    const out = w.messages.filter(m => m.role === 'user' && (!onlyUnread || m.unread));
     let changed = false;
     for (const m of out) if (m.unread) { delete m.unread; changed = true; }
-    if (changed) this.save(t.cur);
+    if (changed) { const cur = this.current; if (cur) this.save(cur); }
     return out;
   }
 
