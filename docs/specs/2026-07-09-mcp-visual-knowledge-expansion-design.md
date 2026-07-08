@@ -110,6 +110,10 @@ Two layers. No new config toggle: the persona rides in `Instructions` whenever M
 Prepend a short role framing to `boardripperInstructions` so every client gets the technician mindset at init. Kept tight to protect handshake size. Draft (final wording owned by the user). Note: the `kb_search` mention is added only when Phase 3 lands — if Phase 2 ships first, drop that clause so the persona never advertises a tool that isn't registered:
 
 > You are acting as an electronics repair technician working a live board in BoardRipper. Understand the circuit before you judge it: build a mental model step by step from what the board and its schematic actually show, form hypotheses, and test them with measurements rather than guessing. Work incrementally — identify the board, map its power domains, follow the suspect signal, narrow down. You have eyes (`board_snapshot`, `pdf_page_image`), the schematic and its text (`pdf_page_text`, `pdf_find`, `pdf_search`), the netlist/parts, reference data (`obd_*`), a knowledge base (`kb_search`), and a shared worklist to record findings and ask the user to probe. Prefer evidence over assumption; when unsure, request a measurement and wait.
+>
+> When you request measurements, be economical and correct: don't ask for the same electrical node twice — nets bridged by a populated 0Ω resistor or closed jumper are one node (but have the user confirm the link if it may be unpopulated). Pick the meter mode that fits the target: diode mode for data lines, **not** for power rails or CPU/GPU phases (there it reads low and meter-dependent); use voltage or resistance-to-ground for rails; reserve continuity mode for continuity only. Remind the user to power down before resistance/diode probing and to re-check any abnormal reading — but calibrate these safety reminders to their apparent skill and drop them for an evidently experienced tech. `kb_search('measurement')` has the full rationale.
+
+**Adaptive guardrails:** the *correctness/efficiency* rules (no redundant same-node request; correct meter mode per net class) always apply — they make the model sharper, not chattier. The *safety/procedure* reminders (power-off, continuity-mode misuse, double-check abnormal) are delivered adaptively: the model infers the user's expertise from their notes, corrections, terminology, or explicit statement and **omits the basic guardrails for an experienced tech**. This is a persona behavior, not a KB chunk (it governs how the model behaves, not reference data).
 
 ### 6.2 Invokable prompt templates (`Server.AddPrompt`)
 
@@ -134,7 +138,8 @@ Adds the **Resources** primitive + a search tool. Purpose: reusable reference th
 ### 7.1 Content
 
 A curated `kb/` of small markdown chunks, `go:embed`-ed into the backend binary (versioned with releases). Each chunk has frontmatter `{id, title, tags[], applies_to[]}`. Categories:
-- **Method**: short-to-ground localization, no-power tree, power-sequencing checks, diode-mode interpretation, liquid-damage protocol.
+- **Method**: short-to-ground localization, no-power tree, power-sequencing checks, liquid-damage protocol.
+- **Measurement practice** (authoritative — user-provided, see §7.5): request hygiene (0Ω/jumper node collapsing), diode-mode applicability, safety/validity.
 - **Failure-mode catalog** per subsystem: PMIC, charging, backlight, SSD/storage, USB-C/PD, etc.
 - **Measurement norms**: expected healthy diode/voltage readings per rail class, cap-to-ground short thresholds.
 - **Conventions**: rail/net naming across formats, glossary; board-family quirks keyed to `board_resolve` families.
@@ -153,6 +158,63 @@ Prompt (the loop) → `kb_search` (the technique) → chunk (the reference) → 
 ### 7.4 Loading / caching
 
 Chunks parsed once at startup from the embedded FS into an in-memory index (id → {frontmatter, body}). Resources and `kb_search` read that index. No new persistent DB unless promoted to FTS5.
+
+### 7.5 Measurement-practice chunks (authoritative, user-provided)
+
+These three chunks encode the user's own measurement rules verbatim-in-intent; they ship without the "draft" caveat (domain-expert authored). The correctness/efficiency rules also surface as always-on persona behavior (§6.1); the chunks carry the full rationale the model pulls on demand.
+
+```markdown
+---
+id: measurement-request-hygiene
+title: Requesting measurements economically
+tags: [measurement, method, efficiency]
+applies_to: [any]
+---
+- Treat nets bridged by a populated 0Ω resistor or a closed jumper as ONE
+  electrical node. Don't request (or ask the user to probe) the same node twice.
+- Before collapsing two nets into one node, confirm the bridging link is actually
+  populated. A 0Ω resistor / jumper pad left unpopulated (DNP / open) does NOT
+  connect the nets — if the link may be open, have the user verify it is bridged
+  on this board before treating the nets as one.
+- Detecting a bridge: net_neighbors surfaces nets reachable through 2-pin parts;
+  part_info on the bridging part gives its value. Only a 0Ω-class link (0 / 0R /
+  jumper) collapses the node; a real resistor does not.
+```
+
+```markdown
+---
+id: diode-mode-usage
+title: When diode mode helps and when it misleads
+tags: [measurement, diode, method]
+applies_to: [any]
+---
+- Diode mode is very useful on DATA lines (USB, PCIe, DP/LVDS, I2C, …): it
+  reveals shorts, leakage, and blown ESD/protection diodes, with readings that
+  compare meaningfully pin-to-pin.
+- Do NOT rely on diode mode for major power rails or CPU/GPU phase (VCORE) nodes.
+  Those readings are low and vary a lot with the meter's diode-test voltage, so
+  they are neither diagnostic nor comparable between meters.
+- For power rails: measure VOLTAGE (board powered) or RESISTANCE-to-ground (board
+  unpowered) instead.
+```
+
+```markdown
+---
+id: measurement-safety
+title: Safe and valid measurement practice
+tags: [measurement, safety, method]
+applies_to: [any]
+---
+- Resistance and diode measurements require the board UNPOWERED. Never measure
+  ohms or diode on a powered-up board.
+- Continuity (beep) mode is for continuity ONLY — connected vs open. Never infer
+  a resistance value or a rail's health from the beep.
+- If a reading is abnormal (outside the expected range), double-check before
+  acting: re-seat probes, confirm range/mode, re-probe. Bad contact and wrong
+  mode cause more false readings than real faults.
+```
+
+Delivery note: `measurement-request-hygiene` and `diode-mode-usage` inform *how the model chooses* `request_measurement` targets/kinds and always apply. `measurement-safety` is surfaced to the user adaptively per §6.1 (dropped for an experienced tech).
 
 ---
 
