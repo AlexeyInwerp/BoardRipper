@@ -137,6 +137,25 @@ type pdfGotoArgs struct {
 
 func (a pdfGotoArgs) session() string { return a.Session }
 
+// pdfPageArgs is pdf_page_text: read the OPEN PDF's cached text layer for one
+// page (defaults to the current page). No re-extraction.
+type pdfPageArgs struct {
+	Page    int    `json:"page,omitempty" jsonschema:"1-based page (default: current page)"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a pdfPageArgs) session() string { return a.Session }
+
+// pdfFindArgs is pdf_search_open: case-insensitive substring search within the
+// OPEN PDF document (distinct from the library-wide pdf_search tool).
+type pdfFindArgs struct {
+	Query   string `json:"query" jsonschema:"text to find in the open PDF"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"max matches (default 200, cap 1000)"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a pdfFindArgs) session() string { return a.Session }
+
 // sessionsResult wraps the session descriptors in an object (the SDK requires
 // every tool's output schema to be a JSON object, not a bare array).
 type sessionsResult struct {
@@ -168,6 +187,8 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[pinArgs](s, b, "pin_connectivity", "Given a part and pin, return its net and the other pins on that net.", "pin_connectivity", true, nil)
 	liveTool[partArgs](s, b, "part_info", "Return a component's full info: pins, and any descriptive metadata the boardview carried — value, serial (these often hold the real part name/number), package, part-type, side, height, angle.", "part_info", true, nil)
 	liveTool[findPartsArgs](s, b, "find_parts", "Search parts by free text across refdes + description fields (value/serial/package/part-type). Use this to locate a component by name/number when no schematic PDF is available — many boardviews store the real part name in the description. Returns {parts:[{refdes,side,value,serial,package,part_type}],total,has_more,offset}.", "find_parts", true, nil)
+	liveTool[pdfPageArgs](s, b, "pdf_page_text", "Extracted text of a page of the open PDF (defaults to the current page). Reads the already-cached text layer; no re-extraction.", "pdf_page_text", true, nil)
+	liveTool[pdfFindArgs](s, b, "pdf_search_open", "Search WITHIN the open PDF document (instant, in-memory; also works for drag-dropped files). For library-wide search use pdf_search.", "pdf_search_open", true, nil)
 
 	// --- drive-UI tools (always registered; gated per-call on DriveUI()) ---
 	gate := func() bool { return deps.State != nil && deps.State.DriveUI() }

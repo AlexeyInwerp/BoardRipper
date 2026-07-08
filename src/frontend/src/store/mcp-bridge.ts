@@ -10,7 +10,7 @@ import { pdfStore } from './pdf-store';
 import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
-import { classifyNetName, buildOverview } from './mcp-bridge-helpers';
+import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -204,6 +204,15 @@ function requireBoard(): BoardData {
   return b;
 }
 
+/** The focused PDF document, or throw — used by pdf_page_text / pdf_search_open,
+ *  which read the OPEN PDF's cached text layer (distinct from the library-wide
+ *  pdf_search tool, which is backend-native and works with no PDF open). */
+function activePdf() {
+  const d = pdfStore.activeDoc;
+  if (!d) throw new Error('no PDF open in BoardRipper');
+  return d;
+}
+
 function findPart(b: BoardData, refdes: string) {
   const want = String(refdes).toLowerCase();
   return b.parts.find((pt) => pt.name.toLowerCase() === want);
@@ -371,6 +380,18 @@ async function dispatch(op: string, p: any): Promise<any> {
     case 'get_user_messages': {
       const msgs = worklistStore.consumeUserMessages(p.only_unread !== false);
       return { messages: msgs.map((m) => ({ text: m.text, at: m.at })) };
+    }
+    // ── open-PDF text ops (read the OPEN doc's cached text layer; distinct
+    // from the library-wide pdf_search tool) ──
+    case 'pdf_page_text': {
+      const d = activePdf();
+      const page = typeof p.page === 'number' && p.page > 0 ? p.page : d.currentPage;
+      return { page, text: pageText(d.textPages, page) };
+    }
+    case 'pdf_search_open': {
+      const d = activePdf();
+      const matches = searchTextPages(d.textPages, String(p.query ?? ''), p.limit);
+      return { matches, total: matches.length };
     }
     default:
       return dispatchDrive(op, p);

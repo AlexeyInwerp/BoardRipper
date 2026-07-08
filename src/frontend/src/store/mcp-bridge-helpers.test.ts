@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyNetName, buildOverview } from './mcp-bridge-helpers';
+import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
 
 describe('classifyNetName', () => {
   it('flags auto-generated names as synthetic', () => {
@@ -27,5 +27,21 @@ describe('buildOverview', () => {
   });
   it('handles no worklist', () => {
     expect(buildOverview(null, 0)).toEqual({ parts: 0, nets: 0, pendingMeasurements: 0, unreadUserMessages: 0, hasListNote: false });
+  });
+});
+
+const PAGES = [
+  [{ str: 'VCC' }, { str: 'MAIN' }],
+  [{ str: 'USB' }, { str: 'connector' }],
+];
+
+describe('pageText', () => {
+  it('joins a page', () => { expect(pageText(PAGES as any, 1)).toBe('VCC MAIN'); });
+  it('clamps out-of-range', () => { expect(pageText(PAGES as any, 99)).toBe(''); });
+});
+describe('searchTextPages', () => {
+  it('finds a case-insensitive match with page + snippet', () => {
+    const m = searchTextPages(PAGES as any, 'usb', 10);
+    expect(m).toEqual([{ page: 2, snippet: 'USB connector' }]);
   });
 });

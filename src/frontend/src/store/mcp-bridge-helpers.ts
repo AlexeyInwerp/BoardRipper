@@ -51,3 +51,34 @@ export function buildOverview(snap: Snap, unread: number): WorklistSummary {
     hasListNote: !!(snap?.note && snap.note.trim()),
   };
 }
+
+/** Narrowed shape of `PdfDocument.textPages[pageIndex][itemIndex]` — only the
+ *  `.str` field `pageText`/`searchTextPages` need. */
+type TextItem = { str: string };
+
+/** Join a 1-based page's text items into a single whitespace-normalized
+ *  string. Reads the already-cached text layer (no re-extraction). Returns ''
+ *  for an out-of-range page rather than throwing — the open PDF's page count
+ *  is dynamic (extraction is progressive), so callers should treat '' as
+ *  "not available yet / out of range", not an error. */
+export function pageText(pages: TextItem[][], page: number): string {
+  const idx = page - 1;
+  if (idx < 0 || idx >= pages.length) return '';
+  return pages[idx].map((it) => it.str).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Case-insensitive substring search across the open PDF's cached text pages,
+ *  distinct from the library-wide `pdf_search` tool. Returns one hit per
+ *  matching page (page + full page-text snippet), capped at `limit`
+ *  (default 200, max 1000). */
+export function searchTextPages(pages: TextItem[][], query: string, limit: number): Array<{ page: number; snippet: string }> {
+  const q = (query ?? '').toLowerCase().trim();
+  const out: Array<{ page: number; snippet: string }> = [];
+  if (!q) return out;
+  const cap = limit > 0 && limit <= 1000 ? limit : 200;
+  for (let i = 0; i < pages.length && out.length < cap; i++) {
+    const text = pages[i].map((it) => it.str).join(' ').replace(/\s+/g, ' ').trim();
+    if (text.toLowerCase().includes(q)) out.push({ page: i + 1, snippet: text });
+  }
+  return out;
+}

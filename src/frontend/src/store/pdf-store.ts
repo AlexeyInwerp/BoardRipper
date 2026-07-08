@@ -519,6 +519,11 @@ class PdfStore extends Emitter {
     return this._activeFileName ? this._documents.get(this._activeFileName) ?? null : null;
   }
 
+  /** The focused document (or null if none open) — for consumers outside this
+   *  module that need the full `PdfDocument` (e.g. the MCP live-board bridge
+   *  reading `textPages`/`currentPage` for pdf_page_text / pdf_search_open). */
+  get activeDoc(): PdfDocument | null { return this._active; }
+
   get fileName(): string { return this._active?.fileName ?? ''; }
   get pageCount(): number { return this._active?.pageCount ?? 0; }
   get currentPage(): number { return this._active?.currentPage ?? 1; }
