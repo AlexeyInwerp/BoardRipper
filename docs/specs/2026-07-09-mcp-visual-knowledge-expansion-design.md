@@ -50,13 +50,14 @@ New ops in `src/frontend/src/store/mcp-bridge.ts`, registered as `liveTool`s in 
 
 | Tool | Args | Source | Returns |
 |---|---|---|---|
-| `board_snapshot` | `session?`, `fit?` (`view`\|`board`, default `view`) | PixiJS `renderer.extract` of the active board canvas | MCP **image** content (PNG) + `{session, w, h}` |
-| `pdf_page_image` | `page?` (default current), `session?`, `scale?` | pdf.js `getPage(n).render()` → offscreen canvas → PNG; honors rotation/mirror | MCP **image** content (PNG) + `{page, w, h}` |
+| `board_overview` | `session?` | one-call orientation, all browser-known state (see §12.1) | `{session, board:{name,boardNumber?,parts,nets,side,generation}, pdfs:[…], worklist:{…}}` |
+| `board_snapshot` | `session?`, `fit?` (`view`\|`board`, default `view`), `around?` (refdes\|bbox — crop, see §12.3) | PixiJS `renderer.extract` of the active board canvas | MCP **image** content (PNG) + `{session, w, h}` |
+| `pdf_page_image` | `page?` (default current), `session?`, `scale?`, `region?` (bbox — sub-rectangle, see §12.3) | pdf.js `getPage(n).render()` → offscreen canvas → PNG; honors rotation/mirror | MCP **image** content (PNG) + `{page, w, h}` |
 | `pdf_page_text` | `page?` (default current; omit-all = whole doc, capped), `session?` | `PdfDocument.textPages` (already cached; no re-extract) | `{page, text}` or `{pages:[{page,text}]}` |
-| `pdf_find` | `query`, `session?`, `limit?` | substring/token search over in-memory `textPages` (instant; works for dropped files) | `{matches:[{page, snippet}], total}` |
+| `pdf_search_open` | `query`, `session?`, `limit?` | substring/token search over in-memory `textPages` (instant; works for dropped files). *Named to not collide with library-wide `pdf_search` — see §12.4* | `{matches:[{page, snippet}], total}` |
 | `pdf_download` | `session?` | the open doc's `originalBuffer` | MCP **resource/blob** (application/pdf) + `{name, size}` |
 
-Descriptor change (fixes the open-PDF exposure gap): `boardDescriptor()` gains `pdfs: [{name, page, pageCount, fileId?}]` sourced from `openPdfEntries()` + current page. Reported in both `board_active` and `board_sessions`. This is what lets the model (a) know which schematic is on screen and (b) hand its `fileId` to Plane B.
+Descriptor change (fixes the open-PDF exposure gap): `boardDescriptor()` gains `pdfs: [{name, page, pageCount, fileId?}]` sourced from `openPdfEntries()` + current page. Reported in `board_active`, `board_sessions`, and the richer `board_overview` (§12.1). This is what lets the model (a) know which schematic is on screen and (b) hand its `fileId` to Plane B.
 
 **Why browser-only rendering:** MCP here is used with a live session; the board is *only* rendered client-side (PixiJS — the backend has no board renderer at all), and the browser already holds the PDF's pixels, bytes, and text. Browser capture reflects exactly what the user sees (side, zoom, highlight, rotation, mirror, clean-mode) and covers drag-dropped files that never reach the server. A backend renderer would duplicate the pipeline, miss the user's view state, and only work for library files.
 
@@ -97,7 +98,7 @@ Image tools return `mcp.ImageContent{Data, MIMEType}`; download tools return an 
 
 ### 5.7 Known limitation
 
-A drag-dropped PDF (no `fileId`, no server path) is reachable only via Plane A (`board_snapshot` is board-only; `pdf_page_*`/`pdf_find`/`pdf_download` all work on it because the browser holds it). Plane B (`pdf_search` corpus, `file_download`) cannot see it until it is added to the library. The primary flow — a board plus its library-linked schematic (via BindLink) — is fully covered. Documented, not worked around.
+A drag-dropped PDF (no `fileId`, no server path) is reachable only via Plane A (`board_snapshot` is board-only; `pdf_page_*`/`pdf_search_open`/`pdf_download` all work on it because the browser holds it). Plane B (`pdf_search` corpus, `file_download`) cannot see it until it is added to the library. The primary flow — a board plus its library-linked schematic (via BindLink) — is fully covered. Documented, not worked around.
 
 ---
 
@@ -109,21 +110,24 @@ Two layers. No new config toggle: the persona rides in `Instructions` whenever M
 
 Prepend a short role framing to `boardripperInstructions` so every client gets the technician mindset at init. Kept tight to protect handshake size. Draft (final wording owned by the user). Note: the `kb_search` mention is added only when Phase 3 lands — if Phase 2 ships first, drop that clause so the persona never advertises a tool that isn't registered:
 
-> You are acting as an electronics repair technician working a live board in BoardRipper. Understand the circuit before you judge it: build a mental model step by step from what the board and its schematic actually show, form hypotheses, and test them with measurements rather than guessing. Work incrementally — identify the board, map its power domains, follow the suspect signal, narrow down. You have eyes (`board_snapshot`, `pdf_page_image`), the schematic and its text (`pdf_page_text`, `pdf_find`, `pdf_search`), the netlist/parts, reference data (`obd_*`), a knowledge base (`kb_search`), and a shared worklist to record findings and ask the user to probe. Prefer evidence over assumption; when unsure, request a measurement and wait.
+> You are acting as an electronics repair technician working a live board in BoardRipper. Understand the circuit before you judge it: build a mental model step by step from what the board and its schematic actually show, form hypotheses, and test them with measurements rather than guessing. Work incrementally — identify the board, map its power domains, follow the suspect signal, narrow down. You have eyes (`board_snapshot`, `pdf_page_image`), the schematic and its text (`pdf_page_text`, `pdf_search_open`, `pdf_search`), the netlist/parts, reference data (`obd_*`), a knowledge base (`kb_search`), and a shared worklist to record findings and ask the user to probe. Prefer evidence over assumption; when unsure, request a measurement and wait.
 >
 > When you request measurements, be economical and correct: don't ask for the same electrical node twice — nets bridged by a populated 0Ω resistor or closed jumper are one node (but have the user confirm the link if it may be unpopulated). Pick the meter mode that fits the target: diode mode for data lines, **not** for power rails or CPU/GPU phases (there it reads low and meter-dependent); use voltage or resistance-to-ground for rails; reserve continuity mode for continuity only. Remind the user to power down before resistance/diode probing and to re-check any abnormal reading — but calibrate these safety reminders to their apparent skill and drop them for an evidently experienced tech. `kb_search('measurement')` has the full rationale.
+>
+> Teach as you fix. Explain your reasoning and the circuit in plain terms, calibrated to the user's level — enough that they learn *why*, not just *what*. Ground every explanation in the board (nets/parts as `[n:]`/`[p:]` chips, the schematic to point at the actual circuit), and define jargon the first time you use it. Prefer a clear analogy over precision the user can't yet use.
 
-**Adaptive guardrails:** the *correctness/efficiency* rules (no redundant same-node request; correct meter mode per net class) always apply — they make the model sharper, not chattier. The *safety/procedure* reminders (power-off, continuity-mode misuse, double-check abnormal) are delivered adaptively: the model infers the user's expertise from their notes, corrections, terminology, or explicit statement and **omits the basic guardrails for an experienced tech**. This is a persona behavior, not a KB chunk (it governs how the model behaves, not reference data).
+**Adaptive guardrails:** the *correctness/efficiency* rules (no redundant same-node request; correct meter mode per net class) always apply — they make the model sharper, not chattier. The *safety/procedure* reminders (power-off, continuity-mode misuse, double-check abnormal) and the *teaching depth* (§13) are delivered adaptively: they are the **same dial** — the single user model in §13.1 — so safety verbosity, explanation depth, and terseness of findings move together off one inferred read of the user's expertise. This is persona behavior, not a KB chunk (it governs how the model behaves, not reference data).
 
 ### 6.2 Invokable prompt templates (`Server.AddPrompt`)
 
 Registered via the SDK Prompts capability; surface in Claude Code as `/mcp__boardripper__<name>`. Each returns a `user`-role `PromptMessage` priming the persona + a concrete tool-wired loop, parameterized by `PromptArgument`s.
 
-- **`understand_circuit`** — arg `focus?` (net/part/area). Loop: orient (`board_active`/`board_resolve`) → see (`board_snapshot`, `pdf_page_image`) → read (`list_nets`/`list_parts`, `net_info`/`part_info`/`net_neighbors`/`pin_connectivity`, `pdf_find`/`pdf_search`/`pdf_page_text`) → model (describe power domains + signal path) → verify (`request_measurement`). Emphasis: build understanding incrementally, show reasoning, don't jump to conclusions.
+- **`understand_circuit`** — arg `focus?` (net/part/area). Loop: orient (`board_overview` → `board_resolve`) → see (`board_snapshot`, `pdf_page_image`) → read (`list_nets`/`list_parts`, `net_info`/`part_info`/`net_neighbors`/`pin_connectivity`, `pdf_search_open`/`pdf_search`/`pdf_page_text`) → model (describe power domains + signal path) → verify (`request_measurement`). Emphasis: build understanding incrementally, show reasoning, don't jump to conclusions.
 - **`diagnose`** — arg `symptom?`. Loop: read the case (`worklist_get` + `get_measurements`) → orient + reference (`board_resolve`, `obd_match`/`obd_data`) → localize (symptom → domain, bounded via `net_neighbors` + schematic) → hypothesize+test (`worklist_add`, `request_measurement`, `get_measurements`) → narrow → record (`worklist_set_list_note` + `post_message`).
 - **`trace_rail`** *(optional, may land with Phase 2 or defer)* — arg `rail`/net. Trace a power/signal net via `net_neighbors` + schematic cross-ref + `request_measurement` at each stage.
+- **`explain`** — arg `topic?` (a net, part, subsystem, or general concept). Teach it in simple, clean terms, grounded in the open board where relevant: what it is, what it does *here*, how it connects, what "healthy" looks like. Calibrated to the user model (§13.1). Distinct from `understand_circuit` (the model building *its own* understanding); `explain` is the model **teaching the user** (§13.3).
 
-Prompts instruct the model to `kb_search` for the relevant technique (composition with Phase 3).
+Prompts instruct the model to `kb_search` for the relevant technique or concept (composition with Phase 3), and follow the convergence/stop discipline in §12.7.
 
 ### 6.3 Relationship to the `boardripper-repair-helper` skill
 
@@ -143,6 +147,7 @@ A curated `kb/` of small markdown chunks, `go:embed`-ed into the backend binary 
 - **Failure-mode catalog** per subsystem: PMIC, charging, backlight, SSD/storage, USB-C/PD, etc.
 - **Measurement norms**: expected healthy diode/voltage readings per rail class, cap-to-ground short thresholds.
 - **Conventions**: rail/net naming across formats, glossary; board-family quirks keyed to `board_resolve` families.
+- **Concepts** (teaching material, see §13.4): plain-language explainers — buck converter / LDO, power sequencing, diode drop & why diode mode works, pull-ups, decoupling, common rails. Method chunks explain *how to work*; concept chunks explain *how electronics work*, for the user.
 
 **Authoring:** system built first; chunks drafted by the implementer and **clearly marked draft**, then reviewed/corrected by the user (domain expert) before shipping. No fabricated measurement thresholds ship as authoritative.
 
@@ -233,9 +238,9 @@ Delivery note: `measurement-request-hygiene` and `diode-mode-usage` inform *how 
 
 ## 10. Testing
 
-**Phase 1 (Go):** `pdf_search` file scoping; `file_download` cap + path-sandbox + cloud-error passthrough; content-block shape (image/resource) via the in-memory self-test client. **(Frontend):** `board_snapshot` op returns a PNG; `pdf_page_image`/`pdf_page_text`/`pdf_find` against a fixture PDF; descriptor exposes `pdfs[]`.
-**Phase 2 (Go):** `prompts/list` includes the templates; `prompts/get` returns well-formed messages with arg substitution; persona present in `Instructions`.
-**Phase 3 (Go):** `resources/list`/`resources/read` for chunks; `kb_search` ranks a known query to the expected chunk; embedded FS parses all chunks (frontmatter valid).
+**Phase 1 (Go):** `pdf_search` file scoping; `file_download` cap + path-sandbox + cloud-error passthrough; content-block shape (image/resource) via the in-memory self-test client. **(Frontend):** `board_overview` returns board+pdfs+worklist summary; `board_snapshot` op returns a PNG (and honours `around=` crop); `pdf_page_image`/`pdf_page_text`/`pdf_search_open` against a fixture PDF; descriptor exposes `pdfs[]`; feedback-rich drive-UI returns (`highlight_net`→pins, `select_part`→found/side, `set_side`→side).
+**Phase 2 (Go):** `prompts/list` includes `understand_circuit`/`diagnose`/`explain`; `prompts/get` returns well-formed messages with arg substitution; persona (technician + educator) present in `Instructions`.
+**Phase 3 (Go):** `resources/list`/`resources/read` for chunks; `kb_search` ranks a known query to the expected chunk (incl. a concept chunk for an `explain`-style query); embedded FS parses all chunks (frontmatter valid, all categories incl. concepts).
 
 ## 11. Phasing / sequencing
 
@@ -243,4 +248,58 @@ Delivery note: `measurement-request-hygiene` and `diode-mode-usage` inform *how 
 2. **Phase 2 — Harness** (small; depends on Phase-1 tool names being final so prompts reference real tools).
 3. **Phase 3 — Knowledge** (independent of 1–2 mechanically, but prompts in Phase 2 reference `kb_search`, so land 3 before or with the final prompt wording).
 
-Each phase gets its own implementation plan and can ship independently.
+Each phase gets its own implementation plan and can ship independently. New surface added by §12/§13 slots into the phases: `board_overview` + region-cropped snapshots + feedback-rich drive-UI returns → Phase 1; the `explain` prompt + educator persona → Phase 2; the **concepts** teaching chunks → Phase 3.
+
+---
+
+## 12. Designing for the agent (Claude-experience refinements)
+
+The tool surface is the model's entire world; its ergonomics decide whether the agent is fast and grounded or slow and hallucinating. These refinements apply across all phases — they are how a capable model is *made* capable here.
+
+### 12.1 One-call orientation — `board_overview`
+Cold-start should be one call, not eight. New live (bridge) tool `board_overview` returns everything the browser knows in a single read: `{session, board:{name, boardNumber?, parts, nets, side, generation}, pdfs:[{name,page,pageCount,fileId?}], worklist:{parts, nets, pendingMeasurements, unreadUserMessages, hasListNote}}`. It carries the raw `boardNumber` so the model can `board_resolve`/`obd_match` next. Keep the lightweight `board_active` for cheap staleness polling (its `generation` token); `board_overview` is the deliberate "lay of the land," the recommended first call in every prompt. Single-plane (browser-side) so it composes no cross-plane calls.
+
+### 12.2 Feedback-rich returns — close the loop
+Every action returns its observable effect, so the model needn't issue a follow-up read to learn what happened. Enrich the existing drive-UI tools: `highlight_net` → `{net, pins_highlighted, parts}`; `select_part` → `{refdes, found, side, centered}`; `set_side` → `{side}`; `pdf_goto` → `{page, matched?}`. When a visual check is warranted the model can `board_snapshot` to confirm — actions and eyes form a closed loop instead of open-loop guessing.
+
+### 12.3 Token & vision discipline — text first, pixels when they add information
+Vision is the most expensive context the agent spends. Guidance (in the persona and the visual tools' descriptions): reach for topology/text first (`net_info`, `part_info`, `pdf_page_text`, `pdf_search_open`); reach for `board_snapshot`/`pdf_page_image` when text is insufficient — no schematic text layer, reading a specific region, or visually correlating board↔schematic. To keep images cheap *and* legible, both visual tools take an optional region: `board_snapshot(around=refdes|bbox)` crops to a part/area; `pdf_page_image(region=bbox)` renders a sub-rectangle. A tight crop beats a full-page dump on both cost and accuracy. Default resolution is tuned for legibility, not maximum.
+
+### 12.4 Names that self-disambiguate
+Tool names are the model's API docs. The two PDF searches must never be confusable: `pdf_search` = library-wide FTS (established name, keep); `pdf_search_open` = within the open document (renamed from `pdf_find`). Convention: open-doc tools (`pdf_page_image`/`_text`/`_search_open`/`_download`, `board_snapshot`, `board_overview`) act on the focused session; library tools (`pdf_search`, `file_download`) take explicit ids. Each description states its scope in the first sentence.
+
+### 12.5 Ambiguity returns candidates, not errors
+When a reference is ambiguous, return ranked candidates with disambiguating fields rather than failing: `select_part`/`part_info` on a non-unique refdes → candidates with side/value/package; multiple open sessions with no `session` arg → the session list; `board_resolve` near-miss → close matches. The model picks; it never dead-ends on a lookup.
+
+### 12.6 Evidence grounding — measured vs known vs inferred
+Confidently-wrong repair advice is dangerous. The model distinguishes and labels its basis: **measured** (a `get_measurements` reading), **known-good** (OBD / KB norm), or **inferred** (topology/reasoning). Worklist notes and conclusions tag the source; when the basis is "inferred" and the stakes are high (a part-replacement call), prefer `request_measurement` over asserting. `expected` fields on measurement requests carry the spec so user and model compare against the same number.
+
+### 12.7 Convergence & stop conditions
+Agents rabbit-hole. The prompts encode: after a few inconclusive probes, step back and re-scope rather than drilling; converge to a single most-likely hypothesis before recommending a fix; and always leave the worklist in a state the user can act on — current suspects plus the *one* next measurement that would most reduce uncertainty. Know when to stop: a confirmed cause, or a clear "here's what I need from you to proceed."
+
+### 12.8 Non-destructive, attributed writes
+Shared-worklist writes never clobber the user's content: agent entries are additive and attributed (`source=agent`), and the model reads the worklist (`board_overview`/`worklist_get`) before writing so it augments rather than overwrites. Writes/drive stay gated; reads are always free — explore freely with reads, act deliberately with writes.
+
+## 13. Educating the user, not just fixing
+
+A primary goal of the harness: **teach**, don't just diagnose. A repair that leaves the user understanding *why* is worth more than a silently-fixed board. Education is a first-class behavior, not a footnote.
+
+### 13.1 One user model drives all adaptivity
+The agent maintains one lightweight model of the user — expertise and intent — inferred from their notes, corrections, terminology, questions, and any explicit statement. That single model governs three dials in lock-step:
+- **Explanation depth** — from first-principles teaching (what a PMIC is; why this rail sequences after that one) to terse expert shorthand.
+- **Safety-reminder verbosity** — the §6.1 guardrails, dropped for an evident expert.
+- **Terseness of findings** — beginners get narrated reasoning; experts get conclusion + evidence.
+
+When unsure, start in the middle and adjust on signal; it's fine to briefly ask "how deep should I go?" once. This unifies the adaptivity already specified for safety with the teaching dimension — there is *one* dial, not three.
+
+### 13.2 Teach the why, grounded in this board
+Explanations are always tied to the board in front of the user: reference real nets/parts with `[n:NET]` / `[p:REFDES:PIN]` chips, use the schematic (`pdf_page_image`) to point at the actual circuit, prefer plain language + analogy over jargon, and define a term the first time it's used. The model explains *as it works* ("I'm checking this rail because it feeds the CPU, and a short here would explain your symptom") so the diagnosis itself is the lesson.
+
+### 13.3 The `explain` prompt
+New invokable prompt `explain` (§6.2) — the model **teaching the user**, as opposed to `understand_circuit` (the model building its own understanding). Given a topic (net/part/subsystem/concept) it explains in simple, clean terms, grounded in the open board when relevant, calibrated to the user model.
+
+### 13.4 KB chunks are teaching material too
+The knowledge base serves the user, not only the model. The **concepts** category (§7.1) holds plain-language explainer chunks that `kb_search` surfaces for `explain` and that the model quotes/adapts to the user's level. Method chunks explain *how to work*; concept chunks explain *how electronics work*.
+
+### 13.5 Why this fits the medium
+The board and schematic are already on screen and addressable (nets, parts, pins, chips, snapshots). That makes grounded teaching cheap: the agent can point at the real thing the user is holding rather than explaining in the abstract. Education here is not a bolt-on — it's the natural payoff of a live, addressable board plus a model that can see and reason about it.
