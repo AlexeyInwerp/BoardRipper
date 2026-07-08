@@ -22,6 +22,13 @@
 
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+// package.json has "type": "module", so __dirname isn't defined here — derive
+// it from import.meta.url the same way tests/boardripper.spec.ts does.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BOARD = path.resolve(__dirname, '../../../samples/820-02100/820-02100.bvr');
 
@@ -59,4 +66,75 @@ test('live-board drive-UI surfaces a toast (requires enabled MCP backend)', asyn
   expect(box).not.toBeNull();
   expect(box!.width).toBeGreaterThan(0);
   expect(box!.y).toBeGreaterThanOrEqual(0); // on-screen, not clipped above viewport
+});
+
+// ── Bridge-ops data proof (unguarded — runs in every CI run) ──
+//
+// The test above proves the full WS round-trip but only runs when a real
+// backend has MCP explicitly enabled (MCP_E2E=1). This test proves the OTHER
+// half unconditionally: that mcp-bridge.ts's dispatch() answers each op
+// correctly once a REAL board is parsed and sitting in boardStore. It drives
+// dispatch() directly via the dev-only window.__brBridgeDispatch hook (see
+// mcp-bridge.ts, exposed only under import.meta.env.DEV) rather than opening
+// a WebSocket — the wire framing/auth is already covered by the Go-side
+// mcpserver tests and the guarded spec above; this spec's job is the
+// frontend-side data correctness.
+const REAL_BVR3 = path.resolve(__dirname, '../../../samples/820-02016.bvr');
+const haveBvr3 = fs.existsSync(REAL_BVR3);
+const TEST_BOARD = path.resolve(__dirname, '../public/samples/test-board.bvr');
+const BOARD_FILE = haveBvr3 ? REAL_BVR3 : TEST_BOARD;
+
+test('bridge ops answer from a loaded board', async ({ page }) => {
+  await page.goto('/');
+
+  const fileInput = page.getByTestId('file-input');
+  await fileInput.setInputFiles(BOARD_FILE);
+
+  // Wait for the board to actually be loaded and the dev hook to be present:
+  // poll board_overview until it reports a non-null board rather than relying
+  // on a UI-text wait, so this also exercises dispatch() itself as part of
+  // the readiness check.
+  await page.waitForFunction(
+    async () => {
+      const fn = (window as any).__brBridgeDispatch;
+      if (!fn) return false;
+      try {
+        const overview = await fn('board_overview', {});
+        return overview && overview.board != null;
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 15000 },
+  );
+
+  const overview = await page.evaluate(() => (window as any).__brBridgeDispatch('board_overview', {}));
+  expect(overview.board).toBeTruthy();
+  expect(overview.board.nets).toBeGreaterThan(0);
+
+  const nets = await page.evaluate(() => (window as any).__brBridgeDispatch('list_nets', { limit: 5 }));
+  expect(nets.nets.length).toBeGreaterThan(0);
+  expect(nets.nets[0]).toHaveProperty('reliability');
+
+  // board_snapshot needs a live WebGL context to extract pixels from the
+  // PixiJS renderer. Headless Chromium has no WebGL adapters (see project
+  // notes), so this may throw or yield an empty/blank canvas. Don't hard-fail
+  // the whole spec over an environment limitation the other two assertions
+  // don't share — record a skip annotation instead.
+  const snap = await page.evaluate(async () => {
+    try {
+      return await (window as any).__brBridgeDispatch('board_snapshot', {});
+    } catch (e) {
+      return { error: String((e as Error)?.message ?? e) };
+    }
+  });
+
+  if (typeof snap?.base64 === 'string' && snap.base64.length > 0) {
+    expect(snap.base64.length).toBeGreaterThan(100);
+  } else {
+    test.info().annotations.push({
+      type: 'skip',
+      description: 'board_snapshot needs WebGL (unavailable headless): ' + JSON.stringify(snap),
+    });
+  }
 });

@@ -531,3 +531,13 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
       throw new Error(`unknown op: ${op}`);
   }
 }
+
+// Exposed so Playwright can drive `dispatch` directly against real stores
+// (bypassing the WebSocket bridge) to prove the frontend answers each op
+// correctly from a loaded board. Dev-only on window — never present in a
+// production build.
+export { dispatch as __dispatchForTest };
+if (import.meta.env.DEV) {
+  (window as unknown as { __brBridgeDispatch?: unknown }).__brBridgeDispatch =
+    (op: string, params: unknown) => dispatch(op, (params ?? {}) as any);
+}
