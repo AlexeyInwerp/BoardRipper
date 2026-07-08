@@ -11,6 +11,7 @@ import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
 import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
+import { renderPdfPageToPng } from './pdf-render';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -392,6 +393,12 @@ async function dispatch(op: string, p: any): Promise<any> {
       const d = activePdf();
       const matches = searchTextPages(d.textPages, String(p.query ?? ''), p.limit);
       return { matches, total: matches.length };
+    }
+    case 'pdf_page_image': {
+      const d = activePdf();
+      const page = typeof p.page === 'number' && p.page > 0 ? p.page : d.currentPage;
+      const { base64, w, h } = await renderPdfPageToPng(d.doc, page, { rotation: d.rotation, mirror: d.mirror });
+      return { base64, mime: 'image/png', page, w, h };
     }
     case 'pdf_download': {
       const d = activePdf();
