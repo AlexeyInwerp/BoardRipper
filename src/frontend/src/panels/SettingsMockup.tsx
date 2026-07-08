@@ -377,7 +377,15 @@ export function SettingsMockup({
         if (onDblClick) canvas.removeEventListener('dblclick', onDblClick);
         if (el.contains(canvas)) el.removeChild(canvas);
         // Do NOT call app.destroy() — PixiJS v8 destroy() corrupts the global
-        // batch pool, breaking all other Application instances. Let GC reclaim.
+        // batch pool, breaking all other Application instances. But DO release the
+        // WebGL context explicitly (mirrors BoardRenderer.teardownForReinit) so the
+        // browser reclaims the GPU slot immediately — otherwise each Settings
+        // open/close orphans an un-lost context until the browser's ~16-context cap
+        // force-loses the oldest. Then let GC reclaim the rest.
+        try {
+          const gl = (state.app.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
+          gl?.getExtension('WEBGL_lose_context')?.loseContext();
+        } catch { /* renderer may already be gone */ }
         pixiRef.current = null;
       }
     };

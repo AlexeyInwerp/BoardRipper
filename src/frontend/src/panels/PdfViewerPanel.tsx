@@ -134,6 +134,16 @@ const QUALITY_CONFIGS: Record<PdfRenderQuality, PdfQualityConfig> = {
   low:    { maxMainTier: 4,  maxAdjTier: 1,  adjSettleMs: 300, cacheMaxEntries: 6,  cacheMaxPixels: 30_000_000,  maxCanvasDim: 2048  },
 };
 
+// The full-page bitmap cache and the tile cache are used in mutually-exclusive
+// zoom regimes (full-page when zoomed out, tiles when zoomed in), so giving each
+// the entire cacheMaxPixels budget doubled the worst-case native/GPU footprint
+// (e.g. at 'high': 2×120 MP ≈ 960 MB of ImageBitmaps). Cap the tile cache at a
+// fraction so the combined ceiling is ~1.6× rather than 2× cacheMaxPixels. This
+// is pure eviction frequency — evicted tiles re-render on demand, and the √clamp
+// on a single bitmap's dimensions still uses the full cacheMaxPixels, so render
+// sharpness is unchanged.
+const TILE_CACHE_BUDGET_FRACTION = 0.6;
+
 export const PDF_QUALITY_KEY = 'boardripper-pdf-render-quality';
 
 export function loadPdfQuality(): PdfRenderQuality {
@@ -865,7 +875,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   // Apply cache limits on mount and quality change
   useEffect(() => {
     setPageCacheLimits(qcfg.cacheMaxEntries, qcfg.cacheMaxPixels);
-    setTileCacheLimit(qcfg.cacheMaxPixels);
+    setTileCacheLimit(Math.round(qcfg.cacheMaxPixels * TILE_CACHE_BUDGET_FRACTION));
   }, [qcfg.cacheMaxEntries, qcfg.cacheMaxPixels]);
 
   // Sync quality when changed from Settings panel
@@ -879,7 +889,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       qcfgRef.current = cfg;
       setPageCacheLimits(cfg.cacheMaxEntries, cfg.cacheMaxPixels);
       invalidatePageCache(pdfFileName);
-      setTileCacheLimit(cfg.cacheMaxPixels);
+      setTileCacheLimit(Math.round(cfg.cacheMaxPixels * TILE_CACHE_BUDGET_FRACTION));
       invalidateTileCache(pdfFileName);
       _lastCommittedTier = 1; // reset hysteresis
       renderPageRef.current();

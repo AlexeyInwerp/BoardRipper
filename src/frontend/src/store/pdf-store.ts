@@ -945,6 +945,15 @@ class PdfStore extends Emitter {
         log.pdf.error('stripWatermarkImages failed:', err);
         d.cleanMode = false;
       }
+    } else if (!enabled && d.strippedDoc) {
+      // Clean mode turned off — drop the second (stripped) PDFDocumentProxy so a
+      // toggled-off doc doesn't keep a whole duplicate parsed document + worker
+      // state resident (near-doubles pdf.js memory for that doc). Rebuilt on
+      // re-enable. The panel invalidates its caches + re-renders off d.doc on
+      // clean-mode change, so nothing is mid-render against it here.
+      const stripped = d.strippedDoc;
+      d.strippedDoc = null;
+      stripped.destroy().catch(() => {});
     }
 
     this.notify();
