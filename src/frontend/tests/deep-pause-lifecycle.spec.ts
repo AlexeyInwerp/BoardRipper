@@ -35,10 +35,21 @@ test('deep-pause releases a hidden board tab and reinit restores it on return', 
 
   const fileInput = page.getByTestId('file-input');
 
+  // Reads the leading "N%" zoom from the visible board HUD. This is a pixel
+  // proxy: if the rebuilt board doesn't restore its fitted viewport it comes back
+  // at 100% with content off-screen (blank) — a bare toBeVisible() misses that.
+  const readZoom = async () => {
+    const txt = (await page.locator('.board-hud:visible').first().textContent()) || '';
+    return (txt.match(/(\d+)%/)?.[1]) ?? '';
+  };
+
   // Tab 1
   await fileInput.setInputFiles(FIXTURE);
   await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 15000 });
   await expect(page.locator('.dv-tab', { hasText: 'test-board.bvr' })).toBeVisible();
+  await page.waitForTimeout(1200); // let the initial fit-to-board settle
+  const zoomBefore = await readZoom();
+  expect(zoomBefore, 'board should be fitted (well below 100%) before deep-pause').not.toBe('100');
 
   // Tab 2 — becomes active; tab 1 is now hidden → deep-pause armed on tab 1.
   await fileInput.setInputFiles(secondFixture);
@@ -56,6 +67,12 @@ test('deep-pause releases a hidden board tab and reinit restores it on return', 
   // The board is intact and a live canvas is back — no crash on the reinit path.
   await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 15000 });
   await expect(page.getByTestId('board-canvas').locator('canvas')).toBeVisible({ timeout: 15000 });
+
+  // Pixel proxy: the rebuilt board must restore its fitted viewport, not come
+  // back at default 100% with content off-screen (the blank-render regression).
+  await page.waitForTimeout(1200);
+  const zoomAfter = await readZoom();
+  expect(zoomAfter, `deep-paused board must restore its fitted zoom (was ${zoomBefore}%, got ${zoomAfter}%) — 100% means it rendered blank`).toBe(zoomBefore);
 
   // No PixiJS teardown/rebuild corruption. Includes the "reading 'resize'"
   // race: the ResizeObserver firing during reinitApp() before app.init()

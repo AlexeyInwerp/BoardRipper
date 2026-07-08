@@ -1086,7 +1086,9 @@ export class BoardRenderer {
 
     if (savedBoard) {
       log.render.log(`reinitApp: activateScene for ${savedBoard.format}/${savedBoard.parts.length}parts tab=${this.tabId}`);
-      this.activateScene(savedBoard);
+      // skipSaveViewport: don't let activateScene overwrite the viewport state
+      // teardownForReinit saved with the fresh default viewport (would render blank).
+      this.activateScene(savedBoard, true);
       this.board = savedBoard;
     } else {
       log.render.warn(`reinitApp: no saved board — nothing to rebuild tab=${this.tabId}`);
@@ -2108,7 +2110,7 @@ export class BoardRenderer {
     }
   }
 
-  private activateScene(board: BoardData) {
+  private activateScene(board: BoardData, skipSaveViewport = false) {
     const scene = this.getOrBuildScene(board);
     log.render.log(`activateScene tab=${this.tabId} ${board.format}/${board.parts.length}pts cached=${this.activeScene === scene} ticker=${this.app.ticker.started}`);
 
@@ -2124,8 +2126,13 @@ export class BoardRenderer {
     }
     log.render.log('activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
 
-    // Save current viewport state before switching
-    this.saveViewportState();
+    // Save current viewport state before switching — EXCEPT during reinitApp,
+    // where `this.viewport` is a brand-new default (scale 1.0) viewport and
+    // `board` is the SAME board whose real view teardownForReinit already saved.
+    // Saving here would clobber that good state with 1.0, so restoreViewportState
+    // below would restore 100% zoom and the board renders blank (content
+    // off-screen). skipSaveViewport preserves the teardown-saved state.
+    if (!skipSaveViewport) this.saveViewportState();
 
     // Detach old scene (netDimGfx + selectionGfx + elevated labels live inside root)
     if (this.activeScene) {
