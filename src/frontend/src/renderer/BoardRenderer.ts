@@ -1378,6 +1378,16 @@ export class BoardRenderer {
       const h = this.containerEl.clientHeight;
       // Skip 0-size resizes (panel hidden by dockview tab switch)
       if (w === 0 || h === 0) return;
+      // Skip while the renderer is torn down or rebuilding. Returning to a
+      // deep-paused (or context-lost) tab resizes the container, which fires
+      // this observer DURING the async reinitApp(): there `this.app` is a fresh
+      // Application whose `.renderer` isn't initialised yet (pre await app.init)
+      // and `this.viewport` is momentarily stale — resizing then throws
+      // "Cannot read properties of undefined (reading 'resize')" and leaves the
+      // rebuilt board blank. reinitApp() sizes the new viewport/renderer itself.
+      // (reinitApp clears contextLost early but holds reinitializing across the
+      // await, so both flags plus the renderer/viewport null-checks are needed.)
+      if (this.destroyed || this.contextLost || this.reinitializing || !this.app?.renderer || !this.viewport) return;
       this.viewport.resize(w, h);
       this.app.renderer.resize(w, h);
       this.needsRender = true;

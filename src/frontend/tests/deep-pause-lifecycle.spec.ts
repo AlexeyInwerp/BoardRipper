@@ -57,12 +57,17 @@ test('deep-pause releases a hidden board tab and reinit restores it on return', 
   await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 15000 });
   await expect(page.getByTestId('board-canvas').locator('canvas')).toBeVisible({ timeout: 15000 });
 
-  // No PixiJS teardown/rebuild corruption.
+  // No PixiJS teardown/rebuild corruption. Includes the "reading 'resize'"
+  // race: the ResizeObserver firing during reinitApp() before app.init()
+  // finished threw "Cannot read properties of undefined (reading 'resize')"
+  // and left the rebuilt board blank — a real regression this spec must catch,
+  // so we match undefined AND null property access, not just 'null'.
   const critical = pageErrors.filter((e) =>
     e.includes('batchPool') ||
     e.includes('_DefaultBatcher') ||
     e.includes('GlobalResourceRegistry') ||
-    e.includes('Cannot read properties of null'),
+    e.includes("reading 'resize'") ||
+    /Cannot read properties of (null|undefined)/.test(e),
   );
   expect(critical, `critical renderer errors: ${critical.join('; ')}`).toHaveLength(0);
 
