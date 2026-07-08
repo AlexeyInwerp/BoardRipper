@@ -809,11 +809,18 @@ export class BoardRenderer {
    */
   scheduleDeepPause() {
     if (this.destroyed || this.contextLost) return;
+    let delay = DEEP_PAUSE_DELAY_MS;
+    // DEV/test seam: Playwright lowers this to exercise the deep-pause→reinit
+    // cycle without a 45s wait. Never read in production builds.
+    if (import.meta.env.DEV) {
+      const ov = (window as unknown as { __deepPauseDelayMs?: number }).__deepPauseDelayMs;
+      if (typeof ov === 'number' && ov >= 0) delay = ov;
+    }
     if (this._deepPauseTimer) clearTimeout(this._deepPauseTimer);
     this._deepPauseTimer = setTimeout(() => {
       this._deepPauseTimer = null;
       this.deepPause();
-    }, DEEP_PAUSE_DELAY_MS);
+    }, delay);
   }
 
   /** Cancel a pending deep-pause (panel became visible again before it fired). */
