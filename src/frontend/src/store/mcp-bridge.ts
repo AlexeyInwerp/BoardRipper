@@ -10,6 +10,7 @@ import { pdfStore } from './pdf-store';
 import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
+import { classifyNetName } from './mcp-bridge-helpers';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -240,7 +241,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       const names = Array.from(b.nets.keys());
       const out = f ? names.filter((n) => n.toLowerCase().includes(f)) : names;
       const { total, offset, has_more, page } = paginate(out, p.limit, p.offset);
-      return { nets: page, total, offset, has_more };
+      return { nets: page.map((n) => ({ name: n, reliability: classifyNetName(n) })), total, offset, has_more };
     }
     case 'list_parts': {
       const b = requireBoard();
@@ -258,13 +259,17 @@ async function dispatch(op: string, p: any): Promise<any> {
       const pins = netPins(b, p.net);
       if (!pins) throw new Error(`net not found: ${p.net}`);
       const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
-      return { net: p.net, pin_count: pins.length, pins, parts };
+      return { net: p.net, pin_count: pins.length, pins, parts, reliability: classifyNetName(p.net) };
     }
     case 'net_neighbors': {
       const b = requireBoard();
       const depth = p.depth && p.depth > 0 ? p.depth : 1;
       const set = computeAdjacentNets(b, p.net, depth);
-      return { net: p.net, depth, neighbors: Array.from(set) };
+      return {
+        net: p.net,
+        depth,
+        neighbors: Array.from(set).map((name) => ({ name, reliability: classifyNetName(name) })),
+      };
     }
     case 'pin_connectivity': {
       const b = requireBoard();
@@ -273,7 +278,13 @@ async function dispatch(op: string, p: any): Promise<any> {
       const pin = part.pins.find((pn) => String(pn.name) === String(p.pin) || String(pn.number) === String(p.pin));
       if (!pin) throw new Error(`pin not found: ${p.pin} on ${p.part}`);
       const connected = pin.net ? netPins(b, pin.net) ?? [] : [];
-      return { part: part.name, pin: p.pin, net: pin.net || null, connected };
+      return {
+        part: part.name,
+        pin: p.pin,
+        net: pin.net || null,
+        connected,
+        net_reliability: pin.net ? classifyNetName(pin.net) : null,
+      };
     }
     case 'part_info': {
       const b = requireBoard();
