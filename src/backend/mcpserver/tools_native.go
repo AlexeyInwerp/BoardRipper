@@ -84,8 +84,9 @@ func ro(b bool) *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint:
 // --- pdf_search ---
 
 type pdfSearchArgs struct {
-	Query string `json:"query" jsonschema:"full-text query (part numbers, designators, keywords)"`
-	Limit int    `json:"limit,omitempty" jsonschema:"max hits (default 200, cap 1000)"`
+	Query  string `json:"query" jsonschema:"full-text query (part numbers, designators, keywords)"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"max hits (default 200, cap 1000)"`
+	FileID int64  `json:"file_id,omitempty" jsonschema:"optional: restrict search to a single indexed file id"`
 }
 type pdfHit struct {
 	FileID  int64  `json:"file_id"`
@@ -145,14 +146,18 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 	if deps.PDF != nil {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "pdf_search",
-			Description: "Full-text search across the indexed PDF library. Returns file_id, page, and a snippet for each hit.",
+			Description: "Full-text search across the indexed PDF library (library-wide); pass file_id to scope to one document. Returns file_id, page, and a snippet for each hit.",
 			Annotations: ro(true),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, a pdfSearchArgs) (*mcp.CallToolResult, pdfSearchResult, error) {
 			limit := a.Limit
 			if limit <= 0 || limit > 1000 {
 				limit = 200
 			}
-			hits, err := deps.PDF.SearchPages(a.Query, nil, limit)
+			var restrict []int64
+			if a.FileID > 0 {
+				restrict = []int64{a.FileID}
+			}
+			hits, err := deps.PDF.SearchPages(a.Query, restrict, limit)
 			if err != nil {
 				return errResult("pdf search failed: " + err.Error()), pdfSearchResult{}, nil
 			}

@@ -458,3 +458,29 @@ func TestFileDownload_CapExceeded(t *testing.T) {
 		t.Fatal("oversized file must be a tool error, not a payload")
 	}
 }
+
+// --- pdf_search file scoping ---
+
+func TestPdfSearch_FileScope(t *testing.T) {
+	var gotRestrict []int64
+	deps := &Deps{
+		State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		PDF: &fakePDFRec{fn: func(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
+			gotRestrict = r
+			return []pdfindex.SearchHit{{FileID: 5, PageNum: 1, Snippet: "hit"}}, nil
+		}},
+	}
+	srv := New(deps)
+	_ = callToolStructured(t, srv, "pdf_search", map[string]any{"query": "x", "file_id": 5})
+	if len(gotRestrict) != 1 || gotRestrict[0] != 5 {
+		t.Fatalf("file_id not forwarded as restrictTo: %v", gotRestrict)
+	}
+}
+
+type fakePDFRec struct {
+	fn func(string, []int64, int) ([]pdfindex.SearchHit, error)
+}
+
+func (f *fakePDFRec) SearchPages(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
+	return f.fn(q, r, l)
+}
