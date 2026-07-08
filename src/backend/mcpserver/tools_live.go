@@ -160,6 +160,7 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 
 	// --- read tools ---
 	liveTool[emptyArgs](s, b, "board_active", "Describe the active board: name, part/net counts, shown side, plus a session id and a generation token that changes when the open board changes (re-read your data when it changes).", "board_active", true, nil)
+	liveTool[emptyArgs](s, b, "board_overview", "One-call orientation: the active board's name, part/net counts, shown side, open PDFs (name/page/pageCount/fileId), and a worklist summary (entry counts, pending measurements, unread user messages). Recommended first call.", "board_overview", true, nil)
 	liveTool[filterArgs](s, b, "list_nets", "List net names on the active board. Supports a substring filter and limit/offset pagination; returns {nets,total,has_more,offset}. Filter before paging — don't enumerate thousands.", "list_nets", true, nil)
 	liveTool[partsFilterArgs](s, b, "list_parts", "List component reference designators on the active board. Supports substring + side (top|bottom) filters and limit/offset pagination; returns {parts:[{refdes,side}],total,has_more,offset}.", "list_parts", true, nil)
 	liveTool[netArgs](s, b, "net_info", "List the pins and parts that belong to a given net.", "net_info", true, nil)

@@ -10,7 +10,7 @@ import { pdfStore } from './pdf-store';
 import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
-import { classifyNetName } from './mcp-bridge-helpers';
+import { classifyNetName, buildOverview } from './mcp-bridge-helpers';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -54,6 +54,9 @@ function boardDescriptor() {
     name: tab?.fileName ?? null,
     parts: b ? b.parts.length : 0,
     nets: b ? b.nets.size : 0,
+    pdfs: pdfStore.openPdfEntries().map((e) => ({
+      name: e.fileName, page: pdfStore.pageOf(e.fileName), pageCount: pdfStore.pageCountOf(e.fileName), fileId: e.fileId ?? null,
+    })),
     // Changes iff the active board changes; the helper re-reads when it differs.
     generation: `${boardStore.activeTabId ?? ''}:${tab?.fileName ?? ''}`,
   };
@@ -234,6 +237,14 @@ async function dispatch(op: string, p: any): Promise<any> {
     case 'board_active': {
       requireBoard();
       return boardDescriptor();
+    }
+    case 'board_overview': {
+      const b = boardStore.board;
+      return {
+        ...boardDescriptor(),
+        board: b ? { parts: b.parts.length, nets: b.nets.size, side: boardStore.showTop ? 'top' : 'bottom' } : null,
+        worklist: buildOverview(worklistStore.aiSnapshot() as any, worklistStore.peekUnreadUserMessages()),
+      };
     }
     case 'list_nets': {
       const b = requireBoard();

@@ -1009,6 +1009,13 @@ class WorklistStore {
     return out;
   }
 
+  /** Count unread user messages WITHOUT marking them read (for board_overview). */
+  peekUnreadUserMessages(): number {
+    const w = this.activeWorklist;
+    if (!w?.messages) return 0;
+    return w.messages.filter((m) => m.role === 'user' && m.unread).length;
+  }
+
   /** Full active-worklist snapshot for the agent's worklist_get. */
   aiSnapshot(): Record<string, unknown> | null {
     const w = this.activeWorklist;

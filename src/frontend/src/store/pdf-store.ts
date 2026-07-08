@@ -569,6 +569,12 @@ class PdfStore extends Emitter {
     }));
   }
 
+  /** Current page / page count for the MCP bridge descriptor (board_overview,
+   *  board_active). `null` when the doc isn't loaded — distinct from
+   *  getDocCurrentPage/getDocPageCount's UI-facing 1/0 defaults. */
+  pageOf(fileName: string): number | null { return this._documents.get(fileName)?.currentPage ?? null; }
+  pageCountOf(fileName: string): number | null { return this._documents.get(fileName)?.pageCount ?? null; }
+
   /** Tag an open PDF doc with its databank file id (after a drop is ingested). */
   setDocFileId(fileName: string, fileId: number): void {
     const d = this._documents.get(fileName);
