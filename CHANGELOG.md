@@ -1,5 +1,35 @@
 # BoardRipper changelog
 
+## v0.31.32 — 2026-07-08
+
+A memory-optimization pass. Across a long session BoardRipper now releases
+memory back to the system instead of holding on to many gigabytes — both in the
+browser (open boards and PDFs) and in the Docker backend.
+
+### Performance
+
+- **Hidden board tabs release their GPU memory.** Each open board used to keep a
+  full WebGL context and scene graph alive for the whole session, so opening many
+  boards piled up gigabytes that came back only slowly. A board that stays hidden
+  now releases its renderer and rebuilds — restoring the exact view you left — the
+  moment you switch back to it. (`1301612`, `2935c2d`, `6d1761d`, `697ce08`)
+- **PDFs no longer accumulate memory as you scroll.** Long schematics kept every
+  visited page's render data until the document was closed; page resources are now
+  trimmed as you navigate, off-screen tile and preview images are freed promptly
+  instead of waiting for the browser's garbage collector, and clean mode no longer
+  keeps a second copy of the document loaded once it's switched off. (`31cc953`,
+  `84ea23a`, `200b2de`)
+- **The backend returns freed memory to the OS.** The Go server now derives a
+  memory budget from its container limit and hands freed pages back promptly; the
+  PDF-index workers cap and recycle their memory instead of holding a permanent
+  high-water mark; large files stream to the browser instead of being buffered
+  whole; and a real container memory limit is now actually enforced. (`c5260ff`,
+  `ad6d9d2`)
+- **Smaller idle footprint elsewhere.** The board renderer frees its overlay
+  textures and detaches its ticker on teardown, and per-board diagnosis lookups
+  are capped so a long browsing session doesn't grow them without bound.
+  (`b6c104c`)
+
 ## v0.31.31 — 2026-07-08
 
 A broad correctness-and-hardening pass from a full multi-directional audit, plus
