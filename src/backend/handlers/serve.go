@@ -170,6 +170,11 @@ func readFileEager(root, relPath string) ([]byte, error) {
 	}
 }
 
+// ReadFileEager is the exported wrapper other packages (mcpserver wiring) use to
+// read a library file fully into memory with the same cloud-placeholder
+// semantics as the file-serve handlers.
+func ReadFileEager(root, relPath string) ([]byte, error) { return readFileEager(root, relPath) }
+
 // serveFileEager reads the file at path fully into memory, verifies byte
 // count matches stat().Size(), and writes the response. Cloud-storage-aware:
 // truncated reads or deadline timeouts produce a 503 with Retry-After so the

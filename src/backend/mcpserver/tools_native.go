@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"boardripper/boarddb"
@@ -11,6 +12,26 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// maxDownloadBytes caps file_download so the model doesn't get handed
+// multi-hundred-MB files; larger files should be paged via pdf_page_image/text.
+const maxDownloadBytes = 50 << 20 // 50 MiB
+
+// MimeForExt maps a file extension (with or without leading dot) to a MIME
+// type for file_download's content block. Exported so main.go's FileBytes
+// wiring can reuse the same mapping.
+func MimeForExt(ext string) string {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "pdf":
+		return "application/pdf"
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	default:
+		return "application/octet-stream"
+	}
+}
 
 // binaryResult wraps binary tool output: an ImageContent block for image/*
 // MIME types, otherwise an EmbeddedResource blob, plus the metadata map as
@@ -224,6 +245,23 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 			}
 			bindings, _ := deps.Files.GetBindingsForFile(ctx, a.ID)
 			return nil, fileGetResult{File: rec, Bindings: bindings}, nil
+		})
+	}
+
+	if deps.FileBytes != nil {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "file_download",
+			Description: "Download a library file by id (from file_list/file_get or a pdf_search hit) as bytes, so the model can read it natively. Capped at 50 MiB.",
+			Annotations: ro(true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, a fileGetArgs) (*mcp.CallToolResult, any, error) {
+			data, name, mime, err := deps.FileBytes(ctx, a.ID)
+			if err != nil {
+				return errResult("file_download failed: " + err.Error()), nil, nil
+			}
+			if len(data) > maxDownloadBytes {
+				return errResult(fmt.Sprintf("file too large (%d bytes, cap %d) — use pdf_page_image/pdf_page_text instead", len(data), maxDownloadBytes)), nil, nil
+			}
+			return binaryResult(mime, data, map[string]any{"filename": name, "mime": mime, "size": len(data)}), nil, nil
 		})
 	}
 }

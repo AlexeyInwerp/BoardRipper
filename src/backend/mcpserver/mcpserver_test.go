@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -384,4 +385,62 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// --- file_download ---
+
+func callToolRaw(t *testing.T, srv *Server, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcp.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cl := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "1"}, nil)
+	cs, err := cl.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func callToolStructured(t *testing.T, srv *Server, name string, args map[string]any) map[string]any {
+	t.Helper()
+	res := callToolRaw(t, srv, name, args)
+	if res.IsError {
+		t.Fatalf("tool %s errored: %v", name, res.Content)
+	}
+	b, _ := json.Marshal(res.StructuredContent)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+func TestFileDownload(t *testing.T) {
+	deps := &Deps{
+		State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		FileBytes: func(_ context.Context, id int64) ([]byte, string, string, error) {
+			if id == 7 {
+				return []byte("%PDF-1.7 body"), "sch.pdf", "application/pdf", nil
+			}
+			return nil, "", "", fmt.Errorf("not found: %d", id)
+		},
+	}
+	srv := New(deps)
+	out := callToolStructured(t, srv, "file_download", map[string]any{"id": 7})
+	if out["filename"] != "sch.pdf" || out["mime"] != "application/pdf" {
+		t.Fatalf("bad meta: %v", out)
+	}
+	// missing id -> tool error
+	res := callToolRaw(t, srv, "file_download", map[string]any{"id": 999})
+	if !res.IsError {
+		t.Fatal("missing file should be a tool error")
+	}
 }
