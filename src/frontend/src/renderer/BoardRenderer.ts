@@ -5293,6 +5293,10 @@ export class BoardRenderer {
   fitToBoard(board?: BoardData) {
     const b = board?.bounds ?? this.board?.bounds;
     if (!b) return;
+    // Defense-in-depth against the same reinit race the ResizeObserver guards:
+    // a pending-fit timer could fire during reinitApp() when app.renderer isn't
+    // ready / viewport is stale. reinitApp sizes the fresh viewport itself.
+    if (this.reinitializing || !this.app?.renderer || !this.viewport) return;
 
     // Sync viewport dimensions to current container size — the container may have
     // been resized (e.g. dockview panel split) since the viewport was created.
