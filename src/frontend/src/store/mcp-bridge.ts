@@ -433,10 +433,12 @@ function toast(msg: string) {
 async function dispatchDrive(op: string, p: any): Promise<any> {
   switch (op) {
     case 'highlight_net': {
-      requireBoard();
+      const board = requireBoard();
       boardStore.highlightNet(p.net);
+      const pins = netPins(board, p.net) ?? [];
+      const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
       toast(`Agent highlighted net ${p.net}`);
-      return { ok: true, net: p.net };
+      return { ok: true, net: p.net, pins_highlighted: pins.length, parts };
     }
     case 'clear_highlight': {
       boardStore.highlightNet(null);
@@ -444,17 +446,18 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
       return { ok: true };
     }
     case 'select_part': {
-      requireBoard();
+      const board = requireBoard();
+      const part = findPart(board, p.refdes);
       boardStore.focusPart(p.refdes);
       toast(`Agent selected ${p.refdes}`);
-      return { ok: true, refdes: p.refdes };
+      return { ok: true, refdes: p.refdes, found: !!part, side: part?.side ?? null, centered: !!part };
     }
     case 'set_side': {
       requireBoard();
-      if (String(p.side).toLowerCase() === 'bottom') boardStore.selectBottom();
-      else boardStore.selectTop();
-      toast(`Agent set side: ${p.side}`);
-      return { ok: true, side: p.side };
+      const side = String(p.side).toLowerCase() === 'bottom' ? 'bottom' : 'top';
+      if (side === 'bottom') boardStore.selectBottom(); else boardStore.selectTop();
+      toast(`Agent set side: ${side}`);
+      return { ok: true, side };
     }
     case 'pdf_goto': {
       if (p.term) pdfStore.searchText(String(p.term), 'lookup');
