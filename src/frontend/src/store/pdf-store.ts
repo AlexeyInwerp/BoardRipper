@@ -484,6 +484,8 @@ export interface LookupContextTerm {
 
 class PdfStore extends Emitter {
   private _documents: Map<string, PdfDocument> = new Map();
+  /** Per-file debounce timers for idle page-resource cleanup (see scheduleIdleCleanup). */
+  private _cleanupTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private _links = new PdfLinks();
   private _activeFileName: string | null = null;
   /** Vertical distance multiplier for multi-term search (fontSize × this) */
@@ -891,6 +893,30 @@ class PdfStore extends Emitter {
       doc.doc?.cleanup(true).catch(() => { /* in-flight render — fine */ });
       doc.strippedDoc?.cleanup(true).catch(() => { /* same */ });
     }
+  }
+
+  /**
+   * Debounced idle cleanup of pdf.js per-page resources. `PDFDocumentProxy`
+   * memoises a `PDFPageProxy` (operator list, decoded images, font resources)
+   * for every page visited via `getPage`, and never trims it while the doc
+   * stays open — so scrolling a long schematic accumulates hundreds of parsed
+   * pages' worth of heap. After navigation settles we call `doc.cleanup(true)`
+   * (keep fonts — expensive to re-fetch, watermark-independent), which drops
+   * the operator lists / image resources for all pages. The visible page
+   * re-parses its (cheap) operator list on the next render that misses the
+   * ImageBitmap cache; nothing else is affected. Reuses the same call as
+   * flushOperatorListCache but debounced per file so it never fires mid-render.
+   */
+  scheduleIdleCleanup(fileName: string, delayMs = 4000): void {
+    const existing = this._cleanupTimers.get(fileName);
+    if (existing) clearTimeout(existing);
+    this._cleanupTimers.set(fileName, setTimeout(() => {
+      this._cleanupTimers.delete(fileName);
+      const d = this._documents.get(fileName);
+      if (!d) return;
+      d.doc?.cleanup(true).catch(() => { /* in-flight render — retry next idle */ });
+      d.strippedDoc?.cleanup(true).catch(() => { /* same */ });
+    }, delayMs));
   }
 
   /** Toggle clean mode: strip small watermark images from the PDF data. */
@@ -1833,6 +1859,8 @@ class PdfStore extends Emitter {
   closeFile(fileName: string) {
     const d = this._documents.get(fileName);
     if (!d) return;
+    const t = this._cleanupTimers.get(fileName);
+    if (t) { clearTimeout(t); this._cleanupTimers.delete(fileName); }
     d.doc.destroy();
     d.strippedDoc?.destroy();
     this._documents.delete(fileName);

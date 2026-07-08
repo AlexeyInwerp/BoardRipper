@@ -1147,6 +1147,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     const prevPage = prevPageRef.current;
     prevPageRef.current = currentPage;
     if (prevPage === currentPage) return; // no actual change (StrictMode re-run)
+    // Navigation happened — arm a debounced cleanup of pdf.js per-page resources
+    // so scrolling a long PDF doesn't accumulate hundreds of parsed pages.
+    // Debounced, so it only fires once navigation settles (never mid-scroll).
+    pdfStore.scheduleIdleCleanup(pdfFileName);
     if (skipResetRef.current) {
       // Page boundary crossing during pan/zoom — keep tiles, skip reset
       skipResetRef.current = false;
