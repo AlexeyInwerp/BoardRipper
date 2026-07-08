@@ -59,9 +59,23 @@ interface IndexStatus {
   board_count: number;
 }
 
+/** LRU cap for the per-board OBD caches — bounds a long session of viewing many
+ *  distinct boards (entries are KB-scale diagnosis payloads, but accumulated
+ *  monotonically before). Evicts the oldest inserted entry when over the cap. */
+const OBD_CACHE_CAP = 40;
+
 class ObdStore extends Emitter {
   private _matchesByBn: Map<string, ObdMatch[]> = new Map();
   private _data: Map<string, ObdData> = new Map();
+
+  /** Insert into a per-board cache map, evicting the oldest entry over the cap. */
+  private _cachePut<V>(map: Map<string, V>, key: string, value: V): void {
+    if (map.size >= OBD_CACHE_CAP && !map.has(key)) {
+      const oldest = map.keys().next().value;
+      if (oldest !== undefined) map.delete(oldest);
+    }
+    map.set(key, value);
+  }
   private _fetching: Set<string> = new Set();
   private _index: IndexStatus = { synced: false, synced_at: null, board_count: 0 };
   private _syncing = false;
@@ -107,7 +121,7 @@ class ObdStore extends Emitter {
         return [];
       }
       const json = await res.json() as { matches: ObdMatch[]; index?: { synced: boolean; synced_at?: string; board_count: number } };
-      this._matchesByBn.set(boardNumber, json.matches);
+      this._cachePut(this._matchesByBn, boardNumber, json.matches);
       if (json.index) {
         this._index = {
           synced: json.index.synced,
@@ -149,7 +163,7 @@ class ObdStore extends Emitter {
         return null;
       }
       const data = await res.json() as ObdData;
-      this._data.set(bpath, data);
+      this._cachePut(this._data, bpath, data);
       this._bump();
       return data;
     } catch (e) {
@@ -191,7 +205,7 @@ class ObdStore extends Emitter {
         return null;
       }
       const data = await res.json() as ObdData;
-      this._data.set(bpath, data);
+      this._cachePut(this._data, bpath, data);
       // Mark the corresponding match as fetched in any cached match list.
       for (const list of this._matchesByBn.values()) {
         for (const m of list) {

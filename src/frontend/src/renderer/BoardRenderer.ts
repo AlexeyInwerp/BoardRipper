@@ -5530,6 +5530,10 @@ export class BoardRenderer {
     try {
       const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
       canvas?.parentElement?.removeChild(canvas);
+      // Defensive: detach the shared ticker callback before nulling app, so the
+      // onTick → this closure can't keep this renderer alive even if a shared
+      // ticker is ever introduced (each Application currently owns its ticker).
+      this.app?.ticker?.remove(this.onTick);
       // Force browser to release the WebGL context immediately.
       // The PixiJS v8 renderer exposes the WebGL context as `.gl` on the
       // WebGL backend; cast through `unknown` to avoid the public-type
@@ -5544,6 +5548,14 @@ export class BoardRenderer {
     // The `app` and `viewport` fields are typed non-nullable to keep call-sites
     // clean across the file; null them out via an unknown cast since this is
     // the only teardown path and no subsequent calls run after disposal.
+    // Explicitly destroy the halo texture/sprite — teardownHalo() only detaches
+    // them from the scene. The GPU side is already freed by loseContext above;
+    // this frees the JS-side Texture/Sprite wrappers immediately rather than
+    // waiting for GC of the whole renderer.
+    try { this._haloSprite?.destroy(); } catch { /* ignore */ }
+    try { this._haloTexture?.destroy(true); } catch { /* ignore */ }
+    this._haloSprite = null;
+    this._haloTexture = null;
     this.activeScene = null;
     this.sceneCache.clear();
     this.hitGridCache.clear();
