@@ -12,6 +12,15 @@ import (
 	"github.com/tetratelabs/wazero"
 )
 
+// wasmMemoryLimitPages caps each pdfium/wazero worker's WebAssembly linear
+// memory. wazero pages are 64 KiB, so 8192 pages = 512 MiB. This bounds the
+// worst case: wazero linear memory only ever GROWS and is freed solely when the
+// module instance is closed, so without a cap a single huge/complex PDF could
+// grow a worker toward wazero's 4 GiB default and permanently pin that RSS. With
+// the cap, an over-budget page fails extraction (memory.Grow returns -1 →
+// caught by extract's recover) instead of OOM-killing the container.
+const wasmMemoryLimitPages uint32 = 8192 // 512 MiB per worker
+
 // Engine is a pooled pdfium-via-wazero text extractor. The pool is the
 // parallelism mechanism (wazero instances are not goroutine-safe).
 type Engine struct {
@@ -26,10 +35,18 @@ func NewEngine(maxTotal int) (*Engine, error) {
 		maxTotal = 1
 	}
 	pool, err := webassembly.Init(webassembly.Config{
-		MinIdle:       1,
-		MaxIdle:       maxTotal,
-		MaxTotal:      maxTotal,
-		RuntimeConfig: wazero.NewRuntimeConfig().WithCloseOnContextDone(true),
+		MinIdle: 1,
+		// MaxIdle:1 (was maxTotal) so idle workers ABOVE one are destroyed when
+		// returned to the pool, freeing their wasm linear memory. Previously every
+		// worker lived for the whole process lifetime, so one burst of concurrent
+		// indexing permanently raised the RSS floor by POOL_MAX × per-worker
+		// high-water mark. Now a burst's extra workers are reclaimed once idle;
+		// one worker stays warm (MinIdle) to avoid cold-start on the next PDF.
+		MaxIdle:  1,
+		MaxTotal: maxTotal,
+		RuntimeConfig: wazero.NewRuntimeConfig().
+			WithCloseOnContextDone(true).
+			WithMemoryLimitPages(wasmMemoryLimitPages),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pdfium init: %w", err)

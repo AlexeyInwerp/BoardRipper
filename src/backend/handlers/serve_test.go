@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -208,5 +209,107 @@ func TestServeFileEager_OtherReadErrno_TaggedHeader(t *testing.T) {
 	got := rec.Header().Get(cloudErrorHeader)
 	if !strings.HasPrefix(got, "read-error:") {
 		t.Fatalf("%s: got %q want prefix 'read-error:'", cloudErrorHeader, got)
+	}
+}
+
+// withStreamThreshold lowers streamThresholdForTest for the duration of a test
+// so small fixtures exercise the streaming path.
+func withStreamThreshold(t *testing.T, v int64) {
+	t.Helper()
+	prev := streamThresholdForTest
+	streamThresholdForTest = v
+	t.Cleanup(func() { streamThresholdForTest = prev })
+}
+
+func TestServeFileStreaming_HappyPath(t *testing.T) {
+	// Body larger than streamProbeBytes so BOTH the probe and the io.Copy tail
+	// are exercised.
+	withStreamThreshold(t, 64*1024)
+	body := make([]byte, 200*1024)
+	for i := range body {
+		body[i] = byte(i)
+	}
+	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
+		return io.NopCloser(strings.NewReader(string(body))), fakeFileInfo{name: "big.pdf", size: int64(len(body))}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	serveFileEagerWith(rec, req, "/fake/big.pdf", "application/pdf", opener)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if got := rec.Body.Len(); got != len(body) {
+		t.Fatalf("streamed body length: got %d want %d", got, len(body))
+	}
+	if !bytes.Equal(rec.Body.Bytes(), body) {
+		t.Fatalf("streamed body content mismatch")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/pdf" {
+		t.Fatalf("Content-Type: got %q want application/pdf", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != "204800" {
+		t.Fatalf("Content-Length: got %q want 204800", got)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "" {
+		t.Fatalf("happy-path should not set %s; got %q", cloudErrorHeader, got)
+	}
+}
+
+func TestServeFileStreaming_ShortReadProbe(t *testing.T) {
+	// Stat says large (streams), but the reader returns only a few bytes then
+	// EOF — placeholder only partially materialized. Caught by the probe.
+	withStreamThreshold(t, 4)
+	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
+		return io.NopCloser(strings.NewReader("hi")), fakeFileInfo{name: "big.pdf", size: 50 * 1024 * 1024}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	serveFileEagerWith(rec, req, "/fake/big.pdf", "", opener)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "short-read" {
+		t.Fatalf("%s: got %q want short-read", cloudErrorHeader, got)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After: got %q want 5", got)
+	}
+}
+
+func TestServeFileStreaming_DeadlineProbe(t *testing.T) {
+	withStreamThreshold(t, 4)
+	prev := readDeadlineForTest
+	readDeadlineForTest = 50 * time.Millisecond
+	defer func() { readDeadlineForTest = prev }()
+	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
+		return &blockingReadCloser{block: make(chan struct{})}, fakeFileInfo{name: "big.pdf", size: 50 * 1024 * 1024}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	serveFileEagerWith(rec, req, "/fake/big.pdf", "", opener)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "deadline" {
+		t.Fatalf("%s: got %q want deadline", cloudErrorHeader, got)
+	}
+}
+
+func TestServeFileStreaming_PlaceholderEDEADLK(t *testing.T) {
+	withStreamThreshold(t, 4)
+	opener := func(path string) (io.ReadCloser, os.FileInfo, error) {
+		return &edeadlkReadCloser{}, fakeFileInfo{name: "big.pdf", size: 50 * 1024 * 1024}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	serveFileEagerWith(rec, req, "/fake/big.pdf", "", opener)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+	if got := rec.Header().Get(cloudErrorHeader); got != "edeadlk" {
+		t.Fatalf("%s: got %q want edeadlk", cloudErrorHeader, got)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Fatalf("Retry-After: got %q want 60", got)
 	}
 }

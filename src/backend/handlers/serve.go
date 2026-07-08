@@ -26,6 +26,30 @@ const readDeadline = 30 * time.Second
 // rather than risk OOM the backend.
 const maxFileBytes = 512 * 1024 * 1024 // 512 MiB
 
+// streamThreshold: files larger than this are STREAMED (probe + io.Copy with a
+// fixed buffer) instead of buffered whole in memory. Below it the eager path
+// runs unchanged, preserving the full cloud-placeholder semantics — and their
+// test coverage — for the small boardview files and typical PDFs that make up
+// the overwhelming majority of requests. Only genuinely large PDFs take the
+// streaming path, where the per-request heap saving is largest. Streaming can't
+// turn a mid-file partial-materialization into a clean 503 (headers ship before
+// the body), but the up-front probe still catches the common "not materialized
+// at all" placeholder case before any header is sent; a rare mid-stream stall
+// surfaces as a truncated download (Content-Length mismatch) the client retries.
+const streamThreshold = 32 * 1024 * 1024 // 32 MiB
+
+// streamProbeBytes is read up-front (within the deadline) on the streaming path
+// to detect placeholders / immediate read errors before committing to a 200.
+const streamProbeBytes = 128 * 1024
+
+// streamBufBytes is the fixed copy buffer for the streaming body — bounds
+// per-request memory to this instead of the whole file.
+const streamBufBytes = 64 * 1024
+
+// streamThresholdForTest lets tests exercise the streaming path with small
+// fixtures. Production reads the const; tests reassign this within a scope.
+var streamThresholdForTest int64 = streamThreshold
+
 // retryAfterShortRead is the Retry-After header value when a partial read
 // suggests cloud-sync glitched (file size mismatch). Short retry — the
 // kernel may already have the bytes by the time the next request lands.
@@ -190,6 +214,14 @@ func serveFileEagerWith(w http.ResponseWriter, r *http.Request, path string, con
 		return
 	}
 
+	// Large files: stream with a fixed buffer instead of buffering the whole
+	// file in memory (a per-request multi-hundred-MB heap spike under concurrent
+	// opens). The eager path below still handles everything ≤ streamThreshold.
+	if expectedSize > streamThresholdForTest {
+		serveFileStreaming(w, r, path, contentType, rc, info, expectedSize, blocks, start)
+		return
+	}
+
 	// Read with a hard deadline. We use a goroutine + select rather than
 	// SetReadDeadline because os.File on regular files doesn't honor
 	// SetReadDeadline.
@@ -266,5 +298,104 @@ func serveFileEagerWith(w http.ResponseWriter, r *http.Request, path string, con
 		if _, err := w.Write(res.data); err != nil {
 			log.Printf("serveFileEager: write to client failed: %v", err)
 		}
+	}
+}
+
+// serveFileStreaming serves a large file without buffering it whole in memory.
+// It first reads a probe chunk (within the deadline) so the common cloud-error
+// cases — EDEADLK, immediate short/EOF, deadline — are detected and answered
+// with the same 503/500 + cloud-error codes as the eager path BEFORE any header
+// is sent. Once the probe succeeds it commits to a 200 and streams the body with
+// a fixed buffer. Takes ownership of rc (closes it).
+func serveFileStreaming(w http.ResponseWriter, r *http.Request, path, contentType string, rc io.ReadCloser, info os.FileInfo, expectedSize int64, blocks string, start time.Time) {
+	defer rc.Close()
+
+	// Probe the head of the file under the read deadline. os.File ignores
+	// SetReadDeadline on regular files, so use the goroutine + select pattern
+	// the eager path uses. Cap the probe to the file size so a complete file
+	// smaller than streamProbeBytes doesn't read short (io.ReadFull only returns
+	// nil when it fills the whole slice) — keeps the logic correct and testable
+	// regardless of the threshold/probe relationship.
+	probeLen := int64(streamProbeBytes)
+	if expectedSize < probeLen {
+		probeLen = expectedSize
+	}
+	probe := make([]byte, probeLen)
+	type probeResult struct {
+		n   int
+		err error
+	}
+	ch := make(chan probeResult, 1)
+	ctx, cancel := context.WithTimeout(r.Context(), readDeadlineForTest)
+	defer cancel()
+	go func() {
+		n, err := io.ReadFull(rc, probe)
+		ch <- probeResult{n, err}
+	}()
+
+	var n int
+	select {
+	case <-ctx.Done():
+		elapsed := time.Since(start)
+		w.Header().Set(cloudErrorHeader, "deadline")
+		log.Printf("serveFileStreaming: read deadline (%s) hit on %s — likely cloud-storage materialization in progress; size=%d blocks=%s elapsed=%s", readDeadlineForTest, path, expectedSize, blocks, elapsed)
+		w.Header().Set("Retry-After", retryAfterDeadline)
+		http.Error(w, "File is materializing from cloud storage; retry shortly", http.StatusServiceUnavailable)
+		return
+	case pr := <-ch:
+		elapsed := time.Since(start)
+		// File ended within the probe though stat said it's large → short read
+		// (cloud placeholder only partially materialized).
+		if pr.err == io.EOF || pr.err == io.ErrUnexpectedEOF {
+			w.Header().Set(cloudErrorHeader, "short-read")
+			log.Printf("serveFileStreaming: short read on %s: got %d bytes in probe, expected %d size=%d blocks=%s elapsed=%s (cloud placeholder?)", path, pr.n, expectedSize, expectedSize, blocks, elapsed)
+			w.Header().Set("Retry-After", retryAfterShortRead)
+			http.Error(w, "File partially available; retry shortly", http.StatusServiceUnavailable)
+			return
+		}
+		if pr.err != nil {
+			errno := errnoName(pr.err)
+			if errors.Is(pr.err, syscall.EDEADLK) {
+				w.Header().Set(cloudErrorHeader, "edeadlk")
+				log.Printf("serveFileStreaming: %s read EDEADLK — cloud placeholder unreachable through container bind-mount; size=%d blocks=%s elapsed=%s", path, expectedSize, blocks, elapsed)
+				w.Header().Set("Retry-After", retryAfterPlaceholder)
+				http.Error(w, "Cloud-storage placeholder: file not yet materialized on host. Open it on the host (Finder → right-click → 'Keep on this device' for Google Drive/iCloud, equivalent for OneDrive) or sync your library to a fully-local directory.", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set(cloudErrorHeader, "read-error:"+errno)
+			log.Printf("serveFileStreaming: read %s failed: errno=%q err=%v size=%d blocks=%s elapsed=%s", path, errno, pr.err, expectedSize, blocks, elapsed)
+			http.Error(w, "Read error", http.StatusInternalServerError)
+			return
+		}
+		n = pr.n
+	}
+
+	// Probe succeeded — commit to a 200 and stream the rest. From here a
+	// mid-stream failure can't become a clean 503 (headers are sent); it
+	// surfaces as a truncated body vs the declared Content-Length, which the
+	// client detects and retries.
+	ct := contentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Length", strconv.FormatInt(expectedSize, 10))
+	w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
+	w.WriteHeader(http.StatusOK)
+
+	written, werr := w.Write(probe[:n])
+	if werr != nil {
+		log.Printf("serveFileStreaming: write probe to client failed: %v", werr)
+		return
+	}
+	buf := make([]byte, streamBufBytes)
+	copied, cerr := io.CopyBuffer(w, rc, buf)
+	total := int64(written) + copied
+	if cerr != nil {
+		log.Printf("serveFileStreaming: %s stream failed after %d/%d bytes: %v", path, total, expectedSize, cerr)
+		return
+	}
+	if total != expectedSize {
+		log.Printf("serveFileStreaming: short stream on %s: sent %d, expected %d blocks=%s (cloud placeholder mid-file?)", path, total, expectedSize, blocks)
 	}
 }
