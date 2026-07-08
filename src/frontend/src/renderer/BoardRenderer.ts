@@ -40,6 +40,12 @@ import { primaryDiodeReading, boardHasDiodeData, formatDiode } from '../store/di
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
 
+/** How long a board tab may stay hidden before its GPU context + scene graph
+ *  are released (deep-pause). Long enough that flipping between a couple of
+ *  boards doesn't thrash rebuilds; short enough to reclaim within a minute of
+ *  leaving a board. resume() rebuilds via the tested reinitApp() path. */
+const DEEP_PAUSE_DELAY_MS = 45_000;
+
 /** Glow colour for "highlight connections" — nets shared between ≥2 parts in
  *  the cyan selection set. Cyan to tie the glow to the cyan selection outline. */
 const SHARED_NET_GLOW = 0x00e5ff;
@@ -499,6 +505,9 @@ export class BoardRenderer {
   private contextLost = false;
   private destroyed = false;
   private reinitializing = false;
+  /** Deep-pause timer: after a tab has been hidden this long, release its GPU
+   *  context + scene graph so K open tabs don't hold K live WebGL contexts. */
+  private _deepPauseTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Cached label counts for perf overlay — updated by applyLabelVisibility, not by iterating every 500ms
   private labelCounts = { partVis: 0, partTotal: 0, pinVis: 0, pinTotal: 0 };
@@ -729,6 +738,10 @@ export class BoardRenderer {
         canvas.removeEventListener('pointerleave', this.boundHideTooltip!);
         if (this.boundWheelWake) canvas.removeEventListener('wheel', this.boundWheelWake);
       }
+      // Symmetry with destroy(): drop webglcontextlost/restored listeners off the
+      // old canvas (reinitApp reinstalls them on the fresh canvas). Otherwise the
+      // dead canvas keeps a listener referencing `this` until GC.
+      this.removeContextLossHandlers();
       canvas?.parentElement?.removeChild(canvas);
     } catch (e) { log.render.warn('teardown canvas cleanup error:', e); }
 
@@ -748,6 +761,8 @@ export class BoardRenderer {
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
   resume() {
     if (this.destroyed) return;
+    // Panel is visible again — cancel any pending deep-pause release.
+    this.cancelDeepPause();
     // GPU was released (pause/context loss) — need full re-init
     if (this.contextLost) {
       log.render.log(`resume → reinitApp tab=${this.tabId}`);
@@ -784,6 +799,46 @@ export class BoardRenderer {
         }
       });
     }
+  }
+
+  /**
+   * Arm the deep-pause timer. Call when this panel becomes hidden (dockview
+   * onDidVisibilityChange → not visible). After DEEP_PAUSE_DELAY_MS the tab's
+   * GPU context + scene graph are released. Only hidden panels arm this — a
+   * board still visible in a split/floating group keeps its live renderer.
+   */
+  scheduleDeepPause() {
+    if (this.destroyed || this.contextLost) return;
+    if (this._deepPauseTimer) clearTimeout(this._deepPauseTimer);
+    this._deepPauseTimer = setTimeout(() => {
+      this._deepPauseTimer = null;
+      this.deepPause();
+    }, DEEP_PAUSE_DELAY_MS);
+  }
+
+  /** Cancel a pending deep-pause (panel became visible again before it fired). */
+  cancelDeepPause() {
+    if (this._deepPauseTimer) { clearTimeout(this._deepPauseTimer); this._deepPauseTimer = null; }
+  }
+
+  /**
+   * Release GPU + scene memory for a tab that has been hidden long enough.
+   * Reuses the tested context-loss recovery path: teardownForReinit() stops the
+   * ticker, evicts the scene/hit-grid caches, loses the WebGL context and removes
+   * the canvas; setting contextLost makes the next resume() rebuild the whole
+   * Application from this.board via reinitApp(). Guarded so it never fires on the
+   * store-active tab or an already-released/uninitialised renderer.
+   */
+  private deepPause() {
+    if (this.destroyed || this.contextLost || this.reinitializing || !this.initialized) return;
+    // Never release the board the user is actually looking at.
+    if (boardStore.activeTabId === this.tabId) return;
+    log.render.log(`deepPause tab=${this.tabId} — releasing GPU context + scene graph`);
+    this.teardownForReinit();
+    // teardownForReinit() releases the context but leaves contextLost=false;
+    // set it so resume() routes through reinitApp() instead of touching the
+    // now-dead Application.
+    this.contextLost = true;
   }
 
   /** Force a full scene re-activation — use the restart button to recover a broken render. */
@@ -5382,6 +5437,7 @@ export class BoardRenderer {
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }
     if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
+    if (this._deepPauseTimer) { clearTimeout(this._deepPauseTimer); this._deepPauseTimer = null; }
     if (this.wheelIdleTimer) { clearTimeout(this.wheelIdleTimer); this.wheelIdleTimer = null; }
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();

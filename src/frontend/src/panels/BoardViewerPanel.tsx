@@ -116,6 +116,10 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         // Only null the ref if it still points to THIS renderer — during
         // React StrictMode double-mount, mount 2 may have already replaced it.
         if (rendererRef.current === renderer) rendererRef.current = null;
+      } else if (!props.api.isVisible) {
+        // Mounted already-hidden (e.g. background tab restored on reload):
+        // onDidVisibilityChange won't fire, so arm deep-pause from initial state.
+        renderer.scheduleDeepPause();
       }
     })();
 
@@ -169,7 +173,20 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
       }
     });
 
-    return () => disposable.dispose();
+    // Deep-pause: when this panel is genuinely hidden (tabbed away in its group,
+    // or its group is collapsed/hidden) release its GPU context + scene graph
+    // after a delay so K open board tabs don't hold K live WebGL contexts.
+    // Visibility — not activation — is the correct signal: a board still shown in
+    // a split/floating group stays visible and keeps its live renderer.
+    // (Initial already-hidden state is armed in the renderer-creation effect,
+    // after init(), since the renderer is created asynchronously and isn't in
+    // rendererRef yet when this effect first runs.)
+    const visDisposable = props.api.onDidVisibilityChange((e) => {
+      if (e.isVisible) rendererRef.current?.cancelDeepPause();
+      else rendererRef.current?.scheduleDeepPause();
+    });
+
+    return () => { disposable.dispose(); visDisposable.dispose(); };
   }, [tabId, props.api]);
 
   // Auto-hide slider on outside click (sidebar stays open)
