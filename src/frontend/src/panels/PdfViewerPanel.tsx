@@ -373,6 +373,21 @@ function getBestPageCache(file: string, page: number, clean: boolean): CachedRen
   return best?.entry;
 }
 
+/**
+ * Detach a display canvas (tile or adjacent-page blit target) and shrink its
+ * backing store to 1×1 first, so the browser releases the (up to ~4 MB for a
+ * 1024² RGBA tile) pixel buffer deterministically instead of only when GC
+ * finally collects the detached element. Mirrors releaseCanvas() in the canvas
+ * pool, which already shrinks before pooling. Safe here: these are our own blit
+ * targets being discarded — never reused — so this is the recommended "abandon"
+ * pattern, not a pool reuse.
+ */
+function detachCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 1;
+  canvas.height = 1;
+  canvas.remove();
+}
+
 // --- Preview cache: always-available tier-1 renders (never evicted by hi-res) ---
 const PREVIEW_CACHE_MAX = 6;
 const _previewCache = new Map<string, CachedRender>();
@@ -1137,7 +1152,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
   /** Remove all tile canvases from the DOM and clear the tile map */
   const clearTileDom = useCallback(() => {
     for (const canvas of tileContainerRef.current.values()) {
-      canvas.remove();
+      detachCanvas(canvas);
     }
     tileContainerRef.current.clear();
   }, []);
@@ -1175,7 +1190,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     clearTileDom();
     invalidateTileCache(pdfFileName);
     invalidatePageCache(pdfFileName);
-    for (const entry of adjCanvasMapRef.current.values()) entry.canvas.remove();
+    for (const entry of adjCanvasMapRef.current.values()) detachCanvas(entry.canvas);
     adjCanvasMapRef.current.clear();
     zoomRef.current = 1;
     panRef.current = { x: 0, y: 0 };
@@ -1191,6 +1206,11 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
 
   useEffect(() => {
     return () => {
+      // Invalidate any in-flight idle prefetch so its .then() doesn't re-insert
+      // an ImageBitmap into the (global) caches we're about to clear — that
+      // orphan would then linger past close until unrelated LRU pressure evicts
+      // it. Every prefetch put is now guarded on this id.
+      prefetchIdRef.current++;
       clearTileDom();
       invalidateTileCache(pdfFileName);
       // Also release the full-page / preview ImageBitmap caches for this doc,
@@ -1518,7 +1538,13 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         const pvKey = previewCacheKey(pdfFileName, currentPage, cleanMode);
         if (resTier > 1 && !getPreviewCache(pvKey)) {
           renderPageToBitmap(currentPage, containerWidth, 1, cleanMode)
-            .then(result => { putPreviewCache(pvKey, result); })
+            .then(result => {
+              // Guard like the hi-res put below: the doc may have closed (unmount
+              // bumps prefetchIdRef) while this render was in flight — don't
+              // re-insert an orphan bitmap into the global preview cache.
+              if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
+              putPreviewCache(pvKey, result);
+            })
             .catch(() => {});
         }
 
@@ -1529,7 +1555,10 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
           const adjPvKey = previewCacheKey(pdfFileName, pNum, cleanMode);
           if (!getPreviewCache(adjPvKey)) {
             renderPageToBitmap(pNum, containerWidth, 1, cleanMode)
-              .then(result => { putPreviewCache(adjPvKey, result); })
+              .then(result => {
+                if (prefetchIdRef.current !== pfId) { result.bitmap.close(); return; }
+                putPreviewCache(adjPvKey, result);
+              })
               .catch(() => {});
           }
           const pfKey = pageCacheKey(pdfFileName, pNum, adjPfTier, cleanMode);
@@ -1894,7 +1923,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
             for (const [key, canvas] of tileContainerRef.current) {
               if (tileContainerRef.current.size <= MAX_TILE_DOM / 2) break;
               if (!key.endsWith(currentScaleSuffix)) {
-                canvas.remove();
+                detachCanvas(canvas);
                 tileContainerRef.current.delete(key);
               }
             }
@@ -2033,7 +2062,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     // adjacent canvases and never render neighbours.
     if (singlePageMode) {
       const adjMap = adjCanvasMapRef.current;
-      for (const entry of adjMap.values()) entry.canvas.remove();
+      for (const entry of adjMap.values()) detachCanvas(entry.canvas);
       adjMap.clear();
       return;
     }
@@ -2075,9 +2104,9 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
     for (const [pageNum, entry] of adjMap) {
       if (!wantedPages.has(pageNum)) {
         if (entry.canvas.dataset.transitionBackdrop) {
-          adjMap.delete(pageNum); // detach from map, keep in DOM
+          adjMap.delete(pageNum); // detach from map, keep in DOM (rAF removes it)
         } else {
-          entry.canvas.remove();
+          detachCanvas(entry.canvas);
           adjMap.delete(pageNum);
         }
       }
@@ -2537,7 +2566,7 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
       const doc = pdfStore.getDocProxy(pdfFileName);
       clearFontCache(doc?.fingerprints[0] ?? undefined);
       pageGlyphDataRef.current = null;
-      for (const entry of adjCanvasMap.values()) entry.canvas.remove();
+      for (const entry of adjCanvasMap.values()) detachCanvas(entry.canvas);
       adjCanvasMap.clear();
       if (adjDebounceRef.current) clearTimeout(adjDebounceRef.current);
       if (scrubberFlashTimerRef.current) clearTimeout(scrubberFlashTimerRef.current);
