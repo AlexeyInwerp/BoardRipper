@@ -347,6 +347,36 @@ func TestServerInstructions(t *testing.T) {
 	}
 }
 
+// --- binaryResult ---
+
+func TestBinaryResult_ImageRoundTrips(t *testing.T) {
+	res := binaryResult("image/png", []byte{0x89, 'P', 'N', 'G'}, map[string]any{"w": 4, "h": 2})
+	if res.IsError || len(res.Content) != 1 {
+		t.Fatalf("want 1 content block, got err=%v n=%d", res.IsError, len(res.Content))
+	}
+	img, ok := res.Content[0].(*mcp.ImageContent)
+	if !ok {
+		t.Fatalf("content[0] is %T, want *mcp.ImageContent", res.Content[0])
+	}
+	if img.MIMEType != "image/png" || len(img.Data) != 4 {
+		t.Fatalf("bad image content: mime=%q len=%d", img.MIMEType, len(img.Data))
+	}
+	if res.StructuredContent == nil {
+		t.Fatal("StructuredContent must carry the metadata map")
+	}
+}
+
+func TestBinaryResult_BlobForNonImage(t *testing.T) {
+	res := binaryResult("application/pdf", []byte("%PDF-1.7"), map[string]any{"size": 8})
+	er, ok := res.Content[0].(*mcp.EmbeddedResource)
+	if !ok || er.Resource == nil || er.Resource.MIMEType != "application/pdf" {
+		t.Fatalf("want application/pdf EmbeddedResource, got %T", res.Content[0])
+	}
+	if len(er.Resource.Blob) != 8 {
+		t.Fatalf("blob len=%d want 8", len(er.Resource.Blob))
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

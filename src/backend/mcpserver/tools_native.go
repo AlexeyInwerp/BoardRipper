@@ -12,6 +12,24 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// binaryResult wraps binary tool output: an ImageContent block for image/*
+// MIME types, otherwise an EmbeddedResource blob, plus the metadata map as
+// StructuredContent so the model gets both the bytes and the dimensions/size.
+func binaryResult(mime string, data []byte, meta map[string]any) *mcp.CallToolResult {
+	var content mcp.Content
+	if strings.HasPrefix(mime, "image/") {
+		content = &mcp.ImageContent{Data: data, MIMEType: mime}
+	} else {
+		content = &mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+			URI: "boardripper://download", MIMEType: mime, Blob: data,
+		}}
+	}
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{content},
+		StructuredContent: meta,
+	}
+}
+
 // --- store interfaces (satisfied by the concrete backend types) ---
 
 // PDFSearcher is satisfied by *pdfindex.DB.
