@@ -12,6 +12,7 @@ import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
 import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
 import { renderPdfPageToPng } from './pdf-render';
+import { getActiveApp } from '../renderer/renderer-registry';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -247,6 +248,14 @@ async function dispatch(op: string, p: any): Promise<any> {
     case 'board_active': {
       requireBoard();
       return boardDescriptor();
+    }
+    case 'board_snapshot': {
+      requireBoard();
+      const app = getActiveApp();
+      if (!app) throw new Error('board renderer not ready');
+      const out = app.renderer.extract.canvas({ target: app.stage }) as HTMLCanvasElement;
+      const base64 = out.toDataURL('image/png').split(',')[1];
+      return { base64, mime: 'image/png', w: out.width, h: out.height };
     }
     case 'board_overview': {
       const b = boardStore.board;

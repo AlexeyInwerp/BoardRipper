@@ -250,6 +250,7 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[pdfFindArgs](s, b, "pdf_search_open", "Search WITHIN the open PDF document (instant, in-memory; also works for drag-dropped files). For library-wide search use pdf_search.", "pdf_search_open", true, nil)
 	liveBinaryTool[emptyArgs](s, b, "pdf_download", "Download the currently open PDF as bytes (application/pdf) so the model can read the schematic natively. Works for library and drag-dropped files.", "pdf_download", nil)
 	liveBinaryTool[pdfPageArgs](s, b, "pdf_page_image", "Render a page of the open PDF to a PNG image (defaults to the current page). Honors the doc's rotation/mirror. Prefer text (pdf_page_text/pdf_search_open) first; use this when text is insufficient or to inspect a region visually.", "pdf_page_image", nil)
+	liveBinaryTool[emptyArgs](s, b, "board_snapshot", "Capture the live board view as a PNG (what the user currently sees — side, zoom, highlight). Prefer topology/text tools first; use this to correlate the board visually.", "board_snapshot", nil)
 
 	// --- drive-UI tools (always registered; gated per-call on DriveUI()) ---
 	gate := func() bool { return deps.State != nil && deps.State.DriveUI() }

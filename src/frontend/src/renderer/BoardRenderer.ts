@@ -30,6 +30,7 @@ import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTE
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import type { BorderBatch, PadGeometry } from './board-scene';
+import { registerRenderer, unregisterRenderer } from './renderer-registry';
 import { getFormat } from '../parsers/registry';
 import { log } from '../store/log-store';
 import { ensurePdfPanel } from '../store/dockview-api';
@@ -705,6 +706,7 @@ export class BoardRenderer {
    */
   private teardownForReinit() {
     log.render.log('teardownForReinit', 'tab=' + this.tabId);
+    if (this.tabId !== null) unregisterRenderer(this.tabId);
     if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
     this.clickCycle = null;
     this.clearPendingCycleAdvance();
@@ -957,6 +959,7 @@ export class BoardRenderer {
         ...(RENDERER_PREFERENCE ? { preference: RENDERER_PREFERENCE } : {}),
       });
       log.render.log(`reinitApp: app.init succeeded tab=${this.tabId} size=${this.containerEl.clientWidth}x${this.containerEl.clientHeight}`);
+      if (this.tabId !== null) registerRenderer(this.tabId, this.app);
     } catch (err) {
       log.render.error(`reinitApp: app.init FAILED tab=${this.tabId}:`, err);
       this.reinitializing = false;
@@ -1127,6 +1130,7 @@ export class BoardRenderer {
       log.render.log(`init: aborted — renderer destroyed during app.init (tab=${this.tabId})`);
       return;
     }
+    if (this.tabId !== null) registerRenderer(this.tabId, this.app);
     this.containerEl.appendChild(this.app.canvas as HTMLCanvasElement);
     this.initialized = true;
 
@@ -5456,6 +5460,10 @@ export class BoardRenderer {
 
   destroy() {
     this.destroyed = true;
+    // destroy() is the full-teardown path (tab closed) and does NOT route
+    // through teardownForReinit() — unregister here too, or a closed tab's
+    // Application would stay referenced in renderer-registry.ts forever.
+    if (this.tabId !== null) unregisterRenderer(this.tabId);
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
       this.selectionBlinkTimer = null;
