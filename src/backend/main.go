@@ -419,7 +419,7 @@ func main() {
 			if err != nil || rec == nil {
 				return nil, "", "", fmt.Errorf("file %d not found", id)
 			}
-			if rec.Size > (50 << 20) {
+			if rec.Size > mcpserver.MaxDownloadBytes {
 				return nil, "", "", fmt.Errorf("file too large: %d bytes", rec.Size)
 			}
 			data, err := handlers.ReadFileEager(scanner.ScanRoot(), rec.Path)

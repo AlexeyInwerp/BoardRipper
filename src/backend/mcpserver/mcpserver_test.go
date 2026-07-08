@@ -444,3 +444,17 @@ func TestFileDownload(t *testing.T) {
 		t.Fatal("missing file should be a tool error")
 	}
 }
+
+func TestFileDownload_CapExceeded(t *testing.T) {
+	deps := &Deps{
+		State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		FileBytes: func(_ context.Context, id int64) ([]byte, string, string, error) {
+			return make([]byte, MaxDownloadBytes+1), "big.pdf", "application/pdf", nil
+		},
+	}
+	srv := New(deps)
+	res := callToolRaw(t, srv, "file_download", map[string]any{"id": 1})
+	if !res.IsError {
+		t.Fatal("oversized file must be a tool error, not a payload")
+	}
+}

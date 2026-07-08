@@ -13,9 +13,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// maxDownloadBytes caps file_download so the model doesn't get handed
+// MaxDownloadBytes caps file_download so the model doesn't get handed
 // multi-hundred-MB files; larger files should be paged via pdf_page_image/text.
-const maxDownloadBytes = 50 << 20 // 50 MiB
+// Exported so main.go's FileBytes wiring can pre-check against the same cap.
+const MaxDownloadBytes = 50 << 20 // 50 MiB
 
 // MimeForExt maps a file extension (with or without leading dot) to a MIME
 // type for file_download's content block. Exported so main.go's FileBytes
@@ -258,8 +259,8 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 			if err != nil {
 				return errResult("file_download failed: " + err.Error()), nil, nil
 			}
-			if len(data) > maxDownloadBytes {
-				return errResult(fmt.Sprintf("file too large (%d bytes, cap %d) — use pdf_page_image/pdf_page_text instead", len(data), maxDownloadBytes)), nil, nil
+			if len(data) > MaxDownloadBytes {
+				return errResult(fmt.Sprintf("file too large (%d bytes, cap %d) — use pdf_page_image/pdf_page_text instead", len(data), MaxDownloadBytes)), nil, nil
 			}
 			return binaryResult(mime, data, map[string]any{"filename": name, "mime": mime, "size": len(data)}), nil, nil
 		})
