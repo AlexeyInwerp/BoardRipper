@@ -2,13 +2,20 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const bridgeTimeout = 10 * time.Second
+
+// bridgeRenderTimeout is used by binary-reply tools (e.g. pdf_download) whose
+// browser-side work (base64-encoding a whole file) takes longer than a plain
+// data lookup.
+const bridgeRenderTimeout = 30 * time.Second
 
 // liveTool registers a tool that forwards {op, args} to the active browser tab
 // and returns the tab's JSON result verbatim. When gate is non-nil and returns
@@ -39,6 +46,58 @@ func liveTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, readOnly b
 		}
 		return nil, out, nil
 	})
+}
+
+// decodeBinaryReply decodes a bridge binary reply of the shape
+// {base64, mime, ...meta}: it base64-decodes the payload and returns the
+// remaining fields (minus "base64") as metadata. mime defaults to
+// "application/octet-stream" when the tab didn't supply one. Split out from
+// liveBinaryTool so the decode/strip logic is unit-testable without a live
+// bridge/socket.
+func decodeBinaryReply(raw json.RawMessage) (mime string, data []byte, meta map[string]any, err error) {
+	var r struct {
+		Base64 string `json:"base64"`
+		MIME   string `json:"mime"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return "", nil, nil, fmt.Errorf("bad binary reply: %w", err)
+	}
+	data, err = base64.StdEncoding.DecodeString(r.Base64)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("bad base64 from tab: %w", err)
+	}
+	meta = map[string]any{}
+	_ = json.Unmarshal(raw, &meta)
+	delete(meta, "base64")
+	mime = r.MIME
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	return mime, data, meta, nil
+}
+
+// liveBinaryTool registers a bridge-backed tool whose browser reply is
+// {base64, mime, ...meta}; it decodes base64 and emits an MCP image/blob
+// content block via binaryResult. Uses the longer render timeout.
+func liveBinaryTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, gate func() bool) {
+	mcp.AddTool(s, &mcp.Tool{Name: name, Description: desc, Annotations: ro(true)},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a T) (*mcp.CallToolResult, any, error) {
+			if gate != nil && !gate() {
+				return errResult("disabled"), nil, nil
+			}
+			if b == nil {
+				return errResult("bridge unavailable"), nil, nil
+			}
+			res, err := b.Request(ctx, extractSession(a), op, a, bridgeRenderTimeout)
+			if err != nil {
+				return errResult(err.Error()), nil, nil
+			}
+			mime, data, meta, err := decodeBinaryReply(res)
+			if err != nil {
+				return errResult(err.Error()), nil, nil
+			}
+			return binaryResult(mime, data, meta), nil, nil
+		})
 }
 
 // sessioned is implemented by every live-tool arg struct so liveTool can target
@@ -189,6 +248,7 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[findPartsArgs](s, b, "find_parts", "Search parts by free text across refdes + description fields (value/serial/package/part-type). Use this to locate a component by name/number when no schematic PDF is available — many boardviews store the real part name in the description. Returns {parts:[{refdes,side,value,serial,package,part_type}],total,has_more,offset}.", "find_parts", true, nil)
 	liveTool[pdfPageArgs](s, b, "pdf_page_text", "Extracted text of a page of the open PDF (defaults to the current page). Reads the already-cached text layer; no re-extraction.", "pdf_page_text", true, nil)
 	liveTool[pdfFindArgs](s, b, "pdf_search_open", "Search WITHIN the open PDF document (instant, in-memory; also works for drag-dropped files). For library-wide search use pdf_search.", "pdf_search_open", true, nil)
+	liveBinaryTool[emptyArgs](s, b, "pdf_download", "Download the currently open PDF as bytes (application/pdf) so the model can read the schematic natively. Works for library and drag-dropped files.", "pdf_download", nil)
 
 	// --- drive-UI tools (always registered; gated per-call on DriveUI()) ---
 	gate := func() bool { return deps.State != nil && deps.State.DriveUI() }

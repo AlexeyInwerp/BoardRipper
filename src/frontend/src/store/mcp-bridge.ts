@@ -393,6 +393,17 @@ async function dispatch(op: string, p: any): Promise<any> {
       const matches = searchTextPages(d.textPages, String(p.query ?? ''), p.limit);
       return { matches, total: matches.length };
     }
+    case 'pdf_download': {
+      const d = activePdf();
+      const bytes = new Uint8Array(d.originalBuffer);
+      const MAX = 50 * 1024 * 1024;
+      if (bytes.byteLength > MAX) throw new Error(`PDF too large (${bytes.byteLength} bytes) to download over MCP`);
+      // btoa needs a binary string; build in chunks to avoid call-stack limits.
+      let bin = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      return { base64: btoa(bin), mime: 'application/pdf', name: d.fileName, size: bytes.byteLength };
+    }
     default:
       return dispatchDrive(op, p);
   }

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -483,4 +484,44 @@ type fakePDFRec struct {
 
 func (f *fakePDFRec) SearchPages(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
 	return f.fn(q, r, l)
+}
+
+// --- decodeBinaryReply (pdf_download / liveBinaryTool) ---
+
+func TestDecodeBinaryReply(t *testing.T) {
+	raw := json.RawMessage(`{"base64":"JVBERg==","mime":"application/pdf","name":"a.pdf","size":4}`)
+	mime, data, meta, err := decodeBinaryReply(raw)
+	if err != nil {
+		t.Fatalf("decodeBinaryReply: %v", err)
+	}
+	if mime != "application/pdf" {
+		t.Fatalf("mime=%q want application/pdf", mime)
+	}
+	if string(data) != "%PDF" {
+		t.Fatalf("data=%q want %%PDF", data)
+	}
+	if meta["name"] != "a.pdf" {
+		t.Fatalf("meta[name]=%v want a.pdf", meta["name"])
+	}
+	if _, ok := meta["base64"]; ok {
+		t.Fatalf("meta must not carry the base64 payload: %v", meta)
+	}
+}
+
+func TestDecodeBinaryReply_BadBase64(t *testing.T) {
+	raw := json.RawMessage(`{"base64":"not-valid-base64!!","mime":"application/pdf"}`)
+	if _, _, _, err := decodeBinaryReply(raw); err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+}
+
+func TestDecodeBinaryReply_DefaultMime(t *testing.T) {
+	raw := json.RawMessage(`{"base64":"` + base64.StdEncoding.EncodeToString([]byte("x")) + `"}`)
+	mime, _, _, err := decodeBinaryReply(raw)
+	if err != nil {
+		t.Fatalf("decodeBinaryReply: %v", err)
+	}
+	if mime != "application/octet-stream" {
+		t.Fatalf("mime=%q want application/octet-stream default", mime)
+	}
 }
