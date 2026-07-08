@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,7 +27,67 @@ import (
 	"boardripper/updater"
 )
 
+// configureMemoryLimit sets Go's soft memory limit (GOMEMLIMIT) from the
+// container's cgroup memory limit when one is enforced and the operator hasn't
+// set GOMEMLIMIT explicitly. Without it the runtime has no notion of its budget:
+// freed heap lingers in RSS and, near a hard cgroup cap, the process is
+// OOM-killed instead of GCing harder first. It's a SOFT limit — the GC works
+// harder to stay under it but never kills — so it's safe to derive
+// automatically. Paired with GODEBUG=madvdontneed=1 (set in the Dockerfile),
+// which returns the freed pages to the OS promptly. The wasm/pdfium linear
+// memory is Go-heap-backed and counts toward this limit, so it's capped
+// per-worker (see pdfindex) to keep the GC from thrashing against a pinned floor.
+func configureMemoryLimit() {
+	if os.Getenv("GOMEMLIMIT") != "" {
+		return // explicit override already applied by the runtime at startup
+	}
+	limit, ok := cgroupMemoryLimit()
+	if !ok {
+		return // unlimited or undetectable — leave the runtime default
+	}
+	// Leave headroom below the hard cgroup cap for non-heap allocations
+	// (goroutine stacks, runtime metadata) so GC pressure kicks in before OOM.
+	soft := int64(float64(limit) * 0.9)
+	debug.SetMemoryLimit(soft)
+	log.Printf("GOMEMLIMIT set to %d MiB (90%% of cgroup limit %d MiB)", soft>>20, limit>>20)
+}
+
+// cgroupMemoryLimit returns the enforced memory limit in bytes, or ok=false when
+// the container is unlimited/undetectable. Handles cgroup v2 (memory.max) and
+// v1 (memory.limit_in_bytes), rejecting the "unlimited" sentinels each reports.
+func cgroupMemoryLimit() (int64, bool) {
+	// cgroup v2
+	if b, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		s := strings.TrimSpace(string(b))
+		if s == "max" {
+			return 0, false
+		}
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return v, plausibleMemLimit(v)
+		}
+	}
+	// cgroup v1
+	if b, err := os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		if v, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+			return v, plausibleMemLimit(v)
+		}
+	}
+	return 0, false
+}
+
+// plausibleMemLimit rejects the near-maxint "unlimited" sentinels cgroups report
+// so we never clamp to a meaningless value. Anything ≥ 64 GiB is treated as
+// effectively unlimited for this container.
+func plausibleMemLimit(v int64) bool {
+	const maxPlausible = int64(64) << 30
+	return v > 0 && v < maxPlausible
+}
+
 func main() {
+	// Derive a soft GOMEMLIMIT from the cgroup cap before any allocation-heavy
+	// work (DB open, board index) so the GC budget is in force from the start.
+	configureMemoryLimit()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

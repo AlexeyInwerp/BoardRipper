@@ -24,6 +24,7 @@ echo "[dev] Starting new ${NAME} on :1234 (preserved config)..."
 sdocker run -d --name "${NAME}" \
   --restart unless-stopped \
   --user 0:0 \
+  -m 2g \
   -p 1234:8080 \
   -e LIBRARY_DIR=/library \
   -e DATA_DIR=/data \

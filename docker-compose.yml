@@ -55,10 +55,16 @@ services:
     # (see the secure update pipeline in CLAUDE.md / docs/RELEASE_RUNBOOK.md).
     healthcheck:
       test: ["NONE"]
-    deploy:
-      resources:
-        limits:
-          memory: 1024M  # pdfium/wazero pool; tune PDFINDEX_POOL_MAX down on small NAS
+    # Hard memory cap. NOTE: the previous `deploy.resources.limits.memory` key is
+    # SILENTLY IGNORED by `docker compose up` / `docker run` (it only applies
+    # under `docker stack deploy` / swarm), so the container was effectively
+    # uncapped and free to balloon to many GB. `mem_limit` is the Compose-v2 key
+    # that actually maps to --memory. The runtime derives a soft GOMEMLIMIT at
+    # 90% of this (see configureMemoryLimit in main.go) so the GC reclaims before
+    # the hard cap OOM-kills, and GODEBUG=madvdontneed=1 (Dockerfile) returns
+    # freed pages promptly. Tune down on a small NAS together with
+    # PDFINDEX_POOL_MAX; the pdfium/wazero linear memory is the main floor.
+    mem_limit: 2g
     environment:
       - PORT=8080
       - PDFINDEX_POOL_MAX=2  # max concurrent pdfium/wazero workers; reduce to 1 on NAS with <1 GB free RAM

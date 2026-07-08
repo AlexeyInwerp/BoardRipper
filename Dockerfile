@@ -80,4 +80,11 @@ ENV PORT=8080
 # os.TempDir() for any non-SQLite temp needs.) Shipped broken in v0.31.0/v0.31.1.
 ENV SQLITE_TMPDIR=/data
 ENV TMPDIR=/data
+# Return freed heap pages to the OS promptly. Go's default Linux scavenger uses
+# MADV_FREE, which leaves freed pages counted in RSS until the kernel is under
+# memory pressure — the "consumes many gigs and slowly releases back" profile.
+# MADV_DONTNEED drops them immediately so RSS tracks live memory. The runtime
+# also derives a soft GOMEMLIMIT from the cgroup memory limit at startup (see
+# configureMemoryLimit in main.go) so the GC works harder before RSS climbs.
+ENV GODEBUG=madvdontneed=1
 ENTRYPOINT ["/server"]
