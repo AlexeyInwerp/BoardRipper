@@ -600,3 +600,50 @@ func TestBridge_LargeMessageRoundTrips(t *testing.T) {
 	t.Fatalf("board_changed large payload never observed in bridge.Sessions() (last seen len=%d, want >= %d) — "+
 		"the oversized frame likely tore down the reader loop before SetReadLimit was applied", lastLen, bigLen)
 }
+
+// --- persona ---
+
+// TestServerInstructions_Persona verifies the technician+educator persona is
+// wired into the real MCP initialize response (prepended, not replacing the
+// existing boardripperInstructions), via a real in-memory client connection —
+// mcp.Server has no Instructions() getter (unexported field set via
+// ServerOptions), so this mirrors the connection pattern TestServerInstructions
+// above uses to read the wired value back out.
+func TestServerInstructions_Persona(t *testing.T) {
+	deps := &Deps{
+		State:  NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		Bridge: NewBridge(),
+	}
+	srv := New(deps)
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := srv.mcp.Connect(context.Background(), st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "persona-test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	got := cs.InitializeResult().Instructions
+	for _, want := range []string{
+		"electronics repair technician",
+		"Never guess",
+		"unlabeled",
+		"Teach as you fix",
+		"continuity mode for continuity only",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Instructions missing %q", want)
+		}
+	}
+	// Phase 2 must NOT mention the Phase-3 kb_search tool yet.
+	if strings.Contains(got, "kb_search") {
+		t.Fatal("persona references kb_search before Phase 3")
+	}
+	// The existing worklist orientation must still be present (prepend, not replace).
+	if !strings.Contains(got, "worklist") {
+		t.Fatal("existing boardripperInstructions was dropped")
+	}
+}
