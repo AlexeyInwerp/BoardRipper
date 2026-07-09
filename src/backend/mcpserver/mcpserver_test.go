@@ -600,3 +600,184 @@ func TestBridge_LargeMessageRoundTrips(t *testing.T) {
 	t.Fatalf("board_changed large payload never observed in bridge.Sessions() (last seen len=%d, want >= %d) — "+
 		"the oversized frame likely tore down the reader loop before SetReadLimit was applied", lastLen, bigLen)
 }
+
+// --- persona ---
+
+// TestServerInstructions_Persona verifies the technician+educator persona is
+// wired into the real MCP initialize response (prepended, not replacing the
+// existing boardripperInstructions), via a real in-memory client connection —
+// mcp.Server has no Instructions() getter (unexported field set via
+// ServerOptions), so this mirrors the connection pattern TestServerInstructions
+// above uses to read the wired value back out.
+func TestServerInstructions_Persona(t *testing.T) {
+	deps := &Deps{
+		State:  NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		Bridge: NewBridge(),
+	}
+	srv := New(deps)
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := srv.mcp.Connect(context.Background(), st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "persona-test", Version: "1"}, nil)
+	cs, err := client.Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	got := cs.InitializeResult().Instructions
+	for _, want := range []string{
+		"electronics repair technician",
+		"Never guess",
+		"unlabeled",
+		"Teach as you fix",
+		"continuity mode for continuity only",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Instructions missing %q", want)
+		}
+	}
+	// The existing worklist orientation must still be present (prepend, not replace).
+	if !strings.Contains(got, "worklist") {
+		t.Fatal("existing boardripperInstructions was dropped")
+	}
+}
+
+// --- prompts ---
+
+func TestPrompts_ListAndGet(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})}
+	srv := New(deps)
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcp.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cl := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "1"}, nil)
+	cs, err := cl.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	lp, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, p := range lp.Prompts {
+		names[p.Name] = true
+	}
+	for _, want := range []string{"understand_circuit", "diagnose", "explain"} {
+		if !names[want] {
+			t.Fatalf("prompts/list missing %q", want)
+		}
+	}
+
+	// get with an argument -> the arg is interpolated into the message text.
+	gp, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "understand_circuit", Arguments: map[string]string{"focus": "PP3V3_G3H"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gp.Messages) == 0 {
+		t.Fatal("no messages")
+	}
+	txt, ok := gp.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("message content is %T, want *TextContent", gp.Messages[0].Content)
+	}
+	if !strings.Contains(txt.Text, "PP3V3_G3H") {
+		t.Fatalf("focus arg not interpolated: %s", txt.Text)
+	}
+	if gp.Messages[0].Role != "user" {
+		t.Fatalf("role = %q, want user", gp.Messages[0].Role)
+	}
+	// get with NO argument still returns a valid message (optional arg).
+	gp2, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "diagnose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gp2.Messages) == 0 {
+		t.Fatal("diagnose returned no messages without arg")
+	}
+}
+
+// TestKBReferencedInPersonaAndPrompts verifies Phase 3 wired kb_search back
+// into the persona and prompt bodies (Phase 2 intentionally omitted it).
+func TestKBReferencedInPersonaAndPrompts(t *testing.T) {
+	if !strings.Contains(technicianPersona, "kb_search") {
+		t.Fatal("persona should reference kb_search now that Phase 3 landed")
+	}
+	if !strings.Contains(understandCircuitBody(""), "kb_search") {
+		t.Fatal("understand_circuit should reference kb_search")
+	}
+}
+
+func TestKBResources(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})}
+	srv := New(deps)
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcp.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cl := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "1"}, nil)
+	cs, err := cl.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	lr, err := cs.ListResources(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uri string
+	for _, r := range lr.Resources {
+		if r.URI == "boardripper://kb/diode-mode-usage" {
+			uri = r.URI
+		}
+	}
+	if uri == "" {
+		t.Fatal("kb resource diode-mode-usage not listed")
+	}
+
+	rr, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rr.Contents) == 0 || rr.Contents[0].MIMEType != "text/markdown" {
+		t.Fatalf("bad resource contents: %+v", rr.Contents)
+	}
+	// Case-insensitive: the committed diode-mode-usage.md chunk (Task 1) reads
+	// "DATA lines" (capitalized), not lowercase "data line" as in the brief's
+	// literal test text — match case-insensitively rather than edit shipped KB
+	// prose. Still discriminates the loop-capture bug: the alphabetically-last
+	// chunk (short-to-ground-localize) contains neither "data line" nor "DATA
+	// lines", so returning the wrong (last) chunk's body would still fail this.
+	if !strings.Contains(strings.ToLower(rr.Contents[0].Text), "data line") {
+		t.Fatalf("resource body not returned: %s", rr.Contents[0].Text)
+	}
+}
+
+func TestKBSearchTool(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})}
+	srv := New(deps)
+	out := callToolStructured(t, srv, "kb_search", map[string]any{"query": "continuity mode beep", "k": 3})
+	hits, ok := out["hits"].([]any)
+	if !ok || len(hits) == 0 {
+		t.Fatalf("no hits: %v", out)
+	}
+	first := hits[0].(map[string]any)
+	if first["id"] != "measurement-safety" {
+		t.Fatalf("top hit = %v, want measurement-safety", first["id"])
+	}
+	if _, ok := first["snippet"].(string); !ok {
+		t.Fatalf("hit missing snippet: %v", first)
+	}
+}

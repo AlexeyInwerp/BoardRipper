@@ -1,0 +1,203 @@
+package mcpserver
+
+import (
+	"context"
+	"embed"
+	"fmt"
+	"io/fs"
+	"log"
+	"sort"
+	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+//go:embed kb/*.md
+var kbFS embed.FS
+
+type kbChunk struct {
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Tags      []string `json:"tags"`
+	AppliesTo []string `json:"applies_to"`
+	Status    string   `json:"status"`
+	Body      string   `json:"body"`
+}
+
+// loadKB parses every embedded kb/*.md chunk once.
+func loadKB() []kbChunk {
+	return loadChunksFromFS(kbFS, "kb")
+}
+
+// loadChunksFromFS parses every *.md file in dir on the given filesystem.
+// A chunk that fails to parse (e.g. a frontmatter typo from a hand-edit) is
+// skipped and logged rather than aborting the whole KB load — one bad chunk
+// must not disable kb_search / all KB resources for every other chunk.
+// Exported as a standalone function (over an fs.FS) so it's testable with
+// testing/fstest.MapFS without touching the embedded kb/*.md tree.
+func loadChunksFromFS(fsys fs.FS, dir string) []kbChunk {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		log.Printf("mcp kb: reading %s: %v", dir, err)
+		return nil
+	}
+	var out []kbChunk
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		raw, err := fs.ReadFile(fsys, dir+"/"+e.Name())
+		if err != nil {
+			log.Printf("mcp kb: skipping %s: %v", e.Name(), err)
+			continue
+		}
+		c, err := parseChunk(string(raw))
+		if err != nil {
+			log.Printf("mcp kb: skipping %s: %v", e.Name(), err)
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// parseChunk splits leading ---frontmatter--- from the markdown body.
+func parseChunk(raw string) (kbChunk, error) {
+	s := strings.TrimLeft(raw, "\uFEFF \t\r\n")
+	if !strings.HasPrefix(s, "---") {
+		return kbChunk{}, fmt.Errorf("no frontmatter")
+	}
+	rest := s[3:]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return kbChunk{}, fmt.Errorf("unterminated frontmatter")
+	}
+	front := rest[:end]
+	body := strings.TrimLeft(rest[end+4:], "\r\n")
+	c := kbChunk{Body: strings.TrimSpace(body)}
+	for _, line := range strings.Split(front, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		switch k {
+		case "id":
+			c.ID = v
+		case "title":
+			c.Title = v
+		case "status":
+			c.Status = v
+		case "tags":
+			c.Tags = parseList(v)
+		case "applies_to":
+			c.AppliesTo = parseList(v)
+		}
+	}
+	if c.ID == "" || c.Title == "" {
+		return kbChunk{}, fmt.Errorf("missing id or title")
+	}
+	return c, nil
+}
+
+func parseList(v string) []string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "[")
+	v = strings.TrimSuffix(v, "]")
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// searchKB scores chunks by query-term hits (title×3, tags×2, body×1),
+// optionally filtered to chunks carrying ALL given tags, and returns the top k.
+func searchKB(chunks []kbChunk, query string, tags []string, k int) []kbChunk {
+	if k <= 0 || k > 50 {
+		k = 5
+	}
+	terms := strings.Fields(strings.ToLower(query))
+	type scored struct {
+		c     kbChunk
+		score int
+	}
+	var ranked []scored
+	for _, c := range chunks {
+		if !hasAllTags(c, tags) {
+			continue
+		}
+		title := strings.ToLower(c.Title)
+		tagStr := strings.ToLower(strings.Join(c.Tags, " "))
+		body := strings.ToLower(c.Body)
+		score := 0
+		for _, t := range terms {
+			score += 3 * strings.Count(title, t)
+			score += 2 * strings.Count(tagStr, t)
+			score += strings.Count(body, t)
+		}
+		if score > 0 || len(terms) == 0 {
+			ranked = append(ranked, scored{c, score})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].c.ID < ranked[j].c.ID
+	})
+	out := make([]kbChunk, 0, k)
+	for i := 0; i < len(ranked) && i < k; i++ {
+		out = append(out, ranked[i].c)
+	}
+	return out
+}
+
+// registerKBResources exposes each loaded KB chunk as an MCP resource at
+// boardripper://kb/<id>, so clients can list and read them directly (in
+// addition to kb_search's ranked lookup).
+func registerKBResources(s *mcp.Server, chunks []kbChunk) {
+	for _, c := range chunks {
+		c := c // capture per-iteration copy; closure below must return THIS chunk's body
+		s.AddResource(&mcp.Resource{
+			URI:         "boardripper://kb/" + c.ID,
+			Name:        c.Title,
+			Description: "Repair knowledge: " + c.Title,
+			MIMEType:    "text/markdown",
+		}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{
+				Contents: []*mcp.ResourceContents{
+					{URI: req.Params.URI, MIMEType: "text/markdown", Text: c.Body},
+				},
+			}, nil
+		})
+	}
+}
+
+func hasAllTags(c kbChunk, tags []string) bool {
+	for _, want := range tags {
+		want = strings.ToLower(strings.TrimSpace(want))
+		if want == "" {
+			continue
+		}
+		found := false
+		for _, have := range c.Tags {
+			if strings.ToLower(have) == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
