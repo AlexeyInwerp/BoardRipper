@@ -647,3 +647,69 @@ func TestServerInstructions_Persona(t *testing.T) {
 		t.Fatal("existing boardripperInstructions was dropped")
 	}
 }
+
+// --- prompts ---
+
+func TestPrompts_ListAndGet(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})}
+	srv := New(deps)
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcp.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cl := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "1"}, nil)
+	cs, err := cl.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	lp, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, p := range lp.Prompts {
+		names[p.Name] = true
+	}
+	for _, want := range []string{"understand_circuit", "diagnose", "explain"} {
+		if !names[want] {
+			t.Fatalf("prompts/list missing %q", want)
+		}
+	}
+
+	// get with an argument -> the arg is interpolated into the message text.
+	gp, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "understand_circuit", Arguments: map[string]string{"focus": "PP3V3_G3H"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gp.Messages) == 0 {
+		t.Fatal("no messages")
+	}
+	txt, ok := gp.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("message content is %T, want *TextContent", gp.Messages[0].Content)
+	}
+	if !strings.Contains(txt.Text, "PP3V3_G3H") {
+		t.Fatalf("focus arg not interpolated: %s", txt.Text)
+	}
+	if gp.Messages[0].Role != "user" {
+		t.Fatalf("role = %q, want user", gp.Messages[0].Role)
+	}
+	// prompts must not reference the Phase-3 kb_search tool.
+	if strings.Contains(txt.Text, "kb_search") {
+		t.Fatal("prompt references kb_search before Phase 3")
+	}
+
+	// get with NO argument still returns a valid message (optional arg).
+	gp2, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "diagnose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gp2.Messages) == 0 {
+		t.Fatal("diagnose returned no messages without arg")
+	}
+}

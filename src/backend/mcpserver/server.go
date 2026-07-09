@@ -127,6 +127,7 @@ func New(deps *Deps) *Server {
 
 	registerNativeTools(s.mcp, deps)
 	registerLiveTools(s.mcp, deps)
+	registerPrompts(s.mcp)
 
 	s.http = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp }, nil)
 	return s
