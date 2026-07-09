@@ -713,3 +713,52 @@ func TestPrompts_ListAndGet(t *testing.T) {
 		t.Fatal("diagnose returned no messages without arg")
 	}
 }
+
+func TestKBResources(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})}
+	srv := New(deps)
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcp.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cl := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "1"}, nil)
+	cs, err := cl.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	lr, err := cs.ListResources(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uri string
+	for _, r := range lr.Resources {
+		if r.URI == "boardripper://kb/diode-mode-usage" {
+			uri = r.URI
+		}
+	}
+	if uri == "" {
+		t.Fatal("kb resource diode-mode-usage not listed")
+	}
+
+	rr, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rr.Contents) == 0 || rr.Contents[0].MIMEType != "text/markdown" {
+		t.Fatalf("bad resource contents: %+v", rr.Contents)
+	}
+	// Case-insensitive: the committed diode-mode-usage.md chunk (Task 1) reads
+	// "DATA lines" (capitalized), not lowercase "data line" as in the brief's
+	// literal test text — match case-insensitively rather than edit shipped KB
+	// prose. Still discriminates the loop-capture bug: the alphabetically-last
+	// chunk (short-to-ground-localize) contains neither "data line" nor "DATA
+	// lines", so returning the wrong (last) chunk's body would still fail this.
+	if !strings.Contains(strings.ToLower(rr.Contents[0].Text), "data line") {
+		t.Fatalf("resource body not returned: %s", rr.Contents[0].Text)
+	}
+}

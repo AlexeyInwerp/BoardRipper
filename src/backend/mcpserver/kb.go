@@ -1,10 +1,13 @@
 package mcpserver
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 //go:embed kb/*.md
@@ -141,6 +144,27 @@ func searchKB(chunks []kbChunk, query string, tags []string, k int) []kbChunk {
 		out = append(out, ranked[i].c)
 	}
 	return out
+}
+
+// registerKBResources exposes each loaded KB chunk as an MCP resource at
+// boardripper://kb/<id>, so clients can list and read them directly (in
+// addition to kb_search's ranked lookup).
+func registerKBResources(s *mcp.Server, chunks []kbChunk) {
+	for _, c := range chunks {
+		c := c // capture per-iteration copy; closure below must return THIS chunk's body
+		s.AddResource(&mcp.Resource{
+			URI:         "boardripper://kb/" + c.ID,
+			Name:        c.Title,
+			Description: "Repair knowledge: " + c.Title,
+			MIMEType:    "text/markdown",
+		}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{
+				Contents: []*mcp.ResourceContents{
+					{URI: req.Params.URI, MIMEType: "text/markdown", Text: c.Body},
+				},
+			}, nil
+		})
+	}
 }
 
 func hasAllTags(c kbChunk, tags []string) bool {

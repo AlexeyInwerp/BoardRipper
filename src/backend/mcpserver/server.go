@@ -93,6 +93,7 @@ type Server struct {
 	mcp  *mcp.Server
 	http *mcp.StreamableHTTPHandler
 	act  *activity
+	kb   []kbChunk
 }
 
 type pingResult struct {
@@ -127,6 +128,12 @@ func New(deps *Deps) *Server {
 
 	registerNativeTools(s.mcp, deps)
 	registerLiveTools(s.mcp, deps)
+
+	if chunks, err := loadKB(); err == nil {
+		s.kb = chunks
+		registerKBResources(s.mcp, chunks)
+	}
+
 	registerPrompts(s.mcp)
 
 	s.http = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp }, nil)
