@@ -1,5 +1,32 @@
 # BoardRipper changelog
 
+## v0.31.34 — 2026-07-09
+
+Continues the MCP build-out: a connected AI assistant now arrives primed as a
+repair technician and can pull on a built-in repair knowledge base. Off by
+default; enable it in Settings ▸ Integrations.
+
+### MCP integration
+
+- **The assistant is primed as a repair technician and teacher.** Every MCP
+  connection now carries a persona: understand the circuit before judging it,
+  work from evidence not guesses, treat unlabeled nets as low-trust, follow
+  sound measurement practice (diode mode for data lines, not power rails; ohms
+  and diode only on an unpowered board; continuity mode for continuity only),
+  and teach the *why* in plain terms — calibrated to how much guidance you want.
+  (`d59e812`)
+- **Three step-by-step workflows you can invoke.** `understand_circuit`,
+  `diagnose`, and `explain` (they appear as slash commands in Claude Code) walk
+  the assistant through learning a circuit, running a symptom-driven diagnosis
+  on the shared worklist, or teaching you about a net/part/concept — each
+  grounded in the board you have open. (`093a5c4`)
+- **A built-in repair knowledge base.** The assistant can pull concise method
+  and concept notes on demand — short-to-ground localization, measurement
+  hygiene, when diode mode helps vs misleads, power-rail basics — through a
+  `kb_search` tool and read each note as an addressable resource. It searches by
+  relevance rather than loading everything, so the connection stays lean.
+  (`a779430`, `4800d3c`, `53719d3`)
+
 ## v0.31.33 — 2026-07-09
 
 Expands the MCP integration so a connected AI assistant can actually see and
