@@ -1,5 +1,45 @@
 # BoardRipper changelog
 
+## v0.31.33 — 2026-07-09
+
+Expands the MCP integration so a connected AI assistant can actually see and
+read the board it's helping with — the first of a phased build-out. Off by
+default; enable it in Settings ▸ Integrations.
+
+### MCP integration
+
+- **The assistant can see the board and schematic now.** `board_snapshot`
+  captures the live board view as an image and `pdf_page_image` renders any page
+  of the open schematic, so a copilot can visually correlate a part on the board
+  with its symbol on the print instead of working from net names alone.
+  (`32ccf34`, `6789416`)
+- **Text access to the open PDF, plus scoped library search.** `pdf_page_text`
+  returns a page's text and `pdf_search_open` searches within the open document
+  instantly; the existing library-wide `pdf_search` now also accepts a single
+  file id to scope a search. (`f5db6d4`, `908da01`)
+- **Pull a PDF down to read it natively.** `pdf_download` hands the open
+  schematic's bytes to the assistant and `file_download` retrieves any indexed
+  library file by id, so a search hit becomes a document the model can read
+  end-to-end. (`4730d06`, `3c49c0e`)
+- **One-call orientation.** `board_overview` reports the open board, its
+  part/net counts, shown side, every open PDF (name/page/id), and a worklist
+  summary in a single call — and the bridge now tells the assistant which PDF
+  you have open. (`39f30a1`)
+- **Unlabeled nets are flagged low-trust.** Every net the assistant reads is
+  tagged `named` or `synthetic`, so it won't read a function into an
+  auto-generated name like `N$123`. (`cba1b66`)
+- **Drive-UI actions report their effect.** Highlighting a net, selecting a
+  part, or flipping sides now returns what actually happened (pins highlighted,
+  part found and its side), so the assistant can confirm an action instead of
+  guessing. (`4fc071c`)
+
+### Fixes
+
+- **Large images and downloads no longer drop the bridge.** The board↔assistant
+  WebSocket capped messages at 32 KiB and tore down the connection on any real
+  image or PDF; the limit is raised so snapshots, page renders, and downloads
+  round-trip cleanly. (`a4ef066`)
+
 ## v0.31.32 — 2026-07-08
 
 A memory-optimization pass. Across a long session BoardRipper now releases
