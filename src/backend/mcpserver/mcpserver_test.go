@@ -638,10 +638,6 @@ func TestServerInstructions_Persona(t *testing.T) {
 			t.Fatalf("Instructions missing %q", want)
 		}
 	}
-	// Phase 2 must NOT mention the Phase-3 kb_search tool yet.
-	if strings.Contains(got, "kb_search") {
-		t.Fatal("persona references kb_search before Phase 3")
-	}
 	// The existing worklist orientation must still be present (prepend, not replace).
 	if !strings.Contains(got, "worklist") {
 		t.Fatal("existing boardripperInstructions was dropped")
@@ -699,11 +695,6 @@ func TestPrompts_ListAndGet(t *testing.T) {
 	if gp.Messages[0].Role != "user" {
 		t.Fatalf("role = %q, want user", gp.Messages[0].Role)
 	}
-	// prompts must not reference the Phase-3 kb_search tool.
-	if strings.Contains(txt.Text, "kb_search") {
-		t.Fatal("prompt references kb_search before Phase 3")
-	}
-
 	// get with NO argument still returns a valid message (optional arg).
 	gp2, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "diagnose"})
 	if err != nil {
@@ -711,6 +702,17 @@ func TestPrompts_ListAndGet(t *testing.T) {
 	}
 	if len(gp2.Messages) == 0 {
 		t.Fatal("diagnose returned no messages without arg")
+	}
+}
+
+// TestKBReferencedInPersonaAndPrompts verifies Phase 3 wired kb_search back
+// into the persona and prompt bodies (Phase 2 intentionally omitted it).
+func TestKBReferencedInPersonaAndPrompts(t *testing.T) {
+	if !strings.Contains(technicianPersona, "kb_search") {
+		t.Fatal("persona should reference kb_search now that Phase 3 landed")
+	}
+	if !strings.Contains(understandCircuitBody(""), "kb_search") {
+		t.Fatal("understand_circuit should reference kb_search")
 	}
 }
 

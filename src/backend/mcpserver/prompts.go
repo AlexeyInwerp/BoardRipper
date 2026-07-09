@@ -9,8 +9,8 @@ import (
 
 // registerPrompts adds the invokable technician workflows. They are guidance
 // templates (a user-role message priming the persona + a tool-wired loop),
-// parameterized by an optional focus/symptom/topic. They name only tools that
-// exist through Phase 2 — no kb_search (Phase 3).
+// parameterized by an optional focus/symptom/topic. They reference kb_search
+// (the Phase 3 knowledge-base search tool) alongside the Phase 1/2 tools.
 func registerPrompts(s *mcp.Server) {
 	s.AddPrompt(&mcp.Prompt{
 		Name:        "understand_circuit",
@@ -61,7 +61,7 @@ func understandCircuitBody(focus string) string {
 	return `Act as an electronics repair technician. Goal: learn and explain how this circuit works, step by step` + scope + `.
 1. Orient — board_overview for the open board; board_resolve for brand/family.
 2. See it — board_snapshot; if a schematic is open, pdf_page_image the relevant page.
-3. Read it — scope with list_nets/list_parts; for the focus use net_info, part_info, net_neighbors, pin_connectivity; cross-reference the schematic with pdf_search_open / pdf_search / pdf_page_text.
+3. Read it — scope with list_nets/list_parts; for the focus use net_info, part_info, net_neighbors, pin_connectivity; cross-reference the schematic with pdf_search_open / pdf_search / pdf_page_text. Pull relevant method/concept chunks with kb_search and read the full chunk via its boardripper://kb/<id> resource.
 4. Model it — describe the power domains and signal path you reconstructed; what each key part does and how the nets tie together.
 5. Verify — where uncertain, request_measurement and say what a reading would confirm.
 Build understanding incrementally and show your reasoning; don't jump to conclusions. Treat unlabeled (synthetic) nets as low-trust — infer their role only from what they connect to and say so.`
@@ -75,7 +75,7 @@ func diagnoseBody(symptom string) string {
 	return `Act as an electronics repair technician diagnosing this board` + sym + `.
 1. Read the case — worklist_get + get_measurements (respect any user-recorded readings and notes).
 2. Orient — board_overview / board_resolve; obd_match + obd_data for known-good readings on this model.
-3. Localize — from the symptom, identify the implicated power domain / subsystem; bound it with net_neighbors + the schematic (pdf_search_open / pdf_page_image).
+3. Localize — from the symptom, identify the implicated power domain / subsystem; bound it with net_neighbors + the schematic (pdf_search_open / pdf_page_image); kb_search for the relevant technique (e.g. localizing a short).
 4. Hypothesize + test — add suspect parts/nets with worklist_add; request_measurement for the readings that would confirm or deny; wait, then get_measurements.
 5. Narrow — iterate until one cause stands; record it with worklist_set_list_note and a short post_message.
 Prefer measurements over assumptions; keep the worklist current. Worklist writes and UI actions only take effect if the user enabled drive-UI — otherwise report your findings in chat.`
