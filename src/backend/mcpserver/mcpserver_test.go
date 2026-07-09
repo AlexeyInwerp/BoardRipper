@@ -762,3 +762,20 @@ func TestKBResources(t *testing.T) {
 		t.Fatalf("resource body not returned: %s", rr.Contents[0].Text)
 	}
 }
+
+func TestKBSearchTool(t *testing.T) {
+	deps := &Deps{State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})}
+	srv := New(deps)
+	out := callToolStructured(t, srv, "kb_search", map[string]any{"query": "continuity mode beep", "k": 3})
+	hits, ok := out["hits"].([]any)
+	if !ok || len(hits) == 0 {
+		t.Fatalf("no hits: %v", out)
+	}
+	first := hits[0].(map[string]any)
+	if first["id"] != "measurement-safety" {
+		t.Fatalf("top hit = %v, want measurement-safety", first["id"])
+	}
+	if _, ok := first["snippet"].(string); !ok {
+		t.Fatalf("hit missing snippet: %v", first)
+	}
+}

@@ -132,6 +132,7 @@ func New(deps *Deps) *Server {
 	if chunks, err := loadKB(); err == nil {
 		s.kb = chunks
 		registerKBResources(s.mcp, chunks)
+		registerKBSearch(s.mcp, s.kb)
 	}
 
 	registerPrompts(s.mcp)

@@ -272,6 +272,49 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 	}
 }
 
+// --- kb_search ---
+
+type kbSearchArgs struct {
+	Query string   `json:"query" jsonschema:"what to look up (technique, symptom, concept)"`
+	Tags  []string `json:"tags,omitempty" jsonschema:"optional: only chunks carrying ALL these tags"`
+	K     int      `json:"k,omitempty" jsonschema:"max chunks to return (default 5, cap 50)"`
+}
+type kbHit struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Tags    []string `json:"tags"`
+	Snippet string   `json:"snippet"`
+}
+type kbSearchResult struct {
+	Hits  []kbHit `json:"hits"`
+	Total int     `json:"total"`
+}
+
+// registerKBSearch registers the kb_search tool over the given loaded KB
+// chunks. No-op when chunks is empty (e.g. loadKB failed) so the tool simply
+// isn't advertised rather than erroring on every call.
+func registerKBSearch(s *mcp.Server, chunks []kbChunk) {
+	if len(chunks) == 0 {
+		return
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "kb_search",
+		Description: "Search the repair knowledge base for relevant technique/concept chunks. Returns top matches (id, title, tags, snippet); read the full chunk via the boardripper://kb/<id> resource.",
+		Annotations: ro(true),
+	}, func(_ context.Context, _ *mcp.CallToolRequest, a kbSearchArgs) (*mcp.CallToolResult, kbSearchResult, error) {
+		found := searchKB(chunks, a.Query, a.Tags, a.K)
+		hits := make([]kbHit, 0, len(found))
+		for _, c := range found {
+			snippet := c.Body
+			if len(snippet) > 300 {
+				snippet = snippet[:300] + "…"
+			}
+			hits = append(hits, kbHit{ID: c.ID, Title: c.Title, Tags: c.Tags, Snippet: snippet})
+		}
+		return nil, kbSearchResult{Hits: hits, Total: len(hits)}, nil
+	})
+}
+
 // normalizeForMatch mirrors handlers.normalizeForMatch so obd_match behaves
 // identically to the /api/obd/match endpoint.
 func normalizeForMatch(s string) string {
