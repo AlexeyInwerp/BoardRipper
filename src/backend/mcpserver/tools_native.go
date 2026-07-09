@@ -305,14 +305,21 @@ func registerKBSearch(s *mcp.Server, chunks []kbChunk) {
 		found := searchKB(chunks, a.Query, a.Tags, a.K)
 		hits := make([]kbHit, 0, len(found))
 		for _, c := range found {
-			snippet := c.Body
-			if len(snippet) > 300 {
-				snippet = snippet[:300] + "…"
-			}
+			snippet := snippetOf(c.Body, 300)
 			hits = append(hits, kbHit{ID: c.ID, Title: c.Title, Tags: c.Tags, Snippet: snippet})
 		}
 		return nil, kbSearchResult{Hits: hits, Total: len(hits)}, nil
 	})
+}
+
+// snippetOf returns body truncated to at most max runes (not bytes), with an
+// ellipsis when truncated — so a multi-byte rune is never split.
+func snippetOf(body string, max int) string {
+	r := []rune(body)
+	if len(r) <= max {
+		return body
+	}
+	return string(r[:max]) + "…"
 }
 
 // normalizeForMatch mirrors handlers.normalizeForMatch so obd_match behaves

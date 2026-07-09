@@ -129,7 +129,7 @@ func New(deps *Deps) *Server {
 	registerNativeTools(s.mcp, deps)
 	registerLiveTools(s.mcp, deps)
 
-	if chunks, err := loadKB(); err == nil {
+	if chunks := loadKB(); len(chunks) > 0 {
 		s.kb = chunks
 		registerKBResources(s.mcp, chunks)
 		registerKBSearch(s.mcp, s.kb)

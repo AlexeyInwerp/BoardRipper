@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io/fs"
+	"log"
 	"sort"
 	"strings"
 
@@ -23,28 +25,41 @@ type kbChunk struct {
 }
 
 // loadKB parses every embedded kb/*.md chunk once.
-func loadKB() ([]kbChunk, error) {
-	entries, err := kbFS.ReadDir("kb")
+func loadKB() []kbChunk {
+	return loadChunksFromFS(kbFS, "kb")
+}
+
+// loadChunksFromFS parses every *.md file in dir on the given filesystem.
+// A chunk that fails to parse (e.g. a frontmatter typo from a hand-edit) is
+// skipped and logged rather than aborting the whole KB load — one bad chunk
+// must not disable kb_search / all KB resources for every other chunk.
+// Exported as a standalone function (over an fs.FS) so it's testable with
+// testing/fstest.MapFS without touching the embedded kb/*.md tree.
+func loadChunksFromFS(fsys fs.FS, dir string) []kbChunk {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return nil, err
+		log.Printf("mcp kb: reading %s: %v", dir, err)
+		return nil
 	}
 	var out []kbChunk
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		raw, err := kbFS.ReadFile("kb/" + e.Name())
+		raw, err := fs.ReadFile(fsys, dir+"/"+e.Name())
 		if err != nil {
-			return nil, err
+			log.Printf("mcp kb: skipping %s: %v", e.Name(), err)
+			continue
 		}
 		c, err := parseChunk(string(raw))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+			log.Printf("mcp kb: skipping %s: %v", e.Name(), err)
+			continue
 		}
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return out
 }
 
 // parseChunk splits leading ---frontmatter--- from the markdown body.

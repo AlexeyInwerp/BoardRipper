@@ -1,12 +1,12 @@
 package mcpserver
 
-import "testing"
+import (
+	"testing"
+	"testing/fstest"
+)
 
 func TestLoadKB(t *testing.T) {
-	chunks, err := loadKB()
-	if err != nil {
-		t.Fatalf("loadKB: %v", err)
-	}
+	chunks := loadKB()
 	if len(chunks) < 6 {
 		t.Fatalf("want >=6 chunks, got %d", len(chunks))
 	}
@@ -35,8 +35,28 @@ func TestLoadKB(t *testing.T) {
 	}
 }
 
+func TestLoadChunksFromFS_SkipsBad(t *testing.T) {
+	good := "---\nid: ok\ntitle: Good\ntags: [x]\nstatus: draft\n---\nbody text"
+	bad := "no frontmatter here"
+	fsys := fstest.MapFS{
+		"kb/ok.md":  {Data: []byte(good)},
+		"kb/bad.md": {Data: []byte(bad)},
+	}
+	chunks := loadChunksFromFS(fsys, "kb")
+	if len(chunks) != 1 || chunks[0].ID != "ok" {
+		t.Fatalf("want 1 good chunk, got %d: %+v", len(chunks), chunks)
+	}
+}
+
+func TestSnippetOf_RuneSafe(t *testing.T) {
+	s := snippetOf("ΩΩΩΩΩ", 3) // 5 two-byte runes, cap 3
+	if s != "ΩΩΩ…" {
+		t.Fatalf("snippetOf split a rune: %q", s)
+	}
+}
+
 func TestSearchKB(t *testing.T) {
-	chunks, _ := loadKB()
+	chunks := loadKB()
 	hits := searchKB(chunks, "diode mode on a power rail", nil, 3)
 	if len(hits) == 0 {
 		t.Fatal("no hits")
