@@ -519,6 +519,11 @@ class PdfStore extends Emitter {
     return this._activeFileName ? this._documents.get(this._activeFileName) ?? null : null;
   }
 
+  /** The focused document (or null if none open) — for consumers outside this
+   *  module that need the full `PdfDocument` (e.g. the MCP live-board bridge
+   *  reading `textPages`/`currentPage` for pdf_page_text / pdf_search_open). */
+  get activeDoc(): PdfDocument | null { return this._active; }
+
   get fileName(): string { return this._active?.fileName ?? ''; }
   get pageCount(): number { return this._active?.pageCount ?? 0; }
   get currentPage(): number { return this._active?.currentPage ?? 1; }
@@ -568,6 +573,12 @@ class PdfStore extends Emitter {
       fileId: d.fileId,
     }));
   }
+
+  /** Current page / page count for the MCP bridge descriptor (board_overview,
+   *  board_active). `null` when the doc isn't loaded — distinct from
+   *  getDocCurrentPage/getDocPageCount's UI-facing 1/0 defaults. */
+  pageOf(fileName: string): number | null { return this._documents.get(fileName)?.currentPage ?? null; }
+  pageCountOf(fileName: string): number | null { return this._documents.get(fileName)?.pageCount ?? null; }
 
   /** Tag an open PDF doc with its databank file id (after a drop is ingested). */
   setDocFileId(fileName: string, fileId: number): void {

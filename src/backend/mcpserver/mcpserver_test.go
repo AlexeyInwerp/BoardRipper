@@ -2,14 +2,18 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"boardripper/pdfindex"
 
+	"github.com/coder/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -347,6 +351,36 @@ func TestServerInstructions(t *testing.T) {
 	}
 }
 
+// --- binaryResult ---
+
+func TestBinaryResult_ImageRoundTrips(t *testing.T) {
+	res := binaryResult("image/png", []byte{0x89, 'P', 'N', 'G'}, map[string]any{"w": 4, "h": 2})
+	if res.IsError || len(res.Content) != 1 {
+		t.Fatalf("want 1 content block, got err=%v n=%d", res.IsError, len(res.Content))
+	}
+	img, ok := res.Content[0].(*mcp.ImageContent)
+	if !ok {
+		t.Fatalf("content[0] is %T, want *mcp.ImageContent", res.Content[0])
+	}
+	if img.MIMEType != "image/png" || len(img.Data) != 4 {
+		t.Fatalf("bad image content: mime=%q len=%d", img.MIMEType, len(img.Data))
+	}
+	if res.StructuredContent == nil {
+		t.Fatal("StructuredContent must carry the metadata map")
+	}
+}
+
+func TestBinaryResult_BlobForNonImage(t *testing.T) {
+	res := binaryResult("application/pdf", []byte("%PDF-1.7"), map[string]any{"size": 8})
+	er, ok := res.Content[0].(*mcp.EmbeddedResource)
+	if !ok || er.Resource == nil || er.Resource.MIMEType != "application/pdf" {
+		t.Fatalf("want application/pdf EmbeddedResource, got %T", res.Content[0])
+	}
+	if len(er.Resource.Blob) != 8 {
+		t.Fatalf("blob len=%d want 8", len(er.Resource.Blob))
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
@@ -354,4 +388,215 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// --- file_download ---
+
+func callToolRaw(t *testing.T, srv *Server, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := srv.mcp.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cl := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "1"}, nil)
+	cs, err := cl.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func callToolStructured(t *testing.T, srv *Server, name string, args map[string]any) map[string]any {
+	t.Helper()
+	res := callToolRaw(t, srv, name, args)
+	if res.IsError {
+		t.Fatalf("tool %s errored: %v", name, res.Content)
+	}
+	b, _ := json.Marshal(res.StructuredContent)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+func TestFileDownload(t *testing.T) {
+	deps := &Deps{
+		State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		FileBytes: func(_ context.Context, id int64) ([]byte, string, string, error) {
+			if id == 7 {
+				return []byte("%PDF-1.7 body"), "sch.pdf", "application/pdf", nil
+			}
+			return nil, "", "", fmt.Errorf("not found: %d", id)
+		},
+	}
+	srv := New(deps)
+	out := callToolStructured(t, srv, "file_download", map[string]any{"id": 7})
+	if out["filename"] != "sch.pdf" || out["mime"] != "application/pdf" {
+		t.Fatalf("bad meta: %v", out)
+	}
+	// missing id -> tool error
+	res := callToolRaw(t, srv, "file_download", map[string]any{"id": 999})
+	if !res.IsError {
+		t.Fatal("missing file should be a tool error")
+	}
+}
+
+func TestFileDownload_CapExceeded(t *testing.T) {
+	deps := &Deps{
+		State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		FileBytes: func(_ context.Context, id int64) ([]byte, string, string, error) {
+			return make([]byte, MaxDownloadBytes+1), "big.pdf", "application/pdf", nil
+		},
+	}
+	srv := New(deps)
+	res := callToolRaw(t, srv, "file_download", map[string]any{"id": 1})
+	if !res.IsError {
+		t.Fatal("oversized file must be a tool error, not a payload")
+	}
+}
+
+// --- pdf_search file scoping ---
+
+func TestPdfSearch_FileScope(t *testing.T) {
+	var gotRestrict []int64
+	deps := &Deps{
+		State: NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}}),
+		PDF: &fakePDFRec{fn: func(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
+			gotRestrict = r
+			return []pdfindex.SearchHit{{FileID: 5, PageNum: 1, Snippet: "hit"}}, nil
+		}},
+	}
+	srv := New(deps)
+	_ = callToolStructured(t, srv, "pdf_search", map[string]any{"query": "x", "file_id": 5})
+	if len(gotRestrict) != 1 || gotRestrict[0] != 5 {
+		t.Fatalf("file_id not forwarded as restrictTo: %v", gotRestrict)
+	}
+}
+
+type fakePDFRec struct {
+	fn func(string, []int64, int) ([]pdfindex.SearchHit, error)
+}
+
+func (f *fakePDFRec) SearchPages(q string, r []int64, l int) ([]pdfindex.SearchHit, error) {
+	return f.fn(q, r, l)
+}
+
+// --- decodeBinaryReply (pdf_download / liveBinaryTool) ---
+
+func TestDecodeBinaryReply(t *testing.T) {
+	raw := json.RawMessage(`{"base64":"JVBERg==","mime":"application/pdf","name":"a.pdf","size":4}`)
+	mime, data, meta, err := decodeBinaryReply(raw)
+	if err != nil {
+		t.Fatalf("decodeBinaryReply: %v", err)
+	}
+	if mime != "application/pdf" {
+		t.Fatalf("mime=%q want application/pdf", mime)
+	}
+	if string(data) != "%PDF" {
+		t.Fatalf("data=%q want %%PDF", data)
+	}
+	if meta["name"] != "a.pdf" {
+		t.Fatalf("meta[name]=%v want a.pdf", meta["name"])
+	}
+	if _, ok := meta["base64"]; ok {
+		t.Fatalf("meta must not carry the base64 payload: %v", meta)
+	}
+}
+
+func TestDecodeBinaryReply_BadBase64(t *testing.T) {
+	raw := json.RawMessage(`{"base64":"not-valid-base64!!","mime":"application/pdf"}`)
+	if _, _, _, err := decodeBinaryReply(raw); err == nil {
+		t.Fatal("expected error for invalid base64")
+	}
+}
+
+func TestDecodeBinaryReply_DefaultMime(t *testing.T) {
+	raw := json.RawMessage(`{"base64":"` + base64.StdEncoding.EncodeToString([]byte("x")) + `"}`)
+	mime, _, _, err := decodeBinaryReply(raw)
+	if err != nil {
+		t.Fatalf("decodeBinaryReply: %v", err)
+	}
+	if mime != "application/octet-stream" {
+		t.Fatalf("mime=%q want application/octet-stream default", mime)
+	}
+}
+
+// --- bridge WS read limit (binary tool replies) ---
+
+// TestBridge_LargeMessageRoundTrips proves a >32 KiB browser->backend frame
+// survives ServeWS. Binary tool replies (pdf_download's base64 body,
+// pdf_page_image / board_snapshot PNGs) are routed to the backend as a single
+// board_changed-shaped WS text frame far larger than coder/websocket's 32 KiB
+// default per-message read limit. Without bridge_ws.go's SetReadLimit call,
+// c.Read() errors on the oversized frame, the reader loop returns, and the
+// session tears down before the large board payload is ever stored — this
+// test fails (RED) if that SetReadLimit(...) line is removed, and passes
+// (GREEN) with it in place.
+func TestBridge_LargeMessageRoundTrips(t *testing.T) {
+	bridge := NewBridge()
+	st := NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})
+	const secret = "secret123secret123secret123secret1" // 35 chars, matches TestGate's convention
+
+	srv := httptest.NewServer(bridge.ServeWS(st, secret))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	// hello: small, authenticates + registers the session.
+	hello := map[string]any{"type": "hello", "session": "s1", "secret": secret, "board": map[string]any{}}
+	helloBytes, _ := json.Marshal(hello)
+	if err := c.Write(ctx, websocket.MessageText, helloBytes); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+
+	// board_changed: LARGE (~1 MiB) board payload, well over the 32 KiB
+	// default read limit that would otherwise close the connection.
+	const bigLen = 1_000_000
+	big := strings.Repeat("x", bigLen)
+	boardChanged := map[string]any{
+		"type":    "board_changed",
+		"session": "s1",
+		"board":   map[string]any{"name": "BigBoard", "blob": big},
+	}
+	bcBytes, err := json.Marshal(boardChanged)
+	if err != nil {
+		t.Fatalf("marshal board_changed: %v", err)
+	}
+	if len(bcBytes) <= 32768 {
+		t.Fatalf("test payload not actually oversized: %d bytes", len(bcBytes))
+	}
+	if err := c.Write(ctx, websocket.MessageText, bcBytes); err != nil {
+		t.Fatalf("write board_changed: %v", err)
+	}
+
+	// Poll bridge.Sessions() until the registered session reflects the large
+	// board payload, or time out.
+	deadline := time.Now().Add(2 * time.Second)
+	var lastLen int
+	for time.Now().Before(deadline) {
+		for _, raw := range bridge.Sessions() {
+			lastLen = len(raw)
+			if lastLen >= bigLen {
+				return // GREEN: large message round-tripped.
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("board_changed large payload never observed in bridge.Sessions() (last seen len=%d, want >= %d) — "+
+		"the oversized frame likely tore down the reader loop before SetReadLimit was applied", lastLen, bigLen)
 }

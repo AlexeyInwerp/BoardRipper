@@ -414,6 +414,20 @@ func main() {
 		Files:  db,
 		Boards: bdb,
 		OBD:    obdStore,
+		FileBytes: func(ctx context.Context, id int64) ([]byte, string, string, error) {
+			rec, err := db.GetFileByID(ctx, id)
+			if err != nil || rec == nil {
+				return nil, "", "", fmt.Errorf("file %d not found", id)
+			}
+			if rec.Size > mcpserver.MaxDownloadBytes {
+				return nil, "", "", fmt.Errorf("file too large: %d bytes", rec.Size)
+			}
+			data, err := handlers.ReadFileEager(scanner.ScanRoot(), rec.Path)
+			if err != nil {
+				return nil, "", "", err
+			}
+			return data, rec.Filename, mcpserver.MimeForExt(rec.Extension), nil
+		},
 	}
 	if pdfIndex != nil {
 		mcpDeps.PDF = pdfIndex // avoid typed-nil in the PDFSearcher interface

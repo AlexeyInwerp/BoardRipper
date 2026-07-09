@@ -72,6 +72,9 @@ type Deps struct {
 	Files  FileStore
 	Boards BoardResolver
 	OBD    ObdStore
+	// FileBytes reads a library file's bytes by id (path-sandboxed eager read).
+	// Left nil disables file_download. Returns filename + MIME alongside bytes.
+	FileBytes func(ctx context.Context, id int64) (data []byte, name, mime string, err error)
 }
 
 // Server wraps the SDK MCP server plus its Streamable HTTP handler.

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"boardripper/boarddb"
@@ -11,6 +12,45 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// MaxDownloadBytes caps file_download so the model doesn't get handed
+// multi-hundred-MB files; larger files should be paged via pdf_page_image/text.
+// Exported so main.go's FileBytes wiring can pre-check against the same cap.
+const MaxDownloadBytes = 50 << 20 // 50 MiB
+
+// MimeForExt maps a file extension (with or without leading dot) to a MIME
+// type for file_download's content block. Exported so main.go's FileBytes
+// wiring can reuse the same mapping.
+func MimeForExt(ext string) string {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "pdf":
+		return "application/pdf"
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// binaryResult wraps binary tool output: an ImageContent block for image/*
+// MIME types, otherwise an EmbeddedResource blob, plus the metadata map as
+// StructuredContent so the model gets both the bytes and the dimensions/size.
+func binaryResult(mime string, data []byte, meta map[string]any) *mcp.CallToolResult {
+	var content mcp.Content
+	if strings.HasPrefix(mime, "image/") {
+		content = &mcp.ImageContent{Data: data, MIMEType: mime}
+	} else {
+		content = &mcp.EmbeddedResource{Resource: &mcp.ResourceContents{
+			URI: "boardripper://download", MIMEType: mime, Blob: data,
+		}}
+	}
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{content},
+		StructuredContent: meta,
+	}
+}
 
 // --- store interfaces (satisfied by the concrete backend types) ---
 
@@ -44,8 +84,9 @@ func ro(b bool) *mcp.ToolAnnotations { return &mcp.ToolAnnotations{ReadOnlyHint:
 // --- pdf_search ---
 
 type pdfSearchArgs struct {
-	Query string `json:"query" jsonschema:"full-text query (part numbers, designators, keywords)"`
-	Limit int    `json:"limit,omitempty" jsonschema:"max hits (default 200, cap 1000)"`
+	Query  string `json:"query" jsonschema:"full-text query (part numbers, designators, keywords)"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"max hits (default 200, cap 1000)"`
+	FileID int64  `json:"file_id,omitempty" jsonschema:"optional: restrict search to a single indexed file id"`
 }
 type pdfHit struct {
 	FileID  int64  `json:"file_id"`
@@ -105,14 +146,18 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 	if deps.PDF != nil {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "pdf_search",
-			Description: "Full-text search across the indexed PDF library. Returns file_id, page, and a snippet for each hit.",
+			Description: "Full-text search across the indexed PDF library (library-wide); pass file_id to scope to one document. Returns file_id, page, and a snippet for each hit.",
 			Annotations: ro(true),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, a pdfSearchArgs) (*mcp.CallToolResult, pdfSearchResult, error) {
 			limit := a.Limit
 			if limit <= 0 || limit > 1000 {
 				limit = 200
 			}
-			hits, err := deps.PDF.SearchPages(a.Query, nil, limit)
+			var restrict []int64
+			if a.FileID > 0 {
+				restrict = []int64{a.FileID}
+			}
+			hits, err := deps.PDF.SearchPages(a.Query, restrict, limit)
 			if err != nil {
 				return errResult("pdf search failed: " + err.Error()), pdfSearchResult{}, nil
 			}
@@ -206,6 +251,23 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 			}
 			bindings, _ := deps.Files.GetBindingsForFile(ctx, a.ID)
 			return nil, fileGetResult{File: rec, Bindings: bindings}, nil
+		})
+	}
+
+	if deps.FileBytes != nil {
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "file_download",
+			Description: "Download a library file by id (from file_list/file_get or a pdf_search hit) as bytes, so the model can read it natively. Capped at 50 MiB.",
+			Annotations: ro(true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, a fileGetArgs) (*mcp.CallToolResult, any, error) {
+			data, name, mime, err := deps.FileBytes(ctx, a.ID)
+			if err != nil {
+				return errResult("file_download failed: " + err.Error()), nil, nil
+			}
+			if len(data) > MaxDownloadBytes {
+				return errResult(fmt.Sprintf("file too large (%d bytes, cap %d) — use pdf_page_image/pdf_page_text instead", len(data), MaxDownloadBytes)), nil, nil
+			}
+			return binaryResult(mime, data, map[string]any{"filename": name, "mime": mime, "size": len(data)}), nil, nil
 		})
 	}
 }

@@ -10,6 +10,9 @@ import { pdfStore } from './pdf-store';
 import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
+import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
+import { renderPdfPageToPng } from './pdf-render';
+import { getActiveApp } from '../renderer/renderer-registry';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -53,6 +56,9 @@ function boardDescriptor() {
     name: tab?.fileName ?? null,
     parts: b ? b.parts.length : 0,
     nets: b ? b.nets.size : 0,
+    pdfs: pdfStore.openPdfEntries().map((e) => ({
+      name: e.fileName, page: pdfStore.pageOf(e.fileName), pageCount: pdfStore.pageCountOf(e.fileName), fileId: e.fileId ?? null,
+    })),
     // Changes iff the active board changes; the helper re-reads when it differs.
     generation: `${boardStore.activeTabId ?? ''}:${tab?.fileName ?? ''}`,
   };
@@ -200,6 +206,15 @@ function requireBoard(): BoardData {
   return b;
 }
 
+/** The focused PDF document, or throw — used by pdf_page_text / pdf_search_open,
+ *  which read the OPEN PDF's cached text layer (distinct from the library-wide
+ *  pdf_search tool, which is backend-native and works with no PDF open). */
+function activePdf() {
+  const d = pdfStore.activeDoc;
+  if (!d) throw new Error('no PDF open in BoardRipper');
+  return d;
+}
+
 function findPart(b: BoardData, refdes: string) {
   const want = String(refdes).toLowerCase();
   return b.parts.find((pt) => pt.name.toLowerCase() === want);
@@ -218,6 +233,25 @@ function partSummary(pt: BoardData['parts'][number]) {
   };
 }
 
+/** Cap a canvas to `maxPx` on its longest side (MCP image-payload constraint:
+ *  images ≤2000px longest side). Retina board snapshots commonly extract at
+ *  2400–4000px; downscaling here also keeps the WS/base64 payload bounded.
+ *  Mirrors the cap style in pdf-render.ts's renderPdfPageToPng. Returns the
+ *  source canvas unchanged when already within budget. */
+function capCanvasSize(src: HTMLCanvasElement, maxPx: number): HTMLCanvasElement {
+  const longest = Math.max(src.width, src.height);
+  if (longest <= maxPx) return src;
+  const scale = maxPx / longest;
+  const w = Math.round(src.width * scale);
+  const h = Math.round(src.height * scale);
+  const dst = document.createElement('canvas');
+  dst.width = w;
+  dst.height = h;
+  const ctx = dst.getContext('2d')!;
+  ctx.drawImage(src, 0, 0, w, h);
+  return dst;
+}
+
 function netPins(b: BoardData, netName: string) {
   const net = b.nets.get(netName);
   if (!net) return null;
@@ -234,13 +268,30 @@ async function dispatch(op: string, p: any): Promise<any> {
       requireBoard();
       return boardDescriptor();
     }
+    case 'board_snapshot': {
+      requireBoard();
+      const app = getActiveApp();
+      if (!app) throw new Error('board renderer not ready');
+      const out = app.renderer.extract.canvas({ target: app.stage }) as HTMLCanvasElement;
+      const canvas = capCanvasSize(out, 2000);
+      const base64 = canvas.toDataURL('image/png').split(',')[1];
+      return { base64, mime: 'image/png', w: canvas.width, h: canvas.height };
+    }
+    case 'board_overview': {
+      const b = boardStore.board;
+      return {
+        ...boardDescriptor(),
+        board: b ? { parts: b.parts.length, nets: b.nets.size, side: boardStore.showTop ? 'top' : 'bottom' } : null,
+        worklist: buildOverview(worklistStore.aiSnapshot() as any, worklistStore.peekUnreadUserMessages()),
+      };
+    }
     case 'list_nets': {
       const b = requireBoard();
       const f = (p.filter ?? '').toLowerCase();
       const names = Array.from(b.nets.keys());
       const out = f ? names.filter((n) => n.toLowerCase().includes(f)) : names;
       const { total, offset, has_more, page } = paginate(out, p.limit, p.offset);
-      return { nets: page, total, offset, has_more };
+      return { nets: page.map((n) => ({ name: n, reliability: classifyNetName(n) })), total, offset, has_more };
     }
     case 'list_parts': {
       const b = requireBoard();
@@ -258,13 +309,17 @@ async function dispatch(op: string, p: any): Promise<any> {
       const pins = netPins(b, p.net);
       if (!pins) throw new Error(`net not found: ${p.net}`);
       const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
-      return { net: p.net, pin_count: pins.length, pins, parts };
+      return { net: p.net, pin_count: pins.length, pins, parts, reliability: classifyNetName(p.net) };
     }
     case 'net_neighbors': {
       const b = requireBoard();
       const depth = p.depth && p.depth > 0 ? p.depth : 1;
       const set = computeAdjacentNets(b, p.net, depth);
-      return { net: p.net, depth, neighbors: Array.from(set) };
+      return {
+        net: p.net,
+        depth,
+        neighbors: Array.from(set).map((name) => ({ name, reliability: classifyNetName(name) })),
+      };
     }
     case 'pin_connectivity': {
       const b = requireBoard();
@@ -273,7 +328,13 @@ async function dispatch(op: string, p: any): Promise<any> {
       const pin = part.pins.find((pn) => String(pn.name) === String(p.pin) || String(pn.number) === String(p.pin));
       if (!pin) throw new Error(`pin not found: ${p.pin} on ${p.part}`);
       const connected = pin.net ? netPins(b, pin.net) ?? [] : [];
-      return { part: part.name, pin: p.pin, net: pin.net || null, connected };
+      return {
+        part: part.name,
+        pin: p.pin,
+        net: pin.net || null,
+        connected,
+        net_reliability: pin.net ? classifyNetName(pin.net) : null,
+      };
     }
     case 'part_info': {
       const b = requireBoard();
@@ -350,6 +411,38 @@ async function dispatch(op: string, p: any): Promise<any> {
       const msgs = worklistStore.consumeUserMessages(p.only_unread !== false);
       return { messages: msgs.map((m) => ({ text: m.text, at: m.at })) };
     }
+    // ── open-PDF text ops (read the OPEN doc's cached text layer; distinct
+    // from the library-wide pdf_search tool) ──
+    case 'pdf_page_text': {
+      const d = activePdf();
+      const page = typeof p.page === 'number' && p.page > 0 ? p.page : d.currentPage;
+      return { page, text: pageText(d.textPages, page) };
+    }
+    case 'pdf_search_open': {
+      const d = activePdf();
+      const matches = searchTextPages(d.textPages, String(p.query ?? ''), p.limit);
+      return { matches, total: matches.length };
+    }
+    case 'pdf_page_image': {
+      const d = activePdf();
+      const page = typeof p.page === 'number' && p.page > 0 ? p.page : d.currentPage;
+      // Use the clean-aware proxy (returns strippedDoc when cleanMode is on and
+      // available) so a watermark-stripped page is what MCP callers see too.
+      const doc = pdfStore.getDocProxy(d.fileName) ?? d.doc;
+      const { base64, w, h } = await renderPdfPageToPng(doc, page, { rotation: d.rotation, mirror: d.mirror });
+      return { base64, mime: 'image/png', page, w, h };
+    }
+    case 'pdf_download': {
+      const d = activePdf();
+      const bytes = new Uint8Array(d.originalBuffer);
+      const MAX = 50 * 1024 * 1024;
+      if (bytes.byteLength > MAX) throw new Error(`PDF too large (${bytes.byteLength} bytes) to download over MCP`);
+      // btoa needs a binary string; build in chunks to avoid call-stack limits.
+      let bin = '';
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      return { base64: btoa(bin), mime: 'application/pdf', name: d.fileName, size: bytes.byteLength };
+    }
     default:
       return dispatchDrive(op, p);
   }
@@ -363,10 +456,12 @@ function toast(msg: string) {
 async function dispatchDrive(op: string, p: any): Promise<any> {
   switch (op) {
     case 'highlight_net': {
-      requireBoard();
+      const board = requireBoard();
       boardStore.highlightNet(p.net);
+      const pins = netPins(board, p.net) ?? [];
+      const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
       toast(`Agent highlighted net ${p.net}`);
-      return { ok: true, net: p.net };
+      return { ok: true, net: p.net, pins_highlighted: pins.length, parts };
     }
     case 'clear_highlight': {
       boardStore.highlightNet(null);
@@ -374,17 +469,18 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
       return { ok: true };
     }
     case 'select_part': {
-      requireBoard();
+      const board = requireBoard();
+      const part = findPart(board, p.refdes);
       boardStore.focusPart(p.refdes);
       toast(`Agent selected ${p.refdes}`);
-      return { ok: true, refdes: p.refdes };
+      return { ok: true, refdes: p.refdes, found: !!part, side: part?.side ?? null, centered: !!part };
     }
     case 'set_side': {
       requireBoard();
-      if (String(p.side).toLowerCase() === 'bottom') boardStore.selectBottom();
-      else boardStore.selectTop();
-      toast(`Agent set side: ${p.side}`);
-      return { ok: true, side: p.side };
+      const side = String(p.side).toLowerCase() === 'bottom' ? 'bottom' : 'top';
+      if (side === 'bottom') boardStore.selectBottom(); else boardStore.selectTop();
+      toast(`Agent set side: ${side}`);
+      return { ok: true, side };
     }
     case 'pdf_goto': {
       if (p.term) pdfStore.searchText(String(p.term), 'lookup');
@@ -457,4 +553,14 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     default:
       throw new Error(`unknown op: ${op}`);
   }
+}
+
+// Exposed so Playwright can drive `dispatch` directly against real stores
+// (bypassing the WebSocket bridge) to prove the frontend answers each op
+// correctly from a loaded board. Dev-only on window — never present in a
+// production build.
+export { dispatch as __dispatchForTest };
+if (import.meta.env.DEV) {
+  (window as unknown as { __brBridgeDispatch?: unknown }).__brBridgeDispatch =
+    (op: string, params: unknown) => dispatch(op, (params ?? {}) as any);
 }

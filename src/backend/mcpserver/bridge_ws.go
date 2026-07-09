@@ -42,6 +42,10 @@ func (b *Bridge) ServeWS(st *State, secret string) http.HandlerFunc {
 		if err != nil {
 			return
 		}
+		// Binary tool replies (pdf_download ≈ 4/3 × up to 50 MiB, pdf_page_image /
+		// board_snapshot PNGs) far exceed coder/websocket's 32 KiB default read
+		// limit; raise it or every large reply tears down the bridge session.
+		c.SetReadLimit(72 << 20) // 72 MiB: 50 MiB PDF base64-inflated (~67 MiB) + JSON envelope headroom
 		defer c.CloseNow()
 
 		ctx := r.Context()
