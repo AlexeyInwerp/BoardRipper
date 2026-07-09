@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"boardripper/pdfindex"
 
+	"github.com/coder/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -524,4 +526,77 @@ func TestDecodeBinaryReply_DefaultMime(t *testing.T) {
 	if mime != "application/octet-stream" {
 		t.Fatalf("mime=%q want application/octet-stream default", mime)
 	}
+}
+
+// --- bridge WS read limit (binary tool replies) ---
+
+// TestBridge_LargeMessageRoundTrips proves a >32 KiB browser->backend frame
+// survives ServeWS. Binary tool replies (pdf_download's base64 body,
+// pdf_page_image / board_snapshot PNGs) are routed to the backend as a single
+// board_changed-shaped WS text frame far larger than coder/websocket's 32 KiB
+// default per-message read limit. Without bridge_ws.go's SetReadLimit call,
+// c.Read() errors on the oversized frame, the reader loop returns, and the
+// session tears down before the large board payload is ever stored — this
+// test fails (RED) if that SetReadLimit(...) line is removed, and passes
+// (GREEN) with it in place.
+func TestBridge_LargeMessageRoundTrips(t *testing.T) {
+	bridge := NewBridge()
+	st := NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1"}})
+	const secret = "secret123secret123secret123secret1" // 35 chars, matches TestGate's convention
+
+	srv := httptest.NewServer(bridge.ServeWS(st, secret))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.CloseNow()
+
+	// hello: small, authenticates + registers the session.
+	hello := map[string]any{"type": "hello", "session": "s1", "secret": secret, "board": map[string]any{}}
+	helloBytes, _ := json.Marshal(hello)
+	if err := c.Write(ctx, websocket.MessageText, helloBytes); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+
+	// board_changed: LARGE (~1 MiB) board payload, well over the 32 KiB
+	// default read limit that would otherwise close the connection.
+	const bigLen = 1_000_000
+	big := strings.Repeat("x", bigLen)
+	boardChanged := map[string]any{
+		"type":    "board_changed",
+		"session": "s1",
+		"board":   map[string]any{"name": "BigBoard", "blob": big},
+	}
+	bcBytes, err := json.Marshal(boardChanged)
+	if err != nil {
+		t.Fatalf("marshal board_changed: %v", err)
+	}
+	if len(bcBytes) <= 32768 {
+		t.Fatalf("test payload not actually oversized: %d bytes", len(bcBytes))
+	}
+	if err := c.Write(ctx, websocket.MessageText, bcBytes); err != nil {
+		t.Fatalf("write board_changed: %v", err)
+	}
+
+	// Poll bridge.Sessions() until the registered session reflects the large
+	// board payload, or time out.
+	deadline := time.Now().Add(2 * time.Second)
+	var lastLen int
+	for time.Now().Before(deadline) {
+		for _, raw := range bridge.Sessions() {
+			lastLen = len(raw)
+			if lastLen >= bigLen {
+				return // GREEN: large message round-tripped.
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("board_changed large payload never observed in bridge.Sessions() (last seen len=%d, want >= %d) — "+
+		"the oversized frame likely tore down the reader loop before SetReadLimit was applied", lastLen, bigLen)
 }

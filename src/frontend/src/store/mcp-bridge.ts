@@ -233,6 +233,25 @@ function partSummary(pt: BoardData['parts'][number]) {
   };
 }
 
+/** Cap a canvas to `maxPx` on its longest side (MCP image-payload constraint:
+ *  images ≤2000px longest side). Retina board snapshots commonly extract at
+ *  2400–4000px; downscaling here also keeps the WS/base64 payload bounded.
+ *  Mirrors the cap style in pdf-render.ts's renderPdfPageToPng. Returns the
+ *  source canvas unchanged when already within budget. */
+function capCanvasSize(src: HTMLCanvasElement, maxPx: number): HTMLCanvasElement {
+  const longest = Math.max(src.width, src.height);
+  if (longest <= maxPx) return src;
+  const scale = maxPx / longest;
+  const w = Math.round(src.width * scale);
+  const h = Math.round(src.height * scale);
+  const dst = document.createElement('canvas');
+  dst.width = w;
+  dst.height = h;
+  const ctx = dst.getContext('2d')!;
+  ctx.drawImage(src, 0, 0, w, h);
+  return dst;
+}
+
 function netPins(b: BoardData, netName: string) {
   const net = b.nets.get(netName);
   if (!net) return null;
@@ -254,8 +273,9 @@ async function dispatch(op: string, p: any): Promise<any> {
       const app = getActiveApp();
       if (!app) throw new Error('board renderer not ready');
       const out = app.renderer.extract.canvas({ target: app.stage }) as HTMLCanvasElement;
-      const base64 = out.toDataURL('image/png').split(',')[1];
-      return { base64, mime: 'image/png', w: out.width, h: out.height };
+      const canvas = capCanvasSize(out, 2000);
+      const base64 = canvas.toDataURL('image/png').split(',')[1];
+      return { base64, mime: 'image/png', w: canvas.width, h: canvas.height };
     }
     case 'board_overview': {
       const b = boardStore.board;
@@ -406,7 +426,10 @@ async function dispatch(op: string, p: any): Promise<any> {
     case 'pdf_page_image': {
       const d = activePdf();
       const page = typeof p.page === 'number' && p.page > 0 ? p.page : d.currentPage;
-      const { base64, w, h } = await renderPdfPageToPng(d.doc, page, { rotation: d.rotation, mirror: d.mirror });
+      // Use the clean-aware proxy (returns strippedDoc when cleanMode is on and
+      // available) so a watermark-stripped page is what MCP callers see too.
+      const doc = pdfStore.getDocProxy(d.fileName) ?? d.doc;
+      const { base64, w, h } = await renderPdfPageToPng(doc, page, { rotation: d.rotation, mirror: d.mirror });
       return { base64, mime: 'image/png', page, w, h };
     }
     case 'pdf_download': {
