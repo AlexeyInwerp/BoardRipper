@@ -3223,6 +3223,13 @@ body {
   font-size: 11px;
   line-height: 1.3;
   margin-top: 2px;
+  /* Override the container's `white-space: nowrap` for the note line only:
+     a long note was rendering as one very wide, unwrapped line and its own
+     newlines were collapsed. pre-wrap keeps the note's newlines AND wraps
+     long lines; the cap stops the tooltip from stretching across the board. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 260px;
 }
 .pin-net-tooltip .pnt-worklist svg,
 .pin-net-tooltip .pnt-worklist-net svg {

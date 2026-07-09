@@ -20,6 +20,7 @@ import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../s
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
 import { startMcpBridge, stopMcpBridge } from '../store/mcp-bridge';
+import { copyText } from '../clipboard';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
@@ -467,7 +468,7 @@ function CopyButton({ text, disabled }: { text: string; disabled?: boolean }) {
     <button type="button" className="library-tab" disabled={disabled}
       style={{ padding: '3px 10px', fontSize: 11 }}
       onClick={async () => {
-        try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+        try { await copyText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }
         catch { /* clipboard blocked */ }
       }}>
       {copied ? 'Copied ✓' : 'Copy'}
