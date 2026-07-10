@@ -29,6 +29,7 @@ import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '
 import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
+import { compareStackHits, type StackHit } from './hit-test-ranking';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { registerRenderer, unregisterRenderer } from './renderer-registry';
 import { getFormat } from '../parsers/registry';
@@ -427,7 +428,7 @@ export class BoardRenderer {
   private _haloTexture: Texture | null = null;
   private _haloSprite: Sprite | null = null;
   // Last-rendered selection — used to skip redundant renderSelection() on tab switch
-  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, discoHighlight: false, searchSelectionActive: false, connectionHighlight: false };
+  private lastRenderedSel = { partIndex: null as number | null, pinIndex: null as number | null, highlightedNet: null as string | null, adjacentNetsSize: 0, searchLen: 0, board: null as BoardData | null, dimMode: 'dim' as 'off' | 'dim' | 'darklight', butterfly: false, showTop: true, showBottom: true, showGhosts: true, discoHighlight: false, searchSelectionActive: false, connectionHighlight: false, rotation: 0, mirrorX: false, mirrorY: false, flipAxis: 'x' as 'x' | 'y' };
   // Track previous top/bottom state for flip-to-center
   private prevShowTop = true;
   private prevShowBottom = false;
@@ -2520,9 +2521,17 @@ export class BoardRenderer {
         || boardStore.showGhosts !== lrs.showGhosts
         || boardStore.discoHighlight !== lrs.discoHighlight
         || boardStore.searchSelectionActive !== lrs.searchSelectionActive
-        || boardStore.connectionHighlight !== lrs.connectionHighlight) {
+        || boardStore.connectionHighlight !== lrs.connectionHighlight
+        // Rotation/mirror change must re-run selection so the pooled white
+        // name-clones (acquireNetLabel) re-copy the base labels' transform —
+        // otherwise the base re-orients via applyFlips but the frozen clone
+        // doesn't, leaving a doubled/offset ghost of every highlighted name.
+        || boardStore.rotation !== lrs.rotation
+        || boardStore.mirrorX !== lrs.mirrorX
+        || boardStore.mirrorY !== lrs.mirrorY
+        || boardStore.flipAxis !== lrs.flipAxis) {
         this.renderSelection();
-        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, discoHighlight: boardStore.discoHighlight, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight };
+        this.lastRenderedSel = { partIndex: sel.partIndex, pinIndex: sel.pinIndex, highlightedNet: sel.highlightedNet, adjacentNetsSize: sel.adjacentNets.size, searchLen, board: this.board, dimMode: boardStore.dimMode, butterfly: boardStore.butterfly, showTop: boardStore.showTop, showBottom: boardStore.showBottom, showGhosts: boardStore.showGhosts, discoHighlight: boardStore.discoHighlight, searchSelectionActive: boardStore.searchSelectionActive, connectionHighlight: boardStore.connectionHighlight, rotation: boardStore.rotation, mirrorX: boardStore.mirrorX, mirrorY: boardStore.mirrorY, flipAxis: boardStore.flipAxis };
       }
 
       // PDF follow mode: search for selected component
@@ -4734,7 +4743,7 @@ export class BoardRenderer {
     }
 
     const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
-    const hits: { partIndex: number; pinIndex: number; area: number; sub: number }[] = [];
+    const hits: StackHit[] = [];
 
     for (const pi of candidateSet) {
       const part = this.board.parts[pi];
@@ -4746,6 +4755,11 @@ export class BoardRenderer {
       // else within click threshold). Same detection as before, per-part.
       let pinIndex = -1;
       let pinDist2 = Infinity;
+      // Whether the winning pin was hit by genuine pad CONTAINMENT (poly / rect)
+      // vs merely falling within the zoom-scaled distance threshold. #24: a
+      // distance-only hit on a nearby test point must not outrank the component
+      // the click is actually inside.
+      let pinContained = false;
       const padPolys = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(pi) : null;
       if (padPolys) {
         for (let pni = 0; pni < 2; pni++) {
@@ -4754,7 +4768,7 @@ export class BoardRenderer {
             const cx = poly.reduce((a: number, p: [number, number]) => a + p[0], 0) / poly.length;
             const cy = poly.reduce((a: number, p: [number, number]) => a + p[1], 0) / poly.length;
             const d2 = (local.x - cx) ** 2 + (local.y - cy) ** 2;
-            if (d2 < pinDist2) { pinDist2 = d2; pinIndex = pni; }
+            if (d2 < pinDist2) { pinDist2 = d2; pinIndex = pni; pinContained = true; }
           }
         }
       } else {
@@ -4765,12 +4779,12 @@ export class BoardRenderer {
             if (local.x >= pb.minX && local.x <= pb.maxX && local.y >= pb.minY && local.y <= pb.maxY) {
               const cx = (pb.minX + pb.maxX) / 2, cy = (pb.minY + pb.maxY) / 2;
               const d2 = (local.x - cx) ** 2 + (local.y - cy) ** 2;
-              if (d2 < pinDist2) { pinDist2 = d2; pinIndex = pni; }
+              if (d2 < pinDist2) { pinDist2 = d2; pinIndex = pni; pinContained = true; }
             }
           } else {
             const dx = pin.position.x - local.x, dy = pin.position.y - local.y;
             const d2 = dx * dx + dy * dy;
-            if (d2 < pinDist2 && d2 < threshold * threshold) { pinDist2 = d2; pinIndex = pni; }
+            if (d2 < pinDist2 && d2 < threshold * threshold) { pinDist2 = d2; pinIndex = pni; pinContained = false; }
           }
         }
       }
@@ -4784,21 +4798,24 @@ export class BoardRenderer {
       const area = rb.pw * rb.ph;
       if (pinIndex >= 0) {
         // Pin/pad hit → default to the pin (net highlight, as before). `sub`
-        // keeps the pin entry ahead of the body entry for the same part.
-        hits.push({ partIndex: pi, pinIndex, area, sub: 0 });
+        // keeps the pin entry ahead of the body entry for the same part. The hit
+        // is "contained" if the pad enclosed the point OR the body does — a bare
+        // distance-threshold pin hit (test point near the click) is not.
+        hits.push({ partIndex: pi, pinIndex, area, sub: 0, contained: pinContained || bodyContains });
         // On 2-pin parts the two pads cover the whole footprint, so the body is
         // otherwise unreachable — offer the WHOLE COMPONENT as the next cycle
         // step so the part itself can be selected (no net). (#23 follow-up)
         if (part.pins.length === 2 && bodyContains) {
-          hits.push({ partIndex: pi, pinIndex: -1, area, sub: 1 });
+          hits.push({ partIndex: pi, pinIndex: -1, area, sub: 1, contained: true });
         }
       } else if (bodyContains) {
-        hits.push({ partIndex: pi, pinIndex: -1, area, sub: 0 });
+        hits.push({ partIndex: pi, pinIndex: -1, area, sub: 0, contained: true });
       }
     }
 
-    // Smallest render area first; within a part, pin before whole-body.
-    hits.sort((a, b) => a.area - b.area || a.sub - b.sub);
+    // Contained hits first (the click is genuinely inside them), then smallest
+    // render area (most-specific stacked part, #23), then pin before whole-body.
+    hits.sort(compareStackHits);
     return hits.map(h => ({ partIndex: h.partIndex, pinIndex: h.pinIndex }));
   }
 
