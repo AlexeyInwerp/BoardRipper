@@ -544,7 +544,7 @@ export const DEFAULTS: RenderSettings = {
   keyboardPanFraction: 0.10,
   keyboardZoomDelta: 100,
 
-  clickThreshold: 30,
+  clickThreshold: 15,
   fitPadding: 50,
   disableInertia: true,
   wheelSmooth: 5,
