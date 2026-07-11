@@ -1,7 +1,7 @@
 {
   "name": "boardripper-frontend",
   "private": true,
-  "version": "0.31.34",
+  "version": "0.31.35",
   "type": "module",
   "scripts": {
     "dev": "vite",
