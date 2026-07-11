@@ -1,5 +1,31 @@
 # BoardRipper changelog
 
+## v0.31.35 — 2026-07-11
+
+A selection and small-UI fix pass.
+
+### Fixes
+
+- **A nearby test point no longer steals a click meant for the component.** From
+  a zoomed-out view the "pin click radius" (a screen-pixel grab distance) grew
+  large in board units, so a small surrounding test point registered as the click
+  and — being the smallest thing there — won selection. Clicking inside a
+  component now takes priority over a merely-nearby pin, and the default Pin Click
+  Radius is tighter (30→15px). Genuinely stacked components still cycle
+  smallest-first. (`eb5eac27`, `ec18e86c`, #24)
+- **Component names no longer render doubled when the board is rotated or
+  mirrored.** The white highlight copy of a selected / net-highlighted name stayed
+  frozen at its old orientation while the base name re-oriented, leaving two
+  overlapping offset copies; the highlight now re-syncs on rotate/mirror.
+  (`eb5eac27`)
+- **Worklist notes wrap in the board hover tooltip.** A long note used to stretch
+  into one very wide line with its own line breaks collapsed; it now wraps and
+  keeps its newlines. (`d9127ee2`)
+- **The MCP connection Copy button works over plain HTTP.** On a LAN / NAS address
+  (not HTTPS or localhost) the browser Clipboard API is unavailable, so the button
+  silently did nothing; it now falls back to a copy path that works there.
+  (`d9127ee2`)
+
 ## v0.31.34 — 2026-07-09
 
 Continues the MCP build-out: a connected AI assistant now arrives primed as a
