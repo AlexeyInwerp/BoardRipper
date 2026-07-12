@@ -361,7 +361,9 @@ function chainComponent(segIdxs: number[], segments: Segment[], eps = 1.0): Poin
 
 /** Compute per-cluster bounding boxes for UI display of outline components. */
 function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }> {
+  const tCluster = performance.now();
   const groups = clusterSegments(segments);
+  log.perf.log(`XZZ clusterSegments (bboxes): ${(performance.now() - tCluster).toFixed(0)}ms for ${segments.length} segments → ${groups.length} groups`);
   return groups.map(idxs => {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const i of idxs) {
@@ -436,7 +438,9 @@ function groupComponentsByGeometry(
  *  halves, fiducial clusters), producing "spaghetti" lines across the board. */
 function chainByComponent(segments: Segment[]): Point[] {
   if (segments.length === 0) return [];
+  const tCluster = performance.now();
   const groups = clusterSegments(segments);
+  log.perf.log(`XZZ clusterSegments (chain): ${(performance.now() - tCluster).toFixed(0)}ms for ${segments.length} segments → ${groups.length} groups`);
   const out: Point[] = [];
   const NAN_BREAK: Point = { x: NaN, y: NaN };
   for (const idxs of groups) {

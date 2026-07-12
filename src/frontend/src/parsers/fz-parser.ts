@@ -21,6 +21,7 @@
 import { inflate, inflateRaw } from 'pako';
 import type { BoardData, Part, Pin, Nail, Point } from './types';
 import { computeBBox, buildNets, computePartGeometry, generateSyntheticOutline } from './types';
+import { log } from '../store/log-store';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -405,7 +406,9 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
     if (key.length !== 44) {
       throw new Error('FZ key must be exactly 44 uint32 values.');
     }
+    const tDec = performance.now();
     rc6Decrypt(data, key);
+    log.perf.log(`FZ rc6Decrypt: ${(performance.now() - tDec).toFixed(0)}ms for ${data.length.toLocaleString()} bytes`);
 
     // Verify decryption produced valid zlib at offset 4
     if (!isZlibAt(data, 4)) {
@@ -446,6 +449,7 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
     try { return decode(inflate(data.subarray(start, end))); } catch { return null; }
   };
 
+  const tInf = performance.now();
   let contentText: string | null = tryZlib(contentStart, contentEnd);
 
   // Variant 1 — GOCCANH-XJ writes `descrSize` 4 bytes long, chopping the deflate
@@ -470,6 +474,7 @@ export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<B
   if (contentText === null) {
     throw new Error('FZ content decompression failed: no decoder produced board content');
   }
+  log.perf.log(`FZ inflate: ${(performance.now() - tInf).toFixed(0)}ms → ${contentText.length.toLocaleString()} chars`);
 
   // Detect the declared coordinate unit (mils by default). The millimetre
   // sanity-check that defends against mislabelled exports lives in parseContent.

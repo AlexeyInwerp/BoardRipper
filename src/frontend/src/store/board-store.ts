@@ -952,10 +952,12 @@ class BoardStore extends Emitter {
         );
 
         loadProgressStore.setPhase('Post-process', 'Mechanical-part detection, derived-view, filters');
+        const tPost = performance.now();
         flagMechanicalParts(board.parts);
         tab.board = board;
         invalidateDerivedBoard(tab);
         applyBoardFilters(tab);
+        log.perf.log(`post-parse: ${(performance.now() - tPost).toFixed(0)}ms (flagMechanical + derive + filters)`);
         tab.rotation = this.autoRotation(board);
         tab.flipAxis = flipAxisForRotation(tab.rotation);
         if (board.flipAxis) tab.flipAxis = board.flipAxis;
@@ -977,7 +979,9 @@ class BoardStore extends Emitter {
         }
 
         loadProgressStore.setPhase('Writing cache', 'Serialising BoardData to IndexedDB');
+        const tCache = performance.now();
         await boardCache.put(file.name, file.size, file.lastModified, board);
+        log.perf.log(`cache put: ${(performance.now() - tCache).toFixed(0)}ms`);
 
         if (board.parserNotes) {
           for (const note of board.parserNotes) this.addToast(note, 'info');
