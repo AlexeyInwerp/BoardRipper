@@ -978,10 +978,14 @@ class BoardStore extends Emitter {
           tab.showBottom = true;
         }
 
-        loadProgressStore.setPhase('Writing cache', 'Serialising BoardData to IndexedDB');
+        // Cache write runs in the background — the renderer handoff below must
+        // not wait on IndexedDB serialization (hundreds of ms on big boards),
+        // and a failed write must not fail the load (the board is already good).
+        loadProgressStore.pushLog('Cache write scheduled (background)');
         const tCache = performance.now();
-        await boardCache.put(file.name, file.size, file.lastModified, board);
-        log.perf.log(`cache put: ${(performance.now() - tCache).toFixed(0)}ms`);
+        void boardCache.put(file.name, file.size, file.lastModified, board)
+          .then(() => log.perf.log(`cache put: ${(performance.now() - tCache).toFixed(0)}ms (background)`))
+          .catch(e => log.cache.error(`Cache write failed for ${file.name}:`, e));
 
         if (board.parserNotes) {
           for (const note of board.parserNotes) this.addToast(note, 'info');
