@@ -199,11 +199,12 @@ const OUTLINE_LAYER = 28;
 const SILKSCREEN_LAYER = 17;
 const decoder = new TextDecoder('utf-8', { fatal: false });
 
-interface Segment { p1: Point; p2: Point; }
+export interface Segment { p1: Point; p2: Point; }
 
 /** Group outline segments into connected components via endpoint-proximity union-find.
- *  Two segments share a component if any endpoint-pair is within `eps` mils. */
-function clusterSegments(segments: Segment[], eps = 1.0): number[][] {
+ *  Two segments share a component if any endpoint-pair is within `eps` mils.
+ *  Exported for the parity test in xzz-cluster.test.ts. */
+export function clusterSegments(segments: Segment[], eps = 1.0): number[][] {
   const n = segments.length;
   if (n === 0) return [];
   const parent = new Int32Array(n);
@@ -216,14 +217,43 @@ function clusterSegments(segments: Segment[], eps = 1.0): number[][] {
     const ra = find(a), rb = find(b);
     if (ra !== rb) parent[ra] = rb;
   }
+  // Spatial hash over endpoints with cell size = eps: two endpoints closer
+  // than eps differ by < eps per axis, so they land in the same or an
+  // adjacent cell — a 3×3 neighborhood scan finds every qualifying pair.
+  // Hash collisions across distant cells are harmless: the exact squared-
+  // distance check below rejects them. Replaces the all-pairs scan
+  // (4 × Math.hypot per pair, O(n²)) with O(n · local density).
+  const epsSq = eps * eps;
+  const inv = 1 / eps;
+  const xs = new Float64Array(n * 2);
+  const ys = new Float64Array(n * 2);
   for (let i = 0; i < n; i++) {
-    const si = segments[i];
-    for (let j = i + 1; j < n; j++) {
-      const sj = segments[j];
-      if (Math.hypot(si.p1.x - sj.p1.x, si.p1.y - sj.p1.y) < eps ||
-          Math.hypot(si.p1.x - sj.p2.x, si.p1.y - sj.p2.y) < eps ||
-          Math.hypot(si.p2.x - sj.p1.x, si.p2.y - sj.p1.y) < eps ||
-          Math.hypot(si.p2.x - sj.p2.x, si.p2.y - sj.p2.y) < eps) union(i, j);
+    const s = segments[i];
+    xs[i * 2] = s.p1.x;     ys[i * 2] = s.p1.y;
+    xs[i * 2 + 1] = s.p2.x; ys[i * 2 + 1] = s.p2.y;
+  }
+  const keyOf = (cx: number, cy: number) => (Math.imul(cx, 0x9E3779B1) ^ cy) | 0;
+  const cells = new Map<number, number[]>();
+  for (let e = 0; e < n * 2; e++) {
+    const k = keyOf(Math.floor(xs[e] * inv), Math.floor(ys[e] * inv));
+    let list = cells.get(k);
+    if (!list) { list = []; cells.set(k, list); }
+    list.push(e);
+  }
+  for (let e = 0; e < n * 2; e++) {
+    const cx = Math.floor(xs[e] * inv), cy = Math.floor(ys[e] * inv);
+    const segE = e >> 1;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const list = cells.get(keyOf(cx + dx, cy + dy));
+        if (!list) continue;
+        for (const o of list) {
+          const segO = o >> 1;
+          if (segO <= segE) continue; // each segment pair once; skip self
+          const ddx = xs[e] - xs[o], ddy = ys[e] - ys[o];
+          if (ddx * ddx + ddy * ddy < epsSq) union(segE, segO);
+        }
+      }
     }
   }
   const groups = new Map<number, number[]>();
