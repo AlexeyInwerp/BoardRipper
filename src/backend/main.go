@@ -474,8 +474,18 @@ func main() {
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
 	}
+	// Cross-origin isolation for the SPA — unlocks precise in-app memory
+	// measurement (performance.measureUserAgentSpecificMemory, status-bar
+	// stat). COEP `credentialless` (not `require-corp`) keeps cross-origin
+	// subresources (OBD images, FZ key mirrors via CORS fetch) working.
+	// Mirrors vite.config.ts server.headers for dev parity.
+	setIsolationHeaders := func(w http.ResponseWriter) {
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Embedder-Policy", "credentialless")
+	}
 	fs := http.FileServer(http.Dir(staticDir))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		setIsolationHeaders(w)
 		// Try to serve the file directly
 		path := filepath.Join(staticDir, r.URL.Path)
 		_, statErr := os.Stat(path)

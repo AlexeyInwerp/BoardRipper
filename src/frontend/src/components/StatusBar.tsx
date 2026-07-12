@@ -1,10 +1,12 @@
 import { useBoardStore } from '../hooks/useBoardStore';
+import { useMemoryStat } from '../hooks/useMemoryStat';
 import { getAllExtensions } from '../parsers/registry';
 
 declare const __APP_VERSION__: string;
 
 export function StatusBar() {
   const { board, selection, selectedPart, selectedPin } = useBoardStore();
+  const mem = useMemoryStat();
 
   return (
     <div className="statusbar" data-testid="statusbar">
@@ -52,6 +54,12 @@ export function StatusBar() {
         </>
       ) : (
         <span>BoardRipper v{__APP_VERSION__} — Supports {getAllExtensions().join(', ')} formats. Vibecoded by RipperDoc</span>
+      )}
+      {mem && (
+        <>
+          <span className="statusbar-sep">|</span>
+          <span title={mem.title} data-testid="statusbar-mem">{mem.label}</span>
+        </>
       )}
     </div>
   );

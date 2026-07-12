@@ -17,6 +17,14 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 8082,
+    // Cross-origin isolation — unlocks performance.measureUserAgentSpecificMemory
+    // (precise memory stat in the status bar, incl. workers). `credentialless`
+    // instead of `require-corp` so cross-origin subresources (OBD images, FZ key
+    // mirrors via CORS fetch) keep working. Mirrors the Go server's headers.
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    },
     proxy: {
       '/api': {
         target: `http://localhost:${BACKEND_PORT}`,
