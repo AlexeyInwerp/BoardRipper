@@ -746,14 +746,22 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
   // listed twice (once via topIdx and once via botIdx).
   const flagged = new Set<string>();
   for (const side of [topIdx, botIdx]) {
-    for (let i = 0; i < side.length; i++) {
-      const ai = side[i];
+    // X-sweep: with the side's parts sorted by bounds.minX, every bbox-overlap
+    // partner of `a` lies before the first part whose minX >= a.maxX — the
+    // inner loop breaks there instead of scanning all pairs
+    // (O(n²) → O(n log n + k)). Ghost/dominator assignment inside the pair
+    // body is order-independent (equal pin counts skip), so sweep order only
+    // affects output order, restored by the sort below.
+    const sorted = [...side].sort((x, y) => parts[x].bounds.minX - parts[y].bounds.minX);
+    for (let i = 0; i < sorted.length; i++) {
+      const ai = sorted[i];
       const a = parts[ai];
       const aBB = a.bounds;
       const aNets = netSets[ai];
-      for (let j = i + 1; j < side.length; j++) {
-        const bi = side[j];
+      for (let j = i + 1; j < sorted.length; j++) {
+        const bi = sorted[j];
         const b = parts[bi];
+        if (b.bounds.minX >= aBB.maxX) break;
         if (!bboxOverlap(aBB, b.bounds)) continue;
         if (!polygonsOverlap(partPolys[ai], partPolys[bi])) continue;
         const bNets = netSets[bi];
@@ -790,6 +798,8 @@ export function detectGhostComponents(parts: Part[]): GhostComponent[] {
       }
     }
   }
+  // Deterministic output order independent of sweep order.
+  ghosts.sort((g1, g2) => g1.partIndex - g2.partIndex || g1.dominatorIndex - g2.dominatorIndex);
   return ghosts;
 }
 
