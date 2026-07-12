@@ -19,6 +19,22 @@ in this folder is the source of truth.
 
 ## Active patches
 
+### `pixi.js+8.17.0.patch` — BatchableGraphics pool-return leak
+
+**Why we patch:** PixiJS pools `BatchableGraphics` wrappers in the
+module-level `BigPool`. `Pool.return()` calls `reset()`, but upstream
+`BatchableGraphics.reset()` nulls only `renderable` — `texture`,
+`geometryData`, `_batcher` and `_batch` stay set on pooled entries, pinning
+destroyed Graphics' textures and the batcher's attribute ArrayBuffers for
+the lifetime of the page (`BatchableSprite.reset()` does this correctly).
+Measured on 2026-07-12: tens of MB retained per closed board tab. The
+patch extends `reset()` to null all of them, matching `destroy()`. One
+edit, two files (`lib/scene/graphics/shared/BatchableGraphics.mjs` + `.js`).
+Every `BigPool.get(BatchableGraphics)` site reassigns these fields, so
+nulling is safe. Re-porting on a pixi bump: re-apply the same field-nulling
+to `reset()` — or drop the patch entirely if upstream has aligned it with
+`BatchableSprite.reset()`.
+
 ### `pdfjs-dist+5.5.207.patch` — parse-time watermark filter
 
 **Why we patch:** BoardRipper hides repair-site watermarks

@@ -1,0 +1,42 @@
+diff --git a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js
+index 591bab5..b3d7949 100644
+--- a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js
++++ b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js
+@@ -57,6 +57,16 @@ class BatchableGraphics {
+     this.applyTransform = true;
+     this.renderable = null;
+     this.topology = "triangle-list";
++    // BoardRipper patch: pooled instances must not retain the destroyed
++    // Graphics' texture / geometry / batcher chain — Pool.return() only calls
++    // reset(), never destroy(), so anything left here is pinned for the
++    // lifetime of the module-level BigPool. BatchableSprite.reset() already
++    // nulls its equivalents; this brings BatchableGraphics in line.
++    // (Every BigPool.get(BatchableGraphics) site reassigns these fields.)
++    this.texture = null;
++    this.geometryData = null;
++    this._batcher = null;
++    this._batch = null;
+   }
+   destroy() {
+     this.renderable = null;
+diff --git a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
+index b0973c0..185e61e 100644
+--- a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
++++ b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
+@@ -55,6 +55,16 @@ class BatchableGraphics {
+     this.applyTransform = true;
+     this.renderable = null;
+     this.topology = "triangle-list";
++    // BoardRipper patch: pooled instances must not retain the destroyed
++    // Graphics' texture / geometry / batcher chain — Pool.return() only calls
++    // reset(), never destroy(), so anything left here is pinned for the
++    // lifetime of the module-level BigPool. BatchableSprite.reset() already
++    // nulls its equivalents; this brings BatchableGraphics in line.
++    // (Every BigPool.get(BatchableGraphics) site reassigns these fields.)
++    this.texture = null;
++    this.geometryData = null;
++    this._batcher = null;
++    this._batch = null;
+   }
+   destroy() {
+     this.renderable = null;

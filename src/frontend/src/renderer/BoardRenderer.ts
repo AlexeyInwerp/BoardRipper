@@ -752,17 +752,25 @@ export class BoardRenderer {
       canvas?.parentElement?.removeChild(canvas);
     } catch (e) { log.render.warn('teardown canvas cleanup error:', e); }
 
-    // Do NOT call app.destroy() — it corrupts the global batch pool.
-    // Instead, explicitly release the WebGL context so the browser can reclaim the
-    // GPU slot (browsers limit WebGL contexts to ~8-16). Then null out references
-    // so GC can collect the Application and its scene graph.
+    // Do NOT call app.destroy() (global-pool corruption) — but
+    // renderer.destroy(false) is safe and required: it removes
+    // GlContextSystem's webglcontextlost/restored listeners (which pin the
+    // abandoned WebGLRenderer from a GC root), loses the GL context, and
+    // returns GraphicsContext batches to the pool. Without it every
+    // deep-pause/reinit cycle leaked the whole render graph. Mirrors destroy().
     try {
-      // PixiJS v8 omits `.gl` from the public renderer type; cast through
-      // `unknown` to read the WebGL backend's context handle.
-      const gl = (this.app?.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
-      gl?.getExtension('WEBGL_lose_context')?.loseContext();
-    } catch { /* ignore — renderer may already be gone */ }
-    log.render.log(`teardownForReinit tab=${this.tabId} — old app released (context lost, no destroy)`);
+      this.viewport?.removeAllListeners();
+    } catch { /* ignore */ }
+    try {
+      this.app?.ticker?.remove(this.onTick);
+      this.app?.renderer?.destroy(false);
+    } catch {
+      try {
+        const gl = (this.app?.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
+        gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      } catch { /* ignore — renderer may already be gone */ }
+    }
+    log.render.log(`teardownForReinit tab=${this.tabId} — old app released (renderer destroyed, app GC-able)`);
   }
 
   /** Resume the renderer (restart ticker). Call when panel becomes visible. */
@@ -5585,11 +5593,15 @@ export class BoardRenderer {
     }
     // Remove context loss listeners before discarding the canvas
     this.removeContextLossHandlers();
-    // Do NOT call app.destroy() — it triggers GlobalResourceRegistry.clear()
-    // which corrupts the module-level batchPool shared by ALL PixiJS Applications.
-    // Instead: remove canvas, force-release the WebGL context so the browser can
-    // reclaim the GPU slot (browsers limit to ~8-16 contexts), then null out all
-    // PixiJS references to break the closure cycle (onTick arrow fn → this → app).
+    // Do NOT call app.destroy() — its stage/ticker teardown plus
+    // renderer.destroy(true) clears the module-level pools shared by ALL
+    // PixiJS Applications (GlobalResourceRegistry.release → batchPool
+    // corruption). But renderer.destroy(false) is safe: it runs every
+    // per-renderer system destroy — GlContextSystem removes its
+    // webglcontextlost/restored listeners (which otherwise pin the whole
+    // WebGLRenderer from a GC root — heap-snapshot verified), loses the GL
+    // context, and GraphicsContextSystem releases its managed contexts'
+    // batches back to the (patched) pool — WITHOUT touching global state.
     try {
       // Drop every viewport listener ('moved'/'clicked'/plugin handlers).
       // PixiJS's event system keeps closed viewports reachable via pooled
@@ -5601,17 +5613,19 @@ export class BoardRenderer {
     } catch { /* ignore */ }
     try {
       const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
-      canvas?.parentElement?.removeChild(canvas);
       // Defensive: detach the shared ticker callback before nulling app, so the
       // onTick → this closure can't keep this renderer alive even if a shared
       // ticker is ever introduced (each Application currently owns its ticker).
       this.app?.ticker?.remove(this.onTick);
-      // Force browser to release the WebGL context immediately.
-      // The PixiJS v8 renderer exposes the WebGL context as `.gl` on the
-      // WebGL backend; cast through `unknown` to avoid the public-type
-      // omission rather than `any`.
-      const gl = (this.app?.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
-      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      try {
+        this.app?.renderer?.destroy(false);
+      } catch {
+        // Fallback: at least force-release the WebGL context so the browser
+        // reclaims the GPU slot (browsers cap contexts at ~8-16).
+        const gl = (this.app?.renderer as unknown as { gl?: WebGL2RenderingContext })?.gl;
+        gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      }
+      canvas?.parentElement?.removeChild(canvas);
     } catch { /* ignore */ }
 
     // Break strong reference cycles so GC can collect the Application + scene graph.
