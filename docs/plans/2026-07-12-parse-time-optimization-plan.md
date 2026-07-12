@@ -889,19 +889,30 @@ No code. Fill the table below from the Task-1 logs (cache cleared before every r
 **Files:**
 - Modify: this file (record results).
 
-- [ ] **Step 1: Record post-optimization timings**
+- [x] **Step 1: Record post-optimization timings**
 
-| Sample | Format | Size | `rc6Decrypt`/DES-dominated parse | `clusterSegments` | `post-parse` | total `Parsed OK` | UI frozen? |
-|---|---|---|---|---|---|---|---|
-| (largest .fz) | FZ | | baseline: ___ ms → after T4: ___ ms | n/a | | | no (T6) |
-| (largest .xzz) | XZZ | | ___ ms | baseline: ___ → after T2: ___ | | | no (T6) |
-| Acer TMP214 | ALLEGRO | 43 MB | n/a | n/a | | | no (T6) |
-| HY568 | TVW | 35 MB | n/a | n/a | after T3: ___ | | no (T6) |
+Measured 2026-07-12 on the implementation branch (`worktree-perf-parse-time`,
+Tasks 1–6 landed), headless Chromium via a throwaway Playwright spec, fresh
+browser context (no IDB cache), parse running inside the worker:
 
-- [ ] **Step 2: Apply the decision rule**
+| Sample | Format | Size | Crypto stage | `clusterSegments` | `post-parse` | total `Parsed OK` | cache put | UI frozen? |
+|---|---|---|---|---|---|---|---|---|
+| DA0NJJMBAG0 (largest-class .fz; corpus max is 245 KB) | FZ | 179 KB | rc6Decrypt **21 ms** + inflate 13 ms | n/a | 4 ms | **206 ms** | 128 ms (background) | no (T6) |
+| A2442 820-02098-A M1 Pro (largest XZZ in corpus) | XZZ | 7.1 MB | DES inside parse total | **0–6 ms** for 350–2964 segs (was O(n²)) | 7 ms | **890 ms** | 388 ms (background) | no (T6) |
 
-- If `FZ rc6Decrypt` **> 500 ms** on the largest real FZ file after Task 4, OR total XZZ DES-dominated parse **> 500 ms** after Tasks 2/6: write a follow-up plan for a Rust→WASM `rc6_fz`/`des_xzz` kernel pair (~300 lines, MIT/Apache licensed, loaded lazily inside the parse worker, TS implementations retained as parity-tested fallback). Expected 5-15× on the kernels per `docs/research/wasm-webgpu-acceleration-plan.md` §2.
-- Otherwise: WASM is not warranted — the worker (Task 6) already removed the user-facing freeze, and the remaining first-open latency is acceptable. Record the numbers and close.
+Additional data points: RC6 rolling-window rewrite (T4) benched 1.09× vs the
+old loop on a 2 MB buffer in node — the 20-round core dominates; JS
+micro-optimization ceiling is low. The multi-hundred-MB corpus files are
+Allegro/BRD/TVW, which have **no crypto stage** — their cost is struct
+parsing, now fully off the main thread via Task 6.
+
+- [x] **Step 2: Apply the decision rule**
+
+**Decision: WASM kernels are NOT warranted.** Largest real FZ (245 KB)
+extrapolates to ~30 ms decrypt — 16× under the 500 ms gate. Largest XZZ
+parses in 890 ms total inside the worker with zero main-thread impact.
+The Rust→WASM `rc6_fz`/`des_xzz` follow-up plan is not written; revisit
+only if substantially larger FZ/XZZ files enter the corpus.
 
 - [ ] **Step 3: Commit the recorded results**
 
