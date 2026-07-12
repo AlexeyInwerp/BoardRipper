@@ -87,17 +87,24 @@ export function validateFZKey(key: Uint32Array): boolean {
 
 /**
  * RC6 stream decryption (modified — operates byte-at-a-time).
- * Decrypts the buffer in-place.
+ * Decrypts the buffer in-place. Exported for the parity test in
+ * fz-rc6.test.ts.
  */
-function rc6Decrypt(data: Uint8Array, key: Uint32Array): void {
+export function rc6Decrypt(data: Uint8Array, key: Uint32Array): void {
   const r = RC6_ROUNDS;
-  const ibuf = new Uint8Array(16); // 4 × uint32 feedback register
+  const k0 = key[0], k1 = key[1];
+  const kEnd0 = key[2 * r + 2], kEnd1 = key[2 * r + 3];
+  // The 16-byte ciphertext feedback window, held as four rolling LE uint32
+  // words (w0 = oldest four bytes). Sliding the window one byte is four
+  // shift-merges — replaces the previous byte-array shuffle + 4 readU32LE
+  // per byte (~25 array ops/byte) with pure register math.
+  let w0 = 0, w1 = 0, w2 = 0, w3 = 0;
   let A = 0, B = 0, C = 0, D = 0;
 
   for (let pos = 0; pos < data.length; pos++) {
     // Step 1: mix in first two key words
-    B = (B + key[0]) >>> 0;
-    D = (D + key[1]) >>> 0;
+    B = (B + k0) >>> 0;
+    D = (D + k1) >>> 0;
 
     // Step 2: r rounds
     for (let i = 1; i <= r; i++) {
@@ -111,22 +118,21 @@ function rc6Decrypt(data: Uint8Array, key: Uint32Array): void {
     }
 
     // Step 3: final key addition
-    A = (A + key[2 * r + 2]) >>> 0;
-    C = (C + key[2 * r + 3]) >>> 0;
+    A = (A + kEnd0) >>> 0;
+    C = (C + kEnd1) >>> 0;
 
     // Step 4: XOR decrypt one byte
     const encrypted = data[pos];
     data[pos] = (encrypted ^ (A & 0xFF)) & 0xFF;
 
-    // Step 5: shift feedback buffer, push original encrypted byte
-    for (let j = 0; j < 15; j++) ibuf[j] = ibuf[j + 1];
-    ibuf[15] = encrypted;
-
-    // Step 6: reconstruct A,B,C,D from feedback buffer
-    A = readU32LE(ibuf, 0);
-    B = readU32LE(ibuf, 4);
-    C = readU32LE(ibuf, 8);
-    D = readU32LE(ibuf, 12);
+    // Steps 5+6: slide the window one byte — drop the oldest (low byte of
+    // w0), append `encrypted` as the top byte of w3 — and seed the next
+    // iteration's registers from it.
+    w0 = ((w0 >>> 8) | ((w1 & 0xFF) << 24)) >>> 0;
+    w1 = ((w1 >>> 8) | ((w2 & 0xFF) << 24)) >>> 0;
+    w2 = ((w2 >>> 8) | ((w3 & 0xFF) << 24)) >>> 0;
+    w3 = ((w3 >>> 8) | (encrypted << 24)) >>> 0;
+    A = w0; B = w1; C = w2; D = w3;
   }
 }
 
