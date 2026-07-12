@@ -40,7 +40,11 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     populated by TVW/Mentor/FZ for oriented selection boxes (M8); Part.type
 //     widened to include 'unknown' and no-signal parsers stop claiming 'smd'
 //     (L5); Allegro v16/17/18 derive through-hole part.type from padstacks (L7).
-const PARSER_VERSION = 78;
+// 79: XZZ placeholder pad-geometry guard — M2-era exports write uniform
+//     12×12 mil round geometry on every pin; parser now drops it (pins/pads
+//     fall back to classic synthesized look) instead of drawing 12-mil dots
+//     on 125-mil coil pads.
+const PARSER_VERSION = 79;
 
 interface CachedBoard {
   key: string;

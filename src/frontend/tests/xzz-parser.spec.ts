@@ -139,6 +139,46 @@ test.describe('XZZ parser', () => {
     }
   });
 
+  // Regression for "2-pin cap/coil pads suddenly tiny" — newer XZZ exports
+  // (M2-era boards, ~half the corpus) write a uniform placeholder pad
+  // geometry (12×12 mil round, angle 0) on EVERY pin instead of real pad
+  // shapes. Trusting it shrinks a 125-mil coil pad to a 12-mil dot. The
+  // parser must detect the placeholder (single distinct size/shape/angle
+  // across the whole file) and drop the geometry, so the renderer falls
+  // back to the classic synthesized FlexBV pads.
+  test('drops uniform placeholder pad geometry (12×12 round on every pin)', async () => {
+    test.skip(!haveSmall, 'XZZ sample (A2681 KB 820-02862-02) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(loadSample(SMALL));
+    for (const part of board.parts) {
+      for (const pin of part.pins) {
+        expect(pin.padBounds).toBeUndefined();
+        expect(pin.padWidth).toBeUndefined();
+        expect(pin.padHeight).toBeUndefined();
+        expect(pin.padShape).toBeUndefined();
+        // Classic no-geometry dot radius, not half the 12-mil placeholder.
+        expect(pin.radius).toBe(8);
+      }
+    }
+    // No copper-pad overlay entries either — they'd draw the same 12-mil dots.
+    expect(board.pads ?? []).toHaveLength(0);
+  });
+
+  test('keeps real pad geometry on files with varied pad sizes', async () => {
+    test.skip(!haveLarge, 'XZZ sample (820-02016-07 MacBook Air M1) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(loadSample(LARGE));
+    // L5820 is a power coil whose real pads are ~125×142 mil — the
+    // placeholder guard must not flag this varied-geometry file.
+    const coil = board.parts.find(p => p.name === 'L5820');
+    expect(coil).toBeDefined();
+    for (const pin of coil!.pins) {
+      expect(pin.padBounds).toBeDefined();
+      expect(Math.min(pin.padWidth!, pin.padHeight!)).toBeGreaterThan(50);
+    }
+    expect((board.pads ?? []).length).toBeGreaterThan(1000);
+  });
+
   // Regression for "rotated chip drawn with axis-aligned outline" — the
   // parser must resolve a single part.angleDeg from the per-pad rotations
   // so the renderer's drawPartOutline picks the OBB branch instead of the

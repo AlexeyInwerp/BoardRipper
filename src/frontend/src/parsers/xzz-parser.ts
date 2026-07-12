@@ -1508,18 +1508,54 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // actually a 9 mil round pad.
   const parts: Part[] = [];
   const pads: Pad[] = [];
+
+  // Placeholder-geometry guard: newer XZZ exports (M2-era Apple boards —
+  // roughly half the surveyed corpus) write the SAME pad geometry on every
+  // pin in the file (12×12 mil round, angle 0) instead of real pad shapes.
+  // Trusting it shrinks a 125-mil coil pad to a 12-mil dot. Real-geometry
+  // files carry 180+ distinct sizes, so the split is clean: if every
+  // geometry-carrying pin shares one identical (w, h, shape, angle) and the
+  // shape is a round dot, the data is a placeholder — drop it, so pins fall
+  // back to the classic radius-8 dot and the renderer synthesizes the
+  // classic FlexBV 2-pin pads.
+  let geomPinCount = 0;
+  let uniformGeom = true;
+  let firstGeom: PinData | undefined;
+  for (const pd of partDataList) {
+    for (const p of pd.pins) {
+      if (p.padW <= 0 || p.padH <= 0) continue;
+      geomPinCount++;
+      if (!firstGeom) { firstGeom = p; continue; }
+      if (p.padW !== firstGeom.padW || p.padH !== firstGeom.padH ||
+          p.padShape !== firstGeom.padShape || p.padAngleDeg !== firstGeom.padAngleDeg) {
+        uniformGeom = false;
+        break;
+      }
+    }
+    if (!uniformGeom) break;
+  }
+  const placeholderPadGeom = uniformGeom && geomPinCount >= 100 &&
+    firstGeom !== undefined && firstGeom.padShape === 'round' && firstGeom.padW === firstGeom.padH;
+  if (placeholderPadGeom) {
+    log.parser.log(
+      `(pcb pads) placeholder pad geometry detected — all ${geomPinCount} pins are ` +
+      `${firstGeom!.padW}x${firstGeom!.padH} ${firstGeom!.padShape}; dropping pad geometry, ` +
+      `renderer falls back to synthesized pads`,
+    );
+  }
+
   for (const pd of partDataList) {
     if (!pd.name) continue;
     const pins: Pin[] = pd.pins.map((p, i) => {
       const raw2 = netDict.get(p.netIndex) ?? '';
       const net = (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2;
-      const r = (p.padW > 0 && p.padH > 0) ? Math.max(0.5, Math.min(p.padW, p.padH) / 2) : 8;
       // Forward the real pad geometry to the pin so the renderer can draw
       // the actual rect/round shape (rotated AABB for selection halo + pin
       // sprite) instead of a generic circle. Mirrors the Pad emission below;
       // also stops the pin-circle peeking out from under the copper overlay
       // when "Show pads" is on (the doubling fix).
-      const hasGeom = p.padW > 0 && p.padH > 0;
+      const hasGeom = !placeholderPadGeom && p.padW > 0 && p.padH > 0;
+      const r = hasGeom ? Math.max(0.5, Math.min(p.padW, p.padH) / 2) : 8;
       const halfW = p.padW / 2, halfH = p.padH / 2;
       const a = (p.padAngleDeg % 360) * Math.PI / 180;
       const cAng = Math.abs(Math.cos(a)), sAng = Math.abs(Math.sin(a));
@@ -1642,8 +1678,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     }
     parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}) });
 
-    // Emit a Pad per pin with valid geometry.
+    // Emit a Pad per pin with valid geometry (none when the file only
+    // carries placeholder geometry — 12-mil dots are not copper pads).
     for (let i = 0; i < pd.pins.length; i++) {
+      if (placeholderPadGeom) break;
       const p = pd.pins[i];
       if (p.padW <= 0 || p.padH <= 0) continue;
       const raw2 = netDict.get(p.netIndex) ?? '';

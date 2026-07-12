@@ -133,16 +133,32 @@ Within a part block, pins are encoded as typed sub-blocks:
 │ i32: x            │  Pin X position (÷ 10000 for mils)
 │ i32: y            │  Pin Y position (÷ 10000 for mils)
 ├──────────────────┤
-│ 8 bytes: unknown  │
+│ u32: zero         │  Constant 0
+│ u32: padAngle     │  Pad rotation in degrees CCW (÷ 10000)
 ├──────────────────┤
 │ u32: nameLen      │
 │ name bytes        │  Pin name
 ├──────────────────┤
-│ 32 bytes: unknown │
+│ 27 bytes: pad geom│  3 × (u32 padW, u32 padH, u8 shape) — three identical
+│                   │  copies (top/inner/bottom?); w/h ÷ 10000 for mils;
+│                   │  shape 0x01 = round, 0x02 = rect
+├──────────────────┤
+│ 5 bytes: padding  │
 ├──────────────────┤
 │ u32: netIndex     │  Reference into net block
 └──────────────────┘
 ```
+
+**Placeholder pad geometry.** Some exports — all surveyed M2-era Apple board
+files (820-02773, 820-02862, and the `-H`/`-L` CPU variants of 820-02098 /
+820-02100 / 820-02382) — write the SAME pad geometry on every pin of the file:
+12×12 mil, shape `round`, angle 0. This is exporter filler, not real pad data
+(a 125-mil coil pad and a BGA ball get the identical 12-mil dot). Real-geometry
+files carry 180+ distinct sizes, so the two populations are cleanly separable.
+The parser detects the placeholder (≥100 geometry-carrying pins, every one
+sharing a single identical `(w, h, shape, angle)`, shape round, w = h) and
+drops pad geometry entirely for that file — pins fall back to the classic
+radius-8 dot and the renderer synthesizes the classic FlexBV 2-pin pads.
 
 ---
 
