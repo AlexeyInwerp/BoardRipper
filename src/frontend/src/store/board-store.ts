@@ -2,6 +2,7 @@ import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat } from '../parsers';
+import { parseBoardFileInWorker, isWorkerTransportError } from '../parsers/parse-in-worker';
 import { FZKeyError } from '../parsers/fz-parser';
 import { fzKeyStore } from './fz-key-store';
 import { computeBBox, generateSyntheticOutline, detectGhostComponents, computeAdjacentNets, buildNets, flagMechanicalParts } from '../parsers/types';
@@ -919,15 +920,20 @@ class BoardStore extends Emitter {
         loadProgressStore.setPhase('Parsing', `${file.name.split('.').pop()?.toUpperCase()} format`);
         let board;
         try {
-          board = await parseBoardFile(buffer, file.name);
+          board = await parseBoardFileInWorker(buffer, file.name);
         } catch (e) {
           // Encrypted FZ files need a user-supplied key. Both "missing" and
           // "invalid" reasons open the dialog so the user can fetch/paste/replace.
+          // NOTE: `buffer` was transferred to the worker and is detached —
+          // every retry below reads fresh bytes from the File.
           if (e instanceof FZKeyError) {
             if (e.reason === 'invalid') fzKeyStore.clearKey();
             const ok = await fzKeyStore.ensureFzKey();
             if (!ok) throw e;
-            board = await parseBoardFile(buffer, file.name);
+            board = await parseBoardFileInWorker(await file.arrayBuffer(), file.name);
+          } else if (isWorkerTransportError(e)) {
+            log.parser.warn(`Worker parse failed for ${file.name} — retrying inline`);
+            board = await parseBoardFile(await file.arrayBuffer(), file.name);
           } else {
             throw e;
           }
@@ -1605,7 +1611,7 @@ class BoardStore extends Emitter {
       log.parser.log(`Re-parsing ${file.name}…`);
       const t0 = performance.now();
       const buffer = await file.arrayBuffer();
-      const board = await parseBoardFile(buffer, file.name);
+      const board = await parseBoardFileInWorker(buffer, file.name);
       log.parser.log(`Re-parsed in ${(performance.now() - t0).toFixed(0)}ms`);
       tab.board = board;
       invalidateDerivedBoard(tab);
@@ -1636,7 +1642,7 @@ class BoardStore extends Emitter {
       if (!file) { skipped++; continue; }
       try {
         const buffer = await file.arrayBuffer();
-        const board = await parseBoardFile(buffer, file.name);
+        const board = await parseBoardFileInWorker(buffer, file.name);
         tab.board = board;
         invalidateDerivedBoard(tab);
         applyBoardFilters(tab);
