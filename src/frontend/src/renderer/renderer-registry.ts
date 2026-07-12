@@ -17,7 +17,17 @@ import { boardStore } from '../store/board-store';
 
 const apps = new Map<number, Application>();
 
-export function registerRenderer(tabId: number, app: Application): void { apps.set(tabId, app); }
+// Leak probe: WeakRefs of every Application ever registered, exposed for
+// tests/DevTools. WeakRefs retain nothing — after a tab closes and GC runs,
+// its entry should deref() to undefined; a live deref on a closed tab is a
+// leak. (window.__brAppRefs in the console.)
+const appRefs: WeakRef<Application>[] = [];
+(globalThis as unknown as { __brAppRefs: WeakRef<Application>[] }).__brAppRefs = appRefs;
+
+export function registerRenderer(tabId: number, app: Application): void {
+  apps.set(tabId, app);
+  if (!appRefs.some(r => r.deref() === app)) appRefs.push(new WeakRef(app));
+}
 export function unregisterRenderer(tabId: number): void { apps.delete(tabId); }
 
 export function getActiveApp(): Application | null {

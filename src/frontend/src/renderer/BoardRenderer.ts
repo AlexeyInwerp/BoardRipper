@@ -552,6 +552,10 @@ export class BoardRenderer {
     this.containerEl = container;
     this.tabId = tabId ?? null;
     this.app = new Application();
+    // Leak probe (WeakRefs retain nothing): after a tab closes + GC, this
+    // renderer must deref() to undefined — asserted by memory-release.spec.ts.
+    const dbg = globalThis as unknown as { __brRendererRefs?: WeakRef<BoardRenderer>[] };
+    (dbg.__brRendererRefs ??= []).push(new WeakRef(this));
     if (import.meta.env.DEV) {
       const w = window as unknown as { __boardRenderer?: BoardRenderer };
       w.__boardRenderer = this;
@@ -5505,6 +5509,12 @@ export class BoardRenderer {
       this.boundShiftCapture = null;
     }
     this.resizeObserver?.disconnect();
+    // Null the field too: Blink's V8ResizeObserverCallback keeps the callback
+    // closure alive while the observer object is reachable, and every arrow
+    // created in init() shares one closure context whose `this` is this
+    // renderer — one surviving callback pins the whole renderer (heap-snapshot
+    // verified, 2026-07-12 memory-leak investigation).
+    this.resizeObserver = null;
     if (this.boundShiftWheel) {
       this.containerEl.removeEventListener('wheel', this.boundShiftWheel, true);
       this.boundShiftWheel = null;
@@ -5581,6 +5591,15 @@ export class BoardRenderer {
     // reclaim the GPU slot (browsers limit to ~8-16 contexts), then null out all
     // PixiJS references to break the closure cycle (onTick arrow fn → this → app).
     try {
+      // Drop every viewport listener ('moved'/'clicked'/plugin handlers).
+      // PixiJS's event system keeps closed viewports reachable via pooled
+      // FederatedPointerEvent.target / overTargets state, so listeners left
+      // on the viewport pin their closures — and through the shared init()
+      // closure context, this whole renderer + its last board (heap-snapshot
+      // verified: ~15 MB retained per opened board before this fix).
+      this.viewport?.removeAllListeners();
+    } catch { /* ignore */ }
+    try {
       const canvas = this.app?.renderer?.canvas as HTMLCanvasElement | undefined;
       canvas?.parentElement?.removeChild(canvas);
       // Defensive: detach the shared ticker callback before nulling app, so the
@@ -5614,6 +5633,9 @@ export class BoardRenderer {
     this.hitGridCache.clear();
     this.viewportStates.clear();
     this.board = null;
+    // lastRenderedSel.board holds a full BoardData — even a pinned renderer
+    // shell must not retain the parsed board after close.
+    this.lastRenderedSel.board = null;
     (this as unknown as { app: unknown }).app = null;
     (this as unknown as { viewport: unknown }).viewport = null;
   }
