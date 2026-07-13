@@ -121,6 +121,7 @@ type filterArgs struct {
 	Filter  string `json:"filter,omitempty" jsonschema:"optional case-insensitive substring filter"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"max items to return (default 200, cap 1000)"`
 	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset (default 0)"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab — lets you compare across boards without switch_tab"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -132,6 +133,7 @@ type partsFilterArgs struct {
 	Side    string `json:"side,omitempty" jsonschema:"filter by side: top or bottom"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"max items to return (default 200, cap 1000)"`
 	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset (default 0)"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -144,6 +146,7 @@ type findPartsArgs struct {
 	Query   string `json:"query" jsonschema:"text to find in refdes or part description (value/serial/package/type)"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"max items (default 200, cap 1000)"`
 	Offset  int    `json:"offset,omitempty" jsonschema:"pagination offset (default 0)"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -151,6 +154,7 @@ func (a findPartsArgs) session() string { return a.Session }
 
 type netArgs struct {
 	Net     string `json:"net" jsonschema:"net name"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab (net_info only; ignored by highlight_net)"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -159,6 +163,7 @@ func (a netArgs) session() string { return a.Session }
 type netNeighborsArgs struct {
 	Net     string `json:"net" jsonschema:"anchor net name"`
 	Depth   int    `json:"depth,omitempty" jsonschema:"hops through 2-pin components (default 1)"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -166,6 +171,7 @@ func (a netNeighborsArgs) session() string { return a.Session }
 
 type partArgs struct {
 	Refdes  string `json:"refdes" jsonschema:"component reference designator (e.g. U1, PM8998)"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab (part_info only; ignored by select_part)"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -174,6 +180,7 @@ func (a partArgs) session() string { return a.Session }
 type pinArgs struct {
 	Part    string `json:"part" jsonschema:"component refdes"`
 	Pin     string `json:"pin" jsonschema:"pin name or number"`
+	Tab     string `json:"tab,omitempty" jsonschema:"optional: board tab id or file-name (from board_tabs) to inspect instead of the active tab"`
 	Session string `json:"session,omitempty"`
 }
 
@@ -195,6 +202,14 @@ type switchTabArgs struct {
 }
 
 func (a switchTabArgs) session() string { return a.Session }
+
+type openFileArgs struct {
+	FileID  int    `json:"file_id" jsonschema:"library file id (from file_list / pdf_search / file_get)"`
+	Page    int    `json:"page,omitempty" jsonschema:"for PDFs: 1-based page to open at"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a openFileArgs) session() string { return a.Session }
 
 type pdfGotoArgs struct {
 	Page    int    `json:"page,omitempty" jsonschema:"1-based page to navigate to"`
@@ -270,6 +285,7 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[sideArgs](s, b, "set_side", "Show the top or bottom side of the live board.", "set_side", false, gate)
 	liveTool[pdfGotoArgs](s, b, "pdf_goto", "Navigate the open PDF to a page (optionally jumping to a search term).", "pdf_goto", false, gate)
 	liveTool[switchTabArgs](s, b, "switch_tab", "Switch the focused page to another open board tab (by id from board_tabs, or by name). All other live tools then act on the newly-active tab.", "switch_tab", false, gate)
+	liveTool[openFileArgs](s, b, "open_file", "Open a library file (board or PDF) by file_id into the browser so the live tools can inspect it — a board also auto-loads its bound schematic PDFs. This is how you bring a file_list / pdf_search / file_get result into the live view. Returns {name,file_type}.", "open_file", false, gate)
 
 	// ── Worklist AI-mode feedback loop ──
 	// Reads: the agent sees what's on the worklist + measurement results + user prompts.

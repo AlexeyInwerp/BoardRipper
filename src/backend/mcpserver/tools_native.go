@@ -129,6 +129,7 @@ type fileListArgs struct {
 	FileType     string `json:"file_type,omitempty" jsonschema:"filter: board | pdf | other"`
 	Manufacturer string `json:"manufacturer,omitempty"`
 	DonorOnly    bool   `json:"donor_only,omitempty"`
+	Query        string `json:"query,omitempty" jsonschema:"optional: match against filename / board number / model (space- and dash-insensitive substring, e.g. A2991)"`
 }
 type fileListResult struct {
 	Files []databank.FileRecord `json:"files"`
@@ -230,12 +231,23 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 	if deps.Files != nil {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "file_list",
-			Description: "List indexed board/PDF files with optional type/manufacturer/donor filters.",
+			Description: "Find indexed board/PDF files. Optional filters: file_type (board|pdf|other), manufacturer, donor_only, and query (matches filename / board number / model, e.g. query='A2991'). Returns file records with ids you can pass to open_file / file_get / file_download.",
 			Annotations: ro(true),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, a fileListArgs) (*mcp.CallToolResult, fileListResult, error) {
 			recs, err := deps.Files.ListFiles(ctx, a.FileType, a.Manufacturer, a.DonorOnly)
 			if err != nil {
 				return errResult("file list failed: " + err.Error()), fileListResult{}, nil
+			}
+			if q := normalizeForMatch(a.Query); q != "" {
+				filtered := recs[:0]
+				for _, r := range recs {
+					if strings.Contains(normalizeForMatch(r.Filename), q) ||
+						strings.Contains(normalizeForMatch(r.BoardNumber), q) ||
+						strings.Contains(normalizeForMatch(r.Model), q) {
+						filtered = append(filtered, r)
+					}
+				}
+				recs = filtered
 			}
 			return nil, fileListResult{Files: recs, Total: len(recs)}, nil
 		})

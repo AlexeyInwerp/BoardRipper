@@ -13,6 +13,7 @@ import { log } from './log-store';
 import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
 import { renderPdfPageToPng } from './pdf-render';
 import { getActiveApp } from '../renderer/renderer-registry';
+import { openLibraryFileById } from './file-actions';
 
 type Frame = { id: number; op: string; params: any };
 
@@ -206,6 +207,25 @@ function requireBoard(): BoardData {
   return b;
 }
 
+/** Resolve the board to inspect for a read tool: a specific tab when `tab` is
+ *  given (numeric id or file-name substring, from board_tabs), else the active
+ *  tab. Lets the agent query a background tab (e.g. compare a part across two
+ *  boards) without switch_tab flipping the user's view. */
+function boardForTab(tab: unknown): BoardData {
+  if (tab === undefined || tab === null || tab === '') return requireBoard();
+  const tabs = boardStore.tabs;
+  const s = String(tab);
+  let t = /^\d+$/.test(s) ? tabs.find((x) => x.id === Number(s)) : undefined;
+  if (!t) {
+    const want = s.toLowerCase();
+    t = tabs.find((x) => x.fileName.toLowerCase() === want)
+      ?? tabs.find((x) => x.fileName.toLowerCase().includes(want));
+  }
+  if (!t) throw new Error(`tab not found: ${s}`);
+  if (!t.board) throw new Error(`tab has no board loaded: ${t.fileName}`);
+  return t.board;
+}
+
 /** The focused PDF document, or throw — used by pdf_page_text / pdf_search_open,
  *  which read the OPEN PDF's cached text layer (distinct from the library-wide
  *  pdf_search tool, which is backend-native and works with no PDF open). */
@@ -315,7 +335,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       };
     }
     case 'list_nets': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const f = (p.filter ?? '').toLowerCase();
       const names = Array.from(b.nets.keys());
       const out = f ? names.filter((n) => n.toLowerCase().includes(f)) : names;
@@ -323,7 +343,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       return { nets: page.map((n) => ({ name: n, reliability: classifyNetName(n) })), total, offset, has_more };
     }
     case 'list_parts': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const f = (p.filter ?? '').toLowerCase();
       const side = (p.side ?? '').toLowerCase();
       const out = b.parts
@@ -334,14 +354,14 @@ async function dispatch(op: string, p: any): Promise<any> {
       return { parts: page, total, offset, has_more };
     }
     case 'net_info': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const pins = netPins(b, p.net);
       if (!pins) throw new Error(`net not found: ${p.net}`);
       const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
       return { net: p.net, pin_count: pins.length, pins, parts, reliability: classifyNetName(p.net) };
     }
     case 'net_neighbors': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const depth = p.depth && p.depth > 0 ? p.depth : 1;
       const set = computeAdjacentNets(b, p.net, depth);
       return {
@@ -351,7 +371,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       };
     }
     case 'pin_connectivity': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const part = findPart(b, p.part);
       if (!part) throw new Error(`part not found: ${p.part}`);
       const pin = part.pins.find((pn) => String(pn.name) === String(p.pin) || String(pn.number) === String(p.pin));
@@ -366,7 +386,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       };
     }
     case 'part_info': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const part = findPart(b, p.refdes);
       if (!part) throw new Error(`part not found: ${p.refdes}`);
       return partInfo(part);
@@ -394,7 +414,7 @@ async function dispatch(op: string, p: any): Promise<any> {
       return { tabs, active_id: boardStore.activeTabId };
     }
     case 'find_parts': {
-      const b = requireBoard();
+      const b = boardForTab(p.tab);
       const q = String(p.query ?? '').toLowerCase().trim();
       if (!q) throw new Error('find_parts: query required');
       const hits = b.parts.filter((pt) => {
@@ -491,6 +511,13 @@ function toast(msg: string) {
 
 async function dispatchDrive(op: string, p: any): Promise<any> {
   switch (op) {
+    case 'open_file': {
+      const fileId = Number(p.file_id ?? p.id);
+      if (!fileId) throw new Error('open_file: file_id required');
+      const res = await openLibraryFileById(fileId, typeof p.page === 'number' ? p.page : undefined);
+      toast(`Agent opened ${res.name}`);
+      return { ok: true, ...res };
+    }
     case 'switch_tab': {
       const tabs = boardStore.tabs;
       let target = typeof p.id === 'number' ? tabs.find((t) => t.id === p.id) : undefined;
