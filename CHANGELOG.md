@@ -1,5 +1,53 @@
 # BoardRipper changelog
 
+## v0.31.36 — 2026-07-13
+
+A memory and parse-performance release: closing board tabs now actually
+returns their memory, big boards parse without freezing the UI, and the
+status bar shows live memory usage.
+
+### Memory
+
+- **Closing a board tab releases its memory.** Two independent leaks meant
+  every opened board stayed in memory forever — its parsed data (~15 MB per
+  board, held via leftover viewport/resize callbacks) and its entire GPU
+  scene (batched geometry and buffers, ~130 MB per few boards, pinned by
+  PixiJS context-loss listeners and a pooling bug patched via
+  `patch-package`). A session that opened and closed a handful of large
+  boards used to park at 1 GB+; the same cycle now settles back near
+  baseline, and background-tab deep-pause cycles no longer leak either.
+  A regression test with GC-forced WeakRef canaries guards both fixes.
+  (`d5e16ee9`, `2f3e49a6`)
+- **Live memory readout in the status bar.** Shows precise JS memory
+  (including the parse worker) where the browser supports it — the app is
+  now served cross-origin isolated to unlock that API — and falls back to
+  an approximate heap figure marked `≈` elsewhere. (`466e2b74`)
+
+### Performance
+
+- **Board files parse in a background worker.** First open of a large board
+  (100+ MB Allegro/BRD/TVW) no longer freezes the tab for the whole parse —
+  the UI stays responsive while the progress overlay runs. Encrypted FZ
+  files, the key dialog, and drag-and-drop all behave as before; if the
+  worker is unavailable the old inline path is used automatically.
+  (`1e6d7e1a`)
+- **First paint no longer waits for the board cache.** The parsed-board
+  IndexedDB write (hundreds of ms on big boards) now happens in the
+  background, and a failed write no longer fails the whole load.
+  (`2f1a80a8`)
+- **Faster parse internals, identical output.** XZZ outline clustering
+  dropped its all-pairs scan for a spatial hash, ghost-component detection
+  got a sweep prefilter, and the FZ RC6 loop lost an array shuffle — each
+  parity-tested byte-for-byte against the previous implementation, so no
+  re-parse of cached boards is needed. Parse stages now log timings to the
+  Debug panel (`perf` scope). (`ce455ab1`, `d7af8e5e`, `2fb7723e`,
+  `3986f879`)
+
+### Fixes
+
+- **XZZ: 2-pin capacitor/coil pads render full-size again.** Placeholder
+  pad geometry from the parser shrank them. (`7b14c221`)
+
 ## v0.31.35 — 2026-07-11
 
 A selection and small-UI fix pass.
