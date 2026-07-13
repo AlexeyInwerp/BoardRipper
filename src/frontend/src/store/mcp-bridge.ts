@@ -262,6 +262,27 @@ function netPins(b: BoardData, netName: string) {
   });
 }
 
+// Full component info incl. pins + descriptive metadata. Shared by part_info
+// (by refdes) and selected_part (the currently-selected component).
+function partInfo(part: BoardData['parts'][number]) {
+  return {
+    refdes: part.name,
+    side: part.side,
+    type: part.type,
+    // Descriptive metadata the boardview carried. value/serial frequently
+    // hold the real part name/number — invaluable when no schematic exists.
+    value: part.meta?.value ?? null,
+    serial: part.meta?.serial ?? null,
+    package: part.meta?.package ?? null,
+    part_type: part.meta?.partType ?? null,
+    height_mils: part.meta?.heightMils ?? null,
+    angle_deg: part.meta?.angleDeg ?? null,
+    mechanical: !!part.mechanical,
+    pin_count: part.pins.length,
+    pins: part.pins.map((pn) => ({ name: pn.name, number: pn.number, net: pn.net })),
+  };
+}
+
 async function dispatch(op: string, p: any): Promise<any> {
   switch (op) {
     case 'board_active': {
@@ -279,9 +300,17 @@ async function dispatch(op: string, p: any): Promise<any> {
     }
     case 'board_overview': {
       const b = boardStore.board;
+      const selPart = boardStore.selectedPart;
       return {
         ...boardDescriptor(),
-        board: b ? { parts: b.parts.length, nets: b.nets.size, side: boardStore.showTop ? 'top' : 'bottom' } : null,
+        board: b ? {
+          parts: b.parts.length,
+          nets: b.nets.size,
+          side: boardStore.showTop ? 'top' : 'bottom',
+          // What the user currently has selected on the board (null if nothing).
+          selected: selPart ? { refdes: selPart.name, pin: boardStore.selectedPin?.name ?? null } : null,
+          tab_count: boardStore.tabs.length,
+        } : null,
         worklist: buildOverview(worklistStore.aiSnapshot() as any, worklistStore.peekUnreadUserMessages()),
       };
     }
@@ -340,22 +369,29 @@ async function dispatch(op: string, p: any): Promise<any> {
       const b = requireBoard();
       const part = findPart(b, p.refdes);
       if (!part) throw new Error(`part not found: ${p.refdes}`);
+      return partInfo(part);
+    }
+    case 'selected_part': {
+      requireBoard();
+      const part = boardStore.selectedPart;
+      if (!part) return { selected: false };
+      const pin = boardStore.selectedPin;
       return {
-        refdes: part.name,
-        side: part.side,
-        type: part.type,
-        // Descriptive metadata the boardview carried. value/serial frequently
-        // hold the real part name/number — invaluable when no schematic exists.
-        value: part.meta?.value ?? null,
-        serial: part.meta?.serial ?? null,
-        package: part.meta?.package ?? null,
-        part_type: part.meta?.partType ?? null,
-        height_mils: part.meta?.heightMils ?? null,
-        angle_deg: part.meta?.angleDeg ?? null,
-        mechanical: !!part.mechanical,
-        pin_count: part.pins.length,
-        pins: part.pins.map((pn) => ({ name: pn.name, number: pn.number, net: pn.net })),
+        selected: true,
+        ...partInfo(part),
+        selected_pin: pin ? { name: pin.name, number: pin.number, net: pin.net } : null,
       };
+    }
+    case 'board_tabs': {
+      const tabs = boardStore.tabs.map((t) => ({
+        id: t.id,
+        name: t.fileName,
+        active: t.id === boardStore.activeTabId,
+        fileId: t.fileId ?? null,
+        parts: t.board ? t.board.parts.length : 0,
+        nets: t.board ? t.board.nets.size : 0,
+      }));
+      return { tabs, active_id: boardStore.activeTabId };
     }
     case 'find_parts': {
       const b = requireBoard();
@@ -455,6 +491,19 @@ function toast(msg: string) {
 
 async function dispatchDrive(op: string, p: any): Promise<any> {
   switch (op) {
+    case 'switch_tab': {
+      const tabs = boardStore.tabs;
+      let target = typeof p.id === 'number' ? tabs.find((t) => t.id === p.id) : undefined;
+      if (!target && p.name) {
+        const want = String(p.name).toLowerCase();
+        target = tabs.find((t) => t.fileName.toLowerCase() === want)
+          ?? tabs.find((t) => t.fileName.toLowerCase().includes(want));
+      }
+      if (!target) throw new Error(`tab not found: ${p.id ?? p.name}`);
+      boardStore.switchTab(target.id);
+      toast(`Agent switched to board tab ${target.fileName}`);
+      return { ok: true, id: target.id, name: target.fileName };
+    }
     case 'highlight_net': {
       const board = requireBoard();
       boardStore.highlightNet(p.net);

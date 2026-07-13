@@ -257,7 +257,7 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 	if deps.FileBytes != nil {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "file_download",
-			Description: "Download a library file by id (from file_list/file_get or a pdf_search hit) as bytes, so the model can read it natively. Capped at 50 MiB.",
+			Description: "Download a library file by id (from file_list/file_get or a pdf_search hit) as bytes — intended for PDFs/documents the model can read natively. Do NOT download boardview files (BRD/FZ/XZZ/BDV-ASC and most binary board formats): they are encrypted or obfuscated, so the bytes are unreadable — use the live board tools (list_parts/net_info/part_info/etc.) for board data instead. Capped at 50 MiB.",
 			Annotations: ro(true),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, a fileGetArgs) (*mcp.CallToolResult, any, error) {
 			data, name, mime, err := deps.FileBytes(ctx, a.ID)

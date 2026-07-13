@@ -216,7 +216,7 @@ func TestServer_ListToolsIncludesLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	want := map[string]bool{"ping": false, "board_active": false, "net_neighbors": false, "highlight_net": false}
+	want := map[string]bool{"ping": false, "board_active": false, "net_neighbors": false, "highlight_net": false, "selected_part": false, "board_tabs": false, "switch_tab": false}
 	for _, tool := range lt.Tools {
 		if _, ok := want[tool.Name]; ok {
 			want[tool.Name] = true

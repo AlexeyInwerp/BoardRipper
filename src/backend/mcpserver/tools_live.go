@@ -188,6 +188,14 @@ type sideArgs struct {
 
 func (a sideArgs) session() string { return a.Session }
 
+type switchTabArgs struct {
+	ID      int    `json:"id,omitempty" jsonschema:"board tab id from board_tabs (preferred)"`
+	Name    string `json:"name,omitempty" jsonschema:"board tab name (file name); exact match else substring"`
+	Session string `json:"session,omitempty"`
+}
+
+func (a switchTabArgs) session() string { return a.Session }
+
 type pdfGotoArgs struct {
 	Page    int    `json:"page,omitempty" jsonschema:"1-based page to navigate to"`
 	Term    string `json:"term,omitempty" jsonschema:"optional text to search and jump to"`
@@ -238,13 +246,15 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 
 	// --- read tools ---
 	liveTool[emptyArgs](s, b, "board_active", "Describe the active board: name, part/net counts, shown side, plus a session id and a generation token that changes when the open board changes (re-read your data when it changes).", "board_active", true, nil)
-	liveTool[emptyArgs](s, b, "board_overview", "One-call orientation: the active board's name, part/net counts, shown side, open PDFs (name/page/pageCount/fileId), and a worklist summary (entry counts, pending measurements, unread user messages). Recommended first call.", "board_overview", true, nil)
+	liveTool[emptyArgs](s, b, "board_overview", "One-call orientation: the active board's name, part/net counts, shown side, the currently-selected component, how many board tabs are open, the open PDFs (name/page/pageCount/fileId), and a worklist summary (entry counts, pending measurements, unread user messages). Recommended first call.", "board_overview", true, nil)
 	liveTool[filterArgs](s, b, "list_nets", "List net names on the active board. Supports a substring filter and limit/offset pagination; returns {nets,total,has_more,offset}. Filter before paging — don't enumerate thousands.", "list_nets", true, nil)
 	liveTool[partsFilterArgs](s, b, "list_parts", "List component reference designators on the active board. Supports substring + side (top|bottom) filters and limit/offset pagination; returns {parts:[{refdes,side}],total,has_more,offset}.", "list_parts", true, nil)
 	liveTool[netArgs](s, b, "net_info", "List the pins and parts that belong to a given net.", "net_info", true, nil)
 	liveTool[netNeighborsArgs](s, b, "net_neighbors", "Find nets adjacent to an anchor net through 2-pin components (computeAdjacentNets); good for tracing power sequences.", "net_neighbors", true, nil)
 	liveTool[pinArgs](s, b, "pin_connectivity", "Given a part and pin, return its net and the other pins on that net.", "pin_connectivity", true, nil)
 	liveTool[partArgs](s, b, "part_info", "Return a component's full info: pins, and any descriptive metadata the boardview carried — value, serial (these often hold the real part name/number), package, part-type, side, height, angle.", "part_info", true, nil)
+	liveTool[emptyArgs](s, b, "selected_part", "Return the component the user currently has selected on the board — its full info + pins + which pin (if any) is selected. {selected:false} when nothing is selected.", "selected_part", true, nil)
+	liveTool[emptyArgs](s, b, "board_tabs", "List the board tabs open in the focused page: {tabs:[{id,name,active,fileId,parts,nets}], active_id}. Use switch_tab to change the active one; all other live tools act on the active tab.", "board_tabs", true, nil)
 	liveTool[findPartsArgs](s, b, "find_parts", "Search parts by free text across refdes + description fields (value/serial/package/part-type). Use this to locate a component by name/number when no schematic PDF is available — many boardviews store the real part name in the description. Returns {parts:[{refdes,side,value,serial,package,part_type}],total,has_more,offset}.", "find_parts", true, nil)
 	liveTool[pdfPageArgs](s, b, "pdf_page_text", "Extracted text of a page of the open PDF (defaults to the current page). Reads the already-cached text layer; no re-extraction.", "pdf_page_text", true, nil)
 	liveTool[pdfFindArgs](s, b, "pdf_search_open", "Search WITHIN the open PDF document (instant, in-memory; also works for drag-dropped files). For library-wide search use pdf_search.", "pdf_search_open", true, nil)
@@ -259,6 +269,7 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 	liveTool[partArgs](s, b, "select_part", "Select and centre a component by reference designator on the live board.", "select_part", false, gate)
 	liveTool[sideArgs](s, b, "set_side", "Show the top or bottom side of the live board.", "set_side", false, gate)
 	liveTool[pdfGotoArgs](s, b, "pdf_goto", "Navigate the open PDF to a page (optionally jumping to a search term).", "pdf_goto", false, gate)
+	liveTool[switchTabArgs](s, b, "switch_tab", "Switch the focused page to another open board tab (by id from board_tabs, or by name). All other live tools then act on the newly-active tab.", "switch_tab", false, gate)
 
 	// ── Worklist AI-mode feedback loop ──
 	// Reads: the agent sees what's on the worklist + measurement results + user prompts.
