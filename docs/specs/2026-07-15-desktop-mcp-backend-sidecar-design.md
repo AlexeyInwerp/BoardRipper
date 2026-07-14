@@ -70,6 +70,14 @@ one).
 | `src/backend/mcpserver/*` | **Unchanged.** Same 20 tools, same bridge, same config keys (`mcp_enabled`, `mcp_drive_ui`) | — |
 | `databank-store.ts` | Drop the `isElectron()` IPC special-casing for scan/read once the backend is reachable — talk to `/api/...` like the web app | backend HTTP API |
 
+### Single source of truth for tools & prompts
+
+Desktop and NAS/Docker run the **same compiled binary from the same source tree** — `desktop/build-all.mjs` cross-compiles `src/backend` as-is, it never forks it. This is a deliberate invariant, not just a current-state observation, and it must hold going forward:
+
+- **No desktop-specific MCP tools.** Any new tool, prompt helper, or KB resource (`tools_native.go`, `tools_live.go`, `prompts.go`, `mcpserver/kb/`) is added once, to the shared package, and ships identically to both deployments. A tool that only makes sense on desktop (e.g. something touching the native file-reveal IPC) is a live-board-bridge-style proxy through the frontend, the same pattern `tools_live.go` already uses for browser-only state — not a binary fork.
+- **No desktop-specific tool descriptions or connect-card copy.** `SettingsPanel.tsx`'s Integrations tab, and the `.claude/skills/boardripper-repair-helper/` skill (`SKILL.md`, `references/function-dictionary.md`) describe "the BoardRipper MCP server" — they don't need per-deployment variants, because from an MCP client's perspective a desktop instance and a NAS instance expose the exact same `tools/list`, just reached at a different URL. Anyone updating the tool set updates it in one place and both deployments — and the one skill doc — stay correct automatically.
+- **Verification, not just convention:** the testing plan (§8) includes diffing `tools/list` between a NAS instance and a locally-built desktop instance to catch any accidental divergence before it ships.
+
 ## 4. Lifecycle & gating
 
 - **Launch, `mcpEnabled === false`:** identical to today. `loadFile(webapp/index.html)`, no
@@ -153,6 +161,10 @@ one).
   done for the NAS deployment (`project_mcp_server_live_board_bridge` memory).
 - Regression: confirm `mcpEnabled=false` launch is byte-for-byte the same startup path as
   today (no child process spawned, no new files under `userData`).
+- **Parity check:** diff `tools/list` (names, schemas, descriptions) between a NAS instance and
+  the locally-built desktop sidecar on the same commit — must be identical, since both compile
+  the same `src/backend/mcpserver` package. Catches an accidental desktop-only tool addition
+  before it ships (§3, "Single source of truth").
 
 ## 9. Out of scope
 
