@@ -373,16 +373,24 @@ export function LibraryPanel() {
   // short-circuit the delay since "x" is meant to feel instant.
   const debouncedSearch = useDebouncedValue(localSearch, 200);
 
-  // Client-side filter: match filename, board_number, manufacturer, model (case-insensitive)
+  // Client-side filter: free-text search across ALL file metadata — folder
+  // path, filename, board number, manufacturer, model, extension, file type.
+  // The identifier a user types (e.g. an Apple A-number like "A2991") often
+  // lives only in the folder PATH — the A2991 boardview is named
+  // "820-02935-05.brd" but sits in ".../A2991 820-02935/" — so path must be
+  // searched or the board is missed. Each whitespace-separated token must
+  // match (AND); space/dash-insensitive so "820-02935" == "82002935".
   const searchFilter = debouncedSearch.trim().toLowerCase();
   const filterFile = useCallback((f: DatabankFile) => {
     if (!searchFilter) return true;
-    return (
-      f.filename.toLowerCase().includes(searchFilter) ||
-      f.board_number?.toLowerCase().includes(searchFilter) ||
-      f.manufacturer?.toLowerCase().includes(searchFilter) ||
-      f.model?.toLowerCase().includes(searchFilter)
+    const norm = (s: string) => s.replace(/[\s-]/g, '');
+    const hay = norm(
+      `${f.path} ${f.filename} ${f.board_number ?? ''} ${f.model ?? ''} ${f.manufacturer ?? ''} ${f.board_manufacturer ?? ''} ${f.extension ?? ''} ${f.file_type ?? ''}`.toLowerCase(),
     );
+    return searchFilter.split(/\s+/).every((tok) => {
+      const t = norm(tok);
+      return !t || hay.includes(t);
+    });
   }, [searchFilter]);
 
   // Load data on mount.
