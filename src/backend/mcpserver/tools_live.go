@@ -239,9 +239,12 @@ type pdfFindArgs struct {
 func (a pdfFindArgs) session() string { return a.Session }
 
 // sessionsResult wraps the session descriptors in an object (the SDK requires
-// every tool's output schema to be a JSON object, not a bare array).
+// every tool's output schema to be a JSON object, not a bare array). The items
+// are map[string]any, NOT json.RawMessage: the SDK reflects json.RawMessage
+// (underlying []byte) as an ARRAY-typed item schema, but each descriptor
+// serializes as an object, so output-schema validation rejected the call.
 type sessionsResult struct {
-	Sessions []json.RawMessage `json:"sessions"`
+	Sessions []map[string]any `json:"sessions"`
 }
 
 func registerLiveTools(s *mcp.Server, deps *Deps) {
@@ -253,10 +256,17 @@ func registerLiveTools(s *mcp.Server, deps *Deps) {
 		Description: "List the boards currently open in connected BoardRipper pages (for disambiguation when several are open).",
 		Annotations: ro(true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, sessionsResult, error) {
+		out := sessionsResult{Sessions: []map[string]any{}}
 		if b == nil {
-			return nil, sessionsResult{Sessions: []json.RawMessage{}}, nil
+			return nil, out, nil
 		}
-		return nil, sessionsResult{Sessions: b.Sessions()}, nil
+		for _, raw := range b.Sessions() {
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err == nil {
+				out.Sessions = append(out.Sessions, m)
+			}
+		}
+		return nil, out, nil
 	})
 
 	// --- read tools ---
