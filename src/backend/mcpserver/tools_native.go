@@ -129,7 +129,7 @@ type fileListArgs struct {
 	FileType     string `json:"file_type,omitempty" jsonschema:"filter: board | pdf | other"`
 	Manufacturer string `json:"manufacturer,omitempty"`
 	DonorOnly    bool   `json:"donor_only,omitempty"`
-	Query        string `json:"query,omitempty" jsonschema:"optional: match against filename / board number / model (space- and dash-insensitive substring, e.g. A2991)"`
+	Query        string `json:"query,omitempty" jsonschema:"optional: free-text search across ALL file metadata — folder path, filename, board number, model, manufacturer, extension, file type — space- and dash-insensitive. Each whitespace-separated word must match (AND). e.g. 'A2991' finds every A2991 file (its boardview lives in the .../A2991.../ folder even though the filename is 820-02935-05.brd); 'apple a2991 brd' narrows to the boardview."`
 }
 type fileListResult struct {
 	Files []databank.FileRecord `json:"files"`
@@ -231,19 +231,37 @@ func registerNativeTools(s *mcp.Server, deps *Deps) {
 	if deps.Files != nil {
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "file_list",
-			Description: "Find indexed board/PDF files. Optional filters: file_type (board|pdf|other), manufacturer, donor_only, and query (matches filename / board number / model, e.g. query='A2991'). Returns file records with ids you can pass to open_file / file_get / file_download.",
+			Description: "Find indexed board/PDF files. Optional filters: file_type (board|pdf|other), manufacturer, donor_only, and query — a free-text search across ALL metadata (folder path, filename, board number, model, manufacturer, extension), space/dash-insensitive, every word required. Because it searches the folder path too, query='A2991' returns the whole A2991 board group (boardview + schematic + images) even when a file's name lacks 'A2991'. Returns file records with ids you can pass to open_file / file_get / file_download.",
 			Annotations: ro(true),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, a fileListArgs) (*mcp.CallToolResult, fileListResult, error) {
 			recs, err := deps.Files.ListFiles(ctx, a.FileType, a.Manufacturer, a.DonorOnly)
 			if err != nil {
 				return errResult("file list failed: " + err.Error()), fileListResult{}, nil
 			}
-			if q := normalizeForMatch(a.Query); q != "" {
+			if raw := strings.TrimSpace(a.Query); raw != "" {
+				// Match against every identity-bearing field, not just the
+				// filename. The board identifier a technician actually types
+				// (Apple A-number, model, manufacturer) often lives only in the
+				// folder PATH — e.g. the A2991 boardview file is named
+				// "820-02935-05.brd" but sits in ".../A2991 820-02935/", so a
+				// filename/board_number/model match alone misses it. Each
+				// whitespace-separated token must be found (AND), so multi-word
+				// queries like "apple a2991 brd" narrow correctly.
+				tokens := strings.Fields(raw)
 				filtered := recs[:0]
 				for _, r := range recs {
-					if strings.Contains(normalizeForMatch(r.Filename), q) ||
-						strings.Contains(normalizeForMatch(r.BoardNumber), q) ||
-						strings.Contains(normalizeForMatch(r.Model), q) {
+					hay := normalizeForMatch(strings.Join([]string{
+						r.Path, r.Filename, r.BoardNumber, r.Model,
+						r.Manufacturer, r.BoardManufacturer, r.Extension, r.FileType,
+					}, " "))
+					match := true
+					for _, tok := range tokens {
+						if nt := normalizeForMatch(tok); nt != "" && !strings.Contains(hay, nt) {
+							match = false
+							break
+						}
+					}
+					if match {
 						filtered = append(filtered, r)
 					}
 				}
