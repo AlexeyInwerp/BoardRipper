@@ -2,50 +2,87 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let desktop (Electron) users opt into the same MCP server + full backend (databank,
-board DB, OBD, PDF index) that the Docker/NAS deployment ships, without changing the default
-footprint for users who never enable it.
+**Goal:** Let desktop (Electron) users opt into the same MCP server + full Go backend (databank,
+board DB, OBD, PDF index, live-board bridge) the Docker/NAS deployment ships, without changing
+the default footprint for users who never enable it.
 
 **Architecture:** A new Electron-native `mcpEnabled` setting gates spawning the existing Go
-backend (`src/backend`, cross-compiled per-platform, zero source changes) as a loopback child
-process. When off (default), desktop behaves exactly as it does today — `loadFile()`, IPC-only
-library scan/read. When on, Electron picks a free port, spawns the backend, waits for
-`/api/health`, bootstraps its `mcp_enabled` config flag, and `loadURL()`s the page from the
-backend origin instead — after which the renderer is indistinguishable from the web/NAS build.
+backend (`src/backend`, cross-compiled per-platform, **zero source changes**) as a loopback
+child process. Off (default) → today's app exactly: `loadFile()`, IPC-only library scan/read,
+no backend. On → Electron resolves a stable loopback port, spawns the backend, waits for
+`/api/health`, seeds the backend's `mcp_enabled` config flag, and reloads the window from
+`http://127.0.0.1:<port>/`. After that reload the renderer is indistinguishable from the
+web/NAS build: `/api/…` fetches, the MCP bridge WebSocket, databank, PDF index — all work
+unmodified. On desktop, backend-running ⟺ MCP-enabled (per the product decision: the backend
+only runs when MCP is on), so there is exactly one user-facing switch.
 
 **Tech Stack:** Electron 35 (`desktop/`, CommonJS `main.js`/`preload.js`), Go 1.25 backend
-(`src/backend`, `CGO_ENABLED=0`), React 19 frontend (`src/frontend`), Node's built-in
-`node:test` runner for the one new pure-Node module.
+(`src/backend`, `CGO_ENABLED=0`, cross-compiled + `lipo`'d to a universal mac binary), React 19
+frontend (`src/frontend`), Node's built-in `node:test` runner for the new pure-Node module.
 
 ## Global Constraints
 
-- The Go backend package (`src/backend/mcpserver/*`, `databank`, `boarddb`, `obd`, `pdfindex`)
-  is **never modified or forked** — desktop compiles the exact same source tree Docker does.
-  Any new MCP tool/prompt in the future goes in the shared package, not a desktop-only copy.
-- `mcpEnabled` defaults to `false`. A user who never opts in gets byte-identical behavior to
-  today's app: no child process spawned, no new files under `userData`, no network calls.
-- The bundled backend binary is built with `CGO_ENABLED=0` and **no** update-related ldflags
-  (`PubKey`/`SourceList` stay empty) — the Docker self-update pipeline does not apply to
-  desktop; hitting `/api/update/*` from this binary returns a graceful "not configured" error,
-  never a crash (verified: `src/backend/updater/updater.go:154-167`).
-- `main.go`'s CSRF check (`src/backend/middleware_security.go:53-86`) allows same-origin
-  browser requests and any request with no `Origin`/`Referer` header (programmatic clients) —
-  both the renderer's `fetch('/api/...')` calls (once loaded from `http://127.0.0.1:<port>/`)
-  and Electron main-process calls to the backend pass through untouched. No backend change
-  needed for this.
-- `main.go` binds via `srv.ListenAndServe()` with no port-discovery mechanism
-  (`src/backend/main.go:512-546`) — Electron must pick the port itself and pass it via `PORT`
-  env var; it can never ask the backend what port it chose.
-- `/api/health` (`src/backend/handlers/health.go`) returns `503 {"status":"starting"}` until
-  ready, `200 {"status":"ok"}` once ready — this is the health-check contract to poll.
-- `PUT /api/config` (`src/backend/handlers/databank.go:596-628`) takes
-  `{"key": "...", "value": "..."}`; `mcp_enabled`/`library_dir` are both in `allowedConfigKeys`.
-  Truthy value strings are `"1"` or `"true"` (`src/backend/mcpserver/state.go:15-24`); the
-  existing frontend convention (`SettingsPanel.tsx:553`) uses `"true"`.
+Copied verbatim from the design spec (`docs/specs/2026-07-15-desktop-mcp-backend-sidecar-design.md`)
+and verified against current code. Every task's requirements implicitly include this section.
+
+- **`src/backend` is never modified or forked.** Desktop compiles the exact same source tree
+  Docker does. The MCP tool/prompt surface (`src/backend/mcpserver/*`) has one definition; any
+  future tool goes there, so desktop and NAS always expose identical `tools/list`.
+- **`mcpEnabled` defaults to `false`.** A user who never opts in gets byte-identical behavior to
+  today's app: no child process spawned, no new SQLite files under `userData`, no network.
+- **On desktop, backend-running ⟺ MCP-enabled.** There is one master switch. Whenever the
+  sidecar runs, its `mcp_enabled` config flag is seeded `true` so `/api/mcp` serves and the
+  live-board bridge connects. (Web/NAS keep their separate in-app `mcp_enabled` toggle — that
+  path is unchanged.)
+- **The bundled backend binary carries no update ldflags** (`PubKey`/`SourceList` stay empty).
+  `src/backend/updater/updater.go:154-167` returns a graceful "updater not configured" error,
+  never a crash, if `/api/update/*` is hit. The Toolbar `UpdateBadge` and the drop-to-update
+  handler must be hidden on Electron builds regardless of MCP state.
+- **`main.go` cannot report its bound port** — it calls `srv.ListenAndServe()` directly
+  (`src/backend/main.go:542`) with no port discovery. Electron picks the port and passes it via
+  the `PORT` env var. Never pass `PORT=0`.
+- **`/api/health`** (`src/backend/handlers/health.go`): `ready` is `func() bool { return true }`
+  (`main.go:199`) and the listener binds *after* all init including `databank.Open`
+  (`main.go:112` → listener at `542`). So health is effectively binary: connection-refused
+  until init completes, then `200` immediately. Poll it; a 60s budget covers a large databank's
+  open/migration (matches the Docker boot invariant).
+- **`PUT /api/config`** (`src/backend/handlers/databank.go:598`) body is
+  `{"key": "...", "value": "..."}`. `mcp_enabled` and `library_dir` are both in
+  `allowedConfigKeys`. Truthy value strings are `"1"` or `"true"`
+  (`src/backend/mcpserver/state.go:23`); the frontend convention (`SettingsPanel.tsx:553`) uses
+  `"true"`.
+- **CSRF** (`src/backend/middleware_security.go:53-86`): same-origin browser requests pass;
+  requests with no `Origin`/`Referer` (Node `fetch` from the main process) pass as programmatic
+  clients. No backend change needed.
+- **Env vars the backend reads** (`main.go`): `PORT`, `DATA_DIR`, `LIBRARY_DIR`, `STATIC_DIR`,
+  `BOARDDB_PATH`. The bundled `boards.db` must be pointed at via `BOARDDB_PATH` (desktop has no
+  `/boards.db` Docker fallback).
+
+### Key design decision: `electronMode` vs `hasBackend()` (read before Tasks 4-6)
+
+`electronMode` is a reactive store flag consumed in **6+ UI sites**. Two of them —
+`DatabaseInfoSection` (`SettingsPanel.tsx:702`) and `AutoScanToggle` (`SettingsPanel.tsx:650`)
+— do `if (electronMode || !backendAvailable) return null`. So `electronMode` must stay **false**
+when the backend sidecar is running, or the databank/PDF-index/dedup/auto-scan UI we are trying
+to unlock would be hidden.
+
+Therefore:
+
+- `electronMode` keeps its meaning: **"Electron IPC mode, no backend."** It is set `true` only
+  by `initElectron()`, which is only reached when `isElectron() && !hasBackend()`. When the
+  backend runs, `electronMode` stays `false` and every backend-gated UI renders normally.
+- `hasBackend()` (new, Task 4) = `!isElectron() || location.protocol !== 'file:'`. True for
+  web/NAS always; true for Electron only once the sidecar has loaded the page over `http:`.
+  Every existing `isElectron()` fork that means "talk to the backend vs use IPC" switches to
+  key on `hasBackend()`.
+- A handful of **native affordances** that should apply to *all* Electron builds regardless of
+  backend (native "Open" label, hide WebDAV sync, hide the Docker text-path field, native
+  folder-picker button, native reveal-in-Finder) switch from `electronMode` to `isElectron()`
+  (Task 5 / Task 6). These read `isElectron()` directly — it's a pure, session-stable function.
 
 ---
 
-### Task 1: Cross-compile the backend + bundle the board DB into desktop builds
+### Task 1: Cross-compile the backend + bundle it (universal mac binary) into desktop builds
 
 **Files:**
 - Modify: `desktop/build-all.mjs`
@@ -53,29 +90,34 @@ backend origin instead — after which the renderer is indistinguishable from th
 - Modify: `.gitignore`
 
 **Interfaces:**
-- Produces: `desktop/bin/darwin-arm64/server`, `desktop/bin/darwin-x64/server`,
-  `desktop/bin/win32-x64/server.exe` (built on demand, matching whichever `--mac`/`--legacy`/
-  `--win` flags are passed), and `desktop/bin/boards.db` (copied once, shared by all
-  platforms). Task 2's `resolveBinaryPath()`/`resolveBoardDbPath()` consume these exact paths.
+- Produces (consumed by Task 2's `resolveBinaryPath()`/`resolveBoardDbPath()`):
+  `desktop/bin/darwin/server` (a `lipo`-merged arm64+x64 universal Mach-O),
+  `desktop/bin/win32/server.exe`, and `desktop/bin/boards.db`. A `lipo`'d universal binary is
+  used (not two per-arch files) because `@electron/universal`'s `makeUniversalApp` merges the
+  arm64 and x64 intermediate app bundles and chokes on differing single-arch Mach-O resources;
+  one identical universal binary in both passes sidesteps that entirely, and `resolveBinaryPath`
+  needs no per-arch branch on macOS.
 
-- [ ] **Step 1: Add the cross-compile step to `build-all.mjs`**
+- [ ] **Step 1: Add the cross-compile + lipo + bundle step to `build-all.mjs`**
 
-Insert immediately after the existing `webapp/` copy step (after the `cpSync(path.join(FRONTEND, 'dist'), WEBAPP_DIR, ...)` block, before `const packager = ...`):
+Insert immediately after the existing `cpSync(path.join(FRONTEND, 'dist'), WEBAPP_DIR, ...)`
+line (the "Copying dist → desktop/webapp/" block), before `const packager = ...`:
 
 ```js
 // ═══════════════════════════════════════════════════════════════
 // Step 1.5: Cross-compile the Go backend sidecar (CGO_ENABLED=0, no
-// update ldflags — the Docker self-update pipeline doesn't apply here)
+// update ldflags — the Docker self-update pipeline doesn't apply here).
+// macOS ships a single lipo'd universal binary so @electron/universal's
+// makeUniversalApp sees one identical resource in both arch passes.
 // ═══════════════════════════════════════════════════════════════
 const BACKEND = path.join(ROOT, 'src', 'backend');
 const BIN_DIR = path.join(DESKTOP, 'bin');
 if (existsSync(BIN_DIR)) rmSync(BIN_DIR, { recursive: true });
+mkdirSync(BIN_DIR, { recursive: true });
 
-function buildBackend(goos, goarch, dirName) {
-  const outDir = path.join(BIN_DIR, dirName);
-  mkdirSync(outDir, { recursive: true });
-  const outFile = path.join(outDir, goos === 'win32' || goos === 'windows' ? 'server.exe' : 'server');
-  console.log(`\n=== Cross-compiling backend for ${dirName} ===`);
+function goBuild(goos, goarch, outFile) {
+  mkdirSync(path.dirname(outFile), { recursive: true });
+  console.log(`\n=== Cross-compiling backend ${goos}/${goarch} ===`);
   execSync(
     `go build -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION}" -o "${outFile}" .`,
     {
@@ -87,67 +129,91 @@ function buildBackend(goos, goarch, dirName) {
 }
 
 if (buildMac || buildLegacy) {
-  buildBackend('darwin', 'arm64', 'darwin-arm64');
-  buildBackend('darwin', 'amd64', 'darwin-x64');
+  const armTmp = path.join(BIN_DIR, '.darwin-arm64');
+  const x64Tmp = path.join(BIN_DIR, '.darwin-x64');
+  goBuild('darwin', 'arm64', armTmp);
+  goBuild('darwin', 'amd64', x64Tmp);
+  const fat = path.join(BIN_DIR, 'darwin', 'server');
+  mkdirSync(path.dirname(fat), { recursive: true });
+  console.log('\n=== lipo → universal darwin/server ===');
+  execSync(`lipo -create "${armTmp}" "${x64Tmp}" -output "${fat}"`, { stdio: 'inherit' });
+  rmSync(armTmp);
+  rmSync(x64Tmp);
 }
 if (buildWin) {
-  buildBackend('windows', 'amd64', 'win32-x64');
+  goBuild('windows', 'amd64', path.join(BIN_DIR, 'win32', 'server.exe'));
 }
 
 console.log('\n=== Copying Board Database → desktop/bin/boards.db ===');
-mkdirSync(BIN_DIR, { recursive: true });
 cpSync(path.join(ROOT, 'Board Database', 'boards.db'), path.join(BIN_DIR, 'boards.db'));
 ```
 
-- [ ] **Step 2: Exclude the other platforms' binaries from each packaging target**
+- [ ] **Step 2: Exclude the non-target platform binary from each packaging pass**
 
-Each packaging step ships only the binaries it needs — a universal mac build needs both darwin
-binaries (merged into one universal `.app`, see rationale below), legacy mac needs x64 only,
-Windows needs its own exe only. Update each `commonOpts`/packager call's `ignore` array:
+Each packaged app ships only the binaries it needs. `desktop/bin/darwin/server` (fat) works on
+both the universal build and the legacy x64 build (macOS runs the x64 slice), so both mac passes
+ship `bin/darwin` and ignore `bin/win32`; Windows ships `bin/win32` and ignores `bin/darwin`.
+`bin/boards.db` ships everywhere.
 
-In the macOS universal block (`if (buildMac) { ... }`), the `commonOpts.ignore` array becomes:
-
-```js
-    ignore: [...IGNORE_PATTERNS, /^\/bin\/win32-x64($|\/)/],
-```
-
-(Both `darwin-arm64` and `darwin-x64` binaries ship in **both** the arm64 and x64 intermediate
-packager passes — `makeUniversalApp` requires non-executable resources to be byte-identical
-between the two passes it merges, and since `desktop/bin/` isn't touched between the two
-`packager()` calls, both binaries are trivially identical across both passes. At runtime
-`resolveBinaryPath()` (Task 2) picks the right one via `process.arch`, the same way the
-universal Electron Framework itself carries both arches.)
-
-In the macOS Legacy block (`if (buildLegacy) { ... }`), the packager call's `ignore` becomes:
+In the macOS universal block (`if (buildMac) { ... }`), change `commonOpts.ignore`:
 
 ```js
-    ignore: [...IGNORE_PATTERNS, /^\/bin\/win32-x64($|\/)/, /^\/bin\/darwin-arm64($|\/)/],
+    ignore: IGNORE_PATTERNS,
+```
+→
+```js
+    ignore: [...IGNORE_PATTERNS, /^\/bin\/win32($|\/)/],
 ```
 
-In the Windows block (`if (buildWin) { ... }`), the packager call's `ignore` becomes:
+In the macOS Legacy block (`if (buildLegacy) { ... }`), change the packager call's `ignore`:
 
 ```js
-    ignore: [...IGNORE_PATTERNS, /^\/bin\/darwin-arm64($|\/)/, /^\/bin\/darwin-x64($|\/)/],
+    ignore: IGNORE_PATTERNS,
+```
+→
+```js
+    ignore: [...IGNORE_PATTERNS, /^\/bin\/win32($|\/)/],
 ```
 
-- [ ] **Step 3: Mirror the same cross-compile step into `build-mac.mjs`**
+In the Windows block (`if (buildWin) { ... }`), change the packager call's `ignore`:
 
-This script backs plain `npm run build` (dev iteration, single-arch or `--arch=universal`).
-Insert after its `cpSync(path.join(FRONTEND, 'dist'), WEBAPP_DIR, ...)` step, before the
-`packager` import:
+```js
+    ignore: IGNORE_PATTERNS,
+```
+→
+```js
+    ignore: [...IGNORE_PATTERNS, /^\/bin\/darwin($|\/)/],
+```
+
+- [ ] **Step 3: Mirror the cross-compile into `build-mac.mjs` (backs `npm run build`)**
+
+First, move the arch-parsing block up. Cut these two lines (currently just before
+`const packager = ...`):
+
+```js
+const archArg = process.argv.find(a => a.startsWith('--arch='));
+const requestedArch = archArg ? archArg.split('=')[1] : process.arch === 'arm64' ? 'arm64' : 'x64';
+```
+
+and paste them immediately after the `WEBAPP_DIR`/`OUT_DIR` const declarations near the top of
+the file (so `requestedArch` is defined before the new step below uses it).
+
+Then insert after the `cpSync(path.join(FRONTEND, 'dist'), WEBAPP_DIR, ...)` step, before the
+"Clean previous output" / `const packager = ...` block:
 
 ```js
 // ---------- 2.5. Cross-compile the Go backend sidecar ----------
-console.log('\n=== Cross-compiling backend ===');
 const BACKEND = path.join(ROOT, 'src', 'backend');
 const BIN_DIR = path.join(DESKTOP, 'bin');
+const APP_VERSION = JSON.parse(readFileSync(path.join(FRONTEND, 'package.json'), 'utf8')).version;
 if (existsSync(BIN_DIR)) rmSync(BIN_DIR, { recursive: true });
+mkdirSync(BIN_DIR, { recursive: true });
 
-function buildBackend(goarch, dirName) {
-  const outDir = path.join(BIN_DIR, dirName);
-  mkdirSync(outDir, { recursive: true });
+function goBuild(goarch, outFile) {
+  mkdirSync(path.dirname(outFile), { recursive: true });
+  console.log(`\n=== Cross-compiling backend darwin/${goarch} ===`);
   execSync(
-    `go build -ldflags="-s -w -X boardripper/updater.Version=${JSON.parse(readFileSync(path.join(FRONTEND, 'package.json'), 'utf8')).version}" -o "${path.join(outDir, 'server')}" .`,
+    `go build -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION}" -o "${outFile}" .`,
     {
       cwd: BACKEND,
       stdio: 'inherit',
@@ -156,56 +222,62 @@ function buildBackend(goarch, dirName) {
   );
 }
 
-const archesToBuild = requestedArch === 'universal' ? ['arm64', 'x64'] : [requestedArch];
-for (const a of archesToBuild) buildBackend(a, `darwin-${a}`);
-
-mkdirSync(BIN_DIR, { recursive: true });
+const fat = path.join(BIN_DIR, 'darwin', 'server');
+mkdirSync(path.dirname(fat), { recursive: true });
+if (requestedArch === 'universal') {
+  const armTmp = path.join(BIN_DIR, '.darwin-arm64');
+  const x64Tmp = path.join(BIN_DIR, '.darwin-x64');
+  goBuild('arm64', armTmp);
+  goBuild('x64', x64Tmp);
+  execSync(`lipo -create "${armTmp}" "${x64Tmp}" -output "${fat}"`, { stdio: 'inherit' });
+  rmSync(armTmp);
+  rmSync(x64Tmp);
+} else {
+  goBuild(requestedArch, fat);
+}
 cpSync(path.join(ROOT, 'Board Database', 'boards.db'), path.join(BIN_DIR, 'boards.db'));
 ```
 
-Note this references `requestedArch`, which is parsed a few lines below in the current file —
-move the arch-parsing block (`const archArg = ...` / `const requestedArch = ...`) up to before
-this new step (it currently sits right before `const packager = ...`).
+(`build-mac.mjs` already imports `readFileSync`, `existsSync`, `rmSync`, `mkdirSync`, `cpSync`,
+`execSync`, `path` — no new imports needed.)
 
 - [ ] **Step 4: Ignore the build artifact**
 
-Add to `.gitignore` alongside the existing `desktop/webapp/` entry:
+Add to `.gitignore` next to the existing `desktop/webapp/` line:
 
 ```
 desktop/bin/
 ```
 
-- [ ] **Step 5: Verify the cross-compiled binary actually runs**
+- [ ] **Step 5: Verify the cross-compiled binary builds and serves health**
 
 ```bash
-cd desktop && node -e "
-const { execSync } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-execSync('go build -o /tmp/br-server-test .', {
-  cwd: path.join(__dirname, '..', 'src', 'backend'),
-  env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: os.arch() === 'arm64' ? 'arm64' : 'amd64' },
-});
-console.log('build OK');
-"
-DATA_DIR=$(mktemp -d) STATIC_DIR=desktop/webapp PORT=18099 /tmp/br-server-test &
-SERVER_PID=$!
-sleep 1
-curl -sf http://127.0.0.1:18099/api/health
-kill $SERVER_PID
-rm /tmp/br-server-test
+cd /Users/besitzer/Desktop/Boardviewer/src/backend && \
+  CGO_ENABLED=0 GOOS=darwin GOARCH=$([ "$(uname -m)" = "arm64" ] && echo arm64 || echo amd64) \
+  go build -ldflags="-s -w" -o /tmp/br-server-test . && echo "BUILD OK"
+DATA=$(mktemp -d); PORT=18099 DATA_DIR="$DATA" STATIC_DIR=/tmp /tmp/br-server-test &
+SRV=$!; sleep 2; echo "--- health ---"; curl -sf http://127.0.0.1:18099/api/health; echo
+kill $SRV; rm -rf "$DATA" /tmp/br-server-test
 ```
 
-Expected: `build OK`, then `{"status":"ok"}` from curl (backend built and is served correctly
-even without `desktop/webapp/` having been freshly built — an empty/missing static dir doesn't
-block `/api/health`).
+Expected: `BUILD OK`, then `{"status":"ok"}`.
+
+Also verify the Windows cross-compile links (no run):
+
+```bash
+cd /Users/besitzer/Desktop/Boardviewer/src/backend && \
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/br-server.exe . && \
+  echo "WINDOWS BUILD OK" && rm /tmp/br-server.exe
+```
+
+Expected: `WINDOWS BUILD OK`. (Windows *runtime* can't be verified from macOS — flagged for a
+manual check on a Windows box before a Windows release.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add desktop/build-all.mjs desktop/build-mac.mjs .gitignore
-git commit -m "build(desktop): cross-compile backend sidecar into desktop bundles"
+git commit -m "build(desktop): cross-compile + bundle backend sidecar (universal mac binary)"
 ```
 
 ---
@@ -220,6 +292,7 @@ git commit -m "build(desktop): cross-compile backend sidecar into desktop bundle
 **Interfaces:**
 - Produces (consumed by Task 3's `main.js`):
   - `pickFreePort(): Promise<number>`
+  - `isPortFree(port: number): Promise<boolean>`
   - `resolveBinaryPath(): string`
   - `resolveBoardDbPath(): string`
   - `startBackend({ dataDir, libraryDir, staticDir, boardDbPath, port }): ChildProcess`
@@ -234,24 +307,36 @@ Create `desktop/backend-sidecar.test.js`:
 ```js
 const { test } = require('node:test');
 const assert = require('node:assert');
+const net = require('node:net');
 const { spawn } = require('node:child_process');
 const {
   pickFreePort,
+  isPortFree,
   waitForHealth,
   stopBackend,
 } = require('./backend-sidecar');
 
-test('pickFreePort returns a usable, distinct port each call', async () => {
-  const a = await pickFreePort();
-  const b = await pickFreePort();
-  assert.ok(Number.isInteger(a) && a > 0 && a < 65536);
-  assert.ok(Number.isInteger(b) && b > 0 && b < 65536);
+test('pickFreePort returns a usable port in range', async () => {
+  const p = await pickFreePort();
+  assert.ok(Number.isInteger(p) && p > 0 && p < 65536);
 });
 
-test('waitForHealth resolves true once a /api/health-like server comes up', async () => {
+test('isPortFree is true for an unused port, false for a bound one', async () => {
+  const p = await pickFreePort();
+  assert.strictEqual(await isPortFree(p), true);
+  const srv = net.createServer();
+  await new Promise(res => srv.listen(p, '127.0.0.1', res));
+  try {
+    assert.strictEqual(await isPortFree(p), false);
+  } finally {
+    srv.close();
+  }
+});
+
+test('waitForHealth resolves true once a /api/health server comes up', async () => {
   const port = await pickFreePort();
-  // Fake backend: starts serving 200 on /api/health after a short delay,
-  // simulating real startup latency without depending on the Go binary.
+  // Fake backend that starts serving 200 after a short delay (simulates real
+  // startup latency without depending on the Go binary).
   const proc = spawn(process.execPath, ['-e', `
     const http = require('http');
     setTimeout(() => {
@@ -262,8 +347,7 @@ test('waitForHealth resolves true once a /api/health-like server comes up', asyn
     }, 300);
   `]);
   try {
-    const healthy = await waitForHealth(port, 5000);
-    assert.strictEqual(healthy, true);
+    assert.strictEqual(await waitForHealth(port, 5000), true);
   } finally {
     stopBackend(proc);
   }
@@ -271,8 +355,7 @@ test('waitForHealth resolves true once a /api/health-like server comes up', asyn
 
 test('waitForHealth resolves false when nothing ever listens', async () => {
   const port = await pickFreePort();
-  const healthy = await waitForHealth(port, 500);
-  assert.strictEqual(healthy, false);
+  assert.strictEqual(await waitForHealth(port, 500), false);
 });
 
 test('stopBackend kills the process', async () => {
@@ -287,7 +370,7 @@ test('stopBackend kills the process', async () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd desktop && node --test backend-sidecar.test.js
+cd /Users/besitzer/Desktop/Boardviewer/desktop && node --test backend-sidecar.test.js
 ```
 
 Expected: FAIL — `Cannot find module './backend-sidecar'`.
@@ -300,8 +383,8 @@ const net = require('net');
 const path = require('path');
 
 /** Ask the OS for a free loopback port. main.go binds via srv.ListenAndServe()
- *  with no way to report back which port it chose, so the caller must decide
- *  the port up front and pass it in via PORT — see docs/specs/
+ *  with no way to report back which port it chose, so the caller decides the
+ *  port up front and passes it via PORT — see docs/specs/
  *  2026-07-15-desktop-mcp-backend-sidecar-design.md §4. */
 function pickFreePort() {
   return new Promise((resolve, reject) => {
@@ -315,16 +398,25 @@ function pickFreePort() {
   });
 }
 
-/** Path to the bundled server binary for the current platform/arch. Both
- *  desktop/bin/darwin-arm64 and desktop/bin/darwin-x64 ship inside a
- *  universal mac build (see build-all.mjs Task 1) — process.arch picks the
- *  right one at runtime, same as the universal Electron Framework itself. */
+/** True if `port` can currently be bound on loopback. Used to decide whether a
+ *  previously-persisted preferred port is still usable this launch. Inherently
+ *  racy (something could grab it before the backend binds) — the caller treats
+ *  a subsequent bind failure as a normal spawn failure. */
+function isPortFree(port) {
+  return new Promise(resolve => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)));
+  });
+}
+
+/** Path to the bundled server binary. macOS ships a single lipo'd universal
+ *  binary (see build-all.mjs), so there is no per-arch branch. */
 function resolveBinaryPath() {
-  const dirName = process.platform === 'win32'
-    ? 'win32-x64'
-    : `darwin-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
-  const name = process.platform === 'win32' ? 'server.exe' : 'server';
-  return path.join(__dirname, 'bin', dirName, name);
+  if (process.platform === 'win32') {
+    return path.join(__dirname, 'bin', 'win32', 'server.exe');
+  }
+  return path.join(__dirname, 'bin', 'darwin', 'server');
 }
 
 function resolveBoardDbPath() {
@@ -332,7 +424,7 @@ function resolveBoardDbPath() {
 }
 
 /** Spawn the backend. Caller owns the returned process (attach stdout/stderr/
- *  exit listeners, call stopBackend to tear down). */
+ *  exit listeners; call stopBackend to tear it down). */
 function startBackend({ dataDir, libraryDir, staticDir, boardDbPath, port }) {
   const env = {
     ...process.env,
@@ -345,10 +437,11 @@ function startBackend({ dataDir, libraryDir, staticDir, boardDbPath, port }) {
   return spawn(resolveBinaryPath(), [], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/** Poll GET /api/health until it returns 200, or timeoutMs elapses.
- *  503 {"status":"starting"} means not ready yet; any fetch failure (process
- *  not listening yet) is treated the same way and retried. */
-async function waitForHealth(port, timeoutMs = 15000) {
+/** Poll GET /api/health until it returns 200, or timeoutMs elapses. The
+ *  backend binds its listener only after full init (databank.Open, board
+ *  index), so early polls fail with connection-refused; both that and a 503
+ *  "starting" body are retried. 60s default matches the Docker boot invariant. */
+async function waitForHealth(port, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -360,11 +453,11 @@ async function waitForHealth(port, timeoutMs = 15000) {
   return false;
 }
 
-/** Bootstrap the backend's own mcp_enabled config flag so /api/mcp stops
- *  404ing the first time a user opts in — mirrors what the Settings ▸
- *  Integrations "Enable MCP server" checkbox does on the web build
- *  (SettingsPanel.tsx setFlag). Best-effort: a failure here just means the
- *  user has to flip the (now-visible) Integrations toggle once themselves. */
+/** Seed the backend's mcp_enabled config flag so /api/mcp serves and the
+ *  live-board bridge auto-connects on the next page load. On desktop,
+ *  backend-running ⟺ MCP-enabled, so this is called on every successful
+ *  start. Best-effort: a failure just means the user's first MCP call 404s
+ *  until they retoggle. */
 async function enableMcpConfig(port) {
   try {
     await fetch(`http://127.0.0.1:${port}/api/config`, {
@@ -382,6 +475,7 @@ function stopBackend(proc) {
 
 module.exports = {
   pickFreePort,
+  isPortFree,
   resolveBinaryPath,
   resolveBoardDbPath,
   startBackend,
@@ -394,14 +488,14 @@ module.exports = {
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd desktop && node --test backend-sidecar.test.js
+cd /Users/besitzer/Desktop/Boardviewer/desktop && node --test backend-sidecar.test.js
 ```
 
-Expected: all 4 tests PASS.
+Expected: all 5 tests PASS.
 
-- [ ] **Step 5: Add a `test` script**
+- [ ] **Step 5: Add a `test` script to `desktop/package.json`**
 
-In `desktop/package.json`, add to `"scripts"`:
+In `"scripts"`, add:
 
 ```json
     "test": "node --test"
@@ -416,7 +510,7 @@ git commit -m "feat(desktop): add backend sidecar process manager module"
 
 ---
 
-### Task 3: Wire `main.js` + `preload.js` — the `mcpEnabled` lifecycle end-to-end
+### Task 3: `main.js` + `preload.js` — the `mcpEnabled` lifecycle end-to-end
 
 **Files:**
 - Modify: `desktop/main.js`
@@ -425,17 +519,19 @@ git commit -m "feat(desktop): add backend sidecar process manager module"
 
 **Interfaces:**
 - Consumes: Task 2's `backend-sidecar.js` exports.
-- Produces: `window.electronAPI.getMcpEnabled(): Promise<boolean>`,
-  `window.electronAPI.setMcpEnabled(on: boolean): Promise<boolean>` (consumed by Task 5's
-  `ElectronMcpToggle`).
+- Produces: `window.electronAPI.getMcpEnabled(): Promise<boolean>` and
+  `window.electronAPI.setMcpEnabled(on: boolean): Promise<boolean>` (returns whether MCP is
+  enabled after the call — `false` if a requested enable failed to become healthy). Consumed by
+  Task 6's `ElectronMcpToggle`.
 
-- [ ] **Step 1: Add the sidecar require + module-level state, near the top of `main.js`**
+- [ ] **Step 1: Require the sidecar module + declare lifecycle state**
 
-After the existing `const fs = require('fs');` line:
+After the existing `const fs = require('fs');` line near the top of `main.js`:
 
 ```js
 const {
   pickFreePort,
+  isPortFree,
   resolveBoardDbPath,
   startBackend,
   waitForHealth,
@@ -443,14 +539,19 @@ const {
   stopBackend,
 } = require('./backend-sidecar');
 
-// The currently-running backend sidecar, or null. Set only while
-// mcpEnabled is true and the process is (believed to be) alive.
-let currentBackend = null; // { proc, port }
+// The running backend sidecar, or null. { proc, port }.
+let currentBackend = null;
+// True while we deliberately kill the backend (user disabled MCP, or a
+// crash-retry is about to replace it) so the 'exit' listener can tell an
+// intentional stop from a crash. Reset at the top of startBackendAndLoad().
+let stoppingDeliberately = false;
+// Consecutive mid-session crash retries (see handleUnexpectedExit).
+let crashRetries = 0;
 ```
 
-- [ ] **Step 2: Replace the direct `loadFile` call in `createWindow()` with a `boot()` call**
+- [ ] **Step 2: Replace the direct `loadFile` in `createWindow()` with `boot()`**
 
-Find this block near the end of `createWindow()`:
+Find, near the end of `createWindow()`:
 
 ```js
   const indexPath = path.join(WEBAPP_DIR, 'index.html');
@@ -463,30 +564,18 @@ Find this block near the end of `createWindow()`:
   });
 ```
 
-Replace it with:
+Replace with:
 
 ```js
   boot();
 ```
 
-- [ ] **Step 3: Add `boot()`, `startBackendAndLoad()`, and `loadStaticFile()` helpers**
+- [ ] **Step 3: Add the lifecycle helpers**
 
-Insert these functions right after `createWindow()`'s closing brace (before `async function
-openFileDialog()`):
+Insert immediately after `createWindow()`'s closing brace, before `async function
+openFileDialog()`:
 
 ```js
-// Set right before we deliberately kill the current backend (user toggled
-// MCP off, or a crash-retry is about to replace it) so the 'exit' listener
-// can tell "we did this on purpose" apart from "it crashed." Cleared at the
-// top of startBackendAndLoad() so normal crash-detection resumes once a new
-// process is up — NOT reset synchronously after kill(), since 'exit' fires
-// asynchronously and a synchronous reset would race it.
-let stoppingDeliberately = false;
-// How many consecutive unexpected exits we've auto-retried, mid-session
-// (i.e. after a prior successful health-check + loadURL — NOT startup
-// failures, which are handled separately by the !healthy branch below).
-let crashRetries = 0;
-
 function loadStaticFile() {
   const indexPath = path.join(WEBAPP_DIR, 'index.html');
   log('INFO', `Loading: ${indexPath}`);
@@ -497,17 +586,30 @@ function loadStaticFile() {
   });
 }
 
-/** Spawn the backend sidecar, wait for it to become healthy, bootstrap its
- *  mcp_enabled flag, then load the window from it. On startup failure, kill
- *  the process, revert mcpEnabled to false so the next launch doesn't retry
- *  a broken setup, and fall back to loadStaticFile(). Returns true on
- *  success. If the process later exits unexpectedly *after* a successful
- *  start (a genuine mid-session crash), the 'exit' listener below drives
- *  handleUnexpectedExit() instead of this function's own failure path. */
+/** Resolve the loopback port for the sidecar. Prefer the persisted port so an
+ *  external MCP client's saved connect URL survives restarts; fall back to a
+ *  fresh free port (and persist it) if the preferred one is taken. */
+async function resolvePort() {
+  const settings = loadSettings();
+  if (settings.mcpPort && await isPortFree(settings.mcpPort)) {
+    return settings.mcpPort;
+  }
+  const port = await pickFreePort();
+  const s = loadSettings();
+  s.mcpPort = port;
+  saveSettings(s);
+  return port;
+}
+
+/** Spawn the backend, wait for health, seed mcp_enabled, then load the window
+ *  from it. On startup failure: kill, revert mcpEnabled to false so the next
+ *  launch doesn't retry a broken setup, and fall back to loadStaticFile().
+ *  Returns true on success. A later unexpected exit (genuine crash) is handled
+ *  by the 'exit' listener → handleUnexpectedExit(), not this function. */
 async function startBackendAndLoad() {
   stoppingDeliberately = false;
   const settings = loadSettings();
-  const port = await pickFreePort();
+  const port = await resolvePort();
   log('INFO', `Starting backend sidecar on port ${port}...`);
   const proc = startBackend({
     dataDir: app.getPath('userData'),
@@ -522,18 +624,13 @@ async function startBackendAndLoad() {
   proc.on('exit', (code, signal) => {
     log('ERROR', `Backend sidecar exited: code=${code} signal=${signal}`);
     const wasCurrent = currentBackend && currentBackend.proc === proc;
-    if (currentBackend && currentBackend.proc === proc) currentBackend = null;
-    if (!wasCurrent) {
-      // Exited before ever becoming the "current" backend — that's a
-      // startup failure, already handled by the !healthy branch below.
-      exitedDuringStartup = true;
-      return;
-    }
-    if (stoppingDeliberately) return; // user-initiated stop, not a crash
+    if (wasCurrent) currentBackend = null;
+    if (!wasCurrent) { exitedDuringStartup = true; return; } // handled below
+    if (stoppingDeliberately) return; // user-initiated, not a crash
     void handleUnexpectedExit();
   });
 
-  const healthy = await waitForHealth(port, 15000);
+  const healthy = await waitForHealth(port);
   if (!healthy || exitedDuringStartup) {
     log('ERROR', 'Backend sidecar failed to become healthy — disabling MCP');
     stopBackend(proc);
@@ -555,9 +652,9 @@ async function startBackendAndLoad() {
   return true;
 }
 
-/** A previously-healthy backend died mid-session. Retry with backoff
- *  (1s, 3s, 9s); if that's exhausted, disable MCP and fall back to the
- *  static file so the app is at least usable again. */
+/** A previously-healthy backend died mid-session. Retry with backoff (1s, 3s,
+ *  9s); if exhausted, disable MCP and fall back to the static file so the app
+ *  stays usable. */
 async function handleUnexpectedExit() {
   if (crashRetries >= 3) {
     logFatal('Backend sidecar crashed repeatedly', new Error('Exceeded restart retries'));
@@ -593,22 +690,16 @@ async function boot() {
 }
 ```
 
-- [ ] **Step 4: Fix the GPU-retry path in `render-process-gone` to reload from the right place**
+- [ ] **Step 4: Point the GPU-retry reload at the right origin**
 
-Find:
+Find, in the `render-process-gone` handler:
 
 ```js
-  mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    log('ERROR', `Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`);
-    if (details.reason === 'launch-failed' && !retried) {
-      retried = true;
-      log('INFO', 'Retrying with GPU disabled...');
       app.commandLine.appendSwitch('disable-gpu');
       mainWindow.loadFile(path.join(WEBAPP_DIR, 'index.html'));
-    } else {
 ```
 
-Replace the `mainWindow.loadFile(...)` line with:
+Replace the `loadFile` line with:
 
 ```js
       if (currentBackend) {
@@ -620,7 +711,7 @@ Replace the `mainWindow.loadFile(...)` line with:
 
 - [ ] **Step 5: Add the `get-mcp-enabled` / `set-mcp-enabled` IPC handlers**
 
-Add near the other `ipcMain.handle` calls (after the `platform` handler):
+After the existing `ipcMain.handle('platform', ...)` handler:
 
 ```js
 ipcMain.handle('get-mcp-enabled', () => !!loadSettings().mcpEnabled);
@@ -630,17 +721,17 @@ ipcMain.handle('set-mcp-enabled', async (_event, on) => {
   settings.mcpEnabled = !!on;
   saveSettings(settings);
   if (on) {
-    return await startBackendAndLoad();
+    return await startBackendAndLoad(); // true on success, false if unhealthy
   }
   stopCurrentBackend();
   await loadStaticFile();
-  return true;
+  return false;
 });
 ```
 
 - [ ] **Step 6: Kill the sidecar on quit**
 
-Add near the other `app.on(...)` handlers, before `app.on('activate', ...)`:
+Before `app.on('activate', ...)`:
 
 ```js
 app.on('before-quit', () => {
@@ -648,21 +739,23 @@ app.on('before-quit', () => {
 });
 ```
 
-- [ ] **Step 7: Expose the two new calls from `preload.js`**
+- [ ] **Step 7: Expose the two calls from `preload.js`**
 
-In `desktop/preload.js`, add to the `contextBridge.exposeInMainWorld('electronAPI', { ... })`
-object, after the existing `platform` entry:
+In the `contextBridge.exposeInMainWorld('electronAPI', { ... })` object, after the `platform`
+entry:
 
 ```js
-  // MCP server sidecar toggle — persisted in Electron settings.json,
-  // gates whether the Go backend child process is spawned at all.
+  // MCP server sidecar toggle — persisted in Electron settings.json; gates
+  // whether the Go backend child process is spawned at all. setMcpEnabled
+  // resolves to whether MCP is enabled after the call (false if an enable
+  // failed to become healthy).
   getMcpEnabled: () => ipcRenderer.invoke('get-mcp-enabled'),
   setMcpEnabled: (on) => ipcRenderer.invoke('set-mcp-enabled', on),
 ```
 
-- [ ] **Step 8: Add the matching TypeScript declarations**
+- [ ] **Step 8: Add the TypeScript declarations**
 
-In `src/frontend/src/electron.d.ts`, add to the `ElectronAPI` interface, after `platform`:
+In `src/frontend/src/electron.d.ts`, in the `ElectronAPI` interface after `platform`:
 
 ```ts
   // MCP server sidecar toggle (see desktop/main.js)
@@ -672,28 +765,25 @@ In `src/frontend/src/electron.d.ts`, add to the `ElectronAPI` interface, after `
 
 - [ ] **Step 9: Manual verification**
 
-Requires Task 1 having produced a binary for the host platform (`node build-mac.mjs` or the
-Step-5 snippet from Task 1).
+Requires Task 1 to have produced a host-platform binary (`cd desktop && node build-mac.mjs`).
 
 ```bash
-cd desktop && npm start
+cd /Users/besitzer/Desktop/Boardviewer/desktop && npm start
 ```
 
-- With no prior `settings.json`, confirm the log file
-  (`~/Library/Application Support/BoardRipper/logs/boardripper.log` on macOS) shows
-  `index.html loaded successfully` and no `[backend]` lines — today's behavior, unchanged.
-- Quit. Manually set `mcpEnabled: true` in
-  `~/Library/Application Support/BoardRipper/settings.json`, relaunch with `npm start`.
-  Confirm the log shows `Starting backend sidecar on port ...` then
-  `Backend sidecar healthy, loading http://127.0.0.1:.../`, and the app window renders the
-  normal UI (now backend-served).
-- Quit via Cmd+Q / window close; confirm (via `ps aux | grep desktop/bin`) the `server` process
-  is gone within ~1s.
-- **Crash-restart:** with `mcpEnabled: true` and the app running (backend-served), find the
-  sidecar's pid (`ps aux | grep desktop/bin`) and `kill -9 <pid>`. Confirm the log shows
-  `Backend sidecar exited: code=null signal=SIGKILL`, then `retrying in 1000ms (attempt 1/3)`,
-  then a fresh `Backend sidecar healthy, loading http://127.0.0.1:.../` on a new port, and the
-  window reloads showing the normal UI again (open tabs are lost — expected, see spec §9).
+Log file: `~/Library/Application Support/BoardRipper/logs/boardripper.log`.
+
+- Fresh `settings.json` (or `mcpEnabled` absent): log shows `index.html loaded successfully`,
+  **no** `[backend]` lines. Today's behavior, unchanged. Quit.
+- Set `"mcpEnabled": true` in `~/Library/Application Support/BoardRipper/settings.json`,
+  relaunch. Log shows `Starting backend sidecar on port <N>` → `Backend sidecar healthy,
+  loading http://127.0.0.1:<N>/`; the window renders the normal UI (now backend-served).
+  Confirm `settings.json` now has a stable `"mcpPort": <N>`.
+- Quit (Cmd+Q); confirm `ps aux | grep bin/darwin/server` shows the process gone within ~1s.
+- Relaunch; confirm the SAME `mcpPort` is reused (log shows the same port).
+- **Crash-restart:** with the app running backend-served, `kill -9` the `server` pid. Log shows
+  `Backend sidecar exited: ... signal=SIGKILL` → `retrying in 1000ms (attempt 1/3)` → a fresh
+  `Backend sidecar healthy` and the window reloads (open tabs lost — expected, spec §9).
 
 - [ ] **Step 10: Commit**
 
@@ -704,51 +794,39 @@ git commit -m "feat(desktop): spawn backend sidecar when mcpEnabled, wire IPC to
 
 ---
 
-### Task 4: `hasBackend()` helper + `databank-store.ts` call-site audit
+### Task 4: `hasBackend()` + `databank-store.ts` fork audit
 
 **Files:**
 - Modify: `src/frontend/src/store/databank-store.ts`
 
 **Interfaces:**
-- Produces: `export function hasBackend(): boolean` (consumed by Task 5's `SettingsPanel.tsx`
-  and Task 6's `Toolbar.tsx`/`App.tsx`).
+- Produces: `export function hasBackend(): boolean` (consumed by Tasks 5-7).
 
-This task changes the *condition* on every existing `isElectron()` call site that exists to
-choose "talk to the backend over HTTP" vs. "use the Electron IPC fallback." It does **not**
-delete the IPC paths — they remain the only path when `mcpEnabled` is off. Every site below was
-read in full before writing this task; there are no others in this file.
+Every `isElectron()` site below exists to choose "talk to the backend over HTTP" vs "use the
+Electron IPC fallback." They switch to `hasBackend()`. The IPC paths are **not** deleted — they
+remain the only path when `mcpEnabled` is off. Crucially, this task must **not** set
+`electronMode = true` in the backend-running path (see the Global Constraints design note):
+`electronMode` must stay false so backend-gated UI renders. Every site was read in full; there
+are no other `isElectron()` uses in this file.
 
 - [ ] **Step 1: Add `hasBackend()` next to `isElectron()`**
 
-```ts
-/** Are we running inside Electron with library APIs available? */
-export function isElectron(): boolean {
-  return typeof window !== 'undefined' && !!window.electronAPI?.scanLibrary;
-}
+After the existing `isElectron()` definition:
 
-/** True whenever a real Go backend is reachable at the current origin.
- *  Always true for the web/NAS build. True for Electron only once the
- *  mcpEnabled sidecar has taken over the page load (loadURL to
- *  http://127.0.0.1:<port>/ instead of loadFile's file:// origin) — see
- *  docs/specs/2026-07-15-desktop-mcp-backend-sidecar-design.md §4. */
+```ts
+/** True whenever a real Go backend is reachable at the current origin. Always
+ *  true for the web/NAS build. True for Electron only once the mcpEnabled
+ *  sidecar has taken over the page load (loadURL to http://127.0.0.1:<port>/
+ *  instead of loadFile's file:// origin) — see docs/specs/
+ *  2026-07-15-desktop-mcp-backend-sidecar-design.md §4. */
 export function hasBackend(): boolean {
   return !isElectron() || (typeof location !== 'undefined' && location.protocol !== 'file:');
 }
 ```
 
-- [ ] **Step 2: `checkScanStatus()` (was line 786)**
+- [ ] **Step 2: `checkScanStatus()` — `if (isElectron()) return;` → `if (!hasBackend()) return;`**
 
-```ts
-  async checkScanStatus(): Promise<void> {
-    if (isElectron()) return;
-```
-→
-```ts
-  async checkScanStatus(): Promise<void> {
-    if (!hasBackend()) return;
-```
-
-- [ ] **Step 3: `_runStartupLoad()` startup fork (was line 830)**
+- [ ] **Step 3: `_runStartupLoad()` startup fork**
 
 ```ts
       // Electron branch: same as today's initElectron path.
@@ -765,97 +843,37 @@ export function hasBackend(): boolean {
 ```
 →
 ```ts
-      // Electron, no backend sidecar running: IPC-only path, unchanged.
+      // Electron with NO backend sidecar: IPC-only path, unchanged. When a
+      // sidecar IS running (mcpEnabled), fall through to the backend chain
+      // below and leave electronMode false so backend-gated UI renders.
       if (isElectron() && !hasBackend()) {
         await this.initElectron();
         this._loadStatus = 'loaded';
         this.notify();
         return;
       }
-      if (isElectron()) {
-        // Backend sidecar is live (mcpEnabled) — still mark Electron mode
-        // so LibraryFolderSetting keeps deferring to the native
-        // folder-picker UI, but otherwise fall through to the normal
-        // browser/backend load chain below. loadConfig() will read
-        // library_dir from the same backend the sidecar was spawned with.
-        this._electronMode = true;
-      }
 
-      // Browser branch: matches the order in today's LibraryPanel useEffect
-      // (which this method is replacing). Also used by Electron once a
-      // backend sidecar is running.
+      // Browser / backend branch: matches the order in today's LibraryPanel
+      // useEffect (which this method is replacing). Also used by Electron once
+      // a backend sidecar is running.
       await this.loadConfig();
 ```
 
-- [ ] **Step 4: `_doFetchFiles()` (was line 963)**
+- [ ] **Step 4: `_doFetchFiles()` — `if (isElectron()) {` → `if (!hasBackend()) {`**
 
-```ts
-    if (isElectron()) {
-      libraryLoadStore.begin('Electron scan');
-```
-→
-```ts
-    if (!hasBackend()) {
-      libraryLoadStore.begin('Electron scan');
-```
+(The `libraryLoadStore.begin('Electron scan')` IPC branch.)
 
-- [ ] **Step 5: `_doFetchFilesByIds()` (was line 1155)**
+- [ ] **Step 5: `_doFetchFilesByIds()` — `if (isElectron() || ids.length === 0) return;` → `if (!hasBackend() || ids.length === 0) return;`**
 
-```ts
-  private async _doFetchFilesByIds(ids: number[]): Promise<void> {
-    if (isElectron() || ids.length === 0) return;
-```
-→
-```ts
-  private async _doFetchFilesByIds(ids: number[]): Promise<void> {
-    if (!hasBackend() || ids.length === 0) return;
-```
+- [ ] **Step 6: `fetchTree()` — `if (isElectron()) {` → `if (!hasBackend()) {`**
 
-- [ ] **Step 6: `fetchTree()` (was line 1171)**
+- [ ] **Step 7: `triggerFileScan()` — `if (isElectron()) {` → `if (!hasBackend()) {`**
 
-```ts
-  async fetchTree(): Promise<void> {
-    if (isElectron()) {
-      // Tree is built during _electronScan
-      return;
-    }
-```
-→
-```ts
-  async fetchTree(): Promise<void> {
-    if (!hasBackend()) {
-      // Tree is built during _electronScan
-      return;
-    }
-```
+(The `_electronScan()` branch; the `else` backend-POST branch is unchanged.)
 
-- [ ] **Step 7: `triggerFileScan()` (was line 1359)**
+- [ ] **Step 8: `stopScan()` — `if (isElectron()) return;` → `if (!hasBackend()) return;`**
 
-```ts
-    if (isElectron()) {
-      await this._electronScan();
-```
-→
-```ts
-    if (!hasBackend()) {
-      await this._electronScan();
-```
-
-(The `else` branch — `apiFetch` POST `/api/databank/scan` — is unchanged.)
-
-- [ ] **Step 8: `stopScan()` (was line 1376)**
-
-```ts
-  async stopScan(): Promise<void> {
-    if (isElectron()) return;
-```
-→
-```ts
-  async stopScan(): Promise<void> {
-    if (!hasBackend()) return;
-```
-
-- [ ] **Step 9: `generatePdfPreview()` (was line 1640)**
+- [ ] **Step 9: `generatePdfPreview()` — replace `isElectron()` in the guard**
 
 ```ts
     if (file.file_type !== 'pdf' || file.has_preview || isElectron()) return false;
@@ -865,7 +883,7 @@ export function hasBackend(): boolean {
     if (file.file_type !== 'pdf' || file.has_preview || !hasBackend()) return false;
 ```
 
-- [ ] **Step 10: `fetchFileBuffer()` (was lines 1864-1869)**
+- [ ] **Step 10: `fetchFileBuffer()` — flip the phase label + the read fork**
 
 ```ts
       loadProgressStore.setPhase('Downloading', isElectron()
@@ -883,31 +901,11 @@ export function hasBackend(): boolean {
     if (!hasBackend()) {
 ```
 
-- [ ] **Step 11: `loadConfig()` (was line 1964)**
+- [ ] **Step 11: `loadConfig()` — `if (isElectron()) return;` → `if (!hasBackend()) return;`**
 
-```ts
-  async loadConfig(): Promise<void> {
-    if (isElectron()) return;
-```
-→
-```ts
-  async loadConfig(): Promise<void> {
-    if (!hasBackend()) return;
-```
+- [ ] **Step 12: `setLibraryDir()` — `if (isElectron()) return false;` → `if (!hasBackend()) return false;`**
 
-- [ ] **Step 12: `setLibraryDir()` (was line 1975) — generalize the guard**
-
-```ts
-  async setLibraryDir(dir: string): Promise<boolean> {
-    if (isElectron()) return false;
-```
-→
-```ts
-  async setLibraryDir(dir: string): Promise<boolean> {
-    if (!hasBackend()) return false;
-```
-
-- [ ] **Step 13: `selectLibraryFolder()` (was lines 1949-1958) — sync the new path to the backend when one is running**
+- [ ] **Step 13: `selectLibraryFolder()` — sync the picked folder to the backend when one runs**
 
 ```ts
   async selectLibraryFolder(): Promise<string | null> {
@@ -930,8 +928,8 @@ export function hasBackend(): boolean {
       this._libraryPath = folderPath;
       this.notify();
       if (hasBackend()) {
-        // Backend sidecar is running: tell it the new root (mirrors the
-        // web/NAS setLibraryDir flow) and let it do the real scan.
+        // Backend sidecar running: tell it the new root (mirrors the web/NAS
+        // setLibraryDir flow) and let it do the real scan.
         await this.setLibraryDir(folderPath);
         await this.triggerFileScan();
       } else {
@@ -942,16 +940,13 @@ export function hasBackend(): boolean {
   }
 ```
 
-`initElectron()` (line 1938) and `_electronScan()` (line 1990) are unchanged — both remain the
-IPC-only implementation, now reached only from the `isElectron() && !hasBackend()` fork.
-`LibraryFolderSetting()` in `SettingsPanel.tsx` (`if (electronMode) return null;`) is also
-unchanged — it stays gated on `electronMode` alone (not `hasBackend()`), since Electron keeps
-its native folder-picker as the library-selection UX regardless of whether a backend is running.
+(`initElectron()` and `_electronScan()` are unchanged — reached only via the
+`isElectron() && !hasBackend()` fork. `initElectron` still sets `_electronMode = true` there.)
 
 - [ ] **Step 14: Typecheck**
 
 ```bash
-cd src/frontend && npx tsc --noEmit
+cd /Users/besitzer/Desktop/Boardviewer/src/frontend && npx tsc --noEmit
 ```
 
 Expected: no new errors.
@@ -965,7 +960,160 @@ git commit -m "feat(desktop): add hasBackend() and switch backend-vs-IPC forks o
 
 ---
 
-### Task 5: `SettingsPanel.tsx` — pre-backend "Enable MCP server" switch
+### Task 5: Native affordances — re-gate `electronMode` → `isElectron()` where they must apply to all desktop builds
+
+**Files:**
+- Modify: `src/frontend/src/components/Toolbar.tsx`
+- Modify: `src/frontend/src/panels/LibrarySyncSection.tsx`
+- Modify: `src/frontend/src/panels/LibraryPanel.tsx`
+
+These five UI affordances should behave the "desktop native" way whenever we're in Electron,
+**independent of whether the backend runs**. Today `electronMode === isElectron()` on desktop so
+they look correct; once the backend can run (electronMode goes false), they'd regress. Switch
+them to `isElectron()`. Do **not** touch the other `electronMode` uses in these files (the
+backend-fetch skips at `LibraryPanel.tsx:410,419` and the `electronMode` prop thread at
+`:1271`) — those correctly stay on `electronMode`.
+
+**Interfaces:**
+- Consumes: `isElectron()` from `databank-store.ts` (already exported).
+
+- [ ] **Step 1: Toolbar "Open" vs "Upload" label → `isElectron()`**
+
+In `Toolbar.tsx`, `isElectron` is not yet imported. Change:
+
+```ts
+import { databankStore } from '../store/databank-store';
+```
+→
+```ts
+import { databankStore, isElectron } from '../store/databank-store';
+```
+
+Then in the open-button JSX (the `data-testid="open-btn"` button), the component currently reads
+`electronMode` from `useDatabank()`. Replace the three `electronMode` references in that button
+with `isElectron()`:
+
+```tsx
+          data-tooltip={electronMode ? 'Open boards or PDFs' : 'Upload boards or PDFs from your device'}
+          style={electronMode ? undefined : { gap: 6 }}
+        >
+          {electronMode ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
+```
+→
+```tsx
+          data-tooltip={isElectron() ? 'Open boards or PDFs' : 'Upload boards or PDFs from your device'}
+          style={isElectron() ? undefined : { gap: 6 }}
+        >
+          {isElectron() ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
+```
+
+If `electronMode` is now otherwise unused in that component, remove it from the `useDatabank()`
+destructure at `Toolbar.tsx:299` to avoid an unused-var lint error; if it's still used
+elsewhere in the component, leave it.
+
+- [ ] **Step 2: LibrarySyncSection — hide on all Electron builds**
+
+In `LibrarySyncSection.tsx`, add the import and re-gate. Change:
+
+```ts
+import { useDatabank } from '../hooks/useDatabank';
+```
+→
+```ts
+import { useDatabank } from '../hooks/useDatabank';
+import { isElectron } from '../store/databank-store';
+```
+
+Then:
+
+```ts
+  const { backendAvailable, electronMode } = useDatabank();
+  const { config, configLoaded } = useLibrarySync();
+  if (electronMode) return null;
+```
+→
+```ts
+  const { backendAvailable } = useDatabank();
+  const { config, configLoaded } = useLibrarySync();
+  // WebDAV library sync is a NAS-hosting concern, excluded from desktop
+  // regardless of whether the backend sidecar is running (design spec §9).
+  if (isElectron()) return null;
+```
+
+- [ ] **Step 3: LibraryPanel — native folder-picker button, backend-warn hint, and file reveal**
+
+In `LibraryPanel.tsx`, add `isElectron` to the existing import. Change:
+
+```ts
+import { databankStore, contentCollapsePlan } from '../store/databank-store';
+```
+→
+```ts
+import { databankStore, contentCollapsePlan, isElectron } from '../store/databank-store';
+```
+
+Native folder-picker button (currently `{electronMode && (`):
+
+```tsx
+      {/* Electron library folder picker */}
+      {electronMode && (
+```
+→
+```tsx
+      {/* Electron library folder picker */}
+      {isElectron() && (
+```
+
+Backend-unreachable warning (should not show on desktop — the "start the server" wording is
+Docker-specific):
+
+```tsx
+      {/* Backend warning (web mode only) */}
+      {!electronMode && !backendAvailable && (
+```
+→
+```tsx
+      {/* Backend warning (web mode only) */}
+      {!isElectron() && !backendAvailable && (
+```
+
+File reveal vs download in `FileDetailPane` (native reveal is nicer for a local file):
+
+```tsx
+        {electronMode ? (
+          <RevealButton path={detail.path} />
+        ) : (
+```
+→
+```tsx
+        {isElectron() ? (
+          <RevealButton path={detail.path} />
+        ) : (
+```
+
+(The `FileDetailPane` `electronMode` prop and its type stay — only this one usage flips to
+`isElectron()`. Leave the prop threading at `:1271` and the effect guards at `:410,:419`
+untouched.)
+
+- [ ] **Step 4: Typecheck**
+
+```bash
+cd /Users/besitzer/Desktop/Boardviewer/src/frontend && npx tsc --noEmit
+```
+
+Expected: no new errors. (If a now-unused `electronMode` destructure remains in any of the three
+files, remove that single identifier to clear the lint/TS unused warning.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/frontend/src/components/Toolbar.tsx src/frontend/src/panels/LibrarySyncSection.tsx src/frontend/src/panels/LibraryPanel.tsx
+git commit -m "feat(desktop): keep native library affordances on isElectron, not electronMode"
+```
+
+---
+
+### Task 6: `SettingsPanel.tsx` — unified desktop MCP toggle + backend-aware gates
 
 **Files:**
 - Modify: `src/frontend/src/panels/SettingsPanel.tsx`
@@ -973,30 +1121,33 @@ git commit -m "feat(desktop): add hasBackend() and switch backend-vs-IPC forks o
 **Interfaces:**
 - Consumes: Task 3's `window.electronAPI.getMcpEnabled/setMcpEnabled`; Task 4's `hasBackend()`.
 
-- [ ] **Step 1: Import `hasBackend`**
+On desktop there is one MCP switch: the Electron `mcpEnabled` setting (spawns the backend). The
+Integrations tab replaces its own "Enable MCP server" row with an `ElectronMcpToggle` that drives
+`setMcpEnabled` (which spawns/kills the backend and reloads the page). The rest of the
+Integrations UI (drive-UI toggle, token, connect cards, live status) renders when the backend is
+up — driven, as today, by `/api/mcp/status`. The `library_dir` text field and watermark-reindex
+prompt become `hasBackend()`-aware.
 
-Find the existing import (line 36):
+- [ ] **Step 1: Import `hasBackend`**
 
 ```ts
 import { isElectron } from '../store/databank-store';
 ```
-
-Replace with:
-
+→
 ```ts
 import { isElectron, hasBackend } from '../store/databank-store';
 ```
 
 - [ ] **Step 2: Add the `ElectronMcpToggle` component**
 
-Insert immediately before `function IntegrationsSection() {` (line 518):
+Insert immediately before `function IntegrationsSection() {`:
 
 ```tsx
-/** Pre-backend Electron switch: the only way to opt into MCP before a
- *  backend sidecar has ever run. Same "Enable MCP server" label/copy as the
- *  real Integrations toggle below — flipping it on triggers a page reload
- *  once the sidecar is healthy, at which point IntegrationsSection (the
- *  full backend-driven UI) takes over seamlessly. */
+/** Desktop-only master MCP switch. Drives the Electron `mcpEnabled` setting,
+ *  which spawns/kills the backend sidecar and reloads the page. On success the
+ *  window navigates (loadURL/loadFile) and this component unmounts. On a failed
+ *  enable (backend never became healthy) it stays mounted and reflects the
+ *  revert. */
 function ElectronMcpToggle() {
   const [enabled, setEnabled] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -1009,63 +1160,89 @@ function ElectronMcpToggle() {
   const toggle = async (on: boolean) => {
     setPending(true);
     setEnabled(on);
-    const ok = await window.electronAPI!.setMcpEnabled(on);
-    // On success the window navigates away (loadURL/loadFile) and this
-    // component unmounts. On failure (backend never became healthy) we're
-    // still here — reflect the revert.
-    if (!ok) { setEnabled(false); setPending(false); }
+    const result = await window.electronAPI!.setMcpEnabled(on);
+    // Reachable only if the page did NOT navigate (i.e. a failed enable).
+    setEnabled(result);
+    setPending(false);
   };
 
   return (
-    <div className="settings-tab-body">
-      <StandaloneCollapsibleSection title="MCP server (AI agents)" defaultOpen storageKey="mcp">
-        <p className="settings-hint">
-          Let an AI agent (Claude Code, Claude Desktop, Cursor, or any MCP client) query
-          this BoardRipper — PDF full-text search, OpenBoardData readings, the board
-          reference DB, and the live connectivity of whatever board you have open — and
-          drive the view. Off by default. Enabling it starts BoardRipper's local server;
-          the app will reload.
-        </p>
-        <div className="settings-row settings-toggle-row">
-          <label className="settings-label">Enable MCP server</label>
-          <input type="checkbox" checked={enabled} disabled={!loaded || pending}
-            onChange={e => toggle(e.target.checked)} />
-        </div>
-        {pending && <p className="settings-hint">Starting local server…</p>}
-      </StandaloneCollapsibleSection>
+    <div className="settings-row settings-toggle-row">
+      <label className="settings-label">Enable MCP server</label>
+      <input type="checkbox" checked={enabled} disabled={!loaded || pending}
+        onChange={e => toggle(e.target.checked)} />
     </div>
   );
 }
 
 ```
 
-- [ ] **Step 3: Branch at the render call site, not inside `IntegrationsSection`**
+- [ ] **Step 3: Swap the enable row + gate the body on backend availability**
 
-`IntegrationsSection` calls hooks unconditionally today; an early `return` before those hooks
-would make hook execution depend on a runtime condition, tripping React's rules-of-hooks lint
-rule. Branch one level up instead, where the tab is rendered. Find (in `SettingsPanel()`):
+In `IntegrationsSection()`, the enable row and the body currently read:
 
 ```tsx
-      {activeTab === 'integrations' && (
-        <IntegrationsSection />
-      )}
+        <div className="settings-row settings-toggle-row">
+          <label className="settings-label">Enable MCP server</label>
+          <input type="checkbox" checked={enabled}
+            onChange={e => setFlag('mcp_enabled', e.target.checked)} />
+        </div>
+        <div className="settings-row settings-toggle-row">
 ```
 
-Replace with:
+Replace the first row (the `mcp_enabled` checkbox) with a desktop/web branch, keeping the
+drive-UI row that follows:
 
 ```tsx
-      {activeTab === 'integrations' && (
-        isElectron() && !hasBackend() ? <ElectronMcpToggle /> : <IntegrationsSection />
-      )}
+        {isElectron()
+          ? <ElectronMcpToggle />
+          : (
+            <div className="settings-row settings-toggle-row">
+              <label className="settings-label">Enable MCP server</label>
+              <input type="checkbox" checked={enabled}
+                onChange={e => setFlag('mcp_enabled', e.target.checked)} />
+            </div>
+          )}
+        <div className="settings-row settings-toggle-row">
 ```
 
-`IntegrationsSection` itself is unchanged — it's simply not mounted at all while Electron has no
-backend yet, so its `/api/mcp/status` fetch (which would otherwise fail against a `file://`
-origin) never runs.
+Then find where the body is gated on `enabled` and make it also accept "Electron backend up":
 
-- [ ] **Step 4: Update the two remaining `isElectron()` sites in this file**
+```tsx
+        {enabled && (
+          <>
+            <McpLiveStatus status={status!} />
+```
+→
+```tsx
+        {(enabled || (isElectron() && hasBackend())) && status && (
+          <>
+            <McpLiveStatus status={status!} />
+```
 
-`pushWatermarkTermsToBackend()` (line 1268):
+(Adding `&& status` guards `status!` and the connect snippet against the brief window between
+page load and the first `/api/mcp/status` response. On web, `enabled` already implies a loaded
+status; on desktop the extra `hasBackend()` opens the body once the sidecar is up.)
+
+- [ ] **Step 4: `LibraryFolderSetting` — hide the Docker text field on all Electron builds**
+
+The text field says "Path inside the container… docker -v …" — wrong for desktop, which uses the
+native folder picker (Task 5). Currently `if (electronMode) return null;`:
+
+```tsx
+  // Don't show in Electron mode (has its own folder picker)
+  if (electronMode) return null;
+```
+→
+```tsx
+  // Don't show on desktop — it has its own native folder picker (LibraryPanel).
+  if (isElectron()) return null;
+```
+
+If `electronMode` is now unused in `LibraryFolderSetting`, drop it from that function's
+`useDatabank()` destructure.
+
+- [ ] **Step 5: `pushWatermarkTermsToBackend` + reindex prompt → `hasBackend()`**
 
 ```ts
 function pushWatermarkTermsToBackend(terms: string[]): void {
@@ -1077,7 +1254,7 @@ function pushWatermarkTermsToBackend(terms: string[]): void {
   if (!hasBackend()) return;
 ```
 
-The reindex prompt (line 1364):
+And the reindex prompt:
 
 ```tsx
       {showReindex && !isElectron() && (
@@ -1087,111 +1264,76 @@ The reindex prompt (line 1364):
       {showReindex && hasBackend() && (
 ```
 
-- [ ] **Step 5: Typecheck**
+- [ ] **Step 6: Typecheck**
 
 ```bash
-cd src/frontend && npx tsc --noEmit
+cd /Users/besitzer/Desktop/Boardviewer/src/frontend && npx tsc --noEmit
 ```
 
 Expected: no new errors.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/frontend/src/panels/SettingsPanel.tsx
-git commit -m "feat(desktop): pre-backend Enable MCP server switch in Settings"
+git commit -m "feat(desktop): unified MCP toggle + backend-aware Settings gates"
 ```
 
 ---
 
-### Task 6: Hide the Docker-update UI on Electron builds
+### Task 7: Hide the Docker-update UI on Electron builds
 
 **Files:**
 - Modify: `src/frontend/src/components/Toolbar.tsx`
 - Modify: `src/frontend/src/App.tsx`
 
-Not a new feature — a guard. Once a real backend can run inside Electron (Task 3), the existing
-`UpdateBadge` would otherwise look functional while silently failing (`PubKey`/`SourceList`
-are empty in the desktop-compiled binary — Global Constraints). This must be hidden regardless
-of `mcpEnabled` state, since it's about the *binary's* capabilities, not the MCP toggle.
+A guard, not a feature. Once a real backend runs inside Electron (Task 3), the `UpdateBadge`
+would look functional while silently failing (no `PubKey`/`SourceList` in the desktop binary —
+Global Constraints). Hidden regardless of MCP state. `Toolbar.tsx` already imports `isElectron`
+after Task 5.
 
 **Interfaces:**
-- Consumes: `isElectron()` from `databank-store.ts` (already exported, no change needed).
+- Consumes: `isElectron()` (Toolbar already imports it after Task 5; App.tsx adds the import).
 
-- [ ] **Step 1: Import `isElectron` in `Toolbar.tsx`**
-
-Find:
-
-```ts
-import { databankStore } from '../store/databank-store';
-```
-
-Replace with:
-
-```ts
-import { databankStore, isElectron } from '../store/databank-store';
-```
-
-- [ ] **Step 2: Gate `<UpdateBadge />`**
-
-Find (near the end of the toolbar's render):
+- [ ] **Step 1: Gate `<UpdateBadge />` in `Toolbar.tsx`**
 
 ```tsx
       <UpdateBadge update={update} />
 ```
-
-Replace with:
-
+→
 ```tsx
       {!isElectron() && <UpdateBadge update={update} />}
 ```
 
-- [ ] **Step 3: Import `isElectron` in `App.tsx`**
+- [ ] **Step 2: Import `isElectron` in `App.tsx`**
 
-Find:
-
-```ts
-import { saveDroppedToIncoming } from './store/incoming-upload';
-```
-
-Add immediately after it:
+After `import { saveDroppedToIncoming } from './store/incoming-upload';`:
 
 ```ts
 import { isElectron } from './store/databank-store';
 ```
 
-- [ ] **Step 4: Gate the drop-to-update-bundle branch**
-
-Find:
+- [ ] **Step 3: Gate the drop-to-update-bundle branch**
 
 ```tsx
     for (const file of files) {
       if (isUpdateBundle(file.name)) {
 ```
-
-Replace with:
-
+→
 ```tsx
     for (const file of files) {
       if (!isElectron() && isUpdateBundle(file.name)) {
 ```
 
-- [ ] **Step 5: Typecheck**
+- [ ] **Step 4: Typecheck**
 
 ```bash
-cd src/frontend && npx tsc --noEmit
+cd /Users/besitzer/Desktop/Boardviewer/src/frontend && npx tsc --noEmit
 ```
 
 Expected: no new errors.
 
-- [ ] **Step 6: Manual verification**
-
-Build and run the desktop app (`cd desktop && npm start`), confirm the toolbar shows no version
-badge / update control at all. Confirm dropping a file named `boardripper-update-v1.0.0.tar`
-onto the window does not show the "Install update bundle?" confirm dialog (falls through to
-normal file handling instead).
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/frontend/src/components/Toolbar.tsx src/frontend/src/App.tsx
@@ -1200,30 +1342,43 @@ git commit -m "fix(desktop): hide Docker-update UI on Electron builds"
 
 ---
 
-### Task 7: End-to-end verification — MCP tool parity + full opt-in flow
+### Task 8: End-to-end verification, MCP parity check, and docs
 
-**Files:** none (verification only).
+**Files:**
+- Modify: `CLAUDE.md`
 
-This task has no code changes; it exercises Tasks 1-6 together and confirms the "single source
-of truth" invariant from the design spec (§3) actually holds — the desktop sidecar and a
-NAS/Docker instance expose identical MCP tools, since they compile the same source tree.
+Exercises Tasks 1-7 together and confirms the design's "single source of truth" invariant (§3):
+the desktop sidecar and a NAS/Docker instance expose identical MCP tools because they compile
+the same source tree.
 
-- [ ] **Step 1: Build a full desktop package**
+- [ ] **Step 1: Full frontend test + build sanity**
 
 ```bash
-cd desktop && node build-all.mjs --mac
+cd /Users/besitzer/Desktop/Boardviewer/src/frontend && npx tsc --noEmit && npx vite build --base ./
 ```
 
-Expected: completes, produces `desktop/out/BoardRipper-macOS-universal-v<version>.zip`.
+Expected: typecheck clean, Vite build succeeds.
 
-- [ ] **Step 2: Launch it, enable MCP through the UI**
+- [ ] **Step 2: Build a desktop package with the sidecar**
 
-Unzip and open the built `.app`. Go to Settings ▸ Integrations, confirm the pre-backend
-"Enable MCP server" switch (Task 5) is visible and unchecked. Check it. Confirm the app reloads
-and the full Integrations UI (token, connect-card snippets, client picker) now renders — same
-as the web build.
+```bash
+cd /Users/besitzer/Desktop/Boardviewer/desktop && node build-all.mjs --mac
+```
 
-- [ ] **Step 3: Connect a real MCP client and list tools**
+Expected: completes; produces `desktop/out/BoardRipper-macOS-universal-v<version>.zip`. Confirm
+`desktop/bin/darwin/server` is a universal binary: `lipo -info desktop/bin/darwin/server`
+prints `Architectures in the fat file: ... arm64 x86_64`.
+
+- [ ] **Step 3: Launch it and enable MCP through the UI**
+
+Unzip and open the built `.app`. Settings ▸ Integrations shows the "Enable MCP server" switch
+(the `ElectronMcpToggle`), unchecked; the databank/Database-info sections behave as today
+(IPC-only). Check the switch → the app reloads → the full Integrations UI (token, connect-card
+snippets, client picker, drive-UI toggle) renders, **and** Settings ▸ Database info now shows
+PDF-index/dedup controls (backend features unlocked). Confirm the Library tab uses the native
+folder picker (not a Docker path field) and the toolbar button reads "Open".
+
+- [ ] **Step 4: Connect a real MCP client + verify the live bridge**
 
 ```bash
 claude mcp add --transport http boardripper-desktop-test \
@@ -1232,61 +1387,52 @@ claude mcp add --transport http boardripper-desktop-test \
 claude mcp list
 ```
 
-(`<port>` is visible in the connect-snippet URL shown in the Integrations tab; `<token>` is
-the bearer token shown there too.)
+Expected: `boardripper-desktop-test` shows `✓ Connected`. Open a board in the app, then confirm a
+live-board tool (e.g. `board_active`) returns the open board over the WS bridge — proving the
+sidecar-served page connected the bridge.
 
-Expected: `boardripper-desktop-test` shows `✓ Connected`.
-
-- [ ] **Step 4: Diff the tool list against a NAS/Docker instance on the same commit**
+- [ ] **Step 5: Tool-list parity vs a NAS/Docker instance on the same commit**
 
 ```bash
 claude mcp add --transport http boardripper-nas-test http://<nas-host>:1336/api/mcp \
   --header "Authorization: Bearer <NAS token>"
 ```
 
-Using each connection, list available tools (e.g. via `claude mcp list` tool inspection, or any
-MCP client's `tools/list` view) and confirm the tool names, count, and schemas are identical
-between `boardripper-desktop-test` and `boardripper-nas-test`. This is the parity check called
-for in the design spec (§8) — any difference means something drifted into a desktop-only or
-NAS-only tool definition, which should not happen given `src/backend/mcpserver` is never
-forked (Global Constraints).
+Inspect `tools/list` on both connections; confirm identical tool names, count, and schemas. Any
+difference means a tool drifted into a desktop-only or NAS-only definition — which must not
+happen given `src/backend/mcpserver` is never forked (Global Constraints / design §8).
 
-- [ ] **Step 5: Confirm the opt-out path**
+- [ ] **Step 6: Opt-out path**
 
-In Settings ▸ Integrations, uncheck "Enable MCP server". Confirm the app reloads back to the
-lightweight IPC-only mode (folder scan works via the native picker; Settings ▸ Integrations
-shows the pre-backend switch again, unchecked). Confirm (`ps aux | grep bin/darwin`) the
-backend process is gone.
+Uncheck "Enable MCP server". The app reloads to the lightweight IPC-only mode; Settings ▸
+Integrations shows the switch again (unchecked); `ps aux | grep bin/darwin/server` shows the
+backend gone.
 
-- [ ] **Step 6: Clean up test MCP connections**
+- [ ] **Step 7: Clean up test connections**
 
 ```bash
 claude mcp remove boardripper-desktop-test
 claude mcp remove boardripper-nas-test
 ```
 
----
+- [ ] **Step 8: Document in `CLAUDE.md`**
 
-### Task 8: Documentation
-
-**Files:**
-- Modify: `CLAUDE.md`
-
-- [ ] **Step 1: Extend the MCP bullet in "Key Architectural Decisions"**
-
-Find the bullet starting `- **MCP server + live-board bridge (feature/mcp-server-live-board-bridge):**`
-in `CLAUDE.md`. Append a new sentence to the end of that bullet (same bullet, not a new one —
-this is the same subsystem, not a separate feature):
+Append to the end of the existing MCP bullet under "Key Architectural Decisions" (the bullet
+starting `- **MCP server + live-board bridge`) — same bullet, same subsystem:
 
 ```
-Desktop (Electron) opt-in: a new `mcpEnabled` setting (off by default, `desktop/main.js`)
-spawns the exact same backend binary (`CGO_ENABLED=0` cross-compiled per-platform in
-`desktop/build-all.mjs`) as a loopback child process and reloads the window from it —
-`src/backend/mcpserver` is never forked, so desktop and NAS always expose identical tools.
-See `docs/specs/2026-07-15-desktop-mcp-backend-sidecar-design.md`.
+Desktop (Electron) opt-in: a new `mcpEnabled` setting (off by default, `desktop/main.js`,
+persisted in `settings.json` with a stable `mcpPort`) spawns the exact same backend binary
+(`CGO_ENABLED=0`, cross-compiled + `lipo`'d to a universal mac binary in
+`desktop/build-all.mjs`) as a loopback child process, seeds `mcp_enabled`, and reloads the
+window from `http://127.0.0.1:<port>/` — after which the renderer is identical to the web build
+(`hasBackend()` in `databank-store.ts` gates the IPC-vs-backend forks). Because
+`src/backend/mcpserver` is never forked, desktop and NAS always expose identical tools. On
+desktop the backend runs only while MCP is enabled. See
+`docs/specs/2026-07-15-desktop-mcp-backend-sidecar-design.md`.
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add CLAUDE.md
