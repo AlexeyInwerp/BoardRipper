@@ -32,9 +32,13 @@ Docker/NAS deployment already ships (`src/backend/mcpserver/`, 20 tools), so an 
   (`mcp_enabled` config key, 404 when disabled) and desktop should preserve that: a user who
   never opts in gets exactly today's lightweight, backend-free app.
 - **The existing Docker self-update pipeline (`src/backend/updater/`) does not apply here** —
-  `docker.go` and the orchestrator-swap logic are Docker-socket specific. Settings ▸ Update
-  must stay hidden on Electron builds regardless of MCP state; desktop's own update mechanism
-  is out of scope for this spec.
+  `docker.go` and the orchestrator-swap logic are Docker-socket specific. There's no dedicated
+  Settings tab for it — the surface is the `UpdateBadge` in `Toolbar.tsx` (checks
+  `/api/update/*` and offers "Update & Restart") and the drop-to-update-bundle handler in
+  `App.tsx`. Both must stay hidden/disabled on Electron builds regardless of MCP state, since a
+  bundled backend would otherwise make the badge look functional while silently failing (no
+  `PubKey`/`SourceList` baked into the desktop binary); desktop's own update mechanism is out
+  of scope for this spec.
 
 ## 3. Architecture
 
@@ -142,13 +146,17 @@ Desktop and NAS/Docker run the **same compiled binary from the same source tree*
 
 ## 7. What changes in the frontend
 
-- `databank-store.ts`: once the backend is reachable, the `isElectron()`-gated IPC branches
-  (`scan-library`, `read-library-file`, "reindex disabled on Electron," etc.) become dead code
-  for that session — delete them rather than dual-maintain, since the app is now talking to the
-  same `/api/...` surface as the web build.
-- `SettingsPanel.tsx`: new pre-backend "Enable MCP Server" switch (§4); Settings ▸ Update stays
-  hidden on Electron builds unconditionally (Docker-orchestration endpoints don't apply,
-  independent of MCP state).
+- `databank-store.ts`: since MCP (and the sidecar) is opt-in, the IPC branches (`scan-library`,
+  `read-library-file`, etc.) **cannot be deleted** — they remain the only path for the default,
+  backend-free desktop mode. What changes is the *condition*: today every one of these branches
+  checks `isElectron()`; they need to check a new `hasBackend()` (`!isElectron() ||
+  location.protocol !== 'file:'`) instead, so Electron-with-a-live-sidecar falls through to the
+  exact same `/api/...` calls the web build uses, while Electron-without-a-sidecar keeps
+  today's IPC behavior unchanged.
+- `SettingsPanel.tsx`: new pre-backend "Enable MCP Server" switch (§4), shown in place of the
+  existing Integrations tab content only while `isElectron() && !hasBackend()`. The `UpdateBadge`
+  (Toolbar) and drop-to-update-bundle handler (App.tsx) stay hidden on Electron builds
+  unconditionally (independent of MCP/backend state).
 - `electron.d.ts` / `preload.js`: add `getMcpEnabled` / `setMcpEnabled`; the file-dialog,
   library-folder-picker, and "open an arbitrary file outside my library" IPC paths are
   untouched — those are genuinely OS-native concerns, not backend concerns.
