@@ -1,5 +1,47 @@
 # BoardRipper changelog
 
+## v0.31.37 — 2026-07-14
+
+An MCP release: the assistant can now drive the live board — open library
+files into tabs, work across several open boards at once, and read a
+selected component's pins — plus a smarter library search that finds a board
+by any of its metadata, including its folder path.
+
+### MCP server
+
+- **Open library files into the live view.** New `open_file` tool loads a
+  board (and its auto-bound schematic PDFs) or a document by file id, so the
+  assistant can go from a search hit to an open board on its own instead of
+  waiting for the user to open it. (`9eb9f0f6`)
+- **Work across several open boards.** New `board_tabs` lists the open board
+  tabs and `switch_tab` changes the active one; the inspection tools
+  (`part_info`, `net_info`, `list_parts`, …) take an optional `tab`, so the
+  assistant can compare two boards without losing its place — e.g. a
+  pin-for-pin comparison of the same chip on two variants. (`439f921e`,
+  `9eb9f0f6`)
+- **Read the selected component.** New `selected_part` returns the pins and
+  nets of whatever the user has clicked, so the assistant can pick the
+  conversation up from the board. (`439f921e`)
+- **Search finds a board by any of its metadata.** `file_list` now matches
+  the folder path, manufacturer and extension in addition to filename /
+  board number / model, with multi-word AND matching — so searching an Apple
+  A-number like "A2991" returns its boardview even though the file is named
+  by its 820-number and sits in an `A2991 …` folder. (`1d05729a`)
+- **Don't download boardviews as blobs.** The download tool now tells the
+  assistant that boardview files (BRD/FZ/XZZ/BDV-ASC …) are encrypted or
+  obfuscated and must be read through the live board tools, not fetched as
+  raw bytes. (`439f921e`)
+- **Fixed `board_sessions`.** It failed output-schema validation and returned
+  an error instead of the list of open boards; now returns cleanly.
+  (`1d41e169`)
+
+### Library
+
+- **Search matches the folder path too.** The Library search box now finds a
+  board by any metadata including its folder path, with multi-word matching,
+  so typing an Apple A-number surfaces the boardview even when its filename
+  only carries the board number. (`23ad492f`)
+
 ## v0.31.36 — 2026-07-13
 
 A memory and parse-performance release: closing board tabs now actually
