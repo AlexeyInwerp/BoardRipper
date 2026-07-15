@@ -39,6 +39,7 @@ desktop/out/
 desktop/out-legacy/
 desktop/out-win/
 desktop/webapp/
+desktop/bin/
 
 # Samples — ignored by default. The public repo does NOT ship real-world
 # boardview files or schematic PDFs (not redistributable). Local working tree

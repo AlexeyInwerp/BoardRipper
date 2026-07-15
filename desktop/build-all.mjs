@@ -108,6 +108,49 @@ if (existsSync(WEBAPP_DIR)) rmSync(WEBAPP_DIR, { recursive: true });
 mkdirSync(WEBAPP_DIR, { recursive: true });
 cpSync(path.join(FRONTEND, 'dist'), WEBAPP_DIR, { recursive: true });
 
+// ═══════════════════════════════════════════════════════════════
+// Step 1.5: Cross-compile the Go backend sidecar (CGO_ENABLED=0, no
+// update ldflags — the Docker self-update pipeline doesn't apply here).
+// macOS ships a single lipo'd universal binary so @electron/universal's
+// makeUniversalApp sees one identical resource in both arch passes.
+// ═══════════════════════════════════════════════════════════════
+const BACKEND = path.join(ROOT, 'src', 'backend');
+const BIN_DIR = path.join(DESKTOP, 'bin');
+if (existsSync(BIN_DIR)) rmSync(BIN_DIR, { recursive: true });
+mkdirSync(BIN_DIR, { recursive: true });
+
+function goBuild(goos, goarch, outFile) {
+  mkdirSync(path.dirname(outFile), { recursive: true });
+  console.log(`\n=== Cross-compiling backend ${goos}/${goarch} ===`);
+  execSync(
+    `go build -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION}" -o "${outFile}" .`,
+    {
+      cwd: BACKEND,
+      stdio: 'inherit',
+      env: { ...process.env, CGO_ENABLED: '0', GOOS: goos, GOARCH: goarch },
+    },
+  );
+}
+
+if (buildMac || buildLegacy) {
+  const armTmp = path.join(BIN_DIR, '.darwin-arm64');
+  const x64Tmp = path.join(BIN_DIR, '.darwin-x64');
+  goBuild('darwin', 'arm64', armTmp);
+  goBuild('darwin', 'amd64', x64Tmp);
+  const fat = path.join(BIN_DIR, 'darwin', 'server');
+  mkdirSync(path.dirname(fat), { recursive: true });
+  console.log('\n=== lipo → universal darwin/server ===');
+  execSync(`lipo -create "${armTmp}" "${x64Tmp}" -output "${fat}"`, { stdio: 'inherit' });
+  rmSync(armTmp);
+  rmSync(x64Tmp);
+}
+if (buildWin) {
+  goBuild('windows', 'amd64', path.join(BIN_DIR, 'win32', 'server.exe'));
+}
+
+console.log('\n=== Copying Board Database → desktop/bin/boards.db ===');
+cpSync(path.join(ROOT, 'Board Database', 'boards.db'), path.join(BIN_DIR, 'boards.db'));
+
 const packager = (await import('@electron/packager')).default;
 const results = [];
 
@@ -132,7 +175,7 @@ if (buildMac) {
       : undefined,
     appBundleId: 'com.boardripper.app',
     appVersion: APP_VERSION,
-    ignore: IGNORE_PATTERNS,
+    ignore: [...IGNORE_PATTERNS, /^\/bin\/win32($|\/)/],
   };
 
   console.log('  --- arm64 ---');
@@ -187,7 +230,8 @@ if (buildLegacy) {
       : undefined,
     appBundleId: 'com.boardripper.app',
     appVersion: APP_VERSION,
-    ignore: IGNORE_PATTERNS,
+    // Ship the fat darwin/server (macOS runs its x64 slice on legacy).
+    ignore: [...IGNORE_PATTERNS, /^\/bin\/win32($|\/)/],
   });
 
   const zipName = `BoardRipper-Legacy-macOS-x64-v${APP_VERSION}.zip`;
@@ -224,7 +268,7 @@ if (buildWin) {
       CompanyName: 'BoardRipper',
       FileDescription: 'PCB Boardview File Viewer',
     },
-    ignore: IGNORE_PATTERNS,
+    ignore: [...IGNORE_PATTERNS, /^\/bin\/darwin($|\/)/],
   });
 
   const zipName = `BoardRipper-Windows-x64-v${APP_VERSION}.zip`;

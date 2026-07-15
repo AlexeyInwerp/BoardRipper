@@ -19,6 +19,11 @@ const DESKTOP = __dirname;
 const WEBAPP_DIR = path.join(DESKTOP, 'webapp');
 const OUT_DIR = path.join(DESKTOP, 'out');
 
+// Parse --arch flag: "arm64", "x64", or "universal" (default: host arch).
+// Parsed up here because the backend cross-compile step (below) needs it.
+const archArg = process.argv.find(a => a.startsWith('--arch='));
+const requestedArch = archArg ? archArg.split('=')[1] : process.arch === 'arm64' ? 'arm64' : 'x64';
+
 function run(cmd, cwd = ROOT) {
   console.log(`\n> ${cmd}`);
   execSync(cmd, { cwd, stdio: 'inherit' });
@@ -35,11 +40,42 @@ if (existsSync(WEBAPP_DIR)) rmSync(WEBAPP_DIR, { recursive: true });
 mkdirSync(WEBAPP_DIR, { recursive: true });
 cpSync(path.join(FRONTEND, 'dist'), WEBAPP_DIR, { recursive: true });
 
-// ---------- 3. Package with @electron/packager ----------
+// ---------- 2.5. Cross-compile the Go backend sidecar ----------
+const BACKEND = path.join(ROOT, 'src', 'backend');
+const BIN_DIR = path.join(DESKTOP, 'bin');
+const APP_VERSION = JSON.parse(readFileSync(path.join(FRONTEND, 'package.json'), 'utf8')).version;
+if (existsSync(BIN_DIR)) rmSync(BIN_DIR, { recursive: true });
+mkdirSync(BIN_DIR, { recursive: true });
 
-// Parse --arch flag: "arm64", "x64", or "universal" (default: host arch)
-const archArg = process.argv.find(a => a.startsWith('--arch='));
-const requestedArch = archArg ? archArg.split('=')[1] : process.arch === 'arm64' ? 'arm64' : 'x64';
+function goBuild(goarch, outFile) {
+  mkdirSync(path.dirname(outFile), { recursive: true });
+  console.log(`\n=== Cross-compiling backend darwin/${goarch} ===`);
+  execSync(
+    `go build -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION}" -o "${outFile}" .`,
+    {
+      cwd: BACKEND,
+      stdio: 'inherit',
+      env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: goarch },
+    },
+  );
+}
+
+const fat = path.join(BIN_DIR, 'darwin', 'server');
+mkdirSync(path.dirname(fat), { recursive: true });
+if (requestedArch === 'universal') {
+  const armTmp = path.join(BIN_DIR, '.darwin-arm64');
+  const x64Tmp = path.join(BIN_DIR, '.darwin-x64');
+  goBuild('arm64', armTmp);
+  goBuild('x64', x64Tmp);
+  execSync(`lipo -create "${armTmp}" "${x64Tmp}" -output "${fat}"`, { stdio: 'inherit' });
+  rmSync(armTmp);
+  rmSync(x64Tmp);
+} else {
+  goBuild(requestedArch, fat);
+}
+cpSync(path.join(ROOT, 'Board Database', 'boards.db'), path.join(BIN_DIR, 'boards.db'));
+
+// ---------- 3. Package with @electron/packager ----------
 
 // Clean previous output
 if (existsSync(OUT_DIR)) rmSync(OUT_DIR, { recursive: true });
