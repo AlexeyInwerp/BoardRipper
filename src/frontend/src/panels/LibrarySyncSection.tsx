@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
+import { isElectron } from '../store/databank-store';
 import { useLibrarySync } from '../hooks/useLibrarySync';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import {
@@ -43,9 +44,11 @@ function fmtNum(n?: number): string {
 // ---- Public component -------------------------------------------------------
 
 export function LibrarySyncSection() {
-  const { backendAvailable, electronMode } = useDatabank();
+  const { backendAvailable } = useDatabank();
   const { config, configLoaded } = useLibrarySync();
-  if (electronMode) return null;
+  // WebDAV library sync is a NAS-hosting concern, excluded from desktop
+  // regardless of whether the backend sidecar is running (design spec §9).
+  if (isElectron()) return null;
   if (!backendAvailable) {
     return (
       <StandaloneCollapsibleSection title="Library Sync" defaultOpen={false} storageKey="library-sync" searchSectionId="library-sync">

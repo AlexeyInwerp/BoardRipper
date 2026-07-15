@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { useLibraryLoad } from '../store/library-load-store';
-import { databankStore, contentCollapsePlan } from '../store/databank-store';
+import { databankStore, contentCollapsePlan, isElectron } from '../store/databank-store';
 import type { CollapsedFileInfo, DatabankBinding, DatabankFile, DonorBackupInfo, DonorEntry, FileDetail, FolderNode, MetadataGroup, ModelGroup, SearchResult, ViewMode } from '../store/databank-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
@@ -1017,7 +1017,7 @@ export function LibraryPanel() {
       )}
 
       {/* Electron library folder picker */}
-      {electronMode && (
+      {isElectron() && (
         <div className="library-folder-bar">
           <button
             className="library-folder-btn"
@@ -1034,7 +1034,7 @@ export function LibraryPanel() {
       )}
 
       {/* Backend warning (web mode only) */}
-      {!electronMode && !backendAvailable && (
+      {!isElectron() && !backendAvailable && (
         <div className="library-backend-warn">
           Backend unreachable — is the BoardRipper server running? Retrying automatically.
         </div>
@@ -1268,7 +1268,6 @@ export function LibraryPanel() {
           onCreateBinding={handleCreateBinding}
           onUpdateBinding={handleUpdateBinding}
           onDeleteBinding={handleDeleteBinding}
-          electronMode={electronMode}
         />
       )}
 
@@ -1617,14 +1616,13 @@ function FileDetailPath({ path }: { path: string }) {
   );
 }
 
-function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding, electronMode }: {
+function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBinding, onDeleteBinding }: {
   detail: FileDetail;
   files: DatabankFile[];
   onOpen: (f: DatabankFile) => void;
   onCreateBinding: (boardId: number, pdfId: number, category?: string, autoOpen?: boolean) => void;
   onUpdateBinding: (bindingId: number, patch: { category?: string; auto_open?: boolean }) => void;
   onDeleteBinding: (bindingId: number) => void;
-  electronMode: boolean;
 }) {
   const [showBindPicker, setShowBindPicker] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -1664,7 +1662,7 @@ function FileDetailPane({ detail, files, onOpen, onCreateBinding, onUpdateBindin
         >
           Open
         </button>
-        {electronMode ? (
+        {isElectron() ? (
           <RevealButton path={detail.path} />
         ) : (
           <a

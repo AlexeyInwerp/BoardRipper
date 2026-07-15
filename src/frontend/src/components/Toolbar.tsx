@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
-import { useDatabank } from '../hooks/useDatabank';
 import { useUpdateStore } from '../hooks/useUpdateStore';
 import { toggleSidebar, showSidebarTab } from './Sidebar.utils';
 import { getAllExtensions, getFileExtension, getFormat } from '../parsers';
@@ -12,7 +11,7 @@ import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
-import { databankStore } from '../store/databank-store';
+import { databankStore, isElectron } from '../store/databank-store';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
@@ -296,7 +295,6 @@ export function Toolbar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // pdfInputRef removed — single Open button + unified file picker now.
   const { showTop, showBottom, butterfly, board, showTraces, activeTabId, flipAxis, rotation } = useBoardStore();
-  const { electronMode } = useDatabank();
   const [twoWindow, setTwoWindow] = useState(isTwoWindowMode());
   useEffect(() => onTwoWindowModeChange(() => setTwoWindow(isTwoWindowMode())), []);
 
@@ -442,10 +440,10 @@ export function Toolbar() {
           onClick={handleFileOpen}
           className="toolbar-btn"
           data-testid="open-btn"
-          data-tooltip={electronMode ? 'Open boards or PDFs' : 'Upload boards or PDFs from your device'}
-          style={electronMode ? undefined : { gap: 6 }}
+          data-tooltip={isElectron() ? 'Open boards or PDFs' : 'Upload boards or PDFs from your device'}
+          style={isElectron() ? undefined : { gap: 6 }}
         >
-          {electronMode ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
+          {isElectron() ? 'Open' : (<><IconUpload size={14} stroke={1.75} />Upload</>)}
         </button>
       </div>
 
