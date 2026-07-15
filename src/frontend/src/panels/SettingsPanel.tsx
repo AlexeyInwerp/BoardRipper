@@ -33,7 +33,7 @@ import { welcomeStore } from '../store/welcome-store';
 import { OverlayCustomizer } from './settings/OverlayCustomizer';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
-import { isElectron } from '../store/databank-store';
+import { isElectron, hasBackend } from '../store/databank-store';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -359,13 +359,13 @@ function PartTypesSection({ types, actions, hideShapes }: { types: PartType[]; a
 // ---- Library folder setting (Docker mode) ----
 
 function LibraryFolderSetting() {
-  const { libraryPath, electronMode, backendAvailable } = useDatabank();
+  const { libraryPath, backendAvailable } = useDatabank();
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState(libraryPath ?? '');
   const [saving, setSaving] = useState(false);
 
-  // Don't show in Electron mode (has its own folder picker)
-  if (electronMode) return null;
+  // Don't show on desktop — it has its own native folder picker (LibraryPanel).
+  if (isElectron()) return null;
 
   const handleSave = async () => {
     setSaving(true);
@@ -515,6 +515,38 @@ function McpLiveStatus({ status }: { status: McpStatus }) {
   );
 }
 
+/** Desktop-only master MCP switch. Drives the Electron `mcpEnabled` setting,
+ *  which spawns/kills the backend sidecar and reloads the page. On success the
+ *  window navigates (loadURL/loadFile) and this component unmounts. On a failed
+ *  enable (backend never became healthy) it stays mounted and reflects the
+ *  revert. */
+function ElectronMcpToggle() {
+  const [enabled, setEnabled] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    window.electronAPI!.getMcpEnabled().then(v => { setEnabled(v); setLoaded(true); });
+  }, []);
+
+  const toggle = async (on: boolean) => {
+    setPending(true);
+    setEnabled(on);
+    const result = await window.electronAPI!.setMcpEnabled(on);
+    // Reachable only if the page did NOT navigate (i.e. a failed enable).
+    setEnabled(result);
+    setPending(false);
+  };
+
+  return (
+    <div className="settings-row settings-toggle-row">
+      <label className="settings-label">Enable MCP server</label>
+      <input type="checkbox" checked={enabled} disabled={!loaded || pending}
+        onChange={e => toggle(e.target.checked)} />
+    </div>
+  );
+}
+
 function IntegrationsSection() {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [token, setToken] = useState('');
@@ -587,11 +619,15 @@ function IntegrationsSection() {
           reference DB, and the live connectivity of whatever board you have open — and
           drive the view. Off by default.
         </p>
-        <div className="settings-row settings-toggle-row">
-          <label className="settings-label">Enable MCP server</label>
-          <input type="checkbox" checked={enabled}
-            onChange={e => setFlag('mcp_enabled', e.target.checked)} />
-        </div>
+        {isElectron()
+          ? <ElectronMcpToggle />
+          : (
+            <div className="settings-row settings-toggle-row">
+              <label className="settings-label">Enable MCP server</label>
+              <input type="checkbox" checked={enabled}
+                onChange={e => setFlag('mcp_enabled', e.target.checked)} />
+            </div>
+          )}
         <div className="settings-row settings-toggle-row">
           <label className="settings-label" title="Lets agents highlight nets, select parts, change side, and navigate PDFs on the open board">
             Allow agents to control the UI
@@ -600,7 +636,7 @@ function IntegrationsSection() {
             onChange={e => setFlag('mcp_drive_ui', e.target.checked)} />
         </div>
 
-        {enabled && (
+        {(enabled || (isElectron() && hasBackend())) && status && (
           <>
             <McpLiveStatus status={status!} />
 
@@ -1265,7 +1301,7 @@ function parseWatermarkFilter(raw: string): string[] {
  *  No-op in Electron mode (no backend available). Fire-and-forget — errors
  *  are silently dropped (the backend key is advisory for the pdfium indexer). */
 function pushWatermarkTermsToBackend(terms: string[]): void {
-  if (isElectron()) return;
+  if (!hasBackend()) return;
   void fetch('/api/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -1361,7 +1397,7 @@ function PdfWatermarkFilterEditor() {
           </button>
         )}
       </div>
-      {showReindex && !isElectron() && (
+      {showReindex && hasBackend() && (
         <div className="pdf-watermark-reindex-prompt">
           <span className="pdf-watermark-reindex-hint">
             Watermark terms changed — reindex PDFs to apply?
