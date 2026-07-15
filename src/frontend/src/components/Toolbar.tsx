@@ -550,7 +550,7 @@ export function Toolbar() {
           the toolbar — removed until the feature actually ships, at which
           point it belongs in an overflow menu. exportToBVR3 stays in parsers. */}
 
-      <UpdateBadge update={update} />
+      {!isElectron() && <UpdateBadge update={update} />}
     </div>
   );
 }
