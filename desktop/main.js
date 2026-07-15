@@ -405,7 +405,15 @@ async function startBackendAndLoad() {
   currentBackend = { proc, port };
   crashRetries = 0;
   log('INFO', `Backend sidecar healthy, loading http://127.0.0.1:${port}/`);
-  await mainWindow.loadURL(`http://127.0.0.1:${port}/`);
+  // Tolerate a load failure (e.g. the backend died in the narrow window
+  // between the health check and here) rather than letting the rejection
+  // bubble to the fatal-error handler; the did-fail-load handler already
+  // surfaces a dialog, and a crash 'exit' will drive handleUnexpectedExit.
+  try {
+    await mainWindow.loadURL(`http://127.0.0.1:${port}/`);
+  } catch (err) {
+    log('ERROR', `loadURL failed: ${err?.message || err}`);
+  }
   return true;
 }
 
@@ -425,6 +433,12 @@ async function handleUnexpectedExit() {
   const delayMs = 1000 * 3 ** (crashRetries - 1); // 1s, 3s, 9s
   log('INFO', `Backend sidecar crashed — retrying in ${delayMs}ms (attempt ${crashRetries}/3)`);
   await new Promise(r => setTimeout(r, delayMs));
+  // The user may have disabled MCP during the backoff (the stale page still
+  // shows the toggle); don't resurrect a backend they just turned off.
+  if (!loadSettings().mcpEnabled) {
+    log('INFO', 'MCP disabled during crash backoff — not restarting backend');
+    return;
+  }
   await startBackendAndLoad();
 }
 
