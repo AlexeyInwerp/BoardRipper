@@ -1,6 +1,24 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const {
+  pickFreePort,
+  isPortFree,
+  resolveBoardDbPath,
+  startBackend,
+  waitForHealth,
+  enableMcpConfig,
+  stopBackend,
+} = require('./backend-sidecar');
+
+// The running backend sidecar, or null. { proc, port }.
+let currentBackend = null;
+// True while we deliberately kill the backend (user disabled MCP, or a
+// crash-retry is about to replace it) so the 'exit' listener can tell an
+// intentional stop from a crash. Reset at the top of startBackendAndLoad().
+let stoppingDeliberately = false;
+// Consecutive mid-session crash retries (see handleUnexpectedExit).
+let crashRetries = 0;
 
 // ── GPU/sandbox workarounds for Windows ──
 // exitCode 18 = renderer launch-failed, typically GPU process or sandbox issues
@@ -220,7 +238,11 @@ function createWindow() {
       retried = true;
       log('INFO', 'Retrying with GPU disabled...');
       app.commandLine.appendSwitch('disable-gpu');
-      mainWindow.loadFile(path.join(WEBAPP_DIR, 'index.html'));
+      if (currentBackend) {
+        mainWindow.loadURL(`http://127.0.0.1:${currentBackend.port}/`);
+      } else {
+        mainWindow.loadFile(path.join(WEBAPP_DIR, 'index.html'));
+      }
     } else {
       logFatal('Renderer process gone', new Error(`reason: ${details.reason}, exitCode: ${details.exitCode}`));
     }
@@ -243,14 +265,7 @@ function createWindow() {
     log(levels[level] || 'INFO', `[renderer] ${message} (${sourceId}:${line})`);
   });
 
-  const indexPath = path.join(WEBAPP_DIR, 'index.html');
-  log('INFO', `Loading: ${indexPath}`);
-  log('INFO', `index.html exists: ${fs.existsSync(indexPath)}`);
-  mainWindow.loadFile(indexPath).then(() => {
-    log('INFO', 'index.html loaded successfully');
-  }).catch((err) => {
-    logFatal('Failed to load index.html', err);
-  });
+  boot();
 
   // Build a platform-aware native menu
   const isMac = process.platform === 'darwin';
@@ -318,6 +333,119 @@ function createWindow() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+function loadStaticFile() {
+  const indexPath = path.join(WEBAPP_DIR, 'index.html');
+  log('INFO', `Loading: ${indexPath}`);
+  return mainWindow.loadFile(indexPath).then(() => {
+    log('INFO', 'index.html loaded successfully');
+  }).catch((err) => {
+    logFatal('Failed to load index.html', err);
+  });
+}
+
+/** Resolve the loopback port for the sidecar. Prefer the persisted port so an
+ *  external MCP client's saved connect URL survives restarts; fall back to a
+ *  fresh free port (and persist it) if the preferred one is taken. */
+async function resolvePort() {
+  const settings = loadSettings();
+  if (settings.mcpPort && await isPortFree(settings.mcpPort)) {
+    return settings.mcpPort;
+  }
+  const port = await pickFreePort();
+  const s = loadSettings();
+  s.mcpPort = port;
+  saveSettings(s);
+  return port;
+}
+
+/** Spawn the backend, wait for health, seed mcp_enabled, then load the window
+ *  from it. On startup failure: kill, revert mcpEnabled to false so the next
+ *  launch doesn't retry a broken setup, and fall back to loadStaticFile().
+ *  Returns true on success. A later unexpected exit (genuine crash) is handled
+ *  by the 'exit' listener -> handleUnexpectedExit(), not this function. */
+async function startBackendAndLoad() {
+  stoppingDeliberately = false;
+  const settings = loadSettings();
+  const port = await resolvePort();
+  log('INFO', `Starting backend sidecar on port ${port}...`);
+  const proc = startBackend({
+    dataDir: app.getPath('userData'),
+    libraryDir: settings.libraryPath || '',
+    staticDir: WEBAPP_DIR,
+    boardDbPath: resolveBoardDbPath(),
+    port,
+  });
+  proc.stdout.on('data', d => log('INFO', `[backend] ${d.toString().trim()}`));
+  proc.stderr.on('data', d => log('ERROR', `[backend] ${d.toString().trim()}`));
+  let exitedDuringStartup = false;
+  proc.on('exit', (code, signal) => {
+    log('ERROR', `Backend sidecar exited: code=${code} signal=${signal}`);
+    const wasCurrent = currentBackend && currentBackend.proc === proc;
+    if (wasCurrent) currentBackend = null;
+    if (!wasCurrent) { exitedDuringStartup = true; return; } // handled below
+    if (stoppingDeliberately) return; // user-initiated, not a crash
+    void handleUnexpectedExit();
+  });
+
+  const healthy = await waitForHealth(port);
+  if (!healthy || exitedDuringStartup) {
+    log('ERROR', 'Backend sidecar failed to become healthy — disabling MCP');
+    stopBackend(proc);
+    const s = loadSettings();
+    s.mcpEnabled = false;
+    saveSettings(s);
+    dialog.showErrorBox(
+      'BoardRipper — MCP server failed to start',
+      `The local server did not become healthy in time. MCP has been disabled.\n\nLog: ${LOG_FILE}`,
+    );
+    return false;
+  }
+
+  await enableMcpConfig(port);
+  currentBackend = { proc, port };
+  crashRetries = 0;
+  log('INFO', `Backend sidecar healthy, loading http://127.0.0.1:${port}/`);
+  await mainWindow.loadURL(`http://127.0.0.1:${port}/`);
+  return true;
+}
+
+/** A previously-healthy backend died mid-session. Retry with backoff (1s, 3s,
+ *  9s); if exhausted, disable MCP and fall back to the static file so the app
+ *  stays usable. */
+async function handleUnexpectedExit() {
+  if (crashRetries >= 3) {
+    logFatal('Backend sidecar crashed repeatedly', new Error('Exceeded restart retries'));
+    const s = loadSettings();
+    s.mcpEnabled = false;
+    saveSettings(s);
+    await loadStaticFile();
+    return;
+  }
+  crashRetries += 1;
+  const delayMs = 1000 * 3 ** (crashRetries - 1); // 1s, 3s, 9s
+  log('INFO', `Backend sidecar crashed — retrying in ${delayMs}ms (attempt ${crashRetries}/3)`);
+  await new Promise(r => setTimeout(r, delayMs));
+  await startBackendAndLoad();
+}
+
+function stopCurrentBackend() {
+  if (currentBackend) {
+    stoppingDeliberately = true;
+    stopBackend(currentBackend.proc);
+    currentBackend = null;
+  }
+}
+
+/** Startup entry point: honours the persisted mcpEnabled setting. */
+async function boot() {
+  const settings = loadSettings();
+  if (settings.mcpEnabled) {
+    const ok = await startBackendAndLoad();
+    if (ok) return;
+  }
+  await loadStaticFile();
+}
+
 async function openFileDialog() {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     title: 'Open Board File',
@@ -356,6 +484,25 @@ ipcMain.handle('show-item-in-folder', (_event, relativePath) => {
 
 // Return process.platform — used by the renderer for label formatting.
 ipcMain.handle('platform', () => process.platform);
+
+// MCP server sidecar toggle. Persisted in settings.json; gates whether the Go
+// backend child process is spawned. Enabling spawns + health-checks + reloads
+// the window from the backend origin; disabling kills it + reloads the static
+// file. Returns whether MCP is enabled after the call (false if a requested
+// enable failed to become healthy).
+ipcMain.handle('get-mcp-enabled', () => !!loadSettings().mcpEnabled);
+
+ipcMain.handle('set-mcp-enabled', async (_event, on) => {
+  const settings = loadSettings();
+  settings.mcpEnabled = !!on;
+  saveSettings(settings);
+  if (on) {
+    return await startBackendAndLoad(); // true on success, false if unhealthy
+  }
+  stopCurrentBackend();
+  await loadStaticFile();
+  return false;
+});
 
 // IPC: read a file from disk and return its ArrayBuffer + metadata
 ipcMain.handle('read-file', async (_event, filePath) => {
@@ -454,6 +601,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   app.quit();
+});
+
+app.on('before-quit', () => {
+  stopCurrentBackend();
 });
 
 app.on('activate', () => {

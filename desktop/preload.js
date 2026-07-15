@@ -38,4 +38,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // to format platform-conditional labels like "Show in Finder" vs
   // "Show in Explorer".
   platform: () => ipcRenderer.invoke('platform'),
+
+  // MCP server sidecar toggle — persisted in Electron settings.json; gates
+  // whether the Go backend child process is spawned at all. setMcpEnabled
+  // resolves to whether MCP is enabled after the call (false if an enable
+  // failed to become healthy).
+  getMcpEnabled: () => ipcRenderer.invoke('get-mcp-enabled'),
+  setMcpEnabled: (on) => ipcRenderer.invoke('set-mcp-enabled', on),
 });

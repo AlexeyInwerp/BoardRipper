@@ -29,6 +29,10 @@ interface ElectronAPI {
   // File reveal + platform detection (added for the library Download button)
   showItemInFolder: (relativePath: string) => Promise<boolean>;
   platform: () => Promise<NodeJS.Platform>;
+
+  // MCP server sidecar toggle (see desktop/main.js)
+  getMcpEnabled: () => Promise<boolean>;
+  setMcpEnabled: (on: boolean) => Promise<boolean>;
 }
 
 declare global {
