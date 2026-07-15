@@ -9,7 +9,8 @@
     "build:all": "node build-all.mjs",
     "build:mac": "node build-all.mjs --mac",
     "build:legacy": "node build-all.mjs --legacy",
-    "build:win": "node build-all.mjs --win"
+    "build:win": "node build-all.mjs --win",
+    "test": "node --test"
   },
   "devDependencies": {
     "@electron/packager": "^18.3.6",
