@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"boardripper/databank"
@@ -365,15 +364,7 @@ func isWritableDir(dir string) bool {
 	return true
 }
 
-// freeBytes returns the available bytes on the filesystem hosting `path`.
-// Uses syscall.Statfs which is available on Linux + Darwin (the project's
-// supported runtimes). Returns 0 on any error.
-func freeBytes(path string) uint64 {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0
-	}
-	// Bavail = blocks available to non-superuser; on Linux+Darwin Bsize is
-	// uint32/int64 respectively, so explicitly widen to uint64 first.
-	return uint64(st.Bavail) * uint64(st.Bsize)
-}
+// freeBytes returns the available bytes on the filesystem hosting `path`,
+// or 0 on any error. Implemented per-platform (freebytes_unix.go /
+// freebytes_windows.go) because the underlying syscall differs; the
+// Linux/Darwin path (Docker/NAS) is byte-for-byte the original Statfs code.
