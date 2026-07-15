@@ -17,6 +17,15 @@ export function isElectron(): boolean {
   return typeof window !== 'undefined' && !!window.electronAPI?.scanLibrary;
 }
 
+/** True whenever a real Go backend is reachable at the current origin. Always
+ *  true for the web/NAS build. True for Electron only once the mcpEnabled
+ *  sidecar has taken over the page load (loadURL to http://127.0.0.1:<port>/
+ *  instead of loadFile's file:// origin) — see docs/specs/
+ *  2026-07-15-desktop-mcp-backend-sidecar-design.md §4. */
+export function hasBackend(): boolean {
+  return !isElectron() || (typeof location !== 'undefined' && location.protocol !== 'file:');
+}
+
 
 export interface DatabankFile {
   id: number;
@@ -783,7 +792,7 @@ class DatabankStore extends Emitter {
 
   /** Check if a scan or PDF extraction is already in progress and start polling if so. */
   async checkScanStatus(): Promise<void> {
-    if (isElectron()) return;
+    if (!hasBackend()) return;
     const status = await this.apiFetch<ScanStatus>('/api/databank/scan/status');
     if (status) {
       this._scanStatus = status;
@@ -826,16 +835,19 @@ class DatabankStore extends Emitter {
         this._viewMode = 'metadata';
       }
 
-      // Electron branch: same as today's initElectron path.
-      if (typeof window !== 'undefined' && window.electronAPI?.scanLibrary) {
+      // Electron with NO backend sidecar: IPC-only path, unchanged. When a
+      // sidecar IS running (mcpEnabled), fall through to the backend chain
+      // below and leave electronMode false so backend-gated UI renders.
+      if (isElectron() && !hasBackend()) {
         await this.initElectron();
         this._loadStatus = 'loaded';
         this.notify();
         return;
       }
 
-      // Browser branch: matches the order in today's LibraryPanel useEffect
-      // (which this method is replacing).
+      // Browser / backend branch: matches the order in today's LibraryPanel
+      // useEffect (which this method is replacing). Also used by Electron once
+      // a backend sidecar is running.
       await this.loadConfig();
       this.checkScanStatus();
       void this.fetchPdfIndexStats();
@@ -960,7 +972,7 @@ class DatabankStore extends Emitter {
     this._loading = true;
     this.notify();
 
-    if (isElectron()) {
+    if (!hasBackend()) {
       libraryLoadStore.begin('Electron scan');
       libraryLoadStore.setPhase('streaming');
       await this._electronScan();
@@ -1152,7 +1164,7 @@ class DatabankStore extends Emitter {
   }
 
   private async _doFetchFilesByIds(ids: number[]): Promise<void> {
-    if (isElectron() || ids.length === 0) return;
+    if (!hasBackend() || ids.length === 0) return;
     if (this._filesComplete) return; // already have everything
     const params = new URLSearchParams({ ids: ids.join(',') });
     const data = await this.apiFetch<DatabankFile[]>(`/api/databank/files?${params}`);
@@ -1168,7 +1180,7 @@ class DatabankStore extends Emitter {
   get folderTreeLoading() { return this._folderTreeLoading; }
 
   async fetchTree(): Promise<void> {
-    if (isElectron()) {
+    if (!hasBackend()) {
       // Tree is built during _electronScan
       return;
     }
@@ -1356,7 +1368,7 @@ class DatabankStore extends Emitter {
     this._persistScanStatus();
     this.notify();
 
-    if (isElectron()) {
+    if (!hasBackend()) {
       await this._electronScan();
       this._scanStatus = {
         running: false, scanned: this._files.length, total: this._files.length,
@@ -1373,7 +1385,7 @@ class DatabankStore extends Emitter {
   }
 
   async stopScan(): Promise<void> {
-    if (isElectron()) return;
+    if (!hasBackend()) return;
     await this.apiFetch<ScanStatus>('/api/databank/scan/stop', { method: 'POST' });
     this._stopScanPolling();
     // Fetch final status
@@ -1637,7 +1649,7 @@ class DatabankStore extends Emitter {
 
   /** Generate and upload a PDF preview thumbnail for a file */
   async generatePdfPreview(file: DatabankFile): Promise<boolean> {
-    if (file.file_type !== 'pdf' || file.has_preview || isElectron()) return false;
+    if (file.file_type !== 'pdf' || file.has_preview || !hasBackend()) return false;
     try {
       const pdfjsLib = await import('pdfjs-dist');
       const fileObj = await this.fetchFileBuffer(file);
@@ -1861,11 +1873,11 @@ class DatabankStore extends Emitter {
     const trackProgress = file.file_type === 'board';
     if (trackProgress) {
       loadProgressStore.start(file.filename, file.size);
-      loadProgressStore.setPhase('Downloading', isElectron()
-        ? 'Reading from local library mount (Electron IPC)'
-        : `Backend → browser via /api/files/path (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+      loadProgressStore.setPhase('Downloading', hasBackend()
+        ? `Backend → browser via /api/files/path (${(file.size / 1024 / 1024).toFixed(2)} MB)`
+        : 'Reading from local library mount (Electron IPC)');
     }
-    if (isElectron()) {
+    if (!hasBackend()) {
       const result = await window.electronAPI!.readLibraryFile(file.path);
       if (trackProgress) loadProgressStore.pushLog(`Read ${result.buffer.byteLength.toLocaleString()} bytes from Electron`);
       return new File([result.buffer], result.name, { lastModified: result.lastModified });
@@ -1952,7 +1964,14 @@ class DatabankStore extends Emitter {
     if (folderPath) {
       this._libraryPath = folderPath;
       this.notify();
-      await this._electronScan();
+      if (hasBackend()) {
+        // Backend sidecar running: tell it the new root (mirrors the web/NAS
+        // setLibraryDir flow) and let it do the real scan.
+        await this.setLibraryDir(folderPath);
+        await this.triggerFileScan();
+      } else {
+        await this._electronScan();
+      }
     }
     return folderPath;
   }
@@ -1961,7 +1980,7 @@ class DatabankStore extends Emitter {
 
   /** Load config from backend — picks up library_dir and effective scan root */
   async loadConfig(): Promise<void> {
-    if (isElectron()) return;
+    if (!hasBackend()) return;
     const cfg = await this.apiFetch<Record<string, string>>('/api/config');
     if (cfg) {
       // Use explicit library_dir config, or the effective _scan_root from env/fallback
@@ -1972,7 +1991,7 @@ class DatabankStore extends Emitter {
 
   /** Set the library folder path on the backend (Docker mode) */
   async setLibraryDir(dir: string): Promise<boolean> {
-    if (isElectron()) return false;
+    if (!hasBackend()) return false;
     const res = await this.apiFetch<{ status: string }>('/api/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
