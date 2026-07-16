@@ -44,7 +44,11 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     12×12 mil round geometry on every pin; parser now drops it (pins/pads
 //     fall back to classic synthesized look) instead of drawing 12-mil dots
 //     on 125-mil coil pads.
-const PARSER_VERSION = 79;
+// 80: XZZ diode table `=0=` records reclassified 'none' → 'value' (mv=0):
+//     a measured short is a real reading XZZ's viewer draws; on connector
+//     diode maps zeros are the majority (776/1144 on 820-03097), so cached
+//     boards from v79 hide most of the table.
+const PARSER_VERSION = 80;
 
 interface CachedBoard {
   key: string;

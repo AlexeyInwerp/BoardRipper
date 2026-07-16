@@ -73,9 +73,9 @@ export function boardHasDiodeData(board: BoardData | null, boardNumber: string |
 }
 
 /** The single reading to draw on the pin. Precedence: a real XZZ reading
- *  (value/open) beats OBD; OBD fills in where XZZ has none; an XZZ `none` is
- *  the last resort so callers can tell the pin was measured-as-zero. Returns
- *  undefined when neither source has anything. */
+ *  (value — including measured-as-zero — or open) beats OBD; OBD fills in
+ *  where XZZ has nothing; a `none` (OBD zero = not measured) is the last
+ *  resort. Returns undefined when neither source has anything. */
 export function primaryDiodeReading(pin: Pin, boardNumber: string | undefined): DiodeReading | undefined {
   const all = resolveDiodeReadings(pin, boardNumber);
   if (all.length === 0) return undefined;

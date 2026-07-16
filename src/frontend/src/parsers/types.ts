@@ -58,7 +58,9 @@ export type DiodeSource = 'xzz-pcb' | 'obd';
 export interface DiodeReading {
   /** Original token as stored: "359" (XZZ mV), "0.450" (OBD V), "OL", "0". */
   raw: string;
-  /** value = a real reading; open = OL (infinite); none = 0 / no reading. */
+  /** value = a real reading (incl. measured 0 = short, mv=0 — XZZ zeros are
+   *  drawn); open = OL (infinite); none = no reading (OBD "0.000" means "not
+   *  measured" and is suppressed). */
   kind: 'value' | 'open' | 'none';
   /** Normalized millivolts when parseable (XZZ int; OBD volts×1000); else null. */
   mv: number | null;

@@ -1022,15 +1022,17 @@ export function isPadsBinaryHeader(header: Uint8Array): boolean {
  *  present) begins right after it. */
 const DIODE_MARKER = [0x76,0x36,0x76,0x36,0x35,0x35,0x35,0x76,0x36,0x76,0x36];
 
-/** Classify one raw diode token: "OL" → open, "0"/"0.000" → none, numeric →
+/** Classify one raw diode token: "OL" → open, numeric (including "0") →
  *  value (millivolts). Tolerates a trailing dot ("312."). Returns null for an
- *  unparseable token (counted as unmatched by the caller). */
+ *  unparseable token (counted as unmatched by the caller). A literal "0" is a
+ *  real measurement (short to ground) — XZZ's own viewer draws it on the pin,
+ *  and on connector diode maps it can be the majority of records (776/1144 on
+ *  820-03097), so it must not be classified 'none'/suppressed. */
 function classifyXzzDiode(tok: string): DiodeReading | null {
   if (tok === '') return null;
   if (/^OL$/i.test(tok)) return { raw: tok, kind: 'open', mv: null, source: 'xzz-pcb' };
   const n = Number(tok.replace(/\.$/, ''));     // tolerate trailing dot
   if (!Number.isFinite(n)) return null;
-  if (n === 0) return { raw: tok, kind: 'none', mv: 0, source: 'xzz-pcb' };
   return { raw: tok, kind: 'value', mv: Math.round(n), source: 'xzz-pcb' };
 }
 

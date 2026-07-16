@@ -2014,7 +2014,10 @@ export function buildBoardScene(
   // Drawn into the per-side label layers AND tracked in topDiodeLabels /
   // bottomDiodeLabels so applyFlips counter-mirrors them per side (the test
   // board folds — without this the text renders mirrored on the bottom half).
-  // `none`/0 readings are skipped; value shown in volts, `OL` literally.
+  // `none` readings (OBD zeros) are skipped; XZZ-baked zeros arrive as
+  // kind 'value' with mv=0 and draw as a literal "0" (short to ground —
+  // XZZ's viewer shows these, and on connector diode maps they're the
+  // majority of the table). Non-zero values shown in volts, `OL` literally.
   // Colour: light blue (baked) / amber (OBD) / red (open) — high contrast vs
   // the many green pins.
   const topDiodeLabels: BitmapText[] = [];
@@ -2030,6 +2033,7 @@ export function buildBoardScene(
         if (!r || r.kind === 'none') continue;
         const text = r.kind === 'open'
           ? 'OL'
+          : r.mv === 0 ? '0'
           : (r.mv != null ? (r.mv / 1000).toFixed(3) : r.raw);
         const radius = computePinRadius(s, pin.radius);
         // Small but legible. NOT quantizeFontSize'd — its steps jump 4→6, so a
