@@ -13,9 +13,14 @@ const {
 
 // The running backend sidecar, or null. { proc, port }.
 let currentBackend = null;
-// True while we deliberately kill the backend (user disabled MCP, or a
-// crash-retry is about to replace it) so the 'exit' listener can tell an
-// intentional stop from a crash. Reset at the top of startBackendAndLoad().
+// A sidecar spawned but not yet healthy (currentBackend is only set once
+// health passes). Tracked so a quit / disable during the startup wait can
+// still kill it instead of orphaning the process.
+let startingProc = null;
+// True while we deliberately kill the backend (user disabled MCP, a
+// crash-retry is about to replace it, or the app is quitting) so the 'exit'
+// listener can tell an intentional stop from a crash and the startup path can
+// skip its failure dialog. Reset at the top of startBackendAndLoad().
 let stoppingDeliberately = false;
 // Consecutive mid-session crash retries (see handleUnexpectedExit).
 let crashRetries = 0;
@@ -375,11 +380,13 @@ async function startBackendAndLoad() {
     boardDbPath: resolveBoardDbPath(),
     port,
   });
+  startingProc = proc;
   proc.stdout.on('data', d => log('INFO', `[backend] ${d.toString().trim()}`));
   proc.stderr.on('data', d => log('ERROR', `[backend] ${d.toString().trim()}`));
   let exitedDuringStartup = false;
   proc.on('exit', (code, signal) => {
     log('ERROR', `Backend sidecar exited: code=${code} signal=${signal}`);
+    if (startingProc === proc) startingProc = null;
     const wasCurrent = currentBackend && currentBackend.proc === proc;
     if (wasCurrent) currentBackend = null;
     if (!wasCurrent) { exitedDuringStartup = true; return; } // handled below
@@ -388,9 +395,17 @@ async function startBackendAndLoad() {
   });
 
   const healthy = await waitForHealth(port);
+  if (stoppingDeliberately) {
+    // Torn down during startup (user disabled MCP, or the app is quitting).
+    // Not a failure — don't disable MCP or pop a dialog.
+    stopBackend(proc);
+    startingProc = null;
+    return false;
+  }
   if (!healthy || exitedDuringStartup) {
     log('ERROR', 'Backend sidecar failed to become healthy — disabling MCP');
     stopBackend(proc);
+    startingProc = null;
     const s = loadSettings();
     s.mcpEnabled = false;
     saveSettings(s);
@@ -403,6 +418,7 @@ async function startBackendAndLoad() {
 
   await enableMcpConfig(port);
   currentBackend = { proc, port };
+  startingProc = null;
   crashRetries = 0;
   log('INFO', `Backend sidecar healthy, loading http://127.0.0.1:${port}/`);
   // Tolerate a load failure (e.g. the backend died in the narrow window
@@ -443,8 +459,14 @@ async function handleUnexpectedExit() {
 }
 
 function stopCurrentBackend() {
+  // Mark deliberate teardown up front so an in-flight startBackendAndLoad
+  // (still awaiting health) sees it and skips its failure dialog.
+  stoppingDeliberately = true;
+  if (startingProc) {
+    stopBackend(startingProc);
+    startingProc = null;
+  }
   if (currentBackend) {
-    stoppingDeliberately = true;
     stopBackend(currentBackend.proc);
     currentBackend = null;
   }
@@ -511,6 +533,9 @@ ipcMain.handle('set-mcp-enabled', async (_event, on) => {
   settings.mcpEnabled = !!on;
   saveSettings(settings);
   if (on) {
+    // Idempotent: if a backend is already running (or mid-startup), don't
+    // spawn a second one on a redundant enable.
+    if (currentBackend || startingProc) return true;
     return await startBackendAndLoad(); // true on success, false if unhealthy
   }
   stopCurrentBackend();

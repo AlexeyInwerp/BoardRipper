@@ -12,8 +12,14 @@ import { pdfIndexClient } from '../pdf/pdf-index-client';
  * across devices.
  *
  * Best-effort and non-blocking from the user's point of view: rendering has
- * already happened by the time this is called. Electron uses a local library
- * folder (scanned via electronAPI), not server upload, so it's skipped there.
+ * already happened by the time this is called.
+ *
+ * Gated on isElectron() — NOT hasBackend() — deliberately: even when the
+ * desktop MCP sidecar is running (so /api/upload exists), the desktop
+ * library is the user's own curated local folder, and silently copying a
+ * dropped-to-view file into its incoming/ subdir is an unwanted mutation of
+ * their collection. On web/NAS the library is a managed shared store where
+ * persisting is the desired behaviour.
  */
 export async function saveDroppedToIncoming(files: File[]): Promise<void> {
   if (isElectron()) return;

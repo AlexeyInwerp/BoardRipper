@@ -48,14 +48,16 @@ if (existsSync(BIN_DIR)) rmSync(BIN_DIR, { recursive: true });
 mkdirSync(BIN_DIR, { recursive: true });
 
 function goBuild(goarch, outFile) {
+  // Map Electron/packager arch naming ('x64') to Go's GOARCH ('amd64').
+  const goGoarch = goarch === 'x64' ? 'amd64' : goarch;
   mkdirSync(path.dirname(outFile), { recursive: true });
-  console.log(`\n=== Cross-compiling backend darwin/${goarch} ===`);
+  console.log(`\n=== Cross-compiling backend darwin/${goGoarch} ===`);
   execSync(
     `go build -ldflags="-s -w -X boardripper/updater.Version=${APP_VERSION}" -o "${outFile}" .`,
     {
       cwd: BACKEND,
       stdio: 'inherit',
-      env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: goarch },
+      env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: goGoarch },
     },
   );
 }
