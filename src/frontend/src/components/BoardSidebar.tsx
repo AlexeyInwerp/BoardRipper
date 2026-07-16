@@ -223,6 +223,7 @@ function LayersTab({ tabId }: { tabId: number }) {
   const showLabels = tab?.showLabels ?? true;
   const rsettings = useRenderSettings();
   const showDiodeValues = rsettings.showDiodeValues;
+  const showPinNumbers = rsettings.showPinNumbers;
   const diodeBn = tab?.fileName ? extractBoardNumberFromFilename(tab.fileName) : null;
   const hasDiodeData = boardHasDiodeData(board, diodeBn ?? undefined);
   const selection = tab?.selection ?? { partIndex: null, pinIndex: null, highlightedNet: null };
@@ -388,6 +389,16 @@ function LayersTab({ tabId }: { tabId: number }) {
             <span className="toggle-check">{showCopperDrops ? '■' : '□'}</span> Copper drops
           </button>
         )}
+        {/* Pin numbers is a global render setting (same as Settings ▸ Show Pin
+            Numbers); surfaced here because on diode-value maps the pin-number
+            labels compete with the on-pin diode readings. */}
+        <button
+          className={`visibility-toggle ${showPinNumbers ? '' : 'off'}`}
+          onClick={() => renderSettingsStore.applyGlobal({ ...renderSettingsStore.globalSnapshot(), showPinNumbers: !showPinNumbers })}
+          title={showPinNumbers ? 'Hide pin-number labels' : 'Show pin-number labels'}
+        >
+          <span className="toggle-check">{showPinNumbers ? '■' : '□'}</span> Pin numbers
+        </button>
         {hasDiodeData && (
           <button
             className={`visibility-toggle ${showDiodeValues ? '' : 'off'}`}
