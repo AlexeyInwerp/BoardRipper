@@ -1,5 +1,38 @@
 # BoardRipper changelog
 
+## v0.31.39 — 2026-07-18
+
+A small fix round: converter-produced GenCAD files open again, XZZ diode maps
+draw their zero readings, and pin numbers can be toggled straight from the
+View tab.
+
+### Parsers
+
+- **NUL-prefixed GenCAD files open again.** Honhan/GOCCANH "TO CAD" converter
+  exports (e.g. `DAX3ACMBAF0 X3AC Rev F.CAD`) start with NUL bytes before
+  `$HEADER`, which content detection didn't strip — so the `.cad` fallback
+  routed the file to the Mentor Neutral parser, which rejected it with
+  "contains no placed components". Detection now tolerates the NUL prefix;
+  the X3AC sample opens with 2,834 components / 1,732 nets. (`7c00bd90`)
+- **XZZ zero diode readings are drawn.** `=0=` records in XZZ diode maps were
+  classified as "not measured" and hidden from the on-pin overlay, tooltip
+  and component info — but a literal 0 is a real measurement (short to
+  ground), and on connector diode maps it's most of the table (776 of 1,144
+  on the iPhone 15 Pro map). Zeros now draw as "0" on the pin and show as
+  0.000 V in the tooltip and info pane; cached boards re-parse
+  automatically. (`9d178fa5`)
+
+### Board view
+
+- **Pin numbers toggle in the View tab.** On diode-value maps the pin-number
+  labels compete with the on-pin readings; hiding them previously meant a
+  trip to Settings. The View tab now has a Pin numbers visibility toggle next
+  to Diode values, mirroring the same global setting. (`ec30722c`)
+
+Also riding along: the desktop MCP-sidecar groundwork from v0.31.38 (an
+Electron-only release) is in a Docker image for the first time here; it is
+gated on Electron and inert in the web build.
+
 ## v0.31.37 — 2026-07-14
 
 An MCP release: the assistant can now drive the live board — open library
