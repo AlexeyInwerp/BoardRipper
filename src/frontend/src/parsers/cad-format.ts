@@ -12,7 +12,9 @@ export const CADFormat: FormatDescriptor = {
   flipY: true,
 
   detect(header) {
-    const text = decoder.decode(header).trimStart();
+    // Some converter-produced GenCAD files (Honhan/GOCCANH "TO CAD" exports)
+    // prefix the file with NUL bytes, which trimStart() does not remove.
+    const text = decoder.decode(header).replace(/^[\s\0]+/, '');
     return text.startsWith('$HEADER') && text.includes('GENCAD');
   },
 
