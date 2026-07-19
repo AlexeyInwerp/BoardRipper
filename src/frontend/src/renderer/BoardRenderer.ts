@@ -39,6 +39,7 @@ import { ensurePdfPanel } from '../store/dockview-api';
 import { fileInputRefs } from '../store/file-inputs';
 import { obdNetIndex, extractBoardNumberFromFilename, obdStore } from '../store/obd-store';
 import { primaryDiodeReading, boardHasDiodeData, formatDiode } from '../store/diode-readings';
+import { stepExpApproach, ZOOM_TWEEN_RATE } from './smooth-zoom';
 
 // Alias for local use — all colour references go through board-scene.ts
 const COLORS = BOARD_COLORS;
@@ -56,6 +57,20 @@ const SHARED_NET_GLOW = 0x00e5ff;
 /** Container alpha applied to non-emphasized trace layers when one layer is
  *  bumped/pinned to the top, so the emphasized layer visually stands out. */
 const LAYER_DIM_ALPHA = 0.25;
+
+/** Divisor for the smooth-zoom plain-wheel branch's exponential factor
+ *  (`factor = 2^(1.3 · -deltaY/divisor)`). Calibrated 2026-07-19 with a
+ *  headless Playwright probe (samples/820-02016/820-02016.bvr): with
+ *  smoothZoom:false + twoFingerPan:false (routes the bare wheel event to
+ *  pixi-viewport's own legacy Wheel plugin instead of our tween or its
+ *  drag-to-pan path), one `page.mouse.wheel(0, -100)` notch at rest moved
+ *  viewport.scale.x from 0.12794882 to 0.15321599 — ratio ≈ 1.19748.
+ *  divisor = (1.3·ln2·100) / ln(ratio) ≈ 500.0000000000007, rounds to 500.
+ *  That is exactly the constant pixi-viewport's own Wheel plugin and this
+ *  file's zoomAtScreen already hardcode (`factor = 2^(1.3·-deltaY/500)`), so
+ *  the tween reproduces the legacy per-notch zoom magnitude exactly instead
+ *  of only approximating it. */
+const WHEEL_DIVISOR = 500;
 
 // Spatial culling: scene-build tags per-grid-cell + per-part containers with
 // `cullable + cullArea` in board-mil coords, but PixiJS v8 culling is opt-in.
@@ -466,6 +481,14 @@ export class BoardRenderer {
     elapsed: number; duration: number;
   } | null = null;
 
+  /** Active wheel-zoom tween — exponential approach toward targetScale with
+   *  the world point under the cursor pinned to its screen position. */
+  private zoomTween: {
+    targetScale: number;
+    anchorScreenX: number; anchorScreenY: number;
+    anchorWorldX: number; anchorWorldY: number;
+  } | null = null;
+
   // Net line geometry cache — avoid O(N) recomputation every frame for pulse/dash animation.
   // Only recomputed when selection, viewport, or visibility changes.
   private netLineSegments: Array<{ start: Point; end: Point; color: number }> = [];
@@ -588,6 +611,22 @@ export class BoardRenderer {
     const perf = this.perfVisible;
     const frameStart = perf ? performance.now() : 0;
 
+    // Wheel-zoom tween (exponential, cursor-anchored) — see smooth-zoom.ts.
+    if (this.zoomTween) {
+      const t = this.zoomTween;
+      const cur = Math.abs(this.viewport.scale.x);
+      const next = stepExpApproach(cur, t.targetScale, ticker.deltaMS, ZOOM_TWEEN_RATE);
+      this.viewport.scale.set(next, next);
+      // Re-pin the anchored world point to its captured screen position.
+      const sp = this.viewport.toScreen(t.anchorWorldX, t.anchorWorldY);
+      this.viewport.x += t.anchorScreenX - sp.x;
+      this.viewport.y += t.anchorScreenY - sp.y;
+      this.needsRender = true;
+      this.netLinesDirty = true;
+      this.viewport.emit('moved', { viewport: this.viewport, type: 'animate' });
+      if (next === t.targetScale) this.zoomTween = null;
+    }
+
     // Drive animated zoom
     if (this.zoomAnim) {
       const a = this.zoomAnim;
@@ -700,6 +739,10 @@ export class BoardRenderer {
     // Cancel any pending rAF-coalesced hover — harmless if it fires after
     // pause() (handleHover no-ops without an active scene), but wasteful.
     if (this.hoverRafId !== null) { cancelAnimationFrame(this.hoverRafId); this.hoverRafId = null; }
+    // Drop any in-flight wheel-zoom tween — the ticker that drives it is
+    // about to stop, and resuming much later with a stale target would glide
+    // unexpectedly on refocus.
+    this.zoomTween = null;
     // Just stop the ticker — do NOT destroy the Application.
     // PixiJS v8 uses module-level batch pools that get permanently corrupted
     // by app.destroy(), making all future Applications crash with
@@ -2682,6 +2725,8 @@ export class BoardRenderer {
       elapsed: 0,
       duration: 400,
     };
+    // A programmatic jump supersedes any in-flight wheel-zoom tween.
+    this.zoomTween = null;
 
     // Ensure ticker is running for the animation
     if (!this.app.ticker.started) this.app.ticker.start();
@@ -2897,11 +2942,15 @@ export class BoardRenderer {
 
       if ((e.shiftKey && s.twoFingerPan) || safetyNetFires) {
         const raw = e.deltaY || e.deltaX;
-        this.zoomAtScreen(e.offsetX, e.offsetY, raw);
+        this.zoomAtScreen(e.offsetX, e.offsetY, raw, true);
       } else if (e.shiftKey && !s.twoFingerPan) {
         // Alternate mode: bare = zoom, shift+scroll = pan.
         const dx = e.deltaX || e.deltaY;
         this.viewport.x -= dx;
+      } else if (!e.shiftKey && !s.twoFingerPan && s.smoothZoom) {
+        // Plain mouse-wheel zoom: intercept before pixi-viewport's frame-count
+        // smoothing and run it through the exponential tween instead.
+        this.zoomAtScreen(e.offsetX, e.offsetY, e.deltaY, true, WHEEL_DIVISOR);
       } else {
         // No modifier and safety net did not fire — let pixi-viewport handle it.
         return;
@@ -2919,9 +2968,26 @@ export class BoardRenderer {
   /** Mouse-centered zoom at a screen point using the same formula the
    *  shift+wheel handler uses, so drag-zoom and wheel-zoom feel identical.
    *  `rawDelta` is an incremental signed pixel delta: positive = zoom out,
-   *  negative = zoom in (matches wheel deltaY sign convention). */
-  private zoomAtScreen(screenX: number, screenY: number, rawDelta: number): void {
-    const factor = Math.pow(2, (1 + 0.3) * (-rawDelta / 500));
+   *  negative = zoom in (matches wheel deltaY sign convention).
+   *  `smooth` (default false) routes through the exponential cursor-anchored
+   *  tween (smooth-zoom.ts) instead of jumping the scale instantly — used by
+   *  wheel/keyboard zoom, gated live on `renderSettingsStore.settings.smoothZoom`.
+   *  Drag-zoom keeps `smooth = false`: a continuous gesture must track the
+   *  pointer 1:1, not lag behind an animated approach. */
+  private zoomAtScreen(screenX: number, screenY: number, rawDelta: number, smooth = false, divisor = 500): void {
+    const factor = Math.pow(2, (1 + 0.3) * (-rawDelta / divisor));
+    if (smooth && renderSettingsStore.settings.smoothZoom) {
+      const base = this.zoomTween?.targetScale ?? Math.abs(this.viewport.scale.x);
+      const world = this.viewport.toWorld(screenX, screenY);
+      this.zoomTween = {
+        targetScale: Math.max(0.001, Math.min(10, base * factor)),
+        anchorScreenX: screenX, anchorScreenY: screenY,
+        anchorWorldX: world.x, anchorWorldY: world.y,
+      };
+      this.zoomAnim = null;
+      this.needsRender = true;
+      return;
+    }
     const before = this.viewport.toWorld(screenX, screenY);
     this.viewport.scale.set(
       Math.max(0.001, Math.min(10, this.viewport.scale.x * factor)),
@@ -3063,7 +3129,7 @@ export class BoardRenderer {
       // fresh references each call — use JSON equality for deep comparison.
       const INTERACTION_ONLY = new Set<string>([
         'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
-        'cap60Fps', 'showPerfOverlay',
+        'cap60Fps', 'showPerfOverlay', 'smoothZoom',
       ]);
       if (prev) {
         let visualChanged = false;
@@ -5500,6 +5566,8 @@ export class BoardRenderer {
       elapsed: 0,
       duration: 300,
     };
+    // A programmatic jump supersedes any in-flight wheel-zoom tween.
+    this.zoomTween = null;
     if (!this.app.ticker.started) this.app.ticker.start();
   }
 
@@ -5558,7 +5626,7 @@ export class BoardRenderer {
     const cy = this.viewport.screenHeight / 2;
     const { keyboardZoomDelta } = renderSettingsStore.settings;
     const rawDelta = direction === 'in' ? -keyboardZoomDelta : keyboardZoomDelta;
-    this.zoomAtScreen(cx, cy, rawDelta);
+    this.zoomAtScreen(cx, cy, rawDelta, true);
     this.viewport.emit('moved', { viewport: this.viewport, type: 'wheel' });
     this.needsRender = true;
     this.netLinesDirty = true;
@@ -5575,6 +5643,7 @@ export class BoardRenderer {
       this.selectionBlinkTimer = null;
     }
     this.teardownHalo();
+    this.zoomTween = null;
     if (this.zoomSettleTimer) { clearTimeout(this.zoomSettleTimer); this.zoomSettleTimer = null; }
     if (this.netLineSettleTimer) { clearTimeout(this.netLineSettleTimer); this.netLineSettleTimer = null; }
     if (this._pendingFitTimer) { clearTimeout(this._pendingFitTimer); this._pendingFitTimer = null; }

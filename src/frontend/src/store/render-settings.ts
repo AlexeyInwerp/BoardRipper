@@ -266,6 +266,9 @@ export interface RenderSettings {
   disableInertia: boolean;
   /** Wheel zoom smoothing factor (1 = instant, higher = smoother) */
   wheelSmooth: number;
+  /** Animated exponential wheel zoom (cursor-anchored tween). Off = legacy
+   *  instant/pixi-viewport zoom. */
+  smoothZoom: boolean;
   /** Require two fingers for panning (one finger does nothing); useful for trackpad users */
   twoFingerPan: boolean;
   /**
@@ -548,6 +551,7 @@ export const DEFAULTS: RenderSettings = {
   fitPadding: 50,
   disableInertia: true,
   wheelSmooth: 5,
+  smoothZoom: true,
   twoFingerPan: true,
   wheelDetection: false,
   dragToZoom: false,
