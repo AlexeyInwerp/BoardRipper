@@ -757,6 +757,7 @@ export interface LabelRecord {
   color: number;                 // 0xRRGGBB
   kind: LabelKind;
   partIndex: number;             // -1 for labels with no owning part (via labels excluded from v1)
+  anchorX: number; anchorY: number; // fraction of text box at (x,y) — matches BitmapText.anchor
 }
 export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }
 ```
@@ -992,7 +993,7 @@ const view = (scale: number): OverlayViewState => ({
 });
 const th: OverlayThresholds = { labelMinScreenPx: 3, circleLabelMinScreenPx: 3, twoPinLabelMinScreenPx: 6, labelZoomHide: 0 };
 const rec = (x: number, y: number, fontSize: number, kind: LabelRecord['kind'] = 'part'): LabelRecord =>
-  ({ x, y, text: 'X', fontSize, color: 0xffffff, kind, partIndex: 0 });
+  ({ x, y, text: 'X', fontSize, color: 0xffffff, kind, partIndex: 0, anchorX: 0.5, anchorY: 0.5 });
 
 describe('selectVisibleLabels', () => {
   it('culls off-screen records', () => {
@@ -1162,8 +1163,15 @@ export class LabelOverlay {
           if (isSel) px = Math.max(px, SELECTED_MIN_PX);
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
           if (fontPx !== lastFontPx) { ctx.font = `${fontPx}px monospace`; lastFontPx = fontPx; }
-          const sx = m.a * r.x + m.c * r.y + m.tx;
-          const sy = m.b * r.x + m.d * r.y + m.ty;
+          const sx0 = m.a * r.x + m.c * r.y + m.tx;
+          const sy0 = m.b * r.x + m.d * r.y + m.ty;
+          // Anchor compensation: ctx draws centered (textAlign/baseline middle),
+          // records carry BitmapText anchors — shift so the anchored point of
+          // the text box lands on (sx0, sy0). Width via measureText; height ≈ fontPx.
+          const aw = (0.5 - r.anchorX) * ctx.measureText(r.text).width;
+          const ah = (0.5 - r.anchorY) * fontPx;
+          const sx = sx0 + aw;
+          const sy = sy0 + ah;
           ctx.globalAlpha = pass === 'dim' ? DIM_ALPHA : 1;
           if (r.kind === 'twoPinNet') {                   // backing rect (replaces the Graphics wrapper)
             const tw = ctx.measureText(r.text).width + fontPx * 0.6;
