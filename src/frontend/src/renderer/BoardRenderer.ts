@@ -1761,7 +1761,20 @@ export class BoardRenderer {
     const wtTop = scene.topLabelLayer.worldTransform;
     const wtBot = scene.bottomLabelLayer.worldTransform;
     const dm = boardStore.dimMode;
-    const dimActive = s.ambientDim && (dm === 'dim' ||
+    // Ambient-dim + dim-mode is a global setting, but the overlay's dim pass
+    // draws NON-lit labels at DIM_ALPHA — that is a SELECTION SPOTLIGHT (some
+    // labels lit, the rest suppressed), not the ambient board dim. The Pixi side
+    // dims the whole board uniformly and leaves the in-scene labels readable when
+    // nothing is selected; if the overlay applied its 0.22 pass with no lit
+    // target it would suppress EVERY label, so an unselected board renders dead
+    // and dark (BUG-B). Gate the spotlight on there actually being something lit
+    // to contrast against — a selected part or highlighted-net members. With no
+    // selection every overlay label is drawn lit, matching the readable
+    // no-selection look of the OFF (BitmapText) path.
+    const litParts = this.currentLitPartSet();
+    const hasSpotlightTarget =
+      boardStore.selection.partIndex !== null || (litParts?.size ?? 0) > 0;
+    const dimActive = hasSpotlightTarget && s.ambientDim && (dm === 'dim' ||
       (dm !== 'off' && (s.searchAutoDim ?? true) && boardStore.searchSelectionActive));
     overlay.draw(model, {
       topMatrix: { a: wtTop.a, b: wtTop.b, c: wtTop.c, d: wtTop.d, tx: wtTop.tx, ty: wtTop.ty },
@@ -1771,7 +1784,7 @@ export class BoardRenderer {
       showTop: boardStore.showTop, showBottom: boardStore.showBottom,
       selectedPartIndex: boardStore.selection.partIndex,
       dimActive,
-      litParts: dimActive ? this.currentLitPartSet() : null,
+      litParts: dimActive ? litParts : null,
     }, {
       labelMinScreenPx: s.labelMinScreenPx,
       circleLabelMinScreenPx: s.circleLabelMinScreenPx,
