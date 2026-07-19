@@ -8,7 +8,6 @@
  * paints the records above the WebGL canvas. Via labels stay `BitmapText`
  * (small count, multi-layer boards only) and are excluded from v1.
  *
- * See docs/research/renderer-research-2026-07-19.md.
  */
 
 export type LabelKind = 'part' | 'pinNum' | 'pinNet' | 'circleNum' | 'circleNet' | 'twoPinNet' | 'diode';

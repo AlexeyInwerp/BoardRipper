@@ -1,6 +1,5 @@
 /** Canvas2D board-text overlay — draws only on-screen, LoD-passing labels
  *  each redraw instead of keeping ~100k BitmapText nodes in the Pixi scene.
- *  Architecture: docs/research/renderer-research-2026-07-19.md §1.5.
  *  Pure selection logic is exported for unit tests; the class owns the
  *  canvas. Text draws upright in screen space (counter-flip machinery not
  *  needed); positions transform through the per-side label-layer world

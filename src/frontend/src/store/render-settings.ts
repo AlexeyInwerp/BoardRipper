@@ -124,7 +124,7 @@ export interface RenderSettings {
    *  while selected (Text fast mode). 0 = scale naturally with zoom. */
   selectedLabelMinPx: number;
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
-   *  See docs/research/renderer-research-2026-07-19.md. */
+   */
   textFastMode: boolean;
 
   selectionWidth: number;

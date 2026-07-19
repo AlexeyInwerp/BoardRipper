@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the interaction-smoothness and FPS gap identified in
-[docs/research/renderer-research-2026-07-19.md](../research/[external]-rendering-audit-2026-07-19.md)
+the renderer smoothness research (July 2026, internal)
 by (1) eliminating pointer-move jank, (2) adopting exponential cursor-anchored
 zoom tweening, and (3) moving board text off the PixiJS scene graph onto a
 Canvas2D overlay that draws only visible labels.
@@ -574,8 +574,7 @@ Expected: FAIL — cannot resolve `./smooth-zoom`.
 /** Frame-rate-independent exponential approach used for wheel-zoom tweening.
  *  value' = value + (target − value) · (1 − e^(−dt·rate)); snaps within a
  *  relative epsilon so animations terminate exactly. Rate 18/s ≈ 60 ms to
- *  90% — matches the [external viewer] feel documented in
- *  docs/research/renderer-research-2026-07-19.md §1.6. */
+ *  90%. */
 
 export const ZOOM_TWEEN_RATE = 18;
 
@@ -728,7 +727,7 @@ Expected: same result as `main` baseline.
 ```bash
 git add src/frontend/src/renderer/smooth-zoom.ts src/frontend/src/renderer/smooth-zoom.test.ts \
         src/frontend/src/renderer/BoardRenderer.ts src/frontend/src/store/render-settings.ts
-git commit -m "feat(render): exponential cursor-anchored wheel-zoom tween ([external] audit)"
+git commit -m "feat(render): exponential cursor-anchored wheel-zoom tween (smoothness plan)"
 ```
 
 Then (maintainer action): merge Phase 1 to `main` and cut a release via the
@@ -787,7 +786,7 @@ In `render-settings.ts` (next to `labelMinScreenPx` :120 / :486):
 
 ```ts
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
-   *  See docs/research/renderer-research-2026-07-19.md. */
+   */
   textFastMode: boolean;
 ```
 ```ts
@@ -1032,7 +1031,6 @@ Expected: FAIL — module missing.
 // src/frontend/src/renderer/label-overlay.ts
 /** Canvas2D board-text overlay — draws only on-screen, LoD-passing labels
  *  each redraw instead of keeping ~100k BitmapText nodes in the Pixi scene.
- *  Architecture: docs/research/renderer-research-2026-07-19.md §1.5.
  *  Pure selection logic is exported for unit tests; the class owns the
  *  canvas. Text draws upright in screen space (counter-flip machinery not
  *  needed); positions transform through the per-side label-layer world
@@ -1584,7 +1582,7 @@ Maintainer: merge, `/release` (mode announced as experimental opt-in).
 
 - Via labels + debug vertex labels to the overlay (small counts; follow-up).
 - Graduating Text fast mode to default — only after extended multi-install field debugging, as a separate decision.\n- Deleting the BitmapText path / atlas machinery (only after graduation).
-- Raising `labelMinScreenPx` default from 3 (user-visible density change — separate discussion; the audit notes [external] uses ~12 px gates).
+- Raising `labelMinScreenPx` default from 3 (user-visible density change — separate discussion; reference viewers use ~12 px gates).
 - D1 (inactive-tab rebuild deferral), C2 (scene-cache LRU), instanced pins (Phase 1 of the acceleration plan) — separate plans.
 - Elevated-label badge redesign; `blendMode: 'difference'` read-under-text.
 

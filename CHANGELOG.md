@@ -2,53 +2,32 @@
 
 ## v0.31.40 — 2026-07-19
 
-The smoothness release: interaction jank fixes across the board renderer, an
-animated cursor-anchored wheel zoom, and Text fast mode — board text drawn on
-a Canvas2D overlay instead of tens of thousands of in-scene text objects,
-now the default after hands-on validation (measured 11→60 fps at label-heavy
-zoom on a dense board).
+Merges the renderer-optimization branch — the implementation round of our
+renderer performance plans from earlier this summer (see
+`docs/research/rendering-review-2026-07-12.md` and
+`docs/research/wasm-webgpu-acceleration-plan.md`).
 
 ### Board view
 
-- **Text fast mode is the new default renderer for board text.** Labels
-  (part names, pin numbers, net names, diode values) draw on a 2D overlay —
-  visible-only, LoD-gated, exact BitmapText placement via recorded
-  anchors — instead of ~16k–100k retained text objects. Adaptive motion mode
-  re-projects the last frame during heavy pans and snaps crisp on settle.
-  Toggle back anytime: Settings ▸ Performance & Debug ▸ "Text fast mode
-  (experimental)". Known trade-offs: slightly slower at mid-zoom with few
-  labels visible; labels stay fully lit during ambient dim with no selection
-  (deliberate, more readable). (`01797db9`, `209750b6`, `8a41d39b`,
-  `eb0ff0a8`, `fe774931`, `8f88a35e`)
-- **Smooth wheel zoom** (default on): wheel and keyboard zoom glide with a
-  frame-rate-independent, cursor-anchored animation at the same per-notch
-  speed as before. Settings ▸ Performance & Debug ▸ "Smooth wheel zoom" to
-  disable. Trackpad pinch, Ctrl-zoom and drag-zoom are unchanged.
-  (`10ba38be`)
-- **Selected-part label LoD.** With a part selected, its pin/net labels now
-  follow zoom level-of-detail (slightly stickier than unselected labels)
-  instead of staying visible forever; the part name remains the always-on
-  selection marker. New Settings ▸ Zoom Level of Detail ▸ "Selected Part
-  Labels" slider controls the minimum on-screen size (default 11 px, 0 =
-  scale naturally). (`162ea46f`, `2d743fd8`, `ee3bee05`)
-- **Labels no longer vanish after settings changes while zoomed.** A latent
-  culling bug (present long before this release) could hide all labels after
-  any visual-settings rebuild until the next zoom step — the culler ran
-  against stale transforms on the first post-rebuild frame. Affects both
-  rendering modes. (`328a6032`)
-- **FPS is uncapped by default** — the 60 fps cap remains available in
-  Settings ▸ Performance & Debug. (`8f88a35e`)
+- **Text fast mode** (new default): board text draws on a lightweight 2D
+  overlay instead of tens of thousands of in-scene text objects — much
+  higher FPS on label-dense boards (11→60 fps measured on a dense board).
+  The previous text renderer stays available: Settings ▸ Performance &
+  Debug ▸ "Text fast mode".
+- **Smooth wheel zoom** (default on): wheel and keyboard zoom glide toward
+  the cursor at the same speed as before. Disable in Settings ▸
+  Performance & Debug. Trackpad pinch, Ctrl-zoom and drag-zoom unchanged.
+- **Selected part labels** now follow zoom level-of-detail; a new
+  "Selected Part Labels" slider (Settings ▸ Zoom Level of Detail) controls
+  their minimum on-screen size.
+- **Fix:** labels could disappear after changing visual settings while
+  zoomed in — long-standing culling bug, affects both text modes.
+- **FPS cap is off by default** (the 60 fps cap remains in Settings).
 
 ### Performance
 
-- **Hover no longer costs frames.** Pointer-move handling is coalesced to
-  one hit-test per frame with a target memo, tooltip measurement is cached
-  (two forced reflows per mouse-move removed), and trace hover hit-testing
-  uses a spatial grid instead of scanning every trace segment. (`aa3d78e8`,
-  `738baba4`)
-- **Perf-overlay label counting** is skipped entirely while the overlay is
-  closed. (`b8152eec`)
-
+- **Smoother hovering** on dense boards: pointer handling coalesced per
+  frame, tooltip measurement cached, trace lookup on a spatial grid.
 
 ## v0.31.39 — 2026-07-18
 
