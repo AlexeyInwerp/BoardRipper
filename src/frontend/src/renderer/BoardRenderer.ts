@@ -378,6 +378,14 @@ export class BoardRenderer {
   /** Set whenever the view, selection, dim state, or scene changed so the next
    *  tick redraws the overlay. Reset in onTick after a successful draw. */
   private overlayDirty = false;
+  /** Set alongside overlayDirty at every site EXCEPT the two viewport 'moved'
+   *  handlers — i.e. whenever the label CONTENT (not just the view transform)
+   *  changed: selection/dim, settings, scene switches, flips, resize. The
+   *  adaptive motion mode's CSS-transform branch (Task 8) only re-projects the
+   *  last-drawn bitmap when this is false — a content change mid-pan must
+   *  force a full redraw instead of cheaply transforming a stale/blank bitmap.
+   *  Reset alongside overlayDirty in onTick after a successful full draw. */
+  private overlayContentDirty = false;
   /** View state (viewport x/y/scale) at the last full overlay draw — lets the
    *  adaptive motion mode (Task 8) cheaply re-project the last-drawn bitmap via
    *  a CSS transform while panning instead of redrawing every frame. Null until
@@ -748,12 +756,16 @@ export class BoardRenderer {
       const moving = performance.now() < this.viewportMovingUntil;
       const heavy = overlay.lastDrawMs > 6;
       const butterfly = !!(boardStore.butterfly && this.activeScene.butterflyRoot);
-      if (this.overlayDirty && (!moving || !heavy || butterfly || !this.overlayDrawnView)) {
+      if (this.overlayDirty && (!moving || !heavy || butterfly || !this.overlayDrawnView || this.overlayContentDirty)) {
         this.overlayDirty = false;
+        this.overlayContentDirty = false;
         this.syncLabelOverlay(overlay, this.activeScene);
-        this.overlayDrawnView = { x: this.viewport.x, y: this.viewport.y, scale: Math.abs(this.viewport.scale.x) };
+        this.overlayDrawnView = { x: this.viewport.x, y: this.viewport.y, scale: curScale };
       } else if (this.overlayDirty && this.overlayDrawnView) {
-        // Heavy + moving: transform the last-drawn bitmap instead of redrawing.
+        // Heavy + moving + content-clean: transform the last-drawn bitmap
+        // instead of redrawing. A content change (selection/settings/scene/
+        // flip/resize — overlayContentDirty) forces the full-draw branch
+        // above instead, so this never re-projects a stale/blank bitmap.
         // Redraw happens when movement settles (viewportMovingUntil expires —
         // the next tick with moving=false takes the full-draw branch).
         //
@@ -766,11 +778,11 @@ export class BoardRenderer {
         // resets the CSS transform to `''` at entry, so the full-draw branch
         // above needs no explicit reset.
         const d = this.overlayDrawnView;
-        const k = Math.abs(this.viewport.scale.x) / d.scale;
+        const k = curScale / d.scale;
         const dx = this.viewport.x - d.x * k;
         const dy = this.viewport.y - d.y * k;
         overlay.setCssTransform(`translate(${dx}px, ${dy}px) scale(${k})`);
-        // overlayDirty stays true → settle redraw
+        // overlayDirty (and overlayContentDirty, if set later this tick) stay true → settle redraw
       }
     } else if (overlay) {
       overlay.clear();   // setting on, but scene built pre-toggle → rebuild pending
@@ -1559,6 +1571,7 @@ export class BoardRenderer {
       // Resize the label overlay's backing store to match and force a redraw.
       this.textFastMode?.resize();
       this.overlayDirty = true;
+      this.overlayContentDirty = true;   // resize() wipes the canvas backing store
       // If ticker is stopped (panel inactive), do a one-shot render so the
       // resized canvas isn't left black until the user clicks.
       if (!this.app.ticker.started && !this.contextLost) {
@@ -1704,6 +1717,7 @@ export class BoardRenderer {
       // positions inside it), so the overlay's position:absolute anchors here.
       this.textFastMode = new LabelOverlay(this.containerEl);
       this.overlayDirty = true;
+      this.overlayContentDirty = true;   // brand-new blank canvas
     }
     return this.textFastMode;
   }
@@ -2355,6 +2369,7 @@ export class BoardRenderer {
       this.applyFlips(board, scene);
       this.needsRender = true;
       this.overlayDirty = true;   // flips changed the label-layer transforms
+      this.overlayContentDirty = true;
       return;
     }
     log.render.log('activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
@@ -2433,6 +2448,7 @@ export class BoardRenderer {
     );
     this.activeScene = scene;
     this.overlayDirty = true;   // new scene → repaint the label overlay
+    this.overlayContentDirty = true;
     this.lastFlipParams = null; // force full label transform on first applyFlips for this scene
     // Set correct label + pin layer visibility for this scene's zoom level
     if (!this.textHiddenForZoom) this.applyLabelVisibility();
@@ -3311,6 +3327,7 @@ export class BoardRenderer {
       // textFastMode toggle itself) should repaint the overlay next tick. The
       // thresholds are read at draw time, so this covers them without a rebuild.
       this.overlayDirty = true;
+      this.overlayContentDirty = true;
       this.lastSettingsSnapshot = cur;
     } catch (err) {
       log.render.error(`onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
@@ -3609,6 +3626,7 @@ export class BoardRenderer {
     this.needsRender = true;
     this.netLinesDirty = true; // selection changed → recompute net line geometry
     this.overlayDirty = true;  // selection/dim change → repaint the label overlay
+    this.overlayContentDirty = true;
     // Cancel any in-progress blink from a previous selection
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
