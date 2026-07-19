@@ -1561,7 +1561,8 @@ Run: `npx tsc --noEmit && npx vitest run && npx playwright test tests/label-over
 Expected: clean/green (modulo the known headless cohort).
 
 ```bash
-git add -A
+# stage explicitly — the user may have unrelated in-progress edits in the tree
+git add docs/research/perf-baseline-2026-07-19.md CLAUDE.md
 git commit -m "feat(render): Text fast mode — opt-in Canvas2D label overlay (experimental)"
 ```
 
