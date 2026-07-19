@@ -12,10 +12,12 @@ Canvas2D overlay that draws only visible labels.
 Phase 1 is surgical fixes inside `BoardRenderer.ts` plus two new pure modules
 (`smooth-zoom.ts`, `trace-grid.ts`). Phase 2 adds a `LabelModel` emitted by
 `buildBoardScene` *instead of* ~100k `BitmapText` nodes (gated by a new
-`labelOverlay` render setting), and a `LabelOverlay` class that draws
+`textFastMode` render setting), and a `LabelOverlay` class that draws
 visible-only labels onto a DOM canvas layered above the Pixi canvas, redrawn
-on viewport movement. The BitmapText path remains intact as the fallback and
-as the SettingsMockup path.
+on viewport movement. **Text fast mode ships OPT-IN (default off, labeled
+experimental) and stays opt-in until it has been debugged across many real
+installs** — the BitmapText path remains the default renderer and the
+SettingsMockup path; no default flip is part of this plan.
 
 **Tech Stack:** TypeScript strict, PixiJS v8 + pixi-viewport v6, vitest
 (`npm run test:unit`, node env, `src/**/*.test.ts`), Playwright
@@ -40,10 +42,10 @@ as the SettingsMockup path.
 | 2–3 | Task 1 (hover rAF+memo), Task 2 (trace grid), Task 3 (B2 gate) | Idle-interaction jank gone |
 | 4–5 | Task 4 — smooth zoom tween + calibration | **Release: smoothness** (`/release` bugfix bump) |
 | 6–7 | Task 5 — LabelModel emission in buildBoardScene | Model built, flag off, scene unchanged by default |
-| 8–10 | Task 6 (LabelOverlay class) + Task 7 (renderer integration) | Overlay working behind `labelOverlay` setting |
+| 8–10 | Task 6 (LabelOverlay class) + Task 7 (renderer integration) | Overlay working behind `textFastMode` setting |
 | 11 | Task 8 — adaptive motion mode | Pan cost bounded on label-dense boards |
 | 12–13 | Task 9 — Playwright + PNG verification | Visual parity proven |
-| 14–15 | Task 10 — perf validation vs baseline, flip default ON, docs | **Release: text overlay** |
+| 14–15 | Task 10 — perf validation vs baseline, docs | **Release: Text fast mode (opt-in, experimental)** |
 
 Total ≈ 3 working weeks. Phase 1 ships alone first — it is user-visible on its
 own and de-risks the release cadence.
@@ -739,7 +741,7 @@ Then (maintainer action): merge Phase 1 to `main` and cut a release via the
 **Files:**
 - Create: `src/frontend/src/renderer/label-model.ts`
 - Modify: `src/frontend/src/renderer/board-scene.ts` (part-label site :1675-1686; the deferred-text flush sites — search `deferredCircleNumTexts` / `deferredCircleNetTexts` / `deferredTwoPinNetTexts` and the pin-number/pin-net `BitmapText` creation sites in the flush functions around :1786-1828; `BoardSceneGraph` interface :284)
-- Modify: `src/frontend/src/store/render-settings.ts` (new `labelOverlay: boolean`, default `false` for now)
+- Modify: `src/frontend/src/store/render-settings.ts` (new `textFastMode: boolean`, default `false` for now)
 - Modify: `src/frontend/src/panels/SettingsMockup.tsx` (force-off override)
 
 **Interfaces:**
@@ -759,9 +761,9 @@ export interface LabelRecord {
 export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }
 ```
 
-- `BoardSceneGraph.labelModel: LabelModel | null` — `null` when `s.labelOverlay` is false.
-- `RenderSettings.labelOverlay: boolean`.
-- Rule when `s.labelOverlay === true`: every site that would create a part/pin/circle/two-pin-net/diode `BitmapText` pushes a `LabelRecord` instead and does NOT construct the BitmapText. Via labels (`viaLabels`) stay BitmapText in v1 (small count, layer-mode only).
+- `BoardSceneGraph.labelModel: LabelModel | null` — `null` when `s.textFastMode` is false.
+- `RenderSettings.textFastMode: boolean`.
+- Rule when `s.textFastMode === true`: every site that would create a part/pin/circle/two-pin-net/diode `BitmapText` pushes a `LabelRecord` instead and does NOT construct the BitmapText. Via labels (`viaLabels`) stay BitmapText in v1 (small count, layer-mode only).
 
 - [ ] **Step 1: Add the types file and the setting**
 
@@ -784,10 +786,10 @@ In `render-settings.ts` (next to `labelMinScreenPx` :120 / :486):
 ```ts
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
    *  See docs/research/renderer-research-2026-07-19.md. */
-  labelOverlay: boolean;
+  textFastMode: boolean;
 ```
 ```ts
-  labelOverlay: false,
+  textFastMode: false,
 ```
 
 (NOT in `INTERACTION_ONLY` — flipping it must trigger the scene rebuild path,
@@ -847,7 +849,7 @@ Run: `npx vitest run src/renderer/label-model.test.ts` → FAIL (module missing)
 At the top of `buildBoardScene` (:628, after locals are set up):
 
 ```ts
-  const labelModel: LabelModel | null = s.labelOverlay ? { top: [], bottom: [] } : null;
+  const labelModel: LabelModel | null = s.textFastMode ? { top: [], bottom: [] } : null;
 ```
 
 Part-label site (:1675-1686) — wrap the BitmapText construction:
@@ -896,7 +898,7 @@ Add `labelModel` to the `BoardSceneGraph` interface (:284) and the return
 object (:2061):
 
 ```ts
-  /** Canvas2D-overlay label records — non-null only when s.labelOverlay.
+  /** Canvas2D-overlay label records — non-null only when s.textFastMode.
    *  When set, part/pin/circle/two-pin/diode BitmapTexts were NOT created and
    *  the corresponding arrays/groups above are empty. */
   labelModel: LabelModel | null;
@@ -905,7 +907,7 @@ object (:2061):
 - [ ] **Step 4: Force the mockup onto the BitmapText path**
 
 In `SettingsMockup.tsx`, find the `buildBoardScene(` call and spread-override
-the settings argument: `{ ...s, labelOverlay: false }` (the mockup has no
+the settings argument: `{ ...s, textFastMode: false }` (the mockup has no
 overlay canvas; shared-scene invariant preserved).
 
 - [ ] **Step 4b: User-facing toggles in Settings ▸ Performance & Debug**
@@ -913,8 +915,9 @@ overlay canvas; shared-scene invariant preserved).
 In the Settings panel component (find the section rendering the
 `showPerfOverlay` checkbox — `grep -rn "showPerfOverlay" src/panels/`), add
 two checkboxes following the exact same row pattern:
-- "Canvas label overlay" → `labelOverlay` (help text: "Draw board text on a
-  2D overlay instead of in-scene text objects — faster on dense boards").
+- "Text fast mode (experimental)" → `textFastMode` (help text: "Draw board
+  text on a 2D overlay instead of in-scene text objects — faster on dense
+  boards. Experimental: report rendering glitches.").
 - "Smooth wheel zoom" → `smoothZoom` (Task 4's setting; add it here in the
   same edit; help text: "Animated cursor-anchored zoom").
 
@@ -922,7 +925,7 @@ two checkboxes following the exact same row pattern:
 
 Run: `npx tsc --noEmit && npx vitest run`
 Expected: clean.
-Manual: with `labelOverlay` still default-false, load a board — identical to
+Manual: with `textFastMode` still default-false, load a board — identical to
 before (screenshot compare vs `main` at one viewport). Then flip the setting
 in Settings → board rebuilds with NO text anywhere (overlay comes in Task 7);
 `applyLabelVisibility` no-ops on empty groups without errors; selection,
@@ -934,7 +937,7 @@ dim, flips all still work text-less.
 git add src/frontend/src/renderer/label-model.ts src/frontend/src/renderer/label-model.test.ts \
         src/frontend/src/renderer/board-scene.ts src/frontend/src/store/render-settings.ts \
         src/frontend/src/panels/SettingsMockup.tsx
-git commit -m "feat(render): emit LabelModel from buildBoardScene behind labelOverlay setting"
+git commit -m "feat(render): emit LabelModel from buildBoardScene behind textFastMode setting"
 ```
 
 ---
@@ -1208,14 +1211,14 @@ git commit -m "feat(render): LabelOverlay canvas layer with visible-only label s
 
 **Interfaces:**
 - Consumes: `LabelOverlay`, `OverlayViewState`, `OverlayThresholds` (Task 6); `scene.labelModel` (Task 5).
-- Produces: `private labelOverlay: LabelOverlay | null`, `private overlayDirty: boolean` — Task 8 extends `syncLabelOverlay`.
+- Produces: `private textFastMode: LabelOverlay | null`, `private overlayDirty: boolean` — Task 8 extends `syncLabelOverlay`.
 
 - [ ] **Step 1: Lifecycle**
 
 Fields:
 
 ```ts
-  private labelOverlay: LabelOverlay | null = null;
+  private textFastMode: LabelOverlay | null = null;
   private overlayDirty = false;
 ```
 
@@ -1224,20 +1227,20 @@ reinit paths are covered without touching each):
 
 ```ts
   private ensureLabelOverlay(): LabelOverlay | null {
-    if (!renderSettingsStore.settings.labelOverlay) {
-      if (this.labelOverlay) { this.labelOverlay.destroy(); this.labelOverlay = null; }
+    if (!renderSettingsStore.settings.textFastMode) {
+      if (this.textFastMode) { this.textFastMode.destroy(); this.textFastMode = null; }
       return null;
     }
-    if (!this.labelOverlay) {
-      this.labelOverlay = new LabelOverlay(this.containerEl);
+    if (!this.textFastMode) {
+      this.textFastMode = new LabelOverlay(this.containerEl);
       this.overlayDirty = true;
     }
-    return this.labelOverlay;
+    return this.textFastMode;
   }
 ```
 
-`destroy()` (:5490): `this.labelOverlay?.destroy(); this.labelOverlay = null;`
-`resizeObserver` callback (:1395): add `this.labelOverlay?.resize(); this.overlayDirty = true;`
+`destroy()` (:5490): `this.textFastMode?.destroy(); this.textFastMode = null;`
+`resizeObserver` callback (:1395): add `this.textFastMode?.resize(); this.overlayDirty = true;`
 (`containerEl` must be `position: relative/absolute` — it already positions
 the tooltip; verify computed style and set `position: relative` on the
 overlay-mount if it is `static`. The tooltip must stay above the overlay:
@@ -1313,14 +1316,14 @@ transforms are unchanged from the last render — also correct.
 
 - [ ] **Step 4: Perf HUD counts from the overlay**
 
-In `flushPerfOverlay` (:1505-1516), when `this.labelOverlay` is non-null and
+In `flushPerfOverlay` (:1505-1516), when `this.textFastMode` is non-null and
 the active scene has a model, source the label counts from
-`this.labelOverlay.lastCounts` instead of `this.labelCounts`.
+`this.textFastMode.lastCounts` instead of `this.labelCounts`.
 
 - [ ] **Step 5: Typecheck + full manual pass**
 
 Run: `npx tsc --noEmit && npx vitest run` → clean.
-Manual (`npm run dev`, flip Settings ▸ `labelOverlay` ON):
+Manual (`npm run dev`, flip Settings ▸ `textFastMode` ON):
 1. Labels appear, crisp at every zoom (no atlas quantization steps).
 2. Pan/zoom: labels track exactly (no lag/offset vs pads) — including after
    rotate (Q/E), mirror, and butterfly mode. If offsets appear in butterfly,
@@ -1333,7 +1336,7 @@ Manual (`npm run dev`, flip Settings ▸ `labelOverlay` ON):
 4. Selection: selected part's labels always visible, on top, full alpha.
 5. Ambient dim: non-lit labels dim to match the board dim visually.
 6. Side toggle (top/bottom off) hides that side's labels.
-7. Toggle `labelOverlay` off → BitmapText path returns identically.
+7. Toggle `textFastMode` off → BitmapText path returns identically.
 
 - [ ] **Step 6: Commit**
 
@@ -1454,7 +1457,7 @@ async function setOverlay(page: import('@playwright/test').Page, on: boolean) {
     const mod = await import('/src/store/render-settings.ts');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = (mod as any).renderSettingsStore;
-    store.applyGlobal({ ...store.globalSnapshot(), labelOverlay: v });
+    store.applyGlobal({ ...store.globalSnapshot(), textFastMode: v });
   }, on);
 }
 
@@ -1508,57 +1511,59 @@ git commit -m "test: label overlay visual parity + lifecycle specs"
 
 ---
 
-### Task 10: Perf validation, default flip, docs
+### Task 10: Perf validation + docs (mode STAYS opt-in)
 
 **Files:**
-- Modify: `src/frontend/src/store/render-settings.ts` (`labelOverlay: true`)
 - Modify: `docs/research/perf-baseline-2026-07-19.md` (after-numbers)
 - Modify: `CLAUDE.md` (one bullet in Key Architectural Decisions)
+
+Per user decision (2026-07-19): Text fast mode ships opt-in (default OFF,
+labeled experimental) and is debugged across real installs for an extended
+period before any default change is even discussed. There is NO default
+flip in this plan. Graduation to default is a separate future decision with
+its own validation.
 
 - [ ] **Step 1: Re-run the Task 0 probe on this branch**
 
 Run: `cd src/frontend && npx playwright test tests/perf-probe.spec.ts 2>&1 | grep PERF`
 Record the numbers next to the baseline in
 `docs/research/perf-baseline-2026-07-19.md` (same machine!). Acceptance
-gates: `panFps` and `zoomFps` ≥ baseline (they must not regress with overlay
-OFF), and with `labelOverlay` ON (temporarily flip the default or drive the
-setting in the spec) `panFps` at label depth ≥ 1.3× baseline. Also record
-`buildScene` ms from the dev console (`log.perf`) with overlay on vs off on
-the densest sample — expect a large drop (no BitmapText construction).
+gates: `panFps` and `zoomFps` ≥ baseline with `textFastMode` OFF (the default
+path must not regress), and with `textFastMode` ON (drive the setting in the
+spec via the applyGlobal pattern) `panFps` at label depth ≥ 1.3× baseline.
+Also record `buildScene` ms from the dev console (`log.perf`) with the mode
+on vs off on the densest sample — expect a large drop (no BitmapText
+construction).
 
-- [ ] **Step 2: Flip the default**
+- [ ] **Step 2: Document**
 
-`labelOverlay: true,` in render-settings defaults. The BitmapText path stays
-selectable (fallback, one release minimum — mirrors the acceleration plan's
-Phase 1 convention).
-
-- [ ] **Step 3: Document**
-
-Add to CLAUDE.md ▸ Key Architectural Decisions (one bullet): board text
-renders on a Canvas2D overlay (`renderer/label-overlay.ts`) driven by a
-`LabelModel` emitted by `buildBoardScene` when `labelOverlay` is on
-(default); BitmapText path retained as fallback + SettingsMockup path;
-adaptive CSS-transform mode bounds pan cost; via labels still BitmapText.
+Add to CLAUDE.md ▸ Key Architectural Decisions (one bullet): **Text fast
+mode (experimental, opt-in, default off)** — board text renders on a
+Canvas2D overlay (`renderer/label-overlay.ts`) driven by a `LabelModel`
+emitted by `buildBoardScene` when `textFastMode` is on; BitmapText remains
+the default path and the SettingsMockup path; adaptive CSS-transform mode
+bounds pan cost; via labels still BitmapText; do not flip the default
+without an explicit graduation decision after extended field debugging.
 Reference the audit doc.
 
-- [ ] **Step 4: Final full check + commit**
+- [ ] **Step 3: Final full check + commit**
 
 Run: `npx tsc --noEmit && npx vitest run && npx playwright test tests/label-overlay.spec.ts tests/memory-release.spec.ts 2>&1 | tail -5`
 Expected: clean/green (modulo the known headless cohort).
 
 ```bash
 git add -A
-git commit -m "feat(render): enable Canvas2D label overlay by default"
+git commit -m "feat(render): Text fast mode — opt-in Canvas2D label overlay (experimental)"
 ```
 
-Maintainer: merge, `/release`.
+Maintainer: merge, `/release` (mode announced as experimental opt-in).
 
 ---
 
 ## Explicitly deferred (do NOT do in this plan)
 
 - Via labels + debug vertex labels to the overlay (small counts; follow-up).
-- Deleting the BitmapText path / atlas machinery (after ≥ 1 stable release).
+- Graduating Text fast mode to default — only after extended multi-install field debugging, as a separate decision.\n- Deleting the BitmapText path / atlas machinery (only after graduation).
 - Raising `labelMinScreenPx` default from 3 (user-visible density change — separate discussion; the audit notes [external] uses ~12 px gates).
 - D1 (inactive-tab rebuild deferral), C2 (scene-cache LRU), instanced pins (Phase 1 of the acceleration plan) — separate plans.
 - Elevated-label badge redesign; `blendMode: 'difference'` read-under-text.
