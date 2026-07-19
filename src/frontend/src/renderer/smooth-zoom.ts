@@ -1,8 +1,8 @@
 /** Frame-rate-independent exponential approach used for wheel-zoom tweening.
  *  value' = value + (target − value) · (1 − e^(−dt·rate)); snaps within a
  *  relative epsilon so animations terminate exactly. Rate 18/s = a ~56 ms
- *  time constant (~63% converged); ~90% converged at ≈ 128 ms — matches the
- *  Tuned for a fluid, quickly-settling camera feel.
+ *  time constant (~63% converged); ~90% converged at ≈ 128 ms — tuned for a
+ *  fluid, quickly-settling camera feel. */
 
 export const ZOOM_TWEEN_RATE = 18;
 
