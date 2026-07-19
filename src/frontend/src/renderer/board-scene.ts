@@ -1420,11 +1420,12 @@ export function buildBoardScene(
 
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
-          if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+          if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
             color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi,
             anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
-          })) {
+            bg: false,
+          }))) {
             const pinLabel = new BitmapText({
               text: numStr,
               style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
@@ -1499,61 +1500,64 @@ export function buildBoardScene(
         if (netFontSize >= s.labelHideThreshold) {
           // Text fast mode: emit a record (kind circleNet / twoPinNet) instead
           // of the BitmapText AND its background-rect wrapper Graphics — the
-          // overlay (Task 6) paints the backing rect behind twoPinNet records.
-          if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+          // overlay (Task 6) paints the backing rect behind records whose `bg`
+          // flag is set. `labelModel &&` short-circuits so the record object is
+          // never allocated on the default (off) path.
+          if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: nx, y: ny, text: pin.net, fontSize: netFontSize,
             color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi,
             anchorX, anchorY,  // mirrors netLabel.anchor.set(anchorX, anchorY) — same locals, incl. 2-pin/BGA parity
-          })) {
-          const netLabel = new BitmapText({
-            text: pin.net,
-            style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(netFontSize, s.labelAtlasResolution) },
-          });
-          netLabel.anchor.set(anchorX, anchorY);
-          netLabel.x = nx;
-          netLabel.y = ny;
-          const bgPad = Math.max(1, netFontSize * 0.12);
-          if (isTwoPinPart) {
-            if (s.twoPinNetLabelBg) {
-              // Container wrapper: bg (index 0) renders behind netLabel (index 1).
-              const estW = netFontSize * pin.net.length * 0.55;
-              const estH = netFontSize * 1.1;
-              const bg = new Graphics();
-              bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
-              bg.fill({ color: BOARD_COLORS.netLabelBg, alpha: BOARD_COLORS.netLabelBgAlpha });
-              netLabel.x = 0; netLabel.y = 0;
-              const wrapper = new Container();
-              wrapper.x = nx; wrapper.y = ny;
-              wrapper.addChild(bg);
-              wrapper.addChild(netLabel);
-              deferredTwoPinTexts.push(wrapper);
-              pushPinLabel(isBottom, wrapper);
+            bg: isTwoPinPart ? s.twoPinNetLabelBg : s.pinNetLabelBg,  // same condition the wrapper Graphics is created under
+          }))) {
+            const netLabel = new BitmapText({
+              text: pin.net,
+              style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(netFontSize, s.labelAtlasResolution) },
+            });
+            netLabel.anchor.set(anchorX, anchorY);
+            netLabel.x = nx;
+            netLabel.y = ny;
+            const bgPad = Math.max(1, netFontSize * 0.12);
+            if (isTwoPinPart) {
+              if (s.twoPinNetLabelBg) {
+                // Container wrapper: bg (index 0) renders behind netLabel (index 1).
+                const estW = netFontSize * pin.net.length * 0.55;
+                const estH = netFontSize * 1.1;
+                const bg = new Graphics();
+                bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
+                bg.fill({ color: BOARD_COLORS.netLabelBg, alpha: BOARD_COLORS.netLabelBgAlpha });
+                netLabel.x = 0; netLabel.y = 0;
+                const wrapper = new Container();
+                wrapper.x = nx; wrapper.y = ny;
+                wrapper.addChild(bg);
+                wrapper.addChild(netLabel);
+                deferredTwoPinTexts.push(wrapper);
+                pushPinLabel(isBottom, wrapper);
+              } else {
+                deferredTwoPinTexts.push(netLabel);
+                pushPinLabel(isBottom, netLabel);
+              }
             } else {
-              deferredTwoPinTexts.push(netLabel);
-              pushPinLabel(isBottom, netLabel);
-            }
-          } else {
-            if (s.pinNetLabelBg) {
-              // Cap background width to 3× pin diameter; Container wrapper keeps bg behind text.
-              const pinR = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
-              const estW = Math.min(netFontSize * pin.net.length * 0.55, pinR * 6);
-              const estH = netFontSize * 1.1;
-              const bg = new Graphics();
-              bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
-              bg.fill({ color: BOARD_COLORS.netLabelBg, alpha: BOARD_COLORS.netLabelBgAlpha });
-              netLabel.x = 0; netLabel.y = 0;
-              const wrapper = new Container();
-              wrapper.x = nx; wrapper.y = ny;
-              wrapper.addChild(bg);
-              wrapper.addChild(netLabel);
-              deferredCircleNetTexts.push(wrapper);
-              pushPinLabel(isBottom, wrapper);
-            } else {
-              deferredCircleNetTexts.push(netLabel);
-              pushPinLabel(isBottom, netLabel);
+              if (s.pinNetLabelBg) {
+                // Cap background width to 3× pin diameter; Container wrapper keeps bg behind text.
+                const pinR = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+                const estW = Math.min(netFontSize * pin.net.length * 0.55, pinR * 6);
+                const estH = netFontSize * 1.1;
+                const bg = new Graphics();
+                bg.rect(-anchorX * estW - bgPad, -anchorY * estH - bgPad, estW + bgPad * 2, estH + bgPad * 2);
+                bg.fill({ color: BOARD_COLORS.netLabelBg, alpha: BOARD_COLORS.netLabelBgAlpha });
+                netLabel.x = 0; netLabel.y = 0;
+                const wrapper = new Container();
+                wrapper.x = nx; wrapper.y = ny;
+                wrapper.addChild(bg);
+                wrapper.addChild(netLabel);
+                deferredCircleNetTexts.push(wrapper);
+                pushPinLabel(isBottom, wrapper);
+              } else {
+                deferredCircleNetTexts.push(netLabel);
+                pushPinLabel(isBottom, netLabel);
+              }
             }
           }
-          } // end textFastMode BitmapText guard
         }
       }
     }
@@ -1699,11 +1703,12 @@ export function buildBoardScene(
         if (s.partLabelShadow) {
           fontFamily = ensureShadowFont(fontSize, s.labelAtlasResolution);
         }
-        if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+        if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2,
           text: part.name, fontSize, color: labelColor, kind: 'part', partIndex: pi,
           anchorX: 0.5, anchorY: 0.5,  // mirrors label.anchor.set(0.5, 0.5)
-        })) {
+          bg: false,
+        }))) {
           const label = new BitmapText({
             text:  part.name,
             style: { fontSize, fill: labelColor, fontFamily },
@@ -2077,11 +2082,12 @@ export function buildBoardScene(
           3,
           Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62))),
         );
-        if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+        if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: pin.position.x, y: pin.position.y - radius * 0.7, text,
           fontSize, color: 0xffffff, kind: 'diode', partIndex: dpi,
           anchorX: 0.5, anchorY: 1.1,  // mirrors label.anchor.set(0.5, 1.1)
-        })) {
+          bg: false,
+        }))) {
           const label = new BitmapText({
             text,
             style: { fontSize, fill: 0xffffff, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },

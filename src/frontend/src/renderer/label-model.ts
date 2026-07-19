@@ -27,6 +27,11 @@ export interface LabelRecord {
    *  BitmapText path's placement pixel-for-pixel, including per-pin variants
    *  (BGA alternating, diode 0.5/1.1, 2-pin net anchorY parity). */
   anchorX: number; anchorY: number;
+  /** True when the BitmapText path would draw a translucent background plate
+   *  behind this label (the net-label wrapper Graphics — 2-pin `twoPinNetLabelBg`
+   *  or circle-net `pinNetLabelBg`). The overlay paints the equivalent backing
+   *  rect so fast-mode net labels keep their plate. All non-net labels: false. */
+  bg: boolean;
 }
 
 export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }
