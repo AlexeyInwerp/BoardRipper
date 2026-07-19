@@ -78,7 +78,7 @@ test.use({
   },
 });
 
-const SAMPLE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
+const SAMPLE = path.resolve(__dirname, '../../../samples/820-02016/820-02016.bvr');
 
 async function measureFps(page: import('@playwright/test').Page, ms: number): Promise<number> {
   return page.evaluate(async (durationMs) => {
@@ -1438,7 +1438,7 @@ test.use({
   },
 });
 
-const SAMPLE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
+const SAMPLE = path.resolve(__dirname, '../../../samples/820-02016/820-02016.bvr');
 
 async function loadBoard(page: import('@playwright/test').Page) {
   await page.goto('/');
