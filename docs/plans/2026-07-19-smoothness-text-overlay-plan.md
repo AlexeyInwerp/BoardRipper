@@ -1412,6 +1412,16 @@ the CSS transform to `''` at entry.)
 Note: butterfly is excluded (two sides move under different transforms — a
 single CSS transform can't represent it), so butterfly always full-draws.
 
+**Content-dirty rule (added after Task 8 review):** `overlayDirty` alone is
+ambiguous — it is also set by selection changes, settings changes, scene
+switches, flips, and resize (which wipes the canvas backing store). The CSS
+branch must therefore be additionally gated on a second flag: every
+`overlayDirty = true` site EXCEPT the two viewport `'moved'` handlers also
+sets `overlayContentDirty = true`; the CSS-transform branch requires
+`!overlayContentDirty`; the full-draw branch clears both flags. Without
+this, a content change landing mid-heavy-pan re-projects a stale or blank
+bitmap until settle.
+
 - [ ] **Step 2: Verify**
 
 Run: `npx tsc --noEmit` → clean.
