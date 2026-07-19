@@ -73,3 +73,47 @@ agent runs headless only and cannot do that.
 Fill in via Settings ▸ Performance & Debug ▸ "Show Perf Overlay", open the
 densest available sample, and read the on-canvas HUD at each of the three
 depths in a real (non-headless) browser with hardware GPU acceleration.
+
+---
+
+## After-numbers — Task 10 validation (2026-07-19, same machine, branch complete through 52de7249)
+
+Same command, same machine, same SwiftShader caveats as above.
+
+| Config | panFps | zoomFps | vs baseline |
+|---|---|---|---|
+| `820-02016.bvr`, textFastMode OFF (default) | 47.3 | 56.8 | pan −8% / zoom −1% — **within the ±10% noise gate**; the default path did not regress |
+| `820-02016.bvr`, textFastMode ON (throwaway probe copy, toggled after load) | 41.0 | 56.4 | see interpretation below |
+
+Raw lines:
+
+```
+PERF {"panFps":47.3,"zoomFps":56.8}
+PERF-ON {"panFps":41,"zoomFps":56.4}
+```
+
+### Interpretation — two regimes, both real
+
+- **At the probe's mid-zoom profile (few labels visible):** ON measures ~13%
+  below OFF under SwiftShader. With little text on screen, the BitmapText
+  path renders a handful of culled quads nearly for free, while the overlay
+  pays a full-viewport Canvas2D `clearRect` + software-composited second
+  canvas every dirty frame. SwiftShader exaggerates this (CPU compositing);
+  a real GPU compositor pays far less for the second canvas.
+- **At label-heavy zoom (the regime the mode exists for):** the Task 9
+  parity captures show the HUD reading **11 fps (OFF) vs 60–61 fps (ON)**
+  at an identical 171% viewport on `820-02016.bvr`
+  (`test-results/labels-bitmaptext.png` vs `labels-overlay.png`) — a ~5.5×
+  win exactly where BitmapText density is the bottleneck.
+
+**Gate verdict:** default-path non-regression PASSES (±10% gate); the
+label-depth ≥1.3× requirement PASSES on the HUD evidence (5.5×). The
+mid-zoom SwiftShader delta is recorded honestly as a known trade-off of the
+experimental mode and is expected to shrink on real GPUs — to be confirmed
+during the field-debug period via the (still pending) manual real-browser
+HUD pass above.
+
+`buildBoardScene` build-time comparison: precise ms capture deferred to the
+manual pass (headless log capture of the load-progress ticks was not
+reliably attributable per-mode within the time budget). Directionally, mode
+ON skips construction of all ~15,885 label BitmapTexts on this board.
