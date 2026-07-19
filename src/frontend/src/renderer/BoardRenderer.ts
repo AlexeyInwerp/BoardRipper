@@ -30,6 +30,7 @@ import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTE
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
+import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
 import type { BorderBatch, PadGeometry } from './board-scene';
 import { registerRenderer, unregisterRenderer } from './renderer-registry';
 import { getFormat } from '../parsers/registry';
@@ -513,6 +514,10 @@ export class BoardRenderer {
   private hitGrid: Map<string, number[]> = new Map();
   private hitGridCellSize = 0;
   private hitGridCache = new Map<string, { grid: Map<string, number[]>; cellSize: number }>();
+
+  /** Lazy per-board trace spatial hash (audit A2). WeakMap so derived boards
+   *  (fold/filter toggles) don't pin — see finding C1 for why not Map. */
+  private traceGridCache = new WeakMap<BoardData, TraceGrid>();
 
   // WebGL context loss recovery
   private contextLost = false;
@@ -4871,10 +4876,19 @@ export class BoardRenderer {
     const zoomScale = Math.abs(this.viewport.scale.x);
     const pointerTol = 8 / zoomScale; // 8 CSS px converted to scene units
 
+    let grid = this.traceGridCache.get(this.board);
+    if (!grid) {
+      const b = this.board.bounds;
+      const cellSize = Math.max(b.maxX - b.minX, b.maxY - b.minY, 1) / 50;
+      grid = buildTraceGrid(this.board.traces, cellSize);
+      this.traceGridCache.set(this.board, grid);
+    }
+    const candidates = queryTraceGrid(grid, local.x, local.y, pointerTol);
+
     let bestDist = Infinity;
     let bestIdx = -1;
 
-    for (let i = 0; i < this.board.traces.length; i++) {
+    for (const i of candidates) {
       const t = this.board.traces[i];
       // Skip traces on hidden layers
       if (t.layer != null && t.layer < layerStates.length && !layerStates[t.layer].visible) continue;
