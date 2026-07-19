@@ -469,6 +469,20 @@ export class BoardRenderer {
   // On-demand rendering: only render when something changed
   private needsRender = true;
 
+  /** Extra render frames to force after a scene (re)activation so the global
+   *  CullerPlugin re-culls with UP-TO-DATE world transforms. The plugin culls
+   *  with `skipUpdateTransform=true` (reads `container.worldTransform` as-is),
+   *  so the FIRST render after building a fresh scene culls every part container
+   *  against its still-identity transform → their board-mil `cullArea` maps far
+   *  off-screen → `culled=true`. That render then updates the transforms, but on
+   *  an on-demand (needsRender-gated) static board no further frame re-runs the
+   *  culler, so the wrongly-culled part-name/pin labels never reappear (BUG-A:
+   *  toggling Text-fast-mode ON→OFF, or any settings rebuild, drops labels until
+   *  reload). Draining a couple of extra frames lets the culler re-evaluate with
+   *  correct transforms. Cheap: a static board renders identical pixels, and on
+   *  first load the fit/zoom sequence already renders many frames. */
+  private cullRefreshFrames = 0;
+
   // LoD zoom tracking — updated by ticker
   private lastLodScale = -1;
 
@@ -736,6 +750,14 @@ export class BoardRenderer {
         return;
       }
       if (perf) this.perfAccum.gpuRender += performance.now() - t0;
+      // After rendering a freshly-activated scene, keep rendering for a few more
+      // frames so the CullerPlugin re-culls with the now-updated world transforms
+      // (the first post-rebuild cull ran against stale/identity transforms). See
+      // cullRefreshFrames — this is what makes labels reappear after ON→OFF.
+      if (this.cullRefreshFrames > 0) {
+        this.cullRefreshFrames--;
+        this.needsRender = true;
+      }
     }
 
     // Canvas2D label overlay — drawn AFTER app.render() so the per-side label
@@ -2483,6 +2505,10 @@ export class BoardRenderer {
     this.updateLoD();
 
     this.needsRender = true;
+    // Fresh scene → its part containers have not had a world-transform pass yet.
+    // Force the culler to re-run over the next few frames once transforms are
+    // current (see cullRefreshFrames) so on-screen labels aren't left culled.
+    this.cullRefreshFrames = 3;
 
     // Close the load-progress overlay if this activation corresponds to the
     // file the user is waiting on. Dynamic-import so the renderer doesn't
