@@ -758,6 +758,7 @@ export interface LabelRecord {
   kind: LabelKind;
   partIndex: number;             // -1 for labels with no owning part (via labels excluded from v1)
   anchorX: number; anchorY: number; // fraction of text box at (x,y) — matches BitmapText.anchor
+  bg: boolean;                   // BitmapText path would draw a background plate (two-pin + circle-net wrappers)
 }
 export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }
 ```
@@ -993,7 +994,7 @@ const view = (scale: number): OverlayViewState => ({
 });
 const th: OverlayThresholds = { labelMinScreenPx: 3, circleLabelMinScreenPx: 3, twoPinLabelMinScreenPx: 6, labelZoomHide: 0 };
 const rec = (x: number, y: number, fontSize: number, kind: LabelRecord['kind'] = 'part'): LabelRecord =>
-  ({ x, y, text: 'X', fontSize, color: 0xffffff, kind, partIndex: 0, anchorX: 0.5, anchorY: 0.5 });
+  ({ x, y, text: 'X', fontSize, color: 0xffffff, kind, partIndex: 0, anchorX: 0.5, anchorY: 0.5, bg: false });
 
 describe('selectVisibleLabels', () => {
   it('culls off-screen records', () => {
@@ -1173,7 +1174,7 @@ export class LabelOverlay {
           const sx = sx0 + aw;
           const sy = sy0 + ah;
           ctx.globalAlpha = pass === 'dim' ? DIM_ALPHA : 1;
-          if (r.kind === 'twoPinNet') {                   // backing rect (replaces the Graphics wrapper)
+          if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)
             const tw = ctx.measureText(r.text).width + fontPx * 0.6;
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
             ctx.fillRect(sx - tw / 2, sy - fontPx * 0.65, tw, fontPx * 1.3);
