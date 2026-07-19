@@ -34,6 +34,7 @@ import {
   isOutlineOnlyNet,
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
+import { pushLabel, sortLabelModel, type LabelModel } from './label-model';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
 
@@ -375,6 +376,10 @@ export interface BoardSceneGraph {
   viaLabels: BitmapText[];
   /** Per-via connected layer indices (parallel to board.vias). Empty for single-layer boards. */
   viaConnectedLayers: number[][];
+  /** Canvas2D-overlay label records — non-null only when s.textFastMode.
+   *  When set, part/pin/circle/two-pin/diode BitmapTexts were NOT created and
+   *  the corresponding arrays/groups above are empty (via labels excluded). */
+  labelModel: LabelModel | null;
 }
 
 /** PCB character set — covers part names, pin numbers, net names, and common accented chars */
@@ -680,6 +685,13 @@ export function buildBoardScene(
   const bottomLabels: BitmapText[] = [];
   const topPinLabels: Container[] = [];
   const bottomPinLabels: Container[] = [];
+
+  // Text fast mode: when on, part/pin/circle/two-pin/diode label sites push a
+  // plain LabelRecord into this model instead of constructing a BitmapText
+  // (the corresponding BitmapText arrays/groups above stay empty, and a
+  // Canvas2D overlay paints the records). Null = off = byte-identical legacy
+  // BitmapText path. Via labels are excluded (always BitmapText).
+  const labelModel: LabelModel | null = s.textFastMode ? { top: [], bottom: [] } : null;
   const pinLabelsByPartIndex: Map<number, Container[]> = new Map();
   // Group A: pin numbers + net names on circle/1-pin parts (smallest text, highest zoom threshold).
   const topCircleLabelLayer    = new Container();
@@ -1408,19 +1420,24 @@ export function buildBoardScene(
 
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
-          const pinLabel = new BitmapText({
-            text: numStr,
-            style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
-          });
-          pinLabel.anchor.set(0.5, numAnchorY);
-          pinLabel.x = pinX;
-          pinLabel.y = pinY;
-          if (isTwoPinPart) {
-            deferredTwoPinTexts.push(pinLabel);
-          } else {
-            deferredCircleNumTexts.push(pinLabel);
+          if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+            x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
+            color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi,
+          })) {
+            const pinLabel = new BitmapText({
+              text: numStr,
+              style: { fontSize: pinFontSize, fill: BOARD_COLORS.labelPin, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(pinFontSize, s.labelAtlasResolution) },
+            });
+            pinLabel.anchor.set(0.5, numAnchorY);
+            pinLabel.x = pinX;
+            pinLabel.y = pinY;
+            if (isTwoPinPart) {
+              deferredTwoPinTexts.push(pinLabel);
+            } else {
+              deferredCircleNumTexts.push(pinLabel);
+            }
+            pushPinLabel(isBottom, pinLabel);
           }
-          pushPinLabel(isBottom, pinLabel);
         }
       }
 
@@ -1479,6 +1496,13 @@ export function buildBoardScene(
         netFontSize = Math.max(netFontSize, netFloor);
         netFontSize = quantizeFontSize(netFontSize);
         if (netFontSize >= s.labelHideThreshold) {
+          // Text fast mode: emit a record (kind circleNet / twoPinNet) instead
+          // of the BitmapText AND its background-rect wrapper Graphics — the
+          // overlay (Task 6) paints the backing rect behind twoPinNet records.
+          if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+            x: nx, y: ny, text: pin.net, fontSize: netFontSize,
+            color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi,
+          })) {
           const netLabel = new BitmapText({
             text: pin.net,
             style: { fontSize: netFontSize, fill: BOARD_COLORS.labelNet, fontFamily: (s.pinLabelShadow ? ensureShadowFont : ensurePinFont)(netFontSize, s.labelAtlasResolution) },
@@ -1527,6 +1551,7 @@ export function buildBoardScene(
               pushPinLabel(isBottom, netLabel);
             }
           }
+          } // end textFastMode BitmapText guard
         }
       }
     }
@@ -1672,17 +1697,22 @@ export function buildBoardScene(
         if (s.partLabelShadow) {
           fontFamily = ensureShadowFont(fontSize, s.labelAtlasResolution);
         }
-        const label = new BitmapText({
-          text:  part.name,
-          style: { fontSize, fill: labelColor, fontFamily },
-        });
-        label.anchor.set(0.5, 0.5);
-        label.x = eb.px + eb.pw / 2;
-        label.y = eb.py + eb.ph / 2;
-        partContainer.addChild(label);
-        labels.push(label);
-        (isBottom ? bottomLabels : topLabels).push(label);
-        partLabelByIndex.set(pi, label);
+        if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+          x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2,
+          text: part.name, fontSize, color: labelColor, kind: 'part', partIndex: pi,
+        })) {
+          const label = new BitmapText({
+            text:  part.name,
+            style: { fontSize, fill: labelColor, fontFamily },
+          });
+          label.anchor.set(0.5, 0.5);
+          label.x = eb.px + eb.pw / 2;
+          label.y = eb.py + eb.ph / 2;
+          partContainer.addChild(label);
+          labels.push(label);
+          (isBottom ? bottomLabels : topLabels).push(label);
+          partLabelByIndex.set(pi, label);
+        }
       }
     }
 
@@ -2023,7 +2053,8 @@ export function buildBoardScene(
   const topDiodeLabels: BitmapText[] = [];
   const bottomDiodeLabels: BitmapText[] = [];
   if (s.showDiodeValues && diodeResolver) {
-    for (const part of board.parts) {
+    for (let dpi = 0; dpi < board.parts.length; dpi++) {
+      const part = board.parts[dpi];
       if (part.hidden) continue;
       const isBottom = part.side === 'bottom';
       const layer = isBottom ? bottomLabelLayer : topLabelLayer;
@@ -2043,20 +2074,28 @@ export function buildBoardScene(
           3,
           Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62))),
         );
-        const label = new BitmapText({
-          text,
-          style: { fontSize, fill: 0xffffff, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
-        });
-        label.anchor.set(0.5, 1.1);                  // sit just above the pin
-        label.x = pin.position.x;
-        label.y = pin.position.y - radius * 0.7;
-        layer.addChild(label);
-        track.push(label);
+        if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
+          x: pin.position.x, y: pin.position.y - radius * 0.7, text,
+          fontSize, color: 0xffffff, kind: 'diode', partIndex: dpi,
+        })) {
+          const label = new BitmapText({
+            text,
+            style: { fontSize, fill: 0xffffff, fontFamily: ensurePinFont(fontSize, s.labelAtlasResolution) },
+          });
+          label.anchor.set(0.5, 1.1);                  // sit just above the pin
+          label.x = pin.position.x;
+          label.y = pin.position.y - radius * 0.7;
+          layer.addChild(label);
+          track.push(label);
+        }
       }
     }
   }
 
+  // Batch overlay records by kind then size (no-op when textFastMode off).
+  if (labelModel) sortLabelModel(labelModel);
+
   tick('fontSizeGroups + vias + tail');
 
-  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topDiodeLabels, bottomDiodeLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers };
+  return { root, outlineGfx, topLayer, bottomLayer, topFillLayer, bottomFillLayer, topPinLayer, bottomPinLayer, topOutlineLayer, bottomOutlineLayer, topLabelLayer, bottomLabelLayer, labels, topLabels, bottomLabels, topDiodeLabels, bottomDiodeLabels, topPinLabels, bottomPinLabels, pinLabelsByPartIndex, borderBatches, fontSizeGroups, topPinGfx, bottomPinGfx, topCircleLabelLayer, bottomCircleLabelLayer, topTwoPinNetLayer, bottomTwoPinNetLayer, circleFontSizeGroups, twoPinFontSizeGroups, partLabelByIndex, pinRadiusClamp, twoPinPadPolys, traceLayer, traceLayerContainers, surfacesLayer, surfacesLayerContainers, silkscreenLayer, silkscreenTop, silkscreenBottom, padsTop, padsBottom, copperDropsTop, copperDropsBottom, viaLayer, viaLabels, viaConnectedLayers, labelModel };
 }

@@ -2215,6 +2215,10 @@ export function SettingsPanel() {
         onToggle={toggleSection} sectionRef={performanceRef} isFocused={focusedSection === 'performance'}>
         <Toggle label="Show Perf Overlay" value={draft.showPerfOverlay} field="showPerfOverlay" onUpdate={updateGlobal}
           title="Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small 'i' button at the bottom-left of a panel" />
+        <Toggle label="Text fast mode (experimental)" value={draft.textFastMode} field="textFastMode" onUpdate={updateGlobal}
+          title="Draw board text on a 2D overlay instead of in-scene text objects — faster on dense boards. Experimental: report rendering glitches." />
+        <Toggle label="Smooth wheel zoom" value={draft.smoothZoom} field="smoothZoom" onUpdate={updateGlobal}
+          title="Animated cursor-anchored zoom" />
         <Toggle label="Cap to 60 FPS" value={draft.cap60Fps} field="cap60Fps" onUpdate={updateGlobal}
           title="Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work" />
         <Slider label="Label Atlas Resolution" value={draft.labelAtlasResolution} min={4} max={24} step={1} field="labelAtlasResolution" onUpdate={updateGlobal}

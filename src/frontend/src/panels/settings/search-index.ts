@@ -164,6 +164,8 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   // Performance & Debug
   S('system', 'performance', 'Performance & Debug', ['perf', 'fps', 'debug']),
   F('system', 'performance', 'showPerfOverlay', 'Show Perf Overlay', 'Show per-phase frame-time stats (frame / lod / sel / net / gpu) on each board panel. Same toggle as the small "i" button at the bottom-left of a panel'),
+  F('system', 'performance', 'textFastMode', 'Text fast mode (experimental)', 'Draw board text on a 2D overlay instead of in-scene text objects — faster on dense boards. Experimental: report rendering glitches.'),
+  F('system', 'performance', 'smoothZoom', 'Smooth wheel zoom', 'Animated cursor-anchored zoom'),
   F('system', 'performance', 'cap60Fps', 'Cap to 60 FPS', 'Limit the renderer to 60 frames per second. Disable to let the ticker run at the display refresh rate (120/144/240 Hz) — smoother but more CPU/GPU work'),
   F('system', 'performance', 'labelAtlasResolution', 'Label Atlas Resolution', 'Pixel multiplier for the BitmapFont atlases used by pin/net/part labels. Higher = sharper labels at deep zoom; texture memory grows ~quadratically. Default 8. Triggers a scene rebuild.'),
   F('system', 'performance', 'hideTextDuringZoom', 'Hide Text During Zoom', 'Temporarily hide all text labels while zooming or panning for smoother performance. Labels reappear when interaction stops'),

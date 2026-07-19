@@ -233,7 +233,10 @@ export function SettingsMockup({
     }
     let graph;
     try {
-      graph = buildBoardScene(MOCK_BOARD, { ...s, showPadVertices: false });
+      // The mockup has no Canvas2D overlay — force the in-scene BitmapText path
+      // so the shared-scene preview always shows text regardless of the global
+      // textFastMode toggle.
+      graph = buildBoardScene(MOCK_BOARD, { ...s, showPadVertices: false, textFastMode: false });
     } catch (err) {
       log.render.error('buildBoardScene failed:', err);
       return;
