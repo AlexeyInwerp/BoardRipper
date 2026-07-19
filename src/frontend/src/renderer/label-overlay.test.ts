@@ -7,7 +7,7 @@ const view = (scale: number): OverlayViewState => ({
   topMatrix: ident, bottomMatrix: ident, scale, width: 800, height: 600,
   showTop: true, showBottom: true, selectedPartIndex: null, dimActive: false, litParts: null,
 });
-const th: OverlayThresholds = { labelMinScreenPx: 3, circleLabelMinScreenPx: 3, twoPinLabelMinScreenPx: 6, labelZoomHide: 0 };
+const th: OverlayThresholds = { labelMinScreenPx: 3, circleLabelMinScreenPx: 3, twoPinLabelMinScreenPx: 6, labelZoomHide: 0, selectedLabelMinPx: 11 };
 const rec = (x: number, y: number, fontSize: number, kind: LabelRecord['kind'] = 'part'): LabelRecord =>
   ({ x, y, text: 'X', fontSize, color: 0xffffff, kind, partIndex: 0, anchorX: 0.5, anchorY: 0.5, bg: false });
 

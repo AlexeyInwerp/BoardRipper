@@ -139,6 +139,7 @@ export const SETTINGS_INDEX: IndexEntry[] = [
   F('input', 'zoomLod', 'twoPinLabelMinScreenPx', '2-Pin Net Names', 'Net names on resistors/capacitors (2-pin parts) appear when they reach this many screen pixels.'),
   F('input', 'zoomLod', 'labelHideThreshold', 'Label Cull (mils)', 'Labels smaller than this (in board mils) are permanently removed from the scene — never drawn at any zoom. Saves GPU memory on dense boards.'),
   F('input', 'zoomLod', 'labelZoomHide', 'Global Zoom Floor', 'Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level.'),
+  F('input', 'zoomLod', 'selectedLabelMinPx', 'Selected Part Labels', 'The selected part\'s labels never render smaller than this many screen pixels while selected (Text fast mode). 0 = scale naturally.'),
 
   // Navigation
   S('input', 'navigation', 'Navigation', ['scroll', 'pan', 'zoom', 'wheel', 'drag', 'pinch']),

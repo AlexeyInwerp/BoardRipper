@@ -120,6 +120,9 @@ export interface RenderSettings {
   labelMinScreenPx: number;
   /** Min viewport scale to show labels (0 = always visible) */
   labelZoomHide: number;
+  /** Selected part's labels never render smaller than this many screen px
+   *  while selected (Text fast mode). 0 = scale naturally with zoom. */
+  selectedLabelMinPx: number;
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
    *  See docs/research/renderer-research-2026-07-19.md. */
   textFastMode: boolean;
@@ -491,6 +494,7 @@ export const DEFAULTS: RenderSettings = {
   showDiodeValues: true,
   labelMinScreenPx: 3,
   labelZoomHide: 0,
+  selectedLabelMinPx: 11,
   textFastMode: false,
 
   selectionWidth: 2,

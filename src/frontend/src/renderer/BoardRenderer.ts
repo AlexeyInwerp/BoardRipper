@@ -1809,6 +1809,7 @@ export class BoardRenderer {
       circleLabelMinScreenPx: s.circleLabelMinScreenPx,
       twoPinLabelMinScreenPx: s.twoPinLabelMinScreenPx,
       labelZoomHide: s.labelZoomHide,
+      selectedLabelMinPx: s.selectedLabelMinPx,
     });
   }
 

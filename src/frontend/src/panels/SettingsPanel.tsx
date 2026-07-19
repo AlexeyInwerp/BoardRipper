@@ -2117,6 +2117,8 @@ export function SettingsPanel() {
           title="Labels smaller than this (in board mils) are permanently removed from the scene — never drawn at any zoom. Saves GPU memory on dense boards." />
         <Slider label="Global Zoom Floor" value={draft.labelZoomHide} min={0} max={10} step={0.01} field="labelZoomHide" onUpdate={updateGlobal}
           title="Hard minimum zoom level to show ANY text. 0 = disabled. All labels vanish below this zoom level." />
+        <Slider label="Selected Part Labels" value={draft.selectedLabelMinPx} min={0} max={30} step={1} field="selectedLabelMinPx" onUpdate={updateGlobal}
+          title="The selected part's labels never render smaller than this many screen pixels — they stay readable while you unzoom (Text fast mode). 0 = scale naturally with zoom." />
       </CollapsibleSection>
       )}
 
