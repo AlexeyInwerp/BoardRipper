@@ -495,7 +495,7 @@ export const DEFAULTS: RenderSettings = {
   labelMinScreenPx: 3,
   labelZoomHide: 0,
   selectedLabelMinPx: 11,
-  textFastMode: false,
+  textFastMode: true,
 
   selectionWidth: 2,
   selectionPadding: 4,
@@ -525,7 +525,7 @@ export const DEFAULTS: RenderSettings = {
 
   hideTextDuringZoom: true,
   labelAtlasResolution: 8,
-  cap60Fps: true,
+  cap60Fps: false,
   showPerfOverlay: false,
 
   circleLabelMinScreenPx: 3,

@@ -139,6 +139,12 @@ test('overlay on/off visual parity + selection/side/zoom variants', async ({ pag
   test.setTimeout(180_000);
   await loadBoard(page);
 
+  // textFastMode defaults ON since the 2026-07-19 graduation decision — this
+  // spec's steps are written OFF-first (BitmapText baseline, then toggle ON),
+  // so force OFF before measuring the baseline.
+  await setOverlay(page, false);
+  await page.waitForTimeout(2_000);
+
   // Baseline canvas count with the overlay off (just the PixiJS board canvas).
   const baselineCanvasCount = await page.locator('canvas').count();
 
