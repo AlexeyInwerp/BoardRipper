@@ -778,6 +778,17 @@ export class BoardRenderer {
       const moving = performance.now() < this.viewportMovingUntil;
       const heavy = overlay.lastDrawMs > 6;
       const butterfly = !!(boardStore.butterfly && this.activeScene.butterflyRoot);
+      // Some transform mutations bypass the viewport 'moved' event entirely
+      // (zoomAnim jump-to-part, fitToBoard's viewport.fit/moveCenter, keyboard
+      // pan). Catch them by comparing against the last-drawn view so overlay
+      // text never freezes at a stale transform (whole-branch review finding).
+      // Three number compares per tick when idle — effectively free.
+      if (!this.overlayDirty && this.overlayDrawnView) {
+        const d = this.overlayDrawnView;
+        if (d.x !== this.viewport.x || d.y !== this.viewport.y || d.scale !== curScale) {
+          this.overlayDirty = true;
+        }
+      }
       if (this.overlayDirty && (!moving || !heavy || butterfly || !this.overlayDrawnView || this.overlayContentDirty)) {
         this.overlayDirty = false;
         this.overlayContentDirty = false;
