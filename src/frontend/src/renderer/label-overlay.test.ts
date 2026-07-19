@@ -31,13 +31,13 @@ describe('selectVisibleLabels', () => {
   });
   it('selected pin/net labels get relaxed LoD, not a bypass', () => {
     const v05 = { ...view(0.5), selectedPartIndex: 0 };
-    // circleNet threshold 3: unselected needs 3px; selected needs 1.5px.
-    // fontSize 4 @ 0.5 = 2px → hidden unselected, visible selected (sticky).
-    expect(selectVisibleLabels([rec(400, 300, 4, 'circleNet')], ident, view(0.5), th)).toHaveLength(0);
-    expect(selectVisibleLabels([rec(400, 300, 4, 'circleNet')], ident, v05, th)).toHaveLength(1);
-    // fontSize 4 @ 0.1 = 0.4px < 1.5 → gone even when selected (deep unzoom).
+    // circleNet threshold 3: unselected needs 3px; selected needs 3*0.75=2.25px.
+    // fontSize 5 @ 0.5 = 2.5px → hidden unselected, visible selected (sticky).
+    expect(selectVisibleLabels([rec(400, 300, 5, 'circleNet')], ident, view(0.5), th)).toHaveLength(0);
+    expect(selectVisibleLabels([rec(400, 300, 5, 'circleNet')], ident, v05, th)).toHaveLength(1);
+    // fontSize 5 @ 0.1 = 0.5px < 2.25 → gone even when selected (deep unzoom).
     const v01 = { ...view(0.1), selectedPartIndex: 0 };
-    expect(selectVisibleLabels([rec(400, 300, 4, 'circleNet')], ident, v01, th)).toHaveLength(0);
+    expect(selectVisibleLabels([rec(400, 300, 5, 'circleNet')], ident, v01, th)).toHaveLength(0);
   });
   it('selected pin/net labels still respect labelZoomHide', () => {
     const v = { ...view(0.5), selectedPartIndex: 0 };

@@ -27,14 +27,20 @@ export interface OverlayThresholds {
 
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
 const DIM_ALPHA = 0.22;           // parity-tuned vs netDimGfx look in Task 9
-const SELECTED_MIN_PX = 11;       // floor so the selected part's text is always readable
-/** Selected-part pin/net labels get a RELAXED LoD (half the normal min-px)
- *  rather than a full bypass: sticky through moderate unzoom, but they still
- *  disappear when genuinely zoomed out (user feedback 2026-07-19 — net names
- *  must not survive unzooming forever). The part NAME label alone keeps the
- *  full bypass as the selection identity marker (parity with the Pixi
- *  elevated badge). */
-const SELECTED_LOD_RELAX = 0.5;
+/** Selected-part labels get a modest PROPORTIONAL boost (1.5× natural size,
+ *  capped at SELECTED_BOOST_CAP_PX) instead of a hard floor — a constant-px
+ *  floor made them visually GROW relative to the shrinking part during
+ *  unzoom (user feedback 2026-07-19). They now shrink with zoom like
+ *  everything else, just slightly larger. */
+const SELECTED_BOOST = 1.5;
+const SELECTED_BOOST_CAP_PX = 11;
+/** Selected-part pin/net labels get a RELAXED LoD (0.75× the normal min-px)
+ *  rather than a full bypass: slightly sticky through unzoom, but they
+ *  disappear close to the normal cutoff (user feedback 2026-07-19 — net
+ *  names must not survive unzooming, and 0.5 kept them too long). The part
+ *  NAME label alone keeps the full bypass as the selection identity marker
+ *  (parity with the Pixi elevated badge). */
+const SELECTED_LOD_RELAX = 0.75;
 
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   switch (kind) {
@@ -140,7 +146,7 @@ export class LabelOverlay {
           if (!want) continue;
           visible += 1;
           let px = r.fontSize * view.scale;
-          if (isSel) px = Math.max(px, SELECTED_MIN_PX);
+          if (isSel) px = Math.max(px, Math.min(px * SELECTED_BOOST, SELECTED_BOOST_CAP_PX));
           const fontPx = Math.round(px * 4) / 4;          // quantize to limit ctx.font churn
           if (fontPx !== lastFontPx) { ctx.font = `${fontPx}px monospace`; lastFontPx = fontPx; }
           const sx0 = m.a * r.x + m.c * r.y + m.tx;
