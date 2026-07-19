@@ -149,6 +149,17 @@ test('overlay on/off visual parity + selection/side/zoom variants', async ({ pag
   await zoomAt(page, box, anchors.mainPart.cx, anchors.mainPart.cy, 6);
   await page.waitForTimeout(1_000);
 
+  // Save this viewport transform so it can be restored before the final
+  // toggle-OFF check below — the culled-label assertion needs a viewport
+  // where most parts are genuinely on-screen (this one), not the deep-zoom
+  // viewport item 5 ends on, where ~99% of parts are legitimately off-screen
+  // regardless of any bug and the healthy/broken signal is too close to call.
+  const labelViewport = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = (window as any).__boardRenderer;
+    return { scaleX: r.viewport.scale.x, x: r.viewport.x, y: r.viewport.y };
+  });
+
   // 1. textFastMode OFF (pristine, never toggled) at label-visible zoom —
   // in-scene BitmapText labels.
   await page.screenshot({ path: 'test-results/labels-bitmaptext.png' });
@@ -183,10 +194,64 @@ test('overlay on/off visual parity + selection/side/zoom variants', async ({ pag
   await page.waitForTimeout(1_000);
   await page.screenshot({ path: 'test-results/labels-overlay-deep.png' });
 
+  // Restore the step-1/2 viewport before the toggle-OFF check so (a) the
+  // culled-label guard below sees a viewport dense with on-screen parts and
+  // (b) labels-off-restored.png is directly comparable with
+  // labels-bitmaptext.png (same transform, BitmapText path restored).
+  await page.evaluate((v) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = (window as any).__boardRenderer;
+    r.viewport.scale.set(v.scaleX, v.scaleX);
+    r.viewport.x = v.x;
+    r.viewport.y = v.y;
+    r.viewport.emit('moved', { viewport: r.viewport, type: 'animate' });
+  }, labelViewport);
+  await page.waitForTimeout(600);
+
   // Toggling OFF removes the overlay canvas from the DOM — count returns to
   // baseline. This is the lifecycle guard: LabelOverlay.destroy() must run.
   await setOverlay(page, false);
-  await page.waitForTimeout(1_000);
+  await page.waitForTimeout(1_500);
+
+  // The canvas-count check below can pass while BUG-A (post-rebuild culling
+  // against identity worldTransforms, fixed by cullRefreshFrames) hides every
+  // restored BitmapText label — the DOM lifecycle looks correct while the
+  // board shows no text at all. Guard that regression class directly: after
+  // toggle-OFF the rebuilt scene must have part labels again, and the labels
+  // of top-side parts inside the current viewport must not be wholesale
+  // culled. Healthy runs measure 0 culled-on-screen here; the BUG-A failure
+  // mode culled 100% of them. Relative assertions — no per-viewport
+  // calibration constants.
+  const cullStats = await page.evaluate(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = (window as any).__boardRenderer;
+    const scene = r.activeScene;
+    const board = r.board;
+    const vb = r.viewport.getVisibleBounds();
+    let onScreen = 0;
+    let culledOnScreen = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    scene.partLabelByIndex.forEach((label: any, pi: number) => {
+      const part = board.parts[pi];
+      const b = part?.bounds;
+      if (!b || part.side === 'bottom') return;
+      if (b.maxX < vb.x || b.minX > vb.x + vb.width || b.maxY < vb.y || b.minY > vb.y + vb.height) return;
+      onScreen++;
+      // CullerPlugin sets `culled` on the ancestor grid-cell containers.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let node: any = label;
+      while (node) {
+        if (node.culled) { culledOnScreen++; break; }
+        node = node.parent;
+      }
+    });
+    return { total: scene.partLabelByIndex.size, onScreen, culledOnScreen };
+  });
+  expect(cullStats.total).toBeGreaterThan(0);                          // BitmapText labels rebuilt
+  expect(cullStats.onScreen).toBeGreaterThan(0);                       // viewport has label-bearing parts
+  expect(cullStats.culledOnScreen).toBeLessThan(cullStats.onScreen);   // not wholesale-culled (BUG-A)
+  await page.screenshot({ path: 'test-results/labels-off-restored.png' });
+
   const offCanvasCount = await page.locator('canvas').count();
   expect(offCanvasCount).toBe(baselineCanvasCount);
 });
