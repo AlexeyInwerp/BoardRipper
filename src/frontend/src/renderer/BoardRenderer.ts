@@ -29,6 +29,8 @@ import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '
 import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
+import { LabelOverlay } from './label-overlay';
+import type { LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
 import type { BorderBatch, PadGeometry } from './board-scene';
@@ -203,6 +205,11 @@ interface BoardScene {
   /** Butterfly mode: a mirrored copy of the board for the bottom side */
   butterflyRoot: Container | null;
   butterflyOutline: Graphics | null;
+  /** Canvas2D-overlay label records — non-null only when the scene was built
+   *  with Text fast mode on (buildBoardScene emits it behind textFastMode).
+   *  Consumed by the LabelOverlay draw path; the BitmapText layers stay empty
+   *  for those label sites in that mode. */
+  labelModel: LabelModel | null;
 }
 
 /** Saved viewport transform for restoring on tab switch */
@@ -362,6 +369,20 @@ export class BoardRenderer {
   private boundShiftCapture: ((e: PointerEvent) => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private containerEl: HTMLDivElement;
+  /** Canvas2D "Text fast mode" label overlay — lazily created by
+   *  ensureLabelOverlay() when the setting is on, torn down when it goes off.
+   *  Decoupled from the Pixi Application: survives context-loss reinit (its
+   *  canvas is a containerEl sibling, not a Pixi object). Task 8 extends the
+   *  sync path; do not rename (referenced by name in the plan). */
+  private textFastMode: LabelOverlay | null = null;
+  /** Set whenever the view, selection, dim state, or scene changed so the next
+   *  tick redraws the overlay. Reset in onTick after a successful draw. */
+  private overlayDirty = false;
+  /** Part indices left lit by the ambient-dim overlay for the current frame
+   *  (the net-member "punch-through" set built in renderSelection). Null until
+   *  the first renderSelection; the selected part is lit unconditionally by the
+   *  overlay so it need not appear here. */
+  private litPartIndices: Set<number> | null = null;
   private initialized = false;
   private boundContextMenu: ((e: MouseEvent) => void) | null = null;
   private boundDblClick: ((e: MouseEvent) => void) | null = null;
@@ -702,6 +723,18 @@ export class BoardRenderer {
         return;
       }
       if (perf) this.perfAccum.gpuRender += performance.now() - t0;
+    }
+
+    // Canvas2D label overlay — drawn AFTER app.render() so the per-side label
+    // layers' worldTransforms are current for this frame. When needsRender was
+    // false (e.g. a selection change without a scene/viewport change) the
+    // transforms are unchanged from the last render — also correct.
+    const overlay = this.ensureLabelOverlay();
+    if (overlay && this.overlayDirty && this.activeScene?.labelModel) {
+      this.overlayDirty = false;
+      this.syncLabelOverlay(overlay, this.activeScene);
+    } else if (overlay && !this.activeScene?.labelModel) {
+      overlay.clear();   // setting on, but scene built pre-toggle → rebuild pending
     }
 
     if (perf) {
@@ -1067,6 +1100,7 @@ export class BoardRenderer {
       // Keep multi-select / worklist outline thickness ~constant in screen
       // pixels across zoom changes. Cheap (small rectangle count).
       this.redrawMultiHighlight();
+      this.overlayDirty = true;   // pan/zoom moved the label-layer transforms
     });
     this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
     this.app.stage.addChild(this.viewport);
@@ -1239,6 +1273,7 @@ export class BoardRenderer {
       // Keep multi-select / worklist outline thickness ~constant in screen
       // pixels across zoom changes. Cheap (small rectangle count).
       this.redrawMultiHighlight();
+      this.overlayDirty = true;   // pan/zoom moved the label-layer transforms
     });
     this.app.stage.addChild(this.viewport);
 
@@ -1482,6 +1517,9 @@ export class BoardRenderer {
       this.viewport.resize(w, h);
       this.app.renderer.resize(w, h);
       this.needsRender = true;
+      // Resize the label overlay's backing store to match and force a redraw.
+      this.textFastMode?.resize();
+      this.overlayDirty = true;
       // If ticker is stopped (panel inactive), do a one-shot render so the
       // resized canvas isn't left black until the user clicks.
       if (!this.app.ticker.started && !this.contextLost) {
@@ -1588,6 +1626,13 @@ export class BoardRenderer {
     // Label sub-counts from cache — maintained by applyLabelVisibility(), zero per-label work here
     const { partVis, partTotal, pinVis, pinTotal } = this.labelCounts;
 
+    // Text fast mode: the BitmapText caches are empty, so source the counts from
+    // the overlay's last draw (visible/total across both sides) instead.
+    const overlayActive = this.textFastMode && !!this.activeScene?.labelModel;
+    const labelLine = overlayActive
+      ? `\noverlay labels: ${this.textFastMode!.lastCounts.visible}/${this.textFastMode!.lastCounts.total}`
+      : `\npart labels: ${partVis}/${partTotal}` + ` | pin labels: ${pinVis}/${pinTotal}`;
+
     const f = (ms: number) => ms < 0.01 ? '0' : ms.toFixed(2);
     const d = this.perfDisplay;
     this.perfOverlayEl.textContent =
@@ -1596,9 +1641,62 @@ export class BoardRenderer {
       ` | sel: ${f(d.selection)}ms` +
       ` | net: ${f(d.netLines)}ms` +
       ` | gpu: ${f(d.gpuRender)}ms` +
-      `\npart labels: ${partVis}/${partTotal}` +
-      ` | pin labels: ${pinVis}/${pinTotal}`;
+      labelLine;
     this.perfOverlayEl.style.display = '';
+  }
+
+  /** Lazily create (or tear down) the Canvas2D label overlay to match the
+   *  textFastMode setting. Called every tick from onTick so both the init and
+   *  the context-loss reinit paths are covered without touching either — the
+   *  overlay canvas is a containerEl sibling, independent of the Pixi app. */
+  private ensureLabelOverlay(): LabelOverlay | null {
+    if (!renderSettingsStore.settings.textFastMode) {
+      if (this.textFastMode) { this.textFastMode.destroy(); this.textFastMode = null; }
+      return null;
+    }
+    if (!this.textFastMode) {
+      // containerEl is set position:relative in init() (the tooltip already
+      // positions inside it), so the overlay's position:absolute anchors here.
+      this.textFastMode = new LabelOverlay(this.containerEl);
+      this.overlayDirty = true;
+    }
+    return this.textFastMode;
+  }
+
+  /** Part indices left lit by the ambient-dim overlay this frame (the
+   *  net-member punch-through set from renderSelection). The overlay lights the
+   *  selected part unconditionally, so it need not be in this set. */
+  private currentLitPartSet(): ReadonlySet<number> | null {
+    return this.litPartIndices;
+  }
+
+  /** Redraw the Canvas2D label overlay from the active scene's LabelModel using
+   *  the per-side label-layer world transforms (so rotate/mirror/butterfly work
+   *  for free — bottomLabelLayer.worldTransform includes the butterfly chain).
+   *  Called from onTick AFTER app.render() so worldTransforms are current. */
+  private syncLabelOverlay(overlay: LabelOverlay, scene: BoardScene): void {
+    const s = renderSettingsStore.settings;
+    const model = scene.labelModel!;
+    const wtTop = scene.topLabelLayer.worldTransform;
+    const wtBot = scene.bottomLabelLayer.worldTransform;
+    const dm = boardStore.dimMode;
+    const dimActive = s.ambientDim && (dm === 'dim' ||
+      (dm !== 'off' && (s.searchAutoDim ?? true) && boardStore.searchSelectionActive));
+    overlay.draw(model, {
+      topMatrix: { a: wtTop.a, b: wtTop.b, c: wtTop.c, d: wtTop.d, tx: wtTop.tx, ty: wtTop.ty },
+      bottomMatrix: { a: wtBot.a, b: wtBot.b, c: wtBot.c, d: wtBot.d, tx: wtBot.tx, ty: wtBot.ty },
+      scale: Math.abs(this.viewport.scale.x),
+      width: this.containerEl.clientWidth, height: this.containerEl.clientHeight,
+      showTop: boardStore.showTop, showBottom: boardStore.showBottom,
+      selectedPartIndex: boardStore.selection.partIndex,
+      dimActive,
+      litParts: dimActive ? this.currentLitPartSet() : null,
+    }, {
+      labelMinScreenPx: s.labelMinScreenPx,
+      circleLabelMinScreenPx: s.circleLabelMinScreenPx,
+      twoPinLabelMinScreenPx: s.twoPinLabelMinScreenPx,
+      labelZoomHide: s.labelZoomHide,
+    });
   }
 
   /** Called per frame when viewport scale is actively changing (user is zooming) */
@@ -2211,6 +2309,7 @@ export class BoardRenderer {
       this.applyLayerVisibility(scene);
       this.applyFlips(board, scene);
       this.needsRender = true;
+      this.overlayDirty = true;   // flips changed the label-layer transforms
       return;
     }
     log.render.log('activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
@@ -2288,6 +2387,7 @@ export class BoardRenderer {
       this.elevatedPinLabel!,
     );
     this.activeScene = scene;
+    this.overlayDirty = true;   // new scene → repaint the label overlay
     this.lastFlipParams = null; // force full label transform on first applyFlips for this scene
     // Set correct label + pin layer visibility for this scene's zoom level
     if (!this.textHiddenForZoom) this.applyLabelVisibility();
@@ -3162,6 +3262,10 @@ export class BoardRenderer {
       // Debounce the expensive scene rebuild so rapid colour-edit changes
       // coalesce and the UI isn't blocked per drag-frame (see scheduleRebuild).
       this.scheduleRebuild();
+      // Cheap catch-all: any visual settings change (label thresholds, dim, the
+      // textFastMode toggle itself) should repaint the overlay next tick. The
+      // thresholds are read at draw time, so this covers them without a rebuild.
+      this.overlayDirty = true;
       this.lastSettingsSnapshot = cur;
     } catch (err) {
       log.render.error(`onSettingsUpdate crashed tab=${this.tabId} scene=${this.activeScene ? 'yes' : 'NULL'} ticker=${this.app.ticker.started}:`, err);
@@ -3459,6 +3563,7 @@ export class BoardRenderer {
 
     this.needsRender = true;
     this.netLinesDirty = true; // selection changed → recompute net line geometry
+    this.overlayDirty = true;  // selection/dim change → repaint the label overlay
     // Cancel any in-progress blink from a previous selection
     if (this.selectionBlinkTimer) {
       clearTimeout(this.selectionBlinkTimer);
@@ -4020,6 +4125,13 @@ export class BoardRenderer {
 
       this.crossSideGhostParts = new Set(ghostPartIndices);
     }
+
+    // Text-fast-mode overlay: `seenParts` is exactly the set of net-member
+    // parts that punch through the ambient-dim overlay (their pins/labels are
+    // re-drawn above netDimGfx). Empty when nothing is highlighted, in which
+    // case only the selected part stays lit (the overlay handles that). A fresh
+    // Set is allocated per renderSelection call, so aliasing the field is safe.
+    this.litPartIndices = seenParts;
 
     // ── Disco mode: collect part indices on the highlighted net so the
     //    ticker can pulse a red outline over each (both sides). ────────────
@@ -5703,6 +5815,9 @@ export class BoardRenderer {
     this.boundWheelWake = null;
     this.tooltipEl?.remove();
     this.tooltipEl = null;
+    // Tear down the Canvas2D label overlay (removes its containerEl-sibling canvas).
+    this.textFastMode?.destroy();
+    this.textFastMode = null;
     this.tooltipNetSpan = null;
     this.tooltipDetailSpan = null;
     this.tooltipMetaSpan = null;
