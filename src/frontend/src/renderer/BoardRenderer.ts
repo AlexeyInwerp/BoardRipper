@@ -1686,7 +1686,7 @@ export class BoardRenderer {
       }
     }
 
-    if (changed) this.rebuildLabelCounts(scene);
+    if (changed && this.perfVisible) this.rebuildLabelCounts(scene);
   }
 
   /** Rebuild cached label counts from scratch — called once after scene switch or visibility change */
@@ -3051,6 +3051,8 @@ export class BoardRenderer {
           this.perfAccum = { lod: 0, selection: 0, netLines: 0, gpuRender: 0, frame: 0 };
           this.perfSamples = 0;
           this.perfThrottle = 0;
+        } else if (this.perfVisible && this.activeScene) {
+          this.rebuildLabelCounts(this.activeScene);
         }
       }
 
