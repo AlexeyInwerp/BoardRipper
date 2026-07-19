@@ -1494,7 +1494,15 @@ export class BoardRenderer {
         if (this.lastHoverEvent) this.handleHover(this.lastHoverEvent);
       });
     };
-    this.boundHideTooltip = () => { this.hideTooltip(); this.setHoverNet(null); };
+    this.boundHideTooltip = () => {
+      // Cancel any hover scheduled by the rAF coalescer — otherwise a stale
+      // in-canvas pointermove event fires after this leave and re-shows the
+      // tooltip / re-lights the hover net with the cursor outside the canvas.
+      if (this.hoverRafId !== null) { cancelAnimationFrame(this.hoverRafId); this.hoverRafId = null; }
+      this.lastHoverEvent = null;
+      this.hideTooltip();
+      this.setHoverNet(null);
+    };
     this.tooltipCanvas.addEventListener('pointermove', this.boundHover);
     this.tooltipCanvas.addEventListener('pointerleave', this.boundHideTooltip);
 
