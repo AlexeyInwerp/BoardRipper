@@ -6,8 +6,7 @@ The smoothness release: interaction jank fixes across the board renderer, an
 animated cursor-anchored wheel zoom, and Text fast mode — board text drawn on
 a Canvas2D overlay instead of tens of thousands of in-scene text objects,
 now the default after hands-on validation (measured 11→60 fps at label-heavy
-zoom on a dense board). Origin story: a competitive rendering audit,
-`docs/research/renderer-research-2026-07-19.md`.
+zoom on a dense board).
 
 ### Board view
 
