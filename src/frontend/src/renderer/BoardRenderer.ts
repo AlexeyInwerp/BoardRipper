@@ -378,6 +378,11 @@ export class BoardRenderer {
   /** Set whenever the view, selection, dim state, or scene changed so the next
    *  tick redraws the overlay. Reset in onTick after a successful draw. */
   private overlayDirty = false;
+  /** View state (viewport x/y/scale) at the last full overlay draw — lets the
+   *  adaptive motion mode (Task 8) cheaply re-project the last-drawn bitmap via
+   *  a CSS transform while panning instead of redrawing every frame. Null until
+   *  the first full draw. */
+  private overlayDrawnView: { x: number; y: number; scale: number } | null = null;
   /** Part indices left lit by the ambient-dim overlay for the current frame
    *  (the net-member "punch-through" set built in renderSelection). Null until
    *  the first renderSelection; the selected part is lit unconditionally by the
@@ -730,10 +735,44 @@ export class BoardRenderer {
     // false (e.g. a selection change without a scene/viewport change) the
     // transforms are unchanged from the last render — also correct.
     const overlay = this.ensureLabelOverlay();
-    if (overlay && this.overlayDirty && this.activeScene?.labelModel) {
-      this.overlayDirty = false;
-      this.syncLabelOverlay(overlay, this.activeScene);
-    } else if (overlay && !this.activeScene?.labelModel) {
+    if (overlay && this.activeScene?.labelModel) {
+      // Adaptive motion mode: while the viewport is actively panning/zooming
+      // (viewportMovingUntil window) AND the last full draw was heavy (>6ms),
+      // re-project the last-drawn bitmap via a cheap CSS transform instead of
+      // redrawing every frame. Redraw resumes once motion settles (next tick
+      // with moving=false takes the full-draw branch). Butterfly is excluded —
+      // its two sides move under different transforms, so a single CSS
+      // transform can't represent it; it always full-draws. A light board
+      // (draw < 6ms) always full-draws too, since redrawing is cheap enough
+      // to stay crisp every frame.
+      const moving = performance.now() < this.viewportMovingUntil;
+      const heavy = overlay.lastDrawMs > 6;
+      const butterfly = !!(boardStore.butterfly && this.activeScene.butterflyRoot);
+      if (this.overlayDirty && (!moving || !heavy || butterfly || !this.overlayDrawnView)) {
+        this.overlayDirty = false;
+        this.syncLabelOverlay(overlay, this.activeScene);
+        this.overlayDrawnView = { x: this.viewport.x, y: this.viewport.y, scale: Math.abs(this.viewport.scale.x) };
+      } else if (this.overlayDirty && this.overlayDrawnView) {
+        // Heavy + moving: transform the last-drawn bitmap instead of redrawing.
+        // Redraw happens when movement settles (viewportMovingUntil expires —
+        // the next tick with moving=false takes the full-draw branch).
+        //
+        // Derivation of dx/dy: a scene point p maps to screen
+        // `viewport.pos + p·scale`; the drawn bitmap has it at
+        // `d.pos + p·d.scale`. Composite CSS `translate(t)·scale(k)` maps
+        // bitmap pixel q → `t + q·k`, so requiring
+        // `t + (d.pos + p·d.scale)·k = viewport.pos + p·scale` gives
+        // `k = scale/d.scale`, `t = viewport.pos − d.pos·k`. `draw()` already
+        // resets the CSS transform to `''` at entry, so the full-draw branch
+        // above needs no explicit reset.
+        const d = this.overlayDrawnView;
+        const k = Math.abs(this.viewport.scale.x) / d.scale;
+        const dx = this.viewport.x - d.x * k;
+        const dy = this.viewport.y - d.y * k;
+        overlay.setCssTransform(`translate(${dx}px, ${dy}px) scale(${k})`);
+        // overlayDirty stays true → settle redraw
+      }
+    } else if (overlay) {
       overlay.clear();   // setting on, but scene built pre-toggle → rebuild pending
     }
 
@@ -1600,8 +1639,14 @@ export class BoardRenderer {
     let sceneText = '';
     const scene = this.activeScene;
     if (scene) {
-      const labelCount = scene.topLabels.length + scene.bottomLabels.length
-        + scene.topPinLabels.length + scene.bottomPinLabels.length;
+      // Text fast mode: the BitmapText caches are empty, so source the count
+      // from the overlay's last draw instead — same fallback flushPerfOverlay
+      // uses for its label line.
+      const overlayActive = this.textFastMode && !!scene.labelModel;
+      const labelCount = overlayActive
+        ? this.textFastMode!.lastCounts.total
+        : scene.topLabels.length + scene.bottomLabels.length
+          + scene.topPinLabels.length + scene.bottomPinLabels.length;
       sceneText = ` · ${labelCount} labels`;
     }
 
