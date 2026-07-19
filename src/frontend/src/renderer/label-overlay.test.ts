@@ -25,9 +25,24 @@ describe('selectVisibleLabels', () => {
     // 10px*0.5=5 < 6 → hidden for twoPinNet, visible for part
     expect(selectVisibleLabels([rec(400, 300, 10, 'twoPinNet')], ident, view(0.5), th)).toHaveLength(0);
   });
-  it('selected part bypasses LoD', () => {
+  it('selected part NAME bypasses LoD entirely (identity marker)', () => {
     const v = { ...view(0.1), selectedPartIndex: 0 };
-    expect(selectVisibleLabels([rec(400, 300, 10)], ident, v, th)).toHaveLength(1);
+    expect(selectVisibleLabels([rec(400, 300, 10, 'part')], ident, v, th)).toHaveLength(1);
+  });
+  it('selected pin/net labels get relaxed LoD, not a bypass', () => {
+    const v05 = { ...view(0.5), selectedPartIndex: 0 };
+    // circleNet threshold 3: unselected needs 3px; selected needs 1.5px.
+    // fontSize 4 @ 0.5 = 2px → hidden unselected, visible selected (sticky).
+    expect(selectVisibleLabels([rec(400, 300, 4, 'circleNet')], ident, view(0.5), th)).toHaveLength(0);
+    expect(selectVisibleLabels([rec(400, 300, 4, 'circleNet')], ident, v05, th)).toHaveLength(1);
+    // fontSize 4 @ 0.1 = 0.4px < 1.5 → gone even when selected (deep unzoom).
+    const v01 = { ...view(0.1), selectedPartIndex: 0 };
+    expect(selectVisibleLabels([rec(400, 300, 4, 'circleNet')], ident, v01, th)).toHaveLength(0);
+  });
+  it('selected pin/net labels still respect labelZoomHide', () => {
+    const v = { ...view(0.5), selectedPartIndex: 0 };
+    const out = selectVisibleLabels([rec(400, 300, 100, 'circleNet')], ident, v, { ...th, labelZoomHide: 1 });
+    expect(out).toHaveLength(0);
   });
   it('labelZoomHide hides everything below the zoom floor', () => {
     const out = selectVisibleLabels([rec(400, 300, 100)], ident, view(0.5), { ...th, labelZoomHide: 1 });

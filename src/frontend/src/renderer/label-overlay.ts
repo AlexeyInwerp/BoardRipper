@@ -28,6 +28,13 @@ export interface OverlayThresholds {
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
 const DIM_ALPHA = 0.22;           // parity-tuned vs netDimGfx look in Task 9
 const SELECTED_MIN_PX = 11;       // floor so the selected part's text is always readable
+/** Selected-part pin/net labels get a RELAXED LoD (half the normal min-px)
+ *  rather than a full bypass: sticky through moderate unzoom, but they still
+ *  disappear when genuinely zoomed out (user feedback 2026-07-19 — net names
+ *  must not survive unzooming forever). The part NAME label alone keeps the
+ *  full bypass as the selection identity marker (parity with the Pixi
+ *  elevated badge). */
+const SELECTED_LOD_RELAX = 0.5;
 
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   switch (kind) {
@@ -47,9 +54,11 @@ export function selectVisibleLabels(
   const zoomHidden = th.labelZoomHide > 0 && view.scale < th.labelZoomHide;
   for (const r of records) {
     const selected = view.selectedPartIndex !== null && r.partIndex === view.selectedPartIndex;
-    if (!selected) {
+    const keepAlways = selected && r.kind === 'part';   // selection identity marker
+    if (!keepAlways) {
       if (zoomHidden) continue;
-      if (r.fontSize * view.scale < minPxFor(r.kind, th)) continue;
+      const min = minPxFor(r.kind, th) * (selected ? SELECTED_LOD_RELAX : 1);
+      if (r.fontSize * view.scale < min) continue;
     }
     const sx = m.a * r.x + m.c * r.y + m.tx;
     const sy = m.b * r.x + m.d * r.y + m.ty;
