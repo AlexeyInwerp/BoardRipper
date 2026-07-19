@@ -20,6 +20,13 @@ export interface LabelRecord {
   color: number;                 // 0xRRGGBB
   kind: LabelKind;
   partIndex: number;             // -1 for labels with no owning part (via labels excluded from v1)
+  /** Anchor fractions matching PixiJS `BitmapText.anchor` exactly: the point of
+   *  the text's bounding box that sits AT (x, y). 0/0 = top-left, 0.5/0.5 =
+   *  centered, 1/1 = bottom-right. The Task 6 overlay compensates at draw time
+   *  (measureText → shift by anchor·[width, height]) so records reproduce the
+   *  BitmapText path's placement pixel-for-pixel, including per-pin variants
+   *  (BGA alternating, diode 0.5/1.1, 2-pin net anchorY parity). */
+  anchorX: number; anchorY: number;
 }
 
 export interface LabelModel { top: LabelRecord[]; bottom: LabelRecord[]; }

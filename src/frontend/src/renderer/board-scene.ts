@@ -1423,6 +1423,7 @@ export function buildBoardScene(
           if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: pinX, y: pinY, text: numStr, fontSize: pinFontSize,
             color: BOARD_COLORS.labelPin, kind: isTwoPinPart ? 'twoPinNet' : 'circleNum', partIndex: pi,
+            anchorX: 0.5, anchorY: numAnchorY,  // mirrors pinLabel.anchor.set(0.5, numAnchorY) incl. BGA alternating
           })) {
             const pinLabel = new BitmapText({
               text: numStr,
@@ -1502,6 +1503,7 @@ export function buildBoardScene(
           if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
             x: nx, y: ny, text: pin.net, fontSize: netFontSize,
             color: BOARD_COLORS.labelNet, kind: isTwoPinPart ? 'twoPinNet' : 'circleNet', partIndex: pi,
+            anchorX, anchorY,  // mirrors netLabel.anchor.set(anchorX, anchorY) — same locals, incl. 2-pin/BGA parity
           })) {
           const netLabel = new BitmapText({
             text: pin.net,
@@ -1700,6 +1702,7 @@ export function buildBoardScene(
         if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2,
           text: part.name, fontSize, color: labelColor, kind: 'part', partIndex: pi,
+          anchorX: 0.5, anchorY: 0.5,  // mirrors label.anchor.set(0.5, 0.5)
         })) {
           const label = new BitmapText({
             text:  part.name,
@@ -2077,6 +2080,7 @@ export function buildBoardScene(
         if (!pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: pin.position.x, y: pin.position.y - radius * 0.7, text,
           fontSize, color: 0xffffff, kind: 'diode', partIndex: dpi,
+          anchorX: 0.5, anchorY: 1.1,  // mirrors label.anchor.set(0.5, 1.1)
         })) {
           const label = new BitmapText({
             text,
