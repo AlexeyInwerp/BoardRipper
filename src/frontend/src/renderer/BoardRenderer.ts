@@ -359,6 +359,17 @@ export class BoardRenderer {
   private tooltipCanvas: HTMLCanvasElement | null = null;  // canvas ref for listener cleanup
   private boundHover: ((e: PointerEvent) => void) | null = null;
   private boundHideTooltip: (() => void) | null = null;
+  // rAF-coalesced hover (audit A1): pointermove events arrive far faster than
+  // the display refreshes, so boundHover only records the latest event and
+  // schedules a single handleHover() per animation frame.
+  private hoverRafId: number | null = null;
+  private lastHoverEvent: PointerEvent | null = null;
+  /** Identity of the currently-hovered pin/trace ("p{part}:{pin}" / "t{traceIndex}") —
+   *  lets handleHover skip tooltip content rewrites when the target hasn't changed. */
+  private hoverKey: string | null = null;
+  /** Cached tooltip DOM size from the last content rewrite — avoids a forced
+   *  reflow (offsetWidth/Height read) on every pointer move. */
+  private tooltipSize: { w: number; h: number } | null = null;
   /** Net name currently under the pointer (for ambient dim hover highlight) */
   private hoverNet: string | null = null;
   /** Bound wheel wake-up handler for cleanup */
@@ -681,6 +692,9 @@ export class BoardRenderer {
     }
     // Cancel pending follow-PDF debounce
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
+    // Cancel any pending rAF-coalesced hover — harmless if it fires after
+    // pause() (handleHover no-ops without an active scene), but wasteful.
+    if (this.hoverRafId !== null) { cancelAnimationFrame(this.hoverRafId); this.hoverRafId = null; }
     // Just stop the ticker — do NOT destroy the Application.
     // PixiJS v8 uses module-level batch pools that get permanently corrupted
     // by app.destroy(), making all future Applications crash with
@@ -1313,7 +1327,17 @@ export class BoardRenderer {
     this.tooltipEl.append(this.tooltipNetSpan, this.tooltipDetailSpan, this.tooltipWorklistSpan, this.tooltipMetaSpan, this.tooltipWorklistNetSpan, this.tooltipObdSpan);
     this.containerEl.appendChild(this.tooltipEl);
     this.tooltipCanvas = this.app.renderer.canvas as HTMLCanvasElement;
-    this.boundHover = (e: PointerEvent) => this.handleHover(e);
+    // Coalesce to one handleHover() per animation frame — pointermove can fire
+    // far faster than the display refreshes; only the latest event per frame
+    // is processed (audit A1).
+    this.boundHover = (e: PointerEvent) => {
+      this.lastHoverEvent = e;
+      if (this.hoverRafId !== null) return;           // already scheduled this frame
+      this.hoverRafId = requestAnimationFrame(() => {
+        this.hoverRafId = null;
+        if (this.lastHoverEvent) this.handleHover(this.lastHoverEvent);
+      });
+    };
     this.boundHideTooltip = () => { this.hideTooltip(); this.setHoverNet(null); };
     this.tooltipCanvas.addEventListener('pointermove', this.boundHover);
     this.tooltipCanvas.addEventListener('pointerleave', this.boundHideTooltip);
@@ -2398,6 +2422,12 @@ export class BoardRenderer {
           this.deactivateScene();
         }
         this.board = board;
+        // hoverKey is a bare "p{partIndex}:{pinIndex}" identity with no board
+        // component — invalidate it on board swap (fold toggle / revision
+        // switch) so a stray pointer move that happens to land on the same
+        // numeric index against the NEW board doesn't hit the memo fast path
+        // and show stale tooltip content (audit A1 hover-key memo).
+        this.hoverKey = null;
         // Hydrate this board's persisted worklistes (resolves refdes → partIndex
         // against the freshly-loaded parts) and repaint the multi-highlight.
         void worklistStore.syncToActiveTab().then(() => this.redrawMultiHighlight());
@@ -4908,6 +4938,16 @@ export class BoardRenderer {
       const part = this.board.parts[hit.partIndex];
       const pin = part?.pins[hit.pinIndex];
       if (pin && part) {
+        // Same pin as last frame and tooltip content is already current —
+        // just reposition (no DOM rewrite / measure). Falls through to a
+        // full showTooltip if the tooltip was hidden mid-hover (tooltipSize
+        // cleared) so it comes back with content instead of staying blank.
+        const key = `p${hit.partIndex}:${hit.pinIndex}`;
+        if (key === this.hoverKey && this.tooltipSize) {
+          this.repositionTooltip(e.offsetX, e.offsetY);
+          return;
+        }
+        this.hoverKey = key;
         const pinId = pin.number || String(hit.pinIndex + 1);
         const diodeStr = pin.diode && pin.diode.kind !== 'none'
           ? `Diode ${formatDiode(pin.diode)}` : undefined;
@@ -4926,6 +4966,12 @@ export class BoardRenderer {
     // Fallback: check traces
     const traceHit = this.traceHitTest(world);
     if (traceHit) {
+      const key = `t${traceHit.traceIndex}`;
+      if (key === this.hoverKey && this.tooltipSize) {
+        this.repositionTooltip(e.offsetX, e.offsetY);
+        return;
+      }
+      this.hoverKey = key;
       const t = this.board.traces![traceHit.traceIndex];
       const layerName = t.layer != null && this.board.layerNames?.[t.layer]
         ? this.board.layerNames[t.layer] : '';
@@ -4936,6 +4982,7 @@ export class BoardRenderer {
       this.setHoverNet(traceHit.net || null);
       return;
     }
+    this.hoverKey = null;
     this.hideTooltip();
     this.setHoverNet(null);
   }
@@ -5001,10 +5048,22 @@ export class BoardRenderer {
     }
 
     el.style.display = 'block';
-    el.style.left = '0';
-    el.style.top = '0';
-    const tw = el.offsetWidth;
-    const th = el.offsetHeight;
+    // Single measure right after the content rewrite (no left/top='0' pre-measure
+    // dance — measuring after display='block' with final content gives the same
+    // numbers) and cache it so subsequent same-target moves reposition without
+    // any layout read (audit A1).
+    const tw0 = el.offsetWidth;
+    const th0 = el.offsetHeight;
+    this.tooltipSize = { w: tw0, h: th0 };
+    this.repositionTooltip(x, y);
+  }
+
+  /** Position the tooltip using the cached size — no layout reads. */
+  private repositionTooltip(x: number, y: number) {
+    const el = this.tooltipEl;
+    const size = this.tooltipSize;
+    if (!el || !size) return;
+    const { w: tw, h: th } = size;
     const offset = 14;
     const cw = this.containerEl.clientWidth;
     const ch = this.containerEl.clientHeight;
@@ -5020,6 +5079,8 @@ export class BoardRenderer {
 
   private hideTooltip() {
     if (this.tooltipEl) this.tooltipEl.style.display = 'none';
+    this.hoverKey = null;
+    this.tooltipSize = null;
   }
 
   /** Worklist line (HTML) for a hovered part: mark icon (or a pinned icon),
@@ -5551,6 +5612,7 @@ export class BoardRenderer {
       if (this.boundWheelWake) this.tooltipCanvas.removeEventListener('wheel', this.boundWheelWake);
       this.tooltipCanvas = null;
     }
+    if (this.hoverRafId !== null) { cancelAnimationFrame(this.hoverRafId); this.hoverRafId = null; }
     this.boundHover = null;
     this.boundHideTooltip = null;
     this.boundWheelWake = null;
