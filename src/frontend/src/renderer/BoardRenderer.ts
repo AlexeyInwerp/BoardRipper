@@ -2698,6 +2698,13 @@ export class BoardRenderer {
     // so the `boardStore.board !== this.board` check below naturally triggers
     // a scene rebuild on toggle. No separate filter-state tracking needed.
 
+    // D1: this renderer is (or just became) the active tab — settle any
+    // rebuild deferred while it was inactive. Covers activation paths that
+    // don't route through resume().
+    if (this.pendingDeferredRebuild && (this.tabId === null || boardStore.activeTabId === this.tabId)) {
+      this.pendingDeferredRebuild = false;
+      this.scheduleRebuild();
+    }
     // Notify settings store which board is active so per-board overrides take effect
     renderSettingsStore.setActiveBoard(boardStore.fileName);
     log.render.log('onBoardUpdate', 'tab=' + this.tabId,
