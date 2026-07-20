@@ -96,14 +96,20 @@ func NewOAuth() *OAuth {
 	return o
 }
 
-// GateOAuth serves next only when MCP is enabled AND the auth mode is "oauth";
-// otherwise 404 — so every OAuth endpoint (discovery + registration + the AS)
-// is invisible when the feature is off or the deployment uses static-token auth,
-// matching the invisibility of the main /api/mcp handler.
+// GateOAuth serves next only when MCP is enabled AND the auth mode is "oauth".
+// With MCP disabled the endpoints stay 404-invisible (matching /api/mcp). With
+// MCP enabled but token mode, they answer an explicit 403 explaining that
+// OAuth is off — clients probing OAuth (e.g. after a 401) surface a reason a
+// human can act on instead of a bare "oauth 404". Usability over stealth: the
+// 403 admits the feature exists, which is fine on this trust model.
 func GateOAuth(st *State, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if st == nil || !st.Enabled() || st.AuthMode() != "oauth" {
+		if st == nil || !st.Enabled() {
 			http.NotFound(w, r)
+			return
+		}
+		if st.AuthMode() != "oauth" {
+			http.Error(w, "OAuth is disabled on this install (token mode). Connect with a bearer token from BoardRipper Settings > Integrations, or ask the operator to switch Settings > Integrations > Authentication to OAuth.", http.StatusForbidden)
 			return
 		}
 		next(w, r)

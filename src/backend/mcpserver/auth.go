@@ -77,14 +77,16 @@ func Gate(st *State, secret string, next http.Handler) http.Handler {
 	})
 }
 
-// GateAuto enforces the enable flag and then the per-request auth scheme:
-// paired per-browser tokens first (accepted in BOTH auth modes — pairing is
-// how multi-user installs separate sessions, independent of how the shared
-// credential is issued), then OAuth bearer-token verification when
-// AuthMode()=="oauth" (with the proper 401 + WWW-Authenticate →
-// protected-resource-metadata challenge), otherwise the static bearer secret.
-// The resolved Scope is attached to the request context (ScopeFrom); the
-// install secret and OAuth tokens carry the shared scope. 404 when disabled.
+// GateAuto enforces the enable flag and then per-request auth. Credentials
+// are checked in a fixed order so different users can mix schemes on one
+// install: (1) paired per-browser tokens (scoped), (2) the shared install
+// secret (shared scope), (3) OAuth bearer tokens when AuthMode()=="oauth"
+// (shared scope). OAuth mode is therefore a strict SUPERSET of token mode —
+// static tokens never stop working; the mode toggle only controls whether the
+// OAuth onboarding endpoints (discovery/register/authorize/token) exist. On
+// rejection: oauth mode answers with the protected-resource-metadata
+// challenge (so OAuth-capable clients onboard), token mode with the RFC 6750
+// invalid_token challenge + explanatory body. 404 when disabled.
 func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, next http.Handler) http.Handler {
 	secretB := []byte(secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,17 +94,20 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 			http.NotFound(w, r)
 			return
 		}
+		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if pairings != nil {
-			tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 			if id, ok := pairings.ClientForToken(tok); ok {
 				next.ServeHTTP(w, r.WithContext(withScope(r.Context(), Scope{ClientID: id})))
 				return
 			}
 		}
+		if subtle.ConstantTimeCompare([]byte(tok), secretB) == 1 {
+			next.ServeHTTP(w, r) // shared scope (zero value)
+			return
+		}
 		if st.AuthMode() == "oauth" {
 			// Explicit verification (no scope requirement — token presence is the
 			// grant) with the proper challenge + a diagnostic log on rejection.
-			tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 			info, err := oauth.Verifier()(r.Context(), tok, r)
 			if err != nil || info == nil {
 				log.Printf("mcp oauth: rejected %s %s (token_len=%d, reason=%v)", r.Method, r.URL.Path, len(tok), err)
@@ -113,11 +118,6 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 			next.ServeHTTP(w, r)
 			return
 		}
-		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		if subtle.ConstantTimeCompare([]byte(tok), secretB) != 1 {
-			writeUnauthorized(w)
-			return
-		}
-		next.ServeHTTP(w, r)
+		writeUnauthorized(w)
 	})
 }

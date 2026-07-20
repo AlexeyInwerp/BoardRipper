@@ -681,7 +681,7 @@ function IntegrationsSection() {
             </div>
             <p className="settings-hint" style={{ margin: '0 0 8px' }}>
               {oauth
-                ? 'Clients connect with just the URL and approve access in the browser the first time — no token to copy.'
+                ? 'Clients can connect with just the URL and approve access in the browser the first time — no token to copy. Bearer tokens (browser + shared, below) keep working too, so users can mix both.'
                 : 'Clients authenticate with the bearer token below.'}
             </p>
 

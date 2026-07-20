@@ -90,13 +90,25 @@ func TestGateAuto_PairedTokenWorksInOAuthMode(t *testing.T) {
 		t.Fatalf("paired token in oauth mode: status=%d client=%q", rec.Code, got.ClientID)
 	}
 
-	// The install secret is NOT an oauth token — oauth mode keeps rejecting it.
+	// OAuth mode is a superset of token mode: the shared install secret keeps
+	// working (shared scope), so different users can mix schemes on one
+	// install — some on static tokens, some via OAuth.
+	got = Scope{ClientID: "sentinel"}
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/mcp", nil)
 	req.Header.Set("Authorization", "Bearer install-secret")
 	h.ServeHTTP(rec, req)
-	if rec.Code != 401 {
-		t.Fatalf("install secret in oauth mode: status=%d, want 401", rec.Code)
+	if rec.Code != 200 || !got.Shared() {
+		t.Fatalf("install secret in oauth mode: status=%d scope=%+v, want 200 shared", rec.Code, got)
+	}
+
+	// Garbage in oauth mode still gets the PRM challenge (OAuth onboarding).
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/mcp", nil)
+	req.Header.Set("Authorization", "Bearer nope")
+	h.ServeHTTP(rec, req)
+	if rec.Code != 401 || !strings.Contains(rec.Header().Get("WWW-Authenticate"), "resource_metadata") {
+		t.Fatalf("garbage in oauth mode: status=%d challenge=%q, want 401 + resource_metadata", rec.Code, rec.Header().Get("WWW-Authenticate"))
 	}
 }
 
