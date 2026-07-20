@@ -51,8 +51,16 @@ func TestGateAuto_ScopeResolution(t *testing.T) {
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
-			if tc.wantStatus == 401 && !strings.Contains(rec.Body.String(), "session-separation update") {
-				t.Fatalf("401 body must explain the token reset, got: %s", rec.Body.String())
+			if tc.wantStatus == 401 {
+				if !strings.Contains(rec.Body.String(), "session-separation update") {
+					t.Fatalf("401 body must explain the token reset, got: %s", rec.Body.String())
+				}
+				// Clients that get a bare 401 fall back to OAuth discovery
+				// (hidden in token mode → confusing 404); the challenge header
+				// carries the real reason for them to surface.
+				if ch := rec.Header().Get("WWW-Authenticate"); !strings.Contains(ch, `error="invalid_token"`) || !strings.Contains(ch, "error_description=") {
+					t.Fatalf("401 missing RFC6750 challenge, got: %q", ch)
+				}
 			}
 			if tc.wantStatus == 200 {
 				if got.ClientID != tc.wantClient {

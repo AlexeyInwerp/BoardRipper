@@ -43,6 +43,21 @@ func ScopeFrom(ctx context.Context) Scope {
 // separation update actually see when their shared token was reset.
 const unauthorizedBody = "unauthorized: this MCP token is not valid. The MCP token system was reset by the multi-user session-separation update (resetting the shared credential was the only way to properly migrate). Open BoardRipper Settings > Integrations and reconnect: each browser now has its own \"This browser's agent\" token (recommended), or use the new shared token for cross-session work."
 
+// unauthorizedChallenge is the WWW-Authenticate header for static-token 401s.
+// Without it, spec-following MCP clients react to a bare 401 by attempting
+// OAuth discovery — which is deliberately hidden (404) in token mode — and
+// then surface a confusing "oauth 404" instead of the real reason. RFC 6750
+// error_description gives them a human-readable cause to show. Must stay a
+// single line with no double quotes inside the description.
+const unauthorizedChallenge = `Bearer error="invalid_token", error_description="MCP tokens were reset by the session-separation update. Get a new token in BoardRipper Settings > Integrations. OAuth is disabled on this install (token mode)."`
+
+// writeUnauthorized emits the static-token 401 with both the machine-readable
+// challenge and the human-readable explanation.
+func writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", unauthorizedChallenge)
+	http.Error(w, unauthorizedBody, http.StatusUnauthorized)
+}
+
 // Gate enforces the enable flag and bearer-token auth in front of the MCP
 // handler. When MCP is disabled the endpoint returns 404 so it is invisible to
 // scanners. When enabled, requests must carry "Authorization: Bearer <secret>".
@@ -55,7 +70,7 @@ func Gate(st *State, secret string, next http.Handler) http.Handler {
 		}
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if subtle.ConstantTimeCompare([]byte(tok), secretB) != 1 {
-			http.Error(w, unauthorizedBody, http.StatusUnauthorized)
+			writeUnauthorized(w)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -100,7 +115,7 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 		}
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if subtle.ConstantTimeCompare([]byte(tok), secretB) != 1 {
-			http.Error(w, unauthorizedBody, http.StatusUnauthorized)
+			writeUnauthorized(w)
 			return
 		}
 		next.ServeHTTP(w, r)
