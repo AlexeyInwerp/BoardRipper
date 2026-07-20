@@ -35,6 +35,7 @@ import {
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { pushLabel, sortLabelModel, type LabelModel } from './label-model';
+import { capsuleParams } from './pad-capsule';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
 
@@ -195,10 +196,20 @@ export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
   const gW = w + grow * 2;
   const gH = h + grow * 2;
 
-  // Round D-code → filled circle. Use max so non-square Round entries
-  // (rare) still cover the full AABB.
+  // Round D-code → filled circle when square; non-square Round entries are
+  // oblong pads (round-capped stroke: XZZ shape 0x01, oval D-codes) and draw
+  // as a rotated stadium. The old max-dim circle inflated a 15×60 QFP lead
+  // into a Ø60 blob (huge-pin reports on PL5TU1B EC1).
   if (p.shape === 'round') {
-    gfx.circle(cx, cy, Math.max(gW, gH) / 2);
+    const cap = capsuleParams(cx, cy, w, h, ang, grow);
+    if (!cap) {
+      gfx.circle(cx, cy, Math.max(gW, gH) / 2);
+      return;
+    }
+    // Two half-circle arcs joined by the straight flanks (auto lineTo).
+    gfx.arc(cap.c1x, cap.c1y, cap.r, cap.axisRad + Math.PI / 2, cap.axisRad + Math.PI * 1.5);
+    gfx.arc(cap.c2x, cap.c2y, cap.r, cap.axisRad - Math.PI / 2, cap.axisRad + Math.PI / 2);
+    gfx.closePath();
     return;
   }
 

@@ -149,6 +149,30 @@ Within a part block, pins are encoded as typed sub-blocks:
 └──────────────────┘
 ```
 
+**Oblong pads (shape 0x01 with w ≠ h).** Shape `0x01` is not strictly a
+circle: with w ≠ h it encodes a round-capped stroke (stadium) — `w` is the
+pen width, `h` the stroke length, rotated by `padAngle` CCW. The surveyed
+MECHREVO corpus (PL5TU1B) writes a constant 15-mil pen with lengths 1–350
+mil. Renderer draws these as rotated capsules (`capsuleParams` in
+`renderer/pad-capsule.ts`). Three caveats, handled by
+`normalizeOblongPads` in the parser (run before the butterfly fold):
+
+1. **Bogus lengths on BGA perimeter rings.** CPU1's outer 2–3 ball rings
+   carry 15×300/350 entries that would cross a dozen neighbouring balls;
+   the vendor's own assembly drawing shows plain 15-mil dots there
+   (probably escape-stub metadata, not pad copper).
+2. **One angle per part.** The exporter stamps a single `padAngle` on every
+   pin of a part, but a QFP's top/bottom leads are physically perpendicular
+   to its left/right leads (EC1: all 128 pins say 270°).
+3. **Degenerate strokes** (h ≤ w, e.g. 15×1) — effectively dots drawn with
+   the 15-mil pen.
+
+The guard is physical — copper pads of different pins can never overlap:
+an oblong is kept at its declared angle if it touches no same-part
+neighbour's pen circle, else retried at +90° (fixes the QFP sides), else
+collapsed to a pen-width round dot. A majority pass then collapses
+gap-threading stragglers of a mostly-bogus (w, h) group (CPU1 pin W1).
+
 **Placeholder pad geometry.** Some exports — all surveyed M2-era Apple board
 files (820-02773, 820-02862, and the `-H`/`-L` CPU variants of 820-02098 /
 820-02100 / 820-02382) — write the SAME pad geometry on every pin of the file:

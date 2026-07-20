@@ -48,7 +48,11 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     a measured short is a real reading XZZ's viewer draws; on connector
 //     diode maps zeros are the majority (776/1144 on 820-03097), so cached
 //     boards from v79 hide most of the table.
-const PARSER_VERSION = 80;
+// 81: XZZ oblong-pad plausibility guard (normalizeOblongPads) — shape 0x01
+//     with w ≠ h is a round-capped stroke; implausible lengths (BGA
+//     perimeter stubs on PL5TU1B CPU1, 15×300/350 covering neighbouring
+//     balls) and degenerate strokes (h ≤ w) collapse to pen-width dots.
+const PARSER_VERSION = 81;
 
 interface CachedBoard {
   key: string;

@@ -521,6 +521,105 @@ interface PinData {
    *  0x02 = rect (SMD). Unknown codes fall through to 'rect'. */
   padShape: 'round' | 'rect';
 }
+/** Structural subset of PinData used by normalizeOblongPads (exported for tests). */
+export interface OblongPinLike {
+  x: number; y: number;
+  padW: number; padH: number;
+  padAngleDeg: number;
+  padShape: 'round' | 'rect';
+}
+
+/** Oblong-pad plausibility guard.
+ *
+ *  Shape 0x01 with w ≠ h is a round-capped stroke (stadium): `w` is the pen
+ *  width, `h` the stroke length, rotated by padAngleDeg. Every oblong entry
+ *  in the surveyed corpus (PL5TU1B) carries the same 15-mil pen width with
+ *  lengths 1–350 mil. Real for chip pads (15×20…40) and QFP leads (15×60,
+ *  matches the vendor's assembly drawing) — but bogus on BGA perimeter
+ *  rings, where 15×300/350 "pads" would cross a dozen neighbouring balls
+ *  the vendor's own drawing shows as plain 15-mil dots (probably escape-stub
+ *  metadata, not pad copper).
+ *
+ *  Copper pads of different pins can never overlap, so the guard is
+ *  physical: a pin's oblong footprint (w×h box at the pad angle) must not
+ *  intersect any same-part neighbour's pen circle (penetration > 1 mil;
+ *  duplicate records within 2 mil of the same spot don't count). Two
+ *  orientations are tried — the declared angle, then +90° — because the
+ *  exporter stamps ONE angle on every pin of a part while a QFP's top/bottom
+ *  leads are physically perpendicular to its left/right leads; an oblong
+ *  only collapses to a pen-width round dot when neither orientation is
+ *  physically possible. Degenerate strokes (h ≤ w, e.g. 15×1) collapse
+ *  unconditionally. A final majority pass drags stragglers along: the
+ *  exporter writes one length for a whole ring/side, so when most pins of
+ *  an identical (w, h) group prove implausible, the survivors (stubs that
+ *  happen to thread a gap in a staggered ball grid — CPU1 pin W1) are the
+ *  same bogus population and collapse too. Must run BEFORE the butterfly
+ *  fold: the geometry assumes positions and angles from the same
+ *  (un-mirrored) frame.
+ *
+ *  Mutates `pins` in place; returns how many pads were collapsed. */
+export function normalizeOblongPads(pins: OblongPinLike[]): number {
+  let collapsed = 0;
+  // True when p's w×h box rotated by angDeg overlaps no neighbour's pen circle.
+  const plausibleAt = (p: OblongPinLike, angDeg: number): boolean => {
+    const halfW = p.padW / 2, halfH = p.padH / 2;
+    const rad = angDeg * Math.PI / 180;
+    const c = Math.cos(rad), s = Math.sin(rad);
+    for (const q of pins) {
+      if (q === p) continue;
+      const dx = q.x - p.x, dy = q.y - p.y;
+      if (dx * dx + dy * dy <= 4) continue;         // duplicate record at (nearly) the same spot
+      // World delta → pad-local frame (rotate by −ang), then point-to-box distance.
+      const lx = dx * c + dy * s;
+      const ly = -dx * s + dy * c;
+      const ex = Math.max(0, Math.abs(lx) - halfW);
+      const ey = Math.max(0, Math.abs(ly) - halfH);
+      const rq = (q.padW > 0 && q.padH > 0) ? Math.min(q.padW, q.padH) / 2 : 4;
+      if (ex * ex + ey * ey < Math.max(0, rq - 1) ** 2) return false;
+    }
+    return true;
+  };
+  // Per-(w,h) group stats for the majority pass. Survivors keep a reference
+  // under their ORIGINAL size key (mutation changes p.padH).
+  const groupTotal = new Map<string, number>();
+  const groupCollapsed = new Map<string, number>();
+  const groupSurvivors = new Map<string, OblongPinLike[]>();
+  for (const p of pins) {
+    if (p.padShape !== 'round' || p.padW <= 0 || p.padH <= 0 || p.padW === p.padH) continue;
+    if (p.padH <= p.padW) {                          // degenerate stroke → dot
+      p.padH = p.padW;
+      p.padAngleDeg = 0;
+      collapsed++;
+      continue;
+    }
+    const key = `${p.padW}x${p.padH}`;
+    groupTotal.set(key, (groupTotal.get(key) ?? 0) + 1);
+    if (plausibleAt(p, p.padAngleDeg) ||
+        (plausibleAt(p, p.padAngleDeg + 90) &&       // perpendicular sibling-side lead
+         ((p.padAngleDeg = (p.padAngleDeg + 90) % 360), true))) {
+      let list = groupSurvivors.get(key);
+      if (!list) { list = []; groupSurvivors.set(key, list); }
+      list.push(p);
+      continue;
+    }
+    p.padH = p.padW;
+    p.padAngleDeg = 0;
+    collapsed++;
+    groupCollapsed.set(key, (groupCollapsed.get(key) ?? 0) + 1);
+  }
+  // Majority pass: a size-group that is mostly implausible is exporter
+  // metadata, not copper — collapse its gap-threading survivors too.
+  for (const [key, bad] of groupCollapsed) {
+    if (bad * 2 <= (groupTotal.get(key) ?? 0)) continue;
+    for (const p of groupSurvivors.get(key) ?? []) {
+      p.padH = p.padW;
+      p.padAngleDeg = 0;
+      collapsed++;
+    }
+  }
+  return collapsed;
+}
+
 interface PartSilkLine { x1: number; y1: number; x2: number; y2: number; }
 interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[]; }
 
@@ -1226,6 +1325,16 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         if (tp) testPads.push(tp);
         break;
       }
+    }
+  }
+
+  // Collapse implausible oblong pad geometry (see normalizeOblongPads doc)
+  // while positions and pad angles are still in the un-mirrored frame.
+  {
+    let collapsedTotal = 0;
+    for (const pd of partDataList) collapsedTotal += normalizeOblongPads(pd.pins);
+    if (collapsedTotal > 0) {
+      log.parser.log(`(pcb pads) oblong guard: collapsed ${collapsedTotal} implausible oblong pads to pen-width dots`);
     }
   }
 
