@@ -1,26 +1,33 @@
-# BoardRipper Web (Standalone, Backend-Free) — Design
+# BoardRipper Web — Lite Build (Backend-Free) — Design
 
-**Date:** 2026-07-20
-**Status:** Design — approved decisions captured; pending user spec review
-**Topic:** A fully-usable, client-only build of the BoardRipper frontend with no Go
-backend. Hosted first at `https://www.ripperdoc.de/boardripper/web/`, later
-mirrored to a `*.web.app` root.
+**Date:** 2026-07-20 (revised 2026-07-21 after model review: renamed demo → lite, closed gating gaps)
+**Status:** Design — approved decisions captured; pending final user review
+**Topic:** The lite build of BoardRipper: the full frontend as a client-only
+static site with no Go backend. Hosted first at
+`https://www.ripperdoc.de/boardripper/web/`, later mirrored to a `*.web.app`
+root.
 
 ---
 
 ## 1. Overview & positioning
 
-BoardRipper Web is **the complete BoardRipper frontend, built with the backend
-disabled and served as static files**. It is not a marketing teaser or a
-locked-down sample viewer — it is the real viewer/inspector that people use with
-their own boardview files and PDFs, running entirely in the browser.
+The lite build is **not a demo**. It is BoardRipper, light: the complete
+frontend, built with the backend disabled and served as static files — the real
+viewer/inspector that people use with their own boardview files and PDFs,
+running entirely in the browser.
 
-Same UI, same home page, same keyboard shortcuts, same rendering. The only thing
-missing is the *server-backed* layer: the shared library, board reference
+Same UI, same home page, same keyboard shortcuts, same rendering. The only
+thing missing is the *server-backed* layer: the shared library, board reference
 database, OpenBoardData readings, backend PDF full-text index, library sync,
 self-update, and MCP server. None of those are meaningful for a personal,
 single-user, client-only tool, so their absence is by design rather than a
 degradation of the core experience.
+
+**It is just a build type.** The renderer and interface are 100% shared with
+mainline BoardRipper — no forked components, no parallel tree — so every future
+rendering/UI improvement flows into the lite build automatically. A new
+backend-coupled feature costs exactly one `isLiteBuild()` guard at its
+registration point.
 
 ### Why this is low-risk
 
@@ -52,9 +59,10 @@ network calls), plus a small amount of additive build/deploy plumbing.
    (`/boardripper/web/`) and at a domain root (`*.web.app`) with no rebuild.
 3. Installable + offline (PWA) so it is a genuine standalone bench tool.
 4. Zero risk to the existing NAS (web) and Electron builds — they must be
-   byte-for-byte unaffected when the demo flag is off.
-5. First-run experience is the **normal BoardRipper home page**, not a bespoke
-   demo screen — with backend-only widgets hidden.
+   behaviorally unaffected (the lite flag is false there and its branches are
+   inert).
+5. First-run experience is the **normal BoardRipper home page** — with
+   backend-only widgets hidden. No bespoke landing screen.
 
 ### Non-goals
 - Reimplementing any server feature client-side (library search, board DB, OBD,
@@ -69,8 +77,9 @@ network calls), plus a small amount of additive build/deploy plumbing.
 
 | Decision | Choice |
 |---|---|
-| Build strategy | **Separate demo build** — one codebase, a build flag; not a fork, not a runtime probe. |
-| Scope | **Pure local viewer** — strip all server-backed features, keep the full viewer/inspector. |
+| Positioning | **Lite build, not demo** — full BoardRipper minus the server layer; "just a build type". |
+| Build strategy | **Separate lite build** — one codebase, one mode flag; not a fork, not a runtime probe. |
+| Scope | **Pure local viewer** — strip all server-backed features, keep the full viewer/inspector (incl. local worklist). |
 | First-run | **Same home page as always**, with backend-only widgets gated out. |
 | Base path | **Relative** (`base: './'`) so one bundle is host-portable. |
 | PWA / offline | **Included now** — service worker + installable manifest. |
@@ -80,45 +89,46 @@ network calls), plus a small amount of additive build/deploy plumbing.
 
 ## 4. Architecture
 
-### 4.1 Build flag
+### 4.1 Build type = Vite mode
 
-- Add a Vite mode / env flag `VITE_DEMO=1`, driven by a new script:
-  `"build:demo": "tsc -b && vite build --mode demo --outDir dist-demo"` (with
-  `.env.demo` setting `VITE_DEMO=1`), emitting a static bundle in a distinct
-  output dir (`dist-demo/`) so it never collides with the NAS build output.
-  `--mode demo` loads `.env.demo` → `import.meta.env.VITE_DEMO` is `"1"`
-  (truthy) in this build and `undefined` (dead-code-eliminated) in all others.
-- The flag is **off by default**; `npm run build` (NAS) and the Electron build
-  are untouched.
+The lite build is `--mode lite` — the mode **is** the build type; no env file
+needed:
 
-### 4.2 One central flag: `isDemoBuild()` (not `hasBackend()`)
+- `"build:lite": "tsc -b && vite build --mode lite"` → emits `dist-lite/`
+  (never collides with `dist/`, which the Go server embeds).
+- `vite.config.ts` becomes a function of `{ mode }`: `const lite = mode ===
+  'lite'` drives `base: './'`, `outDir: 'dist-lite'`, and the PWA plugin.
+- `npm run build` (NAS) and the Electron build pass mode `production` as
+  always and are untouched.
 
-The build type is defined by **one flag** in a new zero-dependency module
-`src/store/build-mode.ts`:
+### 4.2 One central flag: `isLiteBuild()` (not `hasBackend()`)
+
+The build type is exposed to app code by **one flag** in a new zero-dependency
+module `src/store/build-mode.ts`:
 
 ```ts
-/** True only in the standalone web build (`vite build --mode demo`). */
-export function isDemoBuild(): boolean {
-  return !!import.meta.env.VITE_DEMO;
+/** True only in the lite (standalone, backend-free) web build. */
+export function isLiteBuild(): boolean {
+  return import.meta.env.MODE === 'lite';
 }
 ```
 
-`VITE_DEMO` is set only by `.env.demo`; in the NAS/Electron builds it is
-`undefined`, so Vite statically inlines `false` and every `isDemoBuild()` branch
-dead-code-eliminates away — zero risk to those builds.
+`import.meta.env.MODE` is statically replaced by Vite at build time, so in the
+NAS/Electron builds every `isLiteBuild()` branch is inert (and typically
+dead-code-eliminated).
 
 **Two distinct gates — do not conflate them:**
 
-- **`isDemoBuild()`** gates everything *demo-specific*: hiding backend UI and
+- **`isLiteBuild()`** gates everything *lite-specific*: hiding backend UI and
   no-oping backend network. This is the correct gate because it is true **only**
-  in the web build.
+  in the lite web build.
 - **`hasBackend()`** keeps its existing meaning ("is an HTTP backend
   reachable"). It gets a single short-circuit so HTTP-backend-gated paths also
-  no-op in the demo:
+  no-op in the lite build:
 
   ```ts
   export function hasBackend(): boolean {
-    if (isDemoBuild()) return false;                 // standalone web build
+    if (isLiteBuild()) return false;                 // lite web build
     return !isElectron() || (typeof location !== 'undefined' && location.protocol !== 'file:');
   }
   ```
@@ -127,55 +137,75 @@ dead-code-eliminates away — zero risk to those builds.
 app (Electron, MCP sidecar off) `hasBackend()` is *also* `false`, yet the
 Library / databank / board-DB features work there via Electron **IPC**
 (`initElectron`). Gating their visibility on `!hasBackend()` would wrongly hide
-them on desktop. `isDemoBuild()` is false on desktop, so it hides those surfaces
-**only** in the web build. This is the single most important correctness point
-in the plan.
+them on desktop. `isLiteBuild()` is false on desktop, so it hides those surfaces
+**only** in the lite web build. This is the single most important correctness
+point in the plan.
 
 **Databank boot short-circuit.** Rather than trust each of databank-store's
 ~14 `hasBackend()` sub-guards, add one early-return at the top of
 `_runStartupLoad()`:
 
 ```ts
-if (isDemoBuild()) { this._loadStatus = 'loaded'; this.notify(); return; }
+if (isLiteBuild()) { this._loadStatus = 'loaded'; this.notify(); return; }
 ```
 
 so the entire startup load chain (config, stats, files, donors, scan-status,
-pdf-index-stats) is skipped centrally in the demo build.
+pdf-index-stats) is skipped centrally in the lite build.
 
 ### 4.3 Relative base path (host portability)
 
-Under the demo mode, set Vite `base: './'`. This makes every emitted asset
-reference relative, so the built folder runs unmodified at:
+Under lite mode, Vite `base: './'` makes every emitted asset reference
+relative, so the built folder runs unmodified at:
 
 - `https://www.ripperdoc.de/boardripper/web/` (sub-path), and
 - `https://<name>.web.app/` (root) — the later mirror,
 
-with no per-host rebuild. **Verification required** (see §9): `index.html`
-currently references `/logo.svg` and `/src/main.tsx` with leading slashes, and
-the pdf.js worker + any `new URL(..., import.meta.url)` / `?url` asset imports
-must resolve relative to the document, not the origin root.
+with no per-host rebuild. Review findings (2026-07-21) on the known
+absolute-path candidates:
+
+- `index.html` `href="/logo.svg"` — the one real offender; changed to
+  `./logo.svg` (harmless on NAS).
+- pdf.js worker — resolved via `new URL('pdfjs-dist/build/pdf.worker.mjs',
+  import.meta.url)` in `pdf-store.ts`, which Vite rewrites per-base. Safe.
+- Dockview popout — `App.tsx` passes `popoutUrl="popout.html"` (already
+  relative). Safe under a sub-path.
+- No `url(/...)` references in `index.css`; no other `/`-rooted public-dir
+  references in `src/`.
+
+Sub-path serving is **CI-covered, not just hand-checked**: the lite E2E runs
+its whole spec twice — once against the dev server at root, once against the
+**built bundle served under `/boardripper/web/`** by a dependency-free static
+server (`scripts/serve-lite.mjs`), with a zero-failed-requests assertion (§10).
 
 ### 4.4 PWA / offline
 
-- Use `vite-plugin-pwa` (Workbox under the hood), enabled only in demo mode.
-- **Manifest:** name "BoardRipper", standalone display, theme/background colors
-  from the default theme, icons derived from the existing `logo.svg`.
-- **Service worker (precache):** the built JS/CSS/wasm/worker assets so the app
-  shell loads fully offline after first visit. Runtime board/PDF files are
-  user-supplied `File` objects — never fetched — so they need no caching
-  strategy.
+- `vite-plugin-pwa` (Workbox), included in the plugin list **only when
+  `mode === 'lite'`** — the NAS/Electron builds never see it.
+- **Manifest:** name "BoardRipper", standalone display, relative `start_url`/
+  `scope` (`'.'`) so the installed app works at any mount point; icon from the
+  existing `logo.svg`.
+- **Service worker (precache):** the built JS/**MJS**/CSS/wasm/font assets so
+  the app shell — including the pdf.js worker (`pdf.worker.mjs`), which PDF
+  viewing needs — loads fully offline after first visit. Runtime board/PDF
+  files are user-supplied `File` objects, never fetched, so they need no
+  caching strategy.
 - **No `/api/*` runtime caching** — there is no backend to cache.
-- Registration is gated so it never activates in the NAS/Electron builds.
+- `registerType: 'autoUpdate'` so a redeploy is picked up on next load (SW
+  staleness defence).
 
 ### 4.5 Client-side persistence (already works, no change)
 
-These already run with no backend and give the standalone app real
-session continuity:
+These already run with no backend and give the lite app real session
+continuity:
 
 - IndexedDB board cache (`boardripper-cache`, keyed
   `fileName:fileSize:lastModified`) — re-opening a cached board is instant.
 - `localStorage` — theme/accent/chrome knobs, render settings, overlay layout,
-  welcome-done flag, recent items, session restore.
+  welcome-done flag, session restore.
+
+`WelcomeSetup` needs **no gating**: review confirmed it is a pure input-gesture
+calibration wizard (wheel/drag classification → renderSettings + localStorage),
+with no library or backend coupling.
 
 ---
 
@@ -186,50 +216,68 @@ session continuity:
 | All 11 format parsers + PixiJS rendering | Library panel + databank search |
 | PDF local open/drag-drop, viewing, rotate/mirror/page-modes | Database Editor panel |
 | Selection, highlight, butterfly, spotlight, overlay | OBD readings (auto-fetch on board open) |
-| Worklist (local clipboard-driven; AI/MCP writes disabled) | PDF full-text search (backend FTS) |
-| Themes, settings, keyboard shortcuts | Self-update badge + drop-to-update |
-| IndexedDB board cache, localStorage session/settings | MCP server/bridge |
-| Apple board metadata (bundled `apple-boards.ts` table) | Library sync |
-| FZ key dialog (user-provided key) | Incoming-file upload |
+| Worklist (local, clipboard-driven) | Worklist AI-relay section (MCP-backed) |
+| Themes, settings, keyboard shortcuts, welcome wizard | PDF full-text search (backend FTS) |
+| IndexedDB board cache, localStorage session/settings | Self-update badge + drop-to-update |
+| Apple board metadata (bundled `apple-boards.ts` table) | MCP server/bridge |
+| FZ key dialog (fetch-from-mirror links + paste-back) | Library sync · incoming-file upload |
 
 ---
 
 ## 6. Gating work (file-by-file)
 
-Beyond the central databank short-circuit (§4.2), a handful of files fire
-`/api/*` or render backend UI. Each gets **one `isDemoBuild()` guard** — at the
-feature-registration point, not scattered — so it hides/no-ops in the web build
-while staying byte-identical on NAS/Electron. `apiFetch` already fails soft, so
-this is about a clean UX (no dead panels, no spinners-to-nowhere, no console
-noise), not crash prevention. Exact per-file code lives in the implementation
-plan (`docs/plans/2026-07-20-boardripper-web-standalone-plan.md`). The guard
-sites, grouped:
+Beyond the central databank short-circuit (§4.2), the files below fire `/api/*`
+or render backend UI. Each gets **one `isLiteBuild()` guard** — at the
+feature-registration point, not scattered — so it hides/no-ops in the lite
+build while staying behaviorally identical on NAS/Electron. `apiFetch` already
+fails soft, so this is about a clean UX (no dead panels, no
+spinners-to-nowhere, no console noise), not crash prevention. Exact per-file
+code lives in the implementation plan
+(`docs/plans/2026-07-20-boardripper-web-standalone-plan.md`). The guard sites,
+grouped:
 
 **Boot-time auto-fires (module-level side-effects — highest priority; these
 poll forever):** `update-store.ts` (`/api/update/*` on load + every 30 min),
 `librarysync-store.ts` (`/api/sync/*` on load + every 30 s), and
 `mcp-bridge.ts` `startMcpBridgeIfEnabled()` (`/api/mcp/status`, called from
-`main.tsx`). Guard each with `isDemoBuild()`.
+`main.tsx`).
 
-**Call-driven fires (on board/PDF open or drop):** `obd-store.ts`
-(`loadMatches`/`fetchBoard`/`syncIndex`), `pdf/pdf-index-client.ts`
-(`ensureIndexed`), `incoming-upload.ts` (`saveDroppedToIncoming` — today gated
-`if (isElectron())`; extend to `if (isElectron() || isDemoBuild())`).
+**Recurring while UI is open (found in the 2026-07-21 review):**
+`panels/WorklistPanel.tsx` — `AiWorklistSection` polls `/api/mcp/status` every
+5 s whenever a worklist is open. Gate at the call site
+(`{!isLiteBuild() && <AiWorklistSection …/>}`) so the poll never starts; the
+local worklist itself stays fully functional.
 
-**UI surfaces:** the sidebar `TABS` registry (filter out `library`),
-`Toolbar.tsx` update badge (`!isElectron()` → `!isElectron() && !isDemoBuild()`),
-`HomeBackdrop.tsx` "Library" quick-section, and the SettingsPanel tabs/sections
-that expose backend features (Library, Software update, Integrations/MCP, and
-the "Open Database Editor" button — which transitively hides the panel launch).
-All keyed on `isDemoBuild()`.
+**Call-driven fires (on board/PDF open or drop):** `obd-store.ts` — all six
+fetchers (`loadMatches`/`fetchBoard`/`syncIndex` plus, belt-and-suspenders,
+`loadCachedData`/`refreshStatus`/`clearCache`); `pdf/pdf-index-client.ts`
+(`ensureIndexed`); `incoming-upload.ts` (`saveDroppedToIncoming` — today gated
+`if (isElectron())`; extend to `if (isElectron() || isLiteBuild())`); and
+`App.tsx` `handleDrop`'s **update-bundle / Docker-tarball branches** (also
+found in review — dropping `latest-update.tar` on the lite build would confirm
+and `POST /api/update/apply-bundle`; gated so such files fall through to the
+normal "unsupported file" toast).
 
-Transitively hidden (no direct edit needed): `components/UpdateProgressOverlay.tsx`
-(only shown during a self-update, which never starts once update-store is
-gated); the `DatabaseEditorPanel` Dockview panel (its only launcher is the
-Settings button that gets hidden); the cross-file PDF full-text search UI (its
-index is never populated). The **local** worklist stays — it is clipboard-driven
-and client-side; its MCP/AI-mode writes are already gated on `mcp_drive_ui`,
-which is unreachable with no backend config.
+**UI surfaces:** the sidebar `TABS` registry (filter out `library`; default
+tab → `settings`; `showSidebarTab`/`toggleLibrarySidebar` degrade — the
+keyboard shortcut is the only other caller and degrades with them),
+`Sidebar.tsx` (don't mount `LibraryPanel` at all), `Toolbar.tsx` update badge
+(`!isElectron()` → `!isElectron() && !isLiteBuild()`), `HomeBackdrop.tsx`
+("Library" quick-section + auto-open-PDF toggle), and `SettingsPanel.tsx`
+`TAB_ORDER` (drop the `library` + `integrations` tabs — this transitively
+hides Scanning & Indexing, Database info, the "Open Database Editor" button,
+Library Sync, and MCP settings) plus the `SoftwareUpdateSection` on the
+`system` tab.
+
+Transitively hidden / self-healing (no direct edit needed — verified in
+review): `components/UpdateProgressOverlay.tsx` (only shown during a
+self-update, which never starts once update-store is gated); the
+`DatabaseEditorPanel` Dockview panel (its only launcher is the hidden Settings
+button — verified sole call site); the cross-file PDF full-text search UI (its
+index is never populated); the settings **search** (both `TabPill` and
+`SearchEmptyState` derive from `TAB_ORDER`, so hidden tabs neither render
+badges nor get suggested); `WelcomeSetup` (fully local, §4.5); Dockview
+popouts (`popout.html` already relative).
 
 The endpoint names above reflect the code as of this spec: library sync is
 `/api/sync/*` (not `/api/librarysync/*`), and `incoming-upload` currently gates
@@ -240,77 +288,91 @@ on `isElectron()` (extended, not replaced).
 ## 7. First-run / empty state
 
 The normal `HomeBackdrop` home page renders unchanged except that its
-backend-only cards (library stats, auto-PDF toggle, database info) are gated
-out. The open-a-file / drag-here empty-state and the supported-format list stay.
-`WelcomeSetup` (once-per-install, localStorage-gated) can show but its
-library-setup step is hidden/skipped when `!hasBackend()`. No bespoke demo
-screen is introduced.
+backend-only pieces (the "Library" stats section and the auto-open-bound-PDFs
+toggle) are gated out. The open-a-file / drag-here empty-state and the
+supported-format list stay. `WelcomeSetup` shows as normal — it is fully local
+(§4.5). No bespoke landing screen is introduced.
 
 ---
 
 ## 8. Deploy
 
-- `npm run build:demo` → `dist-demo/`.
+- `npm run build:lite` → `dist-lite/`.
 - Deployed by the **RipperDocWeb** rsync, the same mechanism that ships
   `landing/` — no involvement from this repo's build pipeline.
 - Target 1: `https://www.ripperdoc.de/boardripper/web/`.
 - Target 2 (later): `*.web.app` root — a copy of the same folder; the relative
   base makes it portable with no rebuild.
-- **Headers:** the app sets COOP/COEP on the dev server + Go backend to unlock
-  precise memory measurement. A static host may not; absence degrades only the
-  status-bar memory stat (graceful). If offered, RipperDocWeb / the web.app host
-  can add COOP:same-origin + COEP:credentialless to restore it.
+- Local sub-path preview: `npm run serve:lite` (serves `dist-lite/` at
+  `http://localhost:18086/boardripper/web/` — the same server the E2E uses).
+- **Headers:** serve with **no `Cross-Origin-Embedder-Policy`** or
+  `COEP: credentialless` — never `require-corp` — so the FZ-key mirror fetch
+  and cross-origin resources keep working. COOP/COEP absence only degrades the
+  status-bar precise-memory stat (graceful).
 
 ---
 
 ## 9. Risks & verification items
 
-1. **Relative-base asset resolution** — verify the built bundle loads with no
-   `/`-rooted asset misses at a sub-path: `index.html` (`/logo.svg`), the pdf.js
-   worker URL (`pdf-store.ts` points at the unminified `pdf.worker.mjs`), and
-   any `new URL(..., import.meta.url)` / `?url` / public-dir references. Test by
-   serving `dist-demo/` under a `/boardripper/web/` prefix locally.
+1. **Relative-base asset resolution** — reviewed (§4.3): only `index.html`'s
+   favicon was absolute; worker/popout/css are safe. Backstopped in CI by the
+   dist-under-sub-path E2E project with a zero-failed-requests assertion.
 2. **FZ decryption key — no new problem; already client-side.** The FZ (ASUS
    RC6) key is never bundled in any build (DMCA/anti-circumvention; upstream
    OpenBoardView does the same). `FZKeyDialog` already handles it entirely
-   client-side and carries into the standalone build unchanged: a one-click
-   **Fetch** that browser-`fetch()`es public GitHub raw mirrors with fallback
+   client-side and carries into the lite build unchanged: a one-click **Fetch**
+   that browser-`fetch()`es public GitHub raw mirrors with fallback
    (`store/fz-key-store.ts` `fetchAndApply`), **clickable mirror links** to
    follow manually, and a **paste-back** textarea gated by the 44-word parity
-   validator → `localStorage`. The `VITE_FZ_KEY` env "auto-load" is a maintainer
-   dev-fixture convenience only (gitignored `.env.local`, tree-shaken from every
-   production build) — not user-facing, so nothing is lost. Deliberately keep
-   retrieval **user-initiated** (no silent auto-fetch on FZ open) to preserve
-   the "user's decision, not BoardRipper's" legal posture. Offline (PWA): paste
-   works; Fetch needs a network and fails gracefully. (BRD/XZZ/other encrypted
-   formats embed their keys in the client parser and are unaffected.)
-   **Deploy dependency:** the Fetch button is a cross-origin request, so the
-   static host must serve **no COEP** or **`COEP: credentialless`** (never
-   `require-corp`) — same requirement that keeps cross-origin OBD images working
-   — see §8 headers.
-3. **Service worker staleness** — a precache SW can serve an old app shell after
-   a redeploy. Use Workbox auto-update (skipWaiting + clientsClaim or a prompt)
-   so a new deploy is picked up on next load.
-4. **Console/network hygiene** — after gating, confirm a cold load fires **zero**
-   `/api/*` requests (network tab / Playwright request assertion).
-5. **Dead-code elimination** — confirm the demo `VITE_DEMO` branch does not leak
-   into NAS/Electron output and vice-versa (the NAS build must still reach a
-   real backend).
+   validator → `localStorage`. The `VITE_FZ_KEY` env "auto-load" is a
+   maintainer dev-fixture convenience only (gitignored `.env.local`,
+   tree-shaken from every production build) — not user-facing, so nothing is
+   lost. Deliberately keep retrieval **user-initiated** (no silent auto-fetch
+   on FZ open) to preserve the "user's decision, not BoardRipper's" legal
+   posture. Offline (PWA): paste works; Fetch needs a network and fails
+   gracefully. (BRD/XZZ/other encrypted formats embed their keys in the client
+   parser and are unaffected.) **Deploy dependency:** the COEP requirement in
+   §8.
+3. **Service worker staleness** — `registerType: 'autoUpdate'` picks up a
+   redeploy on next load.
+4. **Console/network hygiene** — the E2E asserts **zero** `/api/*` requests on
+   cold load AND after opening a board through the real file-input path.
+5. **NAS/Electron isolation** — `MODE === 'lite'` is never true there; the PWA
+   plugin is excluded at config level; Task-level checks confirm `dist/` has
+   no SW/manifest artifacts.
+6. **Residual manual checks** (headless CI cannot drive WebGL): board/PDF
+   actually *render*, FZ dialog flow, offline reload after install — covered
+   by the bench checklist in `src/frontend/LITE_BUILD.md`.
 
 ---
 
 ## 10. Testing
 
-A Playwright spec run against the demo build (`VITE_DEMO=1`, served statically)
-asserting:
+`npm run test:lite` (dedicated `playwright.lite.config.ts`) runs one spec
+(`tests/web-lite.spec.ts`) against **two projects**:
 
-- **No `/api/*` requests** fire on cold load or on opening a board/PDF.
-- Backend UI is absent: no Library tab, no Database Editor entry, no update
-  badge, no OBD sections, no cross-file PDF search.
-- A board file opens from a local `File` object and renders (part/pin geometry
-  present) — reuse existing headless caveats (SwiftShader for WebGL).
-- A PDF opens from a local `File` and renders a page.
-- The PWA manifest + service worker register (installability check).
+- **lite-dev** — `vite --mode lite` dev server at root;
+- **lite-dist-subpath** — `npm run build:lite` output served at
+  `http://localhost:18086/boardripper/web/` by `scripts/serve-lite.mjs`, so the
+  relative base is exercised exactly as production will mount it. Tests
+  navigate with `page.goto('.')` (never `'/'`, which would escape the
+  sub-path).
+
+Assertions:
+
+- **Zero `/api/*` requests** on cold load (after settle) — and **zero failed
+  (≥400) responses**, which catches any `/`-rooted asset miss under the
+  sub-path.
+- **Board opens locally, still silent:** the tracked synthetic fixture
+  `public/samples/test-board.bvr` is uploaded through the real
+  `file-input` — renamed on the fly to `820-00281.bvr` so the OBD board-open
+  path would fire if it were ungated — status bar shows parts, and the `/api`
+  log stays empty.
+- **Backend UI absent:** no update badge, no Library sidebar tab, no
+  Library/Integrations settings tabs.
+- **PWA manifest link present.**
+- Board/PDF **pixel rendering** is verified manually (headless CI has no
+  WebGL) — bench checklist in `LITE_BUILD.md`.
 
 ---
 
