@@ -650,6 +650,12 @@ export class BoardRenderer {
   private netLinesPulseGfx: Graphics | null = null;
   private netLineBakeSig = '';
 
+  /** D1 (rendering-review-2026-07-12): settings/theme changes on an INACTIVE
+   *  tab defer their scene rebuild until the tab is next resumed, instead of
+   *  every open renderer rebuilding back-to-back (~140 ms each) on one theme
+   *  flip. Coalesces naturally — N deferred changes = one rebuild on resume. */
+  private pendingDeferredRebuild = false;
+
   /** A4 (rendering-review-2026-07-12): skip multi-highlight redraws on pan/zoom
    *  frames when neither the highlight state nor the screen-space stroke width
    *  changed. Store-notify/board-change call sites force a redraw. */
@@ -1003,6 +1009,13 @@ export class BoardRenderer {
     }
     // Sync with current store state
     this.onBoardUpdate();
+
+    // D1: a settings/theme change arrived while this tab was inactive — run
+    // the single deferred rebuild now that the tab is visible again.
+    if (this.pendingDeferredRebuild) {
+      this.pendingDeferredRebuild = false;
+      this.scheduleRebuild();
+    }
 
     // If the container had 0 dimensions (dockview hasn't shown it yet), schedule
     // a deferred sync so the first render uses correct viewport size.
@@ -3492,10 +3505,21 @@ export class BoardRenderer {
     // renderSelection recomputes segments.
     this.lastNetLinesSelKey = null;
     this.netLineBakeSig = '';
+    // D1: inactive tab → remember that a rebuild is owed and do it on resume.
+    if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
+      this.pendingDeferredRebuild = true;
+      if (this._rebuildTimer) { clearTimeout(this._rebuildTimer); this._rebuildTimer = null; }
+      return;
+    }
     if (this._rebuildTimer) clearTimeout(this._rebuildTimer);
     this._rebuildTimer = setTimeout(() => {
       this._rebuildTimer = null;
       if (!this.board || this.contextLost || this.reinitializing || this.destroyed) return;
+      // Tab switched away during the debounce window — defer instead (D1).
+      if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
+        this.pendingDeferredRebuild = true;
+        return;
+      }
       this.saveViewportState();
       this.invalidateAllScenes();
       this.activateScene(this.board);
