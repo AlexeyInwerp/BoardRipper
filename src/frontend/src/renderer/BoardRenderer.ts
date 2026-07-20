@@ -635,6 +635,13 @@ export class BoardRenderer {
   // the renderer's lifetime (rendering-review-2026-07-12 finding C1).
   private viewportStates = new WeakMap<BoardData, ViewportState>();
 
+  /** A3 (rendering-review-2026-07-12): renderSelection repaints fire for
+   *  hover-dim changes too — only mark net-line geometry dirty when the
+   *  net-line-relevant selection (net/part/pin) or board actually changed,
+   *  so pulse frames don't re-run the O(K² log K) chain recompute. */
+  private lastNetLinesSelKey: string | null = null;
+  private lastNetLinesSelBoard: BoardData | null = null;
+
   /** A4 (rendering-review-2026-07-12): skip multi-highlight redraws on pan/zoom
    *  frames when neither the highlight state nor the screen-space stroke width
    *  changed. Store-notify/board-change call sites force a redraw. */
@@ -3697,7 +3704,17 @@ export class BoardRenderer {
     if (this._haloSprite) this._haloSprite.eventMode = 'none';
 
     this.needsRender = true;
-    this.netLinesDirty = true; // selection changed → recompute net line geometry
+    // Net-line geometry depends only on (net, part, pin, board) — not on
+    // hover-dim state. Gate the expensive recompute on an actual change (A3).
+    {
+      const sel = boardStore.selection;
+      const selKey = `${sel.highlightedNet ?? ''}|${sel.partIndex ?? -1}|${sel.pinIndex ?? -1}`;
+      if (selKey !== this.lastNetLinesSelKey || this.board !== this.lastNetLinesSelBoard) {
+        this.lastNetLinesSelKey = selKey;
+        this.lastNetLinesSelBoard = this.board;
+        this.netLinesDirty = true; // selection actually changed → recompute chain geometry
+      }
+    }
     this.overlayDirty = true;  // selection/dim change → repaint the label overlay
     this.overlayContentDirty = true;
     // Cancel any in-progress blink from a previous selection
