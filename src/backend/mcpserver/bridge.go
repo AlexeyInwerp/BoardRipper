@@ -26,11 +26,33 @@ type bridgeReply struct {
 }
 
 type session struct {
-	id        string
-	board     json.RawMessage // descriptor from hello/board_changed
-	outbound  chan bridgeFrame
-	focusedAt time.Time
+	id          string
+	board       json.RawMessage // descriptor from hello/board_changed
+	clientID    string          // paired browser identity ("" = unpaired page)
+	clientLabel string
+	outbound    chan bridgeFrame
+	focusedAt   time.Time
 }
+
+// SessionInfo is the server-side view of a connected page returned by
+// Sessions (board_sessions): the browser-sent descriptor plus the identity
+// and focus recency only the Go side knows.
+type SessionInfo struct {
+	Board       json.RawMessage
+	ClientID    string
+	ClientLabel string
+	FocusedAtMs int64
+}
+
+// Sentinel targeting errors. errForeignSession deliberately covers both
+// "belongs to someone else" and "does not exist" for scoped callers, so a
+// scoped caller cannot probe which session ids exist.
+var (
+	errNoSession      = errors.New("no board open in BoardRipper — open a board in the browser first")
+	errNoPairedPage   = errors.New("no BoardRipper page connected for this browser pairing — open BoardRipper in the paired browser (Settings ▸ Integrations shows which one)")
+	errForeignSession = errors.New("session not found for this token — list yours with board_sessions, or use the shared token to reach other users' sessions")
+	errUnknownSession = errors.New("session not found — list sessions with board_sessions")
+)
 
 // pendingReq is an in-flight bridge request awaiting a reply. session records
 // which browser session the request was routed to, so a reply arriving on a
@@ -70,10 +92,16 @@ func randomInitialID() int64 {
 	return int64(binary.BigEndian.Uint64(b[:]) & 0xFFFFFFFFFFFF)
 }
 
-func (b *Bridge) register(id string, board json.RawMessage) *session {
+func (b *Bridge) register(id string, board json.RawMessage, clientID, clientLabel string) *session {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	s := &session{id: id, board: board, outbound: make(chan bridgeFrame, 16), focusedAt: time.Now()}
+	s := &session{id: id, board: board, clientID: clientID, clientLabel: clientLabel, outbound: make(chan bridgeFrame, 16), focusedAt: time.Now()}
+	if prev := b.sessions[id]; prev != nil {
+		// Same-id reconnect (e.g. the 10-minute idle read-timeout cycle):
+		// keep the page's focus recency so a background window's socket
+		// bounce cannot steal the most-recently-focused default.
+		s.focusedAt = prev.focusedAt
+	}
 	b.sessions[id] = s
 	return s
 }
@@ -100,20 +128,41 @@ func (b *Bridge) setBoard(id string, board json.RawMessage) {
 	b.mu.Unlock()
 }
 
-// pick returns the target session: explicit id, else most-recently-focused.
-func (b *Bridge) pick(sessionID string) *session {
+// pick returns the target session within the caller's scope: explicit id
+// (which must belong to the scope), else the most-recently-focused session
+// the scope can see.
+func (b *Bridge) pick(sessionID string, sc Scope) (*session, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if sessionID != "" {
-		return b.sessions[sessionID]
+		s := b.sessions[sessionID]
+		if s == nil {
+			if sc.Shared() {
+				return nil, errUnknownSession
+			}
+			return nil, errForeignSession
+		}
+		if !sc.Shared() && s.clientID != sc.ClientID {
+			return nil, errForeignSession
+		}
+		return s, nil
 	}
 	var best *session
 	for _, s := range b.sessions {
+		if !sc.Shared() && s.clientID != sc.ClientID {
+			continue
+		}
 		if best == nil || s.focusedAt.After(best.focusedAt) {
 			best = s
 		}
 	}
-	return best
+	if best == nil {
+		if sc.Shared() {
+			return nil, errNoSession
+		}
+		return nil, errNoPairedPage
+	}
+	return best, nil
 }
 
 // deliver routes a reply to its pending request by id WITHOUT verifying the
@@ -151,10 +200,10 @@ func (b *Bridge) route(sessionID string, r bridgeReply, checkSession bool) error
 }
 
 // Request sends op/params to the chosen tab and waits for a reply or timeout.
-func (b *Bridge) Request(ctx context.Context, sessionID, op string, params any, timeout time.Duration) (json.RawMessage, error) {
-	s := b.pick(sessionID)
-	if s == nil {
-		return nil, errors.New("no board open in BoardRipper — open a board in the browser first")
+func (b *Bridge) Request(ctx context.Context, sessionID string, sc Scope, op string, params any, timeout time.Duration) (json.RawMessage, error) {
+	s, err := b.pick(sessionID, sc)
+	if err != nil {
+		return nil, err
 	}
 	raw, err := json.Marshal(params)
 	if err != nil {
@@ -201,15 +250,25 @@ func (b *Bridge) cancel(id int64) {
 	b.mu.Unlock()
 }
 
-// Sessions returns descriptors of all connected boards (for board_sessions).
-func (b *Bridge) Sessions() []json.RawMessage {
+// Sessions returns descriptors of the connected boards the caller's scope can
+// see (for board_sessions), enriched with client identity and focus recency.
+func (b *Bridge) Sessions(sc Scope) []SessionInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make([]json.RawMessage, 0, len(b.sessions))
+	out := make([]SessionInfo, 0, len(b.sessions))
 	for _, s := range b.sessions {
-		if s.board != nil {
-			out = append(out, s.board)
+		if s.board == nil {
+			continue
 		}
+		if !sc.Shared() && s.clientID != sc.ClientID {
+			continue
+		}
+		out = append(out, SessionInfo{
+			Board:       s.board,
+			ClientID:    s.clientID,
+			ClientLabel: s.clientLabel,
+			FocusedAtMs: s.focusedAt.UnixMilli(),
+		})
 	}
 	return out
 }

@@ -15,8 +15,17 @@ type wsMsg struct {
 	Type    string          `json:"type"` // hello | board_changed | focus | reply
 	Session string          `json:"session"`
 	Secret  string          `json:"secret,omitempty"` // per-install MCP secret, hello only
+	Client  *wsClient       `json:"client,omitempty"` // per-browser identity, hello only
 	Board   json.RawMessage `json:"board,omitempty"`
 	Reply   *bridgeReply    `json:"reply,omitempty"`
+}
+
+// wsClient is the stable per-browser identity the page reports in hello; it
+// links this session to its pairing token. Absent on old/unpaired pages —
+// such sessions are visible to shared-scope callers only.
+type wsClient struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // ServeWS returns the WebSocket bridge handler. The bridge is authenticated and
@@ -64,7 +73,11 @@ func (b *Bridge) ServeWS(st *State, secret string) http.HandlerFunc {
 			_ = c.Close(websocket.StatusPolicyViolation, "unauthorized")
 			return
 		}
-		s := b.register(hello.Session, hello.Board)
+		clientID, clientLabel := "", ""
+		if hello.Client != nil {
+			clientID, clientLabel = hello.Client.ID, hello.Client.Label
+		}
+		s := b.register(hello.Session, hello.Board, clientID, clientLabel)
 		defer b.unregister(hello.Session)
 
 		// Writer goroutine: drain outbound request frames to the browser.

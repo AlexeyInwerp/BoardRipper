@@ -34,7 +34,7 @@ func liveTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, readOnly b
 			return errResult("bridge unavailable"), nil, nil
 		}
 		sess := extractSession(a)
-		res, err := b.Request(ctx, sess, op, a, bridgeTimeout)
+		res, err := b.Request(ctx, sess, ScopeFrom(ctx), op, a, bridgeTimeout)
 		if err != nil {
 			return errResult(err.Error()), nil, nil
 		}
@@ -88,7 +88,7 @@ func liveBinaryTool[T any](s *mcp.Server, b *Bridge, name, desc, op string, gate
 			if b == nil {
 				return errResult("bridge unavailable"), nil, nil
 			}
-			res, err := b.Request(ctx, extractSession(a), op, a, bridgeRenderTimeout)
+			res, err := b.Request(ctx, extractSession(a), ScopeFrom(ctx), op, a, bridgeRenderTimeout)
 			if err != nil {
 				return errResult(err.Error()), nil, nil
 			}
@@ -250,21 +250,27 @@ type sessionsResult struct {
 func registerLiveTools(s *mcp.Server, deps *Deps) {
 	b := deps.Bridge
 
-	// board_sessions is answered in Go from the registry (not proxied).
+	// board_sessions is answered in Go from the registry (not proxied). The
+	// caller's scope decides visibility: paired tokens see only their own
+	// browser's pages; the shared install token sees all of them.
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "board_sessions",
-		Description: "List the boards currently open in connected BoardRipper pages (for disambiguation when several are open).",
+		Description: "List the boards currently open in connected BoardRipper pages you can reach with this token (a paired token sees its own browser only; the shared token sees all). Each entry carries client_label and focused_at_ms for disambiguation.",
 		Annotations: ro(true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, sessionsResult, error) {
 		out := sessionsResult{Sessions: []map[string]any{}}
 		if b == nil {
 			return nil, out, nil
 		}
-		for _, raw := range b.Sessions() {
+		for _, si := range b.Sessions(ScopeFrom(ctx)) {
 			var m map[string]any
-			if err := json.Unmarshal(raw, &m); err == nil {
-				out.Sessions = append(out.Sessions, m)
+			if err := json.Unmarshal(si.Board, &m); err != nil {
+				continue
 			}
+			m["client_id"] = si.ClientID
+			m["client_label"] = si.ClientLabel
+			m["focused_at_ms"] = si.FocusedAtMs
+			out.Sessions = append(out.Sessions, m)
 		}
 		return nil, out, nil
 	})

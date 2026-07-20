@@ -91,7 +91,7 @@ func TestGate(t *testing.T) {
 
 func TestBridge_RequestResponseCorrelation(t *testing.T) {
 	b := NewBridge()
-	sess := b.register("s1", json.RawMessage(`{"name":"DemoBoard"}`))
+	sess := b.register("s1", json.RawMessage(`{"name":"DemoBoard"}`), "", "")
 	defer b.unregister("s1")
 
 	go func() {
@@ -99,7 +99,7 @@ func TestBridge_RequestResponseCorrelation(t *testing.T) {
 		_ = b.deliver(bridgeReply{ID: f.ID, OK: true, Result: json.RawMessage(`{"nets":3}`)})
 	}()
 
-	res, err := b.Request(context.Background(), "", "list_nets", map[string]any{}, 2*time.Second)
+	res, err := b.Request(context.Background(), "", Scope{}, "list_nets", map[string]any{}, 2*time.Second)
 	if err != nil {
 		t.Fatalf("Request: %v", err)
 	}
@@ -110,30 +110,30 @@ func TestBridge_RequestResponseCorrelation(t *testing.T) {
 
 func TestBridge_Timeout(t *testing.T) {
 	b := NewBridge()
-	b.register("s1", json.RawMessage(`{}`))
+	b.register("s1", json.RawMessage(`{}`), "", "")
 	defer b.unregister("s1")
-	if _, err := b.Request(context.Background(), "", "list_nets", nil, 80*time.Millisecond); err == nil {
+	if _, err := b.Request(context.Background(), "", Scope{}, "list_nets", nil, 80*time.Millisecond); err == nil {
 		t.Fatal("expected timeout")
 	}
 }
 
 func TestBridge_NoSession(t *testing.T) {
 	b := NewBridge()
-	if _, err := b.Request(context.Background(), "", "list_nets", nil, time.Second); err == nil {
+	if _, err := b.Request(context.Background(), "", Scope{}, "list_nets", nil, time.Second); err == nil {
 		t.Fatal("expected no-session error")
 	}
 }
 
 func TestBridge_PicksMostRecentlyFocused(t *testing.T) {
 	b := NewBridge()
-	b.register("a", json.RawMessage(`{"name":"A"}`))
+	b.register("a", json.RawMessage(`{"name":"A"}`), "", "")
 	time.Sleep(2 * time.Millisecond)
-	b.register("b", json.RawMessage(`{"name":"B"}`))
+	b.register("b", json.RawMessage(`{"name":"B"}`), "", "")
 	b.touchFocus("a") // a now most recent
-	if got := b.pick(""); got == nil || got.id != "a" {
+	if got, err := b.pick("", Scope{}); err != nil || got.id != "a" {
 		t.Fatalf("pick = %v, want a", got)
 	}
-	if got := b.pick("b"); got == nil || got.id != "b" {
+	if got, err := b.pick("b", Scope{}); err != nil || got.id != "b" {
 		t.Fatalf("explicit pick failed")
 	}
 }
@@ -589,8 +589,8 @@ func TestBridge_LargeMessageRoundTrips(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var lastLen int
 	for time.Now().Before(deadline) {
-		for _, raw := range bridge.Sessions() {
-			lastLen = len(raw)
+		for _, raw := range bridge.Sessions(Scope{}) {
+			lastLen = len(raw.Board)
 			if lastLen >= bigLen {
 				return // GREEN: large message round-tripped.
 			}
