@@ -61,6 +61,8 @@ Teach as you fix. Explain your reasoning and the circuit in plain terms, calibra
 // the available workflow and how to drive the worklist loop.
 const boardripperInstructions = `BoardRipper exposes the PCB board open in the user's browser, plus a shared repair "worklist". Tools act on the most-recently-focused browser tab (list tabs with board_sessions; every live tool takes an optional session). Many read tools work with no board too (pdf_search, obd_match/obd_data, board_resolve, file_list/file_get).
 
+Token scope: a per-browser pairing token (Settings > Integrations, "This browser's agent") reaches ONLY that browser's pages — its default target is that browser's focused page, so you can normally omit session. The shared install token reaches every connected page install-wide; with it, when more than one page is open, pick the right entry from board_sessions (each carries client_label + focused_at_ms) and pass its session explicitly on every live call so you never act on another user's screen.
+
 Inspect the board: list_parts / list_nets / find_parts (by description), part_info, net_info, net_neighbors, pin_connectivity. Drive the UI (only when the user enabled drive-UI; otherwise these no-op): highlight_net, clear_highlight, select_part, set_side, pdf_goto.
 
 The worklist is a shared, two-way repair record — a "case" the user and you build together. It is source-agnostic: you can populate it OR review one the user built by hand and suggest next steps.

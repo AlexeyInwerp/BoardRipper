@@ -434,13 +434,22 @@ func main() {
 	}
 	mcpSrv := mcpserver.New(mcpDeps)
 	mcpOAuth := mcpserver.NewOAuth()
-	mux.Handle("/api/mcp", mcpserver.GateAuto(mcpState, mcpSecret, mcpOAuth, mcpSrv.Handler()))
-	mux.Handle("/api/mcp/", mcpserver.GateAuto(mcpState, mcpSecret, mcpOAuth, mcpSrv.Handler()))
+	mcpPairings, err := mcpserver.LoadPairings(dataDir)
+	if err != nil {
+		// Corrupt pairing file: run unpaired (shared-token behavior) rather
+		// than refuse to boot; the operator can delete the file to recover.
+		log.Printf("mcp: pairing store unavailable (%v) — per-browser tokens disabled until fixed", err)
+		mcpPairings = nil
+	}
+	mux.Handle("/api/mcp", mcpserver.GateAuto(mcpState, mcpSecret, mcpPairings, mcpOAuth, mcpSrv.Handler()))
+	mux.Handle("/api/mcp/", mcpserver.GateAuto(mcpState, mcpSecret, mcpPairings, mcpOAuth, mcpSrv.Handler()))
 	// Bridge is authenticated + gated inside ServeWS: 404 when MCP is off, and
 	// the first frame must carry the per-install MCP secret (M14).
 	mux.Handle("/api/mcp/bridge", mcpBridge.ServeWS(mcpState, mcpSecret))
 	mux.HandleFunc("GET /api/mcp/status", mcpserver.StatusHandler(mcpState, mcpBridge, mcpSrv))
 	mux.HandleFunc("GET /api/mcp/token", mcpserver.TokenHandler(mcpState, mcpSecret))
+	mux.HandleFunc("POST /api/mcp/pair", mcpserver.PairHandler(mcpState, mcpPairings))
+	mux.HandleFunc("POST /api/mcp/pair/rotate", mcpserver.RotateHandler(mcpState, mcpPairings))
 	mux.HandleFunc("POST /api/mcp/selftest", mcpserver.SelfTestHandler(mcpState, mcpSrv))
 	// OAuth 2.1 onboarding: discovery + the embedded authorization server. Every
 	// endpoint (discovery, dynamic registration, authorize, token) is gated by
