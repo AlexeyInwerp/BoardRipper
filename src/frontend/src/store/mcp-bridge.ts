@@ -181,10 +181,19 @@ function connect() {
     }
     void handle(frame);
   };
-  socket.onclose = () => {
+  socket.onclose = (ev) => {
     socket = null;
     if (!started) return; // intentional stop — do not reconnect
-    log.mcp.warn('bridge closed; re-checking MCP status before reconnect');
+    if (ev.code === 1008) {
+      // Policy-violation close = our hello was rejected. The install secret
+      // was rotated (e.g. the one-time session-separation token reset) while
+      // we held a stale cached copy — drop the cache so the next attempt
+      // re-fetches the fresh token and the page re-joins without a reload.
+      mcpSecret = null;
+      log.mcp.warn('bridge rejected (token rotated?) — refetching MCP token before reconnect');
+    } else {
+      log.mcp.warn('bridge closed; re-checking MCP status before reconnect');
+    }
     scheduleReconnect();
   };
   socket.onerror = () => socket?.close();

@@ -38,6 +38,11 @@ func ScopeFrom(ctx context.Context) Scope {
 	return Scope{}
 }
 
+// unauthorizedBody explains WHY an old token stopped working and where to get
+// a new one — this is the message agents configured before the session
+// separation update actually see when their shared token was reset.
+const unauthorizedBody = "unauthorized: this MCP token is not valid. The MCP token system was reset by the multi-user session-separation update (resetting the shared credential was the only way to properly migrate). Open BoardRipper Settings > Integrations and reconnect: each browser now has its own \"This browser's agent\" token (recommended), or use the new shared token for cross-session work."
+
 // Gate enforces the enable flag and bearer-token auth in front of the MCP
 // handler. When MCP is disabled the endpoint returns 404 so it is invisible to
 // scanners. When enabled, requests must carry "Authorization: Bearer <secret>".
@@ -50,7 +55,7 @@ func Gate(st *State, secret string, next http.Handler) http.Handler {
 		}
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if subtle.ConstantTimeCompare([]byte(tok), secretB) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			http.Error(w, unauthorizedBody, http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -95,7 +100,7 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 		}
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if subtle.ConstantTimeCompare([]byte(tok), secretB) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			http.Error(w, unauthorizedBody, http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)

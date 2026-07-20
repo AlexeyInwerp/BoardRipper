@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,9 @@ func TestGateAuto_ScopeResolution(t *testing.T) {
 			h.ServeHTTP(rec, req)
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if tc.wantStatus == 401 && !strings.Contains(rec.Body.String(), "session-separation update") {
+				t.Fatalf("401 body must explain the token reset, got: %s", rec.Body.String())
 			}
 			if tc.wantStatus == 200 {
 				if got.ClientID != tc.wantClient {

@@ -402,6 +402,16 @@ func main() {
 	}
 
 	// --- MCP server (off by default; enabled via Settings ▸ Integrations) ---
+	// One-time forced reset of the pre-separation install token: every agent
+	// still configured with the old shared token gets a 401 (whose body
+	// explains the reset) and must reconnect via Settings ▸ Integrations.
+	// Rotating the shared credential was the only way to properly migrate a
+	// multi-user install to per-browser scoped tokens.
+	if rotated, err := mcpserver.ResetSecretOnce(dataDir); err != nil {
+		log.Printf("mcp: token reset check failed: %v", err)
+	} else if rotated {
+		log.Printf("mcp: install token RESET for the session-separation update — previously configured agents are logged out and must reconnect with a new token (Settings ▸ Integrations)")
+	}
 	mcpSecret, err := mcpserver.EnsureSecret(dataDir)
 	if err != nil {
 		log.Fatalf("mcp secret: %v", err)

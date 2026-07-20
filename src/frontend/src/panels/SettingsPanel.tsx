@@ -687,6 +687,12 @@ function IntegrationsSection() {
 
             {!oauth && (
               <>
+                <p className="settings-hint" style={{ margin: '12px 0 4px', opacity: 0.9 }}>
+                  ⚠ MCP tokens were <strong>reset</strong> by the multi-user session-separation
+                  update — resetting the shared credential was the only way to migrate properly.
+                  Agents connected before this update are logged out and must reconnect with a
+                  token from below.
+                </p>
                 <p className="settings-hint" style={{ margin: '12px 0 4px' }}>Token:</p>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
                   <button type="button" className={`library-tab ${tokenSource === 'browser' ? 'active' : ''}`}
