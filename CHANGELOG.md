@@ -1,5 +1,39 @@
 # BoardRipper changelog
 
+## v0.31.42 — 2026-07-20
+
+Multi-user MCP: per-browser agent pairing. On installs shared by several
+technicians every agent used one shared token and targeted the
+most-recently-focused page install-wide — so one user's agent could read
+(and even drive) another user's board. Sessions are now separated by
+pairing each browser with its own token.
+
+### MCP server
+
+- **Per-browser agent tokens** — Settings ▸ Integrations now offers two
+  token sources: **"This browser's agent"** (default; scoped to the boards
+  open in this browser, with an editable label and one-click rotate) and
+  **"Shared (all sessions)"** (the install-wide token, kept for
+  deliberately analyzing other users' sessions). An agent with a paired
+  token only sees and drives its own browser's pages, and its default
+  target is that browser's focused page — wrong-board mixups between
+  users are gone by construction. `e2c29dde` `4c1b1c90` `84b91b63`
+  `f1dd68cd` `95b1526c`
+- **One-time token reset** — on the first start after this update the
+  shared MCP token is regenerated once: agents configured before the
+  update are logged out, because resetting the shared credential was the
+  only way to migrate it properly. The 401 response and a notice in
+  Settings ▸ Integrations explain the reset and point to the new tokens;
+  open BoardRipper pages re-join the bridge automatically. `fec25f66`
+- **board_sessions** now reports each page's `client_label` and
+  `focused_at_ms`, so multiple open sessions are distinguishable — and
+  with the shared token lists every page, while a paired token lists only
+  its own. `f1dd68cd`
+- **Fix:** a background window's periodic bridge reconnect no longer
+  steals the "most recently focused" default target from the window the
+  user is actually working in. `84b91b63`
+
+
 ## v0.31.41 — 2026-07-20
 
 Renderer follow-up round: less per-frame work during interaction, no more
