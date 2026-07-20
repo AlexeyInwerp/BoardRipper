@@ -124,7 +124,7 @@ func TestOAuth_PKCEMismatchRejected(t *testing.T) {
 func TestGateAuto_OAuthModeChallenges(t *testing.T) {
 	st := NewState(&fakeConfig{m: map[string]string{"mcp_enabled": "1", "mcp_auth_mode": "oauth"}})
 	o := NewOAuth()
-	h := GateAuto(st, "unused-secret", o, okHandler())
+	h := GateAuto(st, "unused-secret", nil, o, okHandler())
 
 	// No token → 401 with WWW-Authenticate pointing at the PRM document.
 	rec := httptest.NewRecorder()

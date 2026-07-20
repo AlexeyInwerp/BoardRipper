@@ -1,12 +1,42 @@
 package mcpserver
 
 import (
+	"context"
 	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 )
+
+// Scope is the session visibility resolved from the caller's bearer token.
+// The zero value is the SHARED scope (install secret / OAuth token): all
+// bridge sessions are visible, matching pre-pairing behavior. This also means
+// paths that bypass GateAuto — SelfTest's in-memory transport, unit tests —
+// fail open to shared, which is the intended trust model for an internal tool.
+type Scope struct {
+	// ClientID is the paired browser identity the caller is confined to;
+	// empty means shared/unscoped.
+	ClientID string
+}
+
+// Shared reports whether the caller may reach every session.
+func (s Scope) Shared() bool { return s.ClientID == "" }
+
+type scopeKey struct{}
+
+func withScope(ctx context.Context, s Scope) context.Context {
+	return context.WithValue(ctx, scopeKey{}, s)
+}
+
+// ScopeFrom returns the scope GateAuto attached to the request context, or
+// the shared zero value when none was attached.
+func ScopeFrom(ctx context.Context) Scope {
+	if v, ok := ctx.Value(scopeKey{}).(Scope); ok {
+		return v
+	}
+	return Scope{}
+}
 
 // Gate enforces the enable flag and bearer-token auth in front of the MCP
 // handler. When MCP is disabled the endpoint returns 404 so it is invisible to
@@ -28,15 +58,26 @@ func Gate(st *State, secret string, next http.Handler) http.Handler {
 }
 
 // GateAuto enforces the enable flag and then the per-request auth scheme:
-// OAuth bearer-token verification when AuthMode()=="oauth" (with the proper
-// 401 + WWW-Authenticate → protected-resource-metadata challenge), otherwise
-// the static bearer secret. 404 when disabled.
-func GateAuto(st *State, secret string, oauth *OAuth, next http.Handler) http.Handler {
+// paired per-browser tokens first (accepted in BOTH auth modes — pairing is
+// how multi-user installs separate sessions, independent of how the shared
+// credential is issued), then OAuth bearer-token verification when
+// AuthMode()=="oauth" (with the proper 401 + WWW-Authenticate →
+// protected-resource-metadata challenge), otherwise the static bearer secret.
+// The resolved Scope is attached to the request context (ScopeFrom); the
+// install secret and OAuth tokens carry the shared scope. 404 when disabled.
+func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, next http.Handler) http.Handler {
 	secretB := []byte(secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !st.Enabled() {
 			http.NotFound(w, r)
 			return
+		}
+		if pairings != nil {
+			tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			if id, ok := pairings.ClientForToken(tok); ok {
+				next.ServeHTTP(w, r.WithContext(withScope(r.Context(), Scope{ClientID: id})))
+				return
+			}
 		}
 		if st.AuthMode() == "oauth" {
 			// Explicit verification (no scope requirement — token presence is the
