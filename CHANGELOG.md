@@ -51,6 +51,13 @@ rebuild storms across tabs, and Text fast mode is now on for everyone.
 - **Fix:** flipping/rotating the board could briefly cull labels against
   stale transforms.
 
+### Parsers
+
+- **XZZ oblong pads** render as capsules (shape 0x01 with width ≠ height),
+  with a plausibility guard against implausibly huge pins (PL5TU1B).
+  `7a474e6a` *(shipped in this release but missing from its original
+  notes; added retroactively.)*
+
 ### Performance
 
 - **Theme and settings changes no longer rebuild every open tab at once** —
