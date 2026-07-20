@@ -1091,6 +1091,20 @@ export function setThemeOverridesProvider(provider: ThemeOverridesProvider) {
 const STORAGE_KEY = 'boardripper-render-settings';
 const BOARD_OVERRIDES_KEY = 'boardripper-board-overrides';
 const WHEEL_DETECTION_MIGRATED_KEY = 'boardripper-wheel-detection-migrated-v1';
+/** One-time forced default: Text fast mode graduated to ON (v0.31.41). Any
+ *  install whose persisted settings predate (or opted out during) the
+ *  experimental window gets flipped ON exactly once; the user stays free to
+ *  turn it back off afterwards — the marker prevents re-forcing. */
+const TEXT_FAST_GRADUATED_KEY = 'boardripper-textfastmode-graduated-v1';
+let pendingTextFastGraduationNotice = false;
+/** True exactly once, on the first boot where the graduation migration ran
+ *  against a pre-existing installation — drives the one-time "text rendering
+ *  updated" notice in App.tsx. Consuming resets it. */
+export function consumeTextFastGraduationNotice(): boolean {
+  const v = pendingTextFastGraduationNotice;
+  pendingTextFastGraduationNotice = false;
+  return v;
+}
 
 // ── Per-board overrides persistence ──────────────────────────────────────
 
@@ -1138,6 +1152,20 @@ function loadFromStorage(): RenderSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      // Text-fast-mode graduation (one-time, marker-gated): force ON for
+      // pre-existing installs and persist immediately so a stored `false`
+      // can't resurface on the next boot. Fresh installs never reach this
+      // branch (no stored settings) — the default already covers them.
+      try {
+        if (!localStorage.getItem(TEXT_FAST_GRADUATED_KEY)) {
+          localStorage.setItem(TEXT_FAST_GRADUATED_KEY, '1');
+          if (parsed.textFastMode !== true) {
+            parsed.textFastMode = true;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+          }
+          pendingTextFastGraduationNotice = true;
+        }
+      } catch { /* ignore quota/private-mode errors */ }
       const result: RenderSettings = { ...structuredClone(DEFAULTS), ...parsed };
       if (Array.isArray(parsed.partTypes)) {
         // New format — trust stored list but fall back to defaults if empty.

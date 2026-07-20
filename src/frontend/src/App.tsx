@@ -8,11 +8,12 @@ import type {
 } from 'dockview-react';
 import 'dockview-react/dist/styles/dockview.css';
 import { Toolbar } from './components/Toolbar';
+import { consumeTextFastGraduationNotice } from './store/render-settings';
 import { StatusBar } from './components/StatusBar';
 import { ContextMenu } from './components/ContextMenu';
 import { ShortcutsOverlay } from './components/ShortcutsOverlay';
 import { Sidebar } from './components/Sidebar';
-import { isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide } from './components/Sidebar.utils';
+import { isSidebarCollapsed, toggleSidebar, onSidebarChange, getSidebarSide, showSidebarTab } from './components/Sidebar.utils';
 import { PanelErrorBoundary } from './components/PanelErrorBoundary';
 import { BoardViewerPanel } from './panels/BoardViewerPanel';
 import { PdfViewerPanel } from './panels/PdfViewerPanel';
@@ -131,6 +132,21 @@ function App() {
   // triggered the load. See databank-store.ts:_runStartupLoad.
   useEffect(() => {
     void databankStore.ensureLoaded();
+  }, []);
+
+  // One-time post-update notice: Text fast mode was force-enabled by the
+  // graduation migration on a pre-existing install — tell the user what
+  // changed and where the fallback lives. 20 s + an action button so it
+  // isn't missed the way a default 6 s toast would be.
+  useEffect(() => {
+    if (consumeTextFastGraduationNotice()) {
+      boardStore.addToast(
+        'Board text rendering was updated — the new fast mode is now on. The previous renderer is available under Settings › Performance & Debug › "Text fast mode".',
+        'info',
+        { label: 'Open Settings', run: () => showSidebarTab('settings') },
+        20_000,
+      );
+    }
   }, []);
 
   const sidebarCollapsed = isSidebarCollapsed();

@@ -520,11 +520,11 @@ class BoardStore extends Emitter {
   get pdfFiles(): Map<string, PdfEntry> { return this._pdfFiles; }
   get toasts(): Toast[] { return this._toasts; }
 
-  addToast(message: string, type: 'error' | 'info' = 'error', action?: Toast['action']) {
+  addToast(message: string, type: 'error' | 'info' = 'error', action?: Toast['action'], durationMs = 6000) {
     const toast: Toast = { id: this._nextToastId++, message, type, timestamp: Date.now(), action };
     this._toasts = [...this._toasts, toast];
     this.notify();
-    setTimeout(() => this.dismissToast(toast.id), 6000);
+    setTimeout(() => this.dismissToast(toast.id), durationMs);
   }
 
   dismissToast(id: number) {
