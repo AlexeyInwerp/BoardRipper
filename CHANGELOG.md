@@ -1,5 +1,25 @@
 # BoardRipper changelog
 
+## v0.31.43 — 2026-07-20
+
+MCP auth follow-ups to v0.31.42's session separation: clearer errors for
+logged-out agents, and mixed authentication so OAuth users and token users
+can coexist on one install.
+
+### MCP server
+
+- **Mixed authentication** — OAuth mode is now a strict superset of token
+  mode: per-browser and shared bearer tokens keep working when
+  Authentication is set to "OAuth (no token)", so some users can connect
+  via OAuth while others keep their tokens on the same install. `16e0b674`
+- **Clear errors instead of "oauth 404"** — invalid-token responses now
+  carry an RFC 6750 `WWW-Authenticate` challenge explaining the v0.31.42
+  token reset, and the OAuth endpoints answer an explicit 403 ("OAuth is
+  disabled on this install") in token mode rather than a hidden 404. The
+  404 remains only while the MCP server is disabled entirely.
+  `b35c1c7c` `16e0b674`
+
+
 ## v0.31.42 — 2026-07-20
 
 Multi-user MCP: per-browser agent pairing. On installs shared by several
