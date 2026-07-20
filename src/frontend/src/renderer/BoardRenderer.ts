@@ -4343,6 +4343,16 @@ export class BoardRenderer {
     // re-drawn above netDimGfx). Empty when nothing is highlighted, in which
     // case only the selected part stays lit (the overlay handles that). A fresh
     // Set is allocated per renderSelection call, so aliasing the field is safe.
+    // Pure search-dim (auto-dim promoted by an active search, no net
+    // selected): the Pixi path dims around the search RESULTS — feed the
+    // match set into the overlay's lit-part set so Text fast mode
+    // spotlights them identically (v0.31.40 review parity follow-up).
+    if (seenParts.size === 0 && searchForcesDim && !effectiveNet) {
+      const matches = boardStore.searchResultIndices;
+      if (matches && matches.size > 0) {
+        for (const idx of matches) seenParts.add(idx);
+      }
+    }
     this.litPartIndices = seenParts;
 
     // ── Disco mode: collect part indices on the highlighted net so the
