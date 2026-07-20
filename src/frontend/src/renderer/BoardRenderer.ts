@@ -635,6 +635,15 @@ export class BoardRenderer {
   // the renderer's lifetime (rendering-review-2026-07-12 finding C1).
   private viewportStates = new WeakMap<BoardData, ViewportState>();
 
+  /** A4 (rendering-review-2026-07-12): skip multi-highlight redraws on pan/zoom
+   *  frames when neither the highlight state nor the screen-space stroke width
+   *  changed. Store-notify/board-change call sites force a redraw. */
+  private multiHighlightDirty = true;
+  private lastMultiHighlightWidth = -1;
+  /** Per-board refdes→partIndex cache for worklist resolution (A4). */
+  private refdesIndexBoard: BoardData | null = null;
+  private refdesIndexCache: Map<string, number> | null = null;
+
   /** The board tab ID this renderer is bound to (null = legacy single-renderer mode) */
   private tabId: number | null = null;
 
@@ -1185,8 +1194,9 @@ export class BoardRenderer {
       this.viewportMovingUntil = performance.now() + 100;
       this.scheduleFollowDebounce();
       // Keep multi-select / worklist outline thickness ~constant in screen
-      // pixels across zoom changes. Cheap (small rectangle count).
-      this.redrawMultiHighlight();
+      // pixels across zoom changes — unforced: skips entirely unless the
+      // stroke width bucket or highlight state changed (A4).
+      this.redrawMultiHighlight(false);
       this.overlayDirty = true;   // pan/zoom moved the label-layer transforms
     });
     this.viewport.on('clicked', (e: ViewportClickEvent) => { this.handleClick(e.world); });
@@ -1358,8 +1368,9 @@ export class BoardRenderer {
       this.viewportMovingUntil = performance.now() + 100;
       this.scheduleFollowDebounce();
       // Keep multi-select / worklist outline thickness ~constant in screen
-      // pixels across zoom changes. Cheap (small rectangle count).
-      this.redrawMultiHighlight();
+      // pixels across zoom changes — unforced: skips entirely unless the
+      // stroke width bucket or highlight state changed (A4).
+      this.redrawMultiHighlight(false);
       this.overlayDirty = true;   // pan/zoom moved the label-layer transforms
     });
     this.app.stage.addChild(this.viewport);
@@ -4501,13 +4512,21 @@ export class BoardRenderer {
    *  Last-write-wins on duplicate refdes (matches redrawMultiHighlight's prior
    *  inline loop). Empty map when there's no board. */
   private buildRefdesIndex(): Map<string, number> {
+    // Cached per board identity — derived boards are fresh objects, so a
+    // simple identity check is a correct invalidation (A4).
+    if (this.refdesIndexCache && this.refdesIndexBoard === this.board) {
+      return this.refdesIndexCache;
+    }
     const byRefdes = new Map<string, number>();
     const parts = this.board?.parts;
-    if (!parts) return byRefdes;
-    for (let i = 0; i < parts.length; i++) {
-      const n = parts[i]?.name;
-      if (n) byRefdes.set(n, i);
+    if (parts) {
+      for (let i = 0; i < parts.length; i++) {
+        const n = parts[i]?.name;
+        if (n) byRefdes.set(n, i);
+      }
     }
+    this.refdesIndexBoard = this.board;
+    this.refdesIndexCache = byRefdes;
     return byRefdes;
   }
 
@@ -5606,18 +5625,28 @@ export class BoardRenderer {
    *  don't paint outlines on the wrong components.
    *
    *  Called on store notify, on viewport `moved`, and on board change. */
-  private redrawMultiHighlight(): void {
+  private redrawMultiHighlight(force = true): void {
     const gfx = this.multiHighlightGfx;
     if (!gfx) return;
-    gfx.clear();
+    if (force) this.multiHighlightDirty = true;
     const board = this.board;
-    if (!board) return;
+    if (!board) { gfx.clear(); return; }
     const s = renderSettingsStore.settings;
     const scale = this.viewport?.scale?.x ?? 1;
     // Same formula as `updateBorderWidths` for part borders, just with a
     // 2-px floor instead of 1-px so the highlight reads as heavier.
     const minScreenPx = 2;
     const width = Math.max(s.partBorderWidth, scale > 0 ? minScreenPx / scale : 1);
+    // Pan frames don't change what's highlighted; zoom frames only matter once
+    // the screen-space stroke width moves ≥2% (same tolerance updateBorderWidths
+    // uses). Skip the clear+restroke entirely otherwise (A4).
+    if (!this.multiHighlightDirty && this.lastMultiHighlightWidth > 0 &&
+        Math.abs(width - this.lastMultiHighlightWidth) / this.lastMultiHighlightWidth < 0.02) {
+      return;
+    }
+    this.multiHighlightDirty = false;
+    this.lastMultiHighlightWidth = width;
+    gfx.clear();
     const half = width / 2;
     const drawOutline = (idx: number, color: number, alpha: number) => {
       const part = board.parts[idx];
