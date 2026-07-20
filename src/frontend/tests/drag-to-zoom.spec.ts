@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016.bvr');
+const BVR_FILE = path.resolve(__dirname, '../../../samples/820-02016/820-02016.bvr');
 
 // Skip (not fail) when the gitignored, proprietary sample is absent — same
 // idiom as ci-smoke.spec.ts. Guarding inside the shared helper covers every

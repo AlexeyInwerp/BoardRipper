@@ -79,6 +79,7 @@ export class LabelOverlay {
   private colorCache = new Map<number, string>();
   lastDrawMs = 0;
   lastCounts = { visible: 0, total: 0 };
+  private lastSlowDrawLogAt = 0;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -151,13 +152,14 @@ export class LabelOverlay {
           // Anchor compensation: ctx draws centered (textAlign/baseline middle),
           // records carry BitmapText anchors — shift so the anchored point of
           // the text box lands on (sx0, sy0). Width via measureText; height ≈ fontPx.
-          const aw = (0.5 - r.anchorX) * ctx.measureText(r.text).width;
+          const textW = ctx.measureText(r.text).width;   // measured once — reused for bg rect
+          const aw = (0.5 - r.anchorX) * textW;
           const ah = (0.5 - r.anchorY) * fontPx;
           const sx = sx0 + aw;
           const sy = sy0 + ah;
           ctx.globalAlpha = pass === 'dim' ? DIM_ALPHA : 1;
           if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)
-            const tw = ctx.measureText(r.text).width + fontPx * 0.6;
+            const tw = textW + fontPx * 0.6;
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
             ctx.fillRect(sx - tw / 2, sy - fontPx * 0.65, tw, fontPx * 1.3);
           }
@@ -170,7 +172,10 @@ export class LabelOverlay {
     this.lastCounts = { visible, total: model.top.length + model.bottom.length };
     const ms = performance.now() - t0;
     this.lastDrawMs = this.lastDrawMs === 0 ? ms : this.lastDrawMs * 0.8 + ms * 0.2;
-    if (ms > 12) log.perf.log(`label overlay draw ${ms.toFixed(1)}ms visible=${visible}`);
+    if (ms > 12 && t0 - this.lastSlowDrawLogAt > 1000) {   // ≤1 emit/s — content-dirty motion can hit this per frame
+      this.lastSlowDrawLogAt = t0;
+      log.perf.log(`label overlay draw ${ms.toFixed(1)}ms visible=${visible}`);
+    }
   }
 
   destroy(): void { this.canvas.remove(); }

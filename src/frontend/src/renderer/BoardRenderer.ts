@@ -1075,6 +1075,11 @@ export class BoardRenderer {
     // Never release the board the user is actually looking at.
     if (boardStore.activeTabId === this.tabId) return;
     log.render.log(`deepPause tab=${this.tabId} — releasing GPU context + scene graph`);
+    // Release the label-overlay canvas too (up to ~33 MB backing store at
+    // retina) — ensureLabelOverlay() recreates it lazily on the next tick
+    // after resume. (v0.31.40 review follow-up)
+    this.textFastMode?.destroy();
+    this.textFastMode = null;
     this.teardownForReinit();
     // teardownForReinit() releases the context but leaves contextLost=false;
     // set it so resume() routes through reinitApp() instead of touching the
@@ -1685,6 +1690,7 @@ export class BoardRenderer {
     // HUD overlay (zoom + FPS)
     this.hudEl = document.createElement('div');
     this.hudEl.className = 'board-hud';
+    this.hudEl.style.zIndex = '3';   // above the Text-fast-mode overlay canvas (z 2)
     this.containerEl.style.position = 'relative';
     this.containerEl.appendChild(this.hudEl);
 
@@ -1695,6 +1701,7 @@ export class BoardRenderer {
 
     // Perf overlay (per-phase CPU timings) + toggle button
     this.perfOverlayEl = document.createElement('div');
+    this.perfOverlayEl.style.zIndex = '3';   // above the Text-fast-mode overlay canvas (z 2)
     this.perfOverlayEl.className = 'board-perf-overlay';
     this.perfOverlayEl.style.display = 'none';
     this.containerEl.appendChild(this.perfOverlayEl);
@@ -2471,6 +2478,10 @@ export class BoardRenderer {
       this.needsRender = true;
       this.overlayDirty = true;   // flips changed the label-layer transforms
       this.overlayContentDirty = true;
+      // Flips move part containers under new transforms — re-cull a few
+      // frames so labels aren't culled against the pre-flip worldTransforms
+      // (same mechanism as the post-rebuild re-cull).
+      this.cullRefreshFrames = 3;
       return;
     }
     log.render.log('activateScene: switching to new scene, old=' + (this.activeScene ? 'yes' : 'null'));
