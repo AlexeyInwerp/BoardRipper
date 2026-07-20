@@ -629,8 +629,11 @@ export class BoardRenderer {
     botRot: number; botSx: number; botSy: number;
   } | null = null;
 
-  // Viewport state per board: restore pan/zoom on tab switch
-  private viewportStates = new Map<BoardData, ViewportState>();
+  // Viewport state per board: restore pan/zoom on tab switch. WeakMap —
+  // keys are DERIVED boards that get a fresh object on every fold/filter
+  // toggle; a strong Map pinned each abandoned derivation (tens of MB) for
+  // the renderer's lifetime (rendering-review-2026-07-12 finding C1).
+  private viewportStates = new WeakMap<BoardData, ViewportState>();
 
   /** The board tab ID this renderer is bound to (null = legacy single-renderer mode) */
   private tabId: number | null = null;
@@ -6029,7 +6032,7 @@ export class BoardRenderer {
     this.activeScene = null;
     this.sceneCache.clear();
     this.hitGridCache.clear();
-    this.viewportStates.clear();
+    // viewportStates is a WeakMap — entries die with their boards, no clear() needed.
     this.board = null;
     // lastRenderedSel.board holds a full BoardData — even a pinned renderer
     // shell must not retain the parsed board after close.
