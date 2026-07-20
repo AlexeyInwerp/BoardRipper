@@ -1,5 +1,37 @@
 # BoardRipper changelog
 
+## v0.31.41 — 2026-07-20
+
+Renderer follow-up round: less per-frame work during interaction, no more
+rebuild storms across tabs, and Text fast mode is now on for everyone.
+
+### Board view
+
+- **Text fast mode is enabled once for existing installations** (it became
+  the default for new installs in v0.31.40). A one-time notice on first
+  start explains the change and links to Settings; the previous text
+  renderer remains available under Settings ▸ Performance & Debug ▸
+  "Text fast mode", and turning it off sticks.
+- **Search + auto-dim in fast mode** now spotlights the matching parts'
+  labels, matching the classic renderer.
+- **Fix:** flipping/rotating the board could briefly cull labels against
+  stale transforms.
+
+### Performance
+
+- **Theme and settings changes no longer rebuild every open tab at once** —
+  inactive tabs rebuild once, when you switch back to them.
+- **Selection/worklist highlight outlines** skip their redraw on pan frames
+  entirely (previously re-stroked every frame while the viewport moved).
+- **Net-line pulse** animates a pre-baked layer's opacity instead of
+  rebuilding all line geometry 60× per second.
+- **Net connection chains** recompute only when the selection actually
+  changes, not on every hover while dimmed.
+- **Memory:** fixed a leak that kept abandoned board derivations alive
+  after fold/filter toggles; deep-paused background tabs now release the
+  fast-mode text layer's memory too.
+
+
 ## v0.31.40 — 2026-07-19
 
 Merges the renderer-optimization branch — the implementation round of our
