@@ -642,6 +642,14 @@ export class BoardRenderer {
   private lastNetLinesSelKey: string | null = null;
   private lastNetLinesSelBoard: BoardData | null = null;
 
+  /** A5: pulse crossfade layer — a CHILD of netLinesGfx (inherits every
+   *  attach/reinit/destroy path). Base geometry baked once per (geometry,
+   *  width, alpha) signature; the pulse animates this child's alpha instead
+   *  of re-issuing all path geometry 60×/s. Null until first fast-path bake
+   *  and after netLinesGfx recreation. */
+  private netLinesPulseGfx: Graphics | null = null;
+  private netLineBakeSig = '';
+
   /** A4 (rendering-review-2026-07-12): skip multi-highlight redraws on pan/zoom
    *  frames when neither the highlight state nor the screen-space stroke width
    *  changed. Store-notify/board-change call sites force a redraw. */
@@ -1239,6 +1247,8 @@ export class BoardRenderer {
     this.butterflyDimGfx = new Graphics();
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
+    this.netLinesPulseGfx = null;  // died with the old gfx (child)
+    this.netLineBakeSig = '';
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
@@ -1421,6 +1431,8 @@ export class BoardRenderer {
     this.butterflyDimGfx = new Graphics();
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
+    this.netLinesPulseGfx = null;  // died with the old gfx (child)
+    this.netLineBakeSig = '';
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below selection (30) and labels (35)
@@ -3475,6 +3487,11 @@ export class BoardRenderer {
    */
   private scheduleRebuild(): void {
     if (!this.board || this.contextLost || this.reinitializing) return;
+    // Settings/theme rebuilds can change net-line color/width derivations
+    // without a selection change — drop the A3 memo so the next
+    // renderSelection recomputes segments.
+    this.lastNetLinesSelKey = null;
+    this.netLineBakeSig = '';
     if (this._rebuildTimer) clearTimeout(this._rebuildTimer);
     this._rebuildTimer = setTimeout(() => {
       this._rebuildTimer = null;
@@ -4742,10 +4759,13 @@ export class BoardRenderer {
   /** Draw cached net line segments with current animation state */
   private renderNetLines() {
     this.needsRender = true;
-    this.netLinesGfx.clear();
 
-    if (this.netLinesDirty) this.recomputeNetLineSegments();
-    if (this.netLineSegments.length === 0) return;
+    if (this.netLinesDirty) { this.recomputeNetLineSegments(); this.netLineBakeSig = ''; }
+    if (this.netLineSegments.length === 0) {
+      this.netLinesGfx.clear();
+      this.netLinesPulseGfx?.clear();
+      return;
+    }
 
     const s = renderSettingsStore.settings;
     const vpScale = Math.abs(this.viewport.scale.x);
@@ -4760,24 +4780,46 @@ export class BoardRenderer {
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    // Iterate the colour-keyed buckets cached by recomputeNetLineSegments.
-    // No per-frame allocation here — was previously rebuilding the Map and
-    // wrapping every segment in a fresh {start,end} object 60 fps.
+    // A5 fast path — plain solid lines (no fade, no dash): geometry is baked
+    // once into netLinesGfx (base colors) + a pulse-colored child layer, and
+    // the pulse animates only the child's alpha. The per-frame cost drops
+    // from full path re-issue to one alpha write.
+    if (!useFade && !s.netLineDashed) {
+      const sig = `${lineW.toFixed(4)}|${s.netLineAlpha}`;
+      if (sig !== this.netLineBakeSig) {
+        this.netLineBakeSig = sig;
+        if (!this.netLinesPulseGfx) {
+          this.netLinesPulseGfx = new Graphics();
+          this.netLinesPulseGfx.eventMode = 'none';
+          this.netLinesGfx.addChild(this.netLinesPulseGfx);
+        }
+        this.netLinesGfx.clear();       // clears geometry only; children survive
+        this.netLinesPulseGfx.clear();
+        for (const [baseColor, segs] of this.netLineSegmentsByColor) {
+          for (const { start, end } of segs) {
+            this.netLinesGfx.moveTo(start.x, start.y);
+            this.netLinesGfx.lineTo(end.x, end.y);
+            this.netLinesPulseGfx.moveTo(start.x, start.y);
+            this.netLinesPulseGfx.lineTo(end.x, end.y);
+          }
+          this.netLinesGfx.stroke({ width: lineW, color: baseColor, alpha: s.netLineAlpha });
+        }
+        this.netLinesPulseGfx.stroke({ width: lineW, color: pulseColor, alpha: s.netLineAlpha });
+      }
+      this.netLinesPulseGfx!.alpha = s.netLinePulse ? pulseT : 0;
+      return;
+    }
+
+    // Slow path (fade and/or dashed): geometry genuinely changes per frame.
+    if (this.netLinesPulseGfx) this.netLinesPulseGfx.alpha = 0;
+    this.netLinesGfx.clear();
     for (const [baseColor, segs] of this.netLineSegmentsByColor) {
       const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
-      if (!useFade && !s.netLineDashed) {
-        for (const { start, end } of segs) {
-          this.netLinesGfx.moveTo(start.x, start.y);
-          this.netLinesGfx.lineTo(end.x, end.y);
-        }
-        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
-      } else {
-        for (const { start, end } of segs) {
-          if (useFade) {
-            this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-          } else {
-            this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
-          }
+      for (const { start, end } of segs) {
+        if (useFade) {
+          this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+        } else {
+          this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
         }
       }
     }
