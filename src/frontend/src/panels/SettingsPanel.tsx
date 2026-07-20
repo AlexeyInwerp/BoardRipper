@@ -19,7 +19,7 @@ import type { MockupSectionId } from './SettingsMockup';
 import { shortcuts, formatShortcut, CATEGORY_LABELS, CATEGORY_ORDER } from '../store/keyboard-shortcuts';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { boardStore } from '../store/board-store';
-import { startMcpBridge, stopMcpBridge } from '../store/mcp-bridge';
+import { startMcpBridge, stopMcpBridge, getMcpClientIdentity, setMcpClientLabel } from '../store/mcp-bridge';
 import { copyText } from '../clipboard';
 import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
@@ -551,6 +551,37 @@ function IntegrationsSection() {
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [token, setToken] = useState('');
   const [client, setClient] = useState<McpClientId>('claude-code');
+  // Per-browser pairing: which token feeds the connect snippet, this browser's
+  // pairing token, and its user-editable label.
+  const [tokenSource, setTokenSource] = useState<'browser' | 'shared'>('browser');
+  const [pairToken, setPairToken] = useState('');
+  const [pairLabel, setPairLabel] = useState(() => getMcpClientIdentity().label);
+
+  const pair = useCallback((label?: string) => {
+    const ident = getMcpClientIdentity();
+    fetch('/api/mcp/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: ident.id, label: label ?? ident.label }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { token?: string; label?: string } | null) => {
+        if (d?.token) setPairToken(d.token);
+        if (d?.label) { setPairLabel(d.label); setMcpClientLabel(d.label); }
+      })
+      .catch(() => setPairToken(''));
+  }, []);
+
+  const rotatePair = useCallback(() => {
+    fetch('/api/mcp/pair/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: getMcpClientIdentity().id }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { token?: string } | null) => { if (d?.token) setPairToken(d.token); })
+      .catch(() => { /* keep the old token visible */ });
+  }, []);
 
   const refresh = useCallback(() => {
     fetch('/api/mcp/status')
@@ -562,12 +593,13 @@ function IntegrationsSection() {
   useEffect(() => { refresh(); }, [refresh]);
 
   useEffect(() => {
-    if (!status?.enabled) { setToken(''); return; }
+    if (!status?.enabled) { setToken(''); setPairToken(''); return; }
     fetch('/api/mcp/token')
       .then(r => r.ok ? r.json() : { token: '' })
       .then((d: { token?: string }) => setToken(d.token ?? ''))
       .catch(() => setToken(''));
-  }, [status?.enabled]);
+    pair();
+  }, [status?.enabled, pair]);
 
   // Poll status while enabled so connected pages + tool activity update live.
   useEffect(() => {
@@ -607,7 +639,7 @@ function IntegrationsSection() {
   const enabled = !!status?.enabled;
   const oauth = status?.auth_mode === 'oauth';
   const url = `${location.protocol}//${location.host}/api/mcp`;
-  const snippet = mcpSnippet(client, url, token, oauth);
+  const snippet = mcpSnippet(client, url, tokenSource === 'browser' && !oauth ? pairToken : token, oauth);
   const activeClient = MCP_CLIENTS.find(c => c.id === client)!;
 
   return (
@@ -653,6 +685,33 @@ function IntegrationsSection() {
                 : 'Clients authenticate with the bearer token below.'}
             </p>
 
+            {!oauth && (
+              <>
+                <p className="settings-hint" style={{ margin: '12px 0 4px' }}>Token:</p>
+                <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                  <button type="button" className={`library-tab ${tokenSource === 'browser' ? 'active' : ''}`}
+                    onClick={() => setTokenSource('browser')}>This browser&#39;s agent</button>
+                  <button type="button" className={`library-tab ${tokenSource === 'shared' ? 'active' : ''}`}
+                    onClick={() => setTokenSource('shared')}>Shared (all sessions)</button>
+                </div>
+                <p className="settings-hint" style={{ margin: '0 0 8px' }}>
+                  {tokenSource === 'browser'
+                    ? 'Scoped to boards open in this browser — your agent never sees or drives other users’ sessions. Recommended.'
+                    : 'Sees and can drive every connected session on this install. Use deliberately, e.g. to analyze other users’ sessions; pass an explicit session from board_sessions.'}
+                </p>
+                {tokenSource === 'browser' && (
+                  <div className="settings-row" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <label className="settings-label" title="Shown to agents in board_sessions so your pages are recognizable">Browser label</label>
+                    <input type="text" data-testid="mcp-pair-label" value={pairLabel}
+                      style={{ flex: 1, minWidth: 0 }}
+                      onChange={e => setPairLabel(e.target.value)}
+                      onBlur={e => { const v = e.target.value.trim(); if (v) { setMcpClientLabel(v); pair(v); } }} />
+                    <button type="button" className="library-tab" title="Mint a new token for this browser; the old one stops working"
+                      onClick={rotatePair}>Rotate</button>
+                  </div>
+                )}
+              </>
+            )}
             <p className="settings-hint" style={{ margin: '12px 0 4px' }}>Connect a client:</p>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
               {MCP_CLIENTS.map(c => (

@@ -49,6 +49,29 @@ function fetchMcpSecret(): Promise<string> {
   return secretInFlight;
 }
 
+/** Stable per-browser identity: links every session this browser opens to its
+ *  pairing token (Settings ▸ Integrations ▸ "This browser's agent"). Persisted
+ *  in localStorage so it survives reloads; a fresh profile mints a new one. */
+export function getMcpClientIdentity(): { id: string; label: string } {
+  let id = '';
+  try { id = localStorage.getItem('br-mcp-client-id') ?? ''; } catch { /* private mode */ }
+  if (!/^[0-9a-f]{32}$/.test(id)) {
+    const b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    id = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem('br-mcp-client-id', id); } catch { /* ignore */ }
+  }
+  let label = '';
+  try { label = localStorage.getItem('br-mcp-client-label') ?? ''; } catch { /* ignore */ }
+  if (!label) label = `Browser ${id.slice(0, 6)}`;
+  return { id, label };
+}
+
+/** Persist the user-chosen label for this browser's pairing (Settings). */
+export function setMcpClientLabel(label: string) {
+  try { localStorage.setItem('br-mcp-client-label', label); } catch { /* ignore */ }
+}
+
 function boardDescriptor() {
   const b = boardStore.board;
   const tab = boardStore.activeTab;
@@ -146,7 +169,7 @@ function connect() {
     // no-ops if the socket already closed; if the token wasn't reachable we send
     // an empty secret and the reconnect loop retries once it is.
     void fetchMcpSecret().then((secret) => {
-      send({ type: 'hello', session: sessionId, secret, board: boardDescriptor() });
+      send({ type: 'hello', session: sessionId, secret, client: getMcpClientIdentity(), board: boardDescriptor() });
     });
   };
   socket.onmessage = (ev) => {
