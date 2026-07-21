@@ -14,6 +14,26 @@ to a `*.web.app` root (relative base makes the bundle host-portable).
 `dist-lite/` is self-contained and host-portable (relative base) — deploy the
 folder as-is at any mount point via the RipperDocWeb rsync, same as `landing/`.
 
+## Offline single-file build (`--mode offline`)
+
+    npm run build:offline     # → dist-offline/boardripper-lite.html (ONE ~7 MB file)
+
+The same app packaged as **one self-contained HTML** that opens straight from
+`file://` — save it, double-click, no server. `vite-plugin-singlefile` inlines
+JS+CSS and `inlineDynamicImports` folds in the pdf.js worker;
+`scripts/pack-offline.mjs` inlines the favicon and drops the stray parse-worker
+chunk. Both workers fall back to the main thread on `file://` (the parse worker
+is skipped via `isOfflineBuild()`; pdf.js uses its existing `location.protocol
+=== 'file:'` main-thread path). No service worker / PWA (can't register on
+`file://`).
+
+The hosted lite build's toolbar **"Offline copy"** button (top-right, where the
+update badge sits on the Docker build) links to `./boardripper-lite.html`, which
+`deploy:lite` uploads next to the web app. E2E: `npm run test:offline` opens the
+built file from `file://` and asserts zero external loads + a rendered board.
+Trade-off vs. the hosted build: main-thread board parse (fine — board files are
+small), and Dockview pop-out windows don't work from a single file.
+
 ## Local preview / test
 
     npm run serve:lite        # dist-lite/ at http://localhost:18086/boardripper/web/

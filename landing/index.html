@@ -65,7 +65,7 @@
   <h1>BoardRipper</h1>
   <p class="tagline">Web-based PCB boardview viewer for board-level repair. Free, AGPL-3.0.</p>
   <!-- BR_VERSION:START -->
-  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.20.4</b> &mdash; released 2026-05-10</span></p>
+  <p class="tagline" style="margin-top:4px"><span class="small">Latest release: <b>v0.31.43</b> &mdash; released 2026-07-20</span></p>
   <!-- BR_VERSION:END -->
   <nav>
     [<a href="#what">What is this?</a>] |
@@ -88,6 +88,8 @@
 <p>It is the viewer only. BoardRipper does not ship with any boardview files, schematics, or PDFs &mdash; you bring your own. The bundled board database is reference metadata (board numbers and device models), no copyrighted content.</p>
 
 <p><b>Source code now public</b> &mdash; the full project is on <a href="https://github.com/AlexeyInwerp/BoardRipper">GitHub</a> under AGPL-3.0. Issues and PRs welcome; the repository ships <a href="https://github.com/AlexeyInwerp/BoardRipper/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> and <a href="https://github.com/AlexeyInwerp/BoardRipper/blob/main/SECURITY.md">SECURITY.md</a> with the disclosure policy.</p>
+
+<p><b>Try it now &mdash; no install:</b> open the <a href="https://www.ripperdoc.de/boardripper/web/">browser version</a> (your files stay local &mdash; nothing is uploaded), or <a href="https://www.ripperdoc.de/boardripper/web/boardripper-lite.html" download>download a single offline HTML file</a> and open it from your own computer. Details under <a href="#download">Download</a>.</p>
 
 <div class="thumbs">
   <a href="screenshots/board.png"><img src="screenshots/board.png" alt="Single board open in BoardRipper"></a>
@@ -192,6 +194,14 @@ C12*</pre>
 <section id="download">
 <h2>Download</h2>
 <p>Pick the install style that fits how you work:</p>
+
+<h3>Run in the browser &mdash; no install</h3>
+<p>The <b>lite build</b>: the full BoardRipper viewer and inspector running entirely in your browser, with no server and no backend. Open your own boardview files and PDFs locally &mdash; nothing is uploaded, nothing leaves your machine. There is no shared library, board database, or self-update (those need the Docker build), but all rendering, inspection, net-highlight, layers, themes, and PDF viewing are there.</p>
+<ul>
+  <li><b>Open it now</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/web/">ripperdoc.de/boardripper/web</a>. Loads in the browser; installable as an offline app (PWA).</li>
+  <li><b>Offline single file</b> &mdash; <a href="https://www.ripperdoc.de/boardripper/web/boardripper-lite.html" download>boardripper-lite.html</a> (~7&nbsp;MB). Save it and open it in any browser &mdash; works fully offline, no internet, no server. Put it on a USB stick and take it to the bench.</li>
+</ul>
+<p class="small">Everything runs client-side in your browser. Encrypted ASUS <code>.fz</code> files still need a key pasted or fetched in-app (same as the Docker build). The <b>Offline copy</b> button in the top-right of the web app downloads the same single file.</p>
 
 <h3>Desktop app</h3>
 <p>An Electron wrapper around the same web UI. One-click install, no Docker. Each platform ships as a portable <code>.zip</code> &mdash; unzip and run.</p>

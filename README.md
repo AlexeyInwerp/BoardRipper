@@ -8,6 +8,15 @@ A polished overview with screenshots lives at <https://www.ripperdoc.de/boardrip
 
 > **Bring your own files.** BoardRipper is the viewer only — it does not ship with any boardview files, schematics, or PDFs. The bundled board database is reference metadata (board numbers and device models), no copyrighted content.
 
+## Run it in your browser — no install
+
+Besides the Docker build there's a **lite build**: the full viewer/inspector running entirely client-side, no backend. Open your own boardview files and PDFs locally — nothing is uploaded, nothing is stored server-side. There's no shared library, board database, or self-update (those need the backend), but all rendering, inspection, net-highlight, multi-layer, themes, and PDF viewing work.
+
+- **Open it now** — **<https://www.ripperdoc.de/boardripper/web/>**. Runs in the browser; installable as an offline PWA. An **Offline copy** button (top-right) downloads the single-file build.
+- **Offline single file** — **[boardripper-lite.html](https://www.ripperdoc.de/boardripper/web/boardripper-lite.html)** (~7 MB). Save it and open it from any browser — fully offline, no server, no internet. Copy it to a USB stick for the bench.
+
+Same codebase as the Docker build — `npm run build:lite` / `npm run build:offline` in `src/frontend/`. See [src/frontend/LITE_BUILD.md](src/frontend/LITE_BUILD.md).
+
 ## Features
 
 - **GPU-accelerated rendering** — PixiJS v8 / WebGL, 10,000+ components at 60 fps on a modern GPU. Bench-tested down to Intel HD 4000-era integrated graphics (10–30 fps).
