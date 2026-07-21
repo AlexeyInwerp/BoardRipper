@@ -2,7 +2,9 @@
 # Deploy the BoardRipper lite (backend-free) web build to
 # https://www.ripperdoc.de/boardripper/web/.
 #
-# Builds dist-lite/, stages it alongside the app-scoped .htaccess
+# Builds dist-lite/ AND the single-file offline bundle
+# (dist-offline/boardripper-lite.html, what the toolbar "Offline copy" button
+# links to), stages them alongside the app-scoped .htaccess
 # (deploy/boardripper-web.htaccess), and uploads ONLY the /boardripper/web/
 # subtree via lftp — additive, touches nothing else on the site.
 #
@@ -32,13 +34,17 @@ command -v lftp >/dev/null || { echo "ERROR: lftp not installed (brew install lf
 # --- build -----------------------------------------------------------------
 echo ">>> building lite bundle"
 (cd "$HERE" && npm run build:lite)
+echo ">>> building single-file offline bundle"
+(cd "$HERE" && npm run build:offline)
 
-# --- stage (dist-lite + app-scoped .htaccess) ------------------------------
+# --- stage (dist-lite + offline single file + app-scoped .htaccess) --------
 echo ">>> staging"
 STAGE="$(mktemp -d)/web"
 mkdir -p "$STAGE"
 rsync -a "$HERE/dist-lite/" "$STAGE/"
 cp "$HERE/deploy/boardripper-web.htaccess" "$STAGE/.htaccess"
+# The downloadable offline copy — the toolbar "Offline copy" button links here.
+cp "$HERE/dist-offline/boardripper-lite.html" "$STAGE/boardripper-lite.html"
 
 # --- upload (only the web/ subtree; --delete prunes old hashed assets) ------
 echo ">>> uploading $STAGE -> $REMOTE_DIR"
