@@ -3,6 +3,7 @@ import { IconLayoutSidebar, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { LibraryPanel } from '../panels/LibraryPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { DebugPanel } from '../panels/DebugPanel';
+import { isLiteBuild } from '../store/build-mode';
 import {
   MIN_WIDTH,
   MAX_WIDTH_RATIO,
@@ -129,9 +130,11 @@ export function Sidebar() {
             preserves React state (scroll, expanded folders, search query)
             across tab switches. The panel that's not active just renders
             with display:none and contributes no layout. */}
-        <div style={{ display: activeTab === 'library' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-          <LibraryPanel />
-        </div>
+        {!isLiteBuild() && (
+          <div style={{ display: activeTab === 'library' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+            <LibraryPanel />
+          </div>
+        )}
         <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
           <SettingsPanel />
         </div>

@@ -12,6 +12,7 @@ import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron } from '../store/databank-store';
+import { isLiteBuild } from '../store/build-mode';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
@@ -550,7 +551,7 @@ export function Toolbar() {
           the toolbar — removed until the feature actually ships, at which
           point it belongs in an overflow menu. exportToBVR3 stays in parsers. */}
 
-      {!isElectron() && <UpdateBadge update={update} />}
+      {!isElectron() && !isLiteBuild() && <UpdateBadge update={update} />}
     </div>
   );
 }

@@ -34,6 +34,7 @@ import { OverlayCustomizer } from './settings/OverlayCustomizer';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 import { fmtIndexEta } from './LibraryPanel';
 import { isElectron, hasBackend } from '../store/databank-store';
+import { isLiteBuild } from '../store/build-mode';
 
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
@@ -62,7 +63,8 @@ type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'perf
 
 export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' | 'integrations';
 
-const TAB_ORDER: SettingsTabId[] = ['theme', 'board', 'input', 'library', 'system', 'integrations'];
+const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
+  .filter(t => !(isLiteBuild() && (t === 'library' || t === 'integrations')));
 
 const TAB_LABELS: Record<SettingsTabId, string> = {
   theme:        'Theme',
@@ -2329,7 +2331,7 @@ export function SettingsPanel() {
 
       {activeTab === 'system' && (
         <>
-          <SoftwareUpdateSection />
+          {!isLiteBuild() && <SoftwareUpdateSection />}
           {/* Cache/render resets are troubleshooting tools, not everyday
               controls — demoted from the panel header into their own block. */}
           <StandaloneCollapsibleSection title="Troubleshooting" defaultOpen={false}

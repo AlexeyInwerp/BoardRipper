@@ -9,6 +9,8 @@
  * Refresh can only HMR a file whose only exports are React components.
  */
 
+import { isLiteBuild } from '../store/build-mode';
+
 const SIDEBAR_WIDTH_KEY = 'boardripper-sidebar-width';
 const SIDEBAR_SIDE_KEY = 'boardripper-sidebar-side';
 const DEFAULT_WIDTH = 320;
@@ -18,11 +20,11 @@ export const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
 export type SidebarSide = 'left' | 'right';
 export type SidebarTab = 'library' | 'settings' | 'debug';
 
-export const TABS: { id: SidebarTab; label: string }[] = [
+export const TABS: { id: SidebarTab; label: string }[] = ([
   { id: 'library', label: 'Library' },
   { id: 'settings', label: 'Settings' },
   { id: 'debug', label: 'Debug' },
-];
+] as { id: SidebarTab; label: string }[]).filter(t => !(isLiteBuild() && t.id === 'library'));
 
 export function loadWidth(): number {
   try {
@@ -51,7 +53,7 @@ function saveSide(side: SidebarSide): void {
 // --- Global sidebar state (for external access by Toolbar, keyboard shortcuts) ---
 const state = {
   collapsed: false,
-  activeTab: 'library' as SidebarTab,
+  activeTab: (isLiteBuild() ? 'settings' : 'library') as SidebarTab,
   side: loadSide(),
 };
 const listeners = new Set<() => void>();
@@ -72,7 +74,7 @@ export function toggleSidebar(): void {
 }
 
 export function showSidebarTab(tab: SidebarTab): void {
-  state.activeTab = tab;
+  state.activeTab = (isLiteBuild() && tab === 'library') ? 'settings' : tab;
   if (state.collapsed) state.collapsed = false;
   emitSidebarChange();
 }
@@ -88,6 +90,8 @@ export function toggleLibrarySidebar(): void {
   //   collapsed                          → open with library tab
   //   open on a non-library tab          → switch to library tab
   //   open on library tab                → collapse
+  // Lite build has no library tab — degrade to a plain sidebar toggle.
+  if (isLiteBuild()) { toggleSidebar(); return; }
   if (state.collapsed || state.activeTab !== 'library') {
     showSidebarTab('library');
   } else {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useBoardStore } from '../../hooks/useBoardStore';
 import { useDatabank } from '../../hooks/useDatabank';
 import { databankStore } from '../../store/databank-store';
+import { isLiteBuild } from '../../store/build-mode';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
@@ -933,16 +934,18 @@ function QuickSettings() {
         <h3 className="home-quick-section-title">Behaviour</h3>
         <div className="home-toggle-stack">
           <AutoSwitchToggle />
-          <AutoOpenPdfToggle />
+          {!isLiteBuild() && <AutoOpenPdfToggle />}
           <ThemeSelect />
           <InterfaceColorPickers />
         </div>
       </div>
 
-      <div className="home-quick-section">
-        <h3 className="home-quick-section-title">Library</h3>
-        <LibraryStats />
-      </div>
+      {!isLiteBuild() && (
+        <div className="home-quick-section">
+          <h3 className="home-quick-section-title">Library</h3>
+          <LibraryStats />
+        </div>
+      )}
 
       <button type="button" className="home-settings-link" onClick={openSettings}>
         Open full Settings →
