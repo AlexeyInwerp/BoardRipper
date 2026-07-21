@@ -45,4 +45,7 @@ test('single-file offline build runs from file:// with no external loads', async
 
   // Offline build ships no service worker / PWA manifest (can't register on file://).
   await expect(page.locator('link[rel="manifest"]')).toHaveCount(0);
+
+  // The "download offline copy" button hides itself in the offline file.
+  await expect(page.getByTestId('download-offline')).toHaveCount(0);
 });

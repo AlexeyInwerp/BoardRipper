@@ -75,6 +75,15 @@ test('backend-only UI is absent', async ({ page }) => {
   await expect(page.locator('.library-tab', { hasText: /^Library$/ })).toHaveCount(0);
 });
 
+test('lite build offers the offline-copy download (where the update badge was)', async ({ page }) => {
+  await page.goto('.');
+  await page.waitForLoadState('networkidle');
+  const dl = page.getByTestId('download-offline');
+  await expect(dl).toHaveCount(1);
+  await expect(dl).toHaveAttribute('href', './boardripper-lite.html');
+  await expect(dl).toHaveAttribute('download', /boardripper-lite\.html/);
+});
+
 test('PWA manifest is linked', async ({ page }) => {
   await page.goto('.');
   await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);

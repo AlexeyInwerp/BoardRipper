@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload } from '@tabler/icons-react';
+import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
@@ -12,7 +12,7 @@ import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron } from '../store/databank-store';
-import { isLiteBuild } from '../store/build-mode';
+import { isLiteBuild, isOfflineBuild } from '../store/build-mode';
 import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
@@ -27,6 +27,27 @@ function fmtVersion(v: string | undefined | null): string {
   if (/^v/i.test(v)) return v;
   if (/^\d/.test(v)) return 'v' + v;
   return v; // "dev", "local", etc.
+}
+
+/** Hosted lite build only: download the single self-contained offline copy
+ *  (boardripper-lite.html). Sits in the top-right slot where the self-update
+ *  badge lives on the backend build. Relative href so it resolves under the
+ *  /boardripper/web/ sub-path. Hidden in the offline file itself (you can't
+ *  re-download it while running from file://). */
+function DownloadOfflineButton() {
+  return (
+    <a
+      className="toolbar-btn"
+      href="./boardripper-lite.html"
+      download="boardripper-lite.html"
+      data-testid="download-offline"
+      title="Download BoardRipper as a single offline HTML file — save it to your computer and open it in any browser, no internet needed."
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}
+    >
+      <IconDownload size={15} stroke={2} />
+      Offline copy
+    </a>
+  );
 }
 
 /** Dropdown showing release notes + update/download action */
@@ -552,6 +573,7 @@ export function Toolbar() {
           point it belongs in an overflow menu. exportToBVR3 stays in parsers. */}
 
       {!isElectron() && !isLiteBuild() && <UpdateBadge update={update} />}
+      {isLiteBuild() && !isOfflineBuild() && <DownloadOfflineButton />}
     </div>
   );
 }
