@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 import pkg from './package.json' with { type: 'json' }
 
 // Backend port for the dev proxy. Default 1336 matches the documented
@@ -20,7 +21,37 @@ export default defineConfig(({ mode }) => {
     // ONE bundle work at any mount point. The NAS/Electron build keeps the
     // root-absolute default.
     base: lite ? './' : '/',
-    plugins: [react()],
+    plugins: [
+      react(),
+      ...(lite ? [VitePWA({
+        registerType: 'autoUpdate',      // new deploy picked up on next load
+        injectRegister: 'auto',          // registration script injected at build
+        // Serve the manifest + SW on `vite --mode lite` dev too, so the E2E
+        // and manual testing exercise the real thing.
+        devOptions: { enabled: true },
+        workbox: {
+          // NOTE 'mjs': the pdf.js worker may be emitted as an .mjs asset — omit
+          // it and PDF viewing could break offline.
+          globPatterns: ['**/*.{js,mjs,css,html,svg,woff2,wasm}'],
+          // pdf worker + wasm can be large; lift the default precache cap.
+          maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
+        },
+        manifest: {
+          name: 'BoardRipper',
+          short_name: 'BoardRipper',
+          description: 'PCB boardview viewer & inspector — open boardview files and PDFs locally.',
+          // Relative so the installed app works under a sub-path AND a web.app root.
+          start_url: '.',
+          scope: '.',
+          display: 'standalone',
+          background_color: '#0b0f14',
+          theme_color: '#0b0f14',
+          icons: [
+            { src: 'logo.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+          ],
+        },
+      })] : []),
+    ],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
     },
