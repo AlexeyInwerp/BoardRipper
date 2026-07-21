@@ -4,6 +4,7 @@ import { usePdfDoc } from '../hooks/usePdfStore';
 import { pdfStore, pdfFontSize } from '../store/pdf-store';
 import { boardStore } from '../store/board-store';
 import { boardPanelId, activateLinkedPanel, isAutoSwitchLinked } from '../store/dockview-api';
+import { pickLinkedBoardTab } from '../store/linked-panel';
 import { openBoardSearch } from './board-viewer-bridge';
 import { fileInputRefs } from '../store/file-inputs';
 import { contextMenuStore } from '../store/context-menu-store';
@@ -648,15 +649,19 @@ export function PdfViewerPanel(props: IDockviewPanelProps<{ pdfFileName?: string
         pdfStore.switchTo(pdfFileName);
         // Register this panel's search input for global Cmd+F routing
         fileInputRefs.pdfSearch = searchInputRef.current;
-        // Activate linked board panel so it follows the PDF tab
+        // Activate linked board panel so it follows the PDF tab.
         // Gated by auto-switch flag (toggled via BindLink dropdown header).
-        const linkedTab = isAutoSwitchLinked()
-          ? boardStore.tabs.find(t => t.pdfFileNames.includes(pdfFileName))
+        // Prefer the currently-active board tab when it's already bound to this
+        // PDF: a PDF can be bound to several board tabs (e.g. two revisions
+        // sharing one schematic), and a double-click lookup from a non-first
+        // bound tab must not yank the board to a sibling tab.
+        const linkedTabId = isAutoSwitchLinked()
+          ? pickLinkedBoardTab(boardStore.tabs, boardStore.activeTabId, pdfFileName)
           : null;
-        log.pdf.log(`linkedTab=${linkedTab?.id ?? 'none'} autoSwitch=${isAutoSwitchLinked()}`);
-        if (linkedTab) {
-          const ok = activateLinkedPanel(boardPanelId(linkedTab.id), () => boardStore.switchTab(linkedTab.id));
-          log.pdf.log(`activateLinkedPanel board-${linkedTab.id} ok=${ok}`);
+        log.pdf.log(`linkedTab=${linkedTabId ?? 'none'} autoSwitch=${isAutoSwitchLinked()}`);
+        if (linkedTabId != null) {
+          const ok = activateLinkedPanel(boardPanelId(linkedTabId), () => boardStore.switchTab(linkedTabId));
+          log.pdf.log(`activateLinkedPanel board-${linkedTabId} ok=${ok}`);
         }
       }
     });
