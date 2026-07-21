@@ -9,6 +9,7 @@
 import { parseBoardFile } from './index';
 import { FZKeyError } from './fz-parser';
 import { getFzKey } from '../store/fz-key-store';
+import { isOfflineBuild } from '../store/build-mode';
 import { log } from '../store/log-store';
 import type { BoardData } from './types';
 import type { ParseWorkerRequest, ParseWorkerResponse, ParseWorkerLogMsg } from './parse-worker';
@@ -27,6 +28,10 @@ function relayLog(m: ParseWorkerLogMsg['log']): void {
 
 function ensureWorker(): Worker | null {
   if (workerBroken) return null;
+  // Offline single-file build (file://) ships no worker file — parse on the
+  // main thread. Board files are small; the worker is a big-board perf win the
+  // downloadable single-file trades away to stay one self-contained HTML.
+  if (isOfflineBuild()) return null;
   if (worker) return worker;
   try {
     worker = new Worker(new URL('./parse-worker.ts', import.meta.url), { type: 'module' });

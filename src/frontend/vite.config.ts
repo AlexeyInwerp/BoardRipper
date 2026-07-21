@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { viteSingleFile } from 'vite-plugin-singlefile'
 import pkg from './package.json' with { type: 'json' }
 
 // Backend port for the dev proxy. Default 1336 matches the documented
@@ -11,18 +12,26 @@ const BACKEND_PORT = process.env.BOARDRIPPER_BACKEND_PORT ?? '1336';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  // Lite build = the standalone, backend-free web build (see
-  // docs/specs/2026-07-20-boardripper-web-standalone-design.md). The mode IS
-  // the build type; app code reads it via isLiteBuild() (store/build-mode.ts).
+  // Backend-free web builds (see docs/specs/2026-07-20-boardripper-web-
+  // standalone-design.md). The mode IS the build type; app code reads it via
+  // isLiteBuild()/isOfflineBuild() (store/build-mode.ts).
+  //   lite    → hosted static site (ripperdoc.de/boardripper/web) + PWA.
+  //   offline → single self-contained index.html that runs from file://
+  //             (downloadable, no server), packaged by vite-plugin-singlefile.
   const lite = mode === 'lite';
+  const offline = mode === 'offline';
+  const backendFree = lite || offline;
   return {
-    // The lite build is served from a sub-path (ripperdoc.de/boardripper/web)
-    // AND later mirrored to a domain root (*.web.app). A relative base makes
-    // ONE bundle work at any mount point. The NAS/Electron build keeps the
-    // root-absolute default.
-    base: lite ? './' : '/',
+    // Relative base: the lite build mounts at a sub-path AND a web.app root; the
+    // offline single-file runs from file://. The NAS/Electron build keeps '/'.
+    base: backendFree ? './' : '/',
     plugins: [
       react(),
+      // Single-file offline bundle: inline JS/CSS and flatten dynamic imports
+      // into one index.html so it opens straight from file:// (no server, no
+      // module/asset fetches that file:// would CORS-block). No PWA here — a
+      // service worker can't register on file://.
+      ...(offline ? [viteSingleFile({ removeViteModuleLoader: true })] : []),
       ...(lite ? [VitePWA({
         registerType: 'autoUpdate',      // new deploy picked up on next load
         injectRegister: 'auto',          // registration script injected at build
@@ -56,9 +65,9 @@ export default defineConfig(({ mode }) => {
       __APP_VERSION__: JSON.stringify(pkg.version),
     },
     build: {
-      // Separate output dir so the lite bundle never collides with the NAS
-      // build (dist/), which the Go server embeds.
-      outDir: lite ? 'dist-lite' : 'dist',
+      // Separate output dirs so the backend-free bundles never collide with the
+      // NAS build (dist/), which the Go server embeds.
+      outDir: offline ? 'dist-offline' : lite ? 'dist-lite' : 'dist',
     },
     server: {
       host: '0.0.0.0',
