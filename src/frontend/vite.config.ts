@@ -9,34 +9,50 @@ import pkg from './package.json' with { type: 'json' }
 const BACKEND_PORT = process.env.BOARDRIPPER_BACKEND_PORT ?? '1336';
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
-  },
-  server: {
-    host: '0.0.0.0',
-    port: 8082,
-    // Cross-origin isolation — unlocks performance.measureUserAgentSpecificMemory
-    // (precise memory stat in the status bar, incl. workers). `credentialless`
-    // instead of `require-corp` so cross-origin subresources (OBD images, FZ key
-    // mirrors via CORS fetch) keep working. Mirrors the Go server's headers.
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless',
+export default defineConfig(({ mode }) => {
+  // Lite build = the standalone, backend-free web build (see
+  // docs/specs/2026-07-20-boardripper-web-standalone-design.md). The mode IS
+  // the build type; app code reads it via isLiteBuild() (store/build-mode.ts).
+  const lite = mode === 'lite';
+  return {
+    // The lite build is served from a sub-path (ripperdoc.de/boardripper/web)
+    // AND later mirrored to a domain root (*.web.app). A relative base makes
+    // ONE bundle work at any mount point. The NAS/Electron build keeps the
+    // root-absolute default.
+    base: lite ? './' : '/',
+    plugins: [react()],
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
     },
-    proxy: {
-      '/api': {
-        target: `http://localhost:${BACKEND_PORT}`,
-        changeOrigin: true,
-        // Silence Vite's default ECONNREFUSED logging when the Go backend
-        // isn't running (Playwright / pure-frontend dev / CI). The app
-        // already swallows the fetch error in update-store.ts etc.; Vite's
-        // own proxy logger sits above that and spams the terminal.
-        configure: (proxy) => {
-          proxy.on('error', () => { /* suppress */ });
+    build: {
+      // Separate output dir so the lite bundle never collides with the NAS
+      // build (dist/), which the Go server embeds.
+      outDir: lite ? 'dist-lite' : 'dist',
+    },
+    server: {
+      host: '0.0.0.0',
+      port: 8082,
+      // Cross-origin isolation — unlocks performance.measureUserAgentSpecificMemory
+      // (precise memory stat in the status bar, incl. workers). `credentialless`
+      // instead of `require-corp` so cross-origin subresources (OBD images, FZ key
+      // mirrors via CORS fetch) keep working. Mirrors the Go server's headers.
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'credentialless',
+      },
+      proxy: {
+        '/api': {
+          target: `http://localhost:${BACKEND_PORT}`,
+          changeOrigin: true,
+          // Silence Vite's default ECONNREFUSED logging when the Go backend
+          // isn't running (Playwright / pure-frontend dev / CI). The app
+          // already swallows the fetch error in update-store.ts etc.; Vite's
+          // own proxy logger sits above that and spams the terminal.
+          configure: (proxy) => {
+            proxy.on('error', () => { /* suppress */ });
+          },
         },
       },
     },
-  },
+  };
 })

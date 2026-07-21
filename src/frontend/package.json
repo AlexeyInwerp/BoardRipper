@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:lite": "tsc -b && vite build --mode lite",
+    "preview:lite": "vite preview --mode lite",
+    "serve:lite": "node scripts/serve-lite.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "npx playwright test",
@@ -13,6 +16,7 @@
     "test:headed": "npx playwright test --headed",
     "test:debug": "npx playwright test --debug",
     "test:report": "npx playwright show-report",
+    "test:lite": "npx playwright test --config playwright.lite.config.ts",
     "test:unit": "vitest run",
     "postinstall": "patch-package"
   },
