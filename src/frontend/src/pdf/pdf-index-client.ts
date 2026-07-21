@@ -1,6 +1,7 @@
 // Wire-format contract: see docs/PDF_VIEWER.md#api
 // State machine: see docs/PDF_VIEWER.md#state-machine
 import { log } from '../store/log-store';
+import { isLiteBuild } from '../store/build-mode';
 import {
   isPdfWatermarkText,
   getActiveWatermarkFilter,
@@ -89,6 +90,7 @@ const inflight = new Map<number, Promise<void>>();
  * fileId via the inflight map.
  */
 export function ensureIndexed(fileId: number, getTextPages: () => string[][]): Promise<void> {
+  if (isLiteBuild()) return Promise.resolve();
   const existing = inflight.get(fileId);
   if (existing) return existing;
 

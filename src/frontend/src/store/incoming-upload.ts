@@ -1,6 +1,7 @@
 import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
 import { databankStore, isElectron } from './databank-store';
+import { isLiteBuild } from './build-mode';
 import { log } from './log-store';
 import { pdfIndexClient } from '../pdf/pdf-index-client';
 
@@ -22,7 +23,7 @@ import { pdfIndexClient } from '../pdf/pdf-index-client';
  * persisting is the desired behaviour.
  */
 export async function saveDroppedToIncoming(files: File[]): Promise<void> {
-  if (isElectron()) return;
+  if (isElectron() || isLiteBuild()) return;
   if (files.length === 0) return;
 
   let saved = 0;

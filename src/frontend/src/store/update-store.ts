@@ -1,6 +1,7 @@
 /** Reactive store for update checking — polls /api/update/status */
 import { Emitter } from './emitter';
 import { log } from './log-store';
+import { isLiteBuild } from './build-mode';
 
 // Update-in-progress persistence. When the orchestrator stops the running
 // container, the SSE stream dies; the page may also be refreshed before the
@@ -426,7 +427,7 @@ if (typeof window !== 'undefined') {
 // The resumeIfRestarting() call comes first so the in-progress modal can
 // re-appear before the first status fetch completes — the modal disappears
 // once the post-restart status comes back and we know the new version.
-if (typeof window !== 'undefined' && !import.meta.env.SSR) {
+if (typeof window !== 'undefined' && !import.meta.env.SSR && !isLiteBuild()) {
   updateStore.resumeIfRestarting();
   updateStore.fetchStatus();
   setInterval(() => updateStore.fetchStatus(), 30 * 60 * 1000);

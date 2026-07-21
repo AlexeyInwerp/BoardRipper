@@ -10,6 +10,7 @@ import { pdfStore } from './pdf-store';
 import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
+import { isLiteBuild } from './build-mode';
 import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
 import { renderPdfPageToPng } from './pdf-render';
 import { getActiveApp } from '../renderer/renderer-registry';
@@ -146,6 +147,7 @@ export function stopMcpBridge() {
 
 /** Check whether MCP is enabled on the backend and, if so, start the bridge. */
 export function startMcpBridgeIfEnabled() {
+  if (isLiteBuild()) return;   // lite web build: no backend, no bridge
   fetch('/api/mcp/status')
     .then((r) => (r.ok ? r.json() : null))
     .then((s) => {

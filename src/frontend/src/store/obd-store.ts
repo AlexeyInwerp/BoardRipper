@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { Emitter } from './emitter';
 import { log } from './log-store';
 import { updateStore } from './update-store';
+import { isLiteBuild } from './build-mode';
 
 // Mirrors the backend Match shape.
 export interface ObdMatch {
@@ -104,6 +105,7 @@ class ObdStore extends Emitter {
    *  Also updates _index from the response — the backend always returns
    *  index status, so any match call doubles as a status refresh. */
   async loadMatches(boardNumber: string): Promise<ObdMatch[]> {
+    if (isLiteBuild()) return [];
     if (!boardNumber) return [];
     if (this._matchesByBn.has(boardNumber)) return this._matchesByBn.get(boardNumber)!;
     try {
@@ -153,6 +155,7 @@ class ObdStore extends Emitter {
    *  hitting openboarddata.org. 404 means "not cached"; we treat that as a
    *  no-op rather than an error. */
   async loadCachedData(bpath: string): Promise<ObdData | null> {
+    if (isLiteBuild()) return null;
     if (this._data.has(bpath)) return this._data.get(bpath)!;
     try {
       const res = await fetch(`/api/obd/data?bpath=${encodeURIComponent(bpath)}`);
@@ -174,6 +177,7 @@ class ObdStore extends Emitter {
 
   /** Probe /api/obd/match with empty board_number to refresh index status. */
   async refreshStatus(): Promise<void> {
+    if (isLiteBuild()) return;
     try {
       const res = await fetch('/api/obd/match?board_number=');
       if (!res.ok) return;
@@ -193,6 +197,7 @@ class ObdStore extends Emitter {
 
   /** POST /api/obd/fetch?bpath=… — downloads, parses, caches. */
   async fetchBoard(bpath: string): Promise<ObdData | null> {
+    if (isLiteBuild()) return null;
     if (this._fetching.has(bpath)) return null;
     this._fetching.add(bpath);
     this._bump();
@@ -221,6 +226,7 @@ class ObdStore extends Emitter {
 
   /** POST /api/obd/index/sync — long running, blocks until complete. */
   async syncIndex(): Promise<void> {
+    if (isLiteBuild()) return;
     if (this._syncing) return;
     this._syncing = true;
     this._error = null;
@@ -243,6 +249,7 @@ class ObdStore extends Emitter {
 
   /** DELETE /api/obd/cache — wipes everything. */
   async clearCache(): Promise<void> {
+    if (isLiteBuild()) return;
     const res = await fetch('/api/obd/cache', { method: 'DELETE' });
     if (!res.ok) {
       this._error = `Clear failed: ${res.statusText}`;

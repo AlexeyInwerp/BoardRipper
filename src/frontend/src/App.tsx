@@ -35,6 +35,7 @@ import { pdfStore } from './store/pdf-store';
 import { openPdfFiles } from './store/file-actions';
 import { saveDroppedToIncoming } from './store/incoming-upload';
 import { isElectron } from './store/databank-store';
+import { isLiteBuild } from './store/build-mode';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { getAllExtensions, getFileExtension } from './parsers';
 import { themeStore } from './store/themes';
@@ -188,7 +189,7 @@ function App() {
     // confirm and apply it; the other files are ignored — restarting mid-load
     // would be confusing.
     for (const file of files) {
-      if (!isElectron() && isUpdateBundle(file.name)) {
+      if (!isElectron() && !isLiteBuild() && isUpdateBundle(file.name)) {
         const sizeMiB = (file.size / (1024 * 1024)).toFixed(1);
         const ok = window.confirm(
           `Install update bundle?\n\n` +
@@ -200,7 +201,7 @@ function App() {
         if (ok) await updateStore.applyBundle(file);
         return;
       }
-      if (!isElectron() && isDockerImageTarball(file.name)) {
+      if (!isElectron() && !isLiteBuild() && isDockerImageTarball(file.name)) {
         // Friendly redirect — same directory ships both files and the
         // alphabetised listing puts the image first.
         boardStore.addToast(

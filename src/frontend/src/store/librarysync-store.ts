@@ -1,6 +1,7 @@
 /** Reactive store for the library-sync feature — polls /api/sync/status. */
 import { Emitter } from './emitter';
 import { log } from './log-store';
+import { isLiteBuild } from './build-mode';
 
 export type SyncSchedule = 'off' | 'daily' | 'weekly' | 'monthly';
 
@@ -171,7 +172,7 @@ export const librarySyncStore = new LibrarySyncStore();
 
 // Boot: fetch config + status once, then poll status every 30s when idle
 // (to surface external runs — e.g. cron firing while the UI is open).
-if (typeof window !== 'undefined' && !import.meta.env.SSR) {
+if (typeof window !== 'undefined' && !import.meta.env.SSR && !isLiteBuild()) {
   void librarySyncStore.fetchConfig();
   void librarySyncStore.fetchStatus();
   setInterval(() => {

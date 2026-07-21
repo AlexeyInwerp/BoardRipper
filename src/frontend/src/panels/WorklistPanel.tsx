@@ -8,6 +8,7 @@ import type { WorklistEntry, WorklistMark, NetWorklistEntry, NetWorklistMark, Wo
 import { NoteBody } from '../components/DiagnosisNotes';
 import { selectionSetStore } from '../store/selection-set-store';
 import { boardStore } from '../store/board-store';
+import { isLiteBuild } from '../store/build-mode';
 import { useWorklist } from '../hooks/useWorklist';
 import { useSelectionSet } from '../hooks/useSelectionSet';
 import { useBoardStore } from '../hooks/useBoardStore';
@@ -393,7 +394,7 @@ function ActiveWorklistView() {
           <WorklistNetRow key={'net:' + entry.netName} worklistId={activeWorklist.id} entry={entry} />
         ))}
       </div>
-      <AiWorklistSection worklist={activeWorklist} />
+      {!isLiteBuild() && <AiWorklistSection worklist={activeWorklist} />}
     </>
   );
 }
