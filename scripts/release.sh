@@ -505,8 +505,25 @@ LFTP_EOF
       echo "WARN: could not re-fetch published manifest/signature for post-upload verify (CDN lag?)." >&2
     fi
     rm -rf "$LIVE_DIR"
+
+    # --- Lite web app + downloadable offline HTML (boardripper/web) ---
+    # The backend-free browser build (ripperdoc.de/boardripper/web) and the
+    # single-file download (boardripper-lite.html) are a release target too.
+    # deploy-lite.sh rebuilds both from the just-bumped src/frontend/package.json
+    # (so their __APP_VERSION__ matches $VERSION) and uploads ONLY the
+    # /boardripper/web subtree (mirror --reverse --delete). Non-fatal: the Docker
+    # release is already published, so a lite hiccup just warns. See LITE_BUILD.md.
+    echo ">>> Building + uploading lite web app + offline HTML (boardripper/web)"
+    if FTP_USER="$FTP_USER" FTP_PASSWORD="$FTP_PASSWORD" FTP_ADDRESS="ftp.ripperdoc.de" \
+         bash "$REPO_ROOT/src/frontend/scripts/deploy-lite.sh"; then
+      echo "    lite web + boardripper-lite.html live ✓"
+    else
+      echo "WARN: lite web deploy failed — Docker release is already published." >&2
+      echo "      Retry: cd src/frontend && npm run deploy:lite" >&2
+    fi
   else
     echo ">>> [DRY RUN] Would upload manifest, signature, tarball, and site artifacts to ftp.ripperdoc.de"
+    echo ">>> [DRY RUN] Would build + upload the lite web app + boardripper-lite.html to /boardripper/web"
   fi
 fi
 

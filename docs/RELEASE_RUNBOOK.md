@@ -74,7 +74,7 @@ The script will:
 7. Save image as tarball, generate `manifest.json`, prompt for minisign passphrase to sign.
 8. Build drop-to-update bundle.
 9. Render landing-page version block + `changelog.html` + `third_party.html`.
-10. Upload via lftp to ftp.ripperdoc.de with atomic renames.
+10. Upload via lftp to ftp.ripperdoc.de with atomic renames — **including the lite web build**: `deploy-lite.sh` rebuilds the backend-free browser app (`boardripper/web`) and the single-file `boardripper-lite.html` from the just-bumped `package.json` (so their in-app version matches `$VERSION`) and uploads only the `/boardripper/web` subtree (`mirror --reverse --delete`, prunes old hashed assets). Non-fatal — a lite hiccup warns but doesn't fail an already-published Docker release; retry with `cd src/frontend && npm run deploy:lite`.
 11. Verify the published manifest reports the expected version.
 12. **If desktop builds were requested**: run `desktop/build-all.mjs`, verify zip integrity + macOS codesign, then **upload the three zips to FTP** under `/boardripper/desktop/` &mdash; both versioned (`BoardRipper-{macOS-universal,Legacy-macOS-x64,Windows-x64}-vX.Y.Z.zip`, archived) and the always-newest `-latest.zip` pointers (atomic via `.new` rename). GitHub Releases is the primary host for desktop downloads; the FTP mirror is the failover when github.com is unreachable.
 13. Commit (`.release-counter` + `package.json`), tag `v0.X.Y`.
@@ -264,5 +264,8 @@ After a successful release, the following are uploaded to `ftp.ripperdoc.de:/pub
 - `releases/latest-update.tar` (copy of the same, atomic-renamed)
 - `releases/index.html` (release index page)
 - `screenshots/*.png` (landing-page assets)
+- `web/` — the **lite web app** (backend-free browser build; hosted at `ripperdoc.de/boardripper/web`, PWA-installable). Uploaded by `deploy-lite.sh` (separate `--delete` mirror scoped to `/boardripper/web`), not the atomic mirror above.
+- `web/boardripper-lite.html` — the **single-file offline build** (downloadable, opens from `file://`; the toolbar "Offline copy" button links here).
+- `web/.htaccess` — app-scoped MIME + CSP overrides the LiteSpeed host needs for the SPA (see `src/frontend/LITE_BUILD.md`).
 
 The atomic `.new`-then-rename trick on the manifest and `latest.tar.gz` ensures clients downloading mid-upload never see a half-written file.
