@@ -1,6 +1,7 @@
 import { lookupBoard } from './apple-boards';
 import { log } from './log-store';
 import { Emitter } from './emitter';
+import { isLiteBuild } from './build-mode';
 import { libraryCache } from './library-cache';
 import { libraryLoadStore } from './library-load-store';
 import { updateStore } from './update-store';
@@ -23,6 +24,7 @@ export function isElectron(): boolean {
  *  instead of loadFile's file:// origin) — see docs/specs/
  *  2026-07-15-desktop-mcp-backend-sidecar-design.md §4. */
 export function hasBackend(): boolean {
+  if (isLiteBuild()) return false;   // lite web build: no HTTP backend, ever
   return !isElectron() || (typeof location !== 'undefined' && location.protocol !== 'file:');
 }
 
@@ -833,6 +835,16 @@ class DatabankStore extends Emitter {
       // History stays the default once the user has actually opened files.
       if (this._viewMode === 'history' && this._recentItems.length === 0) {
         this._viewMode = 'metadata';
+      }
+
+      // Lite web build: no HTTP backend and no Electron IPC — there is
+      // nothing to load. Present an empty, ready library so the UI (which
+      // hides backend surfaces via isLiteBuild) never spins or fires dead
+      // /api calls.
+      if (isLiteBuild()) {
+        this._loadStatus = 'loaded';
+        this.notify();
+        return;
       }
 
       // Electron with NO backend sidecar: IPC-only path, unchanged. When a
