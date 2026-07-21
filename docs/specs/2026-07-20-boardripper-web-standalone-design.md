@@ -1,7 +1,7 @@
 # BoardRipper Web — Lite Build (Backend-Free) — Design
 
 **Date:** 2026-07-20 (revised 2026-07-21 after model review: renamed demo → lite, closed gating gaps)
-**Status:** Design — approved decisions captured; pending final user review
+**Status:** Implemented (2026-07-21) — see plan `docs/plans/2026-07-20-boardripper-web-standalone-plan.md` and `src/frontend/LITE_BUILD.md`. Branch `feat/web-lite-build`; lite E2E (`npm run test:lite`) green.
 **Topic:** The lite build of BoardRipper: the full frontend as a client-only
 static site with no Go backend. Hosted first at
 `https://www.ripperdoc.de/boardripper/web/`, later mirrored to a `*.web.app`
