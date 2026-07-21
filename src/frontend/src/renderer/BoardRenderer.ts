@@ -5522,8 +5522,10 @@ export class BoardRenderer {
     let top = y - th - offset;
     if (top < 2) top = y + offset;
     top = Math.max(2, Math.min(top, ch - th - 2));
-    el.style.left = left + 'px';
-    el.style.top = top + 'px';
+    // Position via transform (not left/top) so a hover move is a compositor-only
+    // update — no layout invalidation, no WebGL-canvas recomposite each frame.
+    // The CSS pins left/top at 0 so this translate is the absolute position.
+    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
   }
 
   private hideTooltip() {

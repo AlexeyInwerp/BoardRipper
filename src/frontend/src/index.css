@@ -3183,6 +3183,17 @@ body {
 .pin-net-tooltip {
   display: none;
   position: absolute;
+  /* Positioned via transform (BoardRenderer.repositionTooltip), NOT top/left,
+     so hover moves are compositor-only — no per-frame layout. left/top pin the
+     origin at (0,0) for the translate. `will-change: transform` promotes the
+     tooltip to its own GPU layer and `contain` bounds the one forced measure in
+     showTooltip to this subtree. Without these, hovering re-layouts + re-
+     composites the WebGL canvas each frame and tanks fps on Windows Firefox
+     (WebRender) even though the GPU is idle. */
+  left: 0;
+  top: 0;
+  will-change: transform;
+  contain: layout paint;
   pointer-events: none;
   z-index: 200;
   padding: 5px 9px;
