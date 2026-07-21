@@ -10,7 +10,11 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PORT = Number(process.argv[2] ?? 18086);
+// Robust against junk argv (e.g. a copy-pasted trailing `# comment` that zsh
+// forwards to the script as an argument): fall back to the default on anything
+// that isn't a valid port number.
+const argPort = Number(process.argv[2]);
+const PORT = Number.isInteger(argPort) && argPort > 0 && argPort < 65536 ? argPort : 18086;
 const PREFIX = '/boardripper/web';
 const ROOT = fileURLToPath(new URL('../dist-lite', import.meta.url));
 
