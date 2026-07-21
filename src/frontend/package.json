@@ -9,6 +9,7 @@
     "build:lite": "tsc -b && vite build --mode lite",
     "preview:lite": "vite preview --mode lite",
     "serve:lite": "node scripts/serve-lite.mjs",
+    "deploy:lite": "bash scripts/deploy-lite.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "npx playwright test",
