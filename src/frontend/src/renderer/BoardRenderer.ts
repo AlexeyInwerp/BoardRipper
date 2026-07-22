@@ -635,6 +635,17 @@ export class BoardRenderer {
   // the renderer's lifetime (rendering-review-2026-07-12 finding C1).
   private viewportStates = new WeakMap<BoardData, ViewportState>();
 
+  /** Field regression 2026-07-21 (Safari + AMD Polaris, e.g. Radeon Pro 580X
+   *  iMacs on Sequoia): WebKit's WebGL-on-Metal samples stale vertex memory
+   *  when long-lived retained stroke buffers (the A5 net-line bake) coexist
+   *  with heavy per-frame geometry churn (hover-GND punch-through) — renders
+   *  as garbage lines between all ground pads, scaling with GND pad count.
+   *  Chrome on the same GPU and Apple-Silicon Safari are unaffected. On
+   *  Safari we keep the pre-v0.31.41 per-frame clear+re-issue semantics
+   *  (identical pixels, driver-friendly buffer churn). */
+  private static readonly SAFARI_CONSERVATIVE_GFX =
+    typeof navigator !== 'undefined' && /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+
   /** A3 (rendering-review-2026-07-12): renderSelection repaints fire for
    *  hover-dim changes too — only mark net-line geometry dirty when the
    *  net-line-relevant selection (net/part/pin) or board actually changed,
@@ -4835,8 +4846,9 @@ export class BoardRenderer {
     // A5 fast path — plain solid lines (no fade, no dash): geometry is baked
     // once into netLinesGfx (base colors) + a pulse-colored child layer, and
     // the pulse animates only the child's alpha. The per-frame cost drops
-    // from full path re-issue to one alpha write.
-    if (!useFade && !s.netLineDashed) {
+    // from full path re-issue to one alpha write. Skipped on Safari — see
+    // SAFARI_CONSERVATIVE_GFX (WebKit+Polaris stale-buffer artifact).
+    if (!useFade && !s.netLineDashed && !BoardRenderer.SAFARI_CONSERVATIVE_GFX) {
       const sig = `${lineW.toFixed(4)}|${s.netLineAlpha}`;
       if (sig !== this.netLineBakeSig) {
         this.netLineBakeSig = sig;
@@ -4862,16 +4874,25 @@ export class BoardRenderer {
       return;
     }
 
-    // Slow path (fade and/or dashed): geometry genuinely changes per frame.
+    // Slow path (fade/dashed, and ALL modes on Safari — conservative
+    // per-frame re-issue, the exact pre-v0.31.41 behavior).
     if (this.netLinesPulseGfx) this.netLinesPulseGfx.alpha = 0;
     this.netLinesGfx.clear();
     for (const [baseColor, segs] of this.netLineSegmentsByColor) {
       const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
-      for (const { start, end } of segs) {
-        if (useFade) {
-          this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-        } else {
-          this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+      if (!useFade && !s.netLineDashed) {
+        for (const { start, end } of segs) {
+          this.netLinesGfx.moveTo(start.x, start.y);
+          this.netLinesGfx.lineTo(end.x, end.y);
+        }
+        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+      } else {
+        for (const { start, end } of segs) {
+          if (useFade) {
+            this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+          } else {
+            this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+          }
         }
       }
     }
