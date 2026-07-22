@@ -84,8 +84,14 @@ function boardDescriptor() {
     pdfs: pdfStore.openPdfEntries().map((e) => ({
       name: e.fileName, page: pdfStore.pageOf(e.fileName), pageCount: pdfStore.pageCountOf(e.fileName), fileId: e.fileId ?? null,
     })),
-    // Changes iff the active board changes; the helper re-reads when it differs.
-    generation: `${boardStore.activeTabId ?? ''}:${tab?.fileName ?? ''}`,
+    // Changes iff the active board changes OR its parsed data lands. The tab id
+    // + filename are set at makeTab() time — BEFORE the board parses — so keying
+    // on them alone latches the initial empty (0/0) descriptor: parse completes
+    // without changing the string, so the change-gated push in startMcpBridge
+    // never re-fires and board_sessions/board_active stay stuck at parts:0/nets:0.
+    // Folding in the counts makes the string flip when data lands (and on
+    // revision switches that change counts), forcing a fresh push.
+    generation: `${boardStore.activeTabId ?? ''}:${tab?.fileName ?? ''}:${b ? b.parts.length : 0}:${b ? b.nets.size : 0}`,
   };
 }
 
