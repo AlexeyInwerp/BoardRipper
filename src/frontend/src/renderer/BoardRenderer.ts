@@ -635,6 +635,47 @@ export class BoardRenderer {
   // the renderer's lifetime (rendering-review-2026-07-12 finding C1).
   private viewportStates = new WeakMap<BoardData, ViewportState>();
 
+  /** Chunked draw pools for the net punch-through/glow redraw: with huge
+   *  nets (GND ≈ 7.5k pads on NM-D562-class boards) a single Graphics
+   *  accumulates >65,535 vertices, flipping pixi to 32-bit indices — which
+   *  WebKit-on-Polaris (2019 iMac Safari) renders as garbage lines between
+   *  the pads. Splitting into ≤CHUNK-pad Graphics keeps every geometry
+   *  uint16-indexed. Pools are children of selectionGfx/butterflySelectionGfx
+   *  (inherit lifecycle/z); cleared + cursor-reset every renderSelection.
+   *  Same field bug as SAFARI_CONSERVATIVE_GFX below — this addresses the
+   *  punch-through half. */
+  private static readonly PUNCH_CHUNK_PADS = 1200;
+  private selectionChunkPool: Graphics[] = [];
+  private butterflyChunkPool: Graphics[] = [];
+  private chunkCursorTop = 0;
+  private chunkCursorBot = 0;
+
+  private nextChunkGfx(host: Graphics, pool: Graphics[], cursor: number): Graphics {
+    let g = pool[cursor];
+    if (!g) {
+      g = new Graphics();
+      g.eventMode = 'none';
+      pool[cursor] = g;
+      host.addChild(g);
+    }
+    return g;
+  }
+
+  /** Run `fns` into chunk Graphics of ≤PUNCH_CHUNK_PADS entries each, calling
+   *  `finish` (fill/stroke) per chunk. Returns the advanced cursor. */
+  private flushChunked(
+    host: Graphics, pool: Graphics[], cursor: number,
+    fns: ((g: Graphics) => void)[], finish: (g: Graphics) => void,
+  ): number {
+    for (let i = 0; i < fns.length; i += BoardRenderer.PUNCH_CHUNK_PADS) {
+      const g = this.nextChunkGfx(host, pool, cursor++);
+      const end = Math.min(i + BoardRenderer.PUNCH_CHUNK_PADS, fns.length);
+      for (let j = i; j < end; j++) fns[j](g);
+      finish(g);
+    }
+    return cursor;
+  }
+
   /** Field regression 2026-07-21 (Safari + AMD Polaris, e.g. Radeon Pro 580X
    *  iMacs on Sequoia): WebKit's WebGL-on-Metal samples stale vertex memory
    *  when long-lived retained stroke buffers (the A5 net-line bake) coexist
@@ -4065,14 +4106,19 @@ export class BoardRenderer {
     const seenParts = new Set<number>();
     const ghostPartIndices: number[] = [];
     const seenGhosts = new Set<number>();
-    const topPartOutlines: (() => void)[] = [];
-    const botPartOutlines: (() => void)[] = [];
-    const topByColor = new Map<number, (() => void)[]>();
-    const botByColor = new Map<number, (() => void)[]>();
+    const topPartOutlines: ((g: Graphics) => void)[] = [];
+    const botPartOutlines: ((g: Graphics) => void)[] = [];
+    const topByColor = new Map<number, ((g: Graphics) => void)[]>();
+    const botByColor = new Map<number, ((g: Graphics) => void)[]>();
     // Highlight glow draw fns, grouped by glow color so adjacent nets render
     // their pads in adjacentNetLineColor while the primary net stays yellow.
-    const topHighlightsByColor = new Map<number, (() => void)[]>();
-    const botHighlightsByColor = new Map<number, (() => void)[]>();
+    const topHighlightsByColor = new Map<number, ((g: Graphics) => void)[]>();
+    const botHighlightsByColor = new Map<number, ((g: Graphics) => void)[]>();
+    // Reset punch-through chunk pools for this frame.
+    this.chunkCursorTop = 0;
+    this.chunkCursorBot = 0;
+    for (const g of this.selectionChunkPool) g.clear();
+    for (const g of this.butterflyChunkPool) g.clear();
     const affectedTopNames = new Set<string>();
     const affectedBotNames = new Set<string>();
 
@@ -4128,15 +4174,14 @@ export class BoardRenderer {
             // white accent (see the `sel.partIndex` block), so keep it OUT of the
             // muted net-member batch — otherwise it gets both treatments. (#23)
             if (ref.partIndex === sel.partIndex) continue;
-            const gfx = gfxFor(part);
-            const isBot = gfx === this.butterflySelectionGfx;
+            const isBot = gfxFor(part) === this.butterflySelectionGfx;
             const outlines = isBot ? botPartOutlines : topPartOutlines;
             if (part.pins.length === 1) {
               const pin = part.pins[0];
               const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-              outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+              outlines.push((g) => g.circle(pin.position.x, pin.position.y, r));
             } else {
-              outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
+              outlines.push((g) => drawPartOutline(g, part, s, s.selectionPadding));
             }
           }
         }
@@ -4147,8 +4192,7 @@ export class BoardRenderer {
           const pin = part?.pins[ref.pinIndex];
           if (!pin || !part || !this.isPartVisible(part)) continue;
 
-          const gfx = gfxFor(part);
-          const isBotGfx = gfx === this.butterflySelectionGfx;
+          const isBotGfx = gfxFor(part) === this.butterflySelectionGfx;
 
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
@@ -4160,7 +4204,7 @@ export class BoardRenderer {
           // Resolve pad geometry once.
           const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
           const pb = pin.padBounds;
-          const pushDim = (fn: () => void) => {
+          const pushDim = (fn: (g: Graphics) => void) => {
             if (!dimForHighlight) return;
             const map = isBotGfx ? botByColor : topByColor;
             let arr = map.get(pinColor);
@@ -4169,7 +4213,7 @@ export class BoardRenderer {
           };
           const isSelectedPin =
             ref.partIndex === sel.partIndex && ref.pinIndex === sel.pinIndex;
-          const pushGlow = (fn: () => void) => {
+          const pushGlow = (fn: (g: Graphics) => void) => {
             // Landrex / "clean" mode: suppress the yellow halo overlay around
             // every pin on the highlighted net. The explicitly-clicked pin is
             // exempt — it always keeps its halo so the user sees what they
@@ -4189,8 +4233,8 @@ export class BoardRenderer {
           const usePadShapeForGlow = boardStore.showPads;
           if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
-            pushDim(() => drawPoly(gfx, padPoly));
-            pushGlow(() => drawPoly(gfx, padPoly));
+            pushDim((g) => drawPoly(g, padPoly));
+            pushGlow((g) => drawPoly(g, padPoly));
           } else if (usePadShapeForGlow && pb) {
             const grow = s.netHighlightGrow;
             const padGeom: PadGeometry = {
@@ -4202,13 +4246,13 @@ export class BoardRenderer {
               cornerRadius: pin.padCornerRadius,
               polygon: pin.padPolygon,
             };
-            pushDim(() => drawPadShape(gfx, padGeom));
-            pushGlow(() => drawPadShape(gfx, padGeom, grow));
+            pushDim((g) => drawPadShape(g, padGeom));
+            pushGlow((g) => drawPadShape(g, padGeom, grow));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            pushDim(() => gfx.circle(pin.position.x, pin.position.y, r));
-            pushGlow(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
+            pushDim((g) => g.circle(pin.position.x, pin.position.y, r));
+            pushGlow((g) => g.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
           }
         }
       }
@@ -4220,16 +4264,14 @@ export class BoardRenderer {
       // above), not from dimming the members. (#23)
       const memberWidth = s.selectionWidth;
       const memberStrokeAlpha = 0.85;
-      for (const fn of topPartOutlines) fn();
-      if (topPartOutlines.length > 0) {
-        this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        this.selectionGfx.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
-      }
-      for (const fn of botPartOutlines) fn();
-      if (botPartOutlines.length > 0) {
-        this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        this.butterflySelectionGfx.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
-      }
+      this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, topPartOutlines, (g) => {
+        g.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
+        g.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
+      });
+      this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, botPartOutlines, (g) => {
+        g.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
+        g.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
+      });
 
       // Re-clone affected labels above the dim overlay.
       if (dimForHighlight && this.activeScene) {
@@ -4250,14 +4292,13 @@ export class BoardRenderer {
         }
       }
 
-      // Pin redraws above dim, grouped by pin color (full alpha).
+      // Pin redraws above dim, grouped by pin color (full alpha), chunked so
+      // no single Graphics crosses the uint16-index vertex ceiling.
       for (const [color, fns] of topByColor) {
-        for (const fn of fns) fn();
-        this.selectionGfx.fill({ color, alpha: 1.0 });
+        this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, fns, (g) => g.fill({ color, alpha: 1.0 }));
       }
       for (const [color, fns] of botByColor) {
-        for (const fn of fns) fn();
-        this.butterflySelectionGfx.fill({ color, alpha: 1.0 });
+        this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, fns, (g) => g.fill({ color, alpha: 1.0 }));
       }
 
       // Highlight glow on top, per glow color (yellow for primary, bluish
@@ -4268,14 +4309,16 @@ export class BoardRenderer {
       // label coverage on dense BGA rails.
       const ringW = s.selectionWidth * 0.6;
       for (const [glowColor, fns] of topHighlightsByColor) {
-        for (const fn of fns) fn();
-        this.selectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
-        this.selectionGfx.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
+        this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, fns, (g) => {
+          g.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+          g.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
+        });
       }
       for (const [glowColor, fns] of botHighlightsByColor) {
-        for (const fn of fns) fn();
-        this.butterflySelectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
-        this.butterflySelectionGfx.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
+        this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, fns, (g) => {
+          g.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+          g.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
+        });
       }
 
       // ── Trace highlight (PRIMARY net only) ───────────────────────────
