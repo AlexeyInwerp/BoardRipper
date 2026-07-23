@@ -666,15 +666,27 @@ export class BoardRenderer {
     return g;
   }
 
-  /** Run `fns` into chunk Graphics of ≤PUNCH_CHUNK_PADS entries each, calling
+  /** Effective pads-per-chunk. PUNCH_CHUNK_PADS assumes normal pin radii
+   *  (~40 verts/pad). Resize Mode's `pinSizeScale` enlarges every glow ring,
+   *  and pixi tessellates a circle with more segments as its radius grows —
+   *  so a scale-agnostic 1200-pad chunk would overflow the uint16 ceiling
+   *  again at high scale. Divide the pad budget by the scale (conservative:
+   *  verts grow ~≤ linearly with radius) so each chunk stays ≤ the ceiling. */
+  private punchChunkPads(): number {
+    const scale = renderSettingsStore.settings.pinSizeScale || 1;
+    return Math.max(150, Math.floor(BoardRenderer.PUNCH_CHUNK_PADS / Math.max(1, scale)));
+  }
+
+  /** Run `fns` into chunk Graphics of ≤punchChunkPads() entries each, calling
    *  `finish` (fill/stroke) per chunk. Returns the advanced cursor. */
   private flushChunked(
     host: Graphics, pool: Graphics[], cursor: number,
     fns: ((g: Graphics) => void)[], finish: (g: Graphics) => void,
   ): number {
-    for (let i = 0; i < fns.length; i += BoardRenderer.PUNCH_CHUNK_PADS) {
+    const chunkPads = this.punchChunkPads();
+    for (let i = 0; i < fns.length; i += chunkPads) {
       const g = this.nextChunkGfx(host, pool, cursor++);
-      const end = Math.min(i + BoardRenderer.PUNCH_CHUNK_PADS, fns.length);
+      const end = Math.min(i + chunkPads, fns.length);
       for (let j = i; j < end; j++) fns[j](g);
       finish(g);
     }
