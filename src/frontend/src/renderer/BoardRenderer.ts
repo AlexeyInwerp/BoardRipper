@@ -352,6 +352,10 @@ export class BoardRenderer {
    *  handleClick (pixi-viewport's "clicked" event fires on pointerup but
    *  doesn't carry the down-time modifier reliably across browsers). */
   private lastPointerShift = false;
+  /** Client (CSS) coords of the last primary pointerdown — used to place the
+   *  Resize Mode popup at the real cursor (viewport.toScreen is in DPR-scaled
+   *  device px, wrong for a position:fixed DOM popup). */
+  private lastPointerClient = { x: 0, y: 0 };
   /** Click-cycle state for stacked/overlapping component selection (#23).
    *  `key` is the ordered set of part indices under the anchor; `index` is the
    *  current position in the smallest-first stack. Reset to null on pointer
@@ -1562,7 +1566,10 @@ export class BoardRenderer {
     // multiple stop-propagation paths; reading the down-time modifier from
     // a capture-phase listener is the most reliable signal.
     this.boundShiftCapture = (e: PointerEvent) => {
-      if (e.button === 0) this.lastPointerShift = e.shiftKey;
+      if (e.button === 0) {
+        this.lastPointerShift = e.shiftKey;
+        this.lastPointerClient = { x: e.clientX, y: e.clientY };
+      }
     };
     this.containerEl.addEventListener('pointerdown', this.boundShiftCapture, { capture: true });
 
@@ -5808,14 +5815,20 @@ export class BoardRenderer {
    *  Text wins over the pin beneath it so a net-name label is directly
    *  editable. Empty space closes the popup. */
   private handleResizeClick(world: Point) {
-    const sp = this.viewport.toScreen(world.x, world.y);       // canvas CSS px
+    // Popup goes at the real cursor (client px === position:fixed coords).
+    const pageX = this.lastPointerClient.x;
+    const pageY = this.lastPointerClient.y;
+    // Canvas-local CSS px for the label overlay hit-test (its boxes are in the
+    // container's CSS coordinate space, NOT viewport device px).
     const rect = this.containerEl.getBoundingClientRect();
-    const pageX = rect.left + sp.x;
-    const pageY = rect.top + sp.y;
+    const localX = pageX - rect.left;
+    const localY = pageY - rect.top;
 
-    // 1. Text label? (part name, pin number, net name — all governed by labelMinSize)
-    if (this.textFastMode?.hitTest(sp.x, sp.y)) {
-      resizeModeStore.openFor('text', pageX, pageY, null);
+    // 1. Text label? Component (part) labels get their own scale knob; pin
+    //    numbers / net names / diode readings are governed by labelMinSize.
+    const labelKind = this.textFastMode?.hitTest(localX, localY);
+    if (labelKind) {
+      resizeModeStore.openFor(labelKind === 'part' ? 'partText' : 'text', pageX, pageY, null);
       return;
     }
 

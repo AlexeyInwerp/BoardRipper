@@ -100,6 +100,10 @@ export interface RenderSettings {
    *  auto-computed size, so tiny parts still get a readable label. */
   labelMinSize: number;
   labelHideThreshold: number;
+  /** Multiplier on the computed part-designator (component) label size.
+   *  Part labels are auto-fit to the part body, so `labelMinSize` (a floor)
+   *  barely moves them; this scales them directly. 1 = geometry-fit default. */
+  partLabelScale: number;
 
   pinMinRadius: number;
   pinMaxRadius: number;
@@ -482,6 +486,7 @@ export const DEFAULTS: RenderSettings = {
   partLabelShadow: false,
   pinLabelShadow: true,
   labelMinSize: 3,
+  partLabelScale: 1,
   labelHideThreshold: 2,
 
   pinMinRadius: 3,

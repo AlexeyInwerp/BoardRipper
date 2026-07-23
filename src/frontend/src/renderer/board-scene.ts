@@ -1707,6 +1707,9 @@ export function buildBoardScene(
         fontSize = targetW / (part.name.length * 0.6);
         fontSize = Math.max(s.labelMinSize, Math.min(fontSize, eb.ph * 0.8));
       }
+      // Direct scale on the fitted size (applied after the fit-clamp so labels
+      // can grow beyond the part body). Resize Mode edits this per component.
+      fontSize *= s.partLabelScale || 1;
       fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
         const labelColor: number = BOARD_COLORS.labelPart;

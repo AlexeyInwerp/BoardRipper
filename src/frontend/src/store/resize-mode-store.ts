@@ -12,8 +12,8 @@
 import { Emitter } from './emitter';
 import { renderSettingsStore, type RenderSettings } from './render-settings';
 
-/** The three element classes the board exposes for direct resize. */
-export type ResizeKind = 'text' | 'pin' | 'part';
+/** The element classes the board exposes for direct resize. */
+export type ResizeKind = 'text' | 'partText' | 'pin' | 'part';
 
 export interface ResizeTargetDef {
   /** The global RenderSettings key this class edits. */
@@ -39,7 +39,16 @@ export const RESIZE_TARGETS: Record<ResizeKind, ResizeTargetDef> = {
     min: 1,
     max: 30,
     step: 1,
-    hint: 'Minimum label size — floors all board text (part names, pin numbers, net names).',
+    hint: 'Minimum label size — floors pin numbers and net names.',
+  },
+  partText: {
+    key: 'partLabelScale',
+    label: 'Component label size',
+    unit: '×',
+    min: 0.3,
+    max: 4,
+    step: 0.1,
+    hint: 'Scales every component (part designator) label.',
   },
   pin: {
     key: 'pinMinRadius',
