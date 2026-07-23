@@ -10,7 +10,7 @@
  *  See docs/superpowers/specs/*-resize-mode-*.md (brainstorm) for rationale.
  */
 import { Emitter } from './emitter';
-import { renderSettingsStore, type RenderSettings } from './render-settings';
+import { renderSettingsStore, DEFAULTS, type RenderSettings } from './render-settings';
 
 /** The element classes the board exposes for direct resize. */
 export type ResizeKind = 'text' | 'partText' | 'pin' | 'part';
@@ -152,6 +152,15 @@ class ResizeModeStore extends Emitter {
     }
     this._popup = { ...p, value };
     this.rebuild();
+  }
+
+  /** Reset the open popup's governed setting to its compile-time default
+   *  (double-click convention, matching the rest of the UI). */
+  reset() {
+    const p = this._popup;
+    if (!p) return;
+    const def = RESIZE_TARGETS[p.kind];
+    this.commit(DEFAULTS[def.key] as number);
   }
 
   /** Nudge the open popup's value by ±1 step (for +/- buttons and wheel). */

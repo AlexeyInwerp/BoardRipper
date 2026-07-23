@@ -79,13 +79,15 @@ export function ResizePopup() {
           type="range"
           min={def.min} max={def.max} step={def.step} value={popup.value}
           onChange={(e) => resizeModeStore.commit(Number(e.target.value))}
+          onDoubleClick={() => resizeModeStore.reset()}
+          title="Double-click to reset to default"
           style={{ flex: 1, accentColor: 'var(--accent)' }}
         />
         <button onClick={() => resizeModeStore.nudge(1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
       </div>
 
       <div style={{ marginTop: 6, color: 'var(--text-secondary)', opacity: 0.7, fontSize: 11 }}>
-        {def.hint} · scroll to adjust
+        {def.hint} · scroll to adjust · double-click to reset
       </div>
     </div>,
     document.body,
