@@ -23,6 +23,7 @@ import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRend
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
+import { resizeModeStore } from '../store/resize-mode-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
@@ -5737,6 +5738,14 @@ export class BoardRenderer {
       this.dragZoomConsumedClick = false;
       return;
     }
+    // Resize Mode intercepts the click: classify the element under the cursor
+    // and open its resize popup instead of selecting. Pan/zoom are unaffected
+    // (pixi-viewport only emits 'clicked' when the pointer didn't drag).
+    if (resizeModeStore.enabled) {
+      this.lastPointerShift = false;
+      this.handleResizeClick(world);
+      return;
+    }
     const shift = this.lastPointerShift;
     this.lastPointerShift = false;
 
@@ -5792,6 +5801,41 @@ export class BoardRenderer {
       return;
     }
     if (!shift) boardStore.selectPart(null);
+  }
+
+  /** Resize Mode click: classify the element under the cursor (text label →
+   *  pin → part body) and open the matching resize popup at the click point.
+   *  Text wins over the pin beneath it so a net-name label is directly
+   *  editable. Empty space closes the popup. */
+  private handleResizeClick(world: Point) {
+    const sp = this.viewport.toScreen(world.x, world.y);       // canvas CSS px
+    const rect = this.containerEl.getBoundingClientRect();
+    const pageX = rect.left + sp.x;
+    const pageY = rect.top + sp.y;
+
+    // 1. Text label? (part name, pin number, net name — all governed by labelMinSize)
+    if (this.textFastMode?.hitTest(sp.x, sp.y)) {
+      resizeModeStore.openFor('text', pageX, pageY, null);
+      return;
+    }
+
+    // 2. Pin / part body.
+    const stack = this.hitTestStack(world);
+    if (stack.length > 0) {
+      const hit = stack[0];
+      const part = this.board?.parts[hit.partIndex];
+      if (hit.pinIndex >= 0 && part) {
+        const pin = part.pins[hit.pinIndex];
+        const ctx = pin ? `${part.name} · ${pin.net || pinDisplayId(pin, hit.pinIndex)}` : part.name;
+        resizeModeStore.openFor('pin', pageX, pageY, ctx);
+      } else {
+        resizeModeStore.openFor('part', pageX, pageY, part?.name ?? null);
+      }
+      return;
+    }
+
+    // 3. Empty space → dismiss.
+    resizeModeStore.close();
   }
 
   /** Select a stack entry — a pin selection when a pad/pin was hit, else the

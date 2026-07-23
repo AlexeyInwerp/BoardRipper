@@ -80,6 +80,10 @@ export class LabelOverlay {
   lastDrawMs = 0;
   lastCounts = { visible: 0, total: 0 };
   private lastSlowDrawLogAt = 0;
+  /** Screen-space bounding boxes of every label painted in the last draw,
+   *  in CSS px (same space as the renderer canvas). Consumed by hitTest()
+   *  for Resize Mode's "did the click land on text?" classification. */
+  private lastBoxes: Array<{ x0: number; y0: number; x1: number; y1: number; kind: LabelRecord['kind'] }> = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -127,6 +131,7 @@ export class LabelOverlay {
     ctx.clearRect(0, 0, view.width, view.height);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    this.lastBoxes.length = 0;
 
     // Cull ONCE per side, then iterate the three paint passes over the
     // pre-culled arrays (painter's order: dimmed → lit → selected-on-top).
@@ -165,6 +170,11 @@ export class LabelOverlay {
           }
           ctx.fillStyle = this.css(r.color);
           ctx.fillText(r.text, sx, sy);
+          // Record the painted box (centered draw) for Resize Mode hit-testing.
+          // A few px of slop makes small labels easier to click.
+          const hw = textW / 2 + 3;
+          const hh = fontPx / 2 + 3;
+          this.lastBoxes.push({ x0: sx - hw, y0: sy - hh, x1: sx + hw, y1: sy + hh, kind: r.kind });
         }
       }
     }
@@ -176,6 +186,17 @@ export class LabelOverlay {
       this.lastSlowDrawLogAt = t0;
       log.perf.log(`label overlay draw ${ms.toFixed(1)}ms visible=${visible}`);
     }
+  }
+
+  /** Resize Mode: return the topmost label box containing the given
+   *  canvas-space (CSS px) point, or null. Iterates last-painted-first so the
+   *  visually-on-top label (selected pass drawn last) wins. */
+  hitTest(sx: number, sy: number): LabelRecord['kind'] | null {
+    for (let i = this.lastBoxes.length - 1; i >= 0; i--) {
+      const b = this.lastBoxes[i];
+      if (sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1) return b.kind;
+    }
+    return null;
   }
 
   destroy(): void { this.canvas.remove(); }
