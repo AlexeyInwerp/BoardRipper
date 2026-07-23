@@ -6,6 +6,7 @@
  *  Interaction: −/+ buttons, a slider, direct number entry, and wheel-to-nudge
  *  while the pointer is over the popup. Closes on Escape or outside click. */
 import { useRef, useEffect, useSyncExternalStore, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { resizeModeStore, RESIZE_TARGETS } from '../store/resize-mode-store';
 
 function subscribe(cb: () => void) {
@@ -47,7 +48,7 @@ export function ResizePopup() {
   const left = Math.min(Math.max(8, popup.pageX + 12), window.innerWidth - W - 8);
   const top = Math.min(Math.max(8, popup.pageY + 12), window.innerHeight - H - 8);
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       onWheel={onWheel}
@@ -86,7 +87,8 @@ export function ResizePopup() {
       <div style={{ marginTop: 6, color: 'var(--text-secondary)', opacity: 0.7, fontSize: 11 }}>
         {def.hint} · scroll to adjust
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
