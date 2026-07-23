@@ -51,9 +51,12 @@ async function openLibrary(page: import('@playwright/test').Page) {
  *  viewport before returning. Throws if the tab is not found or if the bench
  *  area is not in the viewport (guards against portaled / display:none bugs). */
 async function openBenchTab(page: import('@playwright/test').Page) {
-  const tab = page.getByTestId('bench-tab');
-  await expect(tab).toBeVisible({ timeout: 5_000 });
-  await tab.click();
+  // Donor boards is now a sub-item under the PDF tab: click PDF to open its
+  // menu, then pick "Donor boards".
+  const pdfTab = page.getByTestId('pdf-tab');
+  await expect(pdfTab).toBeVisible({ timeout: 5_000 });
+  await pdfTab.click();
+  await page.getByRole('menuitemradio', { name: 'Donor boards' }).click();
 
   const bench = page.locator('.library-bench');
   await expect(bench).toBeVisible({ timeout: 3_000 });

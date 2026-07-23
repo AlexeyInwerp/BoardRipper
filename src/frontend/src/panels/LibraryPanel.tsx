@@ -9,7 +9,7 @@ import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
 import { lookupBoard } from '../store/apple-boards';
-import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck } from '@tabler/icons-react';
+import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText } from '@tabler/icons-react';
 import { log } from '../store/log-store';
 import { fetchWithCloudRetry, readCloudError, formatCloudErrorToast } from '../store/fetch-with-cloud-retry';
 import { ObdSection } from '../components/ObdSection';
@@ -202,6 +202,30 @@ export function LibraryPanel() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [sourceMenuOpen, closeSourceMenu]);
   useEffect(() => () => { if (sourceMenuTimerRef.current) clearTimeout(sourceMenuTimerRef.current); }, []);
+
+  // PDF tab sub-menu (PDF search / Donor boards) — same auto-dismiss dropdown
+  // system as the Folders source menu above, but its own state so the two
+  // never collide.
+  const [pdfMenuOpen, setPdfMenuOpen] = useState(false);
+  const pdfMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pdfMenuWrapRef = useRef<HTMLDivElement>(null);
+  const armPdfMenuTimeout = useCallback(() => {
+    if (pdfMenuTimerRef.current) clearTimeout(pdfMenuTimerRef.current);
+    pdfMenuTimerRef.current = setTimeout(() => setPdfMenuOpen(false), SOURCE_MENU_MS);
+  }, []);
+  const closePdfMenu = useCallback(() => {
+    if (pdfMenuTimerRef.current) clearTimeout(pdfMenuTimerRef.current);
+    setPdfMenuOpen(false);
+  }, []);
+  useEffect(() => {
+    if (!pdfMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (pdfMenuWrapRef.current && !pdfMenuWrapRef.current.contains(e.target as Node)) closePdfMenu();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [pdfMenuOpen, closePdfMenu]);
+  useEffect(() => () => { if (pdfMenuTimerRef.current) clearTimeout(pdfMenuTimerRef.current); }, []);
   // Focus targets so switching tabs drops the caret into the relevant field.
   const filterInputRef = useRef<HTMLInputElement>(null);
   const pdfSearchInputRef = useRef<HTMLInputElement>(null);
@@ -432,6 +456,9 @@ export function LibraryPanel() {
     } else {
       closeSourceMenu();
     }
+    // PDF and Donor boards are sub-views of the PDF tab; close its menu when
+    // navigating away to any other tab.
+    if (mode !== 'search' && mode !== 'bench') closePdfMenu();
     if (!focusInput) return;
     // Focus the relevant search field on an explicit tab switch so the user can
     // type-to-filter / search immediately. rAF: the target input for the new
@@ -894,6 +921,40 @@ export function LibraryPanel() {
     </div>
   );
 
+  // PDF-tab sub-menu (PDF text search / Donor boards) — same popup as the
+  // folder source menu, under the PDF tab while pdfMenuOpen.
+  const pdfSourceMenu = (
+    <div
+      className="library-source-popup"
+      role="menu"
+      onMouseEnter={() => { if (pdfMenuTimerRef.current) clearTimeout(pdfMenuTimerRef.current); }}
+      onMouseLeave={armPdfMenuTimeout}
+    >
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={viewMode === 'search'}
+        className={`library-source-item ${viewMode === 'search' ? 'active' : ''}`}
+        onClick={() => { handleSetViewMode('search'); closePdfMenu(); }}
+      >
+        <IconFileText size={14} />
+        <span>PDF search</span>
+        {viewMode === 'search' && <IconCheck size={13} className="library-source-check" />}
+      </button>
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={viewMode === 'bench'}
+        className={`library-source-item ${viewMode === 'bench' ? 'active' : ''}`}
+        onClick={() => { handleSetViewMode('bench'); closePdfMenu(); }}
+      >
+        <IconStack2 size={14} />
+        <span>Donor boards</span>
+        {viewMode === 'bench' && <IconCheck size={13} className="library-source-check" />}
+      </button>
+    </div>
+  );
+
   const failedModal = failedList !== null && (
     <div className="library-modal-backdrop" onClick={() => setFailedList(null)}>
       <div className="library-modal library-modal-wide" onClick={e => e.stopPropagation()}>
@@ -971,21 +1032,21 @@ export function LibraryPanel() {
             Model
           </button>
           */}
-          <button
-            className={`library-tab ${viewMode === 'search' ? 'active' : ''}`}
-            onClick={() => handleSetViewMode('search')}
-            title="Search PDF text content"
-          >
-            PDF
-          </button>
-          <button
-            className={`library-tab ${viewMode === 'bench' ? 'active' : ''}`}
-            data-testid="bench-tab"
-            onClick={() => handleSetViewMode('bench')}
-            title="Donor boards — donor PDFs and their linked boards"
-          >
-            Donor boards
-          </button>
+          <div className="library-tab-folder-wrap" ref={pdfMenuWrapRef}>
+            <button
+              className={`library-tab ${(viewMode === 'search' || viewMode === 'bench') ? 'active' : ''}`}
+              data-testid="pdf-tab"
+              onClick={() => {
+                if (viewMode !== 'search' && viewMode !== 'bench') handleSetViewMode('search');
+                setPdfMenuOpen(true);
+                armPdfMenuTimeout();
+              }}
+              title="PDF text search · Donor boards"
+            >
+              PDF
+            </button>
+            {pdfMenuOpen && (viewMode === 'search' || viewMode === 'bench') && pdfSourceMenu}
+          </div>
         </div>
       </div>
 
