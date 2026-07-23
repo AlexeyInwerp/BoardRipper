@@ -174,6 +174,14 @@ class ResizeModeStore extends Emitter {
 
 export const resizeModeStore = new ResizeModeStore();
 
+// This is a singleton shared between BoardRenderer (captured at module load)
+// and the React UI. Hot-swapping it desyncs those two references (button says
+// ON, renderer's stale store says OFF). Self-accept + invalidate() forces a
+// full reload on edit instead, keeping both references on one instance.
+if (import.meta.hot) {
+  import.meta.hot.accept(() => import.meta.hot!.invalidate());
+}
+
 // Expose for integration tests (Playwright) — DEV builds only
 if (typeof window !== 'undefined' && import.meta.env.DEV) {
   (window as { __resizeModeStore?: typeof resizeModeStore }).__resizeModeStore = resizeModeStore;
