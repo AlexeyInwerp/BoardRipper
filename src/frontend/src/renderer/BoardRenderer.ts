@@ -701,6 +701,15 @@ export class BoardRenderer {
    *  and after netLinesGfx recreation. */
   private netLinesPulseGfx: Graphics | null = null;
   private netLineBakeSig = '';
+  /** Net-line geometry chunk pools — same uint16-index ceiling defence as
+   *  the punch-through pools (see PUNCH_CHUNK_PADS): fade mode multiplies
+   *  each line into gradient sub-segments, so big nets overflow 65,535
+   *  vertices in one Graphics and hit the WebKit+Polaris 32-bit-index bug
+   *  ("red lines on other big networks" — pulse tint 0xcc2222). Children of
+   *  netLinesGfx; pulse chunks render above base chunks, alpha-driven. */
+  private static readonly NETLINE_CHUNK_SEGS = 800;
+  private netLineChunkPool: Graphics[] = [];
+  private netLinePulseChunkPool: Graphics[] = [];
 
   /** D1 (rendering-review-2026-07-12): settings/theme changes on an INACTIVE
    *  tab defer their scene rebuild until the tab is next resumed, instead of
@@ -1318,6 +1327,8 @@ export class BoardRenderer {
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
     this.netLinesPulseGfx = null;  // died with the old gfx (child)
+    this.netLineChunkPool = [];
+    this.netLinePulseChunkPool = [];
     this.netLineBakeSig = '';
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
@@ -1502,6 +1513,8 @@ export class BoardRenderer {
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
     this.netLinesPulseGfx = null;  // died with the old gfx (child)
+    this.netLineChunkPool = [];
+    this.netLinePulseChunkPool = [];
     this.netLineBakeSig = '';
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
@@ -1938,11 +1951,11 @@ export class BoardRenderer {
     if (!this.netLinesHiddenForZoom && this.netLineSegments.length > 0) {
       this.netLinesHiddenForZoom = true;
       // Net line geometry depends on viewport scale (line widths are 1/scale),
-      // so it must be cleared and redrawn at the new scale on settle.
-      // Ghost geometry uses world-space stroke widths and stays visually correct
-      // at any zoom — leave it drawn so the user sees a frozen ghost during zoom
-      // instead of a vanish/reappear flash.
-      this.netLinesGfx.clear();
+      // so it must be hidden and redrawn at the new scale on settle. Hide via
+      // visibility — geometry now lives in chunk CHILDREN of netLinesGfx,
+      // which a parent clear() would not touch (this also fixes the latent
+      // pulse-child-stays-visible-during-zoom glitch).
+      this.netLinesGfx.visible = false;
       this.needsRender = true;
     }
     // Rescale elevated selection labels to maintain constant screen-pixel size
@@ -4865,11 +4878,18 @@ export class BoardRenderer {
   /** Draw cached net line segments with current animation state */
   private renderNetLines() {
     this.needsRender = true;
+    this.netLinesGfx.visible = true;   // zoom-hide toggles visibility (see onZoomFrame)
 
     if (this.netLinesDirty) { this.recomputeNetLineSegments(); this.netLineBakeSig = ''; }
+
+    const clearChunks = () => {
+      for (const g of this.netLineChunkPool) g.clear();
+      for (const g of this.netLinePulseChunkPool) g.clear();
+    };
     if (this.netLineSegments.length === 0) {
       this.netLinesGfx.clear();
       this.netLinesPulseGfx?.clear();
+      clearChunks();
       return;
     }
 
@@ -4886,55 +4906,83 @@ export class BoardRenderer {
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
+    // Chunk-gfx allocator — children of netLinesGfx so lifecycle/transform/
+    // visibility ride along. Pulse chunks are added AFTER base chunks exist,
+    // so they render above them; their alpha carries the crossfade.
+    const chunk = (pool: Graphics[], i: number): Graphics => {
+      let g = pool[i];
+      if (!g) {
+        g = new Graphics();
+        g.eventMode = 'none';
+        pool[i] = g;
+        this.netLinesGfx.addChild(g);
+      }
+      return g;
+    };
+
     // A5 fast path — plain solid lines (no fade, no dash): geometry is baked
-    // once into netLinesGfx (base colors) + a pulse-colored child layer, and
-    // the pulse animates only the child's alpha. The per-frame cost drops
-    // from full path re-issue to one alpha write. Skipped on Safari — see
-    // SAFARI_CONSERVATIVE_GFX (WebKit+Polaris stale-buffer artifact).
+    // once across ≤NETLINE_CHUNK_SEGS-segment chunk pairs (base color +
+    // pulse color), and the pulse animates only the pulse chunks' alpha.
+    // Skipped on Safari — see SAFARI_CONSERVATIVE_GFX.
     if (!useFade && !s.netLineDashed && !BoardRenderer.SAFARI_CONSERVATIVE_GFX) {
       const sig = `${lineW.toFixed(4)}|${s.netLineAlpha}`;
       if (sig !== this.netLineBakeSig) {
         this.netLineBakeSig = sig;
-        if (!this.netLinesPulseGfx) {
-          this.netLinesPulseGfx = new Graphics();
-          this.netLinesPulseGfx.eventMode = 'none';
-          this.netLinesGfx.addChild(this.netLinesPulseGfx);
-        }
-        this.netLinesGfx.clear();       // clears geometry only; children survive
-        this.netLinesPulseGfx.clear();
+        this.netLinesGfx.clear();
+        this.netLinesPulseGfx?.clear();
+        clearChunks();
+        let ci = 0;
         for (const [baseColor, segs] of this.netLineSegmentsByColor) {
-          for (const { start, end } of segs) {
-            this.netLinesGfx.moveTo(start.x, start.y);
-            this.netLinesGfx.lineTo(end.x, end.y);
-            this.netLinesPulseGfx.moveTo(start.x, start.y);
-            this.netLinesPulseGfx.lineTo(end.x, end.y);
+          for (let i = 0; i < segs.length; i += BoardRenderer.NETLINE_CHUNK_SEGS) {
+            const base = chunk(this.netLineChunkPool, ci);
+            const pulse = chunk(this.netLinePulseChunkPool, ci);
+            ci++;
+            const end = Math.min(i + BoardRenderer.NETLINE_CHUNK_SEGS, segs.length);
+            for (let j = i; j < end; j++) {
+              const { start, end: e } = segs[j];
+              base.moveTo(start.x, start.y);
+              base.lineTo(e.x, e.y);
+              pulse.moveTo(start.x, start.y);
+              pulse.lineTo(e.x, e.y);
+            }
+            base.stroke({ width: lineW, color: baseColor, alpha: s.netLineAlpha });
+            pulse.stroke({ width: lineW, color: pulseColor, alpha: s.netLineAlpha });
           }
-          this.netLinesGfx.stroke({ width: lineW, color: baseColor, alpha: s.netLineAlpha });
         }
-        this.netLinesPulseGfx.stroke({ width: lineW, color: pulseColor, alpha: s.netLineAlpha });
       }
-      this.netLinesPulseGfx!.alpha = s.netLinePulse ? pulseT : 0;
+      const pa = s.netLinePulse ? pulseT : 0;
+      for (const g of this.netLinePulseChunkPool) g.alpha = pa;
       return;
     }
 
-    // Slow path (fade/dashed, and ALL modes on Safari — conservative
-    // per-frame re-issue, the exact pre-v0.31.41 behavior).
+    // Slow path (fade/dashed, and ALL modes on Safari — per-frame re-issue,
+    // chunked below the uint16-index vertex ceiling).
+    for (const g of this.netLinePulseChunkPool) g.alpha = 0;
     if (this.netLinesPulseGfx) this.netLinesPulseGfx.alpha = 0;
     this.netLinesGfx.clear();
+    clearChunks();
+    let ci = 0;
     for (const [baseColor, segs] of this.netLineSegmentsByColor) {
       const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
-      if (!useFade && !s.netLineDashed) {
-        for (const { start, end } of segs) {
-          this.netLinesGfx.moveTo(start.x, start.y);
-          this.netLinesGfx.lineTo(end.x, end.y);
-        }
-        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
-      } else {
-        for (const { start, end } of segs) {
-          if (useFade) {
-            this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-          } else {
-            this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+      for (let i = 0; i < segs.length; i += BoardRenderer.NETLINE_CHUNK_SEGS) {
+        const g = chunk(this.netLineChunkPool, ci);
+        ci++;
+        const end = Math.min(i + BoardRenderer.NETLINE_CHUNK_SEGS, segs.length);
+        if (!useFade && !s.netLineDashed) {
+          for (let j = i; j < end; j++) {
+            const seg = segs[j];
+            g.moveTo(seg.start.x, seg.start.y);
+            g.lineTo(seg.end.x, seg.end.y);
+          }
+          g.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+        } else {
+          for (let j = i; j < end; j++) {
+            const seg = segs[j];
+            if (useFade) {
+              this.drawNetLineWithFade(g, seg.start, seg.end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+            } else {
+              this.drawDashedLine(g, seg.start, seg.end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
+            }
           }
         }
       }
@@ -5098,7 +5146,7 @@ export class BoardRenderer {
   }
 
   /** Draw a dashed line between two world-space points */
-  private drawDashedLine(from: Point, to: Point, dashLen: number, dashOffset: number, width: number, color: number, alpha: number) {
+  private drawDashedLine(g: Graphics, from: Point, to: Point, dashLen: number, dashOffset: number, width: number, color: number, alpha: number) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const totalLen = Math.sqrt(dx * dx + dy * dy);
@@ -5116,20 +5164,20 @@ export class BoardRenderer {
       const segStart = Math.max(0, pos);
       const segEnd = Math.min(totalLen, pos + dashLen);
       if (segEnd > segStart) {
-        this.netLinesGfx.moveTo(from.x + ux * segStart, from.y + uy * segStart);
-        this.netLinesGfx.lineTo(from.x + ux * segEnd, from.y + uy * segEnd);
+        g.moveTo(from.x + ux * segStart, from.y + uy * segStart);
+        g.lineTo(from.x + ux * segEnd, from.y + uy * segEnd);
         hasSegments = true;
       }
       pos += segLen;
     }
     if (hasSegments) {
-      this.netLinesGfx.stroke({ width, color, alpha });
+      g.stroke({ width, color, alpha });
     }
   }
 
   /** Draw a net line with alpha fade-in near the start to reduce clutter with many lines.
    *  Non-dashed mode: batches all fade segments per alpha level into a single stroke call. */
-  private drawNetLineWithFade(from: Point, to: Point, fadeDist: number, width: number, color: number, alpha: number, dashed: boolean, dashLen: number, dashOffset: number) {
+  private drawNetLineWithFade(g: Graphics, from: Point, to: Point, fadeDist: number, width: number, color: number, alpha: number, dashed: boolean, dashLen: number, dashOffset: number) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const totalLen = Math.sqrt(dx * dx + dy * dy);
@@ -5148,11 +5196,11 @@ export class BoardRenderer {
         const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7;
         const segFrom: Point = { x: from.x + ux * t0, y: from.y + uy * t0 };
         const segTo: Point = { x: from.x + ux * t1, y: from.y + uy * t1 };
-        this.drawDashedLine(segFrom, segTo, dashLen, dashOffset + t0, width, color, stepAlpha);
+        this.drawDashedLine(g, segFrom, segTo, dashLen, dashOffset + t0, width, color, stepAlpha);
       }
       if (fadeEnd < totalLen) {
         const remainFrom: Point = { x: from.x + ux * fadeEnd, y: from.y + uy * fadeEnd };
-        this.drawDashedLine(remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
+        this.drawDashedLine(g, remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
       }
     } else {
       // Non-dashed: batch all fade segments by alpha level, one stroke() per level
@@ -5161,15 +5209,15 @@ export class BoardRenderer {
         const t0 = (i / fadeSteps) * fadeEnd;
         const t1 = ((i + 1) / fadeSteps) * fadeEnd;
         const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7;
-        this.netLinesGfx.moveTo(from.x + ux * t0, from.y + uy * t0);
-        this.netLinesGfx.lineTo(from.x + ux * t1, from.y + uy * t1);
-        this.netLinesGfx.stroke({ width, color, alpha: stepAlpha });
+        g.moveTo(from.x + ux * t0, from.y + uy * t0);
+        g.lineTo(from.x + ux * t1, from.y + uy * t1);
+        g.stroke({ width, color, alpha: stepAlpha });
       }
       // Remaining line at full alpha
       if (fadeEnd < totalLen) {
-        this.netLinesGfx.moveTo(from.x + ux * fadeEnd, from.y + uy * fadeEnd);
-        this.netLinesGfx.lineTo(to.x, to.y);
-        this.netLinesGfx.stroke({ width, color, alpha });
+        g.moveTo(from.x + ux * fadeEnd, from.y + uy * fadeEnd);
+        g.lineTo(to.x, to.y);
+        g.stroke({ width, color, alpha });
       }
     }
   }
