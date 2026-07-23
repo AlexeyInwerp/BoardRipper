@@ -1784,6 +1784,30 @@ export function SettingsPanel() {
   const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Responsive tab strip: show every tab's label when the panel is wide enough
+  // to fit them, otherwise collapse to icons (the active tab keeps its label).
+  // Hysteresis via `tabsNeedRef` (the width the fully-expanded strip needs)
+  // prevents oscillation: once collapsed we only re-expand when there's room
+  // for the full expanded width, not the smaller collapsed width.
+  const tabsRowRef = useRef<HTMLDivElement>(null);
+  const [tabsExpanded, setTabsExpanded] = useState(true);
+  const tabsNeedRef = useRef(0);
+  useEffect(() => {
+    const el = tabsRowRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      const avail = el.clientWidth;
+      if (tabsExpanded) {
+        tabsNeedRef.current = el.scrollWidth;
+        if (el.scrollWidth > avail + 1) setTabsExpanded(false);
+      } else if (tabsNeedRef.current > 0 && avail >= tabsNeedRef.current) {
+        setTabsExpanded(true);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tabsExpanded]);
+
   // Section scroll refs
   const outlineRef = useRef<HTMLDivElement>(null);
   const partsRef = useRef<HTMLDivElement>(null);
@@ -1952,9 +1976,9 @@ export function SettingsPanel() {
       <div className="settings-top">
         {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
         <div className="library-tabs-row settings-tabs-row">
-          <div className="library-tabs">
+          <div className="library-tabs" ref={tabsRowRef} style={{ flexWrap: 'nowrap', overflow: 'hidden' }}>
             {TAB_ORDER.map(tab => (
-              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} />
+              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} expanded={tabsExpanded} />
             ))}
           </div>
         </div>
@@ -2434,18 +2458,21 @@ function InteractiveModeToggle() {
   );
 }
 
-function TabPill({ tab, activeTab, setActiveTab }: {
+function TabPill({ tab, activeTab, setActiveTab, expanded }: {
   tab: SettingsTabId;
   activeTab: SettingsTabId;
   setActiveTab: (t: SettingsTabId) => void;
+  expanded: boolean;
 }) {
   const { active, matches } = useSettingsSearch();
   const count = matches.perTabCount.get(tab) ?? 0;
   const isActive = activeTab === tab;
   const Icon = TAB_ICONS[tab];
-  // Icon-only tab; the active tab expands to icon + label. The label is always
-  // the hover tooltip so icon-only tabs stay identifiable. Same library-tab
-  // styling as the Library panel's tab strip.
+  // The whole strip expands to icon + label when the panel is wide enough
+  // (`expanded`); when collapsed, only the active tab keeps its label so the
+  // current section stays named. The label is always the hover tooltip. Same
+  // library-tab styling as the Library panel's tab strip.
+  const showLabel = expanded || isActive;
   return (
     <button
       type="button"
@@ -2456,7 +2483,7 @@ function TabPill({ tab, activeTab, setActiveTab }: {
       style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
     >
       <Icon size={14} />
-      {isActive && <span>{TAB_LABELS[tab]}</span>}
+      {showLabel && <span>{TAB_LABELS[tab]}</span>}
       {active && count > 0 && <span className="settings-tab-match-badge">{count}</span>}
     </button>
   );
