@@ -108,6 +108,10 @@ export interface RenderSettings {
   pinMinRadius: number;
   pinMaxRadius: number;
   pinScaleFactor: number;
+  /** Final uniform multiplier on every pin's rendered radius (Resize Mode's
+   *  pin knob). 1 = unchanged. Applied after the min/max clamp in
+   *  computePinRadius so it scales all pins, not just those at the floor. */
+  pinSizeScale: number;
   /** Minimum body size (mils) in the narrow dimension for 2-pin parts. 0 = disabled. */
   partMinBodyRatio: number;
   pinAlpha: number;
@@ -492,6 +496,7 @@ export const DEFAULTS: RenderSettings = {
   pinMinRadius: 3,
   pinMaxRadius: 15,
   pinScaleFactor: 1,
+  pinSizeScale: 1,
   partMinBodyRatio: 0.8,
   pinAlpha: 0.85,
   showPinNumbers: true,
@@ -615,11 +620,15 @@ export function quantizeFontSize(size: number): number {
   return FONT_SIZE_STEPS[FONT_SIZE_STEPS.length - 1];
 }
 
-/** Compute display radius for a pin. At scaleFactor=0 all pins are pinMinRadius. */
+/** Compute display radius for a pin. At scaleFactor=0 all pins are pinMinRadius.
+ *  `pinSizeScale` is a final uniform multiplier (Resize Mode's pin knob) applied
+ *  after the min/max clamp so it grows/shrinks every pin regardless of file
+ *  radius — pinMinRadius alone is only a floor and can't shrink larger pins. */
 export function computePinRadius(s: RenderSettings, fileRadius: number): number {
   const base = fileRadius || s.pinMinRadius;
   const r = s.pinMinRadius + (base - s.pinMinRadius) * s.pinScaleFactor;
-  return Math.min(s.pinMaxRadius, Math.max(s.pinMinRadius, r));
+  const clamped = Math.min(s.pinMaxRadius, Math.max(s.pinMinRadius, r));
+  return clamped * (s.pinSizeScale || 1);
 }
 
 /**
