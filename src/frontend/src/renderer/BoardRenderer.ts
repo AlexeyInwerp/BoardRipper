@@ -338,6 +338,7 @@ export class BoardRenderer {
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeResizeMode: (() => void) | null = null;
   private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
   private unsubscribeSelectionSet: (() => void) | null = null;
@@ -1702,6 +1703,13 @@ export class BoardRenderer {
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
+    // Toggling Resize Mode changes whether the label overlay records hit-test
+    // boxes; force one overlay redraw so boxes are ready on the first click.
+    this.unsubscribeResizeMode = resizeModeStore.subscribe(() => {
+      this.overlayDirty = true;
+      this.overlayContentDirty = true;
+      if (this.app && !this.contextLost && !this.reinitializing) this.app.render();
+    });
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeObd = obdStore.subscribe(() => this.onObdUpdate());
     this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
@@ -5356,7 +5364,11 @@ export class BoardRenderer {
       for (const pi of this.hitGridCandidates(localBot.x, localBot.y)) candidateSet.add(pi);
     }
 
-    const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
+    // Widen the distance-based pin catch radius by pinSizeScale so an enlarged
+    // circle pin (drawn via computePinRadius, which now includes pinSizeScale)
+    // stays pin-hittable instead of falling through to the part body. No-op at
+    // the default scale of 1.
+    const threshold = (s.clickThreshold / Math.abs(this.viewport.scale.x)) * (s.pinSizeScale || 1);
     const hits: StackHit[] = [];
 
     for (const pi of candidateSet) {
@@ -5836,11 +5848,11 @@ export class BoardRenderer {
     const localX = pageX - rect.left;
     const localY = pageY - rect.top;
 
-    // 1. Text label? Component (part) labels get their own scale knob; pin
-    //    numbers / net names / diode readings are governed by labelMinSize.
+    // 1. Text label? A component (part) label opens the Component group; a pin
+    //    number / net name opens the Pin group (pin size + pin# + net sizes).
     const labelKind = this.textFastMode?.hitTest(localX, localY);
     if (labelKind) {
-      resizeModeStore.openFor(labelKind === 'part' ? 'partText' : 'text', pageX, pageY, null);
+      resizeModeStore.openGroup(labelKind === 'part' ? 'part' : 'pin', pageX, pageY, null);
       return;
     }
 
@@ -5852,15 +5864,15 @@ export class BoardRenderer {
       if (hit.pinIndex >= 0 && part) {
         const pin = part.pins[hit.pinIndex];
         const ctx = pin ? `${part.name} · ${pin.net || pinDisplayId(pin, hit.pinIndex)}` : part.name;
-        resizeModeStore.openFor('pin', pageX, pageY, ctx);
+        resizeModeStore.openGroup('pin', pageX, pageY, ctx);
       } else {
-        resizeModeStore.openFor('part', pageX, pageY, part?.name ?? null);
+        resizeModeStore.openGroup('part', pageX, pageY, part?.name ?? null);
       }
       return;
     }
 
-    // 3. Empty space → dismiss.
-    resizeModeStore.close();
+    // 3. Empty board area → board transparency.
+    resizeModeStore.openGroup('board', pageX, pageY, null);
   }
 
   /** Select a stack entry — a pin selection when a pad/pin was hit, else the
@@ -6213,6 +6225,7 @@ export class BoardRenderer {
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
+    this.unsubscribeResizeMode?.();
     this.unsubscribeTheme?.();
     this.unsubscribeObd?.();
     this.unsubscribeViewCommands?.();

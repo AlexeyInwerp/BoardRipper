@@ -1429,6 +1429,7 @@ export function buildBoardScene(
           pinY += bgaAlternate ? (even ? -bgaHalfGap : bgaHalfGap) : 0;
         }
 
+        pinFontSize *= s.pinNumberScale || 1;      // Resize Mode: pin-number size
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
@@ -1507,6 +1508,7 @@ export function buildBoardScene(
           ? s.labelMinSize
           : Math.min(s.labelMinSize, maxNonOverlapRadius * 2 * 0.85);
         netFontSize = Math.max(netFontSize, netFloor);
+        netFontSize *= s.netLabelScale || 1;        // Resize Mode: net-label size
         netFontSize = quantizeFontSize(netFontSize);
         if (netFontSize >= s.labelHideThreshold) {
           // Text fast mode: emit a record (kind circleNet / twoPinNet) instead

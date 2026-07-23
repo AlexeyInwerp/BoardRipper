@@ -6,6 +6,7 @@
  *  matrices so rotate/mirror/butterfly work unchanged. */
 import type { LabelModel, LabelRecord } from './label-model';
 import { log } from '../store/log-store';
+import { resizeModeStore } from '../store/resize-mode-store';
 
 export interface OverlayViewState {
   topMatrix: { a: number; b: number; c: number; d: number; tx: number; ty: number };
@@ -131,6 +132,10 @@ export class LabelOverlay {
     ctx.clearRect(0, 0, view.width, view.height);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    // Only record hit-test boxes while Resize Mode is on — otherwise this is a
+    // per-visible-label allocation on the (normally allocation-free) draw hot
+    // path that no one reads (boxes are consumed only on a Resize Mode click).
+    const recordBoxes = resizeModeStore.enabled;
     this.lastBoxes.length = 0;
 
     // Cull ONCE per side, then iterate the three paint passes over the
@@ -172,9 +177,11 @@ export class LabelOverlay {
           ctx.fillText(r.text, sx, sy);
           // Record the painted box (centered draw) for Resize Mode hit-testing.
           // A few px of slop makes small labels easier to click.
-          const hw = textW / 2 + 3;
-          const hh = fontPx / 2 + 3;
-          this.lastBoxes.push({ x0: sx - hw, y0: sy - hh, x1: sx + hw, y1: sy + hh, kind: r.kind });
+          if (recordBoxes) {
+            const hw = textW / 2 + 3;
+            const hh = fontPx / 2 + 3;
+            this.lastBoxes.push({ x0: sx - hw, y0: sy - hh, x1: sx + hw, y1: sy + hh, kind: r.kind });
+          }
         }
       }
     }

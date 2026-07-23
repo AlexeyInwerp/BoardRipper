@@ -1,83 +1,61 @@
-/** Resize Mode — a direct-manipulation sizing mode.
+/** Resize Mode — direct-manipulation sizing.
  *
- *  When enabled, a plain click on the board no longer selects; instead the
- *  renderer classifies WHAT was clicked (text label / pin / part outline) and
- *  opens a small popup that edits the ONE global RenderSettings key that
- *  governs that element class. Changes are written to global settings and the
- *  whole board previews live (settings are reactive). Pan/zoom stay live —
- *  only the click gesture is repurposed.
+ *  When enabled, a plain click on the board opens a popup with the handles
+ *  relevant to WHAT was clicked, each editing one global RenderSettings key
+ *  live (the whole board previews as settings are reactive). Pan/zoom stay
+ *  live — only the click gesture is repurposed.
  *
- *  See docs/superpowers/specs/*-resize-mode-*.md (brainstorm) for rationale.
+ *  A click classifies into a "group"; each group shows a set of controls:
+ *    - pin (or a pin-number / net-name label) → pin size, pin number size,
+ *      net label size
+ *    - component label / part body → component label size, part outline
+ *    - empty board area → board transparency
  */
 import { Emitter } from './emitter';
 import { renderSettingsStore, DEFAULTS, type RenderSettings } from './render-settings';
 
-/** The element classes the board exposes for direct resize. */
-export type ResizeKind = 'text' | 'partText' | 'pin' | 'part';
+/** What the click landed on → which control group to show. */
+export type ResizeGroup = 'pin' | 'part' | 'board';
 
-export interface ResizeTargetDef {
-  /** The global RenderSettings key this class edits. */
+/** A single editable control (one RenderSettings key). */
+export interface ResizeControlDef {
   key: keyof RenderSettings;
-  /** Popup title. */
   label: string;
-  /** Short unit shown next to the value. */
   unit: string;
   min: number;
   max: number;
   step: number;
-  /** One-line hint under the title explaining the knob. */
-  hint: string;
 }
 
-/** Class → governing setting. Each maps to the single knob that most
- *  visibly controls that element on typical boards (see brainstorm). */
-export const RESIZE_TARGETS: Record<ResizeKind, ResizeTargetDef> = {
-  text: {
-    key: 'labelMinSize',
-    label: 'Text size',
-    unit: 'mils',
-    min: 1,
-    max: 30,
-    step: 1,
-    hint: 'Minimum label size — floors pin numbers and net names.',
-  },
-  partText: {
-    key: 'partLabelScale',
-    label: 'Component label size',
-    unit: '×',
-    min: 0.3,
-    max: 4,
-    step: 0.1,
-    hint: 'Scales every component (part designator) label.',
-  },
-  pin: {
-    key: 'pinSizeScale',
-    label: 'Pin size',
-    unit: '×',
-    min: 0.3,
-    max: 4,
-    step: 0.1,
-    hint: 'Scales the drawn radius of every pin/pad.',
-  },
-  part: {
-    key: 'partBorderWidth',
-    label: 'Part outline',
-    unit: 'px',
-    min: 0.1,
-    max: 10,
-    step: 0.1,
-    hint: 'Stroke width of every part body outline.',
-  },
+/** Registry of every control Resize Mode can show, keyed by setting key. */
+export const CONTROLS: Record<string, ResizeControlDef> = {
+  pinSizeScale:    { key: 'pinSizeScale',    label: 'Pin size',        unit: '×',  min: 0.3, max: 4,  step: 0.1 },
+  pinNumberScale:  { key: 'pinNumberScale',  label: 'Pin number size', unit: '×',  min: 0.3, max: 4,  step: 0.1 },
+  netLabelScale:   { key: 'netLabelScale',   label: 'Net label size',  unit: '×',  min: 0.3, max: 4,  step: 0.1 },
+  partLabelScale:  { key: 'partLabelScale',  label: 'Component label',  unit: '×', min: 0.3, max: 4,  step: 0.1 },
+  partBorderWidth: { key: 'partBorderWidth', label: 'Part outline',    unit: 'px', min: 0.1, max: 10, step: 0.1 },
+  boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05 },
+};
+
+/** Group → the ordered list of control keys it shows. */
+export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
+  pin:   ['pinSizeScale', 'pinNumberScale', 'netLabelScale'],
+  part:  ['partLabelScale', 'partBorderWidth'],
+  board: ['boardFillAlpha'],
+};
+
+const GROUP_TITLE: Record<ResizeGroup, string> = {
+  pin: 'Pin',
+  part: 'Component',
+  board: 'Board',
 };
 
 export interface ResizePopupState {
-  kind: ResizeKind;
-  /** Page coordinates for the DOM popup. */
+  group: ResizeGroup;
+  title: string;
+  keys: (keyof RenderSettings)[];
   pageX: number;
   pageY: number;
-  /** Current live value of the governed setting. */
-  value: number;
-  /** Extra label context (e.g. the clicked net name / refdes) for the header. */
   context: string | null;
 }
 
@@ -86,9 +64,8 @@ export interface ResizeModeSnapshot {
   popup: ResizePopupState | null;
 }
 
-function clampToStep(def: ResizeTargetDef, v: number): number {
+function clampToStep(def: ResizeControlDef, v: number): number {
   const clamped = Math.min(def.max, Math.max(def.min, v));
-  // Snap to the step grid so the number reads cleanly (0.1 steps → no float dust).
   const snapped = Math.round(clamped / def.step) * def.step;
   return Math.round(snapped * 1000) / 1000;
 }
@@ -102,7 +79,6 @@ class ResizeModeStore extends Emitter {
     return this._enabled;
   }
 
-  /** Stable snapshot for useSyncExternalStore. */
   snapshot(): ResizeModeSnapshot {
     return this._snapshot;
   }
@@ -115,7 +91,7 @@ class ResizeModeStore extends Emitter {
   setEnabled(v: boolean) {
     if (this._enabled === v) return;
     this._enabled = v;
-    if (!v) this._popup = null;   // leaving the mode closes any open popup
+    if (!v) this._popup = null;
     this.rebuild();
   }
 
@@ -123,13 +99,10 @@ class ResizeModeStore extends Emitter {
     this.setEnabled(!this._enabled);
   }
 
-  /** Open (or move) the popup for a classified click. Reads the current live
-   *  value from global settings. */
-  openFor(kind: ResizeKind, pageX: number, pageY: number, context: string | null = null) {
+  /** Open the popup for a classified click group at the cursor. */
+  openGroup(group: ResizeGroup, pageX: number, pageY: number, context: string | null = null) {
     if (!this._enabled) return;
-    const def = RESIZE_TARGETS[kind];
-    const value = renderSettingsStore.globalSnapshot()[def.key] as number;
-    this._popup = { kind, pageX, pageY, value, context };
+    this._popup = { group, title: GROUP_TITLE[group], keys: GROUPS[group], pageX, pageY, context };
     this.rebuild();
   }
 
@@ -139,45 +112,41 @@ class ResizeModeStore extends Emitter {
     this.rebuild();
   }
 
-  /** Set an absolute value for the open popup's governed setting (writes
-   *  global settings → whole board re-renders). */
-  commit(rawValue: number) {
-    const p = this._popup;
-    if (!p) return;
-    const def = RESIZE_TARGETS[p.kind];
+  /** Live value of a control's governed setting (global). */
+  valueOf(key: keyof RenderSettings): number {
+    return renderSettingsStore.globalSnapshot()[key] as number;
+  }
+
+  /** Set an absolute value for one control (writes global settings → board
+   *  re-renders). */
+  commit(key: keyof RenderSettings, rawValue: number) {
+    const def = CONTROLS[key as string];
+    if (!def) return;
     const value = clampToStep(def, rawValue);
     const current = renderSettingsStore.globalSnapshot();
-    if ((current[def.key] as number) !== value) {
-      renderSettingsStore.applyGlobal({ ...current, [def.key]: value });
+    if ((current[key] as number) !== value) {
+      renderSettingsStore.applyGlobal({ ...current, [key]: value });
+      this.rebuild();   // reflect the new live value in the popup readout
     }
-    this._popup = { ...p, value };
-    this.rebuild();
   }
 
-  /** Reset the open popup's governed setting to its compile-time default
-   *  (double-click convention, matching the rest of the UI). */
-  reset() {
-    const p = this._popup;
-    if (!p) return;
-    const def = RESIZE_TARGETS[p.kind];
-    this.commit(DEFAULTS[def.key] as number);
+  /** Nudge one control by ±1 step (buttons / wheel). */
+  nudge(key: keyof RenderSettings, direction: 1 | -1) {
+    const def = CONTROLS[key as string];
+    if (!def) return;
+    this.commit(key, this.valueOf(key) + direction * def.step);
   }
 
-  /** Nudge the open popup's value by ±1 step (for +/- buttons and wheel). */
-  nudge(direction: 1 | -1) {
-    const p = this._popup;
-    if (!p) return;
-    const def = RESIZE_TARGETS[p.kind];
-    this.commit(p.value + direction * def.step);
+  /** Reset one control to its compile-time default (double-click). */
+  reset(key: keyof RenderSettings) {
+    this.commit(key, DEFAULTS[key] as number);
   }
 }
 
 export const resizeModeStore = new ResizeModeStore();
 
-// This is a singleton shared between BoardRenderer (captured at module load)
-// and the React UI. Hot-swapping it desyncs those two references (button says
-// ON, renderer's stale store says OFF). Self-accept + invalidate() forces a
-// full reload on edit instead, keeping both references on one instance.
+// Singleton shared between BoardRenderer (captured at module load) and the
+// React UI. Hot-swapping desyncs those references, so force a full reload.
 if (import.meta.hot) {
   import.meta.hot.accept(() => import.meta.hot!.invalidate());
 }

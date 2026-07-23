@@ -104,6 +104,12 @@ export interface RenderSettings {
    *  Part labels are auto-fit to the part body, so `labelMinSize` (a floor)
    *  barely moves them; this scales them directly. 1 = geometry-fit default. */
   partLabelScale: number;
+  /** Multiplier on pin-number label size (Resize Mode). labelMinSize is only a
+   *  floor and can't grow numbers already above it, so this scales directly. */
+  pinNumberScale: number;
+  /** Multiplier on net-name label size (Resize Mode). Independent of pin
+   *  numbers so the two can be sized separately. 1 = unchanged. */
+  netLabelScale: number;
 
   pinMinRadius: number;
   pinMaxRadius: number;
@@ -491,6 +497,8 @@ export const DEFAULTS: RenderSettings = {
   pinLabelShadow: true,
   labelMinSize: 3,
   partLabelScale: 1,
+  pinNumberScale: 1,
+  netLabelScale: 1,
   labelHideThreshold: 2,
 
   pinMinRadius: 3,
