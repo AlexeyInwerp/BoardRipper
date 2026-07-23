@@ -35,12 +35,16 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
   partLabelScale:  { key: 'partLabelScale',  label: 'Component label',  unit: '×', min: 0.3, max: 4,  step: 0.1 },
   partBorderWidth: { key: 'partBorderWidth', label: 'Part outline',    unit: 'px', min: 0.1, max: 10, step: 0.1 },
   boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05 },
+  // Selected-component label floor (fast text): the selected part's labels
+  // never shrink below this many screen px, so they stay readable while
+  // unzooming. Mirrors Settings ▸ Zoom LoD ▸ Selected Part Labels.
+  selectedLabelMinPx: { key: 'selectedLabelMinPx', label: 'Selected label floor', unit: 'px', min: 0, max: 30, step: 1 },
 };
 
 /** Group → the ordered list of control keys it shows. */
 export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
-  pin:   ['pinSizeScale', 'pinNumberScale', 'netLabelScale'],
-  part:  ['partLabelScale', 'partBorderWidth'],
+  pin:   ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'selectedLabelMinPx'],
+  part:  ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx'],
   board: ['boardFillAlpha'],
 };
 
