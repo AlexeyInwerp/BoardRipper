@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
+import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
+import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import { colorToHex, hexToColor } from '../store/layer-store';
@@ -65,6 +67,15 @@ export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' |
 
 const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
   .filter(t => !(isLiteBuild() && (t === 'library' || t === 'integrations')));
+
+const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
+  theme:        IconPalette,
+  board:        IconLayoutBoardSplit,
+  input:        IconKeyboard,
+  library:      IconBooks,
+  system:       IconSettings,
+  integrations: IconPlug,
+};
 
 const TAB_LABELS: Record<SettingsTabId, string> = {
   theme:        'Theme',
@@ -1939,9 +1950,6 @@ export function SettingsPanel() {
     <SettingsSearchProvider>
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
-        {/* ── Search bar — type or press / to focus, Esc to clear ── */}
-        <SettingsSearchBar />
-
         {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
         <div className="library-tabs-row settings-tabs-row">
           <div className="library-tabs">
@@ -1950,6 +1958,9 @@ export function SettingsPanel() {
             ))}
           </div>
         </div>
+
+        {/* ── Search bar (under the tabs) — type or press / to focus, Esc to clear ── */}
+        <SettingsSearchBar />
 
         {/* Mode switch + draft footer govern ONLY the Board tab — every other
             tab commits immediately (updateGlobal / own stores), so rendering
@@ -1974,6 +1985,8 @@ export function SettingsPanel() {
                 ? <>Overrides for <strong>{activeFileName}</strong> &middot; <span className="settings-override-legend">yellow</span> = overridden</>
                 : 'Changes apply to all boards'}
             </div>
+
+            <InteractiveModeToggle />
 
             {/* Render preview (SettingsMockup) is silently disabled for now —
                 kept in the tree via the import so we can flip it back quickly
@@ -2398,6 +2411,29 @@ export function SettingsPanel() {
 
 // ---- Tab pill with match-count badge + search-clear-on-switch helpers ----
 
+/** Board-tab toggle for Resize/Interactive Mode. Clicking board elements while
+ *  ON opens a resize popup for the clicked element class (see resize-mode-store). */
+function InteractiveModeToggle() {
+  const enabled = useSyncExternalStore(
+    (cb) => resizeModeStore.subscribe(cb),
+    () => resizeModeStore.enabled,
+  );
+  return (
+    <div className="settings-mode-hint" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button
+        type="button"
+        className={`settings-mode-btn${enabled ? ' active' : ''}`}
+        onClick={() => resizeModeStore.toggle()}
+        title="Click a pin, component, label, or empty board to resize it directly. The whole board updates live."
+        style={{ flex: '0 0 auto' }}
+      >
+        {enabled ? 'Interactive mode: ON' : 'Interactive mode'}
+      </button>
+      <span style={{ opacity: 0.7, fontSize: 11 }}>Click board elements to resize them.</span>
+    </div>
+  );
+}
+
 function TabPill({ tab, activeTab, setActiveTab }: {
   tab: SettingsTabId;
   activeTab: SettingsTabId;
@@ -2405,13 +2441,22 @@ function TabPill({ tab, activeTab, setActiveTab }: {
 }) {
   const { active, matches } = useSettingsSearch();
   const count = matches.perTabCount.get(tab) ?? 0;
+  const isActive = activeTab === tab;
+  const Icon = TAB_ICONS[tab];
+  // Icon-only tab; the active tab expands to icon + label. The label is always
+  // the hover tooltip so icon-only tabs stay identifiable. Same library-tab
+  // styling as the Library panel's tab strip.
   return (
     <button
       type="button"
-      className={`library-tab ${activeTab === tab ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
+      className={`library-tab settings-tab-iconed ${isActive ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
       onClick={() => setActiveTab(tab)}
+      title={TAB_LABELS[tab]}
+      aria-label={TAB_LABELS[tab]}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
     >
-      {TAB_LABELS[tab]}
+      <Icon size={14} />
+      {isActive && <span>{TAB_LABELS[tab]}</span>}
       {active && count > 0 && <span className="settings-tab-match-badge">{count}</span>}
     </button>
   );

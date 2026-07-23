@@ -237,23 +237,6 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         className="board-panel-canvas"
         data-testid="board-canvas"
       />
-      <button
-        onClick={() => resizeModeStore.toggle()}
-        title={resizeMode
-          ? 'Resize Mode ON — click a pin, part, or text label to resize it. Click to exit.'
-          : 'Resize Mode — click board elements to resize them directly'}
-        style={{
-          position: 'absolute', top: 8, right: 8, zIndex: 30,
-          height: 30, padding: '0 12px', borderRadius: 6, cursor: 'pointer',
-          font: '12px/1 system-ui, sans-serif', fontWeight: 600,
-          border: resizeMode ? '1px solid var(--accent)' : '1px solid var(--border)',
-          background: resizeMode ? 'var(--accent)' : 'var(--bg-secondary)',
-          color: resizeMode ? 'var(--accent-fg, #fff)' : 'var(--text-primary)',
-          boxShadow: resizeMode ? '0 0 0 2px var(--accent-hover, transparent)' : 'none',
-        }}
-      >
-        ⇲ Resize{resizeMode ? ' · ON' : ''}
-      </button>
       {resizeMode && <ResizePopup />}
       {thisTab && !thisTab.board && (
         <div className="board-loading-overlay">
