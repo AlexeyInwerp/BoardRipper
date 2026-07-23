@@ -3507,6 +3507,11 @@ export class BoardRenderer {
       const INTERACTION_ONLY = new Set<string>([
         'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
         'cap60Fps', 'showPerfOverlay', 'smoothZoom',
+        // Overlay-only: read at label-overlay draw time (OverlayThresholds), so
+        // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
+        // this needlessly redraws all geometry (and can hit the vertex ceiling
+        // under an elevated pinSizeScale).
+        'selectedLabelMinPx',
       ]);
       if (prev) {
         let visualChanged = false;
@@ -3524,6 +3529,10 @@ export class BoardRenderer {
         }
         if (!visualChanged) {
           this.applyViewportPlugins();
+          // Overlay-only keys (e.g. selectedLabelMinPx) still need a repaint —
+          // the overlay reads thresholds at draw time, so no rebuild required.
+          this.overlayDirty = true;
+          this.overlayContentDirty = true;
           this.lastSettingsSnapshot = cur;
           return;
         }
