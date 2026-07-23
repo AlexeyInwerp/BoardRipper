@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
-import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug } from '@tabler/icons-react';
+import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
@@ -1976,7 +1976,7 @@ export function SettingsPanel() {
       <div className="settings-top">
         {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
         <div className="library-tabs-row settings-tabs-row">
-          <div className="library-tabs" ref={tabsRowRef} style={{ flexWrap: 'nowrap', overflow: 'hidden' }}>
+          <div className="library-tabs" ref={tabsRowRef} style={{ flex: '1 1 auto', minWidth: 0, flexWrap: 'nowrap', overflow: 'hidden' }}>
             {TAB_ORDER.map(tab => (
               <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} expanded={tabsExpanded} />
             ))}
@@ -1991,6 +1991,8 @@ export function SettingsPanel() {
             Apply/Cancel there would act on invisible state. */}
         {activeTab === 'board' && (
           <>
+            <InteractiveModeToggle />
+
             {/* ── Mode switch: Global vs Board ── */}
             <div className="settings-mode-switch">
               <button
@@ -2009,8 +2011,6 @@ export function SettingsPanel() {
                 ? <>Overrides for <strong>{activeFileName}</strong> &middot; <span className="settings-override-legend">yellow</span> = overridden</>
                 : 'Changes apply to all boards'}
             </div>
-
-            <InteractiveModeToggle />
 
             {/* Render preview (SettingsMockup) is silently disabled for now —
                 kept in the tree via the import so we can flip it back quickly
@@ -2435,26 +2435,31 @@ export function SettingsPanel() {
 
 // ---- Tab pill with match-count badge + search-clear-on-switch helpers ----
 
-/** Board-tab toggle for Resize/Interactive Mode. Clicking board elements while
- *  ON opens a resize popup for the clicked element class (see resize-mode-store). */
+/** Board-tab toggle for Interactive (Resize) Mode. Clicking board elements
+ *  while ON opens a resize popup for the clicked element class. Prominent
+ *  top-of-list card with a description and an attention bump while off. */
 function InteractiveModeToggle() {
   const enabled = useSyncExternalStore(
     (cb) => resizeModeStore.subscribe(cb),
     () => resizeModeStore.enabled,
   );
   return (
-    <div className="settings-mode-hint" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <button
-        type="button"
-        className={`settings-mode-btn${enabled ? ' active' : ''}`}
-        onClick={() => resizeModeStore.toggle()}
-        title="Click a pin, component, label, or empty board to resize it directly. The whole board updates live."
-        style={{ flex: '0 0 auto' }}
-      >
-        {enabled ? 'Interactive mode: ON' : 'Interactive mode'}
-      </button>
-      <span style={{ opacity: 0.7, fontSize: 11 }}>Click board elements to resize them.</span>
-    </div>
+    <button
+      type="button"
+      className={`interactive-mode-toggle${enabled ? ' active' : ''}`}
+      onClick={() => resizeModeStore.toggle()}
+      title="Click a pin, component, label, or empty board to resize it directly. The whole board updates live."
+    >
+      <IconClick size={22} className="interactive-mode-icon" />
+      <span className="interactive-mode-text">
+        <strong>Interactive mode{enabled ? ' · ON' : ''}</strong>
+        <span className="interactive-mode-desc">
+          {enabled
+            ? 'Click a pin, component, label, or empty board to resize it live.'
+            : 'Resize board elements by clicking them — sizes update live.'}
+        </span>
+      </span>
+    </button>
   );
 }
 
