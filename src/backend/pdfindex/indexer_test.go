@@ -2,6 +2,7 @@ package pdfindex
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,13 +96,12 @@ func TestPendingFilter(t *testing.T) {
 	if err := ix.Run(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Progress.Total must be 1 (only file 2 is pending).
-	p := ix.Progress()
-	if p.Total != 1 {
+	waitFor(t, func() bool { return !ix.Progress().Running })
+	// Progress.Total must be 1 (only file 2 is pending; enumeration now runs
+	// asynchronously, so read Total after the sweep settles — it persists).
+	if p := ix.Progress(); p.Total != 1 {
 		t.Errorf("Progress.Total = %d, want 1 (pending only)", p.Total)
 	}
-
-	waitFor(t, func() bool { return !ix.Progress().Running })
 	s, _ := db.Stats()
 	if s.Indexed != 2 {
 		t.Errorf("stats.Indexed = %d, want 2", s.Indexed)
@@ -128,13 +128,12 @@ func TestRunFolder(t *testing.T) {
 	if err := ix.RunFolder("sub"); err != nil {
 		t.Fatalf("RunFolder: %v", err)
 	}
-	// Total should be 2 (sub/a.pdf and sub/b.pdf only).
-	p := ix.Progress()
-	if p.Total != 2 {
+	waitFor(t, func() bool { return !ix.Progress().Running })
+	// Total should be 2 (sub/a.pdf and sub/b.pdf only). Enumeration is async now,
+	// so read Total after the sweep settles — it persists past completion.
+	if p := ix.Progress(); p.Total != 2 {
 		t.Errorf("Progress.Total = %d, want 2 (sub/ only)", p.Total)
 	}
-
-	waitFor(t, func() bool { return !ix.Progress().Running })
 
 	// File 1 (top.pdf) must NOT be indexed.
 	st1, _ := db.Status(1)
@@ -175,6 +174,79 @@ func TestRunFolderConflict(t *testing.T) {
 		t.Errorf("RunFolder while running = %v, want ErrAlreadyRunning", err)
 	}
 	waitFor(t, func() bool { return !ix.Progress().Running })
+}
+
+// slowSource gates ListPDFsUnder on a channel and counts its invocations, so a
+// test can hold a sweep inside enumeration and observe concurrent starts.
+type slowSource struct {
+	fakeSource
+	gate   chan struct{}
+	mu     sync.Mutex
+	nCalls int
+}
+
+func (s *slowSource) ListPDFsUnder(prefix string) ([]PdfFile, error) {
+	s.mu.Lock()
+	s.nCalls++
+	s.mu.Unlock()
+	<-s.gate // block until the test releases enumeration
+	return s.fakeSource.ListPDFsUnder(prefix)
+}
+
+func (s *slowSource) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.nCalls
+}
+
+// TestRunFolderClaimsBeforeEnumeration is a regression test for the "index
+// folder does nothing for 30-60s, then stacks a 'stop previous index?' prompt
+// per click" bug. startScoped must reserve the running slot BEFORE the
+// (potentially slow) enumeration, so: (1) the start call returns promptly
+// instead of blocking the HTTP response on enumeration, and (2) a concurrent
+// start fails fast with ErrAlreadyRunning without running its own full
+// enumeration (which is what produced the delayed, stacked 409s).
+func TestRunFolderClaimsBeforeEnumeration(t *testing.T) {
+	db := openTestDB(t)
+	src := &slowSource{
+		fakeSource: fakeSource{
+			files: []PdfFile{{ID: 1, Path: "sub/a.pdf"}},
+			data:  map[string][]byte{"sub/a.pdf": []byte("alpha")},
+		},
+		gate: make(chan struct{}),
+	}
+	ix := NewIndexer(db, fakeExtractor{}, src, func() []string { return nil }, 1)
+
+	// First start must return promptly even though enumeration is gated shut. If
+	// startScoped still enumerated synchronously this would block until the gate
+	// opens and the select below would time out.
+	done := make(chan error, 1)
+	go func() { done <- ix.RunFolder("sub") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("first RunFolder = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first RunFolder blocked on enumeration (running slot not claimed before IO)")
+	}
+
+	// The running slot must be claimed immediately, before enumeration returns.
+	waitFor(t, func() bool { return ix.Progress().Running })
+
+	// A concurrent start while enumeration is still gated must fail fast and must
+	// NOT invoke its own enumeration.
+	if err := ix.RunFolder("sub"); err != ErrAlreadyRunning {
+		t.Errorf("second RunFolder = %v, want ErrAlreadyRunning", err)
+	}
+
+	// Release enumeration and let the sweep drain.
+	close(src.gate)
+	waitFor(t, func() bool { return !ix.Progress().Running })
+
+	if n := src.calls(); n != 1 {
+		t.Errorf("ListPDFsUnder called %d times, want 1 (concurrent start must not enumerate)", n)
+	}
 }
 
 func TestStartWatchdogStops(t *testing.T) {

@@ -164,25 +164,64 @@ func (ix *Indexer) RunFiles(ids []int64) error {
 }
 
 // startScoped is the shared sweep-start helper. It:
-//  1. Does a speculative (pre-IO) running check.
-//  2. Calls list() to enumerate candidates.
-//  3. Queries the store for already-done/active IDs and filters them out.
-//  4. Re-checks running (double-checked lock after IO) and starts the sweep.
+//  1. Atomically claims the running slot (fast, under the lock) and returns.
+//  2. Runs the expensive enumeration + pending filter in the background.
+//  3. Starts the sweep, or releases the slot if enumeration fails.
+//
+// The running slot is claimed BEFORE enumeration on purpose: list() +
+// DoneOrActiveFileIDs can take tens of seconds on a large databank. If the slot
+// were only claimed afterwards (as it once was) the start call would block the
+// HTTP response for that whole window, and every click fired meanwhile would
+// pass the pre-IO check, run its own full enumeration, and only then race on a
+// post-IO re-check — returning a delayed 409 per click and stacking a
+// "stop previous index?" prompt in the UI for each. Claiming up front makes
+// concurrent starts fail fast with ErrAlreadyRunning and no wasted enumeration.
 func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
 	ix.mu.Lock()
 	if ix.running {
 		ix.mu.Unlock()
 		return ErrAlreadyRunning
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ix.cancel = cancel
+	ix.running = true
+	// Total is unknown until enumeration completes; Progress reports Total=0
+	// (Running=true) during the enumeration window, then the real count.
+	ix.prog = Progress{Running: true, StartedAt: time.Now().Unix()}
 	ix.mu.Unlock()
 
+	go func() {
+		pending, err := ix.enumeratePending(list)
+		if err != nil {
+			// Enumeration failed (rare DB error): release the slot so the next
+			// start can run. Surfaced via logs, matching the sweep's own errors.
+			log.Printf("pdfindex: enumeration failed, aborting sweep: %v", err)
+			cancel()
+			ix.mu.Lock()
+			ix.prog.Running = false
+			ix.running = false
+			ix.cancel = nil
+			ix.mu.Unlock()
+			return
+		}
+		ix.mu.Lock()
+		ix.prog.Total = int64(len(pending))
+		ix.mu.Unlock()
+		ix.sweep(ctx, pending)
+	}()
+	return nil
+}
+
+// enumeratePending lists candidate PDFs and filters out those already done or
+// actively claimed, so Progress.Total reflects only genuinely pending work.
+func (ix *Indexer) enumeratePending(list func() ([]PdfFile, error)) ([]PdfFile, error) {
 	files, err := list()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	skip, err := ix.store.DoneOrActiveFileIDs()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pending := make([]PdfFile, 0, len(files))
 	for _, f := range files {
@@ -190,20 +229,7 @@ func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
 			pending = append(pending, f)
 		}
 	}
-
-	ix.mu.Lock()
-	if ix.running {
-		ix.mu.Unlock()
-		return ErrAlreadyRunning // re-check after IO above
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	ix.cancel = cancel
-	ix.running = true
-	ix.prog = Progress{Running: true, Total: int64(len(pending)), StartedAt: time.Now().Unix()}
-	ix.mu.Unlock()
-
-	go ix.sweep(ctx, pending)
-	return nil
+	return pending, nil
 }
 
 func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {

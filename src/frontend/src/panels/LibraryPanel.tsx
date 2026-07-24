@@ -625,19 +625,29 @@ export function LibraryPanel() {
     if (selectedFileId) databankStore.fetchFileDetail(selectedFileId);
   }, [selectedFileId]);
 
+  // Guards against rapid double-clicks on the index buttons: without it each
+  // click fires an independent request and every one that comes back 409 pops
+  // its own blocking confirm() dialog, stacking one prompt per click.
+  const indexInFlightRef = useRef(false);
   const handleIndexFolder = useCallback(async (folderPath: string) => {
-    const res = await pdfIndexClient.indexFolder(folderPath);
-    if (res.status === 409) {
-      if (confirm('An index is already running. Stop it and index this folder instead?')) {
-        await pdfIndexClient.stop();
-        await new Promise(r => setTimeout(r, 600));
-        await pdfIndexClient.indexFolder(folderPath);
+    if (indexInFlightRef.current) return;
+    indexInFlightRef.current = true;
+    try {
+      const res = await pdfIndexClient.indexFolder(folderPath);
+      if (res.status === 409) {
+        if (confirm('An index is already running. Stop it and index this folder instead?')) {
+          await pdfIndexClient.stop();
+          await new Promise(r => setTimeout(r, 600));
+          await pdfIndexClient.indexFolder(folderPath);
+          databankStore.startPdfIndexPolling();
+        }
+        return;
+      }
+      if (res.ok) {
         databankStore.startPdfIndexPolling();
       }
-      return;
-    }
-    if (res.ok) {
-      databankStore.startPdfIndexPolling();
+    } finally {
+      indexInFlightRef.current = false;
     }
   }, []);
 
