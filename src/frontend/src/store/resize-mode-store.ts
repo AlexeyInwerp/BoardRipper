@@ -45,12 +45,14 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
   netLineWidth: { key: 'netLineWidth', label: 'Net line width',   unit: 'px', min: 0.5, max: 5, step: 0.5, hint: 'Thickness of the highlighted-net connection lines.' },
   netLineAlpha: { key: 'netLineAlpha', label: 'Net line opacity', unit: '',   min: 0,   max: 1, step: 0.05, hint: 'Opacity of the net connection lines.' },
   netLineColor: { key: 'netLineColor', label: 'Net line color',   unit: '',   min: 0,   max: 0xffffff, step: 1, type: 'color', hint: 'Color of the primary net’s connection lines.' },
+  netHighlightGrow:  { key: 'netHighlightGrow',  label: 'Highlight size',    unit: '', min: 0, max: 20, step: 0.5, hint: 'Diameter of the yellow selection highlight ring.' },
+  netHighlightAlpha: { key: 'netHighlightAlpha', label: 'Highlight opacity', unit: '', min: 0, max: 1,  step: 0.05, hint: 'Opacity of the yellow selection highlight.' },
 };
 
 /** Group → the ordered list of control keys it shows. */
 export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
-  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'diodeValueScale', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
-  part:    ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'diodeValueScale', 'netHighlightGrow', 'netHighlightAlpha', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  part:    ['partLabelScale', 'partBorderWidth', 'netHighlightGrow', 'netHighlightAlpha', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
   netline: ['netLineWidth', 'netLineColor', 'netLineAlpha'],
   board:   ['boardFillAlpha'],
 };

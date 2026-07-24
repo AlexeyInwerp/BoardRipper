@@ -86,7 +86,8 @@ export function ResizePopup() {
   if (!popup) return null;
 
   const W = 250;
-  const H = 60 + popup.keys.length * 68;
+  const maxH = window.innerHeight - 24;
+  const H = Math.min(maxH, 60 + popup.keys.length * 68);
   const left = Math.min(Math.max(8, popup.pageX + 12), window.innerWidth - W - 8);
   const top = Math.min(Math.max(8, popup.pageY + 12), window.innerHeight - H - 8);
 
@@ -95,6 +96,7 @@ export function ResizePopup() {
       ref={ref}
       style={{
         position: 'fixed', left, top, width: W, zIndex: 4000,
+        maxHeight: maxH, overflowY: 'auto',
         background: 'var(--bg-secondary)', color: 'var(--text-primary)',
         border: '1px solid var(--border)', borderRadius: 8,
         boxShadow: '0 6px 24px var(--scrim-strong, rgba(0,0,0,0.4))',
