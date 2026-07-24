@@ -3,6 +3,7 @@ import { IconLayoutSidebar, IconLayoutSidebarRight } from '@tabler/icons-react';
 import { LibraryPanel } from '../panels/LibraryPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { ToolsPanel } from '../panels/ToolsPanel';
+import { PanelErrorBoundary } from './PanelErrorBoundary';
 import { DebugPanel } from '../panels/DebugPanel';
 import { isLiteBuild } from '../store/build-mode';
 import {
@@ -137,7 +138,9 @@ export function Sidebar() {
           </div>
         )}
         <div style={{ display: activeTab === 'tools' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
-          <ToolsPanel />
+          <PanelErrorBoundary label="Tools">
+            <ToolsPanel />
+          </PanelErrorBoundary>
         </div>
         <div style={{ display: activeTab === 'settings' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
           <SettingsPanel />

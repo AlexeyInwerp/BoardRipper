@@ -169,6 +169,30 @@ export interface BoardWorklistes {
   schemaVersion: number;
 }
 
+/**
+ * Normalize a raw IndexedDB `getAll()` snapshot into well-formed records.
+ *
+ * `listAllStored()` reads persisted blobs directly, skipping the hydration-time
+ * migration that `migrateLegacyMeasurements` performs (which back-fills
+ * `netEntries: []` and friends). Legacy records persisted before nets-in-worklist
+ * can therefore lack `worklistes`/`entries`/`netEntries` — the TS type says they
+ * are required, but old on-disk data violates it. A read-only consumer that reads
+ * `.length` must not throw, so guarantee the arrays exist here. Pure + in-memory:
+ * it does not persist anything back.
+ */
+export function normalizeStoredWorklistes(
+  raw: BoardWorklistes[] | undefined,
+): BoardWorklistes[] {
+  return (raw ?? []).map(b => ({
+    ...b,
+    worklistes: (b.worklistes ?? []).map(w => ({
+      ...w,
+      entries: w.entries ?? [],
+      netEntries: w.netEntries ?? [],
+    })),
+  }));
+}
+
 const DB_NAME = 'boardripper-worklist';
 const DB_VERSION = 1;
 const STORE = 'boards';
@@ -258,7 +282,8 @@ class WorklistStore {
       return await new Promise((resolve, reject) => {
         const tx = db.transaction(STORE, 'readonly');
         const req = tx.objectStore(STORE).getAll();
-        req.onsuccess = () => resolve((req.result as BoardWorklistes[] | undefined) ?? []);
+        req.onsuccess = () =>
+          resolve(normalizeStoredWorklistes(req.result as BoardWorklistes[] | undefined));
         req.onerror = () => reject(req.error);
       });
     } catch (e) {
