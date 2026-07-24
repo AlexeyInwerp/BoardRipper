@@ -45,9 +45,9 @@ const DIM_ALPHA = 0.22;           // parity-tuned vs netDimGfx look in Task 9
  *  you zoom into a big part — so the net names underneath (drawn earlier) and
  *  the pins below the overlay show through, instead of the huge designator
  *  blanketing a BGA. Purely a draw-time alpha; net names are unaffected. */
-const PART_FADE_START = 150;   // px on-screen — name begins to recede
-const PART_FADE_END = 460;     // px — name reaches PART_FADE_MIN (a faint ghost)
-const PART_FADE_MIN = 0.1;
+const PART_FADE_START = 80;    // px on-screen — name begins to recede (earlier)
+const PART_FADE_END = 240;     // px — name reaches PART_FADE_MIN (a faint ghost)
+const PART_FADE_MIN = 0.14;
 function smoothstep(a: number, b: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
