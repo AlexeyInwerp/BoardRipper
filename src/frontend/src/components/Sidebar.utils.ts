@@ -18,10 +18,11 @@ export const MIN_WIDTH = 200;
 export const MAX_WIDTH_RATIO = 0.5; // never wider than half the screen
 
 export type SidebarSide = 'left' | 'right';
-export type SidebarTab = 'library' | 'settings' | 'debug';
+export type SidebarTab = 'library' | 'tools' | 'settings' | 'debug';
 
 export const TABS: { id: SidebarTab; label: string }[] = ([
   { id: 'library', label: 'Library' },
+  { id: 'tools', label: 'Tools' },
   { id: 'settings', label: 'Settings' },
   { id: 'debug', label: 'Debug' },
 ] as { id: SidebarTab; label: string }[]).filter(t => !(isLiteBuild() && t.id === 'library'));
