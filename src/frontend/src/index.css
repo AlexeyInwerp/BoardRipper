@@ -7794,3 +7794,34 @@ body {
   font-size: 11px; padding: 4px 6px; margin-bottom: 10px;
 }
 .tools-tool-body { padding: 4px 6px; }
+
+/* --- Tools calculators --- */
+.rc-count, .rc-bands { display: flex; gap: 5px; justify-content: center; }
+.rc-count { margin-bottom: 12px; }
+.rc-count-btn {
+  font: inherit; font-size: 10px; padding: 3px 9px; border-radius: 4px;
+  border: 1px solid var(--border, #333); background: none; color: var(--text-muted, #999);
+  cursor: pointer;
+}
+.rc-count-btn.active { background: var(--accent, #3b82f6); color: #fff; border-color: var(--accent, #3b82f6); }
+.rc-bands { margin-bottom: 14px; flex-wrap: wrap; }
+.rc-band { width: 44px; }
+.rc-swatch { height: 44px; border-radius: 2px; border: 1px solid #000; }
+.rc-band select {
+  width: 100%; font-size: 9px; margin-top: 3px; text-align: center;
+  background: var(--input-bg, #26262c); color: var(--text, #bbb);
+  border: 1px solid var(--border, #333); border-radius: 3px; padding: 2px 0;
+}
+.rc-readout, .code-readout {
+  text-align: center; padding: 14px; border-radius: 6px;
+  background: var(--panel-bg, #26262c);
+}
+.rc-value { font-size: 24px; font-weight: 500; color: var(--text, #fff); font-family: ui-monospace, monospace; }
+.rc-sub { font-size: 11px; color: var(--text-muted, #888); margin-top: 4px; font-family: ui-monospace, monospace; }
+.rc-error { font-size: 12px; color: var(--text-muted, #888); }
+.code-tool { display: flex; flex-direction: column; gap: 12px; }
+.code-input {
+  font: inherit; font-family: ui-monospace, monospace; font-size: 16px; text-align: center;
+  padding: 8px; border-radius: 5px; border: 1px solid var(--border, #333);
+  background: var(--input-bg, #26262c); color: var(--text, #fff);
+}

@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useDatabank } from '../hooks/useDatabank';
 import { ensureDatabaseEditorPanel } from '../store/dockview-api';
+import { ResistorColorTool } from './tools/ResistorColorTool';
+import { SmdResistorTool } from './tools/SmdResistorTool';
+import { CapacitorTool } from './tools/CapacitorTool';
 
 type ToolId = 'resistor' | 'smd' | 'capacitor' | 'worklists';
 
@@ -33,7 +36,9 @@ export function ToolsPanel() {
           ← Tools / {TOOL_TITLES[activeTool]}
         </button>
         <div className="tools-tool-body">
-          {/* Calculators wired in Task 6; Worklists catalog in Task 7. */}
+          {activeTool === 'resistor' && <ResistorColorTool />}
+          {activeTool === 'smd' && <SmdResistorTool />}
+          {activeTool === 'capacitor' && <CapacitorTool />}
         </div>
       </div>
     );
