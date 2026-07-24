@@ -1,5 +1,75 @@
 # BoardRipper changelog
 
+## v0.31.44 — 2026-07-24
+
+Interactive Mode: size any board element by clicking it. Plus the offline
+single-file build, and a batch of rendering fixes — including two faults that
+could stop the renderer mid-session.
+
+### Interactive Mode (new)
+
+- **Click a board element to resize it** — a toggle at the top of Settings ▸
+  Board turns a plain click into a sizing gesture: whatever you click opens a
+  popup at the cursor with the handles relevant to it, and the whole board
+  previews live as you drag. Pan and zoom keep working. `f37157a8` `1c163d36`
+- **Handles grouped by what you clicked** — a pin offers pin size, pin-number
+  size, net-label size, diode-value size, selection-highlight size/opacity and
+  the selected-label floor/LOD; a component offers its label size and outline
+  width; a highlighted net's connection line offers width, colour and opacity;
+  empty board offers board opacity. Every handle carries a one-line
+  description, scroll-to-nudge and double-click-to-reset.
+  `c798d216` `a387fb20` `746e761a` `82070a22` `e83eed9a`
+- **Sizes that previously wouldn't budge** — pin, pin-number, net-label,
+  component-label and diode-value sizes are now true multipliers, so they
+  scale on every board instead of only nudging labels that happened to sit at
+  the old minimum-size floor. `6bee409f` `9f80f81e` `b40523b4`
+
+### Rendering
+
+- **Fixed: the renderer could stop on any settings change** — with spotlight
+  (darklight) dimming and a part selected, the selection halo was destroyed
+  along with the scene on each rebuild and then drawn again, halting the
+  ticker until "Restart Render". `856c4343` `5ff71f69`
+- **Fixed: garbage lines across big nets** — net-line, punch-through and glow
+  geometry is chunked below the 65,535-vertex index ceiling, and the chunk
+  budget now adapts when pins are scaled up.
+  `657ea5ef` `c40dffde` `3df9f6f0` `d656e3c9`
+- **Component names step aside as you zoom in** — a large BGA designator fades
+  to a ghost as it grows, so the net names underneath stay readable instead of
+  being blanketed by it. `1ab634f0` `8babb0cc`
+- **Fixed: nets on dense BGAs wouldn't select** — a click landed on the net
+  label and selected the whole component, which highlights no net; clicks now
+  resolve to the specific pin. `e1805871`
+- **Safari/Polaris net-line artefacts** and **hover lag on Windows Firefox**.
+  `6a1777cf` `d7b0ed8e`
+
+### Offline & lite build
+
+- **Offline copy** — a single-file `boardripper-lite.html` that runs straight
+  from `file://`, downloadable from the toolbar, with the lite web app
+  deployed alongside each release.
+  `2f39348b` `a23175ac` `9aaa692d` `5dc6d080` `954f614b`
+
+### Library, PDF & Settings
+
+- **Donor boards moved under the PDF tab** as a sub-view, mirroring the
+  Folders source menu. `263686e1`
+- **Fixed: repeated index clicks stacked prompts** — starting a PDF index now
+  claims its slot immediately instead of after a long enumeration, so extra
+  clicks fail fast rather than queueing a "stop previous index?" dialog each.
+  `b2ca9c82`
+- **Settings tabs are icons** that expand to labels when there's room and
+  collapse when there isn't; the search bar moved below them.
+  `077b6827` `6c74fe14` `686d6439`
+- **Fixed: PDF linked auto-switch** now prefers the active bound board tab.
+  `6e8c8f56`
+
+### MCP
+
+- **Fixed: stale 0/0 board descriptor** — the descriptor is re-pushed once
+  parsed data lands. `2b3987b0`
+
+
 ## v0.31.43 — 2026-07-20
 
 MCP auth follow-ups to v0.31.42's session separation: clearer errors for
