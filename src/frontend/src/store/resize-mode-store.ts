@@ -25,23 +25,20 @@ export interface ResizeControlDef {
   min: number;
   max: number;
   step: number;
+  /** One-line description shown under the control. */
+  hint: string;
 }
 
 /** Registry of every control Resize Mode can show, keyed by setting key. */
 export const CONTROLS: Record<string, ResizeControlDef> = {
-  pinSizeScale:    { key: 'pinSizeScale',    label: 'Pin size',        unit: '×',  min: 0.3, max: 4,  step: 0.1 },
-  pinNumberScale:  { key: 'pinNumberScale',  label: 'Pin number size', unit: '×',  min: 0.3, max: 4,  step: 0.1 },
-  netLabelScale:   { key: 'netLabelScale',   label: 'Net label size',  unit: '×',  min: 0.3, max: 4,  step: 0.1 },
-  partLabelScale:  { key: 'partLabelScale',  label: 'Component label',  unit: '×', min: 0.3, max: 4,  step: 0.1 },
-  partBorderWidth: { key: 'partBorderWidth', label: 'Part outline',    unit: 'px', min: 0.1, max: 10, step: 0.1 },
-  boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05 },
-  // Selected-component label floor (fast text): the selected part's labels
-  // never shrink below this many screen px, so they stay readable while
-  // unzooming. Mirrors Settings ▸ Zoom LoD ▸ Selected Part Labels.
-  selectedLabelMinPx: { key: 'selectedLabelMinPx', label: 'Selected label floor', unit: 'px', min: 0, max: 30, step: 1 },
-  // LoD relax for the selected part's labels: lower = they stay visible when
-  // zoomed out further (1 = no relax, same threshold as unselected labels).
-  selectedLabelLodRelax: { key: 'selectedLabelLodRelax', label: 'Selected label LOD', unit: '×', min: 0.1, max: 1, step: 0.05 },
+  pinSizeScale:    { key: 'pinSizeScale',    label: 'Pin size',        unit: '×',  min: 0.3, max: 4,  step: 0.1, hint: 'Drawn radius of every pin & pad.' },
+  pinNumberScale:  { key: 'pinNumberScale',  label: 'Pin number size', unit: '×',  min: 0.3, max: 4,  step: 0.1, hint: 'Size of the pin-number text.' },
+  netLabelScale:   { key: 'netLabelScale',   label: 'Net label size',  unit: '×',  min: 0.3, max: 4,  step: 0.1, hint: 'Size of the net-name text on pins.' },
+  partLabelScale:  { key: 'partLabelScale',  label: 'Component label',  unit: '×', min: 0.3, max: 4,  step: 0.1, hint: 'Size of component (designator) labels.' },
+  partBorderWidth: { key: 'partBorderWidth', label: 'Part outline',    unit: 'px', min: 0.1, max: 10, step: 0.1, hint: 'Stroke thickness of part outlines.' },
+  boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05, hint: 'Opacity of the board fill (0 = transparent).' },
+  selectedLabelMinPx: { key: 'selectedLabelMinPx', label: 'Selected label floor', unit: 'px', min: 0, max: 30, step: 1, hint: 'Min on-screen size for a selected part’s labels.' },
+  selectedLabelLodRelax: { key: 'selectedLabelLodRelax', label: 'Selected label LOD', unit: '×', min: 0.1, max: 1, step: 0.05, hint: 'Lower = selected labels stay visible when zoomed out further.' },
 };
 
 /** Group → the ordered list of control keys it shows. */

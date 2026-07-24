@@ -42,6 +42,7 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
         />
         <button onClick={() => resizeModeStore.nudge(k, 1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
       </div>
+      <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 2, lineHeight: 1.3 }}>{def.hint}</div>
     </div>
   );
 }
@@ -69,7 +70,7 @@ export function ResizePopup() {
   if (!popup) return null;
 
   const W = 250;
-  const H = 60 + popup.keys.length * 52;
+  const H = 60 + popup.keys.length * 68;
   const left = Math.min(Math.max(8, popup.pageX + 12), window.innerWidth - W - 8);
   const top = Math.min(Math.max(8, popup.pageY + 12), window.innerHeight - H - 8);
 
