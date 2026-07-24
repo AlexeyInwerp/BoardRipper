@@ -137,6 +137,10 @@ export interface RenderSettings {
   /** Selected part's labels never render smaller than this many screen px
    *  while selected (Text fast mode). 0 = scale naturally with zoom. */
   selectedLabelMinPx: number;
+  /** LoD relax multiplier on the selected part's label appear-threshold (Text
+   *  fast mode). Selected labels appear when fontSize*zoom ≥ minPx*relax, so
+   *  lower = they stay visible when zoomed out further. 1 = no relax. */
+  selectedLabelLodRelax: number;
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
    */
   textFastMode: boolean;
@@ -513,6 +517,7 @@ export const DEFAULTS: RenderSettings = {
   labelMinScreenPx: 3,
   labelZoomHide: 0,
   selectedLabelMinPx: 11,
+  selectedLabelLodRelax: 0.75,
   textFastMode: true,
 
   selectionWidth: 2,

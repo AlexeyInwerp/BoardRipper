@@ -1956,6 +1956,7 @@ export class BoardRenderer {
       twoPinLabelMinScreenPx: s.twoPinLabelMinScreenPx,
       labelZoomHide: s.labelZoomHide,
       selectedLabelMinPx: s.selectedLabelMinPx,
+      selectedLabelLodRelax: s.selectedLabelLodRelax ?? 0.75,
     });
   }
 
@@ -3516,7 +3517,7 @@ export class BoardRenderer {
         // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
         // this needlessly redraws all geometry (and can hit the vertex ceiling
         // under an elevated pinSizeScale).
-        'selectedLabelMinPx',
+        'selectedLabelMinPx', 'selectedLabelLodRelax',
       ]);
       if (prev) {
         let visualChanged = false;

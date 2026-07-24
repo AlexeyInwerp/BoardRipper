@@ -28,18 +28,19 @@ export interface OverlayThresholds {
    *  liked). 0 = no floor, scale naturally. User-adjustable: Settings ▸
    *  Zoom Level of Detail ▸ Selected Part Labels. */
   selectedLabelMinPx: number;
+  /** LoD relax multiplier for the selected part's labels (see render-settings
+   *  `selectedLabelLodRelax`). Lower = selected labels appear at lower zoom. */
+  selectedLabelLodRelax: number;
 }
 
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
 const DIM_ALPHA = 0.22;           // parity-tuned vs netDimGfx look in Task 9
-/** Selected-part pin/net labels get a RELAXED LoD (0.75× the normal min-px)
- *  rather than a full bypass: slightly sticky through unzoom, but they
- *  disappear close to the normal cutoff (user feedback 2026-07-19 — net
- *  names must not survive unzooming, and 0.5 kept them too long). The part
- *  NAME label alone keeps the full bypass as the selection identity marker
- *  (parity with the Pixi elevated badge). */
-const SELECTED_LOD_RELAX = 0.75;
-
+/** Selected-part pin/net labels get a RELAXED LoD (default 0.75× the normal
+ *  min-px, via `selectedLabelLodRelax`) rather than a full bypass: slightly
+ *  sticky through unzoom, but they disappear close to the normal cutoff (user
+ *  feedback 2026-07-19 — net names must not survive unzooming, and 0.5 kept
+ *  them too long). The part NAME label alone keeps the full bypass as the
+ *  selection identity marker (parity with the Pixi elevated badge). */
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   switch (kind) {
     case 'circleNum': case 'circleNet': return th.circleLabelMinScreenPx;
@@ -61,7 +62,7 @@ export function selectVisibleLabels(
     const keepAlways = selected && r.kind === 'part';   // selection identity marker
     if (!keepAlways) {
       if (zoomHidden) continue;
-      const min = minPxFor(r.kind, th) * (selected ? SELECTED_LOD_RELAX : 1);
+      const min = minPxFor(r.kind, th) * (selected ? th.selectedLabelLodRelax : 1);
       if (r.fontSize * view.scale < min) continue;
     }
     const sx = m.a * r.x + m.c * r.y + m.tx;

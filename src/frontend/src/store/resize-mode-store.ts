@@ -39,12 +39,15 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
   // never shrink below this many screen px, so they stay readable while
   // unzooming. Mirrors Settings ▸ Zoom LoD ▸ Selected Part Labels.
   selectedLabelMinPx: { key: 'selectedLabelMinPx', label: 'Selected label floor', unit: 'px', min: 0, max: 30, step: 1 },
+  // LoD relax for the selected part's labels: lower = they stay visible when
+  // zoomed out further (1 = no relax, same threshold as unselected labels).
+  selectedLabelLodRelax: { key: 'selectedLabelLodRelax', label: 'Selected label LOD', unit: '×', min: 0.1, max: 1, step: 0.05 },
 };
 
 /** Group → the ordered list of control keys it shows. */
 export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
-  pin:   ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'selectedLabelMinPx'],
-  part:  ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx'],
+  pin:   ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  part:  ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
   board: ['boardFillAlpha'],
 };
 
