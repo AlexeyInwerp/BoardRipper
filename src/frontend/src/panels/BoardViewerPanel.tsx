@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useSyncExternalStore } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { BoardRenderer } from '../renderer/BoardRenderer';
 import { boardStore } from '../store/board-store';
@@ -11,6 +11,8 @@ import { log } from '../store/log-store';
 import { useBareScrollAction } from '../store/scroll-mode';
 import { obdStore, extractBoardNumberFromFilename } from '../store/obd-store';
 import { renderOverlayLayout } from '../components/overlay/slot-renderers';
+import { resizeModeStore } from '../store/resize-mode-store';
+import { ResizePopup } from '../components/ResizePopup';
 import { useRenderSettings } from '../hooks/useRenderSettings';
 import type { SlotCtx } from '../components/overlay/slot-ctx';
 import {
@@ -33,6 +35,10 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
   const layerStates = thisTab?.layerStates ?? [];
   const bareAction = useBareScrollAction();
   const renderSettings = useRenderSettings();
+  const resizeMode = useSyncExternalStore(
+    (cb) => resizeModeStore.subscribe(cb),
+    () => resizeModeStore.enabled,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'layers' | 'info' | 'search' | 'worklist' | null>(null);
   const [sidebarOpacity, setSidebarOpacity] = useState(1);
@@ -231,6 +237,7 @@ export function BoardViewerPanel(props: IDockviewPanelProps<{ boardTabId?: numbe
         className="board-panel-canvas"
         data-testid="board-canvas"
       />
+      {resizeMode && <ResizePopup />}
       {thisTab && !thisTab.board && (
         <div className="board-loading-overlay">
           <div className="board-loading-spinner" />

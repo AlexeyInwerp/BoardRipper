@@ -100,10 +100,28 @@ export interface RenderSettings {
    *  auto-computed size, so tiny parts still get a readable label. */
   labelMinSize: number;
   labelHideThreshold: number;
+  /** Multiplier on the computed part-designator (component) label size.
+   *  Part labels are auto-fit to the part body, so `labelMinSize` (a floor)
+   *  barely moves them; this scales them directly. 1 = geometry-fit default. */
+  partLabelScale: number;
+  /** Multiplier on pin-number label size (Resize Mode). labelMinSize is only a
+   *  floor and can't grow numbers already above it, so this scales directly. */
+  pinNumberScale: number;
+  /** Multiplier on net-name label size (Resize Mode). Independent of pin
+   *  numbers so the two can be sized separately. 1 = unchanged. */
+  netLabelScale: number;
+  /** Multiplier on on-pin diode-value text size (Resize Mode). Diode text is
+   *  otherwise derived from the pin radius, so it grows with pinSizeScale; this
+   *  lets it be sized independently. 1 = unchanged. */
+  diodeValueScale: number;
 
   pinMinRadius: number;
   pinMaxRadius: number;
   pinScaleFactor: number;
+  /** Final uniform multiplier on every pin's rendered radius (Resize Mode's
+   *  pin knob). 1 = unchanged. Applied after the min/max clamp in
+   *  computePinRadius so it scales all pins, not just those at the floor. */
+  pinSizeScale: number;
   /** Minimum body size (mils) in the narrow dimension for 2-pin parts. 0 = disabled. */
   partMinBodyRatio: number;
   pinAlpha: number;
@@ -123,6 +141,10 @@ export interface RenderSettings {
   /** Selected part's labels never render smaller than this many screen px
    *  while selected (Text fast mode). 0 = scale naturally with zoom. */
   selectedLabelMinPx: number;
+  /** LoD relax multiplier on the selected part's label appear-threshold (Text
+   *  fast mode). Selected labels appear when fontSize*zoom ≥ minPx*relax, so
+   *  lower = they stay visible when zoomed out further. 1 = no relax. */
+  selectedLabelLodRelax: number;
   /** Draw board text on a Canvas2D overlay instead of scene BitmapText.
    */
   textFastMode: boolean;
@@ -482,11 +504,16 @@ export const DEFAULTS: RenderSettings = {
   partLabelShadow: false,
   pinLabelShadow: true,
   labelMinSize: 3,
+  partLabelScale: 1,
+  pinNumberScale: 1,
+  netLabelScale: 1,
+  diodeValueScale: 1,
   labelHideThreshold: 2,
 
   pinMinRadius: 3,
   pinMaxRadius: 15,
   pinScaleFactor: 1,
+  pinSizeScale: 1,
   partMinBodyRatio: 0.8,
   pinAlpha: 0.85,
   showPinNumbers: true,
@@ -495,6 +522,7 @@ export const DEFAULTS: RenderSettings = {
   labelMinScreenPx: 3,
   labelZoomHide: 0,
   selectedLabelMinPx: 11,
+  selectedLabelLodRelax: 0.75,
   textFastMode: true,
 
   selectionWidth: 2,
@@ -610,11 +638,15 @@ export function quantizeFontSize(size: number): number {
   return FONT_SIZE_STEPS[FONT_SIZE_STEPS.length - 1];
 }
 
-/** Compute display radius for a pin. At scaleFactor=0 all pins are pinMinRadius. */
+/** Compute display radius for a pin. At scaleFactor=0 all pins are pinMinRadius.
+ *  `pinSizeScale` is a final uniform multiplier (Resize Mode's pin knob) applied
+ *  after the min/max clamp so it grows/shrinks every pin regardless of file
+ *  radius — pinMinRadius alone is only a floor and can't shrink larger pins. */
 export function computePinRadius(s: RenderSettings, fileRadius: number): number {
   const base = fileRadius || s.pinMinRadius;
   const r = s.pinMinRadius + (base - s.pinMinRadius) * s.pinScaleFactor;
-  return Math.min(s.pinMaxRadius, Math.max(s.pinMinRadius, r));
+  const clamped = Math.min(s.pinMaxRadius, Math.max(s.pinMinRadius, r));
+  return clamped * (s.pinSizeScale || 1);
 }
 
 /**

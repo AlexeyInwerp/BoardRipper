@@ -6,6 +6,7 @@
  *  matrices so rotate/mirror/butterfly work unchanged. */
 import type { LabelModel, LabelRecord } from './label-model';
 import { log } from '../store/log-store';
+import { resizeModeStore } from '../store/resize-mode-store';
 
 export interface OverlayViewState {
   topMatrix: { a: number; b: number; c: number; d: number; tx: number; ty: number };
@@ -27,17 +28,33 @@ export interface OverlayThresholds {
    *  liked). 0 = no floor, scale naturally. User-adjustable: Settings ▸
    *  Zoom Level of Detail ▸ Selected Part Labels. */
   selectedLabelMinPx: number;
+  /** LoD relax multiplier for the selected part's labels (see render-settings
+   *  `selectedLabelLodRelax`). Lower = selected labels appear at lower zoom. */
+  selectedLabelLodRelax: number;
 }
 
 const OFFSCREEN_MARGIN = 40;      // px — keep labels whose center is just off-edge
 const DIM_ALPHA = 0.22;           // parity-tuned vs netDimGfx look in Task 9
-/** Selected-part pin/net labels get a RELAXED LoD (0.75× the normal min-px)
- *  rather than a full bypass: slightly sticky through unzoom, but they
- *  disappear close to the normal cutoff (user feedback 2026-07-19 — net
- *  names must not survive unzooming, and 0.5 kept them too long). The part
- *  NAME label alone keeps the full bypass as the selection identity marker
- *  (parity with the Pixi elevated badge). */
-const SELECTED_LOD_RELAX = 0.75;
+/** Selected-part pin/net labels get a RELAXED LoD (default 0.75× the normal
+ *  min-px, via `selectedLabelLodRelax`) rather than a full bypass: slightly
+ *  sticky through unzoom, but they disappear close to the normal cutoff (user
+ *  feedback 2026-07-19 — net names must not survive unzooming, and 0.5 kept
+ *  them too long). The part NAME label alone keeps the full bypass as the
+ *  selection identity marker (parity with the Pixi elevated badge). */
+/** Component (part) names fade out as they grow oversized on screen — i.e. as
+ *  you zoom into a big part — so the net names underneath (drawn earlier) and
+ *  the pins below the overlay show through, instead of the huge designator
+ *  blanketing a BGA. Purely a draw-time alpha; net names are unaffected. */
+const PART_FADE_START = 80;    // px on-screen — name begins to recede (earlier)
+const PART_FADE_END = 240;     // px — name reaches PART_FADE_MIN (a faint ghost)
+const PART_FADE_MIN = 0.14;
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+function partNameFade(onScreenPx: number): number {
+  return 1 - smoothstep(PART_FADE_START, PART_FADE_END, onScreenPx) * (1 - PART_FADE_MIN);
+}
 
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   switch (kind) {
@@ -60,7 +77,7 @@ export function selectVisibleLabels(
     const keepAlways = selected && r.kind === 'part';   // selection identity marker
     if (!keepAlways) {
       if (zoomHidden) continue;
-      const min = minPxFor(r.kind, th) * (selected ? SELECTED_LOD_RELAX : 1);
+      const min = minPxFor(r.kind, th) * (selected ? th.selectedLabelLodRelax : 1);
       if (r.fontSize * view.scale < min) continue;
     }
     const sx = m.a * r.x + m.c * r.y + m.tx;
@@ -80,6 +97,10 @@ export class LabelOverlay {
   lastDrawMs = 0;
   lastCounts = { visible: 0, total: 0 };
   private lastSlowDrawLogAt = 0;
+  /** Screen-space bounding boxes of every label painted in the last draw,
+   *  in CSS px (same space as the renderer canvas). Consumed by hitTest()
+   *  for Resize Mode's "did the click land on text?" classification. */
+  private lastBoxes: Array<{ x0: number; y0: number; x1: number; y1: number; kind: LabelRecord['kind']; partIndex: number }> = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -127,6 +148,11 @@ export class LabelOverlay {
     ctx.clearRect(0, 0, view.width, view.height);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    // Only record hit-test boxes while Resize Mode is on — otherwise this is a
+    // per-visible-label allocation on the (normally allocation-free) draw hot
+    // path that no one reads (boxes are consumed only on a Resize Mode click).
+    const recordBoxes = resizeModeStore.enabled;
+    this.lastBoxes.length = 0;
 
     // Cull ONCE per side, then iterate the three paint passes over the
     // pre-culled arrays (painter's order: dimmed → lit → selected-on-top).
@@ -157,7 +183,9 @@ export class LabelOverlay {
           const ah = (0.5 - r.anchorY) * fontPx;
           const sx = sx0 + aw;
           const sy = sy0 + ah;
-          ctx.globalAlpha = pass === 'dim' ? DIM_ALPHA : 1;
+          let alpha = pass === 'dim' ? DIM_ALPHA : 1;
+          if (r.kind === 'part') alpha *= partNameFade(r.fontSize * view.scale);
+          ctx.globalAlpha = alpha;
           if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)
             const tw = textW + fontPx * 0.6;
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -165,6 +193,13 @@ export class LabelOverlay {
           }
           ctx.fillStyle = this.css(r.color);
           ctx.fillText(r.text, sx, sy);
+          // Record the painted box (centered draw) for Resize Mode hit-testing.
+          // A few px of slop makes small labels easier to click.
+          if (recordBoxes) {
+            const hw = textW / 2 + 3;
+            const hh = fontPx / 2 + 3;
+            this.lastBoxes.push({ x0: sx - hw, y0: sy - hh, x1: sx + hw, y1: sy + hh, kind: r.kind, partIndex: r.partIndex });
+          }
         }
       }
     }
@@ -176,6 +211,17 @@ export class LabelOverlay {
       this.lastSlowDrawLogAt = t0;
       log.perf.log(`label overlay draw ${ms.toFixed(1)}ms visible=${visible}`);
     }
+  }
+
+  /** Resize Mode: return the topmost label box containing the given
+   *  canvas-space (CSS px) point, or null. Iterates last-painted-first so the
+   *  visually-on-top label (selected pass drawn last) wins. */
+  hitTest(sx: number, sy: number): { kind: LabelRecord['kind']; partIndex: number } | null {
+    for (let i = this.lastBoxes.length - 1; i >= 0; i--) {
+      const b = this.lastBoxes[i];
+      if (sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1) return { kind: b.kind, partIndex: b.partIndex };
+    }
+    return null;
   }
 
   destroy(): void { this.canvas.remove(); }

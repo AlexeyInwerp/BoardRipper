@@ -1466,6 +1466,65 @@ body {
 }
 
 /* ── Mode switch: Global / Board ── */
+/* Interactive Mode toggle — prominent top-of-Board-tab card. */
+.interactive-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.interactive-mode-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.interactive-mode-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg, #fff);
+  box-shadow: 0 0 0 2px var(--accent-hover, transparent);
+}
+.interactive-mode-icon {
+  flex: 0 0 auto;
+  /* Periodic attention bump while OFF; steady once ON. */
+  animation: interactive-bump 2.6s ease-in-out infinite;
+}
+.interactive-mode-toggle.active .interactive-mode-icon {
+  animation: none;
+}
+.interactive-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.interactive-mode-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.interactive-mode-desc {
+  font-size: 11px;
+  opacity: 0.75;
+  line-height: 1.3;
+}
+@keyframes interactive-bump {
+  0%, 62%, 100% { transform: translateY(0) scale(1); }
+  70% { transform: translateY(-3px) scale(1.12); }
+  80% { transform: translateY(0) scale(1); }
+  88% { transform: translateY(-1px) scale(1.05); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .interactive-mode-icon { animation: none; }
+}
+
 .settings-mode-switch {
   display: flex;
   gap: 2px;

@@ -1,0 +1,131 @@
+/** Resize Mode popup — appears at the click point with the handles relevant to
+ *  what was clicked (a pin shows pin/number/net sizes; a component shows label
+ *  + outline; empty board shows board opacity). Each row edits one global
+ *  RenderSettings key and the whole board previews live.
+ *
+ *  Per row: −/+ buttons, a slider (double-click = reset to default), and
+ *  wheel-over-the-row to nudge. Popup closes on Escape or outside click. */
+import { useRef, useEffect, useSyncExternalStore, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { resizeModeStore, CONTROLS } from '../store/resize-mode-store';
+import type { RenderSettings } from '../store/render-settings';
+
+function subscribe(cb: () => void) {
+  return resizeModeStore.subscribe(cb);
+}
+
+const toHex = (v: number) => '#' + (v & 0xffffff).toString(16).padStart(6, '0');
+
+function ControlRow({ k }: { k: keyof RenderSettings }) {
+  const def = CONTROLS[k as string];
+  const value = resizeModeStore.valueOf(k);
+  const isColor = def.type === 'color';
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    if (isColor) return;
+    e.stopPropagation();
+    resizeModeStore.nudge(k, e.deltaY < 0 ? 1 : -1);
+  }, [k, isColor]);
+
+  return (
+    <div onWheel={onWheel} style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 12 }}>{def.label}</span>
+        <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', fontSize: 12 }}>
+          {isColor ? toHex(value) : value}{!isColor && def.unit && <span style={{ opacity: 0.6, marginLeft: 3 }}>{def.unit}</span>}
+        </span>
+      </div>
+      {isColor ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+          <input
+            type="color"
+            value={toHex(value)}
+            onChange={(e) => resizeModeStore.commit(k, parseInt(e.target.value.slice(1), 16))}
+            style={{ flex: 1, height: 26, padding: 0, border: '1px solid var(--border)', borderRadius: 5, background: 'transparent', cursor: 'pointer' }}
+          />
+          <button onClick={() => resizeModeStore.reset(k)} style={btnStyle} title="Reset to default">⟲</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+          <button onClick={() => resizeModeStore.nudge(k, -1)} style={btnStyle} title={`− ${def.step}`}>−</button>
+          <input
+            type="range"
+            min={def.min} max={def.max} step={def.step} value={value}
+            onChange={(e) => resizeModeStore.commit(k, Number(e.target.value))}
+            onDoubleClick={() => resizeModeStore.reset(k)}
+            title="Double-click to reset to default"
+            style={{ flex: 1, accentColor: 'var(--accent)' }}
+          />
+          <button onClick={() => resizeModeStore.nudge(k, 1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
+        </div>
+      )}
+      <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 2, lineHeight: 1.3 }}>{def.hint}</div>
+    </div>
+  );
+}
+
+export function ResizePopup() {
+  const snap = useSyncExternalStore(subscribe, () => resizeModeStore.snapshot());
+  const ref = useRef<HTMLDivElement>(null);
+  const popup = snap.popup;
+
+  useEffect(() => {
+    if (!popup) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') resizeModeStore.close(); };
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) resizeModeStore.close();
+    };
+    document.addEventListener('keydown', onKey);
+    const t = setTimeout(() => document.addEventListener('mousedown', onDown), 0);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+      clearTimeout(t);
+    };
+  }, [popup]);
+
+  if (!popup) return null;
+
+  const W = 250;
+  const maxH = window.innerHeight - 24;
+  const H = Math.min(maxH, 60 + popup.keys.length * 68);
+  const left = Math.min(Math.max(8, popup.pageX + 12), window.innerWidth - W - 8);
+  const top = Math.min(Math.max(8, popup.pageY + 12), window.innerHeight - H - 8);
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: 'fixed', left, top, width: W, zIndex: 4000,
+        maxHeight: maxH, overflowY: 'auto',
+        background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+        border: '1px solid var(--border)', borderRadius: 8,
+        boxShadow: '0 6px 24px var(--scrim-strong, rgba(0,0,0,0.4))',
+        padding: '10px 12px', font: '12px/1.4 system-ui, sans-serif',
+        userSelect: 'none',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <strong style={{ fontSize: 13, color: 'var(--accent)' }}>{popup.title}</strong>
+        {popup.context && (
+          <span style={{ color: 'var(--text-secondary)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 150 }}>
+            {popup.context}
+          </span>
+        )}
+      </div>
+
+      {popup.keys.map((k) => <ControlRow key={k as string} k={k} />)}
+
+      <div style={{ marginTop: 8, color: 'var(--text-secondary)', opacity: 0.7, fontSize: 11 }}>
+        scroll a row to adjust · double-click to reset
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+const btnStyle: React.CSSProperties = {
+  width: 24, height: 24, flex: '0 0 auto',
+  border: '1px solid var(--border)', borderRadius: 5,
+  background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
+  fontSize: 15, lineHeight: '1', cursor: 'pointer',
+};

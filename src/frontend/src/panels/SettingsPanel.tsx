@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
+import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
+import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
 import { colorToHex, hexToColor } from '../store/layer-store';
@@ -65,6 +67,15 @@ export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' |
 
 const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
   .filter(t => !(isLiteBuild() && (t === 'library' || t === 'integrations')));
+
+const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
+  theme:        IconPalette,
+  board:        IconLayoutBoardSplit,
+  input:        IconKeyboard,
+  library:      IconBooks,
+  system:       IconSettings,
+  integrations: IconPlug,
+};
 
 const TAB_LABELS: Record<SettingsTabId, string> = {
   theme:        'Theme',
@@ -1773,6 +1784,30 @@ export function SettingsPanel() {
   const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Responsive tab strip: show every tab's label when the panel is wide enough
+  // to fit them, otherwise collapse to icons (the active tab keeps its label).
+  // Hysteresis via `tabsNeedRef` (the width the fully-expanded strip needs)
+  // prevents oscillation: once collapsed we only re-expand when there's room
+  // for the full expanded width, not the smaller collapsed width.
+  const tabsRowRef = useRef<HTMLDivElement>(null);
+  const [tabsExpanded, setTabsExpanded] = useState(true);
+  const tabsNeedRef = useRef(0);
+  useEffect(() => {
+    const el = tabsRowRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      const avail = el.clientWidth;
+      if (tabsExpanded) {
+        tabsNeedRef.current = el.scrollWidth;
+        if (el.scrollWidth > avail + 1) setTabsExpanded(false);
+      } else if (tabsNeedRef.current > 0 && avail >= tabsNeedRef.current) {
+        setTabsExpanded(true);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tabsExpanded]);
+
   // Section scroll refs
   const outlineRef = useRef<HTMLDivElement>(null);
   const partsRef = useRef<HTMLDivElement>(null);
@@ -1939,23 +1974,25 @@ export function SettingsPanel() {
     <SettingsSearchProvider>
     <div className="panel-content settings-panel" data-testid="settings-panel" ref={panelRef}>
       <div className="settings-top">
-        {/* ── Search bar — type or press / to focus, Esc to clear ── */}
-        <SettingsSearchBar />
-
         {/* Tab strip — reuses LibraryPanel's library-tab CSS for visual consistency */}
         <div className="library-tabs-row settings-tabs-row">
-          <div className="library-tabs">
+          <div className="library-tabs" ref={tabsRowRef} style={{ flex: '1 1 auto', minWidth: 0, flexWrap: 'nowrap', overflow: 'hidden' }}>
             {TAB_ORDER.map(tab => (
-              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} />
+              <TabPill key={tab} tab={tab} activeTab={activeTab} setActiveTab={setActiveTab} expanded={tabsExpanded} />
             ))}
           </div>
         </div>
+
+        {/* ── Search bar (under the tabs) — type or press / to focus, Esc to clear ── */}
+        <SettingsSearchBar />
 
         {/* Mode switch + draft footer govern ONLY the Board tab — every other
             tab commits immediately (updateGlobal / own stores), so rendering
             Apply/Cancel there would act on invisible state. */}
         {activeTab === 'board' && (
           <>
+            <InteractiveModeToggle />
+
             {/* ── Mode switch: Global vs Board ── */}
             <div className="settings-mode-switch">
               <button
@@ -2398,20 +2435,60 @@ export function SettingsPanel() {
 
 // ---- Tab pill with match-count badge + search-clear-on-switch helpers ----
 
-function TabPill({ tab, activeTab, setActiveTab }: {
-  tab: SettingsTabId;
-  activeTab: SettingsTabId;
-  setActiveTab: (t: SettingsTabId) => void;
-}) {
-  const { active, matches } = useSettingsSearch();
-  const count = matches.perTabCount.get(tab) ?? 0;
+/** Board-tab toggle for Interactive (Resize) Mode. Clicking board elements
+ *  while ON opens a resize popup for the clicked element class. Prominent
+ *  top-of-list card with a description and an attention bump while off. */
+function InteractiveModeToggle() {
+  const enabled = useSyncExternalStore(
+    (cb) => resizeModeStore.subscribe(cb),
+    () => resizeModeStore.enabled,
+  );
   return (
     <button
       type="button"
-      className={`library-tab ${activeTab === tab ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
-      onClick={() => setActiveTab(tab)}
+      className={`interactive-mode-toggle${enabled ? ' active' : ''}`}
+      onClick={() => resizeModeStore.toggle()}
+      title="Click a pin, component, label, or empty board to resize it directly. The whole board updates live."
     >
-      {TAB_LABELS[tab]}
+      <IconClick size={22} className="interactive-mode-icon" />
+      <span className="interactive-mode-text">
+        <strong>Interactive mode{enabled ? ' · ON' : ''}</strong>
+        <span className="interactive-mode-desc">
+          {enabled
+            ? 'Click a pin, component, label, or empty board to resize it live.'
+            : 'Resize board elements by clicking them — sizes update live.'}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function TabPill({ tab, activeTab, setActiveTab, expanded }: {
+  tab: SettingsTabId;
+  activeTab: SettingsTabId;
+  setActiveTab: (t: SettingsTabId) => void;
+  expanded: boolean;
+}) {
+  const { active, matches } = useSettingsSearch();
+  const count = matches.perTabCount.get(tab) ?? 0;
+  const isActive = activeTab === tab;
+  const Icon = TAB_ICONS[tab];
+  // The whole strip expands to icon + label when the panel is wide enough
+  // (`expanded`); when collapsed, only the active tab keeps its label so the
+  // current section stays named. The label is always the hover tooltip. Same
+  // library-tab styling as the Library panel's tab strip.
+  const showLabel = expanded || isActive;
+  return (
+    <button
+      type="button"
+      className={`library-tab settings-tab-iconed ${isActive ? 'active' : ''}${active && count > 0 ? ' settings-tab-has-match' : ''}`}
+      onClick={() => setActiveTab(tab)}
+      title={TAB_LABELS[tab]}
+      aria-label={TAB_LABELS[tab]}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+    >
+      <Icon size={14} />
+      {showLabel && <span>{TAB_LABELS[tab]}</span>}
       {active && count > 0 && <span className="settings-tab-match-badge">{count}</span>}
     </button>
   );

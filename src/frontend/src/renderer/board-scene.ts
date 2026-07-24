@@ -71,10 +71,17 @@ const LABEL_FONT_FAMILY = 'monospace';
 const MAX_TRACE_WIDTH = 30;
 
 /** Choose grid resolution based on total pin count — returns 1 (no grid) for small boards */
-function computeGridSize(pinCount: number): number {
-  if (pinCount < 1000) return 1;
-  if (pinCount < 5000) return 4;
-  return 8;
+function computeGridSize(pinCount: number, pinSizeScale = 1): number {
+  let base: number;
+  if (pinCount < 1000) base = 1;
+  else if (pinCount < 5000) base = 4;
+  else base = 8;
+  // Enlarged pins (Resize Mode's pinSizeScale) tessellate each circle into more
+  // segments, so a per-cell pin Graphics can overflow the uint16 vertex ceiling
+  // at high scale. Refine the grid with the scale so each cell's Graphics holds
+  // proportionally fewer pins → fewer vertices. No-op at the default scale of 1.
+  const mult = Math.min(3, Math.max(1, Math.round(Math.sqrt(pinSizeScale || 1))));
+  return base * mult;
 }
 
 /** Chain trace segments that share endpoints into polylines, so consecutive
@@ -1052,7 +1059,7 @@ export function buildBoardScene(
   // cullArea. PixiJS skips off-screen cells entirely during rendering.
   // For small boards (gridSize=1) this degrades to the previous flat batching.
   const totalPins = board.parts.reduce((n, p) => n + p.pins.length, 0);
-  const gridSize  = computeGridSize(totalPins);
+  const gridSize  = computeGridSize(totalPins, s.pinSizeScale);
   const bMinX = board.bounds.minX, bMinY = board.bounds.minY;
   const bW = board.bounds.maxX - bMinX || 1;
   const bH = board.bounds.maxY - bMinY || 1;
@@ -1429,6 +1436,7 @@ export function buildBoardScene(
           pinY += bgaAlternate ? (even ? -bgaHalfGap : bgaHalfGap) : 0;
         }
 
+        pinFontSize *= s.pinNumberScale || 1;      // Resize Mode: pin-number size
         pinFontSize = quantizeFontSize(pinFontSize);
         if (pinFontSize >= s.labelHideThreshold) {
           if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
@@ -1507,6 +1515,7 @@ export function buildBoardScene(
           ? s.labelMinSize
           : Math.min(s.labelMinSize, maxNonOverlapRadius * 2 * 0.85);
         netFontSize = Math.max(netFontSize, netFloor);
+        netFontSize *= s.netLabelScale || 1;        // Resize Mode: net-label size
         netFontSize = quantizeFontSize(netFontSize);
         if (netFontSize >= s.labelHideThreshold) {
           // Text fast mode: emit a record (kind circleNet / twoPinNet) instead
@@ -1707,6 +1716,9 @@ export function buildBoardScene(
         fontSize = targetW / (part.name.length * 0.6);
         fontSize = Math.max(s.labelMinSize, Math.min(fontSize, eb.ph * 0.8));
       }
+      // Direct scale on the fitted size (applied after the fit-clamp so labels
+      // can grow beyond the part body). Resize Mode edits this per component.
+      fontSize *= s.partLabelScale || 1;
       fontSize = quantizeFontSize(fontSize);
       if (fontSize >= s.labelHideThreshold) {
         const labelColor: number = BOARD_COLORS.labelPart;
@@ -2091,7 +2103,7 @@ export function buildBoardScene(
         // (caps atlas count) so we can land on intermediate sizes.
         const fontSize = Math.max(
           3,
-          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62))),
+          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62)) * (s.diodeValueScale || 1)),
         );
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: pin.position.x, y: pin.position.y - radius * 0.7, text,

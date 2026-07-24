@@ -23,6 +23,7 @@ import { renderSettingsStore, computePinRadius, resolvePinColor, computePartRend
 import { themeStore, hexToInt } from '../store/themes';
 import { looksLikeMouseWheel } from '../store/scroll-mode';
 import { contextMenuStore } from '../store/context-menu-store';
+import { resizeModeStore } from '../store/resize-mode-store';
 import { viewCommands, type PanDirection, type ZoomDirection } from '../store/view-commands';
 import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
@@ -115,6 +116,17 @@ interface ViewportClickEvent {
 }
 
 /** Point-in-convex-polygon test using cross-product winding. */
+/** Squared distance from point (px,py) to the segment (ax,ay)-(bx,by). */
+function pointSegDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  const ex = px - cx, ey = py - cy;
+  return ex * ex + ey * ey;
+}
+
 function pointInConvexPoly(px: number, py: number, poly: [number, number][]): boolean {
   const n = poly.length;
   if (n < 3) return false;
@@ -337,6 +349,7 @@ export class BoardRenderer {
   private board: BoardData | null = null;
   private unsubscribeBoard: (() => void) | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  private unsubscribeResizeMode: (() => void) | null = null;
   private unsubscribeTheme: (() => void) | null = null;
   private unsubscribeViewCommands: (() => void) | null = null;
   private unsubscribeSelectionSet: (() => void) | null = null;
@@ -351,6 +364,10 @@ export class BoardRenderer {
    *  handleClick (pixi-viewport's "clicked" event fires on pointerup but
    *  doesn't carry the down-time modifier reliably across browsers). */
   private lastPointerShift = false;
+  /** Client (CSS) coords of the last primary pointerdown — used to place the
+   *  Resize Mode popup at the real cursor (viewport.toScreen is in DPR-scaled
+   *  device px, wrong for a position:fixed DOM popup). */
+  private lastPointerClient = { x: 0, y: 0 };
   /** Click-cycle state for stacked/overlapping component selection (#23).
    *  `key` is the ordered set of part indices under the anchor; `index` is the
    *  current position in the smallest-first stack. Reset to null on pointer
@@ -661,15 +678,27 @@ export class BoardRenderer {
     return g;
   }
 
-  /** Run `fns` into chunk Graphics of ≤PUNCH_CHUNK_PADS entries each, calling
+  /** Effective pads-per-chunk. PUNCH_CHUNK_PADS assumes normal pin radii
+   *  (~40 verts/pad). Resize Mode's `pinSizeScale` enlarges every glow ring,
+   *  and pixi tessellates a circle with more segments as its radius grows —
+   *  so a scale-agnostic 1200-pad chunk would overflow the uint16 ceiling
+   *  again at high scale. Divide the pad budget by the scale (conservative:
+   *  verts grow ~≤ linearly with radius) so each chunk stays ≤ the ceiling. */
+  private punchChunkPads(): number {
+    const scale = renderSettingsStore.settings.pinSizeScale || 1;
+    return Math.max(150, Math.floor(BoardRenderer.PUNCH_CHUNK_PADS / Math.max(1, scale)));
+  }
+
+  /** Run `fns` into chunk Graphics of ≤punchChunkPads() entries each, calling
    *  `finish` (fill/stroke) per chunk. Returns the advanced cursor. */
   private flushChunked(
     host: Graphics, pool: Graphics[], cursor: number,
     fns: ((g: Graphics) => void)[], finish: (g: Graphics) => void,
   ): number {
-    for (let i = 0; i < fns.length; i += BoardRenderer.PUNCH_CHUNK_PADS) {
+    const chunkPads = this.punchChunkPads();
+    for (let i = 0; i < fns.length; i += chunkPads) {
       const g = this.nextChunkGfx(host, pool, cursor++);
-      const end = Math.min(i + BoardRenderer.PUNCH_CHUNK_PADS, fns.length);
+      const end = Math.min(i + chunkPads, fns.length);
       for (let j = i; j < end; j++) fns[j](g);
       finish(g);
     }
@@ -1561,7 +1590,10 @@ export class BoardRenderer {
     // multiple stop-propagation paths; reading the down-time modifier from
     // a capture-phase listener is the most reliable signal.
     this.boundShiftCapture = (e: PointerEvent) => {
-      if (e.button === 0) this.lastPointerShift = e.shiftKey;
+      if (e.button === 0) {
+        this.lastPointerShift = e.shiftKey;
+        this.lastPointerClient = { x: e.clientX, y: e.clientY };
+      }
     };
     this.containerEl.addEventListener('pointerdown', this.boundShiftCapture, { capture: true });
 
@@ -1682,6 +1714,13 @@ export class BoardRenderer {
 
     this.unsubscribeBoard = boardStore.subscribe(() => this.onBoardUpdate());
     this.unsubscribeSettings = renderSettingsStore.subscribe(() => this.onSettingsUpdate());
+    // Toggling Resize Mode changes whether the label overlay records hit-test
+    // boxes; force one overlay redraw so boxes are ready on the first click.
+    this.unsubscribeResizeMode = resizeModeStore.subscribe(() => {
+      this.overlayDirty = true;
+      this.overlayContentDirty = true;
+      if (this.app && !this.contextLost && !this.reinitializing) this.app.render();
+    });
     this.unsubscribeTheme = themeStore.subscribe(() => this.onThemeUpdate());
     this.unsubscribeObd = obdStore.subscribe(() => this.onObdUpdate());
     this.unsubscribeSelectionSet = selectionSetStore.subscribe(() => {
@@ -1928,6 +1967,7 @@ export class BoardRenderer {
       twoPinLabelMinScreenPx: s.twoPinLabelMinScreenPx,
       labelZoomHide: s.labelZoomHide,
       selectedLabelMinPx: s.selectedLabelMinPx,
+      selectedLabelLodRelax: s.selectedLabelLodRelax ?? 0.75,
     });
   }
 
@@ -2711,6 +2751,11 @@ export class BoardRenderer {
     // objects are persistent (reused across rebuilds) and must not be destroyed
     // when scene.root.destroy({ children: true }) is called below.
     if (this.activeScene) {
+      // The halo sprite is persistent (reused across rebuilds) and mounted into
+      // scene.root, so it MUST be detached here or the scene.root.destroy({
+      // children:true }) below destroys it — leaving _haloSprite dangling and
+      // crashing the next updateHalo() (spotlight dim mode + selection).
+      this.teardownHalo();
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
@@ -3479,6 +3524,11 @@ export class BoardRenderer {
       const INTERACTION_ONLY = new Set<string>([
         'twoFingerPan', 'wheelDetection', 'wheelSmooth', 'disableInertia', 'dragToZoom',
         'cap60Fps', 'showPerfOverlay', 'smoothZoom',
+        // Overlay-only: read at label-overlay draw time (OverlayThresholds), so
+        // a change needs an overlay repaint, NOT a scene rebuild. Rebuilding on
+        // this needlessly redraws all geometry (and can hit the vertex ceiling
+        // under an elevated pinSizeScale).
+        'selectedLabelMinPx', 'selectedLabelLodRelax',
       ]);
       if (prev) {
         let visualChanged = false;
@@ -3496,6 +3546,10 @@ export class BoardRenderer {
         }
         if (!visualChanged) {
           this.applyViewportPlugins();
+          // Overlay-only keys (e.g. selectedLabelMinPx) still need a repaint —
+          // the overlay reads thresholds at draw time, so no rebuild required.
+          this.overlayDirty = true;
+          this.overlayContentDirty = true;
           this.lastSettingsSnapshot = cur;
           return;
         }
@@ -3622,7 +3676,8 @@ export class BoardRenderer {
    * ABOVE the spotlight in z-order (see updateHalo).
    */
   private buildHaloTexture(): Texture {
-    if (this._haloTexture) return this._haloTexture;
+    if (this._haloTexture && !this._haloTexture.destroyed) return this._haloTexture;
+    this._haloTexture = null;   // stale/destroyed — rebuild below
     const size = 256;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
@@ -3655,7 +3710,21 @@ export class BoardRenderer {
       return;
     }
 
-    if (!this._haloSprite) {
+    // (Re)create the sprite if it's missing OR was destroyed underneath us.
+    // The halo is parented into the active scene, so a scene rebuild (any
+    // settings change) destroys it via `destroy({ children: true })` while this
+    // field still references the dead sprite — reading its now-null texture in
+    // the `.width` setter below would throw. Rebuild instead of dereferencing it.
+    // (Re)create the sprite if it's missing OR was destroyed underneath us.
+    // The halo is parented into the active scene, so a scene rebuild (any
+    // settings change) destroys it via `destroy({ children: true })` while this
+    // field still references the dead sprite — reading its now-null texture in
+    // the `.width` setter below would throw. Rebuild instead of dereferencing it.
+    if (!this._haloSprite || this._haloSprite.destroyed
+        || !this._haloSprite.texture || this._haloSprite.texture.destroyed) {
+      if (this._haloSprite && !this._haloSprite.destroyed) {
+        try { this._haloSprite.destroy(); } catch { /* ignore */ }
+      }
       const tex = this.buildHaloTexture();
       const spr = new Sprite(tex);
       spr.anchor.set(0.5, 0.5);
@@ -5307,6 +5376,35 @@ export class BoardRenderer {
   /** Find the part (and optionally pin) under a world-space point. Returns the
    *  smallest part in the overlap stack — see hitTestStack. Used by hover,
    *  double-click PDF lookup, and as the default pick. */
+  /** Nearest pin to a world point among spatial-hash candidates, within a few
+   *  pin-pitches. Used by Resize Mode so a dense-BGA net-label click still
+   *  resolves to a specific pin (→ its net highlights) when hitTestStack falls
+   *  through to the part body. Returns null if nothing is close. */
+  private nearestPin(world: Point): { partIndex: number; pinIndex: number } | null {
+    if (!this.board) return null;
+    const butterfly = boardStore.butterfly && this.activeScene?.butterflyRoot;
+    const localTop = this.worldToScene(world, this.activeScene?.root);
+    const localBot = butterfly ? this.worldToScene(world, this.activeScene!.butterflyRoot!) : localTop;
+    const candidates = new Set<number>();
+    for (const pi of this.hitGridCandidates(localTop.x, localTop.y)) candidates.add(pi);
+    if (butterfly) for (const pi of this.hitGridCandidates(localBot.x, localBot.y)) candidates.add(pi);
+    let best: { partIndex: number; pinIndex: number } | null = null;
+    let bestD2 = Infinity;
+    for (const pi of candidates) {
+      const part = this.board.parts[pi];
+      if (!part) continue;
+      const local = (butterfly && part.side === 'bottom') ? localBot : localTop;
+      for (let pj = 0; pj < part.pins.length; pj++) {
+        const p = part.pins[pj].position;
+        const dx = p.x - local.x, dy = p.y - local.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = { partIndex: pi, pinIndex: pj }; }
+      }
+    }
+    const maxD = (renderSettingsStore.settings.clickThreshold * 6) / Math.abs(this.viewport.scale.x);
+    return best && bestD2 <= maxD * maxD ? best : null;
+  }
+
   private hitTest(world: Point): { partIndex: number; pinIndex: number } | null {
     return this.hitTestStack(world)[0] ?? null;
   }
@@ -5336,7 +5434,11 @@ export class BoardRenderer {
       for (const pi of this.hitGridCandidates(localBot.x, localBot.y)) candidateSet.add(pi);
     }
 
-    const threshold = s.clickThreshold / Math.abs(this.viewport.scale.x);
+    // Widen the distance-based pin catch radius by pinSizeScale so an enlarged
+    // circle pin (drawn via computePinRadius, which now includes pinSizeScale)
+    // stays pin-hittable instead of falling through to the part body. No-op at
+    // the default scale of 1.
+    const threshold = (s.clickThreshold / Math.abs(this.viewport.scale.x)) * (s.pinSizeScale || 1);
     const hits: StackHit[] = [];
 
     for (const pi of candidateSet) {
@@ -5737,6 +5839,14 @@ export class BoardRenderer {
       this.dragZoomConsumedClick = false;
       return;
     }
+    // Resize Mode intercepts the click: classify the element under the cursor
+    // and open its resize popup instead of selecting. Pan/zoom are unaffected
+    // (pixi-viewport only emits 'clicked' when the pointer didn't drag).
+    if (resizeModeStore.enabled) {
+      this.lastPointerShift = false;
+      this.handleResizeClick(world);
+      return;
+    }
     const shift = this.lastPointerShift;
     this.lastPointerShift = false;
 
@@ -5792,6 +5902,83 @@ export class BoardRenderer {
       return;
     }
     if (!shift) boardStore.selectPart(null);
+  }
+
+  /** Resize Mode click: classify the element under the cursor (text label →
+   *  pin → part body) and open the matching resize popup at the click point.
+   *  Text wins over the pin beneath it so a net-name label is directly
+   *  editable. Empty space closes the popup. */
+  private handleResizeClick(world: Point) {
+    // Popup goes at the real cursor (client px === position:fixed coords).
+    const pageX = this.lastPointerClient.x;
+    const pageY = this.lastPointerClient.y;
+    // Canvas-local CSS px for the label overlay hit-test (its boxes are in the
+    // container's CSS coordinate space, NOT viewport device px).
+    const rect = this.containerEl.getBoundingClientRect();
+    const localX = pageX - rect.left;
+    const localY = pageY - rect.top;
+
+    const labelHit = this.textFastMode?.hitTest(localX, localY);
+    const stack = this.hitTestStack(world);
+    const top = stack.length > 0 ? stack[0] : null;
+    const topPart = top ? this.board?.parts[top.partIndex] : null;
+
+    // 1. Component (part) NAME label → select the whole part, Component group.
+    if (labelHit?.kind === 'part') {
+      boardStore.selectPart(labelHit.partIndex);
+      resizeModeStore.openGroup('part', pageX, pageY, this.board?.parts[labelHit.partIndex]?.name ?? null);
+      return;
+    }
+
+    // 2. Pin-level intent — a pin/pad hit, OR a pin-number / net-name label.
+    //    Prefer the SPECIFIC pin under the cursor so its net highlights (a plain
+    //    selectPart highlights no net — the BGA "menu opens but nothing
+    //    selected" bug). Fall back to the nearest pin, then the part.
+    const pinLevel = !!labelHit || (top != null && top.pinIndex >= 0);
+    if (pinLevel) {
+      let selPart = top && top.pinIndex >= 0 ? top.partIndex : -1;
+      let selPin = top && top.pinIndex >= 0 ? top.pinIndex : -1;
+      if (selPin < 0) {
+        const near = this.nearestPin(world);   // covers dense BGA label clicks
+        if (near) { selPart = near.partIndex; selPin = near.pinIndex; }
+      }
+      if (selPin >= 0) {
+        const part = this.board?.parts[selPart];
+        const pin = part?.pins[selPin];
+        boardStore.selectPin(selPart, selPin);
+        const ctx = part && pin ? `${part.name} · ${pin.net || pinDisplayId(pin, selPin)}` : null;
+        resizeModeStore.openGroup('pin', pageX, pageY, ctx);
+        return;
+      }
+      // No pin resolvable — still open the pin group; select the label's part.
+      if (labelHit) boardStore.selectPart(labelHit.partIndex);
+      resizeModeStore.openGroup('pin', pageX, pageY, this.board?.parts[labelHit?.partIndex ?? -1]?.name ?? null);
+      return;
+    }
+
+    // 3. Part body hit (no pin, no label).
+    if (top) {
+      boardStore.selectPart(top.partIndex);
+      resizeModeStore.openGroup('part', pageX, pageY, topPart?.name ?? null);
+      return;
+    }
+
+    // 3. A highlighted-net connection line? (segments only exist while a net is
+    //    lit — which the pin selection above provides). Point-to-segment test.
+    if (this.netLineSegments.length > 0) {
+      const thr = (renderSettingsStore.settings.clickThreshold * 1.5) / Math.abs(this.viewport.scale.x);
+      const thr2 = thr * thr;
+      for (const seg of this.netLineSegments) {
+        if (pointSegDist2(world.x, world.y, seg.start.x, seg.start.y, seg.end.x, seg.end.y) <= thr2) {
+          resizeModeStore.openGroup('netline', pageX, pageY, boardStore.selection.highlightedNet);
+          return;
+        }
+      }
+    }
+
+    // 4. Empty board area → board transparency (clears any selection).
+    boardStore.selectPart(null);
+    resizeModeStore.openGroup('board', pageX, pageY, null);
   }
 
   /** Select a stack entry — a pin selection when a pad/pin was hit, else the
@@ -6144,6 +6331,7 @@ export class BoardRenderer {
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     this.unsubscribeBoard?.();
     this.unsubscribeSettings?.();
+    this.unsubscribeResizeMode?.();
     this.unsubscribeTheme?.();
     this.unsubscribeObd?.();
     this.unsubscribeViewCommands?.();
