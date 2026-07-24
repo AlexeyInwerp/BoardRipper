@@ -15,7 +15,7 @@ import { Emitter } from './emitter';
 import { renderSettingsStore, DEFAULTS, type RenderSettings } from './render-settings';
 
 /** What the click landed on → which control group to show. */
-export type ResizeGroup = 'pin' | 'part' | 'board';
+export type ResizeGroup = 'pin' | 'part' | 'netline' | 'board';
 
 /** A single editable control (one RenderSettings key). */
 export interface ResizeControlDef {
@@ -27,6 +27,8 @@ export interface ResizeControlDef {
   step: number;
   /** One-line description shown under the control. */
   hint: string;
+  /** 'number' (slider, default) or 'color' (swatch picker; value is a hex int). */
+  type?: 'number' | 'color';
 }
 
 /** Registry of every control Resize Mode can show, keyed by setting key. */
@@ -39,18 +41,23 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
   boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05, hint: 'Opacity of the board fill (0 = transparent).' },
   selectedLabelMinPx: { key: 'selectedLabelMinPx', label: 'Selected label floor', unit: 'px', min: 0, max: 30, step: 1, hint: 'Min on-screen size for a selected part’s labels.' },
   selectedLabelLodRelax: { key: 'selectedLabelLodRelax', label: 'Selected label LOD', unit: '×', min: 0.1, max: 1, step: 0.05, hint: 'Lower = selected labels stay visible when zoomed out further.' },
+  netLineWidth: { key: 'netLineWidth', label: 'Net line width',   unit: 'px', min: 0.5, max: 5, step: 0.5, hint: 'Thickness of the highlighted-net connection lines.' },
+  netLineAlpha: { key: 'netLineAlpha', label: 'Net line opacity', unit: '',   min: 0,   max: 1, step: 0.05, hint: 'Opacity of the net connection lines.' },
+  netLineColor: { key: 'netLineColor', label: 'Net line color',   unit: '',   min: 0,   max: 0xffffff, step: 1, type: 'color', hint: 'Color of the primary net’s connection lines.' },
 };
 
 /** Group → the ordered list of control keys it shows. */
 export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
-  pin:   ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
-  part:  ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
-  board: ['boardFillAlpha'],
+  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  part:    ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  netline: ['netLineWidth', 'netLineColor', 'netLineAlpha'],
+  board:   ['boardFillAlpha'],
 };
 
 const GROUP_TITLE: Record<ResizeGroup, string> = {
   pin: 'Pin',
   part: 'Component',
+  netline: 'Net line',
   board: 'Board',
 };
 
@@ -126,7 +133,10 @@ class ResizeModeStore extends Emitter {
   commit(key: keyof RenderSettings, rawValue: number) {
     const def = CONTROLS[key as string];
     if (!def) return;
-    const value = clampToStep(def, rawValue);
+    // Colors are raw hex ints (no step snapping); numbers clamp to their grid.
+    const value = def.type === 'color'
+      ? Math.max(0, Math.min(0xffffff, Math.round(rawValue)))
+      : clampToStep(def, rawValue);
     const current = renderSettingsStore.globalSnapshot();
     if ((current[key] as number) !== value) {
       renderSettingsStore.applyGlobal({ ...current, [key]: value });

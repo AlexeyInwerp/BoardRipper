@@ -116,6 +116,17 @@ interface ViewportClickEvent {
 }
 
 /** Point-in-convex-polygon test using cross-product winding. */
+/** Squared distance from point (px,py) to the segment (ax,ay)-(bx,by). */
+function pointSegDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  const ex = px - cx, ey = py - cy;
+  return ex * ex + ey * ey;
+}
+
 function pointInConvexPoly(px: number, py: number, poly: [number, number][]): boolean {
   const n = poly.length;
   if (n < 3) return false;
@@ -5907,7 +5918,20 @@ export class BoardRenderer {
       return;
     }
 
-    // 3. Empty board area → board transparency (clears any selection).
+    // 3. A highlighted-net connection line? (segments only exist while a net is
+    //    lit — which the pin selection above provides). Point-to-segment test.
+    if (this.netLineSegments.length > 0) {
+      const thr = (renderSettingsStore.settings.clickThreshold * 1.5) / Math.abs(this.viewport.scale.x);
+      const thr2 = thr * thr;
+      for (const seg of this.netLineSegments) {
+        if (pointSegDist2(world.x, world.y, seg.start.x, seg.start.y, seg.end.x, seg.end.y) <= thr2) {
+          resizeModeStore.openGroup('netline', pageX, pageY, boardStore.selection.highlightedNet);
+          return;
+        }
+      }
+    }
+
+    // 4. Empty board area → board transparency (clears any selection).
     boardStore.selectPart(null);
     resizeModeStore.openGroup('board', pageX, pageY, null);
   }

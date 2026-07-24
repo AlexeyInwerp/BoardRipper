@@ -14,34 +14,50 @@ function subscribe(cb: () => void) {
   return resizeModeStore.subscribe(cb);
 }
 
+const toHex = (v: number) => '#' + (v & 0xffffff).toString(16).padStart(6, '0');
+
 function ControlRow({ k }: { k: keyof RenderSettings }) {
   const def = CONTROLS[k as string];
   const value = resizeModeStore.valueOf(k);
+  const isColor = def.type === 'color';
   const onWheel = useCallback((e: React.WheelEvent) => {
+    if (isColor) return;
     e.stopPropagation();
     resizeModeStore.nudge(k, e.deltaY < 0 ? 1 : -1);
-  }, [k]);
+  }, [k, isColor]);
 
   return (
     <div onWheel={onWheel} style={{ marginTop: 8 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
         <span style={{ fontSize: 12 }}>{def.label}</span>
         <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', fontSize: 12 }}>
-          {value}{def.unit && <span style={{ opacity: 0.6, marginLeft: 3 }}>{def.unit}</span>}
+          {isColor ? toHex(value) : value}{!isColor && def.unit && <span style={{ opacity: 0.6, marginLeft: 3 }}>{def.unit}</span>}
         </span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
-        <button onClick={() => resizeModeStore.nudge(k, -1)} style={btnStyle} title={`− ${def.step}`}>−</button>
-        <input
-          type="range"
-          min={def.min} max={def.max} step={def.step} value={value}
-          onChange={(e) => resizeModeStore.commit(k, Number(e.target.value))}
-          onDoubleClick={() => resizeModeStore.reset(k)}
-          title="Double-click to reset to default"
-          style={{ flex: 1, accentColor: 'var(--accent)' }}
-        />
-        <button onClick={() => resizeModeStore.nudge(k, 1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
-      </div>
+      {isColor ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+          <input
+            type="color"
+            value={toHex(value)}
+            onChange={(e) => resizeModeStore.commit(k, parseInt(e.target.value.slice(1), 16))}
+            style={{ flex: 1, height: 26, padding: 0, border: '1px solid var(--border)', borderRadius: 5, background: 'transparent', cursor: 'pointer' }}
+          />
+          <button onClick={() => resizeModeStore.reset(k)} style={btnStyle} title="Reset to default">⟲</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+          <button onClick={() => resizeModeStore.nudge(k, -1)} style={btnStyle} title={`− ${def.step}`}>−</button>
+          <input
+            type="range"
+            min={def.min} max={def.max} step={def.step} value={value}
+            onChange={(e) => resizeModeStore.commit(k, Number(e.target.value))}
+            onDoubleClick={() => resizeModeStore.reset(k)}
+            title="Double-click to reset to default"
+            style={{ flex: 1, accentColor: 'var(--accent)' }}
+          />
+          <button onClick={() => resizeModeStore.nudge(k, 1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
+        </div>
+      )}
       <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 2, lineHeight: 1.3 }}>{def.hint}</div>
     </div>
   );
