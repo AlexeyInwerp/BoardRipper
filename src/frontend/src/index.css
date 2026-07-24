@@ -7825,3 +7825,10 @@ body {
   padding: 8px; border-radius: 5px; border: 1px solid var(--border, #333);
   background: var(--input-bg, #26262c); color: var(--text, #fff);
 }
+
+/* --- Tools: worklists catalog (salvaged from feat/library-bench-folders) --- */
+.library-worklist-catalog { display: flex; flex-direction: column; }
+.library-worklist-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.library-worklist-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-worklist-board { color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.library-worklist-counts { flex: none; color: var(--text-secondary); font-size: 10px; }

@@ -250,6 +250,23 @@ class WorklistStore {
     }
   }
 
+  /** All persisted per-board worklist records (the Tools "Worklists" catalog).
+   *  Read-only snapshot straight from IndexedDB; does not touch the live cache. */
+  async listAllStored(): Promise<BoardWorklistes[]> {
+    try {
+      const db = await this.openDB();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readonly');
+        const req = tx.objectStore(STORE).getAll();
+        req.onsuccess = () => resolve((req.result as BoardWorklistes[] | undefined) ?? []);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      log.cache?.warn('worklist: listAllStored failed', e);
+      return [];
+    }
+  }
+
   /** Handle a sibling-tab persist notification (L17): reload the record from
    *  IndexedDB, re-resolve against the current board, and notify subscribers.
    *  Deliberately does NOT persist or re-broadcast — the reload-driven notify()

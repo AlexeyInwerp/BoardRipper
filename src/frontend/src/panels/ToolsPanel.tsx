@@ -4,6 +4,7 @@ import { ensureDatabaseEditorPanel } from '../store/dockview-api';
 import { ResistorColorTool } from './tools/ResistorColorTool';
 import { SmdResistorTool } from './tools/SmdResistorTool';
 import { CapacitorTool } from './tools/CapacitorTool';
+import { WorklistsTool } from './tools/WorklistsTool';
 
 type ToolId = 'resistor' | 'smd' | 'capacitor' | 'worklists';
 
@@ -39,6 +40,7 @@ export function ToolsPanel() {
           {activeTool === 'resistor' && <ResistorColorTool />}
           {activeTool === 'smd' && <SmdResistorTool />}
           {activeTool === 'capacitor' && <CapacitorTool />}
+          {activeTool === 'worklists' && <WorklistsTool />}
         </div>
       </div>
     );
