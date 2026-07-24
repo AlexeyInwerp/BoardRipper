@@ -41,6 +41,21 @@ const DIM_ALPHA = 0.22;           // parity-tuned vs netDimGfx look in Task 9
  *  feedback 2026-07-19 — net names must not survive unzooming, and 0.5 kept
  *  them too long). The part NAME label alone keeps the full bypass as the
  *  selection identity marker (parity with the Pixi elevated badge). */
+/** Component (part) names fade out as they grow oversized on screen — i.e. as
+ *  you zoom into a big part — so the net names underneath (drawn earlier) and
+ *  the pins below the overlay show through, instead of the huge designator
+ *  blanketing a BGA. Purely a draw-time alpha; net names are unaffected. */
+const PART_FADE_START = 150;   // px on-screen — name begins to recede
+const PART_FADE_END = 460;     // px — name reaches PART_FADE_MIN (a faint ghost)
+const PART_FADE_MIN = 0.1;
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+function partNameFade(onScreenPx: number): number {
+  return 1 - smoothstep(PART_FADE_START, PART_FADE_END, onScreenPx) * (1 - PART_FADE_MIN);
+}
+
 function minPxFor(kind: LabelRecord['kind'], th: OverlayThresholds): number {
   switch (kind) {
     case 'circleNum': case 'circleNet': return th.circleLabelMinScreenPx;
@@ -168,7 +183,9 @@ export class LabelOverlay {
           const ah = (0.5 - r.anchorY) * fontPx;
           const sx = sx0 + aw;
           const sy = sy0 + ah;
-          ctx.globalAlpha = pass === 'dim' ? DIM_ALPHA : 1;
+          let alpha = pass === 'dim' ? DIM_ALPHA : 1;
+          if (r.kind === 'part') alpha *= partNameFade(r.fontSize * view.scale);
+          ctx.globalAlpha = alpha;
           if (r.bg) {                                     // backing rect (replaces the Graphics wrappers — two-pin AND circle-net)
             const tw = textW + fontPx * 0.6;
             ctx.fillStyle = 'rgba(0,0,0,0.55)';
