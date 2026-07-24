@@ -5376,6 +5376,35 @@ export class BoardRenderer {
   /** Find the part (and optionally pin) under a world-space point. Returns the
    *  smallest part in the overlap stack — see hitTestStack. Used by hover,
    *  double-click PDF lookup, and as the default pick. */
+  /** Nearest pin to a world point among spatial-hash candidates, within a few
+   *  pin-pitches. Used by Resize Mode so a dense-BGA net-label click still
+   *  resolves to a specific pin (→ its net highlights) when hitTestStack falls
+   *  through to the part body. Returns null if nothing is close. */
+  private nearestPin(world: Point): { partIndex: number; pinIndex: number } | null {
+    if (!this.board) return null;
+    const butterfly = boardStore.butterfly && this.activeScene?.butterflyRoot;
+    const localTop = this.worldToScene(world, this.activeScene?.root);
+    const localBot = butterfly ? this.worldToScene(world, this.activeScene!.butterflyRoot!) : localTop;
+    const candidates = new Set<number>();
+    for (const pi of this.hitGridCandidates(localTop.x, localTop.y)) candidates.add(pi);
+    if (butterfly) for (const pi of this.hitGridCandidates(localBot.x, localBot.y)) candidates.add(pi);
+    let best: { partIndex: number; pinIndex: number } | null = null;
+    let bestD2 = Infinity;
+    for (const pi of candidates) {
+      const part = this.board.parts[pi];
+      if (!part) continue;
+      const local = (butterfly && part.side === 'bottom') ? localBot : localTop;
+      for (let pj = 0; pj < part.pins.length; pj++) {
+        const p = part.pins[pj].position;
+        const dx = p.x - local.x, dy = p.y - local.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = { partIndex: pi, pinIndex: pj }; }
+      }
+    }
+    const maxD = (renderSettingsStore.settings.clickThreshold * 6) / Math.abs(this.viewport.scale.x);
+    return best && bestD2 <= maxD * maxD ? best : null;
+  }
+
   private hitTest(world: Point): { partIndex: number; pinIndex: number } | null {
     return this.hitTestStack(world)[0] ?? null;
   }
@@ -5889,32 +5918,48 @@ export class BoardRenderer {
     const localX = pageX - rect.left;
     const localY = pageY - rect.top;
 
-    // 1. Text label? A component (part) label opens the Component group; a pin
-    //    number / net name opens the Pin group (pin size + pin# + net sizes).
-    //    Also SELECT the part so the selected-label controls preview live.
     const labelHit = this.textFastMode?.hitTest(localX, localY);
-    if (labelHit) {
+    const stack = this.hitTestStack(world);
+    const top = stack.length > 0 ? stack[0] : null;
+    const topPart = top ? this.board?.parts[top.partIndex] : null;
+
+    // 1. Component (part) NAME label → select the whole part, Component group.
+    if (labelHit?.kind === 'part') {
       boardStore.selectPart(labelHit.partIndex);
-      resizeModeStore.openGroup(labelHit.kind === 'part' ? 'part' : 'pin', pageX, pageY,
-        this.board?.parts[labelHit.partIndex]?.name ?? null);
+      resizeModeStore.openGroup('part', pageX, pageY, this.board?.parts[labelHit.partIndex]?.name ?? null);
       return;
     }
 
-    // 2. Pin / part body — open the group AND select so the selected-label
-    //    controls (floor / LOD) have a live target to preview against.
-    const stack = this.hitTestStack(world);
-    if (stack.length > 0) {
-      const hit = stack[0];
-      const part = this.board?.parts[hit.partIndex];
-      if (hit.pinIndex >= 0 && part) {
-        boardStore.selectPin(hit.partIndex, hit.pinIndex);
-        const pin = part.pins[hit.pinIndex];
-        const ctx = pin ? `${part.name} · ${pin.net || pinDisplayId(pin, hit.pinIndex)}` : part.name;
-        resizeModeStore.openGroup('pin', pageX, pageY, ctx);
-      } else {
-        boardStore.selectPart(hit.partIndex);
-        resizeModeStore.openGroup('part', pageX, pageY, part?.name ?? null);
+    // 2. Pin-level intent — a pin/pad hit, OR a pin-number / net-name label.
+    //    Prefer the SPECIFIC pin under the cursor so its net highlights (a plain
+    //    selectPart highlights no net — the BGA "menu opens but nothing
+    //    selected" bug). Fall back to the nearest pin, then the part.
+    const pinLevel = !!labelHit || (top != null && top.pinIndex >= 0);
+    if (pinLevel) {
+      let selPart = top && top.pinIndex >= 0 ? top.partIndex : -1;
+      let selPin = top && top.pinIndex >= 0 ? top.pinIndex : -1;
+      if (selPin < 0) {
+        const near = this.nearestPin(world);   // covers dense BGA label clicks
+        if (near) { selPart = near.partIndex; selPin = near.pinIndex; }
       }
+      if (selPin >= 0) {
+        const part = this.board?.parts[selPart];
+        const pin = part?.pins[selPin];
+        boardStore.selectPin(selPart, selPin);
+        const ctx = part && pin ? `${part.name} · ${pin.net || pinDisplayId(pin, selPin)}` : null;
+        resizeModeStore.openGroup('pin', pageX, pageY, ctx);
+        return;
+      }
+      // No pin resolvable — still open the pin group; select the label's part.
+      if (labelHit) boardStore.selectPart(labelHit.partIndex);
+      resizeModeStore.openGroup('pin', pageX, pageY, this.board?.parts[labelHit?.partIndex ?? -1]?.name ?? null);
+      return;
+    }
+
+    // 3. Part body hit (no pin, no label).
+    if (top) {
+      boardStore.selectPart(top.partIndex);
+      resizeModeStore.openGroup('part', pageX, pageY, topPart?.name ?? null);
       return;
     }
 
