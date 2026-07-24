@@ -5880,28 +5880,35 @@ export class BoardRenderer {
 
     // 1. Text label? A component (part) label opens the Component group; a pin
     //    number / net name opens the Pin group (pin size + pin# + net sizes).
-    const labelKind = this.textFastMode?.hitTest(localX, localY);
-    if (labelKind) {
-      resizeModeStore.openGroup(labelKind === 'part' ? 'part' : 'pin', pageX, pageY, null);
+    //    Also SELECT the part so the selected-label controls preview live.
+    const labelHit = this.textFastMode?.hitTest(localX, localY);
+    if (labelHit) {
+      boardStore.selectPart(labelHit.partIndex);
+      resizeModeStore.openGroup(labelHit.kind === 'part' ? 'part' : 'pin', pageX, pageY,
+        this.board?.parts[labelHit.partIndex]?.name ?? null);
       return;
     }
 
-    // 2. Pin / part body.
+    // 2. Pin / part body — open the group AND select so the selected-label
+    //    controls (floor / LOD) have a live target to preview against.
     const stack = this.hitTestStack(world);
     if (stack.length > 0) {
       const hit = stack[0];
       const part = this.board?.parts[hit.partIndex];
       if (hit.pinIndex >= 0 && part) {
+        boardStore.selectPin(hit.partIndex, hit.pinIndex);
         const pin = part.pins[hit.pinIndex];
         const ctx = pin ? `${part.name} · ${pin.net || pinDisplayId(pin, hit.pinIndex)}` : part.name;
         resizeModeStore.openGroup('pin', pageX, pageY, ctx);
       } else {
+        boardStore.selectPart(hit.partIndex);
         resizeModeStore.openGroup('part', pageX, pageY, part?.name ?? null);
       }
       return;
     }
 
-    // 3. Empty board area → board transparency.
+    // 3. Empty board area → board transparency (clears any selection).
+    boardStore.selectPart(null);
     resizeModeStore.openGroup('board', pageX, pageY, null);
   }
 

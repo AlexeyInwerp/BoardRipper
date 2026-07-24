@@ -85,7 +85,7 @@ export class LabelOverlay {
   /** Screen-space bounding boxes of every label painted in the last draw,
    *  in CSS px (same space as the renderer canvas). Consumed by hitTest()
    *  for Resize Mode's "did the click land on text?" classification. */
-  private lastBoxes: Array<{ x0: number; y0: number; x1: number; y1: number; kind: LabelRecord['kind'] }> = [];
+  private lastBoxes: Array<{ x0: number; y0: number; x1: number; y1: number; kind: LabelRecord['kind']; partIndex: number }> = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -181,7 +181,7 @@ export class LabelOverlay {
           if (recordBoxes) {
             const hw = textW / 2 + 3;
             const hh = fontPx / 2 + 3;
-            this.lastBoxes.push({ x0: sx - hw, y0: sy - hh, x1: sx + hw, y1: sy + hh, kind: r.kind });
+            this.lastBoxes.push({ x0: sx - hw, y0: sy - hh, x1: sx + hw, y1: sy + hh, kind: r.kind, partIndex: r.partIndex });
           }
         }
       }
@@ -199,10 +199,10 @@ export class LabelOverlay {
   /** Resize Mode: return the topmost label box containing the given
    *  canvas-space (CSS px) point, or null. Iterates last-painted-first so the
    *  visually-on-top label (selected pass drawn last) wins. */
-  hitTest(sx: number, sy: number): LabelRecord['kind'] | null {
+  hitTest(sx: number, sy: number): { kind: LabelRecord['kind']; partIndex: number } | null {
     for (let i = this.lastBoxes.length - 1; i >= 0; i--) {
       const b = this.lastBoxes[i];
-      if (sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1) return b.kind;
+      if (sx >= b.x0 && sx <= b.x1 && sy >= b.y0 && sy <= b.y1) return { kind: b.kind, partIndex: b.partIndex };
     }
     return null;
   }
