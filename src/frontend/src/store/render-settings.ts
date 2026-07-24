@@ -110,6 +110,10 @@ export interface RenderSettings {
   /** Multiplier on net-name label size (Resize Mode). Independent of pin
    *  numbers so the two can be sized separately. 1 = unchanged. */
   netLabelScale: number;
+  /** Multiplier on on-pin diode-value text size (Resize Mode). Diode text is
+   *  otherwise derived from the pin radius, so it grows with pinSizeScale; this
+   *  lets it be sized independently. 1 = unchanged. */
+  diodeValueScale: number;
 
   pinMinRadius: number;
   pinMaxRadius: number;
@@ -503,6 +507,7 @@ export const DEFAULTS: RenderSettings = {
   partLabelScale: 1,
   pinNumberScale: 1,
   netLabelScale: 1,
+  diodeValueScale: 1,
   labelHideThreshold: 2,
 
   pinMinRadius: 3,

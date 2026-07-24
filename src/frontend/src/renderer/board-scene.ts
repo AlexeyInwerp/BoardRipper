@@ -2103,7 +2103,7 @@ export function buildBoardScene(
         // (caps atlas count) so we can land on intermediate sizes.
         const fontSize = Math.max(
           3,
-          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62))),
+          Math.round(Math.min(radius * 0.55, (radius * 2 * 0.85) / (text.length * 0.62)) * (s.diodeValueScale || 1)),
         );
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: pin.position.x, y: pin.position.y - radius * 0.7, text,

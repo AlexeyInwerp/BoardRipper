@@ -36,6 +36,7 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
   pinSizeScale:    { key: 'pinSizeScale',    label: 'Pin size',        unit: '×',  min: 0.3, max: 4,  step: 0.1, hint: 'Drawn radius of every pin & pad.' },
   pinNumberScale:  { key: 'pinNumberScale',  label: 'Pin number size', unit: '×',  min: 0.3, max: 4,  step: 0.1, hint: 'Size of the pin-number text.' },
   netLabelScale:   { key: 'netLabelScale',   label: 'Net label size',  unit: '×',  min: 0.3, max: 4,  step: 0.1, hint: 'Size of the net-name text on pins.' },
+  diodeValueScale: { key: 'diodeValueScale', label: 'Diode value size', unit: '×', min: 0.3, max: 4,  step: 0.1, hint: 'Size of on-pin diode readings (diode-mode boards).' },
   partLabelScale:  { key: 'partLabelScale',  label: 'Component label',  unit: '×', min: 0.3, max: 4,  step: 0.1, hint: 'Size of component (designator) labels.' },
   partBorderWidth: { key: 'partBorderWidth', label: 'Part outline',    unit: 'px', min: 0.1, max: 10, step: 0.1, hint: 'Stroke thickness of part outlines.' },
   boardFillAlpha:  { key: 'boardFillAlpha',  label: 'Board opacity',   unit: '',   min: 0,   max: 1,  step: 0.05, hint: 'Opacity of the board fill (0 = transparent).' },
@@ -48,7 +49,7 @@ export const CONTROLS: Record<string, ResizeControlDef> = {
 
 /** Group → the ordered list of control keys it shows. */
 export const GROUPS: Record<ResizeGroup, (keyof RenderSettings)[]> = {
-  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
+  pin:     ['pinSizeScale', 'pinNumberScale', 'netLabelScale', 'diodeValueScale', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
   part:    ['partLabelScale', 'partBorderWidth', 'selectedLabelMinPx', 'selectedLabelLodRelax'],
   netline: ['netLineWidth', 'netLineColor', 'netLineAlpha'],
   board:   ['boardFillAlpha'],
