@@ -15,16 +15,43 @@ v1 contents:
 
 - **Calculators:** Resistor color-band decoder, SMD resistor code decoder,
   Capacitor code/value converter.
-- **Workbench:** Database Editor (link → opens the existing Dockview panel),
-  Worklist worker (disabled "soon" placeholder), Wiki (disabled "soon"
-  placeholder).
+- **Workbench:** Worklists (read-only catalog of every worklist stored on this
+  device), Database Editor (launcher → opens the existing Dockview panel),
+  Wiki (disabled "soon" placeholder).
+
+## Relationship to the parked `feat/library-bench-folders` branch
+
+That branch (2026-07-01/02) built the same "bench" idea *inside* the Library
+panel — a Donor boards / Worklists / Device DB variant switcher. Main has since
+moved the opposite way (2026-07-23 nested Donor boards under the PDF tab), so
+the branch's Library restructure is **superseded and will not be merged**;
+merging it would delete the Live folder browser and revert the newer donor
+nesting across four conflicts.
+
+This design reaches the same goal in a separate top-level tab, which touches no
+Library code and therefore has no conflicts. Two pieces of that branch are not
+superseded and are **reused verbatim** rather than rewritten:
+
+- `ensureDatabaseEditorPanel()` → `store/dockview-api.ts`
+- `worklistStore.listAllStored()` + the catalog UI and CSS
+
+Because that code already exists and was proven on the branch, **Worklists ships
+as a real read-only catalog, not a placeholder.** Only Wiki remains a
+placeholder — it was never built anywhere.
+
+The branch's third salvageable piece, the backend per-branch rescan
+(`Scanner.ScanFolderAsync`, `POST /api/databank/scan/folder`,
+`databankStore.scanFolder()`), belongs to the **Folders** tab and is explicitly
+out of scope here; it is recorded as Phase 2 in the implementation plan.
 
 ## Non-goals
 
-- No changes to donor boards or the Library "Bench" view.
+- No changes to donor boards or the Library panel at all.
 - No inductor calculator in v1 (floated, deferred).
 - No backend changes. Calculators are pure client-side.
-- No implementation of the Worklist worker or Wiki — placeholders only.
+- Worklists is **read-only** — no editing, no board-switching, no shared/remote
+  worklist database (that remains future roadmap work).
+- No implementation of Wiki — placeholder only.
 
 ## Navigation & layout
 
@@ -54,10 +81,14 @@ Calculators
   Capacitor converter      104 to pF / nF / µF
 
 Workbench
+  Worklists                every worklist stored on this device
   Database Editor          opens panel
-  Worklist worker          soon        (disabled)
   Wiki                     soon        (disabled)
 ```
+
+`activeTool` is `null | 'resistor' | 'smd' | 'capacitor' | 'worklists'`.
+Database Editor is not a tool view — it launches its own Dockview panel and
+leaves the landing list in place.
 
 ### Lite build behavior
 
@@ -121,14 +152,23 @@ render the readout. No calculation logic lives in the components.
 
 ## Workbench entries
 
+- **Worklists.** A read-only catalog of every worklist persisted in IndexedDB,
+  flattened to one row per worklist: worklist name · board file name · part/net
+  counts. Backed by `worklistStore.listAllStored()` (an `objectStore('boards')
+  .getAll()` snapshot that does not disturb the live cache). Empty state: "No
+  worklists stored yet." A one-line caption notes a shared knowledge database is
+  coming. Both the method and the markup are **reused verbatim** from
+  `feat/library-bench-folders`; they need no adaptation because
+  `BoardWorklistes`, the `STORE` constant and `openDB()` already exist on main.
 - **Database Editor.** Reuse the existing open mechanism. `openDatabaseEditor()`
   is currently a private function in `SettingsPanel.tsx` (~line 952) that calls
   `getDockviewApi()` and adds/focuses a Dockview panel with a stable id
-  `database-editor`. Extract it into a small shared util module (e.g.
-  `src/frontend/src/panels/open-database-editor.ts`) and import it from both
-  `SettingsPanel` and `ToolsPanel`, so there is one copy. Hidden when no backend.
-- **Worklist worker** and **Wiki.** Disabled rows with a muted "soon" status and
-  no click handler.
+  `database-editor`. Rather than inventing a new home for it, adopt the parked
+  branch's version: `ensureDatabaseEditorPanel()` in
+  `src/frontend/src/store/dockview-api.ts`, beside the existing
+  `ensureBoardPanel`/`ensurePdfPanel` helpers. `SettingsPanel` and `ToolsPanel`
+  both call it, so there is one copy. Hidden when no backend.
+- **Wiki.** A disabled row with a muted "soon" status and no click handler.
 
 ## Testing
 
@@ -152,6 +192,7 @@ Known-value cases for each module:
 - Entering a known code in the SMD (or capacitor) tool shows the expected
   readout.
 - Selecting bands in the color decoder shows the expected readout.
+- The **Worklists** entry opens the catalog and the back link returns.
 - The **Database Editor** workbench entry opens the Database Editor panel.
 
 ## Files touched (anticipated)
@@ -159,11 +200,14 @@ Known-value cases for each module:
 - `src/frontend/src/components/Sidebar.utils.ts` — add `'tools'` tab.
 - `src/frontend/src/components/Sidebar.tsx` — mount `ToolsPanel`.
 - `src/frontend/src/panels/ToolsPanel.tsx` — new.
+- `src/frontend/src/panels/tools/{ResistorColorTool,SmdResistorTool,CapacitorTool,WorklistsTool}.tsx` — new.
+- `src/frontend/src/tools/format.ts` — new (+ test; `formatOhms`, `trimNum`).
 - `src/frontend/src/tools/resistor-color.ts` — new (+ test).
 - `src/frontend/src/tools/smd-resistor.ts` — new (+ test).
 - `src/frontend/src/tools/capacitor.ts` — new (+ test).
-- `src/frontend/src/panels/open-database-editor.ts` — new (extracted helper).
-- `src/frontend/src/panels/SettingsPanel.tsx` — use extracted helper.
+- `src/frontend/src/store/dockview-api.ts` — add `ensureDatabaseEditorPanel()` (salvaged).
+- `src/frontend/src/store/worklist-store.ts` — add `listAllStored()` (salvaged).
+- `src/frontend/src/panels/SettingsPanel.tsx` — use the shared helper.
 - `src/frontend/tests/tools-tab.spec.ts` — new E2E.
 - CSS for the Tools panel (co-located with the existing panel styles).
 
