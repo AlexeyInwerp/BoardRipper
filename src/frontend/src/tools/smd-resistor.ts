@@ -37,13 +37,6 @@ export function decodeSmdResistor(raw: string): SmdResult {
   const code = raw.trim().toUpperCase();
   if (!code) return err('empty code');
 
-  // R-notation: R marks the decimal point (4R7 = 4.7, R47 = 0.47).
-  if (code.includes('R')) {
-    const n = parseFloat(code.replace('R', '.'));
-    if (Number.isNaN(n)) return err(`invalid R-notation: ${raw}`);
-    return ok(n);
-  }
-
   // EIA-96: two digits + one multiplier letter.
   const eia = /^(\d{2})([A-Z])$/.exec(code);
   if (eia) {
@@ -53,6 +46,13 @@ export function decodeSmdResistor(raw: string): SmdResult {
       return err(`invalid EIA-96 code: ${raw}`);
     }
     return ok(EIA96[idx] * mult);
+  }
+
+  // R-notation: R marks the decimal point (4R7 = 4.7, R47 = 0.47).
+  if (code.includes('R')) {
+    const n = parseFloat(code.replace('R', '.'));
+    if (Number.isNaN(n)) return err(`invalid R-notation: ${raw}`);
+    return ok(n);
   }
 
   // Pure-digit 3- or 4-digit code: last digit is the power-of-ten multiplier.
