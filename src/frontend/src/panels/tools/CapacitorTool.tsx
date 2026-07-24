@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { decodeCapacitor } from '../../tools/capacitor';
+import { trimNum } from '../../tools/format';
 
 export function CapacitorTool() {
   const [code, setCode] = useState('104');
@@ -20,7 +21,7 @@ export function CapacitorTool() {
             <>
               <div className="rc-value">{r.formatted}</div>
               <div className="rc-sub">
-                {trim(r.pF)} pF · {trim(r.nF)} nF · {trim(r.uF)} µF
+                {trimNum(r.pF)} pF · {trimNum(r.nF)} nF · {trimNum(r.uF)} µF
                 {r.tolerancePct !== undefined ? ` · ±${r.tolerancePct}%` : ''}
               </div>
             </>
@@ -30,6 +31,3 @@ export function CapacitorTool() {
   );
 }
 
-function trim(v: number): string {
-  return v.toFixed(3).replace(/\.?0+$/, '');
-}
