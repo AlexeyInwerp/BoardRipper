@@ -3897,11 +3897,18 @@ export class BoardRenderer {
     if (this._haloSprite) this._haloSprite.eventMode = 'none';
 
     this.needsRender = true;
-    // Net-line geometry depends only on (net, part, pin, board) — not on
-    // hover-dim state. Gate the expensive recompute on an actual change (A3).
+    // Net-line geometry depends on (net, part, pin, board) AND on the board's
+    // orientation: segments are cached in WORLD space (clipToRectEdge →
+    // sceneToWorld bakes each part's root transform in), so flipping sides /
+    // mirroring / rotating moves the parts but would leave the cached lines
+    // behind — they'd render stuck in the pre-flip positions. Include the
+    // orientation in the key so a flip recomputes. Hover-dim state is still
+    // excluded so it stays cheap (A3).
     {
       const sel = boardStore.selection;
-      const selKey = `${sel.highlightedNet ?? ''}|${sel.partIndex ?? -1}|${sel.pinIndex ?? -1}`;
+      const selKey = `${sel.highlightedNet ?? ''}|${sel.partIndex ?? -1}|${sel.pinIndex ?? -1}`
+        + `|${boardStore.butterfly}|${boardStore.showTop}|${boardStore.showBottom}`
+        + `|${boardStore.flipAxis}|${boardStore.mirrorX}|${boardStore.mirrorY}|${boardStore.rotation}`;
       if (selKey !== this.lastNetLinesSelKey || this.board !== this.lastNetLinesSelBoard) {
         this.lastNetLinesSelKey = selKey;
         this.lastNetLinesSelBoard = this.board;
