@@ -2739,6 +2739,11 @@ export class BoardRenderer {
     // objects are persistent (reused across rebuilds) and must not be destroyed
     // when scene.root.destroy({ children: true }) is called below.
     if (this.activeScene) {
+      // The halo sprite is persistent (reused across rebuilds) and mounted into
+      // scene.root, so it MUST be detached here or the scene.root.destroy({
+      // children:true }) below destroys it — leaving _haloSprite dangling and
+      // crashing the next updateHalo() (spotlight dim mode + selection).
+      this.teardownHalo();
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
@@ -3659,7 +3664,8 @@ export class BoardRenderer {
    * ABOVE the spotlight in z-order (see updateHalo).
    */
   private buildHaloTexture(): Texture {
-    if (this._haloTexture) return this._haloTexture;
+    if (this._haloTexture && !this._haloTexture.destroyed) return this._haloTexture;
+    this._haloTexture = null;   // stale/destroyed — rebuild below
     const size = 256;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
@@ -3692,7 +3698,21 @@ export class BoardRenderer {
       return;
     }
 
-    if (!this._haloSprite) {
+    // (Re)create the sprite if it's missing OR was destroyed underneath us.
+    // The halo is parented into the active scene, so a scene rebuild (any
+    // settings change) destroys it via `destroy({ children: true })` while this
+    // field still references the dead sprite — reading its now-null texture in
+    // the `.width` setter below would throw. Rebuild instead of dereferencing it.
+    // (Re)create the sprite if it's missing OR was destroyed underneath us.
+    // The halo is parented into the active scene, so a scene rebuild (any
+    // settings change) destroys it via `destroy({ children: true })` while this
+    // field still references the dead sprite — reading its now-null texture in
+    // the `.width` setter below would throw. Rebuild instead of dereferencing it.
+    if (!this._haloSprite || this._haloSprite.destroyed
+        || !this._haloSprite.texture || this._haloSprite.texture.destroyed) {
+      if (this._haloSprite && !this._haloSprite.destroyed) {
+        try { this._haloSprite.destroy(); } catch { /* ignore */ }
+      }
       const tex = this.buildHaloTexture();
       const spr = new Sprite(tex);
       spr.anchor.set(0.5, 0.5);
