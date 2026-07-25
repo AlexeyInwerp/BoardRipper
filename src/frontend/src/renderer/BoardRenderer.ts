@@ -780,6 +780,12 @@ export class BoardRenderer {
    *  gl.drawElements and asserts on `type === UNSIGNED_INT`). */
   private static readonly CHUNK_VERTEX_BUDGET = 26000;
 
+  /** Net size above which the selection punch-through/glow switches to
+   *  simplified rectangle geometry and drops per-part outlines. Keeps the
+   *  hover overlay's total geometry under the uint16 vertex ceiling on power
+   *  rails (GND ≈ 7.5k pads) — see simplifyNetGeometry in renderSelection. */
+  private static readonly HUGE_NET_PAD_LOD_LIMIT = 1200;
+
   /** Estimated vertices a single pad/outline draw contributes, INCLUDING the
    *  stroke pass (a stroked polygon costs ~4 verts per point, a fill ~1).
    *  Capsule/poly pad outlines tessellate to ~48 points, circles to ~20 at
@@ -4456,7 +4462,7 @@ export class BoardRenderer {
             continue;
           }
 
-          if (s.showSelectionHalo) {
+          if (s.showSelectionHalo && net.pinIndices.length <= BoardRenderer.HUGE_NET_PAD_LOD_LIMIT) {
             // The clicked ("primary") part is drawn separately below with a bold
             // white accent (see the `sel.partIndex` block), so keep it OUT of the
             // muted net-member batch — otherwise it gets both treatments. (#23)
@@ -4517,7 +4523,16 @@ export class BoardRenderer {
           // glow + dim must trace the same shape as the pin sprite, or the
           // halo would re-reveal the real pad outline that we just stopped
           // drawing in the pin layer.
-          const usePadShapeForGlow = boardStore.showPads;
+          // Huge-net LOD. A 7,545-pad GND net drawn with true pad outlines
+          // (~48 points each, filled AND stroked, twice over for dim+glow)
+          // produced a single 1,028,280-index draw — ~5x the uint16 vertex
+          // ceiling, which is what WebKit-on-AMD-Polaris rasterises as
+          // exploded geometry. Above the threshold we draw the pad's AABB
+          // rectangle (4 points) instead: at the zoom levels where anyone
+          // hovers a multi-thousand-pad rail the pads are a few pixels wide,
+          // so the simplification is invisible, and total geometry drops ~12x.
+          const simplifyNetGeometry = net.pinIndices.length > BoardRenderer.HUGE_NET_PAD_LOD_LIMIT;
+          const usePadShapeForGlow = boardStore.showPads && !simplifyNetGeometry;
           if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
             const polyCost = this.padDrawVertexCost(true);
@@ -4537,6 +4552,19 @@ export class BoardRenderer {
             const shapeCost = this.padDrawVertexCost(true);
             pushDim(BoardRenderer.tagCost((g) => drawPadShape(g, padGeom), shapeCost));
             pushGlow(BoardRenderer.tagCost((g) => drawPadShape(g, padGeom, grow), shapeCost));
+          } else if (simplifyNetGeometry) {
+            // Cheapest possible: axis-aligned rect from the pad AABB (or a
+            // pin-radius box when the parser gave no pad bounds).
+            const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
+            const r = Math.min(computePinRadius(s, pin.radius), clamp);
+            const rx = pb ? pb.minX : pin.position.x - r;
+            const ry = pb ? pb.minY : pin.position.y - r;
+            const rw = pb ? pb.maxX - pb.minX : r * 2;
+            const rh = pb ? pb.maxY - pb.minY : r * 2;
+            const grow2 = s.netHighlightGrow;
+            const rectCost = 24;   // 4 points, fill + stroke
+            pushDim(BoardRenderer.tagCost((g) => g.rect(rx, ry, rw, rh), rectCost));
+            pushGlow(BoardRenderer.tagCost((g) => g.rect(rx - grow2, ry - grow2, rw + grow2 * 2, rh + grow2 * 2), rectCost));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);

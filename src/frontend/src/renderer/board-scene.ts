@@ -667,12 +667,16 @@ const EMPTY_PART_OVERRIDES: PartOverrideMap = new Map();
  */
 /** Max path points per trace Graphics. A stroked polyline point costs ~4-8
  *  vertices with round joins/caps, so ~6,000 points keeps each geometry well
- *  under the 65,535-vertex uint16 index ceiling. Past that ceiling pixi
+ *  under the 65,535-vertex uint16 index ceiling. MEASURED, not estimated: a
+ *  round-join/cap stroke costs ~20 vertices per path point (arc fans at every
+ *  join), so 6,000 points still produced 364,341-index draws — over the
+ *  ceiling. 1,200 points keeps a layer's geometry well under the limit.
+ *  Past that ceiling pixi
  *  switches the geometry to 32-bit indices, which WebKit-on-AMD-Polaris
  *  renders as EXPLODED triangles fanning across the board (field regression
  *  2026-07: a 203k-segment TVW layer was one Graphics ≈ 392k vertices /
  *  1,174,950 indices). Chunking is also friendlier to culling. */
-const TRACE_POINTS_PER_GFX = 6000;
+const TRACE_POINTS_PER_GFX = 1200;
 
 /** Build the stroked trace geometry for one layer, split across as many
  *  Graphics as needed to stay uint16-indexed. Strokes are per width group, as
@@ -687,18 +691,33 @@ function buildTraceGraphics(
   let used = 0;          // points already stroked into `gfx`
   let hasContent = false;
   for (const [width, traces] of byWidth) {
-    const strokeStyle = { width: Math.min(width, MAX_TRACE_WIDTH), color, alpha: 0.85, join: 'round' as const, cap: 'round' as const };
+    // bevel JOIN, round CAP. A round join tessellates an arc fan at every
+    // interior vertex (~20 verts/point plus many near-degenerate triangles);
+    // bevel is ~4 and invisible at trace widths. Caps are only at the two ends
+    // of each path, so round caps cost nothing measurable and they hide the
+    // seam where a long polyline is split across chunk graphics.
+    const strokeStyle = { width: Math.min(width, MAX_TRACE_WIDTH), color, alpha: 0.85, join: 'bevel' as const, cap: 'round' as const };
     let pending = 0;     // points in the current unstroked path
     for (const polyline of chainTraceSegments(traces)) {
       if (polyline.length < 2) continue;
-      gfx.moveTo(polyline[0].x, polyline[0].y);
-      for (let i = 1; i < polyline.length; i++) gfx.lineTo(polyline[i].x, polyline[i].y);
-      pending += polyline.length;
-      if (used + pending >= TRACE_POINTS_PER_GFX) {
-        gfx.stroke(strokeStyle);
-        out.push(gfx);
-        gfx = new Graphics();
-        used = 0; pending = 0; hasContent = false;
+      // Walk the polyline in budget-sized runs so ONE long chained trace can't
+      // exceed the ceiling by itself (chaining merges thousands of segments
+      // into a single path). Runs overlap by one point so the line stays
+      // visually continuous across a split.
+      let i = 0;
+      while (i < polyline.length - 1) {
+        const room = Math.max(2, TRACE_POINTS_PER_GFX - used - pending);
+        const end = Math.min(polyline.length - 1, i + room - 1);
+        gfx.moveTo(polyline[i].x, polyline[i].y);
+        for (let j = i + 1; j <= end; j++) gfx.lineTo(polyline[j].x, polyline[j].y);
+        pending += end - i + 1;
+        i = end;                                  // overlap by one point
+        if (used + pending >= TRACE_POINTS_PER_GFX) {
+          gfx.stroke(strokeStyle);
+          out.push(gfx);
+          gfx = new Graphics();
+          used = 0; pending = 0; hasContent = false;
+        }
       }
     }
     if (pending > 0) {
