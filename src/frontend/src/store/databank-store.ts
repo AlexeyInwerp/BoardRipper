@@ -885,8 +885,17 @@ class DatabankStore extends Emitter {
           setTimeout(hydrate, 500);
         }
       } else {
-        // Cold load: full list right away.
-        await Promise.all([this.fetchStats(), this.fetchFiles(), this.refreshDonors()]);
+        // Cold load: await only the cheap essentials (stats badge + donor
+        // membership), then kick off the full file stream in the BACKGROUND.
+        // ensureLoaded() must NOT block on the multi-MB, ~80k-row stream — on
+        // a slow link that would stall every awaiter (session restore,
+        // open-file-by-id) for the entire download, which reads as "the
+        // library is locked". The panel renders rows progressively as they
+        // stream (gated on `filesComplete`, not `loadStatus`), and
+        // `_filesComplete` flips true when the stream finishes. Mirrors the
+        // History fast-path above.
+        await Promise.all([this.fetchStats(), this.refreshDonors()]);
+        void this.fetchFiles();
       }
 
       this._loadStatus = 'loaded';
@@ -1185,6 +1194,33 @@ class DatabankStore extends Emitter {
     if (this._filesComplete) return;
     this._setFiles(data, { complete: false, signature: null });
     this.notify();
+  }
+
+  /** Fetch specific file rows by id WITHOUT mutating the shared `_files` list
+   *  or its caches. Safe to call while the full library stream is in flight —
+   *  used by open-file-by-id and session restore now that ensureLoaded()
+   *  returns before the background stream completes. Chunked to the server's
+   *  per-request id cap (maxIDsPerRequest = 1024). */
+  async fetchFileRows(ids: number[]): Promise<DatabankFile[]> {
+    if (!hasBackend() || ids.length === 0) return [];
+    const out: DatabankFile[] = [];
+    for (let i = 0; i < ids.length; i += 1024) {
+      const slice = ids.slice(i, i + 1024);
+      const params = new URLSearchParams({ ids: slice.join(',') });
+      const data = await this.apiFetch<DatabankFile[]>(`/api/databank/files?${params}`);
+      if (data) out.push(...data);
+    }
+    return out;
+  }
+
+  /** Resolve once the full file list is present. Awaits an in-flight stream if
+   *  one is running, otherwise triggers a fetch. Used by callers that must scan
+   *  the whole library (e.g. name-only session entries) now that ensureLoaded()
+   *  returns before the background stream completes. */
+  async whenFilesComplete(): Promise<void> {
+    if (this._filesComplete) return;
+    if (this._filesInflight) { await this._filesInflight; return; }
+    await this.fetchFiles();
   }
 
   private _folderTreeLoading = false;

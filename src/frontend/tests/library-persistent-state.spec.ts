@@ -22,6 +22,7 @@ type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 interface DatabankStoreHook {
   loadStatus: LoadStatus;
+  filesComplete: boolean;
   files: { id?: number }[];
 }
 
@@ -131,13 +132,16 @@ test.describe('library lazy-load', () => {
     // If status is already 'loaded' / 'error' / 'idle' when we sample,
     // the loading window has passed. The test passes vacuously.
 
-    // Additionally: once settled, verify the placeholder (if visible)
-    // does NOT contain "Loading" when the status is 'loaded' or 'error'
-    // (confirms the two states are correctly gated by loadStatus).
+    // Additionally: once the file stream has fully settled, verify the
+    // placeholder (if visible) does NOT say "Loading library…". The load is
+    // now gated on `filesComplete`, not `loadStatus` — loadStatus flips to
+    // 'loaded' as soon as the essentials land while the row stream continues
+    // in the background, so we must wait for filesComplete (or an error)
+    // before asserting the loading placeholder is gone.
     await page.waitForFunction(() => {
       const w = window as unknown as { __databankStore?: DatabankStoreHook };
       const s = w.__databankStore?.loadStatus;
-      return s === 'loaded' || s === 'error';
+      return w.__databankStore?.filesComplete === true || s === 'error';
     }, undefined, { timeout: 15000 });
 
     const settledSample = await page.evaluate(() => {

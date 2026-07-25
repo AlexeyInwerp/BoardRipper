@@ -94,6 +94,19 @@ export function initSessionStore(): void {
  *  prompt invokes it on the user's explicit Reopen. */
 export async function restoreSession(session: SavedSession): Promise<void> {
   await databankStore.ensureLoaded();
+  // ensureLoaded() returns before the full file stream completes, so pre-hydrate
+  // the rows this session references by id (non-mutating, works mid-stream).
+  // Name-only legacy entries need a full-list scan, so only then wait for the
+  // stream to finish.
+  const wantIds = session.entries
+    .map(e => e.fileId)
+    .filter((v): v is number => typeof v === 'number');
+  const rowsById = new Map(
+    (wantIds.length ? await databankStore.fetchFileRows(wantIds) : []).map(r => [r.id, r] as const),
+  );
+  if (session.entries.some(e => e.fileId == null)) {
+    await databankStore.whenFilesComplete();
+  }
   const unavailable: string[] = [];
   let activeBoardName: string | null = null;
   let opened = 0;   // count only items that genuinely opened (a panel/tab), not just loaded
@@ -101,7 +114,7 @@ export async function restoreSession(session: SavedSession): Promise<void> {
   for (const e of session.entries) {
     try {
       const dbFile =
-        (e.fileId != null ? databankStore.fileById(e.fileId) : undefined) ??
+        (e.fileId != null ? (rowsById.get(e.fileId) ?? databankStore.fileById(e.fileId)) : undefined) ??
         databankStore.findFileByName(e.fileName, e.fileSize) ??
         null;
 
