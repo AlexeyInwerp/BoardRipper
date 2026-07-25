@@ -1,42 +1,56 @@
 diff --git a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js
-index 591bab5..b3d7949 100644
+index 591bab5..0df7fba 100644
 --- a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js
 +++ b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.js
-@@ -57,6 +57,16 @@ class BatchableGraphics {
+@@ -57,6 +57,23 @@ class BatchableGraphics {
      this.applyTransform = true;
      this.renderable = null;
      this.topology = "triangle-list";
 +    // BoardRipper patch: pooled instances must not retain the destroyed
-+    // Graphics' texture / geometry / batcher chain — Pool.return() only calls
-+    // reset(), never destroy(), so anything left here is pinned for the
-+    // lifetime of the module-level BigPool. BatchableSprite.reset() already
-+    // nulls its equivalents; this brings BatchableGraphics in line.
-+    // (Every BigPool.get(BatchableGraphics) site reassigns these fields.)
++    // Graphics' texture / geometry — Pool.return() only calls reset(), never
++    // destroy(), so anything left here is pinned for the lifetime of the
++    // module-level BigPool. These two ARE repopulated by copyTo() at the only
++    // BigPool.get(BatchableGraphics) site (GraphicsPipe), so nulling them is
++    // safe, and they are what actually pinned GPU memory.
++    //
++    // Do NOT null _batcher / _batch here: copyTo() does NOT restore them and
++    // GraphicsPipe.updateRenderable() calls batch._batcher.updateElement(batch)
++    // with no null check, so nulling them turns pixi's stale-but-harmless
++    // reference into a null dereference on pooled clones. That surfaced as
++    // exploded/garbage geometry on multi-layer boards (traces + vias +
++    // silkscreen = many Graphics => many pooled clones) in Safari on AMD
++    // Polaris once v0.31.40's Text fast mode removed ~100k BitmapTexts and
++    // re-grouped the remaining batches.
 +    this.texture = null;
 +    this.geometryData = null;
-+    this._batcher = null;
-+    this._batch = null;
    }
    destroy() {
      this.renderable = null;
 diff --git a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
-index b0973c0..185e61e 100644
+index b0973c0..bb2f167 100644
 --- a/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
 +++ b/node_modules/pixi.js/lib/scene/graphics/shared/BatchableGraphics.mjs
-@@ -55,6 +55,16 @@ class BatchableGraphics {
+@@ -55,6 +55,23 @@ class BatchableGraphics {
      this.applyTransform = true;
      this.renderable = null;
      this.topology = "triangle-list";
 +    // BoardRipper patch: pooled instances must not retain the destroyed
-+    // Graphics' texture / geometry / batcher chain — Pool.return() only calls
-+    // reset(), never destroy(), so anything left here is pinned for the
-+    // lifetime of the module-level BigPool. BatchableSprite.reset() already
-+    // nulls its equivalents; this brings BatchableGraphics in line.
-+    // (Every BigPool.get(BatchableGraphics) site reassigns these fields.)
++    // Graphics' texture / geometry — Pool.return() only calls reset(), never
++    // destroy(), so anything left here is pinned for the lifetime of the
++    // module-level BigPool. These two ARE repopulated by copyTo() at the only
++    // BigPool.get(BatchableGraphics) site (GraphicsPipe), so nulling them is
++    // safe, and they are what actually pinned GPU memory.
++    //
++    // Do NOT null _batcher / _batch here: copyTo() does NOT restore them and
++    // GraphicsPipe.updateRenderable() calls batch._batcher.updateElement(batch)
++    // with no null check, so nulling them turns pixi's stale-but-harmless
++    // reference into a null dereference on pooled clones. That surfaced as
++    // exploded/garbage geometry on multi-layer boards (traces + vias +
++    // silkscreen = many Graphics => many pooled clones) in Safari on AMD
++    // Polaris once v0.31.40's Text fast mode removed ~100k BitmapTexts and
++    // re-grouped the remaining batches.
 +    this.texture = null;
 +    this.geometryData = null;
-+    this._batcher = null;
-+    this._batch = null;
    }
    destroy() {
      this.renderable = null;
