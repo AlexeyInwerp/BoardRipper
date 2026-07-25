@@ -27,6 +27,7 @@ const __dirname = path.dirname(__filename);
 const XZZ_SAMPLES = path.resolve(__dirname, '../../../samples/XZZ PCB SAMPLES');
 const SMALL = path.resolve(XZZ_SAMPLES, 'A26xx/A2681 820-02862 M2/A2681 KB 820-02862-02 boardview.pcb');
 const LARGE = path.resolve(XZZ_SAMPLES, 'A23xx/A2337_820-02016 MacBook Air M1/Schematic and boardview/820-02016-07_MacBook Air (M1, A2337).pcb');
+const MSI = path.resolve(XZZ_SAMPLES, 'V380_20.pcb');
 
 function loadSample(filePath: string): ArrayBuffer {
   const buf = fs.readFileSync(filePath);
@@ -37,6 +38,7 @@ function loadSample(filePath: string): ArrayBuffer {
 
 const haveSmall = fs.existsSync(SMALL);
 const haveLarge = fs.existsSync(LARGE);
+const haveMSI = fs.existsSync(MSI);
 
 test.describe('XZZ parser', () => {
   test('parses a small XZZ board: format, bounds, parts, pins, nets populated', async () => {
@@ -76,6 +78,22 @@ test.describe('XZZ parser', () => {
       }
     }
   });
+
+  // Regression for vendor exports that stamp a component's BOM value into a
+  // second 0x06 label sub-block instead of a dedicated field — parsePartBlock
+  // must resolve it onto Part.meta.value and never let it collapse to the
+  // RefDes (the 1st 0x06 label typically duplicates it).
+test('extracts part value from 2nd 0x06 label block (MSI V380 GeForce GTX 1650 - V380_20.pcb - C905 = 1nF)', async () => {
+  test.skip(!haveMSI, 'XZZ sample (V380_20.pcb) not present (proprietary fixture)');
+  const { parseXZZ } = await import('../src/parsers/xzz-parser');
+  const board = parseXZZ(loadSample(MSI));
+
+  const c905 = board.parts.find(p => p.name === 'C905');
+  expect(c905).toBeDefined();
+  expect(c905!.meta?.value).toBe('1nF');   // or '1nf' — match exact file casing
+  // Ensure we never mistakenly copy the RefDes into the value field.
+  expect(c905!.meta!.value).not.toBe(c905!.name);
+});
 
   test('every pin carries a string net name', async () => {
     test.skip(!haveSmall, 'XZZ sample (A2681 KB 820-02862-02) not present (proprietary fixture)');
