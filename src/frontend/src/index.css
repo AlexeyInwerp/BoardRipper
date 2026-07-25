@@ -2185,6 +2185,11 @@ body {
   color: var(--text-primary);
   font-size: 12px;
 }
+.settings-pdfindex-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .settings-pdfindex-stop {
   border-color: var(--danger, #e55) !important;
   color: var(--danger, #e55) !important;

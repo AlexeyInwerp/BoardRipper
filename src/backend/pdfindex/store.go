@@ -335,6 +335,23 @@ func (db *DB) DoneOrActiveFileIDs() (map[int64]bool, error) {
 	return out, rows.Err()
 }
 
+// RequeueIndexing flips EVERY 'indexing' row back to 'pending', unconditionally.
+// Unlike ReclaimStale (age-gated, for the periodic watchdog) this is the
+// immediate reclaim used (a) once at boot — no worker can exist yet, so any
+// 'indexing' row is an orphan left by a killed process — and (b) by Restart,
+// which stops the sweep first so no live worker races the flip. Without it,
+// orphaned 'indexing' rows are SKIPPED by DoneOrActiveFileIDs and would not
+// resume until the 10-minute watchdog. Returns count requeued.
+func (db *DB) RequeueIndexing() (int64, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	res, err := db.writer.Exec(`UPDATE pdf_index_status SET status='pending' WHERE status='indexing'`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ReclaimStale flips 'indexing' rows whose last heartbeat (attempted_at) is
 // older than maxAgeSeconds back to 'pending'. Returns count reclaimed.
 func (db *DB) ReclaimStale(maxAgeSeconds int64) (int64, error) {

@@ -117,6 +117,70 @@ func (h *PdfIndexHandler) ReindexWatermark(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]interface{}{"reset": n, "running": true})
 }
 
+// POST /api/pdfindex/restart — stop the current sweep, requeue any in-flight
+// ('indexing') rows so they aren't skipped, then start a fresh pass over all
+// pending work. Keeps already-indexed files (NOT a hard reset). StopAndWait
+// guarantees no draining worker races the requeue.
+func (h *PdfIndexHandler) Restart(w http.ResponseWriter, r *http.Request) {
+	h.ix.StopAndWait()
+	if _, err := h.db.RequeueIndexing(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = h.ix.Run()
+	writeJSON(w, h.ix.Progress())
+}
+
+// pdfAutoResumeKey is the databank config key gating background auto-resume.
+// Default ON: only the literal string "false" disables it, so existing installs
+// (no row) auto-resume pending PDFs on boot / after a scan adds PDFs.
+const pdfAutoResumeKey = "pdf_index_auto_run"
+
+// PdfAutoResumeEnabled reports whether background auto-resume is on. Exported so
+// the boot path (main.go) and the handler agree on the default-ON rule.
+func PdfAutoResumeEnabled(bank *databank.DB) bool {
+	if bank == nil {
+		return false
+	}
+	v, _ := bank.GetConfig(pdfAutoResumeKey)
+	return v != "false"
+}
+
+// GET /api/pdfindex/auto-resume
+func (h *PdfIndexHandler) GetAutoResume(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]bool{"enabled": PdfAutoResumeEnabled(h.bank)})
+}
+
+// POST /api/pdfindex/auto-resume  body {"enabled": bool}
+// Persists the toggle. When enabling, kicks a background run so pending work
+// starts immediately without waiting for the next boot/scan.
+func (h *PdfIndexHandler) SetAutoResume(w http.ResponseWriter, r *http.Request) {
+	if h.bank == nil {
+		http.Error(w, "databank unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	val := "false"
+	if body.Enabled {
+		val = "true"
+	}
+	if err := h.bank.SetConfig(pdfAutoResumeKey, val); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if body.Enabled {
+		_ = h.ix.Run() // idempotent — no-op if already running
+	}
+	writeJSON(w, map[string]bool{"enabled": body.Enabled})
+}
+
 // POST /api/pdfindex/files/{id}/index — priority enqueue (backend fallback path)
 func (h *PdfIndexHandler) PriorityIndex(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)

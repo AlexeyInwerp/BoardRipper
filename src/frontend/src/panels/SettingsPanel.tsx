@@ -964,7 +964,29 @@ function LibrarySettingsSection() {
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
   const scanRunning = scanStatus?.running ?? false;
   const pdfIndexRunning = pdfIndexProgress?.running ?? false;
+  const hasPending = (pdfIndexStats?.pending ?? 0) > 0;
   const [forcing, setForcing] = useState(false);
+
+  // Background auto-resume toggle (default ON server-side; null while loading).
+  const [autoResume, setAutoResumeState] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void pdfIndexClient.getAutoResume().then((r) => { if (alive && r) setAutoResumeState(r.enabled); });
+    return () => { alive = false; };
+  }, []);
+  const toggleAutoResume = useCallback(async (next: boolean) => {
+    setAutoResumeState(next); // optimistic
+    const r = await pdfIndexClient.setAutoResume(next);
+    if (r) {
+      setAutoResumeState(r.enabled);
+      if (r.enabled) databankStore.startPdfIndexPolling();
+    }
+  }, []);
+
+  const handleRestart = useCallback(async () => {
+    await pdfIndexClient.restart();
+    databankStore.startPdfIndexPolling();
+  }, []);
 
   // Live indexer numbers. `pdfIndexProgress` is the running snapshot
   // (done/total/active workers/current file/started_at); `pdfIndexStats`
@@ -1034,22 +1056,34 @@ function LibrarySettingsSection() {
       <div className="settings-pdfindex-card">
         <div className="settings-pdfindex-header">
           <span className="settings-pdfindex-label">PDF text indexing</span>
-          {pdfIndexRunning ? (
-            <button
-              className="settings-action-btn settings-pdfindex-stop"
-              onClick={() => pdfIndexClient.stop()}
-              title="Stop the indexer. Files already in progress finish their current page; the rest stay as pending and resume on the next run."
-            >
-              Stop
-            </button>
-          ) : (
+          <span className="settings-pdfindex-actions">
+            {pdfIndexRunning ? (
+              <button
+                className="settings-action-btn settings-pdfindex-stop"
+                onClick={() => pdfIndexClient.stop()}
+                title="Stop the indexer. Files already in progress finish their current page; the rest stay pending and resume when you continue."
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                className="settings-action-btn"
+                onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+                title={hasPending
+                  ? 'Continue indexing the remaining pending PDFs from where it left off.'
+                  : 'Index all PDFs (extract searchable text).'}
+              >
+                {hasPending ? 'Continue' : 'Index all PDFs'}
+              </button>
+            )}
             <button
               className="settings-action-btn"
-              onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+              onClick={handleRestart}
+              title="Stop the current sweep and start a fresh pass over all pending PDFs. Keeps already-indexed files (not a reset)."
             >
-              Index all PDFs
+              Restart
             </button>
-          )}
+          </span>
         </div>
 
         {pdfIndexRunning && pdfIndexProgress ? (
@@ -1097,6 +1131,18 @@ function LibrarySettingsSection() {
           {forcing ? '…' : 'Force re-index'}
         </button>
       </div>
+
+      <label className="settings-row-toggle">
+        <input
+          type="checkbox"
+          checked={autoResume ?? true}
+          disabled={autoResume === null}
+          onChange={(e) => void toggleAutoResume(e.target.checked)}
+        />
+        <span title="When on, the indexer continues any pending PDFs automatically — on server start and after a scan finds new PDFs — without pressing anything.">
+          Auto-index PDFs in the background
+        </span>
+      </label>
 
       <label className="settings-row-toggle">
         <input
