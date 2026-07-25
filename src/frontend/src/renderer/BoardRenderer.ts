@@ -677,17 +677,68 @@ export class BoardRenderer {
    *  punch-through half. */
     private selectionChunkPool: Graphics[] = [];
   private butterflyChunkPool: Graphics[] = [];
+  /** Chunk graphics live in real Containers, NEVER as children of a Graphics.
+   *  pixi v8 Graphics is a leaf ViewContainer: `graphics.addChild()` is
+   *  deprecated and renders through an undefined legacy path, which produced
+   *  driver-dependent garbage geometry on Safari/AMD (field report
+   *  2026-07-25 stack trace: flushChunked → renderSelection → setHoverNet).
+   *  Each layer is attached alongside its host Graphics with a zIndex a hair
+   *  above it, so paint order is unchanged. */
+  private selectionChunkLayer: Container | null = null;
+  private butterflyChunkLayer: Container | null = null;
+  private netLineChunkLayer: Container | null = null;
   private chunkCursorTop = 0;
   private chunkCursorBot = 0;
 
-  private nextChunkGfx(host: Graphics, pool: Graphics[], cursor: number): Graphics {
+  /** Container that hosts chunk graphics for `host`, attached as its sibling
+   *  (same parent, zIndex + 0.1 so chunks paint immediately above the host's
+   *  own geometry, exactly where they used to as illegal children). */
+  private ensureChunkLayer(host: Graphics, which: 'selection' | 'butterfly' | 'netline'): Container | null {
+    const existing = which === 'selection' ? this.selectionChunkLayer
+      : which === 'butterfly' ? this.butterflyChunkLayer : this.netLineChunkLayer;
+    const parent = host.parent;
+    if (existing && !existing.destroyed) {
+      // Follow the host if it was re-parented (butterfly reparent, rebuilds).
+      if (parent && existing.parent !== parent) {
+        parent.addChild(existing);
+        existing.zIndex = host.zIndex + 0.1;
+      }
+      return existing;
+    }
+    if (!parent) return null;   // host not mounted yet — caller falls back
+    const layer = new Container();
+    layer.eventMode = 'none';
+    layer.zIndex = host.zIndex + 0.1;
+    parent.addChild(layer);
+    // A scene rebuild destroys scene.root's children — including a previous
+    // layer and every pooled Graphics in it. Pool lifetime == layer lifetime:
+    // empty the pools IN PLACE (callers hold references to these arrays) so
+    // dead graphics are never reused. Same failure class as the halo sprite
+    // destroyed by invalidateAllScenes.
+    if (which === 'selection') { this.selectionChunkPool.length = 0; this.selectionChunkLayer = layer; }
+    else if (which === 'butterfly') { this.butterflyChunkPool.length = 0; this.butterflyChunkLayer = layer; }
+    else {
+      this.netLineChunkPool.length = 0;
+      this.netLinePulseChunkPool.length = 0;
+      this.netLinesPulseGfx = null;
+      this.netLineBakeSig = '';        // force a re-bake into the fresh layer
+      this.netLineChunkLayer = layer;
+    }
+    return layer;
+  }
+
+  private nextChunkGfx(host: Graphics, pool: Graphics[], cursor: number,
+                       which: 'selection' | 'butterfly' | 'netline'): Graphics {
+    const layer = this.ensureChunkLayer(host, which);
     let g = pool[cursor];
+    if (g?.destroyed) g = undefined as unknown as Graphics;
     if (!g) {
       g = new Graphics();
       g.eventMode = 'none';
       pool[cursor] = g;
-      host.addChild(g);
     }
+    // (Re)attach to the current layer — layers are recreated on reinit/rebuild.
+    if (layer && g.parent !== layer) layer.addChild(g);
     return g;
   }
 
@@ -726,10 +777,11 @@ export class BoardRenderer {
   private flushChunked(
     host: Graphics, pool: Graphics[], cursor: number,
     fns: ChunkDraw[], finish: (g: Graphics) => void,
+    which: 'selection' | 'butterfly' = 'selection',
   ): number {
     let i = 0;
     while (i < fns.length) {
-      const g = this.nextChunkGfx(host, pool, cursor++);
+      const g = this.nextChunkGfx(host, pool, cursor++, which);
       let cost = 0;
       // Always take at least one draw so a single pathological shape can't
       // spin forever; otherwise fill until the vertex budget is reached.
@@ -751,6 +803,18 @@ export class BoardRenderer {
    *  Chrome on the same GPU and Apple-Silicon Safari are unaffected. On
    *  Safari we keep the pre-v0.31.41 per-frame clear+re-issue semantics
    *  (identical pixels, driver-friendly buffer churn). */
+  /** Self-healing WebGL context recovery. Both crash paths (render exception,
+   *  `webglcontextlost`) stop the ticker and rely on `resume()` to reinit —
+   *  but resume() only fires when a HIDDEN panel becomes visible, so a tab
+   *  that loses its context while ALREADY visible froze forever: stale/partial
+   *  frame on screen, no repaint, and every click apparently ignored (the
+   *  store updates, the canvas never redraws). Field report 2026-07-25:
+   *  `tickerStarted=false` on the active tab, dead clicks, garbage geometry.
+   *  Now the active tab reinits itself with backoff. */
+  private contextRecoveryTimer: number | null = null;
+  private contextRecoveryAttempts = 0;
+  private static readonly MAX_CONTEXT_RECOVERIES = 4;
+
   private static readonly SAFARI_CONSERVATIVE_GFX =
     typeof navigator !== 'undefined' && /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
 
@@ -1012,6 +1076,12 @@ export class BoardRenderer {
     } else {
       log.render.log(`pause tab=${this.tabId} storeActive=${boardStore.activeTabId}`);
     }
+    // Release the Text-fast-mode overlay canvas while hidden. At devicePixelRatio
+    // 2 on a 5K display this backing store is ~50 MB per tab; keeping one per
+    // visited tab pushed Safari over its canvas/GPU budget and got WebGL
+    // contexts killed (field report 2026-07-25). ensureLabelOverlay()
+    // recreates it on the first tick after resume.
+    if (this.textFastMode) { this.textFastMode.destroy(); this.textFastMode = null; }
     // Cancel pending follow-PDF debounce
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     // Cancel any pending rAF-coalesced hover — harmless if it fires after
@@ -1206,6 +1276,7 @@ export class BoardRenderer {
     // Release the label-overlay canvas too (up to ~33 MB backing store at
     // retina) — ensureLabelOverlay() recreates it lazily on the next tick
     // after resume. (v0.31.40 review follow-up)
+    if (this.contextRecoveryTimer !== null) { clearTimeout(this.contextRecoveryTimer); this.contextRecoveryTimer = null; }
     this.textFastMode?.destroy();
     this.textFastMode = null;
     this.teardownForReinit();
@@ -1254,8 +1325,36 @@ export class BoardRenderer {
   private handleRenderCrash(err: unknown) {
     if (this.contextLost) return; // already handled
     this.contextLost = true;
-    log.render.error(`render crash tab=${this.tabId} — ticker stopped, use Restart Render to recover:`, err);
+    log.render.error(`render crash tab=${this.tabId} — ticker stopped, auto-recovery scheduled:`, err);
     this.stopTicker();
+    this.scheduleContextRecovery('render-crash');
+  }
+
+  /** Reinit this renderer after a lost context / render crash when it is the
+   *  tab the user is actually looking at (a hidden tab is recovered by
+   *  resume() instead). Backs off and gives up after a few attempts so a
+   *  hard-broken GPU state can't spin. */
+  private scheduleContextRecovery(reason: string) {
+    if (this.destroyed || this.contextRecoveryTimer !== null) return;
+    if (this.tabId !== null && boardStore.activeTabId !== this.tabId) return; // resume() owns hidden tabs
+    if (this.contextRecoveryAttempts >= BoardRenderer.MAX_CONTEXT_RECOVERIES) {
+      log.render.error(`context recovery gave up after ${this.contextRecoveryAttempts} attempts tab=${this.tabId} (${reason}) — use Restart Render`);
+      return;
+    }
+    const delay = 500 * (this.contextRecoveryAttempts + 1);
+    this.contextRecoveryAttempts++;
+    log.render.warn(`scheduling context recovery tab=${this.tabId} reason=${reason} attempt=${this.contextRecoveryAttempts} in ${delay}ms`);
+    this.contextRecoveryTimer = window.setTimeout(() => {
+      this.contextRecoveryTimer = null;
+      if (this.destroyed) return;
+      if (this.tabId !== null && boardStore.activeTabId !== this.tabId) return;
+      try {
+        this.reinitApp();
+      } catch (err) {
+        log.render.error(`context recovery reinit failed tab=${this.tabId}:`, err);
+        this.scheduleContextRecovery('reinit-failed');
+      }
+    }, delay);
   }
 
   /** Install WebGL context loss/restore handlers on a canvas element. */
@@ -1267,8 +1366,9 @@ export class BoardRenderer {
       e.preventDefault();
       if (this.destroyed) return;
       this.contextLost = true;
-      log.render.warn(`WebGL context lost tab=${this.tabId} — will recover on resume`);
+      log.render.warn(`WebGL context lost tab=${this.tabId} — recovering (active tab) or on resume (hidden)`);
       this.stopTicker();
+      this.scheduleContextRecovery('context-lost');
     };
     this.boundContextRestored = () => {
       log.render.log(`WebGL context restored event tab=${this.tabId} — deferring recovery to resume()`);
@@ -3874,7 +3974,13 @@ export class BoardRenderer {
       }
       // Flush to GPU even if ticker is paused (e.g. panel inactive during search focus)
       if (!this.app.ticker.started && !this.contextLost) {
-        try { this.app.render(); } catch (err) { this.handleRenderCrash(err); }
+        try {
+          this.app.render();
+          if (this.contextRecoveryAttempts > 0) {
+            log.render.log(`context recovered tab=${this.tabId} after ${this.contextRecoveryAttempts} attempt(s)`);
+            this.contextRecoveryAttempts = 0;
+          }
+        } catch (err) { this.handleRenderCrash(err); }
       }
     };
 
@@ -4439,7 +4545,7 @@ export class BoardRenderer {
         this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, fns, (g) => g.fill({ color, alpha: 1.0 }));
       }
       for (const [color, fns] of botByColor) {
-        this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, fns, (g) => g.fill({ color, alpha: 1.0 }));
+        this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, fns, (g) => g.fill({ color, alpha: 1.0 }), 'butterfly');
       }
 
       // Highlight glow on top, per glow color (yellow for primary, bluish
@@ -5037,16 +5143,8 @@ export class BoardRenderer {
     // Chunk-gfx allocator — children of netLinesGfx so lifecycle/transform/
     // visibility ride along. Pulse chunks are added AFTER base chunks exist,
     // so they render above them; their alpha carries the crossfade.
-    const chunk = (pool: Graphics[], i: number): Graphics => {
-      let g = pool[i];
-      if (!g) {
-        g = new Graphics();
-        g.eventMode = 'none';
-        pool[i] = g;
-        this.netLinesGfx.addChild(g);
-      }
-      return g;
-    };
+    const chunk = (pool: Graphics[], i: number): Graphics =>
+      this.nextChunkGfx(this.netLinesGfx, pool, i, 'netline');
 
     // A5 fast path — plain solid lines (no fade, no dash): geometry is baked
     // once across ≤NETLINE_CHUNK_SEGS-segment chunk pairs (base color +
