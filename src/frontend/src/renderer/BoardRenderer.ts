@@ -3419,7 +3419,18 @@ export class BoardRenderer {
       const s = renderSettingsStore.settings;
       const action: 'pan' | 'zoom' =
         s.dragToZoom === e.shiftKey ? 'pan' : 'zoom';
-      if (action === 'pan') return; // pixi-viewport handles it
+      if (action === 'pan') {
+        // Cancel any in-flight smooth-zoom tween/animation before the pan begins.
+        // The wheel-zoom tween re-pins viewport.x/y every frame (see the ticker),
+        // so a drag started while it is still animating gets overwritten each
+        // frame — the board only pans once the tween settles. Dropping it here
+        // (capture phase, before pixi-viewport's drag plugin sees the pointer)
+        // makes the pan take effect immediately. Regression: users on the
+        // smoothZoom=true default saw "pan doesn't work right after zooming".
+        this.zoomTween = null;
+        this.zoomAnim = null;
+        return; // pixi-viewport handles the pan itself
+      }
 
       const rect = this.containerEl.getBoundingClientRect();
       const anchorX = e.clientX - rect.left;
