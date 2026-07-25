@@ -192,11 +192,6 @@ export interface PadGeometry {
   polygon?: { x: number; y: number }[];
 }
 
-/** Count of pads skipped this session because their geometry was non-finite
- *  (bad parser dims, NaN setting). Surfaced in the Debug panel so a field
- *  report can confirm whether corrupt pad data is in play. */
-export let nonFinitePadSkips = 0;
-
 export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
   const cx = (p.bounds.minX + p.bounds.maxX) / 2;
   const cy = (p.bounds.minY + p.bounds.maxY) / 2;
@@ -207,18 +202,6 @@ export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
   const ang = p.angleDeg ?? 0;
   const gW = w + grow * 2;
   const gH = h + grow * 2;
-
-  // Hard non-finite gate for EVERY pad shape (circle/capsule/poly/rect): NaN
-  // or Infinity vertices are undefined behaviour on the GPU — some drivers
-  // drop them, Metal-on-Polaris rasterises garbage across the whole board.
-  // Drawing nothing is always better than corrupting the batch.
-  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(gW) || !Number.isFinite(gH)) {
-    nonFinitePadSkips++;
-    if (nonFinitePadSkips <= 3) {
-      log.render.warn(`skipped non-finite pad geometry (cx=${cx} cy=${cy} w=${gW} h=${gH} shape=${p.shape ?? '?'}) — corrupt pad dims or setting`);
-    }
-    return;
-  }
 
   // Round D-code → filled circle when square; non-square Round entries are
   // oblong pads (round-capped stroke: XZZ shape 0x01, oval D-codes) and draw
@@ -665,71 +648,6 @@ const EMPTY_PART_OVERRIDES: PartOverrideMap = new Map();
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
-/** Max path points per trace Graphics. A stroked polyline point costs ~4-8
- *  vertices with round joins/caps, so ~6,000 points keeps each geometry well
- *  under the 65,535-vertex uint16 index ceiling. MEASURED, not estimated: a
- *  round-join/cap stroke costs ~20 vertices per path point (arc fans at every
- *  join), so 6,000 points still produced 364,341-index draws — over the
- *  ceiling. 1,200 points keeps a layer's geometry well under the limit.
- *  Past that ceiling pixi
- *  switches the geometry to 32-bit indices, which WebKit-on-AMD-Polaris
- *  renders as EXPLODED triangles fanning across the board (field regression
- *  2026-07: a 203k-segment TVW layer was one Graphics ≈ 392k vertices /
- *  1,174,950 indices). Chunking is also friendlier to culling. */
-const TRACE_POINTS_PER_GFX = 1200;
-
-/** Build the stroked trace geometry for one layer, split across as many
- *  Graphics as needed to stay uint16-indexed. Strokes are per width group, as
- *  before; a group that overflows the budget is stroked and continued in a
- *  fresh Graphics. */
-function buildTraceGraphics(
-  byWidth: Map<number, { start: { x: number; y: number }; end: { x: number; y: number }; width: number }[]>,
-  color: number,
-): Graphics[] {
-  const out: Graphics[] = [];
-  let gfx = new Graphics();
-  let used = 0;          // points already stroked into `gfx`
-  let hasContent = false;
-  for (const [width, traces] of byWidth) {
-    // bevel JOIN, round CAP. A round join tessellates an arc fan at every
-    // interior vertex (~20 verts/point plus many near-degenerate triangles);
-    // bevel is ~4 and invisible at trace widths. Caps are only at the two ends
-    // of each path, so round caps cost nothing measurable and they hide the
-    // seam where a long polyline is split across chunk graphics.
-    const strokeStyle = { width: Math.min(width, MAX_TRACE_WIDTH), color, alpha: 0.85, join: 'bevel' as const, cap: 'round' as const };
-    let pending = 0;     // points in the current unstroked path
-    for (const polyline of chainTraceSegments(traces)) {
-      if (polyline.length < 2) continue;
-      // Walk the polyline in budget-sized runs so ONE long chained trace can't
-      // exceed the ceiling by itself (chaining merges thousands of segments
-      // into a single path). Runs overlap by one point so the line stays
-      // visually continuous across a split.
-      let i = 0;
-      while (i < polyline.length - 1) {
-        const room = Math.max(2, TRACE_POINTS_PER_GFX - used - pending);
-        const end = Math.min(polyline.length - 1, i + room - 1);
-        gfx.moveTo(polyline[i].x, polyline[i].y);
-        for (let j = i + 1; j <= end; j++) gfx.lineTo(polyline[j].x, polyline[j].y);
-        pending += end - i + 1;
-        i = end;                                  // overlap by one point
-        if (used + pending >= TRACE_POINTS_PER_GFX) {
-          gfx.stroke(strokeStyle);
-          out.push(gfx);
-          gfx = new Graphics();
-          used = 0; pending = 0; hasContent = false;
-        }
-      }
-    }
-    if (pending > 0) {
-      gfx.stroke(strokeStyle);
-      used += pending;
-      hasContent = true;
-    }
-  }
-  if (hasContent) out.push(gfx);
-  return out;
-}
-
 export function buildBoardScene(
   board: BoardData,
   s: RenderSettings,
@@ -913,6 +831,7 @@ export function buildBoardScene(
       for (const [layerIdx, layerTraces] of byLayer) {
         const layerContainer = new Container();
         layerContainer.label = `trace-layer-${layerIdx}`;
+        const gfx = new Graphics();
         // Group by width for batched strokes
         const byWidth = new Map<number, typeof layerTraces>();
         for (const t of layerTraces) {
@@ -924,7 +843,15 @@ export function buildBoardScene(
         const layerColor = board.layerNames && layerIdx < board.layerNames.length
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
-        for (const gfx of buildTraceGraphics(byWidth, layerColor)) layerContainer.addChild(gfx);
+        for (const [width, traces] of byWidth) {
+          for (const polyline of chainTraceSegments(traces)) {
+            if (polyline.length < 2) continue;
+            gfx.moveTo(polyline[0].x, polyline[0].y);
+            for (let i = 1; i < polyline.length; i++) gfx.lineTo(polyline[i].x, polyline[i].y);
+          }
+          gfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
+        }
+        layerContainer.addChild(gfx);
         traceLayer.addChild(layerContainer);
         // Ensure array is big enough
         while (traceLayerContainers.length <= layerIdx) traceLayerContainers.push(null!);
@@ -934,13 +861,22 @@ export function buildBoardScene(
     } else {
       // Single-layer: one container with default red
       traceLayer = new Container();
+      const traceGfx = new Graphics();
       const byWidth = new Map<number, typeof board.traces>();
       for (const t of board.traces) {
         let arr = byWidth.get(t.width);
         if (!arr) { arr = []; byWidth.set(t.width, arr); }
         arr.push(t);
       }
-      for (const gfx of buildTraceGraphics(byWidth, 0xcc3333)) traceLayer.addChild(gfx);
+      for (const [width, traces] of byWidth) {
+        for (const polyline of chainTraceSegments(traces)) {
+          if (polyline.length < 2) continue;
+          traceGfx.moveTo(polyline[0].x, polyline[0].y);
+          for (let i = 1; i < polyline.length; i++) traceGfx.lineTo(polyline[i].x, polyline[i].y);
+        }
+        traceGfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
+      }
+      traceLayer.addChild(traceGfx);
       root.addChild(traceLayer);
     }
   }

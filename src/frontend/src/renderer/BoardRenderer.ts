@@ -248,12 +248,6 @@ function expandPoly(poly: ReadonlyArray<readonly [number, number]>, sp: number):
 
 /** Emit a closed polygon path into `gfx` (does not stroke or fill). */
 function drawPoly(gfx: Graphics, poly: ReadonlyArray<readonly [number, number]>): void {
-  if (poly.length < 3) return;
-  // Non-finite gate (see drawPadShape in board-scene.ts): NaN vertices are
-  // undefined behaviour on the GPU and rasterise as garbage on some drivers.
-  for (const p of poly) {
-    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
-  }
   gfx.moveTo(poly[0][0], poly[0][1]);
   for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
   gfx.closePath();
@@ -275,14 +269,6 @@ function drawPartOutline(
     const rb = computePartRenderBounds(part, s);
     gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
   }
-}
-
-/** A chunked geometry draw: the call plus an estimated vertex cost so
- *  flushChunked can keep every chunk Graphics under the uint16 index
- *  ceiling (see BoardRenderer.CHUNK_VERTEX_BUDGET). */
-interface ChunkDraw {
-  (g: Graphics): void;
-  vertexCost?: number;
 }
 
 export class BoardRenderer {
@@ -666,206 +652,12 @@ export class BoardRenderer {
   // the renderer's lifetime (rendering-review-2026-07-12 finding C1).
   private viewportStates = new WeakMap<BoardData, ViewportState>();
 
-  /** Chunked draw pools for the net punch-through/glow redraw: with huge
-   *  nets (GND ≈ 7.5k pads on NM-D562-class boards) a single Graphics
-   *  accumulates >65,535 vertices, flipping pixi to 32-bit indices — which
-   *  WebKit-on-Polaris (2019 iMac Safari) renders as garbage lines between
-   *  the pads. Splitting into ≤CHUNK-pad Graphics keeps every geometry
-   *  uint16-indexed. Pools are children of selectionGfx/butterflySelectionGfx
-   *  (inherit lifecycle/z); cleared + cursor-reset every renderSelection.
-   *  Same field bug as SAFARI_CONSERVATIVE_GFX below — this addresses the
-   *  punch-through half. */
-    private selectionChunkPool: Graphics[] = [];
-  private butterflyChunkPool: Graphics[] = [];
-  /** Chunk graphics live in real Containers, NEVER as children of a Graphics.
-   *  pixi v8 Graphics is a leaf ViewContainer: `graphics.addChild()` is
-   *  deprecated and renders through an undefined legacy path, which produced
-   *  driver-dependent garbage geometry on Safari/AMD (field report
-   *  2026-07-25 stack trace: flushChunked → renderSelection → setHoverNet).
-   *  Each layer is attached alongside its host Graphics with a zIndex a hair
-   *  above it, so paint order is unchanged. */
-  private selectionChunkLayer: Container | null = null;
-  private butterflyChunkLayer: Container | null = null;
-  private netLineChunkLayer: Container | null = null;
-  private chunkCursorTop = 0;
-  private chunkCursorBot = 0;
-
-  /** Drop destroyed entries from a chunk pool and clear the survivors.
-   *  Pooled graphics live under scene.root, so any scene rebuild
-   *  (`destroy({children:true})`) can kill them while the pool still holds
-   *  references. Calling `.clear()` on a destroyed Graphics throws
-   *  `TypeError: null is not an object (evaluating 'this.context[...]')`
-   *  from inside app.render() — which trips handleRenderCrash, stops the
-   *  ticker and leaves the canvas frozen on a stale frame with every click
-   *  apparently ignored (field report 2026-07-25). */
-  private resetChunkPool(pool: Graphics[]): void {
-    let write = 0;
-    for (let read = 0; read < pool.length; read++) {
-      const g = pool[read];
-      if (!g || g.destroyed) continue;      // dead — drop it
-      g.clear();
-      pool[write++] = g;
-    }
-    pool.length = write;
-  }
-
-  /** Container that hosts chunk graphics for `host`, attached as its sibling
-   *  (same parent, zIndex + 0.1 so chunks paint immediately above the host's
-   *  own geometry, exactly where they used to as illegal children). */
-  private ensureChunkLayer(host: Graphics, which: 'selection' | 'butterfly' | 'netline'): Container | null {
-    const existing = which === 'selection' ? this.selectionChunkLayer
-      : which === 'butterfly' ? this.butterflyChunkLayer : this.netLineChunkLayer;
-    const parent = host.parent;
-    if (existing && !existing.destroyed) {
-      // Follow the host if it was re-parented (butterfly reparent, rebuilds).
-      if (parent && existing.parent !== parent) {
-        parent.addChild(existing);
-        existing.zIndex = host.zIndex + 0.1;
-      }
-      return existing;
-    }
-    if (!parent) return null;   // host not mounted yet — caller falls back
-    const layer = new Container();
-    layer.eventMode = 'none';
-    layer.zIndex = host.zIndex + 0.1;
-    parent.addChild(layer);
-    // A scene rebuild destroys scene.root's children — including a previous
-    // layer and every pooled Graphics in it. Pool lifetime == layer lifetime:
-    // empty the pools IN PLACE (callers hold references to these arrays) so
-    // dead graphics are never reused. Same failure class as the halo sprite
-    // destroyed by invalidateAllScenes.
-    if (which === 'selection') { this.selectionChunkPool.length = 0; this.selectionChunkLayer = layer; }
-    else if (which === 'butterfly') { this.butterflyChunkPool.length = 0; this.butterflyChunkLayer = layer; }
-    else {
-      this.netLineChunkPool.length = 0;
-      this.netLinePulseChunkPool.length = 0;
-      this.netLinesPulseGfx = null;
-      this.netLineBakeSig = '';        // force a re-bake into the fresh layer
-      this.netLineChunkLayer = layer;
-    }
-    return layer;
-  }
-
-  private nextChunkGfx(host: Graphics, pool: Graphics[], cursor: number,
-                       which: 'selection' | 'butterfly' | 'netline'): Graphics {
-    const layer = this.ensureChunkLayer(host, which);
-    let g = pool[cursor];
-    if (g?.destroyed) g = undefined as unknown as Graphics;
-    if (!g) {
-      g = new Graphics();
-      g.eventMode = 'none';
-      pool[cursor] = g;
-    }
-    // (Re)attach to the current layer — layers are recreated on reinit/rebuild.
-    if (layer && g.parent !== layer) layer.addChild(g);
-    return g;
-  }
-
-  /** A chunk draw: the geometry call plus its estimated vertex cost, used by
-   *  flushChunked to keep every chunk Graphics under the uint16 ceiling. */
-  private static tagCost(fn: (g: Graphics) => void, cost: number): ChunkDraw {
-    (fn as ChunkDraw).vertexCost = cost;
-    return fn as ChunkDraw;
-  }
-
-  /** Vertex budget per chunk Graphics. The uint16 index ceiling is 65,535
-   *  vertices; a chunk that crosses it makes pixi allocate a Uint32Array
-   *  index buffer, and 32-bit-index draws are what WebKit-on-AMD-Polaris
-   *  renders as garbage lines across the board (field regression, 2026-07).
-   *  Budgeting by PAD COUNT was the earlier mistake: cost per pad varies
-   *  ~20× by shape and by whether the flush also strokes. We budget by
-   *  ESTIMATED VERTICES instead, at 40% of the ceiling so fill+stroke of the
-   *  same path both fit. Acceptance test: a GND hover must add ZERO 32-bit
-   *  index draws over the static baseline (scripts probe hooks
-   *  gl.drawElements and asserts on `type === UNSIGNED_INT`). */
-  private static readonly CHUNK_VERTEX_BUDGET = 26000;
-
-  /** Net size above which the selection punch-through/glow switches to
-   *  simplified rectangle geometry and drops per-part outlines. Keeps the
-   *  hover overlay's total geometry under the uint16 vertex ceiling on power
-   *  rails (GND ≈ 7.5k pads) — see simplifyNetGeometry in renderSelection. */
-  private static readonly HUGE_NET_PAD_LOD_LIMIT = 1200;
-
-  /** Estimated vertices a single pad/outline draw contributes, INCLUDING the
-   *  stroke pass (a stroked polygon costs ~4 verts per point, a fill ~1).
-   *  Capsule/poly pad outlines tessellate to ~48 points, circles to ~20 at
-   *  typical radii; `pinSizeScale` (Interactive Mode) enlarges rings, and
-   *  bigger radii tessellate finer, so it scales the estimate. Deliberately
-   *  pessimistic — over-estimating costs an extra draw call, under-estimating
-   *  costs a corrupted frame on the reporter's hardware. */
-  private padDrawVertexCost(padShaped: boolean): number {
-    const scale = Math.max(1, renderSettingsStore.settings.pinSizeScale || 1);
-    const points = padShaped ? 48 : 20;
-    return Math.ceil(points * 5 * Math.sqrt(scale));
-  }
-
-  private flushChunked(
-    host: Graphics, pool: Graphics[], cursor: number,
-    fns: ChunkDraw[], finish: (g: Graphics) => void,
-    which: 'selection' | 'butterfly' = 'selection',
-  ): number {
-    let i = 0;
-    while (i < fns.length) {
-      const g = this.nextChunkGfx(host, pool, cursor++, which);
-      let cost = 0;
-      // Always take at least one draw so a single pathological shape can't
-      // spin forever; otherwise fill until the vertex budget is reached.
-      do {
-        fns[i](g);
-        cost += fns[i].vertexCost ?? this.padDrawVertexCost(true);
-        i++;
-      } while (i < fns.length && cost + (fns[i].vertexCost ?? 0) <= BoardRenderer.CHUNK_VERTEX_BUDGET);
-      finish(g);
-    }
-    return cursor;
-  }
-
-  /** Field regression 2026-07-21 (Safari + AMD Polaris, e.g. Radeon Pro 580X
-   *  iMacs on Sequoia): WebKit's WebGL-on-Metal samples stale vertex memory
-   *  when long-lived retained stroke buffers (the A5 net-line bake) coexist
-   *  with heavy per-frame geometry churn (hover-GND punch-through) — renders
-   *  as garbage lines between all ground pads, scaling with GND pad count.
-   *  Chrome on the same GPU and Apple-Silicon Safari are unaffected. On
-   *  Safari we keep the pre-v0.31.41 per-frame clear+re-issue semantics
-   *  (identical pixels, driver-friendly buffer churn). */
-  /** Self-healing WebGL context recovery. Both crash paths (render exception,
-   *  `webglcontextlost`) stop the ticker and rely on `resume()` to reinit —
-   *  but resume() only fires when a HIDDEN panel becomes visible, so a tab
-   *  that loses its context while ALREADY visible froze forever: stale/partial
-   *  frame on screen, no repaint, and every click apparently ignored (the
-   *  store updates, the canvas never redraws). Field report 2026-07-25:
-   *  `tickerStarted=false` on the active tab, dead clicks, garbage geometry.
-   *  Now the active tab reinits itself with backoff. */
-  private contextRecoveryTimer: number | null = null;
-  private contextRecoveryAttempts = 0;
-  private static readonly MAX_CONTEXT_RECOVERIES = 4;
-
-  private static readonly SAFARI_CONSERVATIVE_GFX =
-    typeof navigator !== 'undefined' && /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
-
   /** A3 (rendering-review-2026-07-12): renderSelection repaints fire for
    *  hover-dim changes too — only mark net-line geometry dirty when the
    *  net-line-relevant selection (net/part/pin) or board actually changed,
    *  so pulse frames don't re-run the O(K² log K) chain recompute. */
   private lastNetLinesSelKey: string | null = null;
   private lastNetLinesSelBoard: BoardData | null = null;
-
-  /** A5: pulse crossfade layer — a CHILD of netLinesGfx (inherits every
-   *  attach/reinit/destroy path). Base geometry baked once per (geometry,
-   *  width, alpha) signature; the pulse animates this child's alpha instead
-   *  of re-issuing all path geometry 60×/s. Null until first fast-path bake
-   *  and after netLinesGfx recreation. */
-  private netLinesPulseGfx: Graphics | null = null;
-  private netLineBakeSig = '';
-  /** Net-line geometry chunk pools — same uint16-index ceiling defence as
-   *  the punch-through pools (see PUNCH_CHUNK_PADS): fade mode multiplies
-   *  each line into gradient sub-segments, so big nets overflow 65,535
-   *  vertices in one Graphics and hit the WebKit+Polaris 32-bit-index bug
-   *  ("red lines on other big networks" — pulse tint 0xcc2222). Children of
-   *  netLinesGfx; pulse chunks render above base chunks, alpha-driven. */
-  private static readonly NETLINE_CHUNK_SEGS = 800;
-  private netLineChunkPool: Graphics[] = [];
-  private netLinePulseChunkPool: Graphics[] = [];
 
   /** D1 (rendering-review-2026-07-12): settings/theme changes on an INACTIVE
    *  tab defer their scene rebuild until the tab is next resumed, instead of
@@ -1101,12 +893,6 @@ export class BoardRenderer {
     } else {
       log.render.log(`pause tab=${this.tabId} storeActive=${boardStore.activeTabId}`);
     }
-    // Release the Text-fast-mode overlay canvas while hidden. At devicePixelRatio
-    // 2 on a 5K display this backing store is ~50 MB per tab; keeping one per
-    // visited tab pushed Safari over its canvas/GPU budget and got WebGL
-    // contexts killed (field report 2026-07-25). ensureLabelOverlay()
-    // recreates it on the first tick after resume.
-    if (this.textFastMode) { this.textFastMode.destroy(); this.textFastMode = null; }
     // Cancel pending follow-PDF debounce
     if (this.followDebounceTimer) { clearTimeout(this.followDebounceTimer); this.followDebounceTimer = null; }
     // Cancel any pending rAF-coalesced hover — harmless if it fires after
@@ -1301,7 +1087,6 @@ export class BoardRenderer {
     // Release the label-overlay canvas too (up to ~33 MB backing store at
     // retina) — ensureLabelOverlay() recreates it lazily on the next tick
     // after resume. (v0.31.40 review follow-up)
-    if (this.contextRecoveryTimer !== null) { clearTimeout(this.contextRecoveryTimer); this.contextRecoveryTimer = null; }
     this.textFastMode?.destroy();
     this.textFastMode = null;
     this.teardownForReinit();
@@ -1350,36 +1135,8 @@ export class BoardRenderer {
   private handleRenderCrash(err: unknown) {
     if (this.contextLost) return; // already handled
     this.contextLost = true;
-    log.render.error(`render crash tab=${this.tabId} — ticker stopped, auto-recovery scheduled:`, err);
+    log.render.error(`render crash tab=${this.tabId} — ticker stopped, use Restart Render to recover:`, err);
     this.stopTicker();
-    this.scheduleContextRecovery('render-crash');
-  }
-
-  /** Reinit this renderer after a lost context / render crash when it is the
-   *  tab the user is actually looking at (a hidden tab is recovered by
-   *  resume() instead). Backs off and gives up after a few attempts so a
-   *  hard-broken GPU state can't spin. */
-  private scheduleContextRecovery(reason: string) {
-    if (this.destroyed || this.contextRecoveryTimer !== null) return;
-    if (this.tabId !== null && boardStore.activeTabId !== this.tabId) return; // resume() owns hidden tabs
-    if (this.contextRecoveryAttempts >= BoardRenderer.MAX_CONTEXT_RECOVERIES) {
-      log.render.error(`context recovery gave up after ${this.contextRecoveryAttempts} attempts tab=${this.tabId} (${reason}) — use Restart Render`);
-      return;
-    }
-    const delay = 500 * (this.contextRecoveryAttempts + 1);
-    this.contextRecoveryAttempts++;
-    log.render.warn(`scheduling context recovery tab=${this.tabId} reason=${reason} attempt=${this.contextRecoveryAttempts} in ${delay}ms`);
-    this.contextRecoveryTimer = window.setTimeout(() => {
-      this.contextRecoveryTimer = null;
-      if (this.destroyed) return;
-      if (this.tabId !== null && boardStore.activeTabId !== this.tabId) return;
-      try {
-        this.reinitApp();
-      } catch (err) {
-        log.render.error(`context recovery reinit failed tab=${this.tabId}:`, err);
-        this.scheduleContextRecovery('reinit-failed');
-      }
-    }, delay);
   }
 
   /** Install WebGL context loss/restore handlers on a canvas element. */
@@ -1391,9 +1148,8 @@ export class BoardRenderer {
       e.preventDefault();
       if (this.destroyed) return;
       this.contextLost = true;
-      log.render.warn(`WebGL context lost tab=${this.tabId} — recovering (active tab) or on resume (hidden)`);
+      log.render.warn(`WebGL context lost tab=${this.tabId} — will recover on resume`);
       this.stopTicker();
-      this.scheduleContextRecovery('context-lost');
     };
     this.boundContextRestored = () => {
       log.render.log(`WebGL context restored event tab=${this.tabId} — deferring recovery to resume()`);
@@ -1518,10 +1274,6 @@ export class BoardRenderer {
     this.butterflyDimGfx = new Graphics();
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
-    this.netLinesPulseGfx = null;  // died with the old gfx (child)
-    this.netLineChunkPool = [];
-    this.netLinePulseChunkPool = [];
-    this.netLineBakeSig = '';
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15;
@@ -1704,10 +1456,6 @@ export class BoardRenderer {
     this.butterflyDimGfx = new Graphics();
     this.butterflyDimGfx.eventMode = 'none';
     this.netLinesGfx = new Graphics();
-    this.netLinesPulseGfx = null;  // died with the old gfx (child)
-    this.netLineChunkPool = [];
-    this.netLinePulseChunkPool = [];
-    this.netLineBakeSig = '';
     this.netLinesGfx.eventMode = 'none';
     this.crossSideGhostGfx = new Graphics();
     this.crossSideGhostGfx.zIndex = 15; // above dim (10), below selection (30) and labels (35)
@@ -2154,11 +1902,11 @@ export class BoardRenderer {
     if (!this.netLinesHiddenForZoom && this.netLineSegments.length > 0) {
       this.netLinesHiddenForZoom = true;
       // Net line geometry depends on viewport scale (line widths are 1/scale),
-      // so it must be hidden and redrawn at the new scale on settle. Hide via
-      // visibility — geometry now lives in chunk CHILDREN of netLinesGfx,
-      // which a parent clear() would not touch (this also fixes the latent
-      // pulse-child-stays-visible-during-zoom glitch).
-      this.netLinesGfx.visible = false;
+      // so it must be cleared and redrawn at the new scale on settle.
+      // Ghost geometry uses world-space stroke widths and stays visually correct
+      // at any zoom — leave it drawn so the user sees a frozen ghost during zoom
+      // instead of a vanish/reappear flash.
+      this.netLinesGfx.clear();
       this.needsRender = true;
     }
     // Rescale elevated selection labels to maintain constant screen-pixel size
@@ -2919,22 +2667,6 @@ export class BoardRenderer {
       // children:true }) below destroys it — leaving _haloSprite dangling and
       // crashing the next updateHalo() (spotlight dim mode + selection).
       this.teardownHalo();
-      // Chunk-layer Containers hold the pooled punch-through/glow/net-line
-      // graphics and are mounted alongside their host Graphics inside
-      // scene.root — detach them here or destroy({children:true}) kills them
-      // AND every pooled Graphics they hold, after which renderSelection's
-      // next clear() throws "null is not an object (this.context[...])" from
-      // inside app.render(), stopping the ticker and freezing the canvas
-      // (field report 2026-07-25). Same failure class as the halo sprite.
-      if (this.selectionChunkLayer && !this.selectionChunkLayer.destroyed) {
-        this.selectionChunkLayer.parent?.removeChild(this.selectionChunkLayer);
-      }
-      if (this.butterflyChunkLayer && !this.butterflyChunkLayer.destroyed) {
-        this.butterflyChunkLayer.parent?.removeChild(this.butterflyChunkLayer);
-      }
-      if (this.netLineChunkLayer && !this.netLineChunkLayer.destroyed) {
-        this.netLineChunkLayer.parent?.removeChild(this.netLineChunkLayer);
-      }
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
@@ -3831,7 +3563,6 @@ export class BoardRenderer {
     // without a selection change — drop the A3 memo so the next
     // renderSelection recomputes segments.
     this.lastNetLinesSelKey = null;
-    this.netLineBakeSig = '';
     // D1: inactive tab → remember that a rebuild is owed and do it on resume.
     if (this.tabId !== null && boardStore.activeTabId !== this.tabId) {
       this.pendingDeferredRebuild = true;
@@ -4015,13 +3746,7 @@ export class BoardRenderer {
       }
       // Flush to GPU even if ticker is paused (e.g. panel inactive during search focus)
       if (!this.app.ticker.started && !this.contextLost) {
-        try {
-          this.app.render();
-          if (this.contextRecoveryAttempts > 0) {
-            log.render.log(`context recovered tab=${this.tabId} after ${this.contextRecoveryAttempts} attempt(s)`);
-            this.contextRecoveryAttempts = 0;
-          }
-        } catch (err) { this.handleRenderCrash(err); }
+        try { this.app.render(); } catch (err) { this.handleRenderCrash(err); }
       }
     };
 
@@ -4391,27 +4116,14 @@ export class BoardRenderer {
     const seenParts = new Set<number>();
     const ghostPartIndices: number[] = [];
     const seenGhosts = new Set<number>();
-    const topPartOutlines: ChunkDraw[] = [];
-    const botPartOutlines: ChunkDraw[] = [];
-    const topByColor = new Map<number, ChunkDraw[]>();
-    const botByColor = new Map<number, ChunkDraw[]>();
+    const topPartOutlines: (() => void)[] = [];
+    const botPartOutlines: (() => void)[] = [];
+    const topByColor = new Map<number, (() => void)[]>();
+    const botByColor = new Map<number, (() => void)[]>();
     // Highlight glow draw fns, grouped by glow color so adjacent nets render
     // their pads in adjacentNetLineColor while the primary net stays yellow.
-    const topHighlightsByColor = new Map<number, ChunkDraw[]>();
-    const botHighlightsByColor = new Map<number, ChunkDraw[]>();
-    // Reset punch-through chunk pools for this frame.
-    this.chunkCursorTop = 0;
-    this.chunkCursorBot = 0;
-    // Any persistent overlay destroyed by a rebuild we failed to detach would
-    // throw from inside app.render() (ticker death, frozen canvas). Detect it,
-    // log loudly, and skip this pass — activateScene reattaches fresh objects.
-    if (this.selectionGfx.destroyed || this.netDimGfx.destroyed || this.butterflySelectionGfx.destroyed) {
-      log.render.error(`renderSelection: persistent overlay was destroyed (selection=${this.selectionGfx.destroyed} dim=${this.netDimGfx.destroyed} butterfly=${this.butterflySelectionGfx.destroyed}) — skipping paint, will recover on next scene activation`);
-      this.needsRender = true;
-      return;
-    }
-    this.resetChunkPool(this.selectionChunkPool);
-    this.resetChunkPool(this.butterflyChunkPool);
+    const topHighlightsByColor = new Map<number, (() => void)[]>();
+    const botHighlightsByColor = new Map<number, (() => void)[]>();
     const affectedTopNames = new Set<string>();
     const affectedBotNames = new Set<string>();
 
@@ -4462,19 +4174,20 @@ export class BoardRenderer {
             continue;
           }
 
-          if (s.showSelectionHalo && net.pinIndices.length <= BoardRenderer.HUGE_NET_PAD_LOD_LIMIT) {
+          if (s.showSelectionHalo) {
             // The clicked ("primary") part is drawn separately below with a bold
             // white accent (see the `sel.partIndex` block), so keep it OUT of the
             // muted net-member batch — otherwise it gets both treatments. (#23)
             if (ref.partIndex === sel.partIndex) continue;
-            const isBot = gfxFor(part) === this.butterflySelectionGfx;
+            const gfx = gfxFor(part);
+            const isBot = gfx === this.butterflySelectionGfx;
             const outlines = isBot ? botPartOutlines : topPartOutlines;
             if (part.pins.length === 1) {
               const pin = part.pins[0];
               const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-              outlines.push(BoardRenderer.tagCost((g) => g.circle(pin.position.x, pin.position.y, r), this.padDrawVertexCost(false)));
+              outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
             } else {
-              outlines.push(BoardRenderer.tagCost((g) => drawPartOutline(g, part, s, s.selectionPadding), this.padDrawVertexCost(true)));
+              outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
             }
           }
         }
@@ -4485,7 +4198,8 @@ export class BoardRenderer {
           const pin = part?.pins[ref.pinIndex];
           if (!pin || !part || !this.isPartVisible(part)) continue;
 
-          const isBotGfx = gfxFor(part) === this.butterflySelectionGfx;
+          const gfx = gfxFor(part);
+          const isBotGfx = gfx === this.butterflySelectionGfx;
 
           const isPin1 = ref.pinIndex === 0 && part.pins.length > 2;
           const pinColor = (isPin1 && s.showPin1Marker) ? COLORS.pin1 : resolvePinColor(s, pin.net, pin.side);
@@ -4497,7 +4211,7 @@ export class BoardRenderer {
           // Resolve pad geometry once.
           const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
           const pb = pin.padBounds;
-          const pushDim = (fn: ChunkDraw) => {
+          const pushDim = (fn: () => void) => {
             if (!dimForHighlight) return;
             const map = isBotGfx ? botByColor : topByColor;
             let arr = map.get(pinColor);
@@ -4506,7 +4220,7 @@ export class BoardRenderer {
           };
           const isSelectedPin =
             ref.partIndex === sel.partIndex && ref.pinIndex === sel.pinIndex;
-          const pushGlow = (fn: ChunkDraw) => {
+          const pushGlow = (fn: () => void) => {
             // Landrex / "clean" mode: suppress the yellow halo overlay around
             // every pin on the highlighted net. The explicitly-clicked pin is
             // exempt — it always keeps its halo so the user sees what they
@@ -4523,21 +4237,11 @@ export class BoardRenderer {
           // glow + dim must trace the same shape as the pin sprite, or the
           // halo would re-reveal the real pad outline that we just stopped
           // drawing in the pin layer.
-          // Huge-net LOD. A 7,545-pad GND net drawn with true pad outlines
-          // (~48 points each, filled AND stroked, twice over for dim+glow)
-          // produced a single 1,028,280-index draw — ~5x the uint16 vertex
-          // ceiling, which is what WebKit-on-AMD-Polaris rasterises as
-          // exploded geometry. Above the threshold we draw the pad's AABB
-          // rectangle (4 points) instead: at the zoom levels where anyone
-          // hovers a multi-thousand-pad rail the pads are a few pixels wide,
-          // so the simplification is invisible, and total geometry drops ~12x.
-          const simplifyNetGeometry = net.pinIndices.length > BoardRenderer.HUGE_NET_PAD_LOD_LIMIT;
-          const usePadShapeForGlow = boardStore.showPads && !simplifyNetGeometry;
+          const usePadShapeForGlow = boardStore.showPads;
           if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
-            const polyCost = this.padDrawVertexCost(true);
-            pushDim(BoardRenderer.tagCost((g) => drawPoly(g, padPoly), polyCost));
-            pushGlow(BoardRenderer.tagCost((g) => drawPoly(g, padPoly), polyCost));
+            pushDim(() => drawPoly(gfx, padPoly));
+            pushGlow(() => drawPoly(gfx, padPoly));
           } else if (usePadShapeForGlow && pb) {
             const grow = s.netHighlightGrow;
             const padGeom: PadGeometry = {
@@ -4549,28 +4253,13 @@ export class BoardRenderer {
               cornerRadius: pin.padCornerRadius,
               polygon: pin.padPolygon,
             };
-            const shapeCost = this.padDrawVertexCost(true);
-            pushDim(BoardRenderer.tagCost((g) => drawPadShape(g, padGeom), shapeCost));
-            pushGlow(BoardRenderer.tagCost((g) => drawPadShape(g, padGeom, grow), shapeCost));
-          } else if (simplifyNetGeometry) {
-            // Cheapest possible: axis-aligned rect from the pad AABB (or a
-            // pin-radius box when the parser gave no pad bounds).
-            const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
-            const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            const rx = pb ? pb.minX : pin.position.x - r;
-            const ry = pb ? pb.minY : pin.position.y - r;
-            const rw = pb ? pb.maxX - pb.minX : r * 2;
-            const rh = pb ? pb.maxY - pb.minY : r * 2;
-            const grow2 = s.netHighlightGrow;
-            const rectCost = 24;   // 4 points, fill + stroke
-            pushDim(BoardRenderer.tagCost((g) => g.rect(rx, ry, rw, rh), rectCost));
-            pushGlow(BoardRenderer.tagCost((g) => g.rect(rx - grow2, ry - grow2, rw + grow2 * 2, rh + grow2 * 2), rectCost));
+            pushDim(() => drawPadShape(gfx, padGeom));
+            pushGlow(() => drawPadShape(gfx, padGeom, grow));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            const circleCost = this.padDrawVertexCost(false);
-            pushDim(BoardRenderer.tagCost((g) => g.circle(pin.position.x, pin.position.y, r), circleCost));
-            pushGlow(BoardRenderer.tagCost((g) => g.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow), circleCost));
+            pushDim(() => gfx.circle(pin.position.x, pin.position.y, r));
+            pushGlow(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
           }
         }
       }
@@ -4582,14 +4271,16 @@ export class BoardRenderer {
       // above), not from dimming the members. (#23)
       const memberWidth = s.selectionWidth;
       const memberStrokeAlpha = 0.85;
-      this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, topPartOutlines, (g) => {
-        g.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        g.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
-      });
-      this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, botPartOutlines, (g) => {
-        g.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
-        g.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
-      });
+      for (const fn of topPartOutlines) fn();
+      if (topPartOutlines.length > 0) {
+        this.selectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
+        this.selectionGfx.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
+      }
+      for (const fn of botPartOutlines) fn();
+      if (botPartOutlines.length > 0) {
+        this.butterflySelectionGfx.fill({ color: BOARD_COLORS.labelPin, alpha: s.selectionFillAlpha });
+        this.butterflySelectionGfx.stroke({ width: memberWidth, color: COLORS.netHighlight, alpha: memberStrokeAlpha });
+      }
 
       // Re-clone affected labels above the dim overlay.
       if (dimForHighlight && this.activeScene) {
@@ -4610,13 +4301,14 @@ export class BoardRenderer {
         }
       }
 
-      // Pin redraws above dim, grouped by pin color (full alpha), chunked so
-      // no single Graphics crosses the uint16-index vertex ceiling.
+      // Pin redraws above dim, grouped by pin color (full alpha).
       for (const [color, fns] of topByColor) {
-        this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, fns, (g) => g.fill({ color, alpha: 1.0 }));
+        for (const fn of fns) fn();
+        this.selectionGfx.fill({ color, alpha: 1.0 });
       }
       for (const [color, fns] of botByColor) {
-        this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, fns, (g) => g.fill({ color, alpha: 1.0 }), 'butterfly');
+        for (const fn of fns) fn();
+        this.butterflySelectionGfx.fill({ color, alpha: 1.0 });
       }
 
       // Highlight glow on top, per glow color (yellow for primary, bluish
@@ -4627,16 +4319,14 @@ export class BoardRenderer {
       // label coverage on dense BGA rails.
       const ringW = s.selectionWidth * 0.6;
       for (const [glowColor, fns] of topHighlightsByColor) {
-        this.chunkCursorTop = this.flushChunked(this.selectionGfx, this.selectionChunkPool, this.chunkCursorTop, fns, (g) => {
-          g.fill({ color: glowColor, alpha: s.netHighlightAlpha });
-          g.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
-        });
+        for (const fn of fns) fn();
+        this.selectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+        this.selectionGfx.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
       }
       for (const [glowColor, fns] of botHighlightsByColor) {
-        this.chunkCursorBot = this.flushChunked(this.butterflySelectionGfx, this.butterflyChunkPool, this.chunkCursorBot, fns, (g) => {
-          g.fill({ color: glowColor, alpha: s.netHighlightAlpha });
-          g.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
-        });
+        for (const fn of fns) fn();
+        this.butterflySelectionGfx.fill({ color: glowColor, alpha: s.netHighlightAlpha });
+        this.butterflySelectionGfx.stroke({ width: ringW, color: glowColor, alpha: 0.95 });
       }
 
       // ── Trace highlight (PRIMARY net only) ───────────────────────────
@@ -5183,20 +4873,10 @@ export class BoardRenderer {
   /** Draw cached net line segments with current animation state */
   private renderNetLines() {
     this.needsRender = true;
-    this.netLinesGfx.visible = true;   // zoom-hide toggles visibility (see onZoomFrame)
+    this.netLinesGfx.clear();
 
-    if (this.netLinesDirty) { this.recomputeNetLineSegments(); this.netLineBakeSig = ''; }
-
-    const clearChunks = () => {
-      this.resetChunkPool(this.netLineChunkPool);
-      this.resetChunkPool(this.netLinePulseChunkPool);
-    };
-    if (this.netLineSegments.length === 0) {
-      if (!this.netLinesGfx.destroyed) this.netLinesGfx.clear();
-      if (this.netLinesPulseGfx && !this.netLinesPulseGfx.destroyed) this.netLinesPulseGfx.clear();
-      clearChunks();
-      return;
-    }
+    if (this.netLinesDirty) this.recomputeNetLineSegments();
+    if (this.netLineSegments.length === 0) return;
 
     const s = renderSettingsStore.settings;
     const vpScale = Math.abs(this.viewport.scale.x);
@@ -5211,75 +4891,23 @@ export class BoardRenderer {
     const useFade = this.netLineFadeDist > 0;
     const fadeDist = useFade ? 60 / vpScale : 0;
 
-    // Chunk-gfx allocator — children of netLinesGfx so lifecycle/transform/
-    // visibility ride along. Pulse chunks are added AFTER base chunks exist,
-    // so they render above them; their alpha carries the crossfade.
-    const chunk = (pool: Graphics[], i: number): Graphics =>
-      this.nextChunkGfx(this.netLinesGfx, pool, i, 'netline');
-
-    // A5 fast path — plain solid lines (no fade, no dash): geometry is baked
-    // once across ≤NETLINE_CHUNK_SEGS-segment chunk pairs (base color +
-    // pulse color), and the pulse animates only the pulse chunks' alpha.
-    // Skipped on Safari — see SAFARI_CONSERVATIVE_GFX.
-    if (!useFade && !s.netLineDashed && !BoardRenderer.SAFARI_CONSERVATIVE_GFX) {
-      const sig = `${lineW.toFixed(4)}|${s.netLineAlpha}`;
-      if (sig !== this.netLineBakeSig) {
-        this.netLineBakeSig = sig;
-        this.netLinesGfx.clear();
-        if (this.netLinesPulseGfx && !this.netLinesPulseGfx.destroyed) this.netLinesPulseGfx.clear();
-        clearChunks();
-        let ci = 0;
-        for (const [baseColor, segs] of this.netLineSegmentsByColor) {
-          for (let i = 0; i < segs.length; i += BoardRenderer.NETLINE_CHUNK_SEGS) {
-            const base = chunk(this.netLineChunkPool, ci);
-            const pulse = chunk(this.netLinePulseChunkPool, ci);
-            ci++;
-            const end = Math.min(i + BoardRenderer.NETLINE_CHUNK_SEGS, segs.length);
-            for (let j = i; j < end; j++) {
-              const { start, end: e } = segs[j];
-              base.moveTo(start.x, start.y);
-              base.lineTo(e.x, e.y);
-              pulse.moveTo(start.x, start.y);
-              pulse.lineTo(e.x, e.y);
-            }
-            base.stroke({ width: lineW, color: baseColor, alpha: s.netLineAlpha });
-            pulse.stroke({ width: lineW, color: pulseColor, alpha: s.netLineAlpha });
-          }
-        }
-      }
-      const pa = s.netLinePulse ? pulseT : 0;
-      for (const g of this.netLinePulseChunkPool) { if (!g.destroyed) g.alpha = pa; }
-      return;
-    }
-
-    // Slow path (fade/dashed, and ALL modes on Safari — per-frame re-issue,
-    // chunked below the uint16-index vertex ceiling).
-    for (const g of this.netLinePulseChunkPool) { if (!g.destroyed) g.alpha = 0; }
-    if (this.netLinesPulseGfx) this.netLinesPulseGfx.alpha = 0;
-    this.netLinesGfx.clear();
-    clearChunks();
-    let ci = 0;
+    // Iterate the colour-keyed buckets cached by recomputeNetLineSegments.
+    // No per-frame allocation here — was previously rebuilding the Map and
+    // wrapping every segment in a fresh {start,end} object 60 fps.
     for (const [baseColor, segs] of this.netLineSegmentsByColor) {
       const color = s.netLinePulse ? this.lerpColor(baseColor, pulseColor, pulseT) : baseColor;
-      for (let i = 0; i < segs.length; i += BoardRenderer.NETLINE_CHUNK_SEGS) {
-        const g = chunk(this.netLineChunkPool, ci);
-        ci++;
-        const end = Math.min(i + BoardRenderer.NETLINE_CHUNK_SEGS, segs.length);
-        if (!useFade && !s.netLineDashed) {
-          for (let j = i; j < end; j++) {
-            const seg = segs[j];
-            g.moveTo(seg.start.x, seg.start.y);
-            g.lineTo(seg.end.x, seg.end.y);
-          }
-          g.stroke({ width: lineW, color, alpha: s.netLineAlpha });
-        } else {
-          for (let j = i; j < end; j++) {
-            const seg = segs[j];
-            if (useFade) {
-              this.drawNetLineWithFade(g, seg.start, seg.end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
-            } else {
-              this.drawDashedLine(g, seg.start, seg.end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
-            }
+      if (!useFade && !s.netLineDashed) {
+        for (const { start, end } of segs) {
+          this.netLinesGfx.moveTo(start.x, start.y);
+          this.netLinesGfx.lineTo(end.x, end.y);
+        }
+        this.netLinesGfx.stroke({ width: lineW, color, alpha: s.netLineAlpha });
+      } else {
+        for (const { start, end } of segs) {
+          if (useFade) {
+            this.drawNetLineWithFade(start, end, fadeDist, lineW, color, s.netLineAlpha, s.netLineDashed, dashLen, dashOffset);
+          } else {
+            this.drawDashedLine(start, end, dashLen, dashOffset, lineW, color, s.netLineAlpha);
           }
         }
       }
@@ -5443,7 +5071,7 @@ export class BoardRenderer {
   }
 
   /** Draw a dashed line between two world-space points */
-  private drawDashedLine(g: Graphics, from: Point, to: Point, dashLen: number, dashOffset: number, width: number, color: number, alpha: number) {
+  private drawDashedLine(from: Point, to: Point, dashLen: number, dashOffset: number, width: number, color: number, alpha: number) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const totalLen = Math.sqrt(dx * dx + dy * dy);
@@ -5461,20 +5089,20 @@ export class BoardRenderer {
       const segStart = Math.max(0, pos);
       const segEnd = Math.min(totalLen, pos + dashLen);
       if (segEnd > segStart) {
-        g.moveTo(from.x + ux * segStart, from.y + uy * segStart);
-        g.lineTo(from.x + ux * segEnd, from.y + uy * segEnd);
+        this.netLinesGfx.moveTo(from.x + ux * segStart, from.y + uy * segStart);
+        this.netLinesGfx.lineTo(from.x + ux * segEnd, from.y + uy * segEnd);
         hasSegments = true;
       }
       pos += segLen;
     }
     if (hasSegments) {
-      g.stroke({ width, color, alpha });
+      this.netLinesGfx.stroke({ width, color, alpha });
     }
   }
 
   /** Draw a net line with alpha fade-in near the start to reduce clutter with many lines.
    *  Non-dashed mode: batches all fade segments per alpha level into a single stroke call. */
-  private drawNetLineWithFade(g: Graphics, from: Point, to: Point, fadeDist: number, width: number, color: number, alpha: number, dashed: boolean, dashLen: number, dashOffset: number) {
+  private drawNetLineWithFade(from: Point, to: Point, fadeDist: number, width: number, color: number, alpha: number, dashed: boolean, dashLen: number, dashOffset: number) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const totalLen = Math.sqrt(dx * dx + dy * dy);
@@ -5493,11 +5121,11 @@ export class BoardRenderer {
         const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7;
         const segFrom: Point = { x: from.x + ux * t0, y: from.y + uy * t0 };
         const segTo: Point = { x: from.x + ux * t1, y: from.y + uy * t1 };
-        this.drawDashedLine(g, segFrom, segTo, dashLen, dashOffset + t0, width, color, stepAlpha);
+        this.drawDashedLine(segFrom, segTo, dashLen, dashOffset + t0, width, color, stepAlpha);
       }
       if (fadeEnd < totalLen) {
         const remainFrom: Point = { x: from.x + ux * fadeEnd, y: from.y + uy * fadeEnd };
-        this.drawDashedLine(g, remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
+        this.drawDashedLine(remainFrom, to, dashLen, dashOffset + fadeEnd, width, color, alpha);
       }
     } else {
       // Non-dashed: batch all fade segments by alpha level, one stroke() per level
@@ -5506,15 +5134,15 @@ export class BoardRenderer {
         const t0 = (i / fadeSteps) * fadeEnd;
         const t1 = ((i + 1) / fadeSteps) * fadeEnd;
         const stepAlpha = alpha * ((i + 1) / fadeSteps) * 0.7;
-        g.moveTo(from.x + ux * t0, from.y + uy * t0);
-        g.lineTo(from.x + ux * t1, from.y + uy * t1);
-        g.stroke({ width, color, alpha: stepAlpha });
+        this.netLinesGfx.moveTo(from.x + ux * t0, from.y + uy * t0);
+        this.netLinesGfx.lineTo(from.x + ux * t1, from.y + uy * t1);
+        this.netLinesGfx.stroke({ width, color, alpha: stepAlpha });
       }
       // Remaining line at full alpha
       if (fadeEnd < totalLen) {
-        g.moveTo(from.x + ux * fadeEnd, from.y + uy * fadeEnd);
-        g.lineTo(to.x, to.y);
-        g.stroke({ width, color, alpha });
+        this.netLinesGfx.moveTo(from.x + ux * fadeEnd, from.y + uy * fadeEnd);
+        this.netLinesGfx.lineTo(to.x, to.y);
+        this.netLinesGfx.stroke({ width, color, alpha });
       }
     }
   }
