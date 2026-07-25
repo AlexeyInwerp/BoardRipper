@@ -248,6 +248,12 @@ function expandPoly(poly: ReadonlyArray<readonly [number, number]>, sp: number):
 
 /** Emit a closed polygon path into `gfx` (does not stroke or fill). */
 function drawPoly(gfx: Graphics, poly: ReadonlyArray<readonly [number, number]>): void {
+  if (poly.length < 3) return;
+  // Non-finite gate (see drawPadShape in board-scene.ts): NaN vertices are
+  // undefined behaviour on the GPU and rasterise as garbage on some drivers.
+  for (const p of poly) {
+    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return;
+  }
   gfx.moveTo(poly[0][0], poly[0][1]);
   for (let i = 1; i < poly.length; i++) gfx.lineTo(poly[i][0], poly[i][1]);
   gfx.closePath();
@@ -269,6 +275,14 @@ function drawPartOutline(
     const rb = computePartRenderBounds(part, s);
     gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
   }
+}
+
+/** A chunked geometry draw: the call plus an estimated vertex cost so
+ *  flushChunked can keep every chunk Graphics under the uint16 index
+ *  ceiling (see BoardRenderer.CHUNK_VERTEX_BUDGET). */
+interface ChunkDraw {
+  (g: Graphics): void;
+  vertexCost?: number;
 }
 
 export class BoardRenderer {
@@ -661,8 +675,7 @@ export class BoardRenderer {
    *  (inherit lifecycle/z); cleared + cursor-reset every renderSelection.
    *  Same field bug as SAFARI_CONSERVATIVE_GFX below — this addresses the
    *  punch-through half. */
-  private static readonly PUNCH_CHUNK_PADS = 1200;
-  private selectionChunkPool: Graphics[] = [];
+    private selectionChunkPool: Graphics[] = [];
   private butterflyChunkPool: Graphics[] = [];
   private chunkCursorTop = 0;
   private chunkCursorBot = 0;
@@ -678,28 +691,53 @@ export class BoardRenderer {
     return g;
   }
 
-  /** Effective pads-per-chunk. PUNCH_CHUNK_PADS assumes normal pin radii
-   *  (~40 verts/pad). Resize Mode's `pinSizeScale` enlarges every glow ring,
-   *  and pixi tessellates a circle with more segments as its radius grows —
-   *  so a scale-agnostic 1200-pad chunk would overflow the uint16 ceiling
-   *  again at high scale. Divide the pad budget by the scale (conservative:
-   *  verts grow ~≤ linearly with radius) so each chunk stays ≤ the ceiling. */
-  private punchChunkPads(): number {
-    const scale = renderSettingsStore.settings.pinSizeScale || 1;
-    return Math.max(150, Math.floor(BoardRenderer.PUNCH_CHUNK_PADS / Math.max(1, scale)));
+  /** A chunk draw: the geometry call plus its estimated vertex cost, used by
+   *  flushChunked to keep every chunk Graphics under the uint16 ceiling. */
+  private static tagCost(fn: (g: Graphics) => void, cost: number): ChunkDraw {
+    (fn as ChunkDraw).vertexCost = cost;
+    return fn as ChunkDraw;
   }
 
-  /** Run `fns` into chunk Graphics of ≤punchChunkPads() entries each, calling
-   *  `finish` (fill/stroke) per chunk. Returns the advanced cursor. */
+  /** Vertex budget per chunk Graphics. The uint16 index ceiling is 65,535
+   *  vertices; a chunk that crosses it makes pixi allocate a Uint32Array
+   *  index buffer, and 32-bit-index draws are what WebKit-on-AMD-Polaris
+   *  renders as garbage lines across the board (field regression, 2026-07).
+   *  Budgeting by PAD COUNT was the earlier mistake: cost per pad varies
+   *  ~20× by shape and by whether the flush also strokes. We budget by
+   *  ESTIMATED VERTICES instead, at 40% of the ceiling so fill+stroke of the
+   *  same path both fit. Acceptance test: a GND hover must add ZERO 32-bit
+   *  index draws over the static baseline (scripts probe hooks
+   *  gl.drawElements and asserts on `type === UNSIGNED_INT`). */
+  private static readonly CHUNK_VERTEX_BUDGET = 26000;
+
+  /** Estimated vertices a single pad/outline draw contributes, INCLUDING the
+   *  stroke pass (a stroked polygon costs ~4 verts per point, a fill ~1).
+   *  Capsule/poly pad outlines tessellate to ~48 points, circles to ~20 at
+   *  typical radii; `pinSizeScale` (Interactive Mode) enlarges rings, and
+   *  bigger radii tessellate finer, so it scales the estimate. Deliberately
+   *  pessimistic — over-estimating costs an extra draw call, under-estimating
+   *  costs a corrupted frame on the reporter's hardware. */
+  private padDrawVertexCost(padShaped: boolean): number {
+    const scale = Math.max(1, renderSettingsStore.settings.pinSizeScale || 1);
+    const points = padShaped ? 48 : 20;
+    return Math.ceil(points * 5 * Math.sqrt(scale));
+  }
+
   private flushChunked(
     host: Graphics, pool: Graphics[], cursor: number,
-    fns: ((g: Graphics) => void)[], finish: (g: Graphics) => void,
+    fns: ChunkDraw[], finish: (g: Graphics) => void,
   ): number {
-    const chunkPads = this.punchChunkPads();
-    for (let i = 0; i < fns.length; i += chunkPads) {
+    let i = 0;
+    while (i < fns.length) {
       const g = this.nextChunkGfx(host, pool, cursor++);
-      const end = Math.min(i + chunkPads, fns.length);
-      for (let j = i; j < end; j++) fns[j](g);
+      let cost = 0;
+      // Always take at least one draw so a single pathological shape can't
+      // spin forever; otherwise fill until the vertex budget is reached.
+      do {
+        fns[i](g);
+        cost += fns[i].vertexCost ?? this.padDrawVertexCost(true);
+        i++;
+      } while (i < fns.length && cost + (fns[i].vertexCost ?? 0) <= BoardRenderer.CHUNK_VERTEX_BUDGET);
       finish(g);
     }
     return cursor;
@@ -4206,14 +4244,14 @@ export class BoardRenderer {
     const seenParts = new Set<number>();
     const ghostPartIndices: number[] = [];
     const seenGhosts = new Set<number>();
-    const topPartOutlines: ((g: Graphics) => void)[] = [];
-    const botPartOutlines: ((g: Graphics) => void)[] = [];
-    const topByColor = new Map<number, ((g: Graphics) => void)[]>();
-    const botByColor = new Map<number, ((g: Graphics) => void)[]>();
+    const topPartOutlines: ChunkDraw[] = [];
+    const botPartOutlines: ChunkDraw[] = [];
+    const topByColor = new Map<number, ChunkDraw[]>();
+    const botByColor = new Map<number, ChunkDraw[]>();
     // Highlight glow draw fns, grouped by glow color so adjacent nets render
     // their pads in adjacentNetLineColor while the primary net stays yellow.
-    const topHighlightsByColor = new Map<number, ((g: Graphics) => void)[]>();
-    const botHighlightsByColor = new Map<number, ((g: Graphics) => void)[]>();
+    const topHighlightsByColor = new Map<number, ChunkDraw[]>();
+    const botHighlightsByColor = new Map<number, ChunkDraw[]>();
     // Reset punch-through chunk pools for this frame.
     this.chunkCursorTop = 0;
     this.chunkCursorBot = 0;
@@ -4279,9 +4317,9 @@ export class BoardRenderer {
             if (part.pins.length === 1) {
               const pin = part.pins[0];
               const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-              outlines.push((g) => g.circle(pin.position.x, pin.position.y, r));
+              outlines.push(BoardRenderer.tagCost((g) => g.circle(pin.position.x, pin.position.y, r), this.padDrawVertexCost(false)));
             } else {
-              outlines.push((g) => drawPartOutline(g, part, s, s.selectionPadding));
+              outlines.push(BoardRenderer.tagCost((g) => drawPartOutline(g, part, s, s.selectionPadding), this.padDrawVertexCost(true)));
             }
           }
         }
@@ -4304,7 +4342,7 @@ export class BoardRenderer {
           // Resolve pad geometry once.
           const storedPads = part.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(ref.partIndex) : null;
           const pb = pin.padBounds;
-          const pushDim = (fn: (g: Graphics) => void) => {
+          const pushDim = (fn: ChunkDraw) => {
             if (!dimForHighlight) return;
             const map = isBotGfx ? botByColor : topByColor;
             let arr = map.get(pinColor);
@@ -4313,7 +4351,7 @@ export class BoardRenderer {
           };
           const isSelectedPin =
             ref.partIndex === sel.partIndex && ref.pinIndex === sel.pinIndex;
-          const pushGlow = (fn: (g: Graphics) => void) => {
+          const pushGlow = (fn: ChunkDraw) => {
             // Landrex / "clean" mode: suppress the yellow halo overlay around
             // every pin on the highlighted net. The explicitly-clicked pin is
             // exempt — it always keeps its halo so the user sees what they
@@ -4333,8 +4371,9 @@ export class BoardRenderer {
           const usePadShapeForGlow = boardStore.showPads;
           if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
-            pushDim((g) => drawPoly(g, padPoly));
-            pushGlow((g) => drawPoly(g, padPoly));
+            const polyCost = this.padDrawVertexCost(true);
+            pushDim(BoardRenderer.tagCost((g) => drawPoly(g, padPoly), polyCost));
+            pushGlow(BoardRenderer.tagCost((g) => drawPoly(g, padPoly), polyCost));
           } else if (usePadShapeForGlow && pb) {
             const grow = s.netHighlightGrow;
             const padGeom: PadGeometry = {
@@ -4346,13 +4385,15 @@ export class BoardRenderer {
               cornerRadius: pin.padCornerRadius,
               polygon: pin.padPolygon,
             };
-            pushDim((g) => drawPadShape(g, padGeom));
-            pushGlow((g) => drawPadShape(g, padGeom, grow));
+            const shapeCost = this.padDrawVertexCost(true);
+            pushDim(BoardRenderer.tagCost((g) => drawPadShape(g, padGeom), shapeCost));
+            pushGlow(BoardRenderer.tagCost((g) => drawPadShape(g, padGeom, grow), shapeCost));
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            pushDim((g) => g.circle(pin.position.x, pin.position.y, r));
-            pushGlow((g) => g.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
+            const circleCost = this.padDrawVertexCost(false);
+            pushDim(BoardRenderer.tagCost((g) => g.circle(pin.position.x, pin.position.y, r), circleCost));
+            pushGlow(BoardRenderer.tagCost((g) => g.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow), circleCost));
           }
         }
       }

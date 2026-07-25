@@ -47,3 +47,24 @@ describe('capsuleParams (oblong round-pad stadium geometry)', () => {
     expect(capsuleParams(0, 0, 15, 16, 0, -8)).toBeNull();
   });
 });
+
+describe('capsuleParams non-finite guard (field regression 2026-07)', () => {
+  it('returns null for NaN width/height instead of NaN geometry', () => {
+    expect(capsuleParams(10, 20, NaN, 60, 0, 0)).toBeNull();
+    expect(capsuleParams(10, 20, 15, NaN, 0, 0)).toBeNull();
+  });
+  it('returns null for NaN centre, angle or grow', () => {
+    expect(capsuleParams(NaN, 20, 15, 60, 0, 0)).toBeNull();
+    expect(capsuleParams(10, NaN, 15, 60, 0, 0)).toBeNull();
+    expect(capsuleParams(10, 20, 15, 60, NaN, 0)).toBeNull();
+    expect(capsuleParams(10, 20, 15, 60, 0, NaN)).toBeNull();
+  });
+  it('returns null for Infinity dims', () => {
+    expect(capsuleParams(10, 20, Infinity, 60, 0, 0)).toBeNull();
+    expect(capsuleParams(10, 20, 15, 60, 0, Infinity)).toBeNull();
+  });
+  it('still produces finite geometry for valid oblong pads', () => {
+    const c = capsuleParams(100, 200, 15, 60, 37, 1.5)!;
+    for (const v of [c.c1x, c.c1y, c.c2x, c.c2y, c.r, c.axisRad]) expect(Number.isFinite(v)).toBe(true);
+  });
+});

@@ -192,6 +192,11 @@ export interface PadGeometry {
   polygon?: { x: number; y: number }[];
 }
 
+/** Count of pads skipped this session because their geometry was non-finite
+ *  (bad parser dims, NaN setting). Surfaced in the Debug panel so a field
+ *  report can confirm whether corrupt pad data is in play. */
+export let nonFinitePadSkips = 0;
+
 export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
   const cx = (p.bounds.minX + p.bounds.maxX) / 2;
   const cy = (p.bounds.minY + p.bounds.maxY) / 2;
@@ -202,6 +207,18 @@ export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
   const ang = p.angleDeg ?? 0;
   const gW = w + grow * 2;
   const gH = h + grow * 2;
+
+  // Hard non-finite gate for EVERY pad shape (circle/capsule/poly/rect): NaN
+  // or Infinity vertices are undefined behaviour on the GPU — some drivers
+  // drop them, Metal-on-Polaris rasterises garbage across the whole board.
+  // Drawing nothing is always better than corrupting the batch.
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(gW) || !Number.isFinite(gH)) {
+    nonFinitePadSkips++;
+    if (nonFinitePadSkips <= 3) {
+      log.render.warn(`skipped non-finite pad geometry (cx=${cx} cy=${cy} w=${gW} h=${gH} shape=${p.shape ?? '?'}) — corrupt pad dims or setting`);
+    }
+    return;
+  }
 
   // Round D-code → filled circle when square; non-square Round entries are
   // oblong pads (round-capped stroke: XZZ shape 0x01, oval D-codes) and draw

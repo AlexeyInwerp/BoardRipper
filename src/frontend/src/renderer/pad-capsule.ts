@@ -30,6 +30,17 @@ export function capsuleParams(
   w: number, h: number,
   angleDeg: number, grow: number,
 ): CapsuleParams | null {
+  // Non-finite guard. A NaN/Infinity anywhere in (cx, cy, w, h, angleDeg,
+  // grow) used to sail through the checks below — `NaN <= 1e-6` is false —
+  // and produced NaN arc vertices. NaN geometry is rasterised differently by
+  // every driver: ANGLE/Chrome drops it, Metal-on-AMD-Polaris draws garbage
+  // triangles spanning the board (field regression 2026-07: "distorted
+  // geometry and lines between all ground pads"). Fall back to the circle
+  // path, which the caller guards separately.
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(w)
+      || !Number.isFinite(h) || !Number.isFinite(angleDeg) || !Number.isFinite(grow)) {
+    return null;
+  }
   const gW = w + grow * 2;
   const gH = h + grow * 2;
   const long = Math.max(gW, gH);
