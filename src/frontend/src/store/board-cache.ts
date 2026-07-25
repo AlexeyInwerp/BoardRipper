@@ -56,7 +56,9 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     Studio .PcbDoc (binary CFB + PCB ASCII v5.0). Parts/pins/nets/outline
 //     plus tracks/vias/arcs/fills; Regions6 copper pours surface through the
 //     existing BoardData.surfaces channel.
-const PARSER_VERSION = 82;
+// 83: XZZ parser extracts component value from 2nd 0x06 label sub-block (or
+//     first non-RefDes label) into Part.meta.value.
+const PARSER_VERSION = 83;
 
 interface CachedBoard {
   key: string;

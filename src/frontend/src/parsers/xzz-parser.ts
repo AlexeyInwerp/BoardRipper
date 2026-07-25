@@ -621,7 +621,12 @@ export function normalizeOblongPads(pins: OblongPinLike[]): number {
 }
 
 interface PartSilkLine { x1: number; y1: number; x2: number; y2: number; }
-interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[]; }
+interface PartData {
+  name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[];
+  /** BOM value (e.g. "100K", "10uF") — some vendors write it into a second
+   *  0x06 label sub-block rather than a dedicated field. See parsePartBlock. */
+  partValue?: string;
+}
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
   const EMPTY: PinData = { name: '', x: 0, y: 0, netIndex: 0, padW: 0, padH: 0, padAngleDeg: 0, padShape: 'rect' };
@@ -720,6 +725,11 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
 
   const pins: PinData[] = [];
   const silkLines: PartSilkLine[] = [];
+  // labelIdx counts 0x06 sub-blocks by position, not by valid label: a
+  // malformed block still advances it, so a genuine 2nd label is never
+  // mistaken for the 1st.
+  let partValue: string | undefined;
+  let labelIdx = 0;
   const endPtr = partSize + 4;
   while (ptr < endPtr && ptr < data.length) {
     const subType = data[ptr]; ptr += 1;
@@ -747,10 +757,36 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
         ptr += sz;
         break;
       }
-      case 0x01: case 0x06:
+      case 0x01:
         if (ptr + 4 > data.length) { ptr = endPtr; break; }
         ptr += ru32(data, ptr) + 4;
         break;
+      case 0x06: {
+        // On parts re-exported from Cadence/PADS the first 0x06 label
+        // duplicates the RefDes and the second carries the BOM value
+        // ("100K", "10uF"). Label text sits 26 bytes into the payload —
+        // the part header's own 0x06 layout less its 4-byte size prefix.
+        if (ptr + 4 > data.length) { ptr = endPtr; break; }
+        const labelSize = ru32(data, ptr); ptr += 4;
+        if (ptr + labelSize > data.length) { ptr = endPtr; break; }
+        let label = '';
+        if (labelSize >= 30) {
+          const labelPtr = ptr + 26;
+          if (labelPtr + 4 <= ptr + labelSize) {
+            const labelLen = ru32(data, labelPtr);
+            if (labelLen > 0 && labelPtr + 4 + labelLen <= ptr + labelSize) {
+              label = rstr(data, labelPtr + 4, labelLen);
+            }
+          }
+        }
+        if (label && label !== partName) {
+          if (labelIdx === 1) partValue = label;
+          else if (partValue === undefined) partValue = label;
+        }
+        labelIdx++;
+        ptr += labelSize;
+        break;
+      }
       case 0x09: {
         const { pin, next } = parsePinSubBlock(data, ptr);
         pins.push(pin);
@@ -767,7 +803,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
     }
   }
   if (!partName) return null;
-  return { name: partName, side: 'top', pins, groupName, silkLines };
+  return { name: partName, side: 'top', pins, groupName, silkLines, partValue };
 }
 
 interface TestPadData { x: number; y: number; netIndex: number; }
@@ -1821,7 +1857,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         `guardPassed=${guardPassed} → final angleDeg=${angleDeg}`,
       );
     }
-    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}) });
+    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.partValue ? { meta: { value: pd.partValue } } : {}) });
 
     // Emit a Pad per pin with valid geometry (none when the file only
     // carries placeholder geometry — 12-mil dots are not copper pads).
