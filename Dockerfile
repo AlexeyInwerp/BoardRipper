@@ -2,6 +2,13 @@
 FROM node:20-alpine AS frontend
 WORKDIR /app/frontend
 COPY src/frontend/package*.json ./
+# patches/ MUST land before `npm ci`: the postinstall hook runs patch-package,
+# which silently no-ops when the directory is absent. It was copied only with
+# the rest of src/ below, so every image ever built shipped UNPATCHED
+# pdfjs-dist and pixi.js — the PDF watermark filter and the GPU-leak fix in
+# BatchableGraphics.reset() never actually ran in production (verified by
+# grepping deployed assets: `watermarkFilter` 10x locally, 0x deployed).
+COPY src/frontend/patches ./patches
 RUN npm ci
 COPY src/frontend/ ./
 RUN npm run build
