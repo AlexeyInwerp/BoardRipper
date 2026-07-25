@@ -665,6 +665,52 @@ const EMPTY_PART_OVERRIDES: PartOverrideMap = new Map();
  * Build a PixiJS scene graph for a board.
  * Pure function — no side effects on any store.
  */
+/** Max path points per trace Graphics. A stroked polyline point costs ~4-8
+ *  vertices with round joins/caps, so ~6,000 points keeps each geometry well
+ *  under the 65,535-vertex uint16 index ceiling. Past that ceiling pixi
+ *  switches the geometry to 32-bit indices, which WebKit-on-AMD-Polaris
+ *  renders as EXPLODED triangles fanning across the board (field regression
+ *  2026-07: a 203k-segment TVW layer was one Graphics ≈ 392k vertices /
+ *  1,174,950 indices). Chunking is also friendlier to culling. */
+const TRACE_POINTS_PER_GFX = 6000;
+
+/** Build the stroked trace geometry for one layer, split across as many
+ *  Graphics as needed to stay uint16-indexed. Strokes are per width group, as
+ *  before; a group that overflows the budget is stroked and continued in a
+ *  fresh Graphics. */
+function buildTraceGraphics(
+  byWidth: Map<number, { start: { x: number; y: number }; end: { x: number; y: number }; width: number }[]>,
+  color: number,
+): Graphics[] {
+  const out: Graphics[] = [];
+  let gfx = new Graphics();
+  let used = 0;          // points already stroked into `gfx`
+  let hasContent = false;
+  for (const [width, traces] of byWidth) {
+    const strokeStyle = { width: Math.min(width, MAX_TRACE_WIDTH), color, alpha: 0.85, join: 'round' as const, cap: 'round' as const };
+    let pending = 0;     // points in the current unstroked path
+    for (const polyline of chainTraceSegments(traces)) {
+      if (polyline.length < 2) continue;
+      gfx.moveTo(polyline[0].x, polyline[0].y);
+      for (let i = 1; i < polyline.length; i++) gfx.lineTo(polyline[i].x, polyline[i].y);
+      pending += polyline.length;
+      if (used + pending >= TRACE_POINTS_PER_GFX) {
+        gfx.stroke(strokeStyle);
+        out.push(gfx);
+        gfx = new Graphics();
+        used = 0; pending = 0; hasContent = false;
+      }
+    }
+    if (pending > 0) {
+      gfx.stroke(strokeStyle);
+      used += pending;
+      hasContent = true;
+    }
+  }
+  if (hasContent) out.push(gfx);
+  return out;
+}
+
 export function buildBoardScene(
   board: BoardData,
   s: RenderSettings,
@@ -848,7 +894,6 @@ export function buildBoardScene(
       for (const [layerIdx, layerTraces] of byLayer) {
         const layerContainer = new Container();
         layerContainer.label = `trace-layer-${layerIdx}`;
-        const gfx = new Graphics();
         // Group by width for batched strokes
         const byWidth = new Map<number, typeof layerTraces>();
         for (const t of layerTraces) {
@@ -860,15 +905,7 @@ export function buildBoardScene(
         const layerColor = board.layerNames && layerIdx < board.layerNames.length
           ? DEFAULT_LAYER_PALETTE[layerIdx % DEFAULT_LAYER_PALETTE.length]
           : 0xcc3333;
-        for (const [width, traces] of byWidth) {
-          for (const polyline of chainTraceSegments(traces)) {
-            if (polyline.length < 2) continue;
-            gfx.moveTo(polyline[0].x, polyline[0].y);
-            for (let i = 1; i < polyline.length; i++) gfx.lineTo(polyline[i].x, polyline[i].y);
-          }
-          gfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: layerColor, alpha: 0.85, join: 'round', cap: 'round' });
-        }
-        layerContainer.addChild(gfx);
+        for (const gfx of buildTraceGraphics(byWidth, layerColor)) layerContainer.addChild(gfx);
         traceLayer.addChild(layerContainer);
         // Ensure array is big enough
         while (traceLayerContainers.length <= layerIdx) traceLayerContainers.push(null!);
@@ -878,22 +915,13 @@ export function buildBoardScene(
     } else {
       // Single-layer: one container with default red
       traceLayer = new Container();
-      const traceGfx = new Graphics();
       const byWidth = new Map<number, typeof board.traces>();
       for (const t of board.traces) {
         let arr = byWidth.get(t.width);
         if (!arr) { arr = []; byWidth.set(t.width, arr); }
         arr.push(t);
       }
-      for (const [width, traces] of byWidth) {
-        for (const polyline of chainTraceSegments(traces)) {
-          if (polyline.length < 2) continue;
-          traceGfx.moveTo(polyline[0].x, polyline[0].y);
-          for (let i = 1; i < polyline.length; i++) traceGfx.lineTo(polyline[i].x, polyline[i].y);
-        }
-        traceGfx.stroke({ width: Math.min(width, MAX_TRACE_WIDTH), color: 0xcc3333, alpha: 0.85, join: 'round', cap: 'round' });
-      }
-      traceLayer.addChild(traceGfx);
+      for (const gfx of buildTraceGraphics(byWidth, 0xcc3333)) traceLayer.addChild(gfx);
       root.addChild(traceLayer);
     }
   }

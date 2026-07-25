@@ -690,6 +690,25 @@ export class BoardRenderer {
   private chunkCursorTop = 0;
   private chunkCursorBot = 0;
 
+  /** Drop destroyed entries from a chunk pool and clear the survivors.
+   *  Pooled graphics live under scene.root, so any scene rebuild
+   *  (`destroy({children:true})`) can kill them while the pool still holds
+   *  references. Calling `.clear()` on a destroyed Graphics throws
+   *  `TypeError: null is not an object (evaluating 'this.context[...]')`
+   *  from inside app.render() — which trips handleRenderCrash, stops the
+   *  ticker and leaves the canvas frozen on a stale frame with every click
+   *  apparently ignored (field report 2026-07-25). */
+  private resetChunkPool(pool: Graphics[]): void {
+    let write = 0;
+    for (let read = 0; read < pool.length; read++) {
+      const g = pool[read];
+      if (!g || g.destroyed) continue;      // dead — drop it
+      g.clear();
+      pool[write++] = g;
+    }
+    pool.length = write;
+  }
+
   /** Container that hosts chunk graphics for `host`, attached as its sibling
    *  (same parent, zIndex + 0.1 so chunks paint immediately above the host's
    *  own geometry, exactly where they used to as illegal children). */
@@ -2894,6 +2913,22 @@ export class BoardRenderer {
       // children:true }) below destroys it — leaving _haloSprite dangling and
       // crashing the next updateHalo() (spotlight dim mode + selection).
       this.teardownHalo();
+      // Chunk-layer Containers hold the pooled punch-through/glow/net-line
+      // graphics and are mounted alongside their host Graphics inside
+      // scene.root — detach them here or destroy({children:true}) kills them
+      // AND every pooled Graphics they hold, after which renderSelection's
+      // next clear() throws "null is not an object (this.context[...])" from
+      // inside app.render(), stopping the ticker and freezing the canvas
+      // (field report 2026-07-25). Same failure class as the halo sprite.
+      if (this.selectionChunkLayer && !this.selectionChunkLayer.destroyed) {
+        this.selectionChunkLayer.parent?.removeChild(this.selectionChunkLayer);
+      }
+      if (this.butterflyChunkLayer && !this.butterflyChunkLayer.destroyed) {
+        this.butterflyChunkLayer.parent?.removeChild(this.butterflyChunkLayer);
+      }
+      if (this.netLineChunkLayer && !this.netLineChunkLayer.destroyed) {
+        this.netLineChunkLayer.parent?.removeChild(this.netLineChunkLayer);
+      }
       this.activeScene.root.removeChild(this.netDimGfx);
       this.activeScene.root.removeChild(this.crossSideGhostGfx);
       this.activeScene.root.removeChild(this.netLabelLayer);
@@ -4361,8 +4396,16 @@ export class BoardRenderer {
     // Reset punch-through chunk pools for this frame.
     this.chunkCursorTop = 0;
     this.chunkCursorBot = 0;
-    for (const g of this.selectionChunkPool) g.clear();
-    for (const g of this.butterflyChunkPool) g.clear();
+    // Any persistent overlay destroyed by a rebuild we failed to detach would
+    // throw from inside app.render() (ticker death, frozen canvas). Detect it,
+    // log loudly, and skip this pass — activateScene reattaches fresh objects.
+    if (this.selectionGfx.destroyed || this.netDimGfx.destroyed || this.butterflySelectionGfx.destroyed) {
+      log.render.error(`renderSelection: persistent overlay was destroyed (selection=${this.selectionGfx.destroyed} dim=${this.netDimGfx.destroyed} butterfly=${this.butterflySelectionGfx.destroyed}) — skipping paint, will recover on next scene activation`);
+      this.needsRender = true;
+      return;
+    }
+    this.resetChunkPool(this.selectionChunkPool);
+    this.resetChunkPool(this.butterflyChunkPool);
     const affectedTopNames = new Set<string>();
     const affectedBotNames = new Set<string>();
 
@@ -5117,12 +5160,12 @@ export class BoardRenderer {
     if (this.netLinesDirty) { this.recomputeNetLineSegments(); this.netLineBakeSig = ''; }
 
     const clearChunks = () => {
-      for (const g of this.netLineChunkPool) g.clear();
-      for (const g of this.netLinePulseChunkPool) g.clear();
+      this.resetChunkPool(this.netLineChunkPool);
+      this.resetChunkPool(this.netLinePulseChunkPool);
     };
     if (this.netLineSegments.length === 0) {
-      this.netLinesGfx.clear();
-      this.netLinesPulseGfx?.clear();
+      if (!this.netLinesGfx.destroyed) this.netLinesGfx.clear();
+      if (this.netLinesPulseGfx && !this.netLinesPulseGfx.destroyed) this.netLinesPulseGfx.clear();
       clearChunks();
       return;
     }
@@ -5155,7 +5198,7 @@ export class BoardRenderer {
       if (sig !== this.netLineBakeSig) {
         this.netLineBakeSig = sig;
         this.netLinesGfx.clear();
-        this.netLinesPulseGfx?.clear();
+        if (this.netLinesPulseGfx && !this.netLinesPulseGfx.destroyed) this.netLinesPulseGfx.clear();
         clearChunks();
         let ci = 0;
         for (const [baseColor, segs] of this.netLineSegmentsByColor) {
@@ -5177,13 +5220,13 @@ export class BoardRenderer {
         }
       }
       const pa = s.netLinePulse ? pulseT : 0;
-      for (const g of this.netLinePulseChunkPool) g.alpha = pa;
+      for (const g of this.netLinePulseChunkPool) { if (!g.destroyed) g.alpha = pa; }
       return;
     }
 
     // Slow path (fade/dashed, and ALL modes on Safari — per-frame re-issue,
     // chunked below the uint16-index vertex ceiling).
-    for (const g of this.netLinePulseChunkPool) g.alpha = 0;
+    for (const g of this.netLinePulseChunkPool) { if (!g.destroyed) g.alpha = 0; }
     if (this.netLinesPulseGfx) this.netLinesPulseGfx.alpha = 0;
     this.netLinesGfx.clear();
     clearChunks();
