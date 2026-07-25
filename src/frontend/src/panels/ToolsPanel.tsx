@@ -11,7 +11,7 @@ type ToolId = 'resistor' | 'smd' | 'capacitor' | 'worklists';
 const CALCULATORS: { id: ToolId; name: string; hint: string }[] = [
   { id: 'resistor', name: 'Resistor color-band', hint: '4 / 5 / 6-band to ohms' },
   { id: 'smd', name: 'SMD resistor code', hint: '103, 4R7, 01C to ohms' },
-  { id: 'capacitor', name: 'Capacitor converter', hint: '104 to pF / nF / µF' },
+  { id: 'capacitor', name: 'Capacitor converter', hint: 'convert pF / nF / µF' },
 ];
 
 /** Title shown in the back link for tools that are not calculators. */

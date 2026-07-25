@@ -7826,6 +7826,17 @@ body {
   background: var(--bg-tertiary); color: var(--text-primary);
 }
 
+/* --- Tools: capacitor unit converter (pF / nF / µF cheatsheet) --- */
+.cap-converter { display: flex; flex-direction: column; gap: 10px; }
+.cap-converter-hint { font-size: 11px; color: var(--text-secondary); }
+.cap-field { display: flex; flex-direction: column; gap: 3px; }
+.cap-field-label { font-size: 11px; color: var(--text-secondary); }
+.cap-field-input { text-align: left; }
+.cap-cheatsheet {
+  margin-top: 2px; font-size: 11px; font-family: ui-monospace, monospace;
+  color: var(--text-secondary); text-align: center;
+}
+
 /* --- Tools: worklists catalog (salvaged from feat/library-bench-folders) --- */
 .library-worklist-catalog { display: flex; flex-direction: column; }
 .library-worklist-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 10px; font-size: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }

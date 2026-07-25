@@ -27,11 +27,16 @@ test.describe('Tools tab', () => {
     await expect(page.getByTestId('tools-entry-smd')).toBeVisible();
   });
 
-  test('capacitor converter shows unit breakdown', async ({ page }) => {
+  test('capacitor converter converts live across pF / nF / µF', async ({ page }) => {
     await page.getByRole('button', { name: 'Tools', exact: true }).click();
     await page.getByTestId('tools-entry-capacitor').click();
-    await page.getByTestId('cap-input').fill('104');
-    await expect(page.getByTestId('cap-readout')).toContainText('100 nF');
+    // Type 100 nF → the other two units convert live.
+    await page.getByTestId('cap-nf').fill('100');
+    await expect(page.getByTestId('cap-pf')).toHaveValue('100000');
+    await expect(page.getByTestId('cap-uf')).toHaveValue('0.1');
+    // And the reverse direction: 1 µF → 1000 nF.
+    await page.getByTestId('cap-uf').fill('1');
+    await expect(page.getByTestId('cap-nf')).toHaveValue('1000');
   });
 
   test('resistor color-band shows a live readout', async ({ page }) => {

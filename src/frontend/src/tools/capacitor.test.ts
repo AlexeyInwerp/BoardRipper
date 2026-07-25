@@ -1,30 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { decodeCapacitor } from './capacitor';
+import { convertCapacitance, formatCapValue } from './capacitor';
 
-describe('decodeCapacitor', () => {
-  it('decodes 3-digit codes (value in pF)', () => {
-    const r = decodeCapacitor('104');
-    expect(r.pF).toBe(100000);
-    expect(r.nF).toBeCloseTo(100);
-    expect(r.uF).toBeCloseTo(0.1);
-    expect(r.formatted).toBe('100 nF');
+describe('convertCapacitance', () => {
+  it('converts across pF / nF / µF', () => {
+    expect(convertCapacitance(100, 'nF', 'pF')).toBe(100_000);
+    expect(convertCapacitance(100, 'nF', 'µF')).toBeCloseTo(0.1);
+    expect(convertCapacitance(1, 'µF', 'nF')).toBe(1_000);
+    expect(convertCapacitance(1, 'µF', 'pF')).toBe(1_000_000);
+    expect(convertCapacitance(4700, 'pF', 'nF')).toBeCloseTo(4.7);
   });
-  it('decodes p/n/u notation', () => {
-    expect(decodeCapacitor('4n7').pF).toBeCloseTo(4700);
-    expect(decodeCapacitor('22p').pF).toBeCloseTo(22);
-    expect(decodeCapacitor('1u').pF).toBeCloseTo(1_000_000);
-    expect(decodeCapacitor('n47').pF).toBeCloseTo(470);
+  it('is identity for the same unit', () => {
+    expect(convertCapacitance(47, 'nF', 'nF')).toBe(47);
   });
-  it('treats 1-2 bare digits as literal pF', () => {
-    expect(decodeCapacitor('47').pF).toBe(47);
+});
+
+describe('formatCapValue', () => {
+  it('strips float noise and trailing zeros', () => {
+    expect(formatCapValue(0.1)).toBe('0.1');
+    expect(formatCapValue(100_000)).toBe('100000');
+    expect(formatCapValue(4.7)).toBe('4.7');
+    expect(formatCapValue(0)).toBe('0');
   });
-  it('parses a trailing tolerance letter', () => {
-    const r = decodeCapacitor('104J');
-    expect(r.pF).toBe(100000);
-    expect(r.tolerancePct).toBe(5);
+  it('keeps precision for 4.7 nF expressed in µF (not rounded to 0.005)', () => {
+    expect(formatCapValue(convertCapacitance(4.7, 'nF', 'µF'))).toBe('0.0047');
   });
-  it('reports an error for junk', () => {
-    expect(decodeCapacitor('xyz').error).toBeDefined();
-    expect(decodeCapacitor('').error).toBeDefined();
+  it('returns empty string for a non-finite value (half-typed field)', () => {
+    expect(formatCapValue(NaN)).toBe('');
   });
 });
