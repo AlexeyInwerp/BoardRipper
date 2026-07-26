@@ -410,3 +410,18 @@ export function activateLinkedPanel(
   _linkActivating = false;
   return true;
 }
+
+/** Open (or focus, if already open) the read-only Database Editor panel.
+ *  Uses a stable id so repeated calls reactivate instead of stacking duplicates. */
+export function ensureDatabaseEditorPanel(): void {
+  try {
+    const api = getDockviewApi();
+    if (!api) return;
+    const id = 'database-editor';
+    const existing = api.getPanel(id);
+    if (existing) { existing.api.setActive(); return; }
+    api.addPanel({ id, component: 'databaseEditor', title: 'Database Editor' });
+  } catch (err) {
+    log.ui.error('Failed to open Database Editor panel:', err);
+  }
+}

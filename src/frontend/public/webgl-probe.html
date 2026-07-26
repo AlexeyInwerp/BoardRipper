@@ -1,0 +1,186 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BoardRipper WebGL probe</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, Menlo, monospace; background: #111; color: #ddd; margin: 16px; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  p  { color: #999; margin: 0 0 12px; }
+  #out { white-space: pre; background: #000; border: 1px solid #333; padding: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  figure { margin: 0; }
+  figcaption { color: #888; font-size: 11px; text-align: center; }
+  canvas { background: #000; border: 1px solid #333; display: block; }
+  button { margin-top: 12px; font: inherit; padding: 6px 12px; }
+  .pass { color: #6f6; } .fail { color: #f66; } .skip { color: #fa0; }
+</style>
+<h1>BoardRipper WebGL probe</h1>
+<p>Each test draws a shape whose correct result is known, then reads the pixels back and checks them.
+Run this in the browser that renders badly, then press “Copy results”.</p>
+<div class="row" id="cells"></div>
+<div id="out">running…</div>
+<button id="copy">Copy results</button>
+
+<script>
+const lines = [];
+const say = (s) => { lines.push(s); document.getElementById('out').textContent = lines.join('\n'); };
+
+function makeCanvas(label, w = 140, h = 100) {
+  const fig = document.createElement('figure');
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const cap = document.createElement('figcaption');
+  cap.textContent = label;
+  fig.append(c, cap);
+  document.getElementById('cells').append(fig);
+  return c;
+}
+
+const VS = `attribute vec2 p; attribute vec3 col; varying vec3 v; uniform float bad;
+void main(){ v = col; float k = 1.0; if (bad > 0.5) { k = 0.0/0.0; } gl_Position = vec4(p * k, 0.0, 1.0); }`;
+const FS = `precision mediump float; varying vec3 v; void main(){ gl_FragColor = vec4(v, 1.0); }`;
+
+function compile(gl) {
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, FS]]) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('compile: ' + gl.getShaderInfoLog(s));
+    gl.attachShader(p, s);
+  }
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+  return p;
+}
+
+/** Sample a pixel (origin bottom-left) and say whether it is ~the expected colour. */
+function pixelIs(gl, x, y, [r, g, b], tol = 40) {
+  const px = new Uint8Array(4);
+  gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return Math.abs(px[0] - r) <= tol && Math.abs(px[1] - g) <= tol && Math.abs(px[2] - b) <= tol;
+}
+
+/**
+ * Draws `quads` green quads tiled across the viewport, optionally with:
+ *  - antialias (MSAA) on the context
+ *  - 32-bit indices (forced by padding past 65,535 vertices)
+ *  - a NaN-poisoned vertex or a NaN produced inside the shader
+ *  - per-frame buffer updates
+ * Correct result: a solid green field. Anything else (black, stripes,
+ * triangles fanning across the canvas) is a driver/browser defect.
+ */
+function runTest(name, opts) {
+  const o = Object.assign({ antialias: false, big: false, nanVertex: false, nanShader: false, dynamic: false }, opts);
+  const canvas = makeCanvas(name);
+  const gl = canvas.getContext(o.webgl2 ? 'webgl2' : 'webgl', { antialias: o.antialias, preserveDrawingBuffer: true });
+  if (!gl) { say(pad(name) + ' SKIP  no context'); return; }
+  try {
+    const prog = compile(gl);
+    gl.useProgram(prog);
+
+    // Base geometry: a grid of quads covering clip space.
+    const cols = o.big ? 200 : 8, rows = o.big ? 200 : 8;   // 200*200*4 = 160k verts => needs uint32
+    const pos = [], col = [], idx = [];
+    let v = 0;
+    for (let iy = 0; iy < rows; iy++) for (let ix = 0; ix < cols; ix++) {
+      const x0 = -1 + (2 * ix) / cols, x1 = -1 + (2 * (ix + 1)) / cols;
+      const y0 = -1 + (2 * iy) / rows, y1 = -1 + (2 * (iy + 1)) / rows;
+      pos.push(x0, y0, x1, y0, x1, y1, x0, y1);
+      for (let k = 0; k < 4; k++) col.push(0.2, 0.9, 0.3);
+      idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
+      v += 4;
+    }
+    if (o.nanVertex) { pos[0] = NaN; pos[1] = NaN; }   // poison ONE vertex of the first quad
+
+    const use32 = v > 65535;
+    if (use32 && !o.webgl2) {
+      const ext = gl.getExtension('OES_element_index_uint');
+      if (!ext) { say(pad(name) + ' SKIP  no uint32 index support'); return; }
+    }
+
+    const bind = (data, attr, size) => {
+      const b = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), o.dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, attr);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+      return b;
+    };
+    const posBuf = bind(pos, 'p', 2);
+    bind(col, 'col', 3);
+    const ib = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, use32 ? new Uint32Array(idx) : new Uint16Array(idx), gl.STATIC_DRAW);
+    gl.uniform1f(gl.getUniformLocation(prog, 'bad'), o.nanShader ? 1.0 : 0.0);
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    const frames = o.dynamic ? 12 : 1;
+    for (let f = 0; f < frames; f++) {
+      if (o.dynamic) {   // re-upload every frame, like a per-frame geometry rebuild
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(pos));
+      }
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawElements(gl.TRIANGLES, idx.length, use32 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT, 0);
+    }
+
+    // A correct render is green nearly everywhere. Sample 5 spread-out points;
+    // the NaN tests deliberately damage the bottom-left quad, so ignore it there.
+    const W = canvas.width, H = canvas.height;
+    const pts = [[W >> 1, H >> 1], [W >> 2, H >> 1], [W - 6, H - 6], [W >> 1, 6], [6, H >> 1]];
+    let ok = 0;
+    for (const [x, y] of pts) if (pixelIs(gl, x, y, [51, 230, 77])) ok++;
+    let black = 0;
+    for (const [x, y] of pts) if (pixelIs(gl, x, y, [0, 0, 0], 24)) black++;
+    const err = gl.getError();
+    // A shader-produced NaN collapses every vertex, so a HEALTHY renderer
+    // draws nothing at all here. Garbage (neither green nor black) is the
+    // defect signature we are hunting.
+    const verdict = o.nanShader
+      ? (black === 5 ? 'PASS' : 'FAIL')
+      : (ok >= 4 ? 'PASS' : 'FAIL');
+    say(pad(name) + ' ' + verdict + '  green ' + ok + '/5' +
+        '  verts=' + v + (use32 ? ' idx=uint32' : ' idx=uint16') +
+        (err ? '  glError=0x' + err.toString(16) : '') +
+        '  msaa=' + (gl.getContextAttributes().antialias ? 'on' : 'off') +
+        (o.nanShader ? '  (expect blank: ' + black + '/5 black)' : ''));
+  } catch (e) {
+    say(pad(name) + ' ERROR ' + String(e).slice(0, 90));
+  }
+}
+const pad = (s) => (s + '                                   ').slice(0, 34);
+
+// ── environment ───────────────────────────────────────────────────────────
+const probe = document.createElement('canvas').getContext('webgl2')
+           || document.createElement('canvas').getContext('webgl');
+if (probe) {
+  const dbg = probe.getExtension('WEBGL_debug_renderer_info');
+  say('UA         ' + navigator.userAgent);
+  say('GPU        ' + (dbg ? probe.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'hidden'));
+  say('GL         ' + probe.getParameter(probe.VERSION));
+  say('WebGL2     ' + (!!document.createElement('canvas').getContext('webgl2')));
+  say('WebGPU     ' + (!!navigator.gpu));
+  say('maxTexture ' + probe.getParameter(probe.MAX_TEXTURE_SIZE));
+  say('');
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────
+runTest('1 baseline uint16, no MSAA', {});
+runTest('2 baseline uint16, MSAA on', { antialias: true });
+runTest('3 big geometry uint32 idx', { big: true });
+runTest('4 big geometry uint32 + MSAA', { big: true, antialias: true });
+runTest('5 NaN in a vertex', { nanVertex: true });
+runTest('6 NaN made inside shader', { nanShader: true });
+runTest('7 per-frame buffer updates', { dynamic: true });
+runTest('8 big + dynamic + MSAA', { big: true, dynamic: true, antialias: true });
+runTest('9 WebGL2 big uint32', { big: true, webgl2: true });
+say('');
+say('Expected on a healthy machine: ALL tests PASS (test 6 passes by drawing nothing).');
+say('Any FAIL, or a canvas above showing stripes/black/fanned triangles, is the defect.');
+
+document.getElementById('copy').onclick = () => {
+  navigator.clipboard.writeText(lines.join('\n'));
+  document.getElementById('copy').textContent = 'copied';
+};
+</script>

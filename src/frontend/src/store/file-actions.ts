@@ -63,7 +63,11 @@ export async function openLibraryFileById(
   page?: number,
 ): Promise<{ name: string; file_type: string }> {
   await databankStore.ensureLoaded();
-  const file = databankStore.fileById(fileId);
+  // ensureLoaded() no longer blocks on the full file stream, so a miss here
+  // isn't authoritative — the row may just not have streamed in yet. Fetch it
+  // directly (non-mutating, safe mid-stream) before giving up.
+  const file =
+    databankStore.fileById(fileId) ?? (await databankStore.fetchFileRows([fileId]))[0];
   if (!file) throw new Error(`file id ${fileId} not in the library index`);
   const fileObj = await databankStore.fetchFileBuffer(file);
 
@@ -76,7 +80,9 @@ export async function openLibraryFileById(
     for (const binding of detail?.bindings ?? []) {
       if (!binding.auto_open) continue;
       try {
-        const pdfFile = databankStore.fileById(binding.pdf_file_id);
+        const pdfFile =
+          databankStore.fileById(binding.pdf_file_id) ??
+          (await databankStore.fetchFileRows([binding.pdf_file_id]))[0];
         if (!pdfFile) continue;
         const pdfObj = await databankStore.fetchFileBuffer(pdfFile);
         boardStore.addPdf(pdfObj);

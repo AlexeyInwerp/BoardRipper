@@ -61,6 +61,7 @@ type Indexer struct {
 	mu       sync.Mutex
 	running  bool
 	cancel   context.CancelFunc
+	done     chan struct{} // closed when the current sweep goroutine exits; nil when idle
 	prog     Progress
 	priority chan int64
 	active   atomic.Int64 // workers currently inside the extract+store path
@@ -100,13 +101,30 @@ func (ix *Indexer) Progress() Progress {
 	return p
 }
 
-// Stop cancels the running sweep. No-op if not running.
+// Stop cancels the running sweep. No-op if not running. Returns immediately;
+// workers already inside process() finish their current file. Use StopAndWait
+// when you must observe Running == false before the next action (e.g. Restart).
 func (ix *Indexer) Stop() {
 	ix.mu.Lock()
 	if ix.cancel != nil {
 		ix.cancel()
 	}
 	ix.mu.Unlock()
+}
+
+// StopAndWait cancels the running sweep and blocks until the sweep goroutine has
+// fully settled (Running == false, workers drained). No-op if not running.
+// Used by Restart so a requeue-then-run can't race the draining workers.
+func (ix *Indexer) StopAndWait() {
+	ix.mu.Lock()
+	if ix.cancel != nil {
+		ix.cancel()
+	}
+	d := ix.done
+	ix.mu.Unlock()
+	if d != nil {
+		<-d
+	}
 }
 
 // Run starts a sweep over all files returned by Source.ListPDFs, pre-filtered
@@ -185,23 +203,33 @@ func (ix *Indexer) startScoped(list func() ([]PdfFile, error)) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	ix.cancel = cancel
 	ix.running = true
+	done := make(chan struct{})
+	ix.done = done
 	// Total is unknown until enumeration completes; Progress reports Total=0
 	// (Running=true) during the enumeration window, then the real count.
 	ix.prog = Progress{Running: true, StartedAt: time.Now().Unix()}
 	ix.mu.Unlock()
 
 	go func() {
-		pending, err := ix.enumeratePending(list)
-		if err != nil {
-			// Enumeration failed (rare DB error): release the slot so the next
-			// start can run. Surfaced via logs, matching the sweep's own errors.
-			log.Printf("pdfindex: enumeration failed, aborting sweep: %v", err)
-			cancel()
+		// Single cleanup point for BOTH exit paths (enumeration failure and
+		// normal sweep completion): settle Running=false and close `done` so
+		// StopAndWait unblocks. Keeping this in one deferred place is what lets
+		// sweep() no longer touch the running/cancel bookkeeping.
+		defer func() {
 			ix.mu.Lock()
 			ix.prog.Running = false
 			ix.running = false
 			ix.cancel = nil
+			ix.done = nil
 			ix.mu.Unlock()
+			close(done)
+		}()
+		pending, err := ix.enumeratePending(list)
+		if err != nil {
+			// Enumeration failed (rare DB error): the deferred cleanup releases
+			// the slot so the next start can run. Surfaced via logs.
+			log.Printf("pdfindex: enumeration failed, aborting sweep: %v", err)
+			cancel()
 			return
 		}
 		ix.mu.Lock()
@@ -285,12 +313,8 @@ func (ix *Indexer) sweep(ctx context.Context, files []PdfFile) {
 finish:
 	close(bulk)
 	wg.Wait()
-
-	ix.mu.Lock()
-	ix.prog.Running = false
-	ix.running = false
-	ix.cancel = nil
-	ix.mu.Unlock()
+	// Running/cancel/done bookkeeping is settled by startScoped's deferred
+	// cleanup once this returns — see startScoped.
 }
 
 func (ix *Indexer) process(f PdfFile) {

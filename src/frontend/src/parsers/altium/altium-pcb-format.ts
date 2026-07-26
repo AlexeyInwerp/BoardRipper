@@ -28,9 +28,16 @@ function startsWith(buf: Uint8Array, magic: Uint8Array): boolean {
 
 export const AltiumPcbFormat: FormatDescriptor = {
   id: 'ALTIUM_PCB',
-  name: 'Altium PCB',
+  name: 'Altium PCB (experimental)',
   extensions: ['.pcbdoc', '.cmpcbdoc', '.cspcbdoc'],
-  description: 'Altium Designer / Circuit Maker / Circuit Studio PCB (binary or ASCII)',
+  // Labelled experimental deliberately. Phase-1 coverage is honest but partial:
+  // pad subrecord 6 (APAD6_SIZE_AND_SHAPE) is unparsed, so complex-mode pads
+  // (typical BGA stackups) decode 0x0 and are skipped — 40/100 pads on the
+  // ESD_GW1N_4L fixture. Those pins still exist and are net-attached, but render
+  // at the radius floor. layerNames also exposes only 2 layers on a 4-layer
+  // board, and the outline is a synthetic bbox envelope. Drop the label once
+  // subrecord 6 lands. See docs/formats/ALTIUM_PCB_FORMAT.md.
+  description: 'Altium Designer / Circuit Maker / Circuit Studio PCB (binary or ASCII) — experimental, partial pad/layer coverage',
   docUrl: 'docs/formats/ALTIUM_PCB_FORMAT.md',
   hasPads: true,
   hasTraces: true,

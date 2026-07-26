@@ -69,6 +69,18 @@ export const pdfIndexClient = {
       body: JSON.stringify({ scope }),
     }),
   reindexWatermark: () => jfetch(`/api/pdfindex/reindex-watermark`, { method: 'POST' }),
+  /** Stop the sweep, requeue in-flight rows, and start a fresh pass over all
+   *  pending work (keeps already-indexed files — NOT a hard reset). */
+  restart: () => jfetch<PdfIndexProgress>(`/api/pdfindex/restart`, { method: 'POST' }),
+  /** Read the background auto-resume toggle (continue indexing on boot / after scans). */
+  getAutoResume: () => jfetch<{ enabled: boolean }>(`/api/pdfindex/auto-resume`),
+  /** Persist the background auto-resume toggle. Enabling kicks a run immediately. */
+  setAutoResume: (enabled: boolean) =>
+    jfetch<{ enabled: boolean }>(`/api/pdfindex/auto-resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }),
   failed: () => jfetch<PdfIndexFailedEntry[]>(`/api/pdfindex/failed`),
   priorityIndex: (fileId: number) =>
     jfetch(`/api/pdfindex/files/${fileId}/index`, { method: 'POST' }),

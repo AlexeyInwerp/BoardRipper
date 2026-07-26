@@ -140,7 +140,7 @@ export function LibraryPanel() {
     autoPdf, backendAvailable,
     libraryPath, electronMode,
     browseMode, browseResult, browsing,
-    stats, filesComplete,
+    stats, filesComplete, loading,
     filesVersion,
     donorIds,
     pdfIndexProgress, pdfIndexStats, dedupProgress,
@@ -1262,8 +1262,6 @@ export function LibraryPanel() {
               )}
             </>
           </div>
-        ) : loadStatus === 'loading' && files.length === 0 ? (
-          <div className="library-empty">Loading library…</div>
         ) : loadStatus === 'error' ? (
           <div className="library-empty">
             Failed to load library{loadError ? `: ${loadError.message}` : '.'} Open the Debug panel for details.
@@ -1272,6 +1270,12 @@ export function LibraryPanel() {
           <div className="library-empty">
             Library will appear once the backend is reachable.
           </div>
+        ) : !filesComplete && loading && files.length === 0 ? (
+          // Stream still running (loadStatus flips to 'loaded' as soon as the
+          // essentials land, so we gate on filesComplete + loading, not
+          // loadStatus). A failed/finished stream drops `loading` and falls
+          // through to the empty message below rather than spinning forever.
+          <div className="library-empty">Loading library…</div>
         ) : files.length === 0 ? (
           <div className="library-empty">
             <div>Library is empty — no files indexed yet.</div>

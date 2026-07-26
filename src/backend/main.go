@@ -332,6 +332,16 @@ func main() {
 			indexer := pdfindex.NewIndexer(pdfIndex, engine, source, termsFn, poolMax)
 			defer close(indexer.StartWatchdog(5*time.Minute, 600))
 
+			// Boot reclaim: no worker can exist yet, so any 'indexing' row is an
+			// orphan from a killed process. Flip them to 'pending' immediately so
+			// auto-resume (below) picks them up instead of waiting ~10 min for the
+			// watchdog. Cheap single UPDATE; safe when there's nothing to do.
+			if n, rerr := pdfIndex.RequeueIndexing(); rerr != nil {
+				log.Printf("pdfindex: boot requeue of stale 'indexing' rows failed: %v", rerr)
+			} else if n > 0 {
+				log.Printf("pdfindex: boot requeued %d orphaned 'indexing' row(s) to pending", n)
+			}
+
 			pdfIdxHandler := handlers.NewPdfIndexHandler(pdfIndex, indexer, db)
 
 			// Wire the scanner → pdfindex re-queue path: when a PDF file's
@@ -348,6 +358,15 @@ func main() {
 			scanner.SetPdfDeleteHook(func(id int64) error {
 				return pdfIndex.DeleteFile(id)
 			})
+			// After a scan that added/modified files, kick a background run so
+			// newly-'pending' PDFs (flipped by the modified hook above) start
+			// indexing without the user pressing anything — gated on the
+			// auto-resume toggle. Run() is idempotent (no-op if already sweeping).
+			scanner.SetScanCompleteHook(func(added, updated int64) {
+				if (added+updated) > 0 && handlers.PdfAutoResumeEnabled(db) {
+					go func() { _ = indexer.Run() }()
+				}
+			})
 			// Cascade a full databank wipe (POST /api/databank/reset) to
 			// pdfindex.db as well, so a reset doesn't leave orphaned pages/FTS
 			// rows that later mis-attribute snippets to reused file ids.
@@ -359,6 +378,9 @@ func main() {
 			mux.HandleFunc("GET /api/pdfindex/progress", read(pdfIdxHandler.ProgressEndpoint))
 			mux.HandleFunc("POST /api/pdfindex/reindex", write(pdfIdxHandler.Reindex))
 				mux.HandleFunc("POST /api/pdfindex/reindex-watermark", write(pdfIdxHandler.ReindexWatermark))
+			mux.HandleFunc("POST /api/pdfindex/restart", write(pdfIdxHandler.Restart))
+			mux.HandleFunc("GET /api/pdfindex/auto-resume", read(pdfIdxHandler.GetAutoResume))
+			mux.HandleFunc("POST /api/pdfindex/auto-resume", write(pdfIdxHandler.SetAutoResume))
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/index", write(pdfIdxHandler.PriorityIndex))
 			mux.HandleFunc("POST /api/pdfindex/files/{id}/begin", write(pdfIdxHandler.Begin))
 			mux.HandleFunc("PUT /api/pdfindex/files/{id}/pages", pdfIdxHandler.Pages)
@@ -392,9 +414,12 @@ func main() {
 				}
 			}()
 
-			if v, _ := db.GetConfig("pdf_index_auto_run"); v == "true" {
+			// Auto-resume defaults ON (only the literal "false" disables it), so a
+			// boot with pending work — including the orphans just requeued above —
+			// continues indexing in the background off the /api/health path.
+			if handlers.PdfAutoResumeEnabled(db) {
 				go func() {
-					log.Println("pdfindex: auto-run enabled — starting bulk sweep")
+					log.Println("pdfindex: auto-resume enabled — continuing bulk sweep")
 					_ = indexer.Run()
 				}()
 			}

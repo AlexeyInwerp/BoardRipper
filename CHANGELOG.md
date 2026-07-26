@@ -1,5 +1,64 @@
 # BoardRipper changelog
 
+## v0.32.0 — 2026-07-26
+
+Altium Designer files now open — the twelfth supported format. Plus the Tools
+tab (component-code calculators and a worklist catalog), a faster Library, and
+a container-build fix that means two earlier fixes actually reach you for the
+first time.
+
+### Altium Designer support (new, experimental)
+
+- **`.PcbDoc` files open directly** — Altium Designer 6.0 and later, plus the
+  Circuit Maker (`.CMPcbDoc`) and Circuit Studio (`.CSPcbDoc`) variants, and
+  the PCB ASCII v5.0 text export. Components, pins, nets, tracks, vias, arcs,
+  fills and multi-layer copper all come through; every pin carries its net, so
+  net highlighting and connectivity work as they do on any other format.
+- **Marked experimental on purpose.** Pad decoding is incomplete: pads whose
+  shape varies per layer (common on BGA stackups) are not sized yet and render
+  small — on our 4-layer test board that is 40 of 100 pads. Inner copper layers
+  are parsed but only the outer two are listed, and the board outline is a
+  bounding box rather than the true shape. Connectivity is unaffected. Expect
+  a net list you can trust and a picture that is not yet finished.
+- Copper pours reuse the existing copper-plane display, so the "Surfaces"
+  toggle in the sidebar controls them like any other format's.
+
+### Tools tab (new)
+
+- **Resistor colour-band decoder** — 4/5/6-band, with tolerance and tempco.
+- **SMD resistor code decoder** — 3- and 4-digit, R-notation, and EIA-96,
+  including the letter-position rule that tells EIA-96 from R-notation apart.
+- **Capacitor unit converter** — pF / nF / µF in both directions.
+- **Worklists catalog** — every worklist stored on this device in one list,
+  instead of only the one attached to the open board.
+
+### Library and PDF index
+
+- **The Library no longer freezes on large collections.** It used to wait for
+  the complete file list before drawing anything; it now renders as results
+  stream in.
+- **PDF indexing survives restarts** — the background indexer resumes where it
+  stopped, can be restarted from Settings, and picks itself back up
+  automatically after a container update.
+
+### Fixes
+
+- **The PDF watermark filter and the renderer memory fix now actually ship.**
+  Both were in the source (since v0.30.3 and v0.31.36) but were being dropped
+  during the container build, so no web or NAS install has ever run them. If
+  watermark filtering looks new to you, this is why.
+- **Panning works again right after a zoom** — a zoom animation could swallow
+  the pan that followed it.
+- Net highlight lines redraw correctly after flipping the board.
+- The net-line pulse no longer rebuilds its geometry every frame.
+
+### Under the hood
+
+- Continuous integration is green again. It had been failing on lint for weeks,
+  and because the container build was chained behind that lint step, the
+  container build and smoke test were being skipped entirely rather than run.
+  Both now run independently.
+
 ## v0.31.44 — 2026-07-24
 
 Interactive Mode: size any board element by clicking it. Plus the offline

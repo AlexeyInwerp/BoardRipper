@@ -27,8 +27,7 @@ import { useDatabank } from '../hooks/useDatabank';
 import { databankStore } from '../store/databank-store';
 import { SCROLL_BINDINGS_KEY, SCROLL_ACTIONS, DEFAULT_SCROLL_BINDINGS, loadScrollBindings, PDF_QUALITY_KEY, PDF_RENDER_QUALITY_OPTIONS, loadPdfQuality, getPdfQualityConfig, PDF_INERTIA_KEY, loadPdfInertia } from './PdfViewerPanel';
 import type { ScrollAction, ScrollBindings, PdfRenderQuality } from './PdfViewerPanel';
-import { getDockviewApi } from '../store/dockview-api';
-import { log } from '../store/log-store';
+import { ensureDatabaseEditorPanel } from '../store/dockview-api';
 import { useObdForBoard } from '../store/obd-store';
 import { LibrarySyncSection, SoftwareUpdateSection } from './LibrarySyncSection';
 import { welcomeStore } from '../store/welcome-store';
@@ -913,7 +912,7 @@ function DatabaseInfoSection() {
       <div className="settings-db-actions" style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button
           className="settings-action-btn"
-          onClick={openDatabaseEditor}
+          onClick={ensureDatabaseEditorPanel}
           title="Open the read-only Database Editor in a Dockview panel"
         >
           Open Database Editor
@@ -958,28 +957,6 @@ function DatabaseInfoSection() {
   );
 }
 
-/** Open (or focus, if already open) the read-only Database Editor panel.
- *  Uses a stable id so repeated clicks reactivate instead of stacking duplicates. */
-function openDatabaseEditor(): void {
-  try {
-    const api = getDockviewApi();
-    if (!api) return;
-    const id = 'database-editor';
-    const existing = api.getPanel(id);
-    if (existing) {
-      existing.api.setActive();
-      return;
-    }
-    api.addPanel({
-      id,
-      component: 'databaseEditor',
-      title: 'Database Editor',
-    });
-  } catch (err) {
-    log.ui.error('Failed to open Database Editor panel:', err);
-  }
-}
-
 // ---- Library settings (auto-pdf, history depth, clear history) ----
 
 function LibrarySettingsSection() {
@@ -987,7 +964,29 @@ function LibrarySettingsSection() {
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
   const scanRunning = scanStatus?.running ?? false;
   const pdfIndexRunning = pdfIndexProgress?.running ?? false;
+  const hasPending = (pdfIndexStats?.pending ?? 0) > 0;
   const [forcing, setForcing] = useState(false);
+
+  // Background auto-resume toggle (default ON server-side; null while loading).
+  const [autoResume, setAutoResumeState] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void pdfIndexClient.getAutoResume().then((r) => { if (alive && r) setAutoResumeState(r.enabled); });
+    return () => { alive = false; };
+  }, []);
+  const toggleAutoResume = useCallback(async (next: boolean) => {
+    setAutoResumeState(next); // optimistic
+    const r = await pdfIndexClient.setAutoResume(next);
+    if (r) {
+      setAutoResumeState(r.enabled);
+      if (r.enabled) databankStore.startPdfIndexPolling();
+    }
+  }, []);
+
+  const handleRestart = useCallback(async () => {
+    await pdfIndexClient.restart();
+    databankStore.startPdfIndexPolling();
+  }, []);
 
   // Live indexer numbers. `pdfIndexProgress` is the running snapshot
   // (done/total/active workers/current file/started_at); `pdfIndexStats`
@@ -1057,22 +1056,34 @@ function LibrarySettingsSection() {
       <div className="settings-pdfindex-card">
         <div className="settings-pdfindex-header">
           <span className="settings-pdfindex-label">PDF text indexing</span>
-          {pdfIndexRunning ? (
-            <button
-              className="settings-action-btn settings-pdfindex-stop"
-              onClick={() => pdfIndexClient.stop()}
-              title="Stop the indexer. Files already in progress finish their current page; the rest stay as pending and resume on the next run."
-            >
-              Stop
-            </button>
-          ) : (
+          <span className="settings-pdfindex-actions">
+            {pdfIndexRunning ? (
+              <button
+                className="settings-action-btn settings-pdfindex-stop"
+                onClick={() => pdfIndexClient.stop()}
+                title="Stop the indexer. Files already in progress finish their current page; the rest stay pending and resume when you continue."
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                className="settings-action-btn"
+                onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+                title={hasPending
+                  ? 'Continue indexing the remaining pending PDFs from where it left off.'
+                  : 'Index all PDFs (extract searchable text).'}
+              >
+                {hasPending ? 'Continue' : 'Index all PDFs'}
+              </button>
+            )}
             <button
               className="settings-action-btn"
-              onClick={() => { void pdfIndexClient.run(); databankStore.startPdfIndexPolling(); }}
+              onClick={handleRestart}
+              title="Stop the current sweep and start a fresh pass over all pending PDFs. Keeps already-indexed files (not a reset)."
             >
-              Index all PDFs
+              Restart
             </button>
-          )}
+          </span>
         </div>
 
         {pdfIndexRunning && pdfIndexProgress ? (
@@ -1120,6 +1131,18 @@ function LibrarySettingsSection() {
           {forcing ? '…' : 'Force re-index'}
         </button>
       </div>
+
+      <label className="settings-row-toggle">
+        <input
+          type="checkbox"
+          checked={autoResume ?? true}
+          disabled={autoResume === null}
+          onChange={(e) => void toggleAutoResume(e.target.checked)}
+        />
+        <span title="When on, the indexer continues any pending PDFs automatically — on server start and after a scan finds new PDFs — without pressing anything.">
+          Auto-index PDFs in the background
+        </span>
+      </label>
 
       <label className="settings-row-toggle">
         <input

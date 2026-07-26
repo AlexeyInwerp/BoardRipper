@@ -506,7 +506,11 @@ test('AltiumPcbFormat appears in the format list with sister extensions', async 
   const all = parsers.getAllFormats();
   const altium = all.find(f => f.id === 'ALTIUM_PCB');
   expect(altium).toBeDefined();
-  expect(altium!.name).toBe('Altium PCB');
+  // Name carries an "(experimental)" suffix while Phase-1 pad/layer coverage is
+  // partial (see altium-pcb-format.ts). Assert the stable part plus the marker
+  // so dropping the suffix later is a one-line change here.
+  expect(altium!.name).toContain('Altium PCB');
+  expect(altium!.name).toContain('experimental');
   expect(altium!.extensions).toEqual(
     expect.arrayContaining(['.pcbdoc', '.cmpcbdoc', '.cspcbdoc']),
   );

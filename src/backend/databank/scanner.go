@@ -68,6 +68,16 @@ type Scanner struct {
 	activeOp       string       // "", "file"
 	onPdfModified  PdfModifiedHook // optional — re-queues modified PDFs into pdf_index_status
 	onPdfDeleted   PdfDeleteHook   // optional — drops pruned files from the PDF index
+	onScanComplete func(added, updated int64) // optional — fired once a non-stopped scan finishes
+}
+
+// SetScanCompleteHook registers a callback fired once when a scan finishes
+// normally (not stopped). Used to kick PDF-index auto-resume when a scan added
+// or modified files. Fired outside the scanner lock.
+func (s *Scanner) SetScanCompleteHook(fn func(added, updated int64)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onScanComplete = fn
 }
 
 // SetPdfModifiedHook registers the callback the scanner fires when a PDF
@@ -722,6 +732,7 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 	s.activeOp = ""
 	s.cancelFn = nil
 	s.cancelCh = nil
+	hook := s.onScanComplete
 	s.mu.Unlock()
 
 	if stopped {
@@ -737,6 +748,9 @@ func (s *Scanner) finishScan(scanned, total, added, updated, deleted, errors int
 
 	if !stopped {
 		_ = s.db.SetConfig("last_file_scan_at", fmt.Sprintf("%d", time.Now().Unix()))
+		if hook != nil {
+			hook(added, updated)
+		}
 	}
 }
 
