@@ -7342,8 +7342,24 @@ body {
   font-size: 12px;
   cursor: pointer;
 }
+/* Keyboard / hover cursor — a neutral emphasis as you move through the list. */
 .overlay-dropdown-row.highlighted {
-  background: var(--bg-hover, rgba(255,255,255,0.06));
+  background: var(--bg-hover, rgba(255,255,255,0.10));
+}
+/* The net/part currently highlighted ON THE BOARD — a persistent accent marker
+   (inset left bar + tint + bold) so it stays clearly visible regardless of
+   where the keyboard cursor is. Theme-aware via --accent; the inset box-shadow
+   bar avoids the layout shift a border-left would cause. */
+.overlay-dropdown-row.selected {
+  background: color-mix(in srgb, var(--accent, #88f) 16%, transparent);
+  box-shadow: inset 3px 0 0 0 var(--accent, #88f);
+  color: var(--text-primary, #ddd);
+  font-weight: 600;
+}
+/* When the cursor is also on the selected row, deepen the accent so it reads as
+   "selected AND focused" rather than washing the marker out. */
+.overlay-dropdown-row.selected.highlighted {
+  background: color-mix(in srgb, var(--accent, #88f) 28%, transparent);
 }
 .overlay-dropdown-row.dimmed {
   opacity: 0.45;

@@ -307,6 +307,13 @@ class DatabankStore extends Emitter {
 
   private _files: DatabankFile[] = [];
   private _filesVersion = 0;
+  /** Transport for the full file list. 'stream' = progressive NDJSON (now
+   *  gzipped server-side); 'bulk' = one gzipped JSON GET — smaller/faster on
+   *  slow links but no progressive rows. Persisted; a change reloads via the
+   *  new transport. The `stream` path auto-falls-back to `bulk` on failure. */
+  private _libraryLoadMode: 'stream' | 'bulk' =
+    (typeof localStorage !== 'undefined' && localStorage.getItem('br.libraryLoadMode') === 'bulk')
+      ? 'bulk' : 'stream';
   /** True once the full file list has been fetched. False while we're showing
    *  a partial subset (e.g. only the files referenced by the History tab). */
   private _filesComplete = false;
@@ -454,6 +461,16 @@ class DatabankStore extends Emitter {
    *  on this version, not on the array identity. */
   get filesVersion() { return this._filesVersion; }
   get filesComplete() { return this._filesComplete; }
+  get libraryLoadMode(): 'stream' | 'bulk' { return this._libraryLoadMode; }
+  /** Switch the full-list transport and reload via it immediately (force skips
+   *  the cache so the new mode is actually exercised). */
+  setLibraryLoadMode(mode: 'stream' | 'bulk') {
+    if (mode === this._libraryLoadMode) return;
+    this._libraryLoadMode = mode;
+    try { localStorage.setItem('br.libraryLoadMode', mode); } catch { /* ignore */ }
+    this.notify();
+    void this.fetchFiles({ force: true });
+  }
   get folderTree() { return this._folderTree; }
   get scanStatus() { return this._scanStatus; }
   get stats() { return this._stats; }
@@ -1066,24 +1083,68 @@ class DatabankStore extends Emitter {
       }
     }
 
-    // Network stream path. The NDJSON endpoint yields a `begin` line, then
-    // one `file` line per row, then a `done` line. We batch up to 2048
-    // files before flushing to the store + load progress.
-    await this._streamFilesFromNetwork(signature);
+    // Network path. Transport chosen by `_libraryLoadMode`; both share the
+    // in-memory + IDB short-circuits above, so this only runs on a cold or
+    // changed library. `stream` = progressive NDJSON (now gzipped server-side);
+    // `bulk` = one gzipped JSON GET. `stream` auto-falls-back to `bulk`.
+    const t0 = performance.now();
+    if (this._libraryLoadMode === 'bulk') {
+      await this._fetchFilesBulk(signature, t0);
+    } else {
+      const ok = await this._streamFilesFromNetwork(signature, t0);
+      if (!ok) {
+        log.scan.warn('library load: stream path failed — falling back to bulk API (GET /api/databank/files)');
+        libraryLoadStore.setPhase('streaming', 'Retrying via bulk API…');
+        await this._fetchFilesBulk(signature, t0);
+      }
+    }
 
     this._loading = false;
     this.notify();
   }
 
-  /** Stream the file list from /api/databank/files/stream. Backend + frontend
-   *  ship together (same Docker image, same release counter), so there is no
-   *  "no-stream-endpoint" scenario to defend against — a network failure is
-   *  surfaced via libraryLoadStore.error() and the user retries. */
-  private async _streamFilesFromNetwork(signature: string | null): Promise<void> {
+  /** Bulk transport: one gzipped GET /api/databank/files returning the whole
+   *  board+pdf list as a JSON array (identical set + order to the stream). No
+   *  progressive rows, but a single compressed body — smaller/faster than the
+   *  stream on slow links, and the auto-fallback when the stream fails. */
+  private async _fetchFilesBulk(signature: string | null, startedAt: number): Promise<void> {
+    this._resetFilesForStream();
+    libraryLoadStore.setPhase('streaming', 'Loading library (bulk API)…');
+    try {
+      const res = await fetch('/api/databank/files');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Read as bytes first so we can report decoded size + throughput; one
+      // decode + parse, same cost as res.json().
+      const buf = await res.arrayBuffer();
+      const data = JSON.parse(new TextDecoder().decode(buf)) as DatabankFile[];
+      this._setFiles(data, { complete: true, signature });
+      libraryLoadStore.advance(data.length, data.length);
+      libraryLoadStore.finish();
+      if (signature) void libraryCache.writeChunked(signature, this._files);
+      const elapsed = Math.round(performance.now() - startedAt);
+      const kib = Math.round(buf.byteLength / 1024);
+      const rate = elapsed > 0 ? Math.round(data.length / (elapsed / 1000)) : 0;
+      const mbps = elapsed > 0 ? ((buf.byteLength / 1048576) / (elapsed / 1000)).toFixed(1) : '0';
+      log.scan.log(`library load [bulk]: ${data.length} files · ${kib} KiB decoded · ${mbps} MB/s · ${elapsed}ms · ${rate} rows/s (gzip on wire) sig=${signature ?? 'unknown'}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.scan.warn(`library load [bulk] failed after ${this._files.length} files: ${msg}`);
+      libraryLoadStore.error(msg);
+    }
+  }
+
+  /** Stream the file list from /api/databank/files/stream (gzipped NDJSON).
+   *  Returns true on a clean finalize, false on failure — the caller then
+   *  auto-falls-back to the bulk API. Byte counts are post-decompression
+   *  (the browser inflates transparently); the gzip win shows as reduced
+   *  wall-clock, logged verbosely for the Debug panel. */
+  private async _streamFilesFromNetwork(signature: string | null, startedAt: number): Promise<boolean> {
     this._resetFilesForStream();
     libraryLoadStore.setPhase('streaming', 'Streaming files…');
 
     let total = 0;
+    let bytes = 0;
+    let ttfb = 0;
     let serverSig = signature;
     const batchAll: DatabankFile[] = [];
     const flushBatch = () => {
@@ -1111,6 +1172,8 @@ class DatabankStore extends Emitter {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (ttfb === 0) ttfb = performance.now() - startedAt;
+        if (value) bytes += value.byteLength;
         buf += dec.decode(value, { stream: true });
         let nl;
         while ((nl = buf.indexOf('\n')) >= 0) {
@@ -1142,9 +1205,12 @@ class DatabankStore extends Emitter {
       flushBatch();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.scan.warn(`Files stream failed after ${this._files.length} files: ${msg}`);
+      const elapsed = Math.round(performance.now() - startedAt);
+      // Verbose so the Debug panel shows exactly where the stream died before
+      // the caller retries via the bulk API.
+      log.scan.warn(`library load [stream] FAILED after ${this._files.length} files · ${Math.round(bytes / 1024)} KiB · ${elapsed}ms: ${msg}`);
       libraryLoadStore.error(msg);
-      return;
+      return false;
     }
 
     libraryLoadStore.setPhase('finalizing', 'Indexing…');
@@ -1155,13 +1221,22 @@ class DatabankStore extends Emitter {
     // Cache write is async + tx-isolated; never blocks the UI.
     if (serverSig) void libraryCache.writeChunked(serverSig, this._files);
     const got = this._files.length;
+    const elapsed = Math.round(performance.now() - startedAt);
+    const kib = Math.round(bytes / 1024);
+    const rate = elapsed > 0 ? Math.round(got / (elapsed / 1000)) : 0;
+    // Effective content throughput: decoded bytes / wall-clock. The on-wire
+    // (gzipped) rate is smaller — the browser inflates transparently and fetch
+    // only exposes decoded bytes — so this reads as "how fast the library came
+    // down" rather than raw link speed.
+    const mbps = elapsed > 0 ? ((bytes / 1048576) / (elapsed / 1000)).toFixed(1) : '0';
     if (total > 0 && got + 16 < total) {
       // Stream advertised more rows than it delivered. Loudly log so the
       // Debug panel surfaces it next to the completeness chip in the panel.
-      log.scan.warn(`Library stream short: ${got} delivered, ${total} advertised (sig ${serverSig ?? 'unknown'})`);
+      log.scan.warn(`library load [stream] SHORT: ${got} delivered, ${total} advertised · ${kib} KiB decoded · ${elapsed}ms (sig ${serverSig ?? 'unknown'})`);
     } else {
-      log.scan.log(`Library streamed: ${got} files (sig ${serverSig ?? 'unknown'})`);
+      log.scan.log(`library load [stream]: ${got} files · ${kib} KiB decoded · ${mbps} MB/s · TTFB ${Math.round(ttfb)}ms · ${elapsed}ms · ${rate} rows/s (gzip on wire) sig=${serverSig ?? 'unknown'}`);
     }
+    return true;
   }
 
   private _filesByIdsInflight: Promise<void> | null = null;
