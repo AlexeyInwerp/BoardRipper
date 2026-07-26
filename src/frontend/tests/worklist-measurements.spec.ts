@@ -85,7 +85,7 @@ test('highlight: worklist outlines only when toggle on; button relabeled', async
   await page.waitForFunction(() => !!(window as any).__boardStore?.board, { timeout: 20000 });
   // Create a worklist and add the first board part (index 0 always exists).
   await page.evaluate(() => {
-    /* @ts-expect-error */
+    /* @ts-expect-error test-only global exposed by the app for E2E */
     const ws = window.__worklistStore;
     const wl = ws.createWorklist('Test');
     if (wl) ws.pushParts(wl.id, [0]);
@@ -94,10 +94,10 @@ test('highlight: worklist outlines only when toggle on; button relabeled', async
   await page.locator('.board-sidebar-tab', { hasText: 'Worklist' }).click();
   const btn = page.getByRole('button', { name: 'Highlight' });
   await expect(btn).toBeVisible();
-  const on = await page.evaluate(() => { /* @ts-expect-error */ return window.__boardStore.connectionHighlight; });
+  const on = await page.evaluate(() => { /* @ts-expect-error test-only global exposed by the app for E2E */ return window.__boardStore.connectionHighlight; });
   expect(on).toBe(false); // off by default
   await btn.click();
-  const on2 = await page.evaluate(() => { /* @ts-expect-error */ return window.__boardStore.connectionHighlight; });
+  const on2 = await page.evaluate(() => { /* @ts-expect-error test-only global exposed by the app for E2E */ return window.__boardStore.connectionHighlight; });
   expect(on2).toBe(true);
 });
 

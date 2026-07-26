@@ -14,8 +14,8 @@ jobs:
   lint-and-typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -32,12 +32,15 @@ jobs:
       - run: cd src/frontend && npx eslint .
       - run: cd src/frontend && npx tsc -b --noEmit
 
+  # NOT gated on lint-and-typecheck. It used to be, and when lint went red the
+  # only visible failure was lint while this job and docker-build were silently
+  # `skipped` — so the Docker build and smoke test stopped running entirely and
+  # nobody noticed. Independent jobs surface independent breakage.
   frontend-tests:
     runs-on: ubuntu-latest
-    needs: lint-and-typecheck
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -48,7 +51,7 @@ jobs:
         run: cd src/frontend && npx playwright test ci-smoke.spec.ts
         env:
           CI: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: failure()
         with:
           name: playwright-report
@@ -58,7 +61,7 @@ jobs:
   backend-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v5
         with:
           # Must match src/backend/go.mod (`go 1.25.0`) and the Dockerfile
@@ -69,11 +72,13 @@ jobs:
           cache-dependency-path: src/backend/go.sum
       - run: cd src/backend && go test ./... -v -count=1
 
+  # Gated on backend-tests only (the image embeds the Go binary, so a failing
+  # backend makes the build pointless). Deliberately NOT gated on lint.
   docker-build:
     runs-on: ubuntu-latest
-    needs: [lint-and-typecheck, backend-tests]
+    needs: backend-tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: docker build -t boardripper:ci-${{ github.sha }} .
       - run: |
           docker run -d --name br-smoke -p 8080:8080 boardripper:ci-${{ github.sha }}

@@ -97,7 +97,8 @@ function splitNote(s: string): [string, string] {
 }
 
 function parsePartRow(raw: string): ClipPart | null {
-  let [s, note] = splitNote(raw.trim());
+  const [rawBody, note] = splitNote(raw.trim());
+  let s = rawBody;
   let mark: WorklistMark = 'none';
   let waterdamage = false;
   for (const m of s.matchAll(/\[([a-z]+)\]/g)) {
@@ -112,7 +113,8 @@ function parsePartRow(raw: string): ClipPart | null {
 }
 
 function parseNetRow(raw: string): ClipNet | null {
-  let [s, note] = splitNote(raw.trim());
+  const [rawBody, note] = splitNote(raw.trim());
+  let s = rawBody;
   // measurements: — <label> <value>[, <label> <value>…]
   const measurements: ClipNetMeas[] = [];
   const mm = s.match(/—\s*(.+?)\s*$/);
