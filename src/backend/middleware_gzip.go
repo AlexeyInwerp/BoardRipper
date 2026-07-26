@@ -42,6 +42,13 @@ func (g *gzipResponseWriter) WriteHeader(status int) {
 
 	h := g.ResponseWriter.Header()
 	ct := h.Get("Content-Type")
+	// A handler can opt an otherwise-excluded stream (e.g. the library NDJSON
+	// file list) into gzip by setting X-Br-Gzip-Stream: 1. Consumed + stripped
+	// here so it never reaches the client. Only meaningful for batch-flushed
+	// streams — do NOT set it on per-row streams (search/stream), whose tiny
+	// incremental flushes gzip poorly and stall.
+	optInStream := h.Get("X-Br-Gzip-Stream") == "1"
+	h.Del("X-Br-Gzip-Stream")
 	// Skip already-encoded responses and any response that has explicitly
 	// opted out of transformation (e.g. SSE/NDJSON streams set
 	// Cache-Control: no-transform).
@@ -49,7 +56,7 @@ func (g *gzipResponseWriter) WriteHeader(status int) {
 		g.useGzip = false
 	} else if hasNoTransform(h.Get("Cache-Control")) {
 		g.useGzip = false
-	} else if isCompressible(ct) {
+	} else if isCompressible(ct) || optInStream {
 		h.Set("Content-Encoding", "gzip")
 		h.Del("Content-Length") // length changes after compression
 		h.Add("Vary", "Accept-Encoding")

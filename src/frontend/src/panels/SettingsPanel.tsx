@@ -960,7 +960,7 @@ function DatabaseInfoSection() {
 // ---- Library settings (auto-pdf, history depth, clear history) ----
 
 function LibrarySettingsSection() {
-  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress, pdfIndexStats } = useDatabank();
+  const { autoPdf, historyDepth, recentItems, scanStatus, pdfIndexProgress, pdfIndexStats, libraryLoadMode } = useDatabank();
   const [depthDraft, setDepthDraft] = useState<string>(String(historyDepth));
   const scanRunning = scanStatus?.running ?? false;
   const pdfIndexRunning = pdfIndexProgress?.running ?? false;
@@ -1048,6 +1048,29 @@ function LibrarySettingsSection() {
             Scan now
           </button>
         )}
+      </div>
+
+      {/* Library load transport. Streaming = progressive gzipped NDJSON (rows
+       *  appear as they arrive). Bulk API = one gzipped JSON download — often
+       *  faster on slow connections, no progressive rows. Switching reloads. */}
+      <div className="settings-row-field">
+        <span title="How the full library list is fetched. Streaming shows rows as they arrive; Bulk API downloads one compressed file (often faster on slow links). The stream also auto-falls-back to Bulk on failure. Changing this reloads the library.">
+          Library load mode
+        </span>
+        <span className="settings-pdfindex-actions">
+          <button
+            className={`settings-action-btn${libraryLoadMode === 'stream' ? ' active' : ''}`}
+            onClick={() => databankStore.setLibraryLoadMode('stream')}
+          >
+            Streaming
+          </button>
+          <button
+            className={`settings-action-btn${libraryLoadMode === 'bulk' ? ' active' : ''}`}
+            onClick={() => databankStore.setLibraryLoadMode('bulk')}
+          >
+            Bulk API
+          </button>
+        </span>
       </div>
 
       {/* PDF text indexing — verbose status when running, summary when idle.

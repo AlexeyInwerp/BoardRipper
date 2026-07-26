@@ -14,6 +14,7 @@ interface DatabankSnapshot {
    *  must react to content changes key on this instead of the array identity. */
   filesVersion: number;
   filesComplete: boolean;
+  libraryLoadMode: 'stream' | 'bulk';
   folderTree: FolderNode | null;
   folderTreeLoading: boolean;
   scanStatus: ScanStatus | null;
@@ -50,6 +51,7 @@ export const useDatabank = createStoreHook<DatabankSnapshot>(databankStore, () =
   files: databankStore.files,
   filesVersion: databankStore.filesVersion,
   filesComplete: databankStore.filesComplete,
+  libraryLoadMode: databankStore.libraryLoadMode,
   folderTree: databankStore.folderTree,
   folderTreeLoading: databankStore.folderTreeLoading,
   scanStatus: databankStore.scanStatus,
