@@ -52,7 +52,11 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     with w ≠ h is a round-capped stroke; implausible lengths (BGA
 //     perimeter stubs on PL5TU1B CPU1, 15×300/350 covering neighbouring
 //     balls) and degenerate strokes (h ≤ w) collapse to pen-width dots.
-const PARSER_VERSION = 81;
+// 82: ALTIUM_PCB parser added — Altium Designer / Circuit Maker / Circuit
+//     Studio .PcbDoc (binary CFB + PCB ASCII v5.0). Parts/pins/nets/outline
+//     plus tracks/vias/arcs/fills; Regions6 copper pours surface through the
+//     existing BoardData.surfaces channel.
+const PARSER_VERSION = 82;
 
 interface CachedBoard {
   key: string;

@@ -18,6 +18,13 @@ in BoardRipper.
 - **Nature of use:** The Cadence Allegro BRD parser in BoardRipper is a TypeScript re-implementation derived from KiCad's C++ Allegro importer. Block-type definitions, version-detection logic, three-phase parsing architecture, and coordinate transforms are transliterated from KiCad. GPL-3.0 obligations propagate to BoardRipper, which is why BoardRipper as a whole is licensed under AGPL-3.0 (a GPL-3.0-compatible upgrade).
 - **Spec:** [docs/formats/ALLEGRO_BRD_FORMAT.md](docs/formats/ALLEGRO_BRD_FORMAT.md)
 
+### KiCad — `pcbnew/pcb_io/altium/`
+- **License:** GNU General Public License v2.0 or later (GPL-2.0+); one file is GPL-3.0+
+- **Upstream:** https://github.com/KiCad/kicad-source-mirror/tree/master/pcbnew/pcb_io/altium
+- **Used in:** `src/frontend/src/parsers/altium/`
+- **Nature of use:** The Altium Designer `.PcbDoc` parser in BoardRipper is a TypeScript re-implementation derived from KiCad's C++ Altium importer. Stream layouts, property-bag and binary-record decoders, version-conditional field handling, and coordinate transforms are transliterated from KiCad. Same GPL lineage as the Allegro parser — already covered by BoardRipper's AGPL-3.0 envelope.
+- **Spec:** [docs/formats/ALTIUM_PCB_FORMAT.md](docs/formats/ALTIUM_PCB_FORMAT.md)
+
 ### OpenBoardView
 - **License:** MIT
 - **Upstream:** https://github.com/OpenBoardView/OpenBoardView
@@ -91,6 +98,7 @@ in BoardRipper.
 | pdf-lib | MIT | PDF manipulation |
 | opentype.js | MIT | Font glyph extraction |
 | @tabler/icons-react | MIT | UI icon set |
+| cfb | Apache-2.0 | MS-CFBF / OLE Compound File Binary parser (SheetJS) — Altium `.PcbDoc` container |
 
 A complete, version-pinned inventory is generated from `src/frontend/package.json`
 and `src/frontend/package-lock.json`.

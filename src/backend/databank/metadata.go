@@ -13,14 +13,17 @@ import (
 // extension here without a frontend parser is dead — the scanner indexes
 // files no viewer can open.
 var boardExtensions = map[string]bool{
-	".bvr": true, // BVR1, BVR3
-	".bv":  true, // BVR1, BVR3
-	".brd": true, // BRD (Apple/Mac), BDV, Allegro
-	".bdv": true, // BDV, BDV ASC
-	".fz":  true, // FZ (ASUS)
-	".cad": true, // GenCAD 1.4, Mentor Boardstation Neutral
-	".pcb": true, // XZZ
-	".tvw": true, // Teboview
+	".bvr":      true, // BVR1, BVR3
+	".bv":       true, // BVR1, BVR3
+	".brd":      true, // BRD (Apple/Mac), BDV, Allegro
+	".bdv":      true, // BDV, BDV ASC
+	".fz":       true, // FZ (ASUS)
+	".cad":      true, // GenCAD 1.4, Mentor Boardstation Neutral
+	".pcb":      true, // XZZ
+	".tvw":      true, // Teboview
+	".pcbdoc":   true, // Altium Designer / SolidWorks PCB Connector
+	".cmpcbdoc": true, // Circuit Maker
+	".cspcbdoc": true, // Circuit Studio
 }
 
 // PDF extension.
