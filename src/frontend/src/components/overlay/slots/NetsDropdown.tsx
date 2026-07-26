@@ -137,6 +137,7 @@ export function NetsDropdown({ ctx }: { ctx: SlotCtx }) {
           onHighlight={setHighlight}
           onSelect={commit}
           onClose={close}
+          selectedName={selectedName}
         />
       )}
     </div>

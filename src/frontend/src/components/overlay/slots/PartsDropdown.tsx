@@ -135,6 +135,7 @@ export function PartsDropdown({ ctx }: { ctx: SlotCtx }) {
           onHighlight={setHighlight}
           onSelect={commit}
           onClose={close}
+          selectedName={selectedName}
         />
       )}
     </div>

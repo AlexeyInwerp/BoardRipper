@@ -30,13 +30,16 @@ export interface SuggestionListProps {
   onClose: () => void;
   /** Element the suggestion list anchors under (the filter input). */
   anchorRef: RefObject<HTMLInputElement | null>;
+  /** Name of the row currently active on the board — rendered with a persistent
+   *  accent marker so it stays clearly visible as the keyboard cursor moves. */
+  selectedName?: string | null;
 }
 
 /**
  * Suggestion list shown below the filter input. Handles its own scroll-into-view.
  * The parent component owns the `<input>`, the query state, and keyboard events.
  */
-export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClose, anchorRef }: SuggestionListProps) {
+export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClose, anchorRef, selectedName }: SuggestionListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
@@ -102,7 +105,7 @@ export function SuggestionList({ groups, highlight, onHighlight, onSelect, onClo
         <button
           key={`${group.header ?? ''}-${r.row.name}`}
           data-row-idx={i}
-          className={`overlay-dropdown-row${r.dimmed ? ' dimmed' : ''}${i === safeHighlight ? ' highlighted' : ''}`}
+          className={`overlay-dropdown-row${r.dimmed ? ' dimmed' : ''}${i === safeHighlight ? ' highlighted' : ''}${selectedName != null && r.row.name === selectedName ? ' selected' : ''}`}
           onMouseEnter={() => onHighlight(i)}
           onMouseDown={e => {
             // Prevent the input from losing focus before we handle the click
