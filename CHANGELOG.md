@@ -1,11 +1,11 @@
 # BoardRipper changelog
 
-## v0.32.0 — 2026-07-26
+## v0.32.0 — 2026-07-27
 
 Altium Designer files now open — the twelfth supported format. Plus the Tools
-tab (component-code calculators and a worklist catalog), a faster Library, and
-a container-build fix that means two earlier fixes actually reach you for the
-first time.
+tab (component-code calculators and a worklist catalog), a much faster Library
+on slow connections, and a container-build fix that means two earlier fixes
+actually reach you for the first time.
 
 ### Altium Designer support (new, experimental)
 
@@ -36,10 +36,17 @@ first time.
 
 - **The Library no longer freezes on large collections.** It used to wait for
   the complete file list before drawing anything; it now renders as results
-  stream in.
+  stream in, and opening a file no longer waits for the whole list to load.
+  `5b452db7`
+- **The file list downloads roughly 10× smaller.** It is now gzip-compressed on
+  the wire — a large collection drops from tens of megabytes to a few, so a cold
+  load over a slow connection finishes in seconds instead of most of a minute. A
+  new "Bulk API" load mode in Settings ▸ Library offers a single compressed
+  download as an alternative to streaming, and streaming falls back to it
+  automatically if it fails. `663142d4` `91d73e98`
 - **PDF indexing survives restarts** — the background indexer resumes where it
   stopped, can be restarted from Settings, and picks itself back up
-  automatically after a container update.
+  automatically after a container update. `d5acd945`
 
 ### Fixes
 
@@ -49,7 +56,13 @@ first time.
   watermark filtering looks new to you, this is why.
 - **Panning works again right after a zoom** — a zoom animation could swallow
   the pan that followed it.
-- Net highlight lines redraw correctly after flipping the board.
+- **Net highlight lines redraw on every kind of flip** — they now follow the
+  pads when you flip top/bottom, mirror, or change the flip axis, not only on
+  rotation as before. `efb5bb03`
+- **The Nets/Parts filter releases the keyboard after you pick a match** —
+  selecting from the dropdown blurs the field (so Space flips the board again
+  instead of typing a space) while keeping your typed text; re-focusing reopens
+  the list with the active net/part clearly marked. `efb5bb03` `fbd19212`
 - The net-line pulse no longer rebuilds its geometry every frame.
 
 ### Under the hood
