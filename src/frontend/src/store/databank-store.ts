@@ -1113,14 +1113,19 @@ class DatabankStore extends Emitter {
     try {
       const res = await fetch('/api/databank/files');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as DatabankFile[];
+      // Read as bytes first so we can report decoded size + throughput; one
+      // decode + parse, same cost as res.json().
+      const buf = await res.arrayBuffer();
+      const data = JSON.parse(new TextDecoder().decode(buf)) as DatabankFile[];
       this._setFiles(data, { complete: true, signature });
       libraryLoadStore.advance(data.length, data.length);
       libraryLoadStore.finish();
       if (signature) void libraryCache.writeChunked(signature, this._files);
       const elapsed = Math.round(performance.now() - startedAt);
+      const kib = Math.round(buf.byteLength / 1024);
       const rate = elapsed > 0 ? Math.round(data.length / (elapsed / 1000)) : 0;
-      log.scan.log(`library load [bulk]: ${data.length} files · ${elapsed}ms · ${rate} rows/s (gzip on wire) sig=${signature ?? 'unknown'}`);
+      const mbps = elapsed > 0 ? ((buf.byteLength / 1048576) / (elapsed / 1000)).toFixed(1) : '0';
+      log.scan.log(`library load [bulk]: ${data.length} files · ${kib} KiB decoded · ${mbps} MB/s · ${elapsed}ms · ${rate} rows/s (gzip on wire) sig=${signature ?? 'unknown'}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.scan.warn(`library load [bulk] failed after ${this._files.length} files: ${msg}`);
@@ -1219,12 +1224,17 @@ class DatabankStore extends Emitter {
     const elapsed = Math.round(performance.now() - startedAt);
     const kib = Math.round(bytes / 1024);
     const rate = elapsed > 0 ? Math.round(got / (elapsed / 1000)) : 0;
+    // Effective content throughput: decoded bytes / wall-clock. The on-wire
+    // (gzipped) rate is smaller — the browser inflates transparently and fetch
+    // only exposes decoded bytes — so this reads as "how fast the library came
+    // down" rather than raw link speed.
+    const mbps = elapsed > 0 ? ((bytes / 1048576) / (elapsed / 1000)).toFixed(1) : '0';
     if (total > 0 && got + 16 < total) {
       // Stream advertised more rows than it delivered. Loudly log so the
       // Debug panel surfaces it next to the completeness chip in the panel.
       log.scan.warn(`library load [stream] SHORT: ${got} delivered, ${total} advertised · ${kib} KiB decoded · ${elapsed}ms (sig ${serverSig ?? 'unknown'})`);
     } else {
-      log.scan.log(`library load [stream]: ${got} files · ${kib} KiB decoded · TTFB ${Math.round(ttfb)}ms · ${elapsed}ms · ${rate} rows/s (gzip on wire) sig=${serverSig ?? 'unknown'}`);
+      log.scan.log(`library load [stream]: ${got} files · ${kib} KiB decoded · ${mbps} MB/s · TTFB ${Math.round(ttfb)}ms · ${elapsed}ms · ${rate} rows/s (gzip on wire) sig=${serverSig ?? 'unknown'}`);
     }
     return true;
   }
