@@ -422,3 +422,69 @@ func TestCopyPathsForFile(t *testing.T) {
 		t.Errorf("singleton copies = %v err=%v, want non-nil empty", solo, err)
 	}
 }
+
+// TestCompactReclaimsFreePages simulates the real bug: a big table is created,
+// filled, then dropped (freeing many pages) without reclaiming them — mirroring
+// the pre-v0.31 in-DB PDF-text tables. Compact() must shrink the file and
+// CompactIfBloated must fire on the bloated DB but no-op on the compact one.
+func TestCompactReclaimsFreePages(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// Create + fill a scratch table with enough rows to grow the file well past
+	// the 64 MiB reclaim gate, then drop it (frees the pages to the freelist).
+	if _, err := db.writer.Exec(`CREATE TABLE bloat (id INTEGER PRIMARY KEY, blob TEXT)`); err != nil {
+		t.Fatalf("create bloat: %v", err)
+	}
+	tx, _ := db.writer.Begin()
+	payload := make([]byte, 4096)
+	for i := range payload {
+		payload[i] = 'x'
+	}
+	for i := 0; i < 30000; i++ { // ~120 MB of pages
+		if _, err := tx.Exec(`INSERT INTO bloat(blob) VALUES(?)`, string(payload)); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if _, err := db.writer.Exec(`DROP TABLE bloat`); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+
+	free, total, err := db.freeBytes()
+	if err != nil {
+		t.Fatalf("freeBytes: %v", err)
+	}
+	if free < 64<<20 || float64(free)/float64(total) < 0.5 {
+		t.Fatalf("expected a bloated DB after drop, got free=%d total=%d", free, total)
+	}
+
+	before, after, err := db.CompactIfBloated()
+	if err != nil {
+		t.Fatalf("CompactIfBloated: %v", err)
+	}
+	if before == 0 {
+		t.Fatalf("CompactIfBloated should have fired on the bloated DB")
+	}
+	if after >= before {
+		t.Fatalf("compaction did not shrink the DB: before=%d after=%d", before, after)
+	}
+	if after > 8<<20 {
+		t.Fatalf("compacted DB unexpectedly large: %d bytes", after)
+	}
+
+	// Second call is a no-op: the file is compact now.
+	b2, a2, err := db.CompactIfBloated()
+	if err != nil {
+		t.Fatalf("CompactIfBloated(2): %v", err)
+	}
+	if b2 != 0 || a2 != 0 {
+		t.Fatalf("expected no-op on compact DB, got before=%d after=%d", b2, a2)
+	}
+}

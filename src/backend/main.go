@@ -155,12 +155,34 @@ func main() {
 	if err := db.MigratePdfIndexV1(); err != nil {
 		log.Fatalf("pdf-index migration failed: %v", err)
 	}
-	// Background, off the boot path: reclaim the legacy in-process PDF-index
-	// tables. Idempotent + self-skipping, so a crash mid-drop just retries next
-	// boot. Errors are logged, never fatal — leftover dead tables are harmless.
+	// Background boot maintenance, off the /api/health path (health stays green —
+	// ready == true regardless): (1) drop the legacy in-process PDF-index tables,
+	// (2) reclaim the ~free pages that drop left behind if the DB is bloated
+	// (VACUUM), then (3) run the conditional auto-scan. All three are serialised
+	// in ONE goroutine so VACUUM's exclusive lock can never collide with a scan
+	// write. Each step is idempotent/self-skipping, so a crash mid-way just
+	// retries next boot; errors are logged, never fatal.
 	go func() {
 		if err := db.CleanupLegacyPdfTables(); err != nil {
 			log.Printf("WARNING: legacy PDF-index cleanup failed (%v) — retrying next boot", err)
+		}
+		// One-time on bloated installs (e.g. everyone who used PDF search before
+		// the v0.31 pdfindex.db split): the dropped legacy tables freed pages that
+		// were never reclaimed, so the file stayed huge and every cold library
+		// load paged through it. A no-op once the file is compact.
+		if before, after, err := db.CompactIfBloated(); err != nil {
+			log.Printf("WARNING: databank compaction failed (%v) — will retry next boot", err)
+		} else if before > 0 {
+			log.Printf("databank: compacted %d MB -> %d MB (reclaimed %d MB free pages)",
+				before>>20, after>>20, (before-after)>>20)
+		}
+		if autoScan, _ := db.GetConfig("auto_scan"); autoScan == "true" {
+			log.Println("Auto-scan: starting file indexing...")
+			status := scanner.Scan()
+			log.Printf("Auto-scan complete: %d files (%d added, %d updated, %d deleted) in %dms",
+				status.Total, status.Added, status.Updated, status.Deleted, status.Duration)
+		} else {
+			log.Println("Auto-scan disabled (set auto_scan=true in config to enable)")
 		}
 	}()
 	pdfIndexPath := filepath.Join(dataDir, "pdfindex.db")
@@ -172,18 +194,6 @@ func main() {
 	} else {
 		defer pdfIndex.Close()
 	}
-	// Conditional auto-scan based on config (default: off)
-	if autoScan, _ := db.GetConfig("auto_scan"); autoScan == "true" {
-		go func() {
-			log.Println("Auto-scan: starting file indexing...")
-			status := scanner.Scan()
-			log.Printf("Auto-scan complete: %d files (%d added, %d updated, %d deleted) in %dms",
-				status.Total, status.Added, status.Updated, status.Deleted, status.Duration)
-		}()
-	} else {
-		log.Println("Auto-scan disabled (set auto_scan=true in config to enable)")
-	}
-
 	mux := http.NewServeMux()
 
 	// Per-route handler timeouts. Reads get 30s (covers full-list queries
@@ -231,6 +241,9 @@ func main() {
 	// When pdfIndex is nil (degraded boot), search is unavailable — no route.
 	mux.HandleFunc("GET /api/databank/stats", read(dbHandler.Stats))
 	mux.HandleFunc("POST /api/databank/reset", write(dbHandler.Reset))
+	// Unwrapped (no 10s write timeout): VACUUM of a large/bloated DB can run
+	// longer; it holds db.mu so it won't race a scan write.
+	mux.HandleFunc("POST /api/databank/optimize", dbHandler.Optimize)
 	mux.HandleFunc("GET /api/databank/browse", read(dbHandler.Browse))
 	mux.HandleFunc("GET /api/databank/preview/{id}", dbHandler.PreviewGet)  // streaming PNG — no wrap
 	mux.HandleFunc("PUT /api/databank/preview/{id}", write(dbHandler.PreviewPut))

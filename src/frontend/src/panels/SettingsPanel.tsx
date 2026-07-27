@@ -798,6 +798,11 @@ function AutoScanToggle() {
 function DatabaseInfoSection() {
   const { stats, scanStatus, backendAvailable, electronMode, pdfIndexStats, pdfIndexProgress, dedupProgress, dedupStats } = useDatabank();
   const [resetting, setResetting] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const reclaimable = stats?.reclaimable_bytes ?? 0;
+  // Nudge Optimize only when there's a meaningful amount to reclaim (≥64 MiB),
+  // matching the backend's boot auto-compaction gate.
+  const worthOptimizing = reclaimable >= 64 * 1024 * 1024;
 
   useEffect(() => {
     if (!electronMode && backendAvailable) {
@@ -839,6 +844,19 @@ function DatabaseInfoSection() {
     setResetting(true);
     await databankStore.resetAll();
     setResetting(false);
+  };
+
+  const handleOptimize = async () => {
+    if (optimizing) return;
+    setOptimizing(true);
+    try {
+      const r = await databankStore.optimizeDatabase();
+      if (r) {
+        boardStore.addToast(`Database compacted — reclaimed ${formatBytes(r.reclaimed_bytes)}`, 'info');
+      }
+    } finally {
+      setOptimizing(false);
+    }
   };
 
   return (
@@ -901,7 +919,14 @@ function DatabaseInfoSection() {
           </div>
           <div className="settings-row settings-toggle-row">
             <label className="settings-label">Database size</label>
-            <span>{formatBytes(stats.db_size_bytes)}</span>
+            <span>
+              {formatBytes(stats.db_size_bytes)}
+              {worthOptimizing && (
+                <span style={{ color: 'var(--warn, #b8730a)' }}>
+                  {' '}· {formatBytes(reclaimable)} reclaimable
+                </span>
+              )}
+            </span>
           </div>
           <div className="settings-row settings-toggle-row">
             <label className="settings-label">Last file scan</label>
@@ -935,6 +960,14 @@ function DatabaseInfoSection() {
             Find duplicates
           </button>
         )}
+        <button
+          className={`settings-action-btn${worthOptimizing ? ' active' : ''}`}
+          onClick={handleOptimize}
+          disabled={optimizing || !!isRunning}
+          title="Compact the database (VACUUM) to reclaim free pages left by past scans and index changes. Runs automatically at boot when badly bloated; safe to run any time."
+        >
+          {optimizing ? 'Optimizing…' : worthOptimizing ? `Optimize (reclaim ${formatBytes(reclaimable)})` : 'Optimize database'}
+        </button>
         <button
           className="settings-action-btn"
           onClick={handleResetPdf}

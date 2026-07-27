@@ -193,6 +193,8 @@ export interface DatabankStats {
   pdfs: number;
   bindings: number;
   db_size_bytes: number;
+  /** Free-list bytes recoverable by Optimize (VACUUM). */
+  reclaimable_bytes?: number;
   last_file_scan_at: number;
 }
 
@@ -1863,6 +1865,20 @@ class DatabankStore extends Emitter {
       return true;
     }
     return false;
+  }
+
+  /** Compact the databank (VACUUM) to reclaim free-list pages, then refresh
+   *  stats so the smaller size + zero reclaimable show immediately. Returns the
+   *  before/after/reclaimed byte counts, or null on failure. */
+  async optimizeDatabase(): Promise<{ before_bytes: number; after_bytes: number; reclaimed_bytes: number } | null> {
+    const res = await this.apiFetch<{ before_bytes: number; after_bytes: number; reclaimed_bytes: number }>(
+      '/api/databank/optimize', { method: 'POST' });
+    if (res) {
+      log.scan.log(`Database optimized: ${(res.reclaimed_bytes / 1048576).toFixed(0)} MB reclaimed`);
+      await this.fetchStats();
+      this.notify();
+    }
+    return res;
   }
 
   async browse(path: string): Promise<void> {

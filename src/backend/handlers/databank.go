@@ -743,6 +743,26 @@ func (h *DatabankHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 }
 
+// Optimize compacts the databank (VACUUM) to reclaim free pages, then reports
+// the byte sizes before/after. Long-running on a bloated DB, so it is registered
+// WITHOUT the 10s write-timeout wrapper (like the scan trigger). The frontend
+// "Optimize database" button (Settings ▸ Database info) drives this on demand;
+// the same reclaim also runs automatically at boot when the DB is bloated.
+func (h *DatabankHandler) Optimize(w http.ResponseWriter, r *http.Request) {
+	before, after, err := h.db.Compact()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("databank optimize: %d MB -> %d MB (reclaimed %d MB)", before>>20, after>>20, (before-after)>>20)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{
+		"before_bytes":    before,
+		"after_bytes":     after,
+		"reclaimed_bytes": before - after,
+	})
+}
+
 // resolveDonorPath maps a snapshot entry to a current PDF file id: first by
 // relative path, then by content_hash (survives moves). Returns (0,false) if
 // no current PDF row matches.

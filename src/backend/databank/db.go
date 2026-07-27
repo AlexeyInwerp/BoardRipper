@@ -69,6 +69,73 @@ func (db *DB) Conn() *sql.DB {
 	return db.reader
 }
 
+// sizeBytes returns the logical database size (page_count * page_size). In WAL
+// mode this tracks the main file closely without any filesystem access.
+func (db *DB) sizeBytes() (int64, error) {
+	var pageCount, pageSize int64
+	if err := db.reader.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return 0, err
+	}
+	if err := db.reader.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return 0, err
+	}
+	return pageCount * pageSize, nil
+}
+
+// freeBytes returns (reclaimable free-list bytes, total bytes).
+func (db *DB) freeBytes() (free int64, total int64, err error) {
+	var pageCount, freeCount, pageSize int64
+	if err = db.reader.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return
+	}
+	if err = db.reader.QueryRow(`PRAGMA freelist_count`).Scan(&freeCount); err != nil {
+		return
+	}
+	if err = db.reader.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return
+	}
+	return freeCount * pageSize, pageCount * pageSize, nil
+}
+
+// Compact rewrites the database to reclaim free pages (VACUUM) and converts it to
+// incremental auto_vacuum so future churn is reclaimed cheaply without another
+// full rewrite. Serialised through db.mu so VACUUM's exclusive lock never
+// collides with a scanner write (they wait on the Go mutex instead of racing to
+// SQLITE_BUSY). Returns the logical byte size before and after.
+func (db *DB) Compact() (before int64, after int64, err error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if before, err = db.sizeBytes(); err != nil {
+		return
+	}
+	// auto_vacuum only converts an existing database when followed by a VACUUM.
+	if _, err = db.writer.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		return
+	}
+	if _, err = db.writer.Exec(`VACUUM`); err != nil {
+		return
+	}
+	after, err = db.sizeBytes()
+	return
+}
+
+// CompactIfBloated runs Compact only when the free-list is a large fraction of
+// the file AND the reclaimable space is non-trivial (> 64 MiB) — the classic
+// aftermath of dropping the pre-v0.31 in-database PDF-text tables without a
+// VACUUM. The gate is a cheap PRAGMA check, so this is safe to call on every
+// boot; it is a no-op (0, 0, nil) once the file is compact. Returns bytes
+// before/after (both 0 when skipped).
+func (db *DB) CompactIfBloated() (before int64, after int64, err error) {
+	free, total, ferr := db.freeBytes()
+	if ferr != nil {
+		return 0, 0, ferr
+	}
+	if total == 0 || free < 64<<20 || float64(free)/float64(total) < 0.5 {
+		return 0, 0, nil // already compact enough
+	}
+	return db.Compact()
+}
+
 const schemaVersion = 10
 
 func (db *DB) migrate() error {
@@ -550,11 +617,12 @@ func (db *DB) migrateV7() error {
 
 // DatabankStats holds aggregate database info.
 type DatabankStats struct {
-	Boards         int   `json:"boards"`
-	Pdfs           int   `json:"pdfs"`
-	Bindings       int   `json:"bindings"`
-	DbSizeBytes    int64 `json:"db_size_bytes"`
-	LastFileScanAt int64 `json:"last_file_scan_at"`
+	Boards           int   `json:"boards"`
+	Pdfs             int   `json:"pdfs"`
+	Bindings         int   `json:"bindings"`
+	DbSizeBytes      int64 `json:"db_size_bytes"`
+	ReclaimableBytes int64 `json:"reclaimable_bytes"` // free-list pages recoverable by Optimize (VACUUM)
+	LastFileScanAt   int64 `json:"last_file_scan_at"`
 }
 
 // Stats returns aggregate database statistics.
@@ -581,6 +649,12 @@ func (db *DB) Stats(dataDir string) (*DatabankStats, error) {
 
 	if v, err := db.GetConfig("last_file_scan_at"); err == nil && v != "" {
 		fmt.Sscanf(v, "%d", &s.LastFileScanAt)
+	}
+
+	// Reclaimable space = free-list pages × page size. Surfaced so the UI can
+	// nudge "Optimize" when a bloated DB carries hundreds of MB of dead pages.
+	if free, _, err := db.freeBytes(); err == nil {
+		s.ReclaimableBytes = free
 	}
 
 	return s, nil
