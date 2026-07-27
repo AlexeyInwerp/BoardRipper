@@ -533,6 +533,12 @@ export class BoardRenderer {
   // anchored across rotation changes (rotation pivot at board center would
   // otherwise drag the user's focus off-screen on non-centered views).
   private prevRotation = 0;
+  // Track previous mirror / flip-axis so a change force-recomputes the
+  // world-space net-line cache (see onBoardUpdate flip branch) — like rotation,
+  // a flip re-signs scene.root's scale and leaves the cached segments stale.
+  private prevMirrorX = false;
+  private prevMirrorY = false;
+  private prevFlipAxis: 'x' | 'y' = 'x';
 
   // Net line pulse animation phase (0–1, driven by ticker)
   private netLinePulsePhase = 0;
@@ -2818,6 +2824,16 @@ export class BoardRenderer {
         const rotated = oldRotation !== newRotation;
         this.prevRotation = newRotation;
 
+        // Detect mirror / flip-axis change. Like a side flip and like rotation,
+        // these re-sign scene.root's scale, so the world-space net-line cache
+        // must be re-projected (see the explicit recompute below).
+        const mirrored = boardStore.mirrorX !== this.prevMirrorX
+          || boardStore.mirrorY !== this.prevMirrorY
+          || boardStore.flipAxis !== this.prevFlipAxis;
+        this.prevMirrorX = boardStore.mirrorX;
+        this.prevMirrorY = boardStore.mirrorY;
+        this.prevFlipAxis = boardStore.flipAxis;
+
         // Capture the viewport's world center + old flipX/flipY state before
         // applyFlips so we can mirror the center around the board center and
         // keep the same physical region visible.
@@ -2830,12 +2846,15 @@ export class BoardRenderer {
         this.applyLayerVisibility(this.activeScene);
         this.applyFlips(board, this.activeScene);
         this.needsRender = true;
-        // Rotation changes the world transform of every pin, so cached net-line
-        // segments (built via sceneToWorld) become stale. Mark dirty AND
+        // Rotation, side flip (top↔bottom), mirror, and flip-axis all change
+        // the world transform of every pin (scene.root scale/rotation), so the
+        // cached net-line segments (built via sceneToWorld, and living in
+        // netLinesGfx OUTSIDE scene.root) become stale. Mark dirty AND
         // immediately redraw — without the redraw call, lines stay at their
-        // pre-rotation world positions until the next selection / pan / pulse
-        // tick re-enters renderNetLines.
-        if (rotated) {
+        // pre-flip world positions until the next selection / pan / pulse tick
+        // re-enters renderNetLines. (renderSelection's selKey fallback repaints
+        // too, but only on the next selection change — not on a bare flip.)
+        if (rotated || flipped || mirrored) {
           this.netLinesDirty = true;
           this.renderNetLines();
           if (this.crossSideGhostParts.size > 0) this.renderCrossSideGhosts();

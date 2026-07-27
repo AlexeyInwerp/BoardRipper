@@ -227,6 +227,13 @@ func (h *DatabankHandler) ListFilesStream(w http.ResponseWriter, r *http.Request
 	// Encourage proxies/buffers to not coalesce — without this, nginx-like
 	// intermediaries can buffer the whole response back into one block.
 	w.Header().Set("X-Accel-Buffering", "no")
+	// Opt this ONE ndjson stream into gzip. NDJSON is excluded from gzip by
+	// default (per-row search/stream depends on tiny incremental flushes), but
+	// the library file list is a multi-MB body flushed in 1024-row batches, so
+	// gzip (~6–8× on this JSON) is a large win on slow links with no meaningful
+	// latency cost — gzip.Flush at each batch keeps rows arriving progressively.
+	// The gzip middleware consumes + strips this marker; see middleware_gzip.go.
+	w.Header().Set("X-Br-Gzip-Stream", "1")
 
 	flusher, _ := w.(http.Flusher)
 	enc := json.NewEncoder(w)

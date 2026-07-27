@@ -102,6 +102,51 @@ func TestGzipSkipsNDJSON(t *testing.T) {
 	}
 }
 
+// TestGzipNDJSONOptInMarker verifies the library file stream (NDJSON) opts into
+// gzip via X-Br-Gzip-Stream while the marker itself never reaches the client.
+func TestGzipNDJSONOptInMarker(t *testing.T) {
+	// A body long enough that gzip actually shrinks it.
+	line := `{"type":"file","path":"some/long/path/board.brd","filename":"board.brd"}` + "\n"
+	h := gzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("X-Br-Gzip-Stream", "1")
+		f, _ := w.(http.Flusher)
+		for i := 0; i < 200; i++ {
+			_, _ = w.Write([]byte(line))
+		}
+		if f != nil {
+			f.Flush()
+		}
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/databank/files/stream", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if enc := rec.Header().Get("Content-Encoding"); enc != "gzip" {
+		t.Fatalf("opt-in NDJSON must be gzip-encoded, got %q", enc)
+	}
+	if m := rec.Header().Get("X-Br-Gzip-Stream"); m != "" {
+		t.Fatalf("marker header must be stripped, got %q", m)
+	}
+	gz, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	dec, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("gunzip: %v", err)
+	}
+	want := strings.Repeat(line, 200)
+	if string(dec) != want {
+		t.Fatalf("decompressed body mismatch: got %d bytes, want %d", len(dec), len(want))
+	}
+	if rec.Body.Len() >= len(want) {
+		t.Fatalf("gzip did not shrink body: on-wire %d >= raw %d", rec.Body.Len(), len(want))
+	}
+}
+
 // TestGzipNoTransformRespected verifies a compressible content type is left
 // uncompressed when Cache-Control: no-transform is set.
 func TestGzipNoTransformRespected(t *testing.T) {
