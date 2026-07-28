@@ -23,6 +23,7 @@ import { BoardTab } from './components/BoardTab';
 import { PdfTab } from './components/PdfTab';
 import { HomeBackdrop } from './components/home/HomeBackdrop';
 import { UpdateProgressOverlay } from './components/UpdateProgressOverlay';
+import { ResizePopup } from './components/ResizePopup';
 import { LoadProgressOverlay } from './components/LoadProgressOverlay';
 import { PeekHintChip } from './components/PeekHintChip';
 import { FZKeyDialog } from './components/FZKeyDialog';
@@ -338,6 +339,11 @@ function App() {
       </div>
       <StatusBar />
       <ContextMenu />
+      {/* Interactive Mode handles. Mounted ONCE here, not per board panel:
+          the popup state and the settings it edits are global, and a second
+          instance's outside-click listener would close the popup the moment
+          you pressed a handle in the first. */}
+      <ResizePopup />
       <ShortcutsOverlay />
       {toasts.length > 0 && (
         <div className="toast-container">

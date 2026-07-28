@@ -4,7 +4,14 @@
  *  RenderSettings key and the whole board previews live.
  *
  *  Per row: −/+ buttons, a slider (double-click = reset to default), and
- *  wheel-over-the-row to nudge. Popup closes on Escape or outside click. */
+ *  wheel-over-the-row to nudge. Popup closes on Escape or outside click.
+ *
+ *  MOUNT ONCE, app-level (App.tsx). Both the popup state and the settings it
+ *  edits are global, so a per-board-panel mount produced one instance per open
+ *  board tab: identical popups stacked on document.body, each with its own
+ *  "mousedown outside → close" listener. Pressing a handle in the topmost one
+ *  is *outside* every other instance, so they closed the shared store and the
+ *  popup vanished the moment you touched it. */
 import { useRef, useEffect, useSyncExternalStore, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { resizeModeStore, CONTROLS } from '../store/resize-mode-store';
@@ -83,7 +90,7 @@ export function ResizePopup() {
     };
   }, [popup]);
 
-  if (!popup) return null;
+  if (!snap.enabled || !popup) return null;
 
   const W = 250;
   const maxH = window.innerHeight - 24;
@@ -94,6 +101,7 @@ export function ResizePopup() {
   return createPortal(
     <div
       ref={ref}
+      data-testid="resize-popup"
       style={{
         position: 'fixed', left, top, width: W, zIndex: 4000,
         maxHeight: maxH, overflowY: 'auto',
