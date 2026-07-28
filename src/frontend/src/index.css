@@ -1063,6 +1063,190 @@ body {
   text-decoration: underline;
 }
 
+/* ── Net branch section (Info tab, shown when a PIN is selected) ──────────
+   The component block above keeps its own scroll box only while it is the
+   whole tab. Once the net branch is present both blocks flow into the
+   sidebar's own scroller instead of fighting over a fixed 100%-80px box. */
+.component-info--with-net .pin-table-container {
+  max-height: none;
+  overflow: visible;
+}
+
+.net-branch {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 2px solid var(--border);
+}
+
+.net-branch-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  margin-bottom: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.net-branch-header:hover { background: var(--surface-hover); }
+
+.net-branch-header--on {
+  border-color: var(--accent);
+  background: var(--highlight-net);
+}
+
+.net-branch-kicker {
+  font-size: 0.7em;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.net-branch-name {
+  font-weight: 600;
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.net-branch-header .badge { flex: none; }
+
+.net-branch-obd { margin-left: auto; }
+
+/* Branch rails: a vertical line down the list, a tick out to each row. Drawn
+   with pseudo-elements (not text glyphs) so they follow the interface scale
+   and stay aligned when a spoiler pushes rows apart. */
+.net-branch-item {
+  position: relative;
+  padding-left: 14px;
+}
+
+.net-branch-item::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text-secondary);
+  opacity: 0.35;
+}
+
+.net-branch-item--last::before { bottom: auto; height: 11px; }
+
+.net-branch-item::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  width: 7px;
+  height: 1px;
+  background: var(--text-secondary);
+  opacity: 0.35;
+}
+
+.net-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  min-height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.net-branch-row:hover { background: var(--surface-hover); }
+
+.net-branch-row--selected {
+  background: var(--highlight-pin);
+}
+
+/* The chevron is its own hit area: it opens the spoiler and never touches
+   the board selection, which the row body does. */
+.net-branch-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.net-branch-chevron:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.net-branch-refdes {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.net-branch-pins {
+  margin-left: auto;
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.net-branch-pin-ids { opacity: 0.75; }
+
+.net-branch-this {
+  font-size: 0.75em;
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+
+.net-branch-detail {
+  margin: 2px 0 6px 20px;
+  padding: 4px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.net-branch-detail-meta {
+  font-size: 0.8em;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.net-branch-muted { color: var(--text-secondary); }
+
+.net-branch-pin-table { font-size: 0.8em; }
+.net-branch-pin-table th { position: static; padding: 2px 6px; }
+.net-branch-pin-table td { padding: 1px 6px; cursor: default; }
+.net-branch-pin-table .pin-net { cursor: pointer; }
+.net-branch-pin-table .net-branch-pin-on-net td { background: var(--highlight-net); }
+
+.net-branch-overflow {
+  padding: 4px 6px;
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+
+.net-branch-showall {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-text);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
 /* Net List Panel */
 .net-list-header {
   padding-bottom: 6px;

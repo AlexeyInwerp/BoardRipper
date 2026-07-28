@@ -15,15 +15,25 @@
  *   - The BOM-alternates switcher (BomClusterSection).
  *   - Board-level OBD DIAGNOSIS notes render regardless of whether a part is
  *     selected (they are board-scoped, not pin-scoped).
- *   - A single ObdCell renders the per-pin diode/V/Ω readings.
+ *   - A single ObdCell renders the per-pin diode/V/Ω readings (the cell now
+ *     lives in ./ObdCell and is re-exported here for existing call sites).
+ *   - Which selection gets the net branch: component selected → component
+ *     only; pin selected → component + NetBranchSection for the pin's net.
  */
 import { useEffect } from 'react';
 import { bomReasonLabel, type BoardData, type BomAlternateCluster } from '../parsers';
 import type { SelectionState } from '../store/board-store';
 import { boardStore, bomClusterSig } from '../store/board-store';
-import { obdStore, useObdNetLookup, type ObdNet } from '../store/obd-store';
+import { obdStore, useObdNetLookup } from '../store/obd-store';
 import { formatDiode } from '../store/diode-readings';
 import { DiagnosisNotes } from './DiagnosisNotes';
+import { NetBranchSection } from './NetBranchSection';
+import { ObdCell } from './ObdCell';
+
+// Re-exported so existing `import { ObdCell } from './ComponentInfoBody'`
+// call sites keep working after the cell moved to its own module (it had to,
+// or NetBranchSection ↔ ComponentInfoBody would be an import cycle).
+export { ObdCell };
 
 export interface ComponentInfoBodyProps {
   board: BoardData;
@@ -76,6 +86,14 @@ export function ComponentInfoBody({
   const cluster: BomAlternateCluster | null =
     board.bomClusters?.find(c => c.memberRefdes.includes(selectedPart.name)) ?? null;
 
+  // The net branch section is pin-scoped, not part-scoped: a part-only
+  // selection derives `highlightedNet` from an arbitrary pin (or none at
+  // all), so a branch shown there would be a guess. Component selected →
+  // component only; pin selected → component + its net.
+  const selectedPin =
+    selection.pinIndex !== null ? selectedPart.pins[selection.pinIndex] ?? null : null;
+  const branchNet = selectedPin?.net || null;
+
   const meta = selectedPart.meta;
   const metaRows: Array<[string, string]> = [];
   if (meta?.partType) metaRows.push(['Type', meta.partType]);
@@ -86,7 +104,10 @@ export function ComponentInfoBody({
   if (meta?.angleDeg != null) metaRows.push(['Rotation', `${meta.angleDeg}°`]);
 
   return (
-    <div className="panel-content component-info" data-testid="component-info">
+    <div
+      className={`panel-content component-info ${branchNet ? 'component-info--with-net' : ''}`}
+      data-testid="component-info"
+    >
       <div className="info-header">
         <h3>{selectedPart.name}</h3>
         <div className="info-meta">
@@ -192,6 +213,18 @@ export function ComponentInfoBody({
         </table>
       </div>
 
+      {/* Net branch — every component hanging off the selected pin's net.
+          Keyed by net so each net switch starts with all spoilers closed. */}
+      {branchNet && (
+        <NetBranchSection
+          key={branchNet}
+          board={board}
+          net={branchNet}
+          selection={selection}
+          obd={obd}
+        />
+      )}
+
       {/* Structured DIAGNOSIS_DATA from openboarddata.org — power sequencing,
           repair notes, etc. Each fetched variant rendered sequentially. */}
       {obdNotes}
@@ -290,38 +323,4 @@ function memberStatusLabel(isChosen: boolean, isSelected: boolean): string {
   if (isChosen) return '(primary)';
   if (isSelected) return '(selected)';
   return '';
-}
-
-/** Single shared OBD pin-cell renderer (replaces the former ObdCell /
- *  ObdSidebarCell duplicate pair). Renders deduped diode / voltage / resistance
- *  readings plus an optional comments tooltip. */
-export function ObdCell({ nets }: { nets: ObdNet[] }) {
-  if (nets.length === 0) return <span style={{ color: '#666' }}>—</span>;
-  // Defensive against null arrays (older cached payloads, future API drift).
-  const dedupe = (xs: (string | null | undefined)[]) =>
-    Array.from(new Set(xs.filter((v): v is string => typeof v === 'string' && v.length > 0)));
-  const diodes = dedupe(nets.map(n => n.diode));
-  const volts = dedupe(nets.map(n => n.voltage));
-  const ohms = dedupe(nets.map(n => n.resistance));
-  const allComments = Array.from(
-    new Set(
-      nets
-        .flatMap(n => (Array.isArray(n.comments) ? n.comments : []))
-        .filter((c): c is string => typeof c === 'string' && c.trim().length > 0),
-    ),
-  );
-  const parts: string[] = [];
-  if (diodes.length) parts.push(`d ${diodes.join('/')}`);
-  if (volts.length) parts.push(`${volts.join('/')} V`);
-  if (ohms.length) parts.push(`${ohms.join('/')} Ω`);
-  return (
-    <span style={{ fontSize: 11, fontFamily: 'monospace' }}>
-      {parts.length > 0 ? parts.join(' · ') : <span style={{ color: '#666' }}>—</span>}
-      {allComments.length > 0 && (
-        <span title={allComments.join('\n')} style={{ marginLeft: 4, cursor: 'help' }}>
-          📝
-        </span>
-      )}
-    </span>
-  );
 }
