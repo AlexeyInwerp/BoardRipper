@@ -97,6 +97,144 @@ function parseUnitsFactor(headerLines: string[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Pad geometry ($PADS + $PADSTACKS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fallback pin radius (mils) for files whose pads can't be resolved.
+ *
+ * Historically this constant was applied to *every* GenCAD pin. It matches the
+ * `CIRCLE 0 0 6.000` pads that the mils-based CAMCAD/Quanta exports carry, so
+ * it stays the right guess when the pad chain is missing or degenerate.
+ */
+const DEFAULT_PIN_RADIUS = 6;
+
+/**
+ * Parse $PADS into padName → radius (mils).
+ *
+ * A GenCAD pad is `PAD <name> <type> <drill>` followed by one or more geometry
+ * records. We only need a representative radius, taken as the inscribed circle
+ * of the pad's bounding box (`min(w, h) / 2`) so oblong/finger pads don't get a
+ * circle that overflows the pad's narrow axis and collides with its neighbours:
+ *
+ *   RECTANGLE <x> <y> <w> <h>          — w/h are the size, x/y the corner offset
+ *   CIRCLE    <x> <y> <r>
+ *   LINE      <x1> <y1> <x2> <y2>      — FINGER/POLYGON outlines; bound the ends
+ *   ARC       <x1> <y1> <x2> <y2> <cx> <cy>
+ *
+ * The pad offset (x/y) is deliberately ignored: it doesn't affect the size, and
+ * boardview-converted exports write placeholder corners (`RECTANGLE 0 0 30 30`)
+ * that would otherwise push every pad off its own pin.
+ */
+function parsePads(lines: string[], factor: number): Map<string, number> {
+  const pads = new Map<string, number>();
+  let name = '';
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let radius = 0;
+
+  const flush = () => {
+    if (!name) return;
+    let r = radius;
+    if (r <= 0 && minX <= maxX && minY <= maxY) {
+      r = Math.min(maxX - minX, maxY - minY) / 2;
+    }
+    if (r > 0) pads.set(name, r * factor);
+  };
+
+  const bound = (x: number, y: number) => {
+    if (!isFinite(x) || !isFinite(y)) return;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const t = line.split(/\s+/);
+    const kw = t[0].toUpperCase();
+
+    if (kw === 'PAD') {
+      flush();
+      name = t[1] ?? '';
+      minX = minY = Infinity; maxX = maxY = -Infinity; radius = 0;
+      continue;
+    }
+    if (!name) continue;
+
+    switch (kw) {
+      case 'RECTANGLE': {
+        const w = Math.abs(parseFloat(t[3])), h = Math.abs(parseFloat(t[4]));
+        if (isFinite(w) && isFinite(h)) { bound(0, 0); bound(w, h); }
+        break;
+      }
+      case 'CIRCLE': {
+        const r = Math.abs(parseFloat(t[3]));
+        if (isFinite(r) && r > radius) radius = r;
+        break;
+      }
+      case 'LINE':
+      case 'ARC':
+        bound(parseFloat(t[1]), parseFloat(t[2]));
+        bound(parseFloat(t[3]), parseFloat(t[4]));
+        break;
+      // ATTRIBUTE and anything else carries no geometry.
+    }
+  }
+  flush();
+  return pads;
+}
+
+/**
+ * Resolve $PADSTACKS to padstackName → radius (mils), using `pads` for sizes.
+ *
+ * A padstack lists one `PAD <padName> <layer> <rot> <mirror>` record per layer.
+ * Two rules pick the representative:
+ *
+ *  1. Only *outer copper* layers count (TOP / BOTTOM / ALL). SOLDERMASK_* and
+ *     SOLDERPASTE_* are deliberately over/undersized relief apertures, and
+ *     INNER* entries are antipads/thermals — none of them is the pad the user
+ *     sees. If a stack has no outer-copper entry at all we fall back to any
+ *     non-mask/paste layer so exotic stacks still get a size.
+ *  2. Among the survivors the **smallest** pad wins. The concatenated
+ *     multi-pass exports this format family is riddled with (the same
+ *     pathology `dedupeShapePins` cleans up in $SHAPES) leak a second, much
+ *     larger copper entry into a stack — e.g. 7523v10's `PAD_SMD12X25` lists
+ *     both a 224x222 residue and the real 12x25 pad. Residue is always the
+ *     oversized one, and over-sizing is the damaging direction for a
+ *     boardview: pins swell past their neighbours and hide the board.
+ */
+function resolvePadstacks(lines: string[], pads: Map<string, number>): Map<string, number> {
+  const outer = new Map<string, number>();
+  const other = new Map<string, number>();
+  let name = '';
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const t = line.split(/\s+/);
+    const kw = t[0].toUpperCase();
+
+    if (kw === 'PADSTACK') { name = t[1] ?? ''; continue; }
+    if (kw !== 'PAD' || !name || !t[1]) continue;
+
+    const r = pads.get(t[1]);
+    if (r === undefined || !(r > 0)) continue;
+
+    const layer = (t[2] ?? '').toUpperCase();
+    if (layer.includes('MASK') || layer.includes('PASTE') || layer.includes('GLUE')) continue;
+
+    const target = (layer === 'TOP' || layer === 'BOTTOM' || layer === 'ALL') ? outer : other;
+    const prev = target.get(name);
+    if (prev === undefined || r < prev) target.set(name, r);
+  }
+
+  for (const [k, v] of other) if (!outer.has(k)) outer.set(k, v);
+  return outer;
+}
+
+// ---------------------------------------------------------------------------
 // Shape parsing (pin templates)
 // ---------------------------------------------------------------------------
 
@@ -105,6 +243,8 @@ interface ShapePin {
   x: number;
   y: number;
   side: 'top' | 'bottom';
+  /** $PADSTACKS key from the PIN record — resolves to a $PADS entry for the radius. */
+  padstack?: string;
 }
 
 interface Shape {
@@ -131,12 +271,13 @@ function parseShapes(lines: string[], factor: number): Map<string, Shape> {
       const parts = line.split(/\s+/);
       if (parts.length >= 6) {
         const pinName = parts[1];
+        const padstack = parts[2];
         const x = parseFloat(parts[3]) * factor;
         const y = parseFloat(parts[4]) * factor;
         const sideStr = (parts[5] ?? '').toUpperCase();
         const side: 'top' | 'bottom' = sideStr === 'BOTTOM' ? 'bottom' : 'top';
         if (!isNaN(x) && !isNaN(y)) {
-          current.pins.push({ name: pinName, x, y, side });
+          current.pins.push({ name: pinName, x, y, side, padstack });
         }
       }
     } else if (line.startsWith('INSERT ') && current) {
@@ -890,6 +1031,8 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
   const unitFactor = parseUnitsFactor(headerLines);
 
   // Parse sections
+  const pads       = parsePads(extractSection(lines, 'PADS'), unitFactor);
+  const padstacks  = resolvePadstacks(extractSection(lines, 'PADSTACKS'), pads);
   const shapes     = parseShapes(extractSection(lines, 'SHAPES'), unitFactor);
   const parsedComps = parseComponents(extractSection(lines, 'COMPONENTS'), unitFactor);
   const components = parsedComps.components;
@@ -1031,11 +1174,20 @@ export function parseCAD(buffer: ArrayBuffer): BoardData {
 
       const side = comp.layer === 'bottom' ? 'bottom' : sp.side;
 
+      // Pin radius from the file's own pad geometry (PIN → $PADSTACKS → $PADS).
+      // Deriving it beats the old fixed 6-mil constant because the pad is
+      // expressed in the *file's* coordinate unit, so the pin stays correctly
+      // proportioned even for the TESTCAD/IMPACT-family exports that ship no
+      // $HEADER UNITS record and land on the treat-as-mils fallback — those
+      // used to draw 6-mil pins on a board whose coordinate space was several
+      // times finer than a mil, making pins far smaller than their labels.
+      const padRadius = sp.padstack ? padstacks.get(sp.padstack) : undefined;
+
       pins.push({
         name:     sp.name,
         number:   sp.name,
         position: { x: px, y: py },
-        radius:   6,
+        radius:   padRadius && padRadius > 0 ? padRadius : DEFAULT_PIN_RADIUS,
         side,
         net,
       });

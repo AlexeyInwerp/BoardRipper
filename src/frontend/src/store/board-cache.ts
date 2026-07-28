@@ -56,7 +56,14 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     Studio .PcbDoc (binary CFB + PCB ASCII v5.0). Parts/pins/nets/outline
 //     plus tracks/vias/arcs/fills; Regions6 copper pours surface through the
 //     existing BoardData.surfaces channel.
-const PARSER_VERSION = 82;
+// 83: CAD (GenCAD) pin radius now derived from the file's own $PADS/$PADSTACKS
+//     geometry instead of a fixed 6-mil constant. Fixes exports with no
+//     $HEADER UNITS record (TESTCAD/IMPACT family — GV302XI, X415JA), whose
+//     native coordinate unit is finer than a mil, so 6-mil pins rendered far
+//     smaller than their own labels. Padstacks pick the smallest outer-copper
+//     pad, which also drops the oversized residue entries that concatenated
+//     multi-pass exports (7523v10, V382_20) leak into a stack.
+const PARSER_VERSION = 83;
 
 interface CachedBoard {
   key: string;
