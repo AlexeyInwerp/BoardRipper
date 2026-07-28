@@ -159,6 +159,11 @@ export interface PdfEntry {
 export interface FocusRequest {
   partIndex: number | null;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  /** Blink the selection once the camera arrives. Default true. Preview
+   *  navigation sets this false: it deliberately leaves the selection alone,
+   *  so blinking would draw attention to the *previous* subject rather than
+   *  the part being previewed. */
+  blink?: boolean;
 }
 
 const emptySelection: SelectionState = {
@@ -2044,6 +2049,64 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
+    this.notify();
+  }
+
+  /**
+   * Navigate to a component WITHOUT retargeting the inspector.
+   *
+   * The net tree's single click uses this: it pans/zooms the board to a
+   * neighbour so you can see where it sits, while `selection` — and therefore
+   * the Info tab's subject and its open net tree — stays exactly where it was.
+   * Double click promotes for real (`promotePartOnNet`).
+   *
+   * No selection blink: the blink renders the *current* selection, which here
+   * is still the previous part, so blinking would point at the wrong thing.
+   */
+  previewPart(name: string) {
+    const tab = this.activeTab;
+    if (!tab?.board) return;
+    const upper = name.toUpperCase();
+    const idx = tab.board.parts.findIndex(p => p.name.toUpperCase() === upper);
+    if (idx < 0) return;
+    this._focusRequest = { partIndex: idx, bounds: tab.board.parts[idx].bounds, blink: false };
+    this.notify();
+  }
+
+  /**
+   * Promote a component reached from the net tree to be the inspector's subject.
+   *
+   * Selects the component *by the pin that sits on `net`* rather than the bare
+   * part. That distinction is the whole point: `ComponentInfoBody` derives the
+   * net tree from `selection.pinIndex`, and `focusPart()` sets `pinIndex: null`
+   * — so promoting via focusPart blanked the tree you were walking even though
+   * the net stayed lit on the board. Keeping a pin selected means the same net
+   * stays fanned out under the new subject, with the previous part now a row
+   * in it, so walking a rail is a sequence of reversible steps.
+   *
+   * Side-flip and camera behaviour are copied from `focusPart` so promoting
+   * feels identical to any other navigation.
+   */
+  promotePartOnNet(partIndex: number, pinIndex: number) {
+    const tab = this.activeTab;
+    const part = tab?.board?.parts[partIndex];
+    if (!tab?.board || !part) return;
+    const pin = part.pins[pinIndex];
+
+    if (!tab.butterfly) {
+      if (part.side === 'top' && !tab.showTop) {
+        this.updateActiveTab({ showTop: true, showBottom: false });
+      } else if (part.side === 'bottom' && !tab.showBottom) {
+        this.updateActiveTab({ showTop: false, showBottom: true });
+      }
+    }
+
+    const net = pin?.net || null;
+    this.updateActiveTab({
+      selection: { partIndex, pinIndex, highlightedNet: net, adjacentNets: this._resolveAdjacentNets(net) },
+      searchSelectionActive: true,
+    });
+    this._focusRequest = { partIndex, bounds: part.bounds };
     this.notify();
   }
 

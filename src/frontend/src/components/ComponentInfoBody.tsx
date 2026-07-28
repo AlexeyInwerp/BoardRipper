@@ -19,15 +19,26 @@
  *     lives in ./ObdCell and is re-exported here for existing call sites).
  *   - Which selection gets the net branch: component selected → component
  *     only; pin selected → component + NetBranchSection for the pin's net.
+ *   - WHERE that tree is mounted. Small nets hang inline as a row inside the
+ *     pin table directly under the pin they belong to; nets with more than
+ *     NET_TREE_INLINE_MAX other components move below the table so a power
+ *     rail can never bury the pinout. The two placements deliberately differ
+ *     in their header — see NetBranchSection.
+ *   - The --nw colour scope every net tint derives from. Read the comment at
+ *     the declaration below before moving it: the derived ladder in index.css
+ *     only works while it sits on the same element as --nw.
  */
-import { useEffect } from 'react';
+import { Fragment, useEffect } from 'react';
 import { bomReasonLabel, type BoardData, type BomAlternateCluster } from '../parsers';
 import type { SelectionState } from '../store/board-store';
 import { boardStore, bomClusterSig } from '../store/board-store';
 import { obdStore, useObdNetLookup } from '../store/obd-store';
 import { formatDiode } from '../store/diode-readings';
+import { useRenderSettings } from '../hooks/useRenderSettings';
+import { colorToHex } from '../store/layer-store';
+import { accentTextColor } from '../store/color-math';
 import { DiagnosisNotes } from './DiagnosisNotes';
-import { NetBranchSection } from './NetBranchSection';
+import { NetBranchSection, countNetComponents, NET_TREE_INLINE_MAX } from './NetBranchSection';
 import { ObdCell } from './ObdCell';
 
 // Re-exported so existing `import { ObdCell } from './ComponentInfoBody'`
@@ -54,6 +65,7 @@ export function ComponentInfoBody({
   bomClusterSelections,
 }: ComponentInfoBodyProps) {
   const obd = useObdNetLookup(boardNumber);
+  const settings = useRenderSettings();
 
   // Auto-load matches + cached data when the active board changes. Cheap:
   // hits the backend's match endpoint once per board, and the per-bpath
@@ -94,6 +106,39 @@ export function ComponentInfoBody({
     selection.pinIndex !== null ? selectedPart.pins[selection.pinIndex] ?? null : null;
   const branchNet = selectedPin?.net || null;
 
+  // ── Net-tree colour scope ────────────────────────────────────────────
+  // Everything the tree tints — the selected pin row, the strip, the rails,
+  // the previewed row — derives from ONE value: renderSettings.netLineColor,
+  // the colour the board draws this net's connection lines in. The panel path
+  // and the lit net on the canvas are then visibly the same object.
+  //
+  // The derived ladder (--nw-rail, --nw-probe, …) lives in index.css under
+  // `.net-scope`, which is applied to THIS element — the one carrying --nw.
+  // It cannot live on :root: a custom property is substituted at
+  // computed-value time on the element where it is declared, so a ladder
+  // declared at :root would freeze against :root's --nw and never follow an
+  // override. Keep the class and the inline --nw on the same node.
+  const netWire = colorToHex(settings.netLineColor);
+  const netScope = branchNet
+    ? ({
+        '--nw': netWire,
+        // The raw colour is the wire; it is not necessarily readable as text.
+        // A dark netLineColor still reads as a 1px line on black but not as a
+        // net name, so the ink goes through the same luminance correction that
+        // already produces --accent-text.
+        '--nw-ink': accentTextColor(netWire, '#0f0f18'),
+      } as React.CSSProperties)
+    : undefined;
+
+  // Placement: a big rail must not bury the pinout. Small nets hang inline
+  // under their own pin row (the link is unmissable at that distance); larger
+  // ones move below the table, where the pin list stays scannable end to end.
+  const otherCount = branchNet ? countNetComponents(board, branchNet, selection.partIndex) : 0;
+  const netPlacement: 'inline' | 'below' = otherCount <= NET_TREE_INLINE_MAX ? 'inline' : 'below';
+  const inlineNet = branchNet !== null && netPlacement === 'inline';
+  /** Pin-table column count — the inline net row spans all of it. */
+  const pinColumns = 3 + (board.diodeReference ? 1 : 0) + (obd.hasData ? 1 : 0);
+
   const meta = selectedPart.meta;
   const metaRows: Array<[string, string]> = [];
   if (meta?.partType) metaRows.push(['Type', meta.partType]);
@@ -105,7 +150,8 @@ export function ComponentInfoBody({
 
   return (
     <div
-      className={`panel-content component-info ${branchNet ? 'component-info--with-net' : ''}`}
+      className={`panel-content component-info ${branchNet ? 'component-info--with-net net-scope' : ''}`}
+      style={netScope}
       data-testid="component-info"
     >
       <div className="info-header">
@@ -165,12 +211,21 @@ export function ComponentInfoBody({
               const isSelected = selection.pinIndex === idx;
               const isNetHighlighted = selection.highlightedNet === pin.net && pin.net !== '';
               const obdNets = obd.hasData ? obd.lookup(pin.net) : [];
+              // This part's OTHER contacts on the same net. Marked so you can
+              // see them without opening anything — the fact the old duplicate
+              // "● this" row used to carry as "pins 3, 7".
+              const isEcho = branchNet !== null && !isSelected && pin.net === branchNet;
+              // The row where the pin list resumes after an inline net block:
+              // it takes a hairline so the block's end is unambiguous.
+              const isResume = inlineNet && selection.pinIndex === idx - 1;
               return (
+                <Fragment key={idx}>
                 <tr
-                  key={idx}
                   className={[
                     isSelected ? 'pin-selected' : '',
                     isNetHighlighted ? 'pin-net-highlight' : '',
+                    isEcho ? 'pin-echo' : '',
+                    isResume ? 'pin-resume' : '',
                   ].join(' ')}
                   onClick={() => {
                     if (selection.partIndex !== null) {
@@ -207,21 +262,40 @@ export function ComponentInfoBody({
                     </td>
                   )}
                 </tr>
+                {/* Small net: the tree hangs from the pin row it belongs to,
+                    so the link is a few pixels rather than a page. */}
+                {inlineNet && isSelected && branchNet && (
+                  <tr className="net-slot">
+                    <td colSpan={pinColumns}>
+                      <NetBranchSection
+                        key={branchNet}
+                        board={board}
+                        net={branchNet}
+                        selection={selection}
+                        obd={obd}
+                        placement="inline"
+                      />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
           </tbody>
         </table>
       </div>
 
-      {/* Net branch — every component hanging off the selected pin's net.
-          Keyed by net so each net switch starts with all spoilers closed. */}
-      {branchNet && (
+      {/* Big net: below the pin table, so a 400-component rail can't bury the
+          pinout. Keyed by net so each net switch starts with all spoilers
+          closed. */}
+      {branchNet && !inlineNet && (
         <NetBranchSection
           key={branchNet}
           board={board}
           net={branchNet}
           selection={selection}
           obd={obd}
+          placement="below"
         />
       )}
 

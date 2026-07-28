@@ -1072,7 +1072,144 @@ body {
   overflow: visible;
 }
 
-.net-branch {
+/* ── Net-tree colour ladder ───────────────────────────────────────────────
+   Every tint the net tree uses derives from ONE value: --nw, set inline by
+   ComponentInfoBody from renderSettings.netLineColor (the colour the board
+   draws this net's connection lines in), alongside --nw-ink, the same value
+   run through accentTextColor() so a dark netLineColor still reads as text.
+
+   This ladder MUST stay on .net-scope — the same element that declares --nw —
+   and must NOT be hoisted to :root. A custom property is substituted at
+   computed-value time on the element where it is DECLARED, so a ladder at
+   :root would resolve var(--nw) against :root once and never follow the
+   inline override: the wire would retint and every wash would stay put. */
+.net-scope {
+  --nw-trace:    color-mix(in srgb, var(--nw) 85%, transparent);
+  --nw-rail:     color-mix(in srgb, var(--nw) 45%, transparent);
+  --nw-rowsel:   color-mix(in srgb, var(--nw) 24%, transparent);
+  --nw-bus:      color-mix(in srgb, var(--nw) 19%, transparent);
+  --nw-bus-edge: color-mix(in srgb, var(--nw) 40%, transparent);
+  --nw-probe:    color-mix(in srgb, var(--nw) 14%, transparent);
+  --nw-rowhover: color-mix(in srgb, var(--nw) 11%, transparent);
+  --nw-echo:     color-mix(in srgb, var(--nw)  8%, transparent);
+}
+
+/* The selected pin row is the node the tree hangs from: washed in the net's
+   own colour, capped in the pure colour, and its net cell inked + bold so the
+   cell itself reads as the net's name. No underline — the strip owns the
+   lit/dim state, the cell only says "this is the node". */
+/* `!important` is not decoration here: the base `.pin-selected td` and
+   `.pin-net-highlight td` rules above are themselves `!important`, and
+   `.pin-net-highlight` is declared LAST — so a row that is both (which the
+   selected pin always is, its net being the highlighted one) was painted
+   --highlight-net and no ordinary rule could reach it. These must out-shout
+   them. Order matters below: selected is declared after net-highlight so it
+   wins the tie at equal specificity. */
+.net-scope .pin-table tr.pin-net-highlight td { background: var(--nw-echo) !important; }
+
+/* This part's other contacts on the same net. */
+.net-scope .pin-table tr.pin-echo td { background: var(--nw-echo) !important; }
+.net-scope .pin-table tr.pin-echo td:first-child { box-shadow: inset 2px 0 0 var(--nw-rail); }
+.net-scope .pin-table tr.pin-echo .pin-net { color: var(--nw-ink); opacity: 0.8; }
+
+.net-scope .pin-table tr.pin-selected td { background: var(--nw-probe) !important; }
+.net-scope .pin-table tr.pin-selected td:first-child {
+  box-shadow: inset 2px 0 0 var(--nw);
+  color: var(--nw-ink);
+}
+.net-scope .pin-table tr.pin-selected .pin-net { color: var(--nw-ink); font-weight: 600; }
+
+/* Where the pin list resumes after an inline block. */
+.net-scope .pin-table tr.pin-resume td { border-top: 1px solid var(--border); }
+
+/* The inline block's host row: a plain container, no table chrome. */
+.net-slot > td {
+  padding: 0;
+  background: transparent;
+  border-bottom: none;
+}
+
+/* ── Inline placement — hanging under its own pin row ─────────────────── */
+.net-branch--inline {
+  position: relative;
+  padding: 6px 0 5px 17px;
+}
+/* Elbow: leaves the row's cap and turns into the strip. Short on purpose —
+   the argument for hanging it here is that the distance can't be misread. */
+.net-branch--inline::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: -1px;
+  width: 10px;
+  height: 16px;
+  border-left: 1px solid var(--nw-trace);
+  border-bottom: 1px solid var(--nw-trace);
+  border-bottom-left-radius: 5px;
+}
+/* Terminator: pairs with .pin-resume's hairline to close the block. */
+.net-branch--inline::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  bottom: 0;
+  width: 9px;
+  height: 1px;
+  background: var(--nw-rail);
+}
+
+/* Nameless header for the inline placement — the pin row above already names
+   the net, so this carries only what the row can't say. */
+.net-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 7px;
+  min-height: 22px;
+  background: var(--nw-bus);
+  border: 1px solid var(--nw-bus-edge);
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-size: 0.82em;
+  color: var(--text-secondary);
+  transition: background 0.12s, border-color 0.12s;
+}
+.net-strip:hover {
+  background: color-mix(in srgb, var(--nw) 26%, transparent);
+  border-color: color-mix(in srgb, var(--nw) 60%, transparent);
+}
+.net-strip-counts b { color: var(--nw-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.net-strip-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+  color: var(--text-secondary);
+}
+.net-strip-caret:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.net-strip-obd { margin-left: 4px; }
+.net-strip-lit {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.88em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--nw-ink);
+  white-space: nowrap;
+}
+.net-lit-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nw); flex: none; }
+.net-lit-dot--off { background: transparent; border: 1px solid var(--nw-rail); }
+
+/* ── Below placement — after the pin table ────────────────────────────── */
+.net-branch--below {
   margin-top: 14px;
   padding-top: 10px;
   border-top: 2px solid var(--border);
@@ -1095,11 +1232,14 @@ body {
   font: inherit;
 }
 
-.net-branch-header:hover { background: var(--surface-hover); }
+.net-branch-header:hover {
+  background: color-mix(in srgb, var(--nw) 26%, transparent);
+  border-color: color-mix(in srgb, var(--nw) 60%, transparent);
+}
 
 .net-branch-header--on {
-  border-color: var(--accent);
-  background: var(--highlight-net);
+  border-color: var(--nw-bus-edge);
+  background: var(--nw-bus);
 }
 
 .net-branch-kicker {
@@ -1134,8 +1274,7 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--text-secondary);
-  opacity: 0.35;
+  background: var(--nw-rail);
 }
 
 .net-branch-item--last::before { bottom: auto; height: 11px; }
@@ -1147,8 +1286,7 @@ body {
   top: 11px;
   width: 7px;
   height: 1px;
-  background: var(--text-secondary);
-  opacity: 0.35;
+  background: var(--nw-rail);
 }
 
 .net-branch-row {
@@ -1161,10 +1299,16 @@ body {
   cursor: pointer;
 }
 
-.net-branch-row:hover { background: var(--surface-hover); }
+/* Hover and preview both sit on the net's own colour: everything in this list
+   IS the net, so borrowing the UI accent here would read as a second subject. */
+.net-branch-row:hover { background: var(--nw-rowhover); }
 
-.net-branch-row--selected {
-  background: var(--highlight-pin);
+/* Single click previews — the board pans to this component while the
+   inspector keeps its subject, so the row needs to say "you're looking at me"
+   without claiming to be the selection. */
+.net-branch-row--preview {
+  background: var(--nw-rowsel);
+  box-shadow: inset 2px 0 0 var(--nw);
 }
 
 /* The chevron is its own hit area: it opens the spoiler and never touches
@@ -1202,13 +1346,7 @@ body {
   white-space: nowrap;
 }
 
-.net-branch-pin-ids { opacity: 0.75; }
-
-.net-branch-this {
-  font-size: 0.75em;
-  color: var(--accent-text);
-  white-space: nowrap;
-}
+.net-branch-pin-ids { opacity: 0.85; color: var(--nw-ink); }
 
 .net-branch-detail {
   margin: 2px 0 6px 20px;
@@ -1229,7 +1367,7 @@ body {
 .net-branch-pin-table th { position: static; padding: 2px 6px; }
 .net-branch-pin-table td { padding: 1px 6px; cursor: default; }
 .net-branch-pin-table .pin-net { cursor: pointer; }
-.net-branch-pin-table .net-branch-pin-on-net td { background: var(--highlight-net); }
+.net-branch-pin-table .net-branch-pin-on-net td { background: var(--nw-bus); }
 
 .net-branch-overflow {
   padding: 4px 6px;

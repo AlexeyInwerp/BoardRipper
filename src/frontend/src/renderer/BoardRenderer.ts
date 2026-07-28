@@ -2987,7 +2987,10 @@ export class BoardRenderer {
         // the user's navZoomMode.
         const zoomMode = isNet ? 'always' : s.navZoomMode;
         this.zoomToBounds(focus.bounds, focusRoot, target, { zoomMode });
-        this.startSelectionBlink();
+        // Preview navigation (net tree, single click) deliberately leaves the
+        // selection alone, so the blink would draw attention to the previous
+        // subject instead of the part we just flew to.
+        if (focus.blink !== false) this.startSelectionBlink();
       }
     } catch (err) {
       log.render.error('onBoardUpdate crashed:', err);
