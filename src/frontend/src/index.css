@@ -1297,17 +1297,21 @@ body {
 
 .net-branch-pin-ids { opacity: 0.85; color: var(--nw-ink); }
 
+/* No horizontal padding: the pin table inside brings its own cell padding,
+   and stacking the two gave every spoiler a doubled gutter. The container
+   contributes the tint and the vertical breathing room only. */
 .net-branch-detail {
-  margin: 2px 0 6px 20px;
-  padding: 4px 6px;
+  margin: 1px 0 3px 18px;
+  padding: 2px 0;
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 .net-branch-detail-meta {
   font-size: 0.8em;
   color: var(--text-primary);
-  margin-bottom: 4px;
+  padding: 0 6px;
+  margin-bottom: 2px;
 }
 
 .net-branch-muted { color: var(--text-secondary); }

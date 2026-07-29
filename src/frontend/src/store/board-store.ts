@@ -2069,7 +2069,21 @@ class BoardStore extends Emitter {
     const upper = name.toUpperCase();
     const idx = tab.board.parts.findIndex(p => p.name.toUpperCase() === upper);
     if (idx < 0) return;
-    this._focusRequest = { partIndex: idx, bounds: tab.board.parts[idx].bounds, blink: false };
+    const part = tab.board.parts[idx];
+
+    // Flip to the part's side, exactly as focusPart does. Changing the visible
+    // side is a view change, not a selection change, so it does not violate
+    // preview's contract — and without it, previewing a bottom-side neighbour
+    // flew the camera to a blank patch of the top side.
+    if (!tab.butterfly) {
+      if (part.side === 'top' && !tab.showTop) {
+        this.updateActiveTab({ showTop: true, showBottom: false });
+      } else if (part.side === 'bottom' && !tab.showBottom) {
+        this.updateActiveTab({ showTop: false, showBottom: true });
+      }
+    }
+
+    this._focusRequest = { partIndex: idx, bounds: part.bounds, blink: false };
     this.notify();
   }
 
