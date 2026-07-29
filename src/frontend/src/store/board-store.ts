@@ -156,9 +156,27 @@ export interface PdfEntry {
   boundTabIds: Set<number>;
 }
 
+/** How long the previewed part gets the loud solid-red heartbeat before it
+ *  settles into the quiet 2-second beacon. */
+export const PREVIEW_BURST_MS = 5500;
+
+/** Marker state for a previewed component. `burst` is the arrival heartbeat —
+ *  it takes over the disco layer entirely so exactly one part blinks — and
+ *  `beacon` is the indefinite reminder that follows, drawn as a stroke ring
+ *  rather than a fill so it stays distinguishable from net-wide disco. */
+export interface PreviewPulse {
+  partIndex: number;
+  phase: 'burst' | 'beacon';
+}
+
 export interface FocusRequest {
   partIndex: number | null;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  /** Blink the selection once the camera arrives. Default true. Preview
+   *  navigation sets this false: it deliberately leaves the selection alone,
+   *  so blinking would draw attention to the *previous* subject rather than
+   *  the part being previewed. */
+  blink?: boolean;
 }
 
 const emptySelection: SelectionState = {
@@ -492,6 +510,11 @@ class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
   private _focusRequest: FocusRequest | null = null;
+  /** Previewed part + when the preview started. Survives until another preview
+   *  replaces it or the selection moves — the beacon is meant to still be there
+   *  when you look back at the board a minute later. */
+  private _preview: { partIndex: number; startedAt: number } | null = null;
+  private _previewBurstTimer: ReturnType<typeof setTimeout> | null = null;
   private _pdfFiles: Map<string, PdfEntry> = new Map();
   private _toasts: Toast[] = [];
   private _nextToastId = 1;
@@ -1168,6 +1191,7 @@ class BoardStore extends Emitter {
   }
 
   selectPart(partIndex: number | null) {
+    this._clearPreviewPulse();
     // Hierarchical net-lines (chain-adjacent): selecting a 2-pin component by
     // its body — which otherwise highlights no net — seeds the highlight from
     // one pin's net so the one-hop adjacency lights up the *other* pin's net
@@ -1188,6 +1212,7 @@ class BoardStore extends Emitter {
   }
 
   selectPin(partIndex: number, pinIndex: number) {
+    this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab?.board?.parts[partIndex];
     const pin = part?.pins[pinIndex];
@@ -2016,6 +2041,7 @@ class BoardStore extends Emitter {
   }
 
   focusPart(name: string) {
+    this._clearPreviewPulse();
     const tab = this.activeTab;
     if (!tab?.board) return;
     const upper = name.toUpperCase();
@@ -2044,6 +2070,110 @@ class BoardStore extends Emitter {
       searchSelectionActive: true,
     });
     this._focusRequest = { partIndex: idx, bounds: part.bounds };
+    this.notify();
+  }
+
+  /**
+   * Navigate to a component WITHOUT retargeting the inspector.
+   *
+   * The net tree's single click uses this: it pans/zooms the board to a
+   * neighbour so you can see where it sits, while `selection` — and therefore
+   * the Info tab's subject and its open net tree — stays exactly where it was.
+   * Double click promotes for real (`promotePartOnNet`).
+   *
+   * No selection blink: the blink renders the *current* selection, which here
+   * is still the previous part, so blinking would point at the wrong thing.
+   */
+  previewPart(name: string) {
+    const tab = this.activeTab;
+    if (!tab?.board) return;
+    const upper = name.toUpperCase();
+    const idx = tab.board.parts.findIndex(p => p.name.toUpperCase() === upper);
+    if (idx < 0) return;
+    const part = tab.board.parts[idx];
+
+    // Flip to the part's side, exactly as focusPart does. Changing the visible
+    // side is a view change, not a selection change, so it does not violate
+    // preview's contract — and without it, previewing a bottom-side neighbour
+    // flew the camera to a blank patch of the top side.
+    if (!tab.butterfly) {
+      if (part.side === 'top' && !tab.showTop) {
+        this.updateActiveTab({ showTop: true, showBottom: false });
+      } else if (part.side === 'bottom' && !tab.showBottom) {
+        this.updateActiveTab({ showTop: false, showBottom: true });
+      }
+    }
+
+    this._focusRequest = { partIndex: idx, bounds: part.bounds, blink: false };
+    this._startPreviewPulse(idx);
+    this.notify();
+  }
+
+  /** Marker to draw for the previewed part, or null. */
+  get previewPulse(): PreviewPulse | null {
+    if (!this._preview) return null;
+    const elapsed = Date.now() - this._preview.startedAt;
+    return {
+      partIndex: this._preview.partIndex,
+      phase: elapsed < PREVIEW_BURST_MS ? 'burst' : 'beacon',
+    };
+  }
+
+  private _startPreviewPulse(partIndex: number) {
+    if (this._previewBurstTimer) clearTimeout(this._previewBurstTimer);
+    this._preview = { partIndex, startedAt: Date.now() };
+    // One notify when the burst ends, so net-wide disco (suppressed for the
+    // duration) resumes and the beacon takes over without waiting for some
+    // unrelated store change to wake the renderer.
+    this._previewBurstTimer = setTimeout(() => {
+      this._previewBurstTimer = null;
+      this.notify();
+    }, PREVIEW_BURST_MS);
+  }
+
+  /** Drop the preview marker. Called whenever the selection moves: once the
+   *  part IS the subject it gets the selection's own treatment, and two
+   *  markers on one component reads as a bug. */
+  private _clearPreviewPulse() {
+    if (this._previewBurstTimer) { clearTimeout(this._previewBurstTimer); this._previewBurstTimer = null; }
+    this._preview = null;
+  }
+
+  /**
+   * Promote a component reached from the net tree to be the inspector's subject.
+   *
+   * Selects the component *by the pin that sits on `net`* rather than the bare
+   * part. That distinction is the whole point: `ComponentInfoBody` derives the
+   * net tree from `selection.pinIndex`, and `focusPart()` sets `pinIndex: null`
+   * — so promoting via focusPart blanked the tree you were walking even though
+   * the net stayed lit on the board. Keeping a pin selected means the same net
+   * stays fanned out under the new subject, with the previous part now a row
+   * in it, so walking a rail is a sequence of reversible steps.
+   *
+   * Side-flip and camera behaviour are copied from `focusPart` so promoting
+   * feels identical to any other navigation.
+   */
+  promotePartOnNet(partIndex: number, pinIndex: number) {
+    this._clearPreviewPulse();
+    const tab = this.activeTab;
+    const part = tab?.board?.parts[partIndex];
+    if (!tab?.board || !part) return;
+    const pin = part.pins[pinIndex];
+
+    if (!tab.butterfly) {
+      if (part.side === 'top' && !tab.showTop) {
+        this.updateActiveTab({ showTop: true, showBottom: false });
+      } else if (part.side === 'bottom' && !tab.showBottom) {
+        this.updateActiveTab({ showTop: false, showBottom: true });
+      }
+    }
+
+    const net = pin?.net || null;
+    this.updateActiveTab({
+      selection: { partIndex, pinIndex, highlightedNet: net, adjacentNets: this._resolveAdjacentNets(net) },
+      searchSelectionActive: true,
+    });
+    this._focusRequest = { partIndex, bounds: part.bounds };
     this.notify();
   }
 

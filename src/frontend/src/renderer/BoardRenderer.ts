@@ -776,7 +776,13 @@ export class BoardRenderer {
     // Selection changes still draw ghosts via renderSelection(), so the static
     // frame stays correct; on refocus, the pulse resumes from the saved phase.
     const hasGhosts = this.crossSideGhostParts.size > 0;
-    const hasDisco = boardStore.discoHighlight && this.discoHaloParts.size > 0;
+    // The disco layer also carries the preview marker, so it must keep
+    // animating for a preview even when disco mode itself is off — and must
+    // get one more pass after everything goes quiet to clear its geometry.
+    const hasDisco =
+      (boardStore.discoHighlight && this.discoHaloParts.size > 0) ||
+      boardStore.previewPulse !== null ||
+      this.discoHaloDirty;
     const hasNetLines = boardStore.netLineMode !== 'off' && boardStore.selection.highlightedNet !== null;
     const pageVisible = !document.hidden && document.hasFocus();
     const viewportIdle = performance.now() >= this.viewportMovingUntil;
@@ -2987,7 +2993,10 @@ export class BoardRenderer {
         // the user's navZoomMode.
         const zoomMode = isNet ? 'always' : s.navZoomMode;
         this.zoomToBounds(focus.bounds, focusRoot, target, { zoomMode });
-        this.startSelectionBlink();
+        // Preview navigation (net tree, single click) deliberately leaves the
+        // selection alone, so the blink would draw attention to the previous
+        // subject instead of the part we just flew to.
+        if (focus.blink !== false) this.startSelectionBlink();
       }
     } catch (err) {
       log.render.error('onBoardUpdate crashed:', err);
@@ -5031,12 +5040,26 @@ export class BoardRenderer {
    * and `needsRender` stays false so the GPU isn't re-submitted for nothing.
    */
   private renderDiscoHalo() {
-    if (!boardStore.discoHighlight || this.discoHaloParts.size === 0 || !this.board) {
+    const preview = boardStore.previewPulse;
+    // The burst OWNS this layer: while it runs, net-wide disco is suppressed so
+    // exactly one component blinks and you cannot mistake "look here" for
+    // "these are on the net". Once it decays into the beacon the two coexist,
+    // because the beacon is a stroke ring and disco is a solid fill.
+    const discoOn =
+      boardStore.discoHighlight && this.discoHaloParts.size > 0 && preview?.phase !== 'burst';
+    const burstPart  = preview?.phase === 'burst'  ? preview.partIndex : null;
+    const beaconPart = preview?.phase === 'beacon' ? preview.partIndex : null;
+
+    const clearIfDirty = () => {
       if (this.discoHaloDirty) {
         this.discoHaloGfx.clear();
         this.discoHaloDirty = false;
         this.needsRender = true;
       }
+    };
+
+    if (!this.board || (!discoOn && burstPart === null && beaconPart === null)) {
+      clearIfDirty();
       return;
     }
 
@@ -5045,23 +5068,30 @@ export class BoardRenderer {
     const sine = (Math.sin(this.netLinePulsePhase * Math.PI * 2) + 1) / 2;
     const SILENT = 0.79;
     const pulse = sine > SILENT ? (sine - SILENT) / (1 - SILENT) : 0;
-    if (pulse === 0) {
-      if (this.discoHaloDirty) {
-        this.discoHaloGfx.clear();
-        this.discoHaloDirty = false;
-        this.needsRender = true;
-      }
+
+    // Beacon: one short flash every BEACON_PERIOD, on its own clock so it is
+    // visibly slower than the 1 s heartbeat rather than a harmonic of it.
+    const BEACON_PERIOD = 2000;
+    const BEACON_ON = 320;
+    let beaconAlpha = 0;
+    if (beaconPart !== null) {
+      const t = performance.now() % BEACON_PERIOD;
+      if (t < BEACON_ON) beaconAlpha = Math.sin((t / BEACON_ON) * Math.PI);
+    }
+
+    const drawsDisco  = discoOn && pulse > 0;
+    const drawsBurst  = burstPart !== null && pulse > 0;
+    const drawsBeacon = beaconPart !== null && beaconAlpha > 0;
+    if (!drawsDisco && !drawsBurst && !drawsBeacon) {
+      clearIfDirty();
       return;
     }
 
     const s = renderSettingsStore.settings;
-    // Peak = 1.0 so the part is fully obscured by solid red at the top of
-    // the blink, then fades back out as the duty cycle returns to silent.
-    const fillAlpha   = pulse;
-    const strokeAlpha = pulse;
     const width = Math.max(s.selectionWidth * 1.2, 2);
     const pad = Math.max(s.selectionPadding * 0.5, 1);
-    const RED = 0xff2a2a;
+    const RED = 0xff2a2a;        // disco / burst — solid fill
+    const BEACON_RED = 0xcc2222; // matches the focus blink's red
     const gfx = this.discoHaloGfx;
 
     /** Single-pin parts have no polygon outline — emit a pin-shaped circle
@@ -5075,20 +5105,39 @@ export class BoardRenderer {
       }
     };
 
-    gfx.clear();
-    // Pass 1 — body fills (no padding, sits exactly on the part shape).
-    for (const partIndex of this.discoHaloParts) {
-      const part = this.board.parts[partIndex];
-      if (part) emitShape(part, 0);
-    }
-    gfx.fill({ color: RED, alpha: fillAlpha });
+    /** Parts taking the solid-red treatment this frame: the whole net in disco
+     *  mode, or the single previewed part during its burst. */
+    const solid: number[] = drawsBurst
+      ? [burstPart as number]
+      : drawsDisco ? Array.from(this.discoHaloParts) : [];
 
-    // Pass 2 — outlines, padded so they ring (not overlay) the part border.
-    for (const partIndex of this.discoHaloParts) {
-      const part = this.board.parts[partIndex];
-      if (part) emitShape(part, pad);
+    gfx.clear();
+
+    if (solid.length > 0) {
+      // Pass 1 — body fills (no padding, sits exactly on the part shape).
+      for (const partIndex of solid) {
+        const part = this.board.parts[partIndex];
+        if (part) emitShape(part, 0);
+      }
+      gfx.fill({ color: RED, alpha: pulse });
+
+      // Pass 2 — outlines, padded so they ring (not overlay) the part border.
+      for (const partIndex of solid) {
+        const part = this.board.parts[partIndex];
+        if (part) emitShape(part, pad);
+      }
+      gfx.stroke({ width, color: RED, alpha: pulse });
     }
-    gfx.stroke({ width, color: RED, alpha: strokeAlpha });
+
+    // Pass 3 — the beacon: ring only, no fill. Deliberately a different mark
+    // from the solid disco body so both can be on screen at once.
+    if (drawsBeacon) {
+      const part = this.board.parts[beaconPart as number];
+      if (part) {
+        emitShape(part, pad * 2);
+        gfx.stroke({ width: width * 1.3, color: BEACON_RED, alpha: beaconAlpha });
+      }
+    }
 
     this.discoHaloDirty = true;
     this.needsRender = true;
