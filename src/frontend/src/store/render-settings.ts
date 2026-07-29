@@ -465,6 +465,29 @@ export function resolvePinGroup(
   return null;
 }
 
+/**
+ * True when a net belongs to the user's Ground pin group.
+ *
+ * Reads the configured group rather than hardcoding a GND/VSS regex, so a
+ * board using an unusual ground name only has to be taught once, in
+ * Settings ▸ Pin groups, and every consumer follows.
+ *
+ * Used by the Info tab to skip fanning out a ground rail: "every component
+ * touching GND" is most of the board and answers nothing.
+ */
+export function isGroundNet(settings: RenderSettings, netName: string): boolean {
+  if (!netName || !settings.pinGroups) return false;
+  const upper = netName.toUpperCase();
+  const group = settings.pinGroups.find(g => g.id === 'ground');
+  if (!group) return false;
+  for (const rule of group.rules) {
+    for (const kw of rule.keywords.split(',')) {
+      if (matchPinGroupKeyword(upper, kw, group.outlineOnly)) return true;
+    }
+  }
+  return false;
+}
+
 /** True when a net should render as an outline-only pin (no fill / no labels). */
 export function isOutlineOnlyNet(settings: RenderSettings, netName: string): boolean {
   return resolvePinGroup(settings, netName)?.outlineOnly ?? false;

@@ -1208,56 +1208,22 @@ body {
 .net-lit-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nw); flex: none; }
 .net-lit-dot--off { background: transparent; border: 1px solid var(--nw-rail); }
 
-/* ── Below placement — after the pin table ────────────────────────────── */
-.net-branch--below {
-  margin-top: 14px;
-  padding-top: 10px;
-  border-top: 2px solid var(--border);
-}
-
-.net-branch-header {
-  display: flex;
+/* "+N more" — the rest of the net, one click away. Sits on the rail like a
+   branch row so the list reads as continuing, not as a separate control. */
+.net-branch-more .net-branch-more-btn {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 6px;
-  margin-bottom: 6px;
-  background: var(--bg-tertiary);
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
+  min-height: 20px;
+  padding: 1px 6px;
+  background: none;
+  border: none;
   font: inherit;
+  font-size: 0.8em;
+  color: var(--nw-ink);
+  cursor: pointer;
+  border-radius: 3px;
 }
-
-.net-branch-header:hover {
-  background: color-mix(in srgb, var(--nw) 26%, transparent);
-  border-color: color-mix(in srgb, var(--nw) 60%, transparent);
-}
-
-.net-branch-header--on {
-  border-color: var(--nw-bus-edge);
-  background: var(--nw-bus);
-}
-
-.net-branch-kicker {
-  font-size: 0.7em;
-  letter-spacing: 0.08em;
-  color: var(--text-secondary);
-}
-
-.net-branch-name {
-  font-weight: 600;
-  color: var(--accent-text);
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-
-.net-branch-header .badge { flex: none; }
-
-.net-branch-obd { margin-left: auto; }
+.net-branch-more .net-branch-more-btn:hover { background: var(--nw-rowhover); }
 
 /* Branch rails: a vertical line down the list, a tick out to each row. Drawn
    with pseudo-elements (not text glyphs) so they follow the interface scale

@@ -6,19 +6,20 @@
  * so showing a branch there would be a guess). Lists every OTHER component
  * that touches the net as a branch hanging off the net node.
  *
- * ── Placement ────────────────────────────────────────────────────────────
- * Two placements, chosen by `ComponentInfoBody` on component count:
+ * ── Placement and size ───────────────────────────────────────────────────
+ * The block is always a row INSIDE the pin table, directly under the pin it
+ * belongs to, so the link between pin and net is a few pixels rather than a
+ * page. The pin row above already names the net, so the header here is a
+ * NAMELESS strip: counts, OBD, lit state.
  *
- *   inline (≤ NET_TREE_INLINE_MAX others) — the block is a row INSIDE the pin
- *     table, directly under the pin it belongs to. The pin row above already
- *     names the net, so the header here is a NAMELESS strip: counts, OBD, lit
- *     state. Collapsible, so the pin table can always be read as one
- *     uninterrupted list again.
+ * A net with fifty components must not push the rest of the pinout off the
+ * screen, so only the first NET_TREE_PREVIEW_ROWS hang open and the rest sit
+ * behind a "+N more" spoiler. Two further escapes: the strip's caret collapses
+ * the block entirely (the pin table then reads as one uninterrupted list), and
+ * past ROW_CAP even the expanded list is truncated behind "show all".
  *
- *   below (more than that) — the block sits after the pin table, where it
- *     can't bury the pinout. It is far from the row that spawned it, so here
- *     the header DOES name the net: that repetition is orientation, not
- *     duplication.
+ * Ground rails never get here at all — `ComponentInfoBody` skips them, because
+ * "every component touching GND" is most of the board and answers nothing.
  *
  * ── The selected part is not a row ───────────────────────────────────────
  * It is the subject of the block above; listing it again as "● this" was pure
@@ -57,10 +58,9 @@ import { ObdCell } from './ObdCell';
  *  the rest. */
 const ROW_CAP = 100;
 
-/** At most this many other components may hang inline inside the pin table.
- *  Above it the block moves below the table so the pinout stays scannable —
- *  a 40-component rail must never push pins 4..42 off the screen. */
-export const NET_TREE_INLINE_MAX = 3;
+/** Components shown before the "+N more" spoiler. Keeps the block about four
+ *  rows tall whatever the net's size, so the pinout underneath stays visible. */
+export const NET_TREE_PREVIEW_ROWS = 3;
 
 export interface NetBranchSectionProps {
   board: BoardData;
@@ -69,8 +69,6 @@ export interface NetBranchSectionProps {
   selection: SelectionState;
   /** OBD net lookup from the parent, so we don't rebuild the index here. */
   obd: { hasData: boolean; lookup: (netName: string) => ObdNet[] };
-  /** Where the parent mounted us — decides strip-vs-header and collapsibility. */
-  placement: 'inline' | 'below';
 }
 
 interface BranchRow {
@@ -82,26 +80,14 @@ interface BranchRow {
   netPinLabel: string;
 }
 
-/** How many components other than `excludePartIndex` sit on `net`. The parent
- *  needs this before rendering to choose a placement, and it is much cheaper
- *  than building the rows. */
-export function countNetComponents(board: BoardData, net: string, excludePartIndex: number | null): number {
-  const entry = board.nets.get(net);
-  if (!entry) return 0;
-  const seen = new Set<number>();
-  for (const { partIndex } of entry.pinIndices) {
-    if (partIndex === excludePartIndex) continue;
-    if (board.parts[partIndex]) seen.add(partIndex);
-  }
-  return seen.size;
-}
-
-export function NetBranchSection({ board, net, selection, obd, placement }: NetBranchSectionProps) {
+export function NetBranchSection({ board, net, selection, obd }: NetBranchSectionProps) {
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
+  /** Past the first NET_TREE_PREVIEW_ROWS. */
+  const [showMore, setShowMore] = useState(false);
+  /** Past ROW_CAP, once showMore is on. */
   const [showAll, setShowAll] = useState(false);
-  // Inline blocks open by default (they are ≤ NET_TREE_INLINE_MAX rows tall, so
-  // they cost the pin list almost nothing) but can be collapsed back to the
-  // single strip row, which restores an uninterrupted pin table.
+  // Open by default: at preview size the block costs the pin list ~4 rows.
+  // Collapsing restores an entirely uninterrupted pin table.
   const [open, setOpen] = useState(true);
   /** Row last previewed by a single click — panel-local "where was I looking",
    *  not board state, and it resets with the net because the parent keys us. */
@@ -116,9 +102,16 @@ export function NetBranchSection({ board, net, selection, obd, placement }: NetB
   const pinCount = netEntry?.pinIndices.length ?? 0;
   const isHighlighted = selection.highlightedNet === net;
   const obdNets = obd.hasData ? obd.lookup(net) : [];
-  const inline = placement === 'inline';
 
-  const shown = showAll ? rows : rows.slice(0, ROW_CAP);
+  // Preview → expanded (capped) → uncapped. Each step is opt-in, so a
+  // 400-component rail can never take the screen without being asked twice.
+  const shown = !showMore
+    ? rows.slice(0, NET_TREE_PREVIEW_ROWS)
+    : showAll
+      ? rows
+      : rows.slice(0, ROW_CAP);
+  const hiddenByPreview = showMore ? 0 : rows.length - shown.length;
+  const hiddenByCap = showMore && !showAll ? rows.length - shown.length : 0;
 
   const toggle = (partIndex: number) => {
     setExpanded(prev => {
@@ -131,9 +124,8 @@ export function NetBranchSection({ board, net, selection, obd, placement }: NetB
   const toggleHighlight = () => boardStore.highlightNet(isHighlighted ? null : net);
 
   return (
-    <div className={`net-branch net-branch--${placement}`} data-testid="net-branch" data-placement={placement}>
-      {inline ? (
-        /* Nameless: the pin row directly above already says which net this is. */
+    <div className="net-branch net-branch--inline" data-testid="net-branch">
+      {/* Nameless: the pin row directly above already says which net this is. */}
         <button
           type="button"
           className="net-strip"
@@ -164,27 +156,8 @@ export function NetBranchSection({ board, net, selection, obd, placement }: NetB
             {isHighlighted ? 'lit' : 'dim'}
           </span>
         </button>
-      ) : (
-        /* Below the table: far from the row that spawned it, so name the net. */
-        <button
-          type="button"
-          className={`net-branch-header ${isHighlighted ? 'net-branch-header--on' : ''}`}
-          onClick={toggleHighlight}
-          title={isHighlighted ? 'Clear the net highlight' : 'Highlight this net on the board'}
-        >
-          <span className="net-branch-kicker">NET</span>
-          <span className="net-branch-name" data-testid="net-branch-name">{net}</span>
-          <span className="badge">{pinCount} pin{pinCount === 1 ? '' : 's'}</span>
-          <span className="badge" data-testid="net-branch-count">
-            {rows.length} other{rows.length === 1 ? '' : 's'}
-          </span>
-          {obdNets.length > 0 && (
-            <span className="net-branch-obd"><ObdCell nets={obdNets} /></span>
-          )}
-        </button>
-      )}
 
-      {(!inline || open) && (
+      {open && (
         <div className="net-branch-list">
           {shown.map((row, i) => (
             <BranchItem
@@ -201,7 +174,23 @@ export function NetBranchSection({ board, net, selection, obd, placement }: NetB
               onPromote={() => boardStore.promotePartOnNet(row.partIndex, row.netPinIndices[0] ?? 0)}
             />
           ))}
-          {rows.length > shown.length && (
+
+          {/* Stage 1: the rest of a normal net, one click away. */}
+          {hiddenByPreview > 0 && (
+            <div className="net-branch-item net-branch-item--last net-branch-more">
+              <button
+                type="button"
+                className="net-branch-more-btn"
+                data-testid="net-branch-more"
+                onClick={() => setShowMore(true)}
+              >
+                + {hiddenByPreview} more
+              </button>
+            </div>
+          )}
+
+          {/* Stage 2: past ROW_CAP, ask again — this is rail territory. */}
+          {hiddenByCap > 0 && (
             <div className="net-branch-overflow">
               Showing {shown.length} of {rows.length} —{' '}
               <button type="button" className="net-branch-showall" onClick={() => setShowAll(true)}>
@@ -308,10 +297,12 @@ function BranchDetail({
 
   return (
     <div className="net-branch-detail" data-testid="net-branch-detail">
-      <div className="net-branch-detail-meta">
-        {metaBits.length > 0 ? metaBits.join(' · ') : <span className="net-branch-muted">no BOM metadata</span>}
-        <span className="net-branch-muted"> · {part.pins.length} pins total</span>
-      </div>
+      {/* Only when there is something to say. "no BOM metadata · 2 pins total"
+          spent a whole row announcing nothing — the pin table directly below
+          already shows how many pins there are. */}
+      {metaBits.length > 0 && (
+        <div className="net-branch-detail-meta">{metaBits.join(' · ')}</div>
+      )}
       <table className="pin-table net-branch-pin-table">
         <thead>
           <tr>

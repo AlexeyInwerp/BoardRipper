@@ -7,9 +7,9 @@ import fs from 'fs';
 // pin table for large ones so a power rail can't bury the pinout.
 const BOARD = '/Users/besitzer/Desktop/Boardviewer/samples/820-02016/820-02016.bvr';
 
-/** Others hanging inline before the block moves below the table. Mirrors
- *  NET_TREE_INLINE_MAX in NetBranchSection.tsx. */
-const INLINE_MAX = 3;
+/** Components shown before the "+N more" spoiler. Mirrors
+ *  NET_TREE_PREVIEW_ROWS in NetBranchSection.tsx. */
+const PREVIEW_ROWS = 3;
 
 /** Load the sample board and open the sidebar's Info tab. */
 async function openInfoTab(page: Page) {
@@ -31,6 +31,9 @@ async function pickTarget(page: Page, min: number, max: number) {
       for (let i = 0; i < part.pins.length; i++) {
         const net = part.pins[i].net;
         if (!net) continue;
+        // Ground rails deliberately get no tree, so they can never be a target.
+        const u = net.toUpperCase();
+        if (u.includes('GND') || u.includes('VSS')) continue;
         const entry = board.nets.get(net);
         if (!entry) continue;
         const parts = new Set(entry.pinIndices.map((r: any) => r.partIndex));
@@ -73,7 +76,7 @@ test('the selected part is not listed as a branch of its own net', async ({ page
   test.skip(!fs.existsSync(BOARD), 'sample board not present');
   await openInfoTab(page);
 
-  const target = await pickTarget(page, 3, 12);
+  const target = await pickTarget(page, 3, PREVIEW_ROWS + 1);
   expect(target).not.toBeNull();
   await selectPin(page, target!);
   await expect(page.getByTestId('net-branch')).toBeVisible();
@@ -85,37 +88,67 @@ test('the selected part is not listed as a branch of its own net', async ({ page
   ).toHaveCount(0);
 });
 
-test('small nets hang inline and name the net once; big nets sit below and name it', async ({ page }) => {
+test('the tree always hangs inside the pin table and names the net once', async ({ page }) => {
   test.skip(!fs.existsSync(BOARD), 'sample board not present');
   await openInfoTab(page);
 
-  // Small: others <= INLINE_MAX → inline, nameless strip.
-  const small = await pickTarget(page, 2, INLINE_MAX + 1);
-  expect(small, 'a small net should exist').not.toBeNull();
-  await selectPin(page, small!);
-  await expect(page.getByTestId('net-branch')).toHaveAttribute('data-placement', 'inline');
+  const target = await pickTarget(page, 2, 40);
+  expect(target).not.toBeNull();
+  await selectPin(page, target!);
+
+  // A row inside the pin table, under its own pin — never a separate section.
+  await expect(page.locator('.pin-table tr.net-slot [data-testid="net-branch"]')).toHaveCount(1);
   await expect(page.getByTestId('net-strip')).toBeVisible();
   // The pin row above already names it — no second copy underneath.
   await expect(page.getByTestId('net-branch-name')).toHaveCount(0);
-  // The block is a row inside the pin table, under its own pin.
-  await expect(page.locator('.pin-table tr.net-slot [data-testid="net-branch"]')).toHaveCount(1);
+});
 
-  // Big: others > INLINE_MAX → below the table, header names the net.
-  const big = await pickTarget(page, INLINE_MAX + 3, 40);
+test('a big net shows the first few and hides the rest behind "+N more"', async ({ page }) => {
+  test.skip(!fs.existsSync(BOARD), 'sample board not present');
+  await openInfoTab(page);
+
+  const big = await pickTarget(page, PREVIEW_ROWS + 3, 40);
   test.skip(big === null, 'no net large enough on this board');
   await selectPin(page, big!);
-  await expect(page.getByTestId('net-branch')).toHaveAttribute('data-placement', 'below');
-  await expect(page.getByTestId('net-branch-name')).toHaveText(big!.net);
-  await expect(page.getByTestId('net-strip')).toHaveCount(0);
-  // Not nested in the pin table — the pinout stays scannable end to end.
-  await expect(page.locator('.pin-table tr.net-slot')).toHaveCount(0);
+
+  // Preview only — the pinout underneath must stay visible.
+  await expect(page.getByTestId('net-branch-row')).toHaveCount(PREVIEW_ROWS);
+  const more = page.getByTestId('net-branch-more');
+  await expect(more).toBeVisible();
+  await expect(more).toContainText(`${big!.comps - 1 - PREVIEW_ROWS} more`);
+
+  await more.click();
+  await expect(page.getByTestId('net-branch-row')).toHaveCount(big!.comps - 1);
+  await expect(page.getByTestId('net-branch-more')).toHaveCount(0);
+});
+
+test('ground rails get no tree at all', async ({ page }) => {
+  test.skip(!fs.existsSync(BOARD), 'sample board not present');
+  await openInfoTab(page);
+
+  const gnd = await page.evaluate(() => {
+    const board: any = (window as any).__boardStore.board;
+    for (let p = 0; p < board.parts.length; p++) {
+      const part = board.parts[p];
+      for (let i = 0; i < part.pins.length; i++) {
+        if ((part.pins[i].net || '').toUpperCase() === 'GND') return { partIndex: p, pinIndex: i };
+      }
+    }
+    return null;
+  });
+  test.skip(gnd === null, 'no GND net on this board');
+
+  await selectPin(page, gnd!);
+  // The component block still renders; the fan-out does not.
+  await expect(page.getByTestId('component-info')).toBeVisible();
+  await expect(page.getByTestId('net-branch')).toHaveCount(0);
 });
 
 test('the inline block collapses so the pin list can be read uninterrupted', async ({ page }) => {
   test.skip(!fs.existsSync(BOARD), 'sample board not present');
   await openInfoTab(page);
 
-  const small = await pickTarget(page, 2, INLINE_MAX + 1);
+  const small = await pickTarget(page, 2, PREVIEW_ROWS + 1);
   expect(small).not.toBeNull();
   await selectPin(page, small!);
   await expect(page.getByTestId('net-branch-row').first()).toBeVisible();
