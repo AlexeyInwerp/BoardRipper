@@ -1,5 +1,66 @@
 # BoardRipper changelog
 
+## v0.33.0 — 2026-07-29
+
+Click a pin and the Info tab now shows the whole net hanging off it — every
+component that touches it, each one a click away — with the board pointing at
+whichever you are looking at. Plus a much faster cold library load and two
+rendering fixes.
+
+### The net fans out from the pin you clicked
+
+- **Select a pin, get its net.** Under that pin's row, the Info tab lists every
+  other component sitting on the same net, each with the pins that land on it.
+  The first three are open and the rest are one click away, so a big rail never
+  buries the pinout underneath. `50d2519a` `671de89e`
+- **Everything is one click from everything else.** The chevron opens a
+  neighbour's own pinout in place without moving anything; a single click flies
+  the board to it while the panel keeps your place; a double click makes it the
+  subject, with the net still fanned out beneath it and the part you came from
+  now a row in the list. Walking a rail is a sequence of steps you can walk
+  back. `50d2519a`
+- **The previewed component announces itself.** It blinks solid red for about
+  five seconds on arrival — while that runs, disco mode goes quiet so exactly
+  one component is blinking — then settles into a slow flash every two seconds
+  that does not stop, so it is still findable when you look back at the board a
+  minute later. `0ade4c2a`
+- **Clicking a different net in the pin list switches to it.** Previously that
+  only lit the net on the board while its components stayed out of view.
+  `6a942658`
+- **It is coloured by your net-line colour.** The selected pin row, the rails,
+  the counts and the previewed row all derive from Settings ▸ Board ▸ Net Lines
+  ▸ Color, so the trail in the panel and the lit net on the board are visibly
+  the same thing. Change the colour and the whole thing follows. `50d2519a`
+- **Ground is left out.** "Every component touching GND" is most of the board
+  and answers nothing, so ground rails get no list. Which nets count as ground
+  comes from your own Ground pin group, so an unusual name is taught once in
+  Settings. `671de89e`
+- Pin tables are tighter throughout, and the net's name, pin count and component
+  count now live on the pin row itself rather than a bar of their own.
+  `6a942658` `bb31d55c`
+
+### Fixes
+
+- **A much faster cold library load, and a far smaller database.** The files
+  database never reclaimed space: splitting out the PDF text tables in v0.31 had
+  freed 1.45 GB to its free-list, but nothing ever compacted the file, so it
+  stayed at 1.5 GB with 96% of its pages empty and every cold load paged the
+  file list across all of it — around 29 seconds on NAS disk. It is compacted
+  now, once, on upgrade. `8b66cc8b`
+- **The resize popup no longer vanishes when you grab a slider.** With two or
+  more boards open, each board's panel had mounted its own copy of the popup,
+  and every copy treated a press in the visible one as a click outside itself
+  and closed the shared popup. One board was fine; two made Interactive Mode
+  unusable. `c375c57e`
+- **GenCAD pins are sized from the file instead of a constant.** Every `.cad`
+  pin had used a fixed 6-mil radius, which is right only for exports that
+  declare their units; on files that do not, pins rendered smaller than their
+  own pin-number labels. The radius now comes from the pad geometry in the
+  file's `$PADS` section. `5b50bc76`
+- **The net tree's connector line no longer breaks.** Its segments butted
+  end-to-end and 19-pixel rows land on fractional device pixels, so opening a
+  component's details left hairline gaps in the line. `0ade4c2a`
+
 ## v0.32.0 — 2026-07-27
 
 Altium Designer files now open — the twelfth supported format. Plus the Tools
