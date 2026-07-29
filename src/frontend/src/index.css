@@ -1030,14 +1030,18 @@ body {
   top: 0;
   background: var(--bg-tertiary);
   text-align: left;
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
   font-weight: 500;
 }
 
+/* Tight on purpose: a 60-pin part should be scannable without scrolling, so
+   rows carry only the leading the text needs. */
 .pin-table td {
-  padding: 3px 8px;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 1.2;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
@@ -1132,7 +1136,7 @@ body {
 /* ── Inline placement — hanging under its own pin row ─────────────────── */
 .net-branch--inline {
   position: relative;
-  padding: 6px 0 5px 17px;
+  padding: 3px 0 3px 17px;
 }
 /* Elbow: leaves the row's cap and turns into the strip. Short on purpose —
    the argument for hanging it here is that the distance can't be misread. */
@@ -1158,55 +1162,34 @@ body {
   background: var(--nw-rail);
 }
 
-/* Nameless header for the inline placement — the pin row above already names
-   the net, so this carries only what the row can't say. */
-.net-strip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 3px 7px;
-  min-height: 22px;
-  background: var(--nw-bus);
-  border: 1px solid var(--nw-bus-edge);
-  border-radius: 3px;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  font-size: 0.82em;
-  color: var(--text-secondary);
-  transition: background 0.12s, border-color 0.12s;
-}
-.net-strip:hover {
-  background: color-mix(in srgb, var(--nw) 26%, transparent);
-  border-color: color-mix(in srgb, var(--nw) 60%, transparent);
-}
-.net-strip-counts b { color: var(--nw-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
-.net-strip-caret {
+/* The selected row's net cell IS the tree's header: name, caret, counts. A
+   separate bar cost a whole line to restate the net and re-print the OBD
+   reading this row's own OBD column already carries. */
+/* No nowrap on the cell: a long net name plus the counts would force the
+   whole pin table into horizontal scroll. The counts keep themselves whole
+   and wrap to the next line instead. */
+
+.pin-net-caret {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex: none;
-  border-radius: 3px;
-  color: var(--text-secondary);
-}
-.net-strip-caret:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-.net-strip-obd { margin-left: 4px; }
-.net-strip-lit {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.88em;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  width: 13px;
+  height: 13px;
+  margin-right: 2px;
+  vertical-align: -2px;
+  border-radius: 2px;
   color: var(--nw-ink);
-  white-space: nowrap;
+  cursor: pointer;
 }
-.net-lit-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nw); flex: none; }
-.net-lit-dot--off { background: transparent; border: 1px solid var(--nw-rail); }
+.pin-net-caret:hover { background: var(--nw-bus); }
+
+.pin-net-counts {
+  white-space: nowrap;
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
 
 /* "+N more" — the rest of the net, one click away. Sits on the rail like a
    branch row so the list reads as continuing, not as a separate control. */
@@ -1258,9 +1241,9 @@ body {
 .net-branch-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 6px;
-  min-height: 22px;
+  gap: 5px;
+  padding: 0 6px;
+  min-height: 19px;
   border-radius: 3px;
   cursor: pointer;
 }
@@ -1283,8 +1266,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 17px;
+  height: 17px;
   padding: 0;
   flex: none;
   background: transparent;

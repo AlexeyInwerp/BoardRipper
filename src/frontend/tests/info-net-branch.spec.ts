@@ -3,8 +3,8 @@ import fs from 'fs';
 
 // Info tab net tree: selecting a PIN fans that pin's net out beneath it;
 // selecting only a COMPONENT does not. The tree never lists the selected part
-// itself, and it sits inline under its own pin row for small nets / below the
-// pin table for large ones so a power rail can't bury the pinout.
+// itself, always hangs as a row inside the pin table under the pin it belongs
+// to, previews a few components behind a "+N more" spoiler, and skips ground.
 const BOARD = '/Users/besitzer/Desktop/Boardviewer/samples/820-02016/820-02016.bvr';
 
 /** Components shown before the "+N more" spoiler. Mirrors
@@ -98,7 +98,7 @@ test('the tree always hangs inside the pin table and names the net once', async 
 
   // A row inside the pin table, under its own pin — never a separate section.
   await expect(page.locator('.pin-table tr.net-slot [data-testid="net-branch"]')).toHaveCount(1);
-  await expect(page.getByTestId('net-strip')).toBeVisible();
+  await expect(page.getByTestId('net-counts')).toBeVisible();
   // The pin row above already names it — no second copy underneath.
   await expect(page.getByTestId('net-branch-name')).toHaveCount(0);
 });
@@ -153,12 +153,61 @@ test('the inline block collapses so the pin list can be read uninterrupted', asy
   await selectPin(page, small!);
   await expect(page.getByTestId('net-branch-row').first()).toBeVisible();
 
-  await page.getByTestId('net-strip-caret').click();
+  await page.getByTestId('net-caret').click();
   await expect(page.getByTestId('net-branch-row')).toHaveCount(0);
   // The strip itself stays — it is the net's one line in the pin list.
-  await expect(page.getByTestId('net-strip')).toBeVisible();
+  await expect(page.getByTestId('net-counts')).toBeVisible();
 
-  await page.getByTestId('net-strip-caret').click();
+  await page.getByTestId('net-caret').click();
+  await expect(page.getByTestId('net-branch-row').first()).toBeVisible();
+});
+
+test('clicking another net in the pin list re-roots the tree on it, expanded', async ({ page }) => {
+  test.skip(!fs.existsSync(BOARD), 'sample board not present');
+  await openInfoTab(page);
+
+  // A part carrying two DIFFERENT non-ground nets, so switching is possible.
+  const pair = await page.evaluate(() => {
+    const board: any = (window as any).__boardStore.board;
+    const ok = (n: string) => {
+      if (!n) return false;
+      const u = n.toUpperCase();
+      if (u.includes('GND') || u.includes('VSS')) return false;
+      return (board.nets.get(n)?.pinIndices.length ?? 0) >= 2;
+    };
+    for (let p = 0; p < board.parts.length; p++) {
+      const part = board.parts[p];
+      const hits: { pinIndex: number; net: string }[] = [];
+      const seen = new Set<string>();
+      for (let i = 0; i < part.pins.length; i++) {
+        const n = part.pins[i].net;
+        if (!ok(n) || seen.has(n)) continue;
+        seen.add(n);
+        hits.push({ pinIndex: i, net: n });
+        if (hits.length === 2) return { partIndex: p, first: hits[0], second: hits[1] };
+      }
+    }
+    return null;
+  });
+  expect(pair, 'a part with two non-ground nets should exist').not.toBeNull();
+
+  await selectPin(page, { partIndex: pair!.partIndex, pinIndex: pair!.first.pinIndex });
+  await expect(page.getByTestId('net-branch')).toBeVisible();
+
+  // Collapse, so we also prove the next net does NOT inherit the collapse.
+  await page.getByTestId('net-caret').click();
+  await expect(page.getByTestId('net-branch-row')).toHaveCount(0);
+
+  const other = pair!.second;
+
+  // Click the NET CELL of that row — not the row body.
+  await page.locator(`.pin-table tr:nth-child(${other!.pinIndex + 1}) .pin-net`).click();
+
+  const sel = await readSel(page);
+  expect(sel.pinIndex).toBe(other!.pinIndex);
+  expect(sel.net).toBe(other!.net);
+  // Re-rooted AND expanded — the collapse did not carry over.
+  await expect(page.getByTestId('net-branch')).toBeVisible();
   await expect(page.getByTestId('net-branch-row').first()).toBeVisible();
 });
 

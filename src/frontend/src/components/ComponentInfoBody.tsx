@@ -29,7 +29,8 @@
  *     the declaration below before moving it: the derived ladder in index.css
  *     only works while it sits on the same element as --nw.
  */
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { bomReasonLabel, type BoardData, type BomAlternateCluster } from '../parsers';
 import type { SelectionState } from '../store/board-store';
 import { boardStore, bomClusterSig } from '../store/board-store';
@@ -68,6 +69,13 @@ export function ComponentInfoBody({
 }: ComponentInfoBodyProps) {
   const obd = useObdNetLookup(boardNumber);
   const settings = useRenderSettings();
+  /** Which net the user has collapsed, rather than a bare boolean. Landing on
+   *  a different net is then open by construction — collapsing is "get this
+   *  out of my way for now", not a preference that follows you to the next
+   *  net — and it needs no effect to reset. Lives here, not in
+   *  NetBranchSection, because the caret that drives it is now part of the
+   *  selected pin row's net cell. */
+  const [collapsedNet, setCollapsedNet] = useState<string | null>(null);
 
   // Auto-load matches + cached data when the active board changes. Cheap:
   // hits the backend's match endpoint once per board, and the per-bpath
@@ -75,6 +83,30 @@ export function ComponentInfoBody({
   useEffect(() => {
     if (boardNumber) obdStore.loadMatches(boardNumber);
   }, [boardNumber]);
+
+  // The net the tree fans out, resolved before any early return so the hooks
+  // below stay unconditional. Ground rails are excluded on purpose: "every
+  // component touching GND" is most of the board, so the fan-out costs a
+  // screen and answers nothing. Membership comes from the user's Ground pin
+  // group, not a hardcoded pattern, so an unusual ground name is taught once
+  // in Settings and every consumer follows.
+  const pinNet = selectedPinNet(board, selection);
+  const branchNet = pinNet && !isGroundNet(settings, pinNet) ? pinNet : null;
+  const netOpen = branchNet !== null && collapsedNet !== branchNet;
+
+  // Counts for the selected row's net cell. They live there rather than in a
+  // bar of their own: a dedicated row cost a full line to restate the net and
+  // re-print the OBD reading the pin's own OBD column already shows.
+  const netStats = useMemo(() => {
+    if (!branchNet) return null;
+    const entry = board.nets.get(branchNet);
+    if (!entry) return null;
+    const parts = new Set<number>();
+    for (const { partIndex } of entry.pinIndices) {
+      if (partIndex !== selection.partIndex && board.parts[partIndex]) parts.add(partIndex);
+    }
+    return { pins: entry.pinIndices.length, comps: parts.size };
+  }, [board, branchNet, selection.partIndex]);
 
   const selectedPart =
     selection.partIndex !== null ? board.parts[selection.partIndex] ?? null : null;
@@ -99,19 +131,6 @@ export function ComponentInfoBody({
   // `buildRenderedBoard` when alternates are hidden.
   const cluster: BomAlternateCluster | null =
     board.bomClusters?.find(c => c.memberRefdes.includes(selectedPart.name)) ?? null;
-
-  // The net branch section is pin-scoped, not part-scoped: a part-only
-  // selection derives `highlightedNet` from an arbitrary pin (or none at
-  // all), so a branch shown there would be a guess. Component selected →
-  // component only; pin selected → component + its net.
-  const selectedPin =
-    selection.pinIndex !== null ? selectedPart.pins[selection.pinIndex] ?? null : null;
-  // Ground rails are excluded on purpose: "every component touching GND" is
-  // most of the board, so the fan-out costs a screen and answers nothing.
-  // Membership comes from the user's Ground pin group, not a hardcoded
-  // pattern, so an unusual ground name is taught once in Settings.
-  const pinNet = selectedPin?.net || null;
-  const branchNet = pinNet && !isGroundNet(settings, pinNet) ? pinNet : null;
 
   // ── Net-tree colour scope ────────────────────────────────────────────
   // Everything the tree tints — the selected pin row, the strip, the rails,
@@ -240,12 +259,45 @@ export function ComponentInfoBody({
                     className="pin-net"
                     onClick={(e) => {
                       e.stopPropagation();
-                      boardStore.highlightNet(
-                        selection.highlightedNet === pin.net ? null : pin.net,
-                      );
+                      if (isSelected) {
+                        // Already the subject: the cell toggles the board highlight.
+                        boardStore.highlightNet(
+                          selection.highlightedNet === pin.net ? null : pin.net,
+                        );
+                      } else if (selection.partIndex !== null) {
+                        // A different net: move the subject to this pin so the
+                        // tree re-roots on it and opens, rather than merely
+                        // lighting a net whose components stay out of view.
+                        boardStore.selectPin(selection.partIndex, idx);
+                      }
                     }}
                   >
+                    {isSelected && branchNet && (
+                      <span
+                        className="pin-net-caret"
+                        data-testid="net-caret"
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={netOpen}
+                        onClick={(e) => { e.stopPropagation(); setCollapsedNet(netOpen ? branchNet : null); }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.stopPropagation(); e.preventDefault();
+                            setCollapsedNet(netOpen ? branchNet : null);
+                          }
+                        }}
+                        title={netOpen ? 'Collapse the net' : 'Expand the net'}
+                      >
+                        {netOpen ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
+                      </span>
+                    )}
                     {pin.net}
+                    {isSelected && branchNet && netStats && (
+                      <span className="pin-net-counts" data-testid="net-counts">
+                        {' · '}{netStats.pins} pin{netStats.pins === 1 ? '' : 's'}
+                        {' · '}{netStats.comps} comp{netStats.comps === 1 ? '' : 's'}
+                      </span>
+                    )}
                   </td>
                   {board.diodeReference && (
                     <td className="pin-diode" data-testid="pin-diode-cell"
@@ -268,7 +320,7 @@ export function ComponentInfoBody({
                     the net's size: NetBranchSection shows the first few and
                     puts the rest behind "+N more". Keyed by net so each net
                     switch starts with every spoiler closed. */}
-                {isSelected && branchNet && (
+                {isSelected && branchNet && netOpen && (
                   <tr className="net-slot">
                     <td colSpan={pinColumns}>
                       <NetBranchSection
@@ -293,6 +345,13 @@ export function ComponentInfoBody({
       {obdNotes}
     </div>
   );
+}
+
+/** The selected pin's net, or null when no pin is selected. Used as the reset
+ *  key for the tree's open state. */
+function selectedPinNet(board: BoardData, selection: SelectionState): string | null {
+  if (selection.partIndex === null || selection.pinIndex === null) return null;
+  return board.parts[selection.partIndex]?.pins[selection.pinIndex]?.net || null;
 }
 
 function BomClusterSection({

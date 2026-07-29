@@ -86,9 +86,6 @@ export function NetBranchSection({ board, net, selection, obd }: NetBranchSectio
   const [showMore, setShowMore] = useState(false);
   /** Past ROW_CAP, once showMore is on. */
   const [showAll, setShowAll] = useState(false);
-  // Open by default: at preview size the block costs the pin list ~4 rows.
-  // Collapsing restores an entirely uninterrupted pin table.
-  const [open, setOpen] = useState(true);
   /** Row last previewed by a single click — panel-local "where was I looking",
    *  not board state, and it resets with the net because the parent keys us. */
   const [preview, setPreview] = useState<number | null>(null);
@@ -97,11 +94,6 @@ export function NetBranchSection({ board, net, selection, obd }: NetBranchSectio
     () => buildBranchRows(board, net, selection.partIndex),
     [board, net, selection.partIndex],
   );
-
-  const netEntry = board.nets.get(net);
-  const pinCount = netEntry?.pinIndices.length ?? 0;
-  const isHighlighted = selection.highlightedNet === net;
-  const obdNets = obd.hasData ? obd.lookup(net) : [];
 
   // Preview → expanded (capped) → uncapped. Each step is opt-in, so a
   // 400-component rail can never take the screen without being asked twice.
@@ -121,44 +113,9 @@ export function NetBranchSection({ board, net, selection, obd }: NetBranchSectio
     });
   };
 
-  const toggleHighlight = () => boardStore.highlightNet(isHighlighted ? null : net);
-
   return (
     <div className="net-branch net-branch--inline" data-testid="net-branch">
-      {/* Nameless: the pin row directly above already says which net this is. */}
-        <button
-          type="button"
-          className="net-strip"
-          data-testid="net-strip"
-          onClick={toggleHighlight}
-          title={isHighlighted ? 'Clear the net highlight' : 'Highlight this net on the board'}
-        >
-          <span
-            className="net-strip-caret"
-            data-testid="net-strip-caret"
-            aria-expanded={open}
-            role="button"
-            tabIndex={0}
-            onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); setOpen(o => !o); }
-            }}
-            title={open ? 'Collapse — show the pin list uninterrupted' : 'Expand the net'}
-          >
-            {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
-          </span>
-          <span className="net-strip-counts" data-testid="net-strip-counts">
-            <b>{pinCount}</b> pin{pinCount === 1 ? '' : 's'} · <b>{rows.length}</b> comp{rows.length === 1 ? '' : 's'}
-          </span>
-          {obdNets.length > 0 && <span className="net-strip-obd"><ObdCell nets={obdNets} /></span>}
-          <span className="net-strip-lit">
-            <span className={isHighlighted ? 'net-lit-dot' : 'net-lit-dot net-lit-dot--off'} />
-            {isHighlighted ? 'lit' : 'dim'}
-          </span>
-        </button>
-
-      {open && (
-        <div className="net-branch-list">
+      <div className="net-branch-list">
           {shown.map((row, i) => (
             <BranchItem
               key={row.partIndex}
@@ -198,8 +155,7 @@ export function NetBranchSection({ board, net, selection, obd }: NetBranchSectio
               </button>
             </div>
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
