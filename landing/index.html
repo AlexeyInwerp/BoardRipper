@@ -50,6 +50,14 @@
   ul { padding-left: 22px; margin: 6px 0 10px; }
   li { margin: 2px 0; }
   .tagline { color: #555; font-size: 12px; margin: 0 0 0; }
+  .callout {
+    border: 1px solid #888;
+    background: #f9f9f9;
+    padding: 12px 14px;
+    margin: 12px 0;
+  }
+  .callout p { margin: 0 0 8px; }
+  .callout p:last-child { margin-bottom: 0; }
   @media (max-width: 480px) {
     main { padding: 20px 14px 50px; }
     table td { padding: 2px 10px 2px 0; font-size: 12px; }
@@ -75,6 +83,7 @@
     [<a href="#docker">Docker setup</a>] |
     [<a href="#download">Download</a>] |
     [<a href="#feedback">Feedback</a>] |
+    [<a href="#support">Support the project</a>] |
     [<a href="#credits">Credits</a>] |
     [<a href="https://github.com/AlexeyInwerp/BoardRipper">Source on GitHub</a>] |
     [<a href="https://discord.gg/BYEkKTMNNY">Discord</a>] |
@@ -246,6 +255,18 @@ C12*</pre>
 </ul>
 </section>
 
+<hr class="stars">
+
+<section id="support">
+<h2>Support the project</h2>
+<div class="callout">
+<p>Honest framing: I build BoardRipper mostly for myself. It&rsquo;s the viewer I want on my own bench, and it would exist even if nobody else ever opened it. It is free software under AGPL-3.0 and it stays that way &mdash; no paywall, no accounts, no pro tier, no telemetry, no ads.</p>
+<p>It isn&rsquo;t free to make, though. The code is generated with <a href="https://www.anthropic.com/claude-code">Claude Code</a> and the tokens run me roughly <b>&euro;100 a month</b> out of pocket, on top of hosting and the evenings spent testing on real boards. So if you look at BoardRipper and think it&rsquo;s a good, useful piece of software &mdash; or it already saved you a repair job or two &mdash; support is <b>really</b> appreciated. It goes directly into keeping development going: more formats, more fixes, more releases.</p>
+<p style="font-size:15px"><b>&rarr; <a href="https://buymeacoffee.com/inwerp">Buy me a coffee</a></b> &mdash; any amount, one-off or monthly. No account needed.</p>
+<p class="small">Rather not send money? Completely fine, and nothing is locked either way. Bug reports, boards that fail to parse, and sample files for unsupported formats are worth just as much to me &mdash; see <a href="#feedback">Feedback</a>.</p>
+</div>
+</section>
+
 <section id="credits">
 <h2>Credits &amp; references</h2>
 <p>BoardRipper exists because of the work the boardview community has already done. Each entry below was consulted during development; full attribution and license details live in <a href="https://www.ripperdoc.de/boardripper/third_party.html">THIRD_PARTY.md</a>.</p>
@@ -309,7 +330,7 @@ C12*</pre>
 <hr class="stars">
 
 <footer>
-<p class="small">BoardRipper is free software, AGPL-3.0. Built by <a href="https://www.ripperdoc.de">Alexey Lavrov / RipperDoc Munich</a>. If it saves you time, <a href="https://buymeacoffee.com/inwerp">buy me a coffee</a>.</p>
+<p class="small">BoardRipper is free software, AGPL-3.0. Built by <a href="https://www.ripperdoc.de">Alexey Lavrov / RipperDoc Munich</a>. If it saves you time, <a href="https://buymeacoffee.com/inwerp">buy me a coffee</a> &mdash; development costs me about &euro;100 a month in tokens (<a href="#support">why</a>).</p>
 </footer>
 
 </main>
