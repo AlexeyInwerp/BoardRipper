@@ -1134,32 +1134,13 @@ body {
 }
 
 /* ── Inline placement — hanging under its own pin row ─────────────────── */
+/* No elbow and no terminator tick. The old L-shaped spline started under the
+   pin NUMBER — a column that has nothing to do with the net — so it read as
+   an artifact rather than a connector. The rail below is the whole graphic:
+   one line, one tick per row, ending at the last tick. */
 .net-branch--inline {
   position: relative;
-  padding: 3px 0 3px 17px;
-}
-/* Elbow: leaves the row's cap and turns into the strip. Short on purpose —
-   the argument for hanging it here is that the distance can't be misread. */
-.net-branch--inline::before {
-  content: '';
-  position: absolute;
-  left: 6px;
-  top: -1px;
-  width: 10px;
-  height: 16px;
-  border-left: 1px solid var(--nw-trace);
-  border-bottom: 1px solid var(--nw-trace);
-  border-bottom-left-radius: 5px;
-}
-/* Terminator: pairs with .pin-resume's hairline to close the block. */
-.net-branch--inline::after {
-  content: '';
-  position: absolute;
-  left: 2px;
-  bottom: 0;
-  width: 9px;
-  height: 1px;
-  background: var(--nw-rail);
+  padding: 2px 0 2px 7px;
 }
 
 /* The selected row's net cell IS the tree's header: name, caret, counts. A
@@ -1196,8 +1177,8 @@ body {
 .net-branch-more .net-branch-more-btn {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 1px 6px;
+  min-height: 17px;
+  padding: 0 4px;
   background: none;
   border: none;
   font: inherit;
@@ -1213,26 +1194,30 @@ body {
    and stay aligned when a spoiler pushes rows apart. */
 .net-branch-item {
   position: relative;
-  padding-left: 14px;
+  padding-left: 13px;
 }
 
+/* top/bottom overlap by 1px: rows are 19px with fractional device-pixel
+   heights, and butting the segments exactly end-to-end left hairline gaps
+   that showed up as a "split" rail the moment a spoiler changed the layout. */
 .net-branch-item::before {
   content: '';
   position: absolute;
   left: 4px;
-  top: 0;
-  bottom: 0;
+  top: -1px;
+  bottom: -1px;
   width: 1px;
   background: var(--nw-rail);
 }
 
-.net-branch-item--last::before { bottom: auto; height: 11px; }
+/* The last row terminates the rail at its own tick — no stub hanging past it. */
+.net-branch-item--last::before { bottom: auto; height: 10px; }
 
 .net-branch-item::after {
   content: '';
   position: absolute;
   left: 4px;
-  top: 11px;
+  top: 9px;
   width: 7px;
   height: 1px;
   background: var(--nw-rail);
@@ -1301,7 +1286,7 @@ body {
    and stacking the two gave every spoiler a doubled gutter. The container
    contributes the tint and the vertical breathing room only. */
 .net-branch-detail {
-  margin: 1px 0 3px 18px;
+  margin: 1px 0 3px 6px;
   padding: 2px 0;
   background: var(--bg-tertiary);
   border-radius: 3px;

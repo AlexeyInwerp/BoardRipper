@@ -156,6 +156,19 @@ export interface PdfEntry {
   boundTabIds: Set<number>;
 }
 
+/** How long the previewed part gets the loud solid-red heartbeat before it
+ *  settles into the quiet 2-second beacon. */
+export const PREVIEW_BURST_MS = 5500;
+
+/** Marker state for a previewed component. `burst` is the arrival heartbeat —
+ *  it takes over the disco layer entirely so exactly one part blinks — and
+ *  `beacon` is the indefinite reminder that follows, drawn as a stroke ring
+ *  rather than a fill so it stays distinguishable from net-wide disco. */
+export interface PreviewPulse {
+  partIndex: number;
+  phase: 'burst' | 'beacon';
+}
+
 export interface FocusRequest {
   partIndex: number | null;
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
@@ -497,6 +510,11 @@ class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
   private _focusRequest: FocusRequest | null = null;
+  /** Previewed part + when the preview started. Survives until another preview
+   *  replaces it or the selection moves — the beacon is meant to still be there
+   *  when you look back at the board a minute later. */
+  private _preview: { partIndex: number; startedAt: number } | null = null;
+  private _previewBurstTimer: ReturnType<typeof setTimeout> | null = null;
   private _pdfFiles: Map<string, PdfEntry> = new Map();
   private _toasts: Toast[] = [];
   private _nextToastId = 1;
@@ -1173,6 +1191,7 @@ class BoardStore extends Emitter {
   }
 
   selectPart(partIndex: number | null) {
+    this._clearPreviewPulse();
     // Hierarchical net-lines (chain-adjacent): selecting a 2-pin component by
     // its body — which otherwise highlights no net — seeds the highlight from
     // one pin's net so the one-hop adjacency lights up the *other* pin's net
@@ -1193,6 +1212,7 @@ class BoardStore extends Emitter {
   }
 
   selectPin(partIndex: number, pinIndex: number) {
+    this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab?.board?.parts[partIndex];
     const pin = part?.pins[pinIndex];
@@ -2021,6 +2041,7 @@ class BoardStore extends Emitter {
   }
 
   focusPart(name: string) {
+    this._clearPreviewPulse();
     const tab = this.activeTab;
     if (!tab?.board) return;
     const upper = name.toUpperCase();
@@ -2084,7 +2105,38 @@ class BoardStore extends Emitter {
     }
 
     this._focusRequest = { partIndex: idx, bounds: part.bounds, blink: false };
+    this._startPreviewPulse(idx);
     this.notify();
+  }
+
+  /** Marker to draw for the previewed part, or null. */
+  get previewPulse(): PreviewPulse | null {
+    if (!this._preview) return null;
+    const elapsed = Date.now() - this._preview.startedAt;
+    return {
+      partIndex: this._preview.partIndex,
+      phase: elapsed < PREVIEW_BURST_MS ? 'burst' : 'beacon',
+    };
+  }
+
+  private _startPreviewPulse(partIndex: number) {
+    if (this._previewBurstTimer) clearTimeout(this._previewBurstTimer);
+    this._preview = { partIndex, startedAt: Date.now() };
+    // One notify when the burst ends, so net-wide disco (suppressed for the
+    // duration) resumes and the beacon takes over without waiting for some
+    // unrelated store change to wake the renderer.
+    this._previewBurstTimer = setTimeout(() => {
+      this._previewBurstTimer = null;
+      this.notify();
+    }, PREVIEW_BURST_MS);
+  }
+
+  /** Drop the preview marker. Called whenever the selection moves: once the
+   *  part IS the subject it gets the selection's own treatment, and two
+   *  markers on one component reads as a bug. */
+  private _clearPreviewPulse() {
+    if (this._previewBurstTimer) { clearTimeout(this._previewBurstTimer); this._previewBurstTimer = null; }
+    this._preview = null;
   }
 
   /**
@@ -2102,6 +2154,7 @@ class BoardStore extends Emitter {
    * feels identical to any other navigation.
    */
   promotePartOnNet(partIndex: number, pinIndex: number) {
+    this._clearPreviewPulse();
     const tab = this.activeTab;
     const part = tab?.board?.parts[partIndex];
     if (!tab?.board || !part) return;

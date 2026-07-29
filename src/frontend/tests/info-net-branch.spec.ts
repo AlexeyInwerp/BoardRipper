@@ -236,6 +236,42 @@ test('chevron opens a spoiler and single click previews — neither moves the se
   await expect(other).toHaveClass(/net-branch-row--preview/);
 });
 
+test('preview marks the part: loud burst first, then a quiet beacon', async ({ page }) => {
+  test.skip(!fs.existsSync(BOARD), 'sample board not present');
+  test.slow(); // deliberately waits out the 5.5 s burst
+  await openInfoTab(page);
+
+  const target = await pickTarget(page, 3, 12);
+  expect(target).not.toBeNull();
+  await selectPin(page, target!);
+  await expect(page.getByTestId('net-branch')).toBeVisible();
+
+  const pulse = () => page.evaluate(() => (window as any).__boardStore.previewPulse);
+  expect(await pulse(), 'nothing marked before previewing').toBeNull();
+
+  const row = page.getByTestId('net-branch-row').first();
+  const refdes = await row.getAttribute('data-refdes');
+  await row.click();
+
+  // Arrival: the loud one, aimed at the part we clicked.
+  const burst = await pulse();
+  expect(burst?.phase).toBe('burst');
+  const marked = await page.evaluate(
+    (i) => (window as any).__boardStore.board.parts[i].name, burst!.partIndex);
+  expect(marked).toBe(refdes);
+
+  // It decays into the beacon, and the beacon does NOT expire — the whole
+  // point is that the part is still findable when you look back later.
+  await expect.poll(async () => (await pulse())?.phase, { timeout: 12000 }).toBe('beacon');
+  await page.waitForTimeout(2500);
+  expect((await pulse())?.phase).toBe('beacon');
+
+  // Promoting hands the part over to the selection's own treatment; two
+  // markers on one component would read as a bug.
+  await row.dblclick();
+  expect(await pulse()).toBeNull();
+});
+
 test('double click promotes the component AND keeps the net tree alive', async ({ page }) => {
   test.skip(!fs.existsSync(BOARD), 'sample board not present');
   await openInfoTab(page);
