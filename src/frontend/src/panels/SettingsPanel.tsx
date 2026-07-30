@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
-import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
+import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick, IconInfoCircle } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
 import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
@@ -37,6 +37,8 @@ import { fmtIndexEta } from './LibraryPanel';
 import { isElectron, hasBackend } from '../store/databank-store';
 import { isLiteBuild } from '../store/build-mode';
 
+declare const __APP_VERSION__: string;
+
 /** Silently disable the SettingsMockup render preview without removing
  *  it from the tree. Flip to true to bring the preview back in one line. */
 const SHOW_MOCKUP_PREVIEW = false;
@@ -62,9 +64,11 @@ function useOverride(field: keyof RenderSettings) {
 
 type SectionId = MockupSectionId | 'zoomLod' | 'netLines' | 'navigation' | 'performance' | 'shortcuts' | 'partTypeOverrides' | 'server' | 'dbinfo' | 'pdf' | 'boardOverlay';
 
-export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' | 'integrations';
+export type SettingsTabId = 'theme' | 'board' | 'input' | 'library' | 'system' | 'integrations' | 'about';
 
-const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations'] as SettingsTabId[])
+// `about` stays in the lite build — it's the only place the project explains
+// itself in-app, and the lite build is what most first-time users open.
+const TAB_ORDER: SettingsTabId[] = (['theme', 'board', 'input', 'library', 'system', 'integrations', 'about'] as SettingsTabId[])
   .filter(t => !(isLiteBuild() && (t === 'library' || t === 'integrations')));
 
 const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
@@ -74,6 +78,7 @@ const TAB_ICONS: Record<SettingsTabId, typeof IconPalette> = {
   library:      IconBooks,
   system:       IconSettings,
   integrations: IconPlug,
+  about:        IconInfoCircle,
 };
 
 const TAB_LABELS: Record<SettingsTabId, string> = {
@@ -83,6 +88,7 @@ const TAB_LABELS: Record<SettingsTabId, string> = {
   library:      'Library',
   system:       'System',
   integrations: 'Integrations',
+  about:        'About',
 };
 
 /** Maps each section id to the tab that owns it. Used by focusSection deep-links. */
@@ -2499,6 +2505,10 @@ export function SettingsPanel() {
         <IntegrationsSection />
       )}
 
+      {activeTab === 'about' && (
+        <AboutTab />
+      )}
+
       {activeTab === 'board' && (
         <button className="settings-reset-btn" onClick={handleReset}
           title={isBoardMode ? 'Clear all board overrides — revert to global settings' : 'Reset all settings to defaults (board render + input behavior)'}>
@@ -3006,6 +3016,49 @@ function PinGroupRuleRow({ rule, onKeywords, onColor, onRemove }: {
       <input type="color" className="color-rule-color" value={rule.color} onChange={(e) => onColor(e.target.value)} />
       <button className="color-rule-remove" onClick={onRemove} title="Remove rule">×</button>
     </div>
+  );
+}
+
+/** About tab — what this program is, who made it, and a small donate link.
+ *  Static content only; no stores, no side effects. Present in every build
+ *  (including lite) since it's the only in-app place the project explains
+ *  itself. Wording is kept in step with the "Support the project" section on
+ *  landing/index.html. */
+function AboutTab() {
+  return (
+    <StandaloneCollapsibleSection title="About BoardRipper" defaultOpen storageKey="about">
+      <div className="about-body">
+        <p>
+          BoardRipper started as a tool for my own repair shop. I wanted a boardview viewer
+          that ran on the bench, opened whatever file format landed on my desk, and put the
+          schematic next to the board instead of on a second laptop. It turned out useful
+          enough that I started sharing it.
+        </p>
+        <p>
+          It is free software under AGPL-3.0 and it stays that way — no accounts, no paywall,
+          no ads, no telemetry. Boards and schematics are read locally; nothing is uploaded.
+        </p>
+        <p>
+          If it earns a place on your bench too, support is genuinely appreciated. Development
+          runs about €100 a month in AI tokens out of my own pocket, and that is what keeps
+          the fixes and new formats coming.
+          {' '}
+          <a className="about-donate" href="https://buymeacoffee.com/inwerp" target="_blank" rel="noopener noreferrer"
+            title="Buy me a coffee — any amount, one-off or monthly">
+            Buy me a coffee
+          </a>
+        </p>
+        <div className="about-links">
+          <a href="https://www.ripperdoc.de/boardripper/" target="_blank" rel="noopener noreferrer">Website</a>
+          <a href="https://github.com/AlexeyInwerp/BoardRipper" target="_blank" rel="noopener noreferrer">Source</a>
+          <a href="https://discord.gg/BYEkKTMNNY" target="_blank" rel="noopener noreferrer">Discord</a>
+          <a href="https://www.ripperdoc.de/boardripper/changelog.html" target="_blank" rel="noopener noreferrer">Changelog</a>
+        </div>
+        <div className="about-meta">
+          BoardRipper v{__APP_VERSION__} · AGPL-3.0 · by Alexey Lavrov / RipperDoc Munich
+        </div>
+      </div>
+    </StandaloneCollapsibleSection>
   );
 }
 
