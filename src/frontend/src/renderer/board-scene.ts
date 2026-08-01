@@ -1161,6 +1161,17 @@ export function buildBoardScene(
       return ratio > 0.4;
     })();
     const isTwoPinPart = part.pins.length === 2 && !isDiag2Pin;
+    // Single-pin parts (testpoints, fiducials, standalone pads) have a
+    // degenerate `eb`: computePartGeometry bounds the pin *centres*, so one pin
+    // gives a zero-size box and computeEffectiveBounds' inflate branch needs
+    // ≥2 pins. That left the part label sized off a 0-width box (always
+    // labelMinSize) and centred on exactly the same point as the net label,
+    // which is anchored at the pin centre — the two drew straight on top of
+    // each other. The pin loop below records the pad radius and the net
+    // label's fitted size so the part label can be sized and stacked clear.
+    const isSinglePin = part.pins.length === 1;
+    let singlePinR = 0;
+    let singlePinNetFont = 0;
 
     applyBodyShapeOverride(eb, override, isSmallPart);
 
@@ -1517,6 +1528,12 @@ export function buildBoardScene(
         netFontSize = Math.max(netFontSize, netFloor);
         netFontSize *= s.netLabelScale || 1;        // Resize Mode: net-label size
         netFontSize = quantizeFontSize(netFontSize);
+        // Single-pin part: remember the net label's final height so the part
+        // label below can clear it whatever the pad size / netLabelScale.
+        if (isSinglePin) {
+          singlePinR = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
+          singlePinNetFont = netFontSize >= s.labelHideThreshold ? netFontSize : 0;
+        }
         if (netFontSize >= s.labelHideThreshold) {
           // Text fast mode: emit a record (kind circleNet / twoPinNet) instead
           // of the BitmapText AND its background-rect wrapper Graphics — the
@@ -1703,7 +1720,17 @@ export function buildBoardScene(
     // ── Label (last = always on top within the part) ────────────────────────
     if (s.showPartLabels) {
       let fontSize: number;
-      if (isTwoPinPart) {
+      if (isSinglePin) {
+        // Size against the pad, not the zero-width `eb`. Same fit formula the
+        // net label uses on circle pins, so a testpoint's refdes and its net
+        // name come out visually matched.
+        const diameter = Math.max(singlePinR, s.pinMinRadius) * 2;
+        fontSize = Math.min(
+          diameter * 0.85 / (Math.max(part.name.length, 3) * 0.6),
+          diameter * 0.85,
+        );
+        fontSize = Math.max(fontSize, s.labelMinSize);
+      } else if (isTwoPinPart) {
         // Horizontal: text is always rendered horizontally so size to full part width.
         // Vertical:   text spans the narrow width, height limited to center-body gap.
         // Floor at settings font size so tiny parts always have a readable label.
@@ -1726,19 +1753,28 @@ export function buildBoardScene(
         if (s.partLabelShadow) {
           fontFamily = ensureShadowFont(fontSize, s.labelAtlasResolution);
         }
+        // Single-pin parts stack the refdes above the pad (anchor 1.0 = text
+        // bottom sits at y) instead of centring it on the pin, where the net
+        // label already lives. Clearance is the pad radius, or half the net
+        // label when a scaled-up net name is taller than the pad.
+        const labelX = isSinglePin ? part.pins[0].position.x : eb.px + eb.pw / 2;
+        const labelY = isSinglePin
+          ? part.pins[0].position.y - Math.max(singlePinR, singlePinNetFont / 2)
+          : eb.py + eb.ph / 2;
+        const labelAnchorY = isSinglePin ? 1.0 : 0.5;
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
-          x: eb.px + eb.pw / 2, y: eb.py + eb.ph / 2,
+          x: labelX, y: labelY,
           text: part.name, fontSize, color: labelColor, kind: 'part', partIndex: pi,
-          anchorX: 0.5, anchorY: 0.5,  // mirrors label.anchor.set(0.5, 0.5)
+          anchorX: 0.5, anchorY: labelAnchorY,  // mirrors label.anchor.set below
           bg: false,
         }))) {
           const label = new BitmapText({
             text:  part.name,
             style: { fontSize, fill: labelColor, fontFamily },
           });
-          label.anchor.set(0.5, 0.5);
-          label.x = eb.px + eb.pw / 2;
-          label.y = eb.py + eb.ph / 2;
+          label.anchor.set(0.5, labelAnchorY);
+          label.x = labelX;
+          label.y = labelY;
           partContainer.addChild(label);
           labels.push(label);
           (isBottom ? bottomLabels : topLabels).push(label);

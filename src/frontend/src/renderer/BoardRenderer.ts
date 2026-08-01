@@ -3827,9 +3827,14 @@ export class BoardRenderer {
         text: srcLabel.text,
         style: { fontSize: srcFontSize, fill: BOARD_COLORS.labelPin, fontFamily: srcFontFamily },
       });
-      label.anchor.set(0.5, 0.5);
       this.netLabelLayer.addChild(label);
     }
+    // Inherit the source's anchor rather than assuming centred. Single-pin
+    // parts anchor their name label's *bottom* to a point above the pad
+    // (anchorY 1.0) so it clears the net name; cloning that at 0.5 would drop
+    // the white selection copy half a line and ghost the original. Pooled
+    // labels must be re-anchored too — the previous occupant's anchor sticks.
+    label.anchor.copyFrom(srcLabel.anchor);
     label.x = srcLabel.x;
     label.y = srcLabel.y;
     label.rotation = srcLabel.rotation;
