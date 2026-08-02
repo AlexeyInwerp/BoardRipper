@@ -1376,6 +1376,9 @@ export function buildBoardScene(
             && pin.padWidth > 0 && pin.padHeight > 0) {
           r = Math.min(r, Math.min(pin.padWidth, pin.padHeight) / 2);
         }
+        // Single-pin part: this is the pin's true drawn radius (pad-clamped),
+        // so it's the one the name/net label pair below sizes and offsets from.
+        if (isSinglePin) singlePinR = r;
         const padShape = override?.padShape ?? 'natural';
         if (isNcPin) {
           // Inset by half stroke width so outer edge aligns with filled pins of same radius
@@ -1515,6 +1518,14 @@ export function buildBoardScene(
             anchorY = even ? 0.0 : 1.0;
             const bgaHalfGap = (r * s.bgaLabelGapFactor) / 2;
             ny += even ? bgaHalfGap : -bgaHalfGap;
+          } else if (isSinglePin) {
+            // Testpoint/fiducial: the part name is the only other label on this
+            // pin, so the two straddle the pin centre exactly like a BGA's
+            // number/net pair — name above (anchor 1.0), net below (anchor 0.0).
+            // Same half-gap each way, so the visible separation is
+            // r * bgaLabelGapFactor and the pair stays centred on the pad.
+            anchorY = 0.0;
+            ny += (r * s.bgaLabelGapFactor) / 2;
           } else if (isMultiPin && s.showPinNumbers) {
             anchorY = 0.05; // standard offset when pin number also shown
           }
@@ -1528,10 +1539,10 @@ export function buildBoardScene(
         netFontSize = Math.max(netFontSize, netFloor);
         netFontSize *= s.netLabelScale || 1;        // Resize Mode: net-label size
         netFontSize = quantizeFontSize(netFontSize);
-        // Single-pin part: remember the net label's final height so the part
-        // label below can clear it whatever the pad size / netLabelScale.
+        // Single-pin part: record whether a net label actually lands. When one
+        // does, the part name takes the upper half; when it doesn't, there is
+        // nothing to straddle and the name stays centred on the pad.
         if (isSinglePin) {
-          singlePinR = Math.min(computePinRadius(s, pin.radius), maxNonOverlapRadius);
           singlePinNetFont = netFontSize >= s.labelHideThreshold ? netFontSize : 0;
         }
         if (netFontSize >= s.labelHideThreshold) {
@@ -1753,15 +1764,16 @@ export function buildBoardScene(
         if (s.partLabelShadow) {
           fontFamily = ensureShadowFont(fontSize, s.labelAtlasResolution);
         }
-        // Single-pin parts stack the refdes above the pad (anchor 1.0 = text
-        // bottom sits at y) instead of centring it on the pin, where the net
-        // label already lives. Clearance is the pad radius, or half the net
-        // label when a scaled-up net name is taller than the pad.
+        // Single-pin parts split the pair around the pin centre: the name takes
+        // the upper half (anchor 1.0 = text bottom sits at y), the net label
+        // the lower half (anchor 0.0), each offset by the same half-gap. With
+        // no net label there is nothing to straddle, so the name stays centred.
+        const hasNetLabel = isSinglePin && singlePinNetFont > 0;
         const labelX = isSinglePin ? part.pins[0].position.x : eb.px + eb.pw / 2;
-        const labelY = isSinglePin
-          ? part.pins[0].position.y - Math.max(singlePinR, singlePinNetFont / 2)
-          : eb.py + eb.ph / 2;
-        const labelAnchorY = isSinglePin ? 1.0 : 0.5;
+        const labelY = hasNetLabel
+          ? part.pins[0].position.y - (singlePinR * s.bgaLabelGapFactor) / 2
+          : isSinglePin ? part.pins[0].position.y : eb.py + eb.ph / 2;
+        const labelAnchorY = hasNetLabel ? 1.0 : 0.5;
         if (!(labelModel && pushLabel(labelModel, isBottom ? 'bottom' : 'top', {
           x: labelX, y: labelY,
           text: part.name, fontSize, color: labelColor, kind: 'part', partIndex: pi,

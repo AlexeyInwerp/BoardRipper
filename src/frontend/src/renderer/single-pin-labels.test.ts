@@ -67,6 +67,39 @@ describe('single-pin (testpoint) labels', () => {
       .toBeGreaterThanOrEqual(0);
   });
 
+  it('straddles the pin centre — name above, net below, equal offsets', () => {
+    const { part, net } = labelsFor(testpointBoard());
+    const pinY = 0;  // the testpoint sits at the origin
+    // Name occupies the upper half, net the lower half.
+    expect(part!.anchorY).toBeCloseTo(1.0, 3);
+    expect(net!.anchorY).toBeCloseTo(0.0, 3);
+    expect(part!.y).toBeLessThanOrEqual(pinY);
+    expect(net!.y).toBeGreaterThanOrEqual(pinY);
+    // Symmetric: each is offset from the centre by the same half-gap.
+    expect(pinY - part!.y).toBeCloseTo(net!.y - pinY, 6);
+    // Both share the pin's X.
+    expect(part!.x).toBeCloseTo(net!.x, 6);
+  });
+
+  it('keeps the pair symmetric when the gap factor is opened up', () => {
+    const { part, net } = labelsFor(testpointBoard(), { bgaLabelGapFactor: 0.8 });
+    const pinY = 0;
+    expect(pinY - part!.y).toBeCloseTo(net!.y - pinY, 6);
+    expect(pinY - part!.y).toBeGreaterThan(0);   // actually pushed apart
+    const [, pBot] = span(part!);
+    const [nTop] = span(net!);
+    expect(nTop).toBeGreaterThanOrEqual(pBot);
+  });
+
+  it('centres the name on the pad when the pin has no net label', () => {
+    // GND is suppressed as a net label (already colour-coded), so nothing
+    // shares the pin and the name should not be pushed off-centre.
+    const { part, net } = labelsFor(testpointBoard('TP9', 'GND'));
+    expect(net, 'no net label for GND').toBeFalsy();
+    expect(part!.anchorY).toBeCloseTo(0.5, 3);
+    expect(part!.y).toBeCloseTo(0, 6);
+  });
+
   it('sizes the part label from the pad instead of a degenerate zero-width box', () => {
     // eb.pw is 0 for a 1-pin part, so the old fit formula collapsed to
     // labelMinSize for every testpoint no matter how big the pad was.
