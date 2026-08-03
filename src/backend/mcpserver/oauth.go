@@ -416,6 +416,47 @@ func (o *OAuth) Token(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- revocation ---
+
+// RevokeAll drops every issued access token, pending authorization code and
+// registered client, and reports how many tokens were live. Because GateAuto
+// verifies OAuth tokens regardless of the current auth mode, this is the only
+// way to end OAuth sessions — flipping Settings > Integrations back to Token
+// deliberately does not, so the toggle can't log agents out by accident.
+//
+// Clients are cleared too: a re-connect then re-registers and passes through
+// the consent screen again, rather than silently resuming on a stale
+// registration.
+func (o *OAuth) RevokeAll() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := len(o.tokens)
+	o.clients = map[string]*oauthClient{}
+	o.codes = map[string]*authCode{}
+	o.tokens = map[string]*accessToken{}
+	return n
+}
+
+// ResetOAuthHandler exposes RevokeAll over HTTP for the Settings button.
+//
+// Deliberately NOT wrapped in GateOAuth: that gate 403s outside oauth mode,
+// but token mode is exactly when an operator reaches for this — having just
+// switched away from OAuth and wanting the lingering grants gone. It is gated
+// only on MCP being enabled, so it stays 404-invisible like the rest of
+// /api/mcp. Same-origin and unauthenticated, matching PairHandler and
+// GET /api/mcp/token on this trust model.
+func ResetOAuthHandler(st *State, o *OAuth) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if st == nil || !st.Enabled() || o == nil {
+			http.NotFound(w, r)
+			return
+		}
+		n := o.RevokeAll()
+		log.Printf("mcp oauth: reset by operator (revoked %d token(s))", n)
+		oauthJSON(w, 200, map[string]int{"revoked": n})
+	}
+}
+
 // Verifier returns an auth.TokenVerifier that validates opaque tokens by lookup.
 func (o *OAuth) Verifier() auth.TokenVerifier {
 	return func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {

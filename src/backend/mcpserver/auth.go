@@ -80,13 +80,20 @@ func Gate(st *State, secret string, next http.Handler) http.Handler {
 // GateAuto enforces the enable flag and then per-request auth. Credentials
 // are checked in a fixed order so different users can mix schemes on one
 // install: (1) paired per-browser tokens (scoped), (2) the shared install
-// secret (shared scope), (3) OAuth bearer tokens when AuthMode()=="oauth"
-// (shared scope). OAuth mode is therefore a strict SUPERSET of token mode —
-// static tokens never stop working; the mode toggle only controls whether the
-// OAuth onboarding endpoints (discovery/register/authorize/token) exist. On
-// rejection: oauth mode answers with the protected-resource-metadata
+// secret (shared scope), (3) previously-issued OAuth bearer tokens (shared
+// scope), regardless of the current AuthMode.
+//
+// The mode toggle therefore controls *onboarding only* — whether the OAuth
+// discovery/register/authorize/token endpoints exist (see GateOAuth). Neither
+// direction of the switch invalidates a credential that already works: static
+// tokens survive a move to OAuth, and live OAuth grants survive a move back to
+// token mode. Ending an OAuth session is an explicit act (ResetOAuthHandler),
+// so an operator can never log agents out by accident while toggling.
+//
+// On rejection: oauth mode answers with the protected-resource-metadata
 // challenge (so OAuth-capable clients onboard), token mode with the RFC 6750
-// invalid_token challenge + explanatory body. 404 when disabled.
+// invalid_token challenge + explanatory body — token mode must not advertise
+// an onboarding path that answers 403. 404 when disabled.
 func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, next http.Handler) http.Handler {
 	secretB := []byte(secret)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,18 +112,23 @@ func GateAuto(st *State, secret string, pairings *PairingStore, oauth *OAuth, ne
 			next.ServeHTTP(w, r) // shared scope (zero value)
 			return
 		}
-		if st.AuthMode() == "oauth" {
-			// Explicit verification (no scope requirement — token presence is the
-			// grant) with the proper challenge + a diagnostic log on rejection.
-			info, err := oauth.Verifier()(r.Context(), tok, r)
-			if err != nil || info == nil {
+		if oauth != nil {
+			// Verification is unconditional — an already-issued OAuth token keeps
+			// working after the operator flips back to token mode, so the switch
+			// never logs out live agents. Revoking is the explicit reset button
+			// (ResetOAuthHandler), not a side effect of the toggle.
+			if info, err := oauth.Verifier()(r.Context(), tok, r); err == nil && info != nil {
+				next.ServeHTTP(w, r) // shared scope (zero value)
+				return
+			} else if st.AuthMode() == "oauth" {
+				// Only advertise onboarding while it actually exists; in token
+				// mode fall through so we don't point clients at endpoints that
+				// answer 403.
 				log.Printf("mcp oauth: rejected %s %s (token_len=%d, reason=%v)", r.Method, r.URL.Path, len(tok), err)
 				w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer resource_metadata=%q", oauth.ResourceMetadataURL(r)))
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r)
-			return
 		}
 		writeUnauthorized(w)
 	})

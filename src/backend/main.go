@@ -511,6 +511,10 @@ func main() {
 	mux.HandleFunc("POST /api/mcp/oauth/register", mcpserver.GateOAuth(mcpState, mcpOAuth.Register))
 	mux.HandleFunc("/api/mcp/oauth/authorize", mcpserver.GateOAuth(mcpState, mcpOAuth.Authorize))
 	mux.HandleFunc("POST /api/mcp/oauth/token", mcpserver.GateOAuth(mcpState, mcpOAuth.Token))
+	// Revocation is the one OAuth route NOT behind GateOAuth: it must stay
+	// reachable in token mode, which is exactly when an operator wants to end
+	// grants that outlived the switch. Enabled-gated only.
+	mux.HandleFunc("POST /api/mcp/oauth/reset", mcpserver.ResetOAuthHandler(mcpState, mcpOAuth))
 
 	// Serve static frontend files.
 	//

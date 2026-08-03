@@ -601,6 +601,22 @@ function IntegrationsSection() {
       .catch(() => { /* keep the old token visible */ });
   }, []);
 
+  // Ends every OAuth grant at once. Switching auth mode deliberately does NOT
+  // do this (agents mid-session would drop), so revoking is an explicit act.
+  const resetOAuth = useCallback(() => {
+    fetch('/api/mcp/oauth/reset', { method: 'POST' })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { revoked?: number } | null) => {
+        const n = d?.revoked ?? 0;
+        boardStore.addToast(
+          n > 0
+            ? `Disconnected ${n} OAuth agent${n === 1 ? '' : 's'} — they must approve access again.`
+            : 'No OAuth agents were connected.',
+          'info');
+      })
+      .catch(() => boardStore.addToast('Could not reset OAuth — check backend connection.', 'error'));
+  }, []);
+
   const refresh = useCallback(() => {
     fetch('/api/mcp/status')
       .then(r => r.ok ? r.json() : null)
@@ -699,9 +715,16 @@ function IntegrationsSection() {
             </div>
             <p className="settings-hint" style={{ margin: '0 0 8px' }}>
               {oauth
-                ? 'Clients can connect with just the URL and approve access in the browser the first time — no token to copy. Bearer tokens (browser + shared, below) keep working too, so users can mix both.'
-                : 'Clients authenticate with the bearer token below.'}
+                ? 'Clients can connect with just the URL and approve access in the browser the first time — no token to copy. Bearer tokens keep working too, so users can mix both.'
+                : 'New clients authenticate with the bearer token below. Agents that already approved access over OAuth stay connected — switching modes never logs anyone out.'}
             </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 8px' }}>
+              <button type="button" className="settings-action-btn" data-testid="mcp-oauth-reset"
+                onClick={resetOAuth}>Disconnect all OAuth agents</button>
+              <span className="settings-hint" style={{ margin: 0 }}>
+                Revokes every approved OAuth session. They can reconnect by approving again.
+              </span>
+            </div>
 
             {!oauth && (
               <>
