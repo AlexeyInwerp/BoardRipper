@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BoardRipper — HDR probe</title>
+<style>
+  body { background:#000; color:#ccc; font:13px ui-monospace,SFMono-Regular,Menlo,monospace; padding:24px; }
+  h2 { color:#fff; font-weight:600; margin:0 0 4px; }
+  .sub { color:#777; margin-bottom:18px; }
+  #caps { margin-bottom:18px; line-height:1.7; }
+  #ctl { margin-bottom:20px; color:#aaa; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  figure { margin:0; width:200px; }
+  .box { width:200px; height:200px; position:relative; background:#000; overflow:hidden; }
+  .glow { position:absolute; inset:0; background:url(/hdr-glow.avif) center/contain no-repeat;
+          dynamic-range-limit:no-limit; }
+  body.clamp .glow { dynamic-range-limit:standard; }
+  figcaption { padding-top:8px; color:#888; line-height:1.5; }
+  b { color:#fff; }
+  .gate { color:#ffcf4a; }
+  canvas { display:block; }
+</style>
+
+<h2>HDR probe</h2>
+<div class="sub">Does a PQ-encoded image keep its headroom when composited over the board canvas?</div>
+
+<div id="caps">…</div>
+
+<div id="ctl">
+  <label><input type="checkbox" id="clamp"> force <code>dynamic-range-limit: standard</code>
+  — <span style="color:#777">tick this: if nothing dims, no HDR is happening at all</span></label>
+</div>
+
+<div class="row">
+  <figure><div class="box" style="background:#fff"></div>
+    <figcaption>1. Plain white div<br>SDR reference</figcaption></figure>
+
+  <figure><div class="box"><div class="glow"></div></div>
+    <figcaption>2. PQ image, standalone<br><b>must out-glow #1</b></figcaption></figure>
+
+  <figure><div class="box"><canvas id="c" width="200" height="200"></canvas>
+      <div class="glow"></div></div>
+    <figcaption>3. Over a WebGL canvas<br><span class="gate">GATE — must match #2</span></figcaption></figure>
+
+  <figure><div class="box"><canvas id="c2" width="200" height="200"></canvas>
+      <div class="glow" style="opacity:.6"></div></div>
+    <figcaption>4. Over canvas, opacity .6<br><span class="gate">GATE — must still glow</span></figcaption></figure>
+
+  <figure><div class="box"><canvas id="gpu" width="200" height="200"></canvas></div>
+    <figcaption>5. WebGPU extended<br>reference (Chromium only)</figcaption></figure>
+</div>
+
+<script type="module">
+const mq = matchMedia('(dynamic-range: high)');
+function caps() {
+  document.getElementById('caps').innerHTML = [
+    `dynamic-range: high .... <b>${mq.matches}</b>`,
+    `color-gamut: p3 ........ <b>${matchMedia('(color-gamut: p3)').matches}</b>`,
+    `dynamic-range-limit .... <b>${CSS.supports('dynamic-range-limit', 'no-limit')}</b>`,
+    `devicePixelRatio ....... <b>${devicePixelRatio}</b>`,
+    `webgpu ................. <b>${!!navigator.gpu}</b>`,
+  ].join('<br>');
+}
+caps();
+mq.addEventListener('change', caps);
+
+document.getElementById('clamp').addEventListener('change', (e) => {
+  document.body.classList.toggle('clamp', e.target.checked);
+});
+
+// Dark grey fill so the canvases are visibly present under the glow layers.
+for (const id of ['c', 'c2']) {
+  const gl = document.getElementById(id).getContext('webgl2');
+  if (gl) { gl.clearColor(0.12, 0.12, 0.14, 1); gl.clear(gl.COLOR_BUFFER_BIT); }
+}
+
+// Swatch 5: WebGPU extended-range reference square.
+if (navigator.gpu) {
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    const device = await adapter.requestDevice();
+    const ctx = document.getElementById('gpu').getContext('webgpu');
+    ctx.configure({
+      device, format: 'rgba16float', alphaMode: 'opaque',
+      toneMapping: { mode: 'extended' },
+    });
+    const enc = device.createCommandEncoder();
+    enc.beginRenderPass({ colorAttachments: [{
+      view: ctx.getCurrentTexture().createView(),
+      clearValue: { r: 4, g: 4, b: 4, a: 1 },   // 4x SDR white
+      loadOp: 'clear', storeOp: 'store',
+    }] }).end();
+    device.queue.submit([enc.finish()]);
+  } catch (err) {
+    document.getElementById('gpu').outerHTML =
+      `<div style="padding:8px;color:#a55;font-size:11px">WebGPU failed:<br>${err}</div>`;
+  }
+}
+</script>
