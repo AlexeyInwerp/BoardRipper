@@ -83,7 +83,32 @@ unexplained binary in the tree.
   `(experimental)` per the standing opt-in convention for new render modes.
 - Setting `hdrGlowIntensity` (range 0–4, default 3). Peak nits are fixed by the ICC profile, so
   intensity modulates the div's peak **alpha and size**, not its colour.
+- Both are **global** settings (`renderSettingsStore.globalSettings`, edited via
+  `updateGlobal`), alongside `textFastMode` and `dragToZoom` — not per-tab draft settings.
+  This is a property of the user's display, not of a board, so it must not vary per tab.
 - Not capable, or setting off → the overlay never mounts. Zero cost.
+
+### Where the switch lives
+
+Two surfaces, both bound to the same global setting so they stay in lock-step:
+
+- **Settings ▸ Selection & Highlight** (`SettingsPanel.tsx:2360`) — a `Toggle` "HDR focus
+  glow (experimental)" plus a `Slider` "HDR Glow Intensity" (0–4, step 0.5), using the
+  existing section primitives. This section already owns every other highlight control
+  (selection fill, net highlight ring, dim overlay), so the glow belongs with them rather
+  than in Performance & Debug.
+- **Start page** (`HomeBackdrop.tsx`) — a `home-toggle-row` entry following the existing
+  `AutoSwitchToggle` / `AutoOpenPdfToggle` shape, so the feature is reachable without
+  opening Settings.
+
+Behaviour when the display is not HDR-capable is deliberately **different** between the two:
+
+- The start-page row is **hidden**. The home screen is a dashboard of things you can act
+  on, not a settings dump; a permanently dead row is noise.
+- The Settings toggle stays **visible but disabled**, with a title explaining that no HDR
+  display was detected. A user who enabled this on a laptop and later docked to an SDR
+  monitor needs to see *why* it stopped working — silently hiding the control would read as
+  a bug.
 
 **The existing SDR highlight is untouched in every case.** HDR is strictly additive on top,
 never a replacement. This is what makes the fallback free and the failure mode benign: on
