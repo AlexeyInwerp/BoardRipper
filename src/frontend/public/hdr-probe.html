@@ -48,6 +48,35 @@
     <figcaption>5. WebGPU extended<br>reference (Chromium only)</figcaption></figure>
 </div>
 
+<h2 style="margin-top:32px">Fade mechanism</h2>
+<div class="sub">Opacity flattens HDR, so the pulse needs another way down.
+  Each of these sits over a WebGL canvas at roughly half strength —
+  <b>which ones still out-glow plain white?</b></div>
+
+<div class="row">
+  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
+      <div class="glow" style="opacity:.5"></div></div>
+    <figcaption>A. opacity .5<br><span style="color:#a55">known broken — control</span></figcaption></figure>
+
+  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
+      <div class="glow" id="mix"></div></div>
+    <figcaption>B. dynamic-range-limit-mix()<br>50% no-limit / 50% standard<br>
+      <span id="mixsup" style="color:#777">…</span></figcaption></figure>
+
+  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
+      <div class="glow" style="background-image:url(/hdr-glow-3.avif)"></div></div>
+    <figcaption>C. dimmer sprite<br>894-nit frame, no alpha</figcaption></figure>
+
+  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
+      <div class="glow" style="filter:brightness(.5)"></div></div>
+    <figcaption>D. filter: brightness(.5)</figcaption></figure>
+
+  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
+      <div class="glow" id="anim"></div></div>
+    <figcaption>E. the 7-frame ladder, animated<br>
+      <span style="color:#777">is the step-down smooth?</span></figcaption></figure>
+</div>
+
 <script type="module">
 const mq = matchMedia('(dynamic-range: high)');
 function caps() {
@@ -67,10 +96,31 @@ document.getElementById('clamp').addEventListener('change', (e) => {
 });
 
 // Dark grey fill so the canvases are visibly present under the glow layers.
-for (const id of ['c', 'c2']) {
-  const gl = document.getElementById(id).getContext('webgl2');
+for (const el of [document.getElementById('c'), document.getElementById('c2'),
+                  ...document.querySelectorAll('canvas.bg')]) {
+  const gl = el.getContext('webgl2');
   if (gl) { gl.clearColor(0.12, 0.12, 0.14, 1); gl.clear(gl.COLOR_BUFFER_BIT); }
 }
+
+// B: dynamic-range-limit-mix() is Chromium-only as far as we know — report
+// whether the browser even parses it, so a flat swatch isn't misread as
+// "compositing killed it" when the truth is "the property was ignored".
+const MIX = 'dynamic-range-limit-mix(no-limit 50%, standard 50%)';
+const mixOk = CSS.supports('dynamic-range-limit', MIX);
+document.getElementById('mixsup').textContent = mixOk ? 'parsed ✓' : 'NOT SUPPORTED — ignore this swatch';
+if (mixOk) document.getElementById('mix').style.setProperty('dynamic-range-limit', MIX);
+
+// E: step the luminance ladder 0 -> 6 over PULSE_MS, hold, repeat.
+const FRAMES = 7, PULSE_MS = 500;
+const anim = document.getElementById('anim');
+let t0 = performance.now();
+(function step(now) {
+  const el = (now - t0) % (PULSE_MS + 700);
+  const i = el >= PULSE_MS ? FRAMES - 1
+    : Math.min(FRAMES - 1, Math.floor((el / PULSE_MS) * FRAMES));
+  anim.style.backgroundImage = `url(/hdr-glow-${i}.avif)`;
+  requestAnimationFrame(step);
+})(t0);
 
 // Swatch 5: WebGPU extended-range reference square.
 if (navigator.gpu) {
