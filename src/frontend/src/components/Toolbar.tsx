@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload } from '@tabler/icons-react';
+import { IconBoxMultiple, IconFlipHorizontal, IconLayoutBoardSplit, IconUpload, IconDownload, IconInfoCircle } from '@tabler/icons-react';
 import { boardStore } from '../store/board-store';
 import { useBoardStore } from '../hooks/useBoardStore';
 import { useUpdateStore } from '../hooks/useUpdateStore';
@@ -17,6 +17,8 @@ import { setLibrarySearch } from '../panels/LibraryPanel';
 import { countInBoardTab, countInPdf, findInBoardTab, findInPdf } from '../store/cross-target-search';
 import { SearchScopeBadge, type SearchScope } from './SearchScopeBadge';
 import { isTwoWindowMode, toggleTwoWindowMode, onTwoWindowModeChange } from '../store/two-window-mode';
+
+declare const __APP_VERSION__: string;
 
 /** Display a version string with exactly one leading `v`. The backend's
  *  Version (release.sh tag, e.g. "v0.31.18") already carries the prefix, so
@@ -47,6 +49,70 @@ function DownloadOfflineButton() {
       <IconDownload size={15} stroke={2} />
       Offline copy
     </a>
+  );
+}
+
+/** Small (i) next to the update badge: who wrote this, what it is, and where
+ *  to support it. Renders in every build (lite/offline/Electron included) —
+ *  unlike the update badge, which is backend-only — because this is the one
+ *  always-visible place the project introduces itself. The long version lives
+ *  in Settings ▸ About; keep the two in step, and both in step with the
+ *  "Support the project" section on landing/index.html. */
+function InfoBadge() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click — same pattern as UpdateBadge.
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div className="update-badge-wrap" ref={ref}>
+      <button
+        data-testid="info-badge"
+        className={`toolbar-btn toolbar-info-badge${open ? ' active' : ''}`}
+        onClick={() => setOpen(v => !v)}
+        title="About BoardRipper"
+        aria-label="About BoardRipper"
+      >
+        <IconInfoCircle size={15} stroke={2} />
+      </button>
+
+      {open && (
+        <div className="update-dropdown info-dropdown">
+          <div className="update-dropdown-header">
+            <div className="update-dropdown-header-main">
+              <span>BoardRipper {fmtVersion(__APP_VERSION__)}</span>
+            </div>
+            <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
+          </div>
+          <div className="update-dropdown-body info-dropdown-body">
+            <p>
+              Built as a tool for my own repair shop, then shared once it turned out
+              useful. Free software under AGPL-3.0 — no accounts, no paywall, no
+              telemetry; your boards stay on your machine.
+            </p>
+            <p className="info-dropdown-author">by Alexey Lavrov — RipperDoc, Munich</p>
+            <p>
+              Development runs about €100 a month in AI tokens out of my own pocket.
+              If BoardRipper is useful to you, support is genuinely appreciated.
+            </p>
+            <div className="info-dropdown-links">
+              <a href="https://buymeacoffee.com/inwerp" target="_blank" rel="noopener noreferrer"
+                className="info-dropdown-donate">Buy me a coffee</a>
+              <a href="https://www.ripperdoc.de/boardripper/" target="_blank" rel="noopener noreferrer">Website</a>
+              <a href="https://github.com/AlexeyInwerp/BoardRipper" target="_blank" rel="noopener noreferrer">Source</a>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -572,6 +638,7 @@ export function Toolbar() {
           the toolbar — removed until the feature actually ships, at which
           point it belongs in an overflow menu. exportToBVR3 stays in parsers. */}
 
+      <InfoBadge />
       {!isElectron() && !isLiteBuild() && <UpdateBadge update={update} />}
       {isLiteBuild() && !isOfflineBuild() && <DownloadOfflineButton />}
     </div>

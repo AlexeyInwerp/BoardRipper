@@ -2586,6 +2586,45 @@ body {
   text-align: center;
 }
 
+/* ── Toolbar (i) — about / support popover ── */
+.toolbar-info-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+}
+.info-dropdown {
+  width: 320px;
+}
+.info-dropdown-body {
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.info-dropdown-body p {
+  margin: 0 0 8px 0;
+}
+.info-dropdown-author {
+  color: var(--text-secondary);
+}
+.info-dropdown-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.info-dropdown-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.info-dropdown-links a:hover {
+  text-decoration: underline;
+}
+.info-dropdown-donate {
+  font-weight: 600;
+}
+
 /* ── Settings ▸ About tab ── */
 .about-body {
   font-size: 0.85em;

@@ -3030,9 +3030,9 @@ function AboutTab() {
       <div className="about-body">
         <p>
           BoardRipper started as a tool for my own repair shop. I wanted a boardview viewer
-          that ran on the bench, opened whatever file format landed on my desk, and put the
-          schematic next to the board instead of on a second laptop. It turned out useful
-          enough that I started sharing it.
+          that ran on the bench, opened whatever file format landed on my desk, and kept the
+          schematic on screen next to the board. It turned out useful enough that I started
+          sharing it.
         </p>
         <p>
           It is free software under AGPL-3.0 and it stays that way — no accounts, no paywall,
