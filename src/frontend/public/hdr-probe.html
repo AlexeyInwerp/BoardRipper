@@ -48,34 +48,12 @@
     <figcaption>5. WebGPU extended<br>reference (Chromium only)</figcaption></figure>
 </div>
 
-<h2 style="margin-top:32px">Fade mechanism</h2>
-<div class="sub">Opacity flattens HDR, so the pulse needs another way down.
-  Each of these sits over a WebGL canvas at roughly half strength —
-  <b>which ones still out-glow plain white?</b></div>
+<h2 style="margin-top:32px">Intensity rungs</h2>
+<div class="sub">The glow is steady, not a pulse, so intensity is picked from the baked
+  luminance ladder rather than modulated with alpha (alpha flattens HDR — see swatch 4).
+  <b>Which rung should be the default?</b> Each sits over a WebGL canvas, as it will in the app.</div>
 
-<div class="row">
-  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
-      <div class="glow" style="opacity:.5"></div></div>
-    <figcaption>A. opacity .5<br><span style="color:#a55">known broken — control</span></figcaption></figure>
-
-  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
-      <div class="glow" id="mix"></div></div>
-    <figcaption>B. dynamic-range-limit-mix()<br>50% no-limit / 50% standard<br>
-      <span id="mixsup" style="color:#777">…</span></figcaption></figure>
-
-  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
-      <div class="glow" style="background-image:url(/hdr-glow-3.avif)"></div></div>
-    <figcaption>C. dimmer sprite<br>894-nit frame, no alpha</figcaption></figure>
-
-  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
-      <div class="glow" style="filter:brightness(.5)"></div></div>
-    <figcaption>D. filter: brightness(.5)</figcaption></figure>
-
-  <figure><div class="box"><canvas class="bg" width="200" height="200"></canvas>
-      <div class="glow" id="anim"></div></div>
-    <figcaption>E. the 7-frame ladder, animated<br>
-      <span style="color:#777">is the step-down smooth?</span></figcaption></figure>
-</div>
+<div class="row" id="rungs"></div>
 
 <script type="module">
 const mq = matchMedia('(dynamic-range: high)');
@@ -102,34 +80,25 @@ for (const el of [document.getElementById('c'), document.getElementById('c2'),
   if (gl) { gl.clearColor(0.12, 0.12, 0.14, 1); gl.clear(gl.COLOR_BUFFER_BIT); }
 }
 
-// B: dynamic-range-limit-mix() is Chromium-only as far as we know — report
-// whether the browser even parses it, so a flat swatch isn't misread as
-// "compositing killed it" when the truth is "the property was ignored".
-const MIX = 'dynamic-range-limit-mix(no-limit 50%, standard 50%)';
-const mixOk = CSS.supports('dynamic-range-limit', MIX);
-document.getElementById('mixsup').textContent = mixOk ? 'parsed ✓' : 'NOT SUPPORTED — ignore this swatch';
-if (mixOk) document.getElementById('mix').style.setProperty('dynamic-range-limit', MIX);
+// Intensity rungs: a spread across the 24-rung ladder, labelled with the peak
+// luminance each was baked at, so the default can be chosen by eye rather than
+// guessed. Rung 23 (200 nits) is roughly SDR white — the "off" end.
+const PEAK = 4000, FLOOR = 200, FRAMES = 24;
+const nitsOf = (i) => Math.round(PEAK * Math.pow(FLOOR / PEAK, i / (FRAMES - 1)));
+document.getElementById('rungs').innerHTML = [0, 4, 8, 12, 16, 20, 23].map((i) => `
+  <figure>
+    <div class="box">
+      <canvas class="bg" width="200" height="200"></canvas>
+      <div class="glow" style="background-image:url(/hdr-glow-${i}.avif)"></div>
+    </div>
+    <figcaption>rung ${i} — <b>${nitsOf(i)} nits</b></figcaption>
+  </figure>`).join('');
 
-// E: the actual proposed pulse. Two things move together:
-//   - the luminance ladder, stepped LINEARLY in frame index. The rungs are
-//     geometric in nits (~perceptually even), so a linear index sweep is a
-//     perceptually linear fade — smoother than easing the nits directly.
-//   - a continuous scale shrink. Transforms composite smoothly and cost
-//     nothing, and the motion masks whatever stepping remains.
-const FRAMES = 24, PULSE_MS = 500, HOLD_MS = 700;
-const anim = document.getElementById('anim');
-const t0 = performance.now();
-(function step(now) {
-  const el = (now - t0) % (PULSE_MS + HOLD_MS);
-  const done = el >= PULSE_MS;
-  const t = done ? 1 : el / PULSE_MS;
-  const i = Math.min(FRAMES - 1, Math.floor(t * FRAMES));
-  anim.style.backgroundImage = `url(/hdr-glow-${i}.avif)`;
-  // Holds its size while bright, then contracts onto the target: 1.0 -> 0.82.
-  anim.style.transform = `scale(${0.82 + 0.18 * (1 - t * t)})`;
-  anim.style.visibility = done ? 'hidden' : 'visible';
-  requestAnimationFrame(step);
-})(t0);
+// The canvases above were injected after the initial fill pass, so fill them now.
+for (const el of document.querySelectorAll('#rungs canvas.bg')) {
+  const gl = el.getContext('webgl2');
+  if (gl) { gl.clearColor(0.12, 0.12, 0.14, 1); gl.clear(gl.COLOR_BUFFER_BIT); }
+}
 
 // Swatch 5: WebGPU extended-range reference square.
 if (navigator.gpu) {
