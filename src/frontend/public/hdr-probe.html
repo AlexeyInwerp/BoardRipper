@@ -110,15 +110,24 @@ const mixOk = CSS.supports('dynamic-range-limit', MIX);
 document.getElementById('mixsup').textContent = mixOk ? 'parsed ✓' : 'NOT SUPPORTED — ignore this swatch';
 if (mixOk) document.getElementById('mix').style.setProperty('dynamic-range-limit', MIX);
 
-// E: step the luminance ladder 0 -> 6 over PULSE_MS, hold, repeat.
-const FRAMES = 7, PULSE_MS = 500;
+// E: the actual proposed pulse. Two things move together:
+//   - the luminance ladder, stepped LINEARLY in frame index. The rungs are
+//     geometric in nits (~perceptually even), so a linear index sweep is a
+//     perceptually linear fade — smoother than easing the nits directly.
+//   - a continuous scale shrink. Transforms composite smoothly and cost
+//     nothing, and the motion masks whatever stepping remains.
+const FRAMES = 24, PULSE_MS = 500, HOLD_MS = 700;
 const anim = document.getElementById('anim');
-let t0 = performance.now();
+const t0 = performance.now();
 (function step(now) {
-  const el = (now - t0) % (PULSE_MS + 700);
-  const i = el >= PULSE_MS ? FRAMES - 1
-    : Math.min(FRAMES - 1, Math.floor((el / PULSE_MS) * FRAMES));
+  const el = (now - t0) % (PULSE_MS + HOLD_MS);
+  const done = el >= PULSE_MS;
+  const t = done ? 1 : el / PULSE_MS;
+  const i = Math.min(FRAMES - 1, Math.floor(t * FRAMES));
   anim.style.backgroundImage = `url(/hdr-glow-${i}.avif)`;
+  // Holds its size while bright, then contracts onto the target: 1.0 -> 0.82.
+  anim.style.transform = `scale(${0.82 + 0.18 * (1 - t * t)})`;
+  anim.style.visibility = done ? 'hidden' : 'visible';
   requestAnimationFrame(step);
 })(t0);
 

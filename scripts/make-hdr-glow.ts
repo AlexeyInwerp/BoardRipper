@@ -17,7 +17,7 @@ import { pqEncode } from '../src/frontend/src/renderer/pq.ts';
 const SIZE = 256;
 const PEAK_NITS = 4000;   // centre luminance; real output is capped by display headroom
 const FLOOR_NITS = 200;   // ~SDR white — the dimmest frame, where the SDR highlight takes over
-const FRAMES = 7;         // luminance ladder used to fade WITHOUT opacity (see below)
+const FRAMES = 24;        // luminance ladder used to fade WITHOUT opacity (see below)
 const OUT = 'src/frontend/public/hdr-glow.avif';
 const TMP = 'src/frontend/public/.hdr-glow-src.png';
 
@@ -25,7 +25,9 @@ const TMP = 'src/frontend/public/.hdr-glow-src.png';
  *  probe: swatch 4 == swatch 1). So the pulse cannot fade with alpha. Instead we
  *  bake a ladder of frames at decreasing PEAK luminance and swap the sprite —
  *  a real luminance fade rather than an alpha fade. Geometric spacing keeps the
- *  perceived steps even. */
+ *  perceived steps even: the ladder spans ~4.3 stops, so each of 24 rungs is
+ *  ~0.19 stops. At 7 rungs (0.63 stops each) the step-down was visibly steppy
+ *  in the probe. Frames are ~1.2 KB, so rungs are nearly free. */
 function frameNits(i: number): number {
   if (FRAMES <= 1) return PEAK_NITS;
   const t = i / (FRAMES - 1);
