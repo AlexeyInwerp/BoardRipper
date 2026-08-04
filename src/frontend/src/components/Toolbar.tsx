@@ -10,6 +10,7 @@ import { fileInputRefs } from '../store/file-inputs';
 import { formatShortcut } from '../store/keyboard-shortcuts';
 import { openPdfFiles } from '../store/file-actions';
 import { updateStore } from '../store/update-store';
+import { ReleaseNotes } from './ReleaseNotes';
 import { pdfStore } from '../store/pdf-store';
 import { databankStore, isElectron } from '../store/databank-store';
 import { isLiteBuild, isOfflineBuild } from '../store/build-mode';
@@ -136,9 +137,12 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
   const isImportant = manifest?.important === true;
   // Release notes for an available update, embedded in the signed manifest.
   // Empty (→ spoiler not shown) when the manifest carries no notes.
-  const bodyLines: string[] = (state.has_update && manifest?.notes)
-    ? manifest.notes.split('\n')
-    : [];
+  const pendingNotes = (state.has_update && manifest?.notes) ? manifest.notes : '';
+  // Notes for the version RUNNING right now. The whole point: after the update
+  // lands, has_update flips false and the pending notes go away — this is what
+  // keeps "what changed" readable afterwards. Null when we have never seen a
+  // manifest for this version (bundle install / dev build).
+  const installed = update.installed;
 
   return (
     <div className="update-badge-wrap" ref={ref}>
@@ -171,22 +175,16 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
             <button className="update-dropdown-close" onClick={() => setOpen(false)}>x</button>
           </div>
 
-          {bodyLines.length > 0 && (
+          {pendingNotes && (
             <details className="update-dropdown-notes" data-testid="update-whats-new">
-              <summary>What&apos;s new</summary>
+              <summary>What&apos;s new in {fmtVersion(manifest?.version || state.latest_version)}</summary>
               <div className="update-dropdown-body">
-                {bodyLines.map((line, i) => {
-                  if (line.startsWith('## ')) return <h3 key={i}>{line.slice(3)}</h3>;
-                  if (line.startsWith('### ')) return <h4 key={i}>{line.slice(4)}</h4>;
-                  if (line.startsWith('- ')) return <li key={i}>{line.slice(2)}</li>;
-                  if (line.startsWith('| ') || line.startsWith('---')) return null;
-                  return <p key={i}>{line}</p>;
-                })}
+                <ReleaseNotes notes={pendingNotes} />
               </div>
             </details>
           )}
 
-          {!state.has_update && !updating && bodyLines.length === 0 && (
+          {!state.has_update && !updating && (
             <div className="update-dropdown-body">
               <p>You are on the latest version.</p>
             </div>
@@ -245,6 +243,31 @@ function UpdateBadge({ update }: { update: ReturnType<typeof useUpdateStore> }) 
                 </span>
               </div>
             </div>
+          )}
+
+          {/* What the version you are RUNNING brought. Sits below the actions
+              and carries its own version in the summary, so it can never be
+              mistaken for the pending release's notes above. */}
+          {installed && !updating && (
+            <details className="update-dropdown-notes" data-testid="update-installed-notes">
+              <summary>
+                What&apos;s new in {fmtVersion(installed.version)}
+                {state.has_update && <span className="update-dropdown-yours"> · yours</span>}
+              </summary>
+              <div className="update-dropdown-body">
+                <ReleaseNotes notes={installed.notes} />
+                {installed.notes_url && (
+                  <a
+                    className="update-dropdown-notes-link"
+                    href={installed.notes_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Full release notes ↗
+                  </a>
+                )}
+              </div>
+            </details>
           )}
         </div>
       )}

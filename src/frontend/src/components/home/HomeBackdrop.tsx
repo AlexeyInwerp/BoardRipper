@@ -9,6 +9,7 @@ import { renderSettingsStore, type RenderSettings } from '../../store/render-set
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
 import { isHdrCapable, onHdrCapabilityChange, isHdrPromptDismissed, dismissHdrPrompt, DEMO_RUNG } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
+import { ReleaseNotes } from '../ReleaseNotes';
 import {
   isAutoSwitchLinked,
   setAutoSwitchLinked,
@@ -78,6 +79,13 @@ function useDockviewPanelCount(): number {
     };
   }, []);
   return count;
+}
+
+function useInstalledRelease() {
+  return useSyncExternalStore(
+    (cb) => updateStore.subscribe(cb),
+    () => updateStore.installedRelease,
+  );
 }
 
 function useUpdateState() {
@@ -249,6 +257,7 @@ function formatRelativeTime(iso: string): string {
 
 function LatestUpdate() {
   const state = useUpdateState();
+  const installed = useInstalledRelease();
   const info = state.manifest;
   const isImportant = state.has_update && info?.important === true;
 
@@ -286,11 +295,38 @@ function LatestUpdate() {
               </a>
             )}
           </div>
+          {installed && <InstalledNotes installed={installed} showHeading={state.has_update} />}
+        </div>
+      ) : installed ? (
+        // No manifest reachable (offline), but we know what the running
+        // version brought — still worth showing.
+        <div className="home-update-body">
+          <InstalledNotes installed={installed} showHeading={false} />
         </div>
       ) : (
         <p className="home-card-empty">No release info — check your connection.</p>
       )}
     </CollapsibleCard>
+  );
+}
+
+/** What the running version brought. Clipped to a few lines on the start page
+ *  so a long changelog can't swallow the card; "Show all" expands it in place.
+ *  `showHeading` labels it explicitly when an update is also on offer above,
+ *  so the two versions are never confused. */
+function InstalledNotes({ installed, showHeading }: {
+  installed: { version: string; notes: string; notes_url?: string };
+  showHeading: boolean;
+}) {
+  return (
+    <div className="home-update-notes" data-testid="home-installed-notes">
+      {showHeading && (
+        <div className="home-update-notes-heading">
+          What&apos;s new in {installed.version} · yours
+        </div>
+      )}
+      <ReleaseNotes notes={installed.notes} maxLines={6} />
+    </div>
   );
 }
 

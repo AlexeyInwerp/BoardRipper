@@ -19,6 +19,37 @@ interface RestartFlag {
   expectedVersion?: string;
 }
 
+// Notes for the version actually RUNNING, so "what's new" survives the update
+// that delivered it. While up to date the live manifest already describes the
+// running version, but once a newer release appears it describes that one
+// instead — and the user who just updated is exactly who wants to read what
+// changed. Cached at apply time (the manifest being applied is by definition
+// what will be running, so it is ready even if the network is unreachable
+// afterwards) and re-affirmed by any status/check whose manifest matches the
+// running version.
+const INSTALLED_NOTES_KEY = 'boardripper.installed-release-notes';
+
+export interface InstalledRelease {
+  version: string;
+  notes: string;
+  notes_url?: string;
+  released_at?: string;
+}
+
+function saveInstalledRelease(rel: InstalledRelease) {
+  try { localStorage.setItem(INSTALLED_NOTES_KEY, JSON.stringify(rel)); } catch { /* quota */ }
+}
+
+function loadInstalledRelease(): InstalledRelease | null {
+  try {
+    const raw = localStorage.getItem(INSTALLED_NOTES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InstalledRelease;
+    if (typeof parsed?.version !== 'string' || typeof parsed?.notes !== 'string') return null;
+    return parsed;
+  } catch { return null; }
+}
+
 function saveRestartFlag(flag: RestartFlag) {
   try { localStorage.setItem(RESTART_FLAG_KEY, JSON.stringify(flag)); } catch { /* quota */ }
 }
@@ -101,8 +132,11 @@ class UpdateStore extends Emitter {
                                           // container handoff) rather than logging
                                           // them as real warnings.
 
+  private _installed: InstalledRelease | null = loadInstalledRelease();
+
   get state(): UpdateState { return this._state; }
   get updating(): boolean { return this._updating; }
+
   get progress(): ProgressEntry[] { return this._progress; }
   get restarting(): boolean { return this._restarting; }
   get restartingFromVersion(): string { return this._restartingFromVersion; }
@@ -112,11 +146,44 @@ class UpdateStore extends Emitter {
    *  for fetch failures that would otherwise read as a "broken update". */
   get isPostRestartSettling(): boolean { return Date.now() < this._settleUntil; }
 
+  /** Release notes for the version currently running, or null when we have
+   *  never seen a manifest for it (drag-drop bundle install, `dev` build, or
+   *  an install that predates the cache). Consumers fall back to `notes_url`. */
+  get installedRelease(): InstalledRelease | null {
+    // A stale entry describes a version we are no longer on — after a
+    // downgrade or a rollback — so it must not be presented as "yours".
+    if (this._installed && this._installed.version !== this._state.current_version) return null;
+    return this._installed;
+  }
+
+  /** Remember the notes for `version` when it is (or is about to become) the
+   *  running version. No-op for anything else. */
+  private rememberInstalled(rel: InstalledRelease | null | undefined) {
+    if (!rel?.version || !rel.notes) return;
+    if (this._installed?.version === rel.version && this._installed.notes === rel.notes) return;
+    this._installed = rel;
+    saveInstalledRelease(rel);
+  }
+
+  /** Cache the running version's notes when a fetched manifest describes it. */
+  private captureInstalledFromState() {
+    const m = this._state.manifest;
+    if (!m?.notes) return;
+    if (m.version !== this._state.current_version) return;
+    this.rememberInstalled({
+      version: m.version,
+      notes: m.notes,
+      notes_url: m.notes_url,
+      released_at: m.released_at,
+    });
+  }
+
   async fetchStatus() {
     try {
       const res = await apiFetch('/api/update/status');
       if (!res.ok) return;
       this._state = await res.json();
+      this.captureInstalledFromState();
       if (this._state.has_update) {
         log.update.log(`Update available: ${this._state.current_version} → ${this._state.latest_version}`);
       } else if (this._state.current_version !== 'dev') {
@@ -135,6 +202,7 @@ class UpdateStore extends Emitter {
         return;
       }
       this._state = await res.json();
+      this.captureInstalledFromState();
       if (this._state.has_update) {
         log.update.log(`New version found: ${this._state.latest_version}`);
       } else {
@@ -152,6 +220,18 @@ class UpdateStore extends Emitter {
     this._progress = [];
     this._terminalSeen = false;
     log.update.log(`Starting update to ${this._state.latest_version}...`);
+    // The manifest being applied IS the version that will be running, so
+    // stash its notes now — after the swap the app may come back with no
+    // network, and the notes would otherwise be unreachable.
+    const pending = this._state.manifest;
+    if (pending?.notes && pending.version === this._state.latest_version) {
+      this.rememberInstalled({
+        version: pending.version,
+        notes: pending.notes,
+        notes_url: pending.notes_url,
+        released_at: pending.released_at,
+      });
+    }
     saveRestartFlag({
       startedAt: Date.now(),
       fromVersion: this._state.current_version,
