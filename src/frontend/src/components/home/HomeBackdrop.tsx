@@ -5,7 +5,7 @@ import { databankStore } from '../../store/databank-store';
 import { isLiteBuild } from '../../store/build-mode';
 import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
-import { renderSettingsStore } from '../../store/render-settings';
+import { renderSettingsStore, type RenderSettings } from '../../store/render-settings';
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
 import { isHdrCapable, onHdrCapabilityChange } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
@@ -696,30 +696,66 @@ function useHdrGlow(): boolean {
   );
 }
 
-/** Start-page switch for the HDR focus glow. Unlike the Settings control this
- *  one HIDES on a non-HDR display: the home screen is a dashboard of things you
- *  can act on, and a permanently dead row is just noise. */
-function HdrGlowToggle() {
+function useHdrIntensity(): number {
+  return useSyncExternalStore(
+    (cb) => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.globalSettings.hdrGlowIntensity,
+  );
+}
+
+function setGlobal<K extends 'hdrFocusGlow' | 'hdrGlowIntensity'>(
+  key: K, value: RenderSettings[K],
+): void {
+  const snap = renderSettingsStore.globalSnapshot();
+  snap[key] = value;
+  renderSettingsStore.applyGlobal(snap);
+}
+
+/** Top-level start-page card for the HDR selection outline.
+ *
+ *  Deliberately NOT inside the collapsible "Quick settings" card: this is the
+ *  feature's discovery surface, and buried under a sub-heading inside a card
+ *  that users collapse, nobody finds it.
+ *
+ *  HIDES entirely on a non-HDR display — unlike the Settings control, which
+ *  stays visible-but-hinted. The home screen is a dashboard of things you can
+ *  act on; a permanently dead card is noise. The intensity slider rides along
+ *  because the right value is display-dependent and has to be found by eye. */
+function HdrGlowCard() {
   const enabled = useHdrGlow();
+  const intensity = useHdrIntensity();
   const [capable, setCapable] = useState(isHdrCapable);
   useEffect(() => onHdrCapabilityChange(setCapable), []);
   if (!capable) return null;
   return (
-    <label
-      className="home-toggle-row"
-      title="Burn the selected component brighter than white while it stays selected, so you cannot lose it on a dense board. Needs an HDR display."
-    >
-      <span>HDR focus glow (experimental)</span>
-      <input
-        type="checkbox"
-        checked={enabled}
-        onChange={(e) => {
-          const snap = renderSettingsStore.globalSnapshot();
-          snap.hdrFocusGlow = e.target.checked;
-          renderSettingsStore.applyGlobal(snap);
-        }}
-      />
-    </label>
+    <div className="home-hdr-card">
+      <label className="home-hdr-head">
+        <span className="home-hdr-title">
+          HDR selection outline
+          <span className="home-hdr-badge">NEW</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setGlobal('hdrFocusGlow', e.target.checked)}
+        />
+      </label>
+      <p className="home-hdr-desc">
+        Your display can show light brighter than white. Turn this on and the selected
+        component's outline burns into that headroom — so the part you searched for,
+        looked up from a PDF, or stepped to on a net is unmistakable on a dense board.
+      </p>
+      {enabled && (
+        <label className="home-hdr-slider">
+          <span>Intensity</span>
+          <input
+            type="range" min={1} max={10} step={1} value={intensity}
+            onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
+          />
+          <span className="home-hdr-value">{intensity}</span>
+        </label>
+      )}
+    </div>
   );
 }
 
@@ -970,7 +1006,6 @@ function QuickSettings() {
         <div className="home-toggle-stack">
           <AutoSwitchToggle />
           {!isLiteBuild() && <AutoOpenPdfToggle />}
-          <HdrGlowToggle />
           <ThemeSelect />
           <InterfaceColorPickers />
         </div>
@@ -1060,6 +1095,7 @@ export function HomeBackdrop() {
           <div className="home-ui-scale-row">
             <InterfaceScaleSlider />
           </div>
+          <HdrGlowCard />
           <Instructions />
           <QuickSettings />
           <LatestUpdate />

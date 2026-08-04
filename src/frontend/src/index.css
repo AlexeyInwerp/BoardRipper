@@ -7073,6 +7073,63 @@ body {
     letter-spacing: 0.05em;
   }
 }
+/* HDR selection outline card — top-level on the start page (its discovery
+   surface), and only rendered at all on an HDR-capable display. */
+.home-hdr-card {
+  padding: 12px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.home-hdr-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.home-hdr-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.home-hdr-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-text, #fff);
+}
+.home-hdr-desc {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.home-hdr-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.home-hdr-slider input[type='range'] { flex: 1; }
+.home-hdr-value {
+  min-width: 1.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
 .home-toggle-row {
   display: flex;
   justify-content: space-between;
