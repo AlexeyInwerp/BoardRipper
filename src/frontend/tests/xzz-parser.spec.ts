@@ -90,6 +90,42 @@ test.describe('XZZ parser', () => {
     }
   });
 
+  // Component value channel (the part's 0x06 body label). What lives there is
+  // exporter-specific: MSI writes the BOM value ("22uF"), Apple writes a
+  // serialised placeholder — Device1, Device2, … one per part. The parser
+  // drops a channel that is unique on every part, so the placeholder never
+  // reaches the Info pane. A2681 carries 200 such labels, one per part.
+  test('placeholder part labels (DeviceN) never become component values', async () => {
+    test.skip(!haveSmall, 'XZZ sample (A2681 KB 820-02862-02) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(loadSample(SMALL));
+
+    const placeholders = board.parts.filter(p => /^Device\d+$/i.test(p.meta?.value ?? ''));
+    expect(placeholders.map(p => `${p.name}=${p.meta?.value}`)).toEqual([]);
+    // A value must never merely echo the refdes either.
+    for (const p of board.parts) {
+      if (p.meta?.value) expect(p.meta.value).not.toBe(p.name);
+    }
+  });
+
+  // Positive path for the same channel. Runs only when a fixture from an
+  // exporter that populates it is present — every board in the public corpus
+  // is Apple, so this stays skipped until an MSI .pcb is dropped in.
+  test('extracts component values from a board whose exporter writes them', async () => {
+    const MSI = path.resolve(XZZ_SAMPLES, 'MSI/V380_20.pcb');
+    test.skip(!fs.existsSync(MSI), 'XZZ sample (MSI V380_20.pcb) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(loadSample(MSI));
+
+    const valued = board.parts.filter(p => p.meta?.value);
+    expect(valued.length).toBeGreaterThan(0);
+    for (const p of valued) expect(p.meta!.value).not.toBe(p.name);
+    // A genuine BOM column repeats — many parts share "100nF"/"10K". If every
+    // value were unique the placeholder guard should have dropped the channel.
+    const distinct = new Set(valued.map(p => p.meta!.value)).size;
+    expect(distinct).toBeLessThan(valued.length);
+  });
+
   test('parsing the same buffer twice yields identical counts (deterministic)', async () => {
     test.skip(!haveSmall, 'XZZ sample (A2681 KB 820-02862-02) not present (proprietary fixture)');
     const { parseXZZ } = await import('../src/parsers/xzz-parser');

@@ -621,7 +621,63 @@ export function normalizeOblongPads(pins: OblongPinLike[]): number {
 }
 
 interface PartSilkLine { x1: number; y1: number; x2: number; y2: number; }
-interface PartData { name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[]; }
+interface PartData {
+  name: string; side: 'top' | 'bottom'; pins: PinData[]; groupName: string; silkLines: PartSilkLine[];
+  /** BOM value ("22uF", "100K") when the exporter wrote one into a body
+   *  label sub-block. See readLabelSubBlock / parsePartBlock. */
+  value?: string;
+}
+
+/** Longest string still plausible as a BOM value. Anything longer is a sign
+ *  the 26-byte header guess missed and we are reading neighbouring bytes. */
+const MAX_PART_VALUE_LEN = 48;
+
+/** Placeholder-channel guard (see the "(pcb values)" pass in parseXZZ): a
+ *  label that is alphabetic-then-numeric ("Device1", "Part207"). Real values
+ *  lead with the magnitude — "22uF", "10K", "0R" — so they don't match. */
+const SERIAL_LABEL_RE = /^[A-Za-z][A-Za-z ._-]*\d+$/;
+const PLACEHOLDER_MIN_SAMPLES = 20;
+const PLACEHOLDER_UNIQUE_RATIO = 0.95;
+const PLACEHOLDER_SERIAL_RATIO = 0.8;
+
+/** Read a 0x06 label sub-block from a part body, `ptr` positioned just past
+ *  the marker byte. Same framing as the part header's own 0x06 label
+ *  ([30 unknown][len:u32][text]) minus 4 bytes, because a body sub-block
+ *  spends them on its own size prefix:
+ *
+ *    [0x06] [size:u32] [26 unknown] [len:u32] [text…]
+ *
+ *  Returns `label: ''` for a block whose payload doesn't hold a readable
+ *  string — the block is still skipped correctly via its size prefix. */
+function readLabelSubBlock(data: Uint8Array, ptr: number): { label: string; next: number } {
+  if (ptr + 4 > data.length) return { label: '', next: data.length };
+  const size = ru32(data, ptr); ptr += 4;
+  const end = ptr + size;
+  if (end > data.length) return { label: '', next: data.length };
+  let label = '';
+  const lenPtr = ptr + 26;
+  if (lenPtr + 4 <= end) {
+    const len = ru32(data, lenPtr);
+    if (len > 0 && len <= MAX_PART_VALUE_LEN && lenPtr + 4 + len <= end) {
+      label = rstr(data, lenPtr + 4, len);
+    }
+  }
+  return { label, next: end };
+}
+
+/** A value is only accepted when it is printable text — a mis-framed read
+ *  lands on binary, and half a struct rendered as mojibake in the Info pane
+ *  is worse than no value at all. */
+function isPlausiblePartValue(s: string): boolean {
+  if (s.length === 0 || s.length > MAX_PART_VALUE_LEN) return false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    // Control range, C1 range, or U+FFFD — the decoder's marker for bytes that
+    // were never text to begin with.
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0xfffd) return false;
+  }
+  return true;
+}
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
   const EMPTY: PinData = { name: '', x: 0, y: 0, netIndex: 0, padW: 0, padH: 0, padAngleDeg: 0, padShape: 'rect' };
@@ -720,6 +776,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
 
   const pins: PinData[] = [];
   const silkLines: PartSilkLine[] = [];
+  let value: string | undefined;
   const endPtr = partSize + 4;
   while (ptr < endPtr && ptr < data.length) {
     const subType = data[ptr]; ptr += 1;
@@ -747,10 +804,21 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
         ptr += sz;
         break;
       }
-      case 0x01: case 0x06:
+      case 0x01:
         if (ptr + 4 > data.length) { ptr = endPtr; break; }
         ptr += ru32(data, ptr) + 4;
         break;
+      case 0x06: {
+        // Body label. Apple exports write exactly one and it repeats the
+        // refdes; MSI (and other Cadence/PADS re-exports) write a second one
+        // carrying the BOM value — "22uF" under C757. The first label that
+        // isn't the refdes is that value; a board with only the refdes copy
+        // yields nothing, which is the pre-existing behaviour.
+        const { label, next } = readLabelSubBlock(data, ptr);
+        if (value === undefined && label !== partName && isPlausiblePartValue(label)) value = label;
+        ptr = next;
+        break;
+      }
       case 0x09: {
         const { pin, next } = parsePinSubBlock(data, ptr);
         pins.push(pin);
@@ -767,7 +835,7 @@ function parsePartBlock(encBuf: Uint8Array): PartData | null {
     }
   }
   if (!partName) return null;
-  return { name: partName, side: 'top', pins, groupName, silkLines };
+  return { name: partName, side: 'top', pins, groupName, silkLines, value };
 }
 
 interface TestPadData { x: number; y: number; netIndex: number; }
@@ -1328,6 +1396,30 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     }
   }
 
+  // Decide whether the part-label channel actually carries BOM values.
+  // The 0x06 body label is a silkscreen text element and what an exporter
+  // puts in it varies: MSI (and other Cadence/PADS re-exports) write the
+  // component value — "22uF" under C757 — while Apple's exporter writes a
+  // serialised placeholder, Device1 / Device2 / … one per part and never
+  // repeated. A value column that is unique on every single part of a board
+  // full of passives is not a BOM, so drop the whole channel rather than
+  // stamping 4,745 parts with a meaningless "DeviceN".
+  {
+    const values = partDataList.map(pd => pd.value).filter((v): v is string => !!v);
+    const distinct = new Set(values).size;
+    if (values.length >= PLACEHOLDER_MIN_SAMPLES
+        && distinct >= values.length * PLACEHOLDER_UNIQUE_RATIO
+        && values.filter(v => SERIAL_LABEL_RE.test(v)).length >= values.length * PLACEHOLDER_SERIAL_RATIO) {
+      for (const pd of partDataList) pd.value = undefined;
+      log.parser.log(
+        `(pcb values) dropped ${values.length} part labels — ${distinct} distinct and serially numbered ` +
+        `(e.g. "${values[0]}"): exporter placeholder text, not BOM values`,
+      );
+    } else if (values.length > 0) {
+      log.parser.log(`(pcb values) ${values.length} parts carry a component value (${distinct} distinct)`);
+    }
+  }
+
   // Collapse implausible oblong pad geometry (see normalizeOblongPads doc)
   // while positions and pad angles are still in the un-mirrored frame.
   {
@@ -1821,7 +1913,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         `guardPassed=${guardPassed} → final angleDeg=${angleDeg}`,
       );
     }
-    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}) });
+    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value ? { meta: { value: pd.value } } : {}) });
 
     // Emit a Pad per pin with valid geometry (none when the file only
     // carries placeholder geometry — 12-mil dots are not copper pads).

@@ -63,7 +63,11 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     smaller than their own labels. Padstacks pick the smallest outer-copper
 //     pad, which also drops the oversized residue entries that concatenated
 //     multi-pass exports (7523v10, V382_20) leak into a stack.
-const PARSER_VERSION = 83;
+// 84: XZZ parser reads the part's 0x06 body label into Part.meta.value, so
+//     exporters that write a component value there (MSI) show one in the Info
+//     pane. Boards whose label channel is placeholder text (Apple's serialised
+//     Device1/Device2/…) drop it board-wide and are unchanged.
+const PARSER_VERSION = 84;
 
 interface CachedBoard {
   key: string;

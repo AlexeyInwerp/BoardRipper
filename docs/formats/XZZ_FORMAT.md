@@ -116,9 +116,50 @@ After DES decryption:
 │ u32: nameLen      │
 │ partName bytes    │  Reference designator
 ├──────────────────┤
-│ Pin sub-blocks... │  Sequential pin data
+│ Sub-blocks...     │  0x05 silk line, 0x06 label, 0x09 pin, …
 └──────────────────┘
 ```
+
+### Label Sub-Block (`0x06`) — component value
+
+A part body may carry `0x06` sub-blocks: silkscreen **text** elements placed
+on the part. Same framing as the part header's own `0x06`, minus 4 bytes —
+a body sub-block spends those on its own size prefix:
+
+```
+┌──────────────────┐
+│ 0x06 marker byte  │
+├──────────────────┤
+│ u32: size         │  Payload length
+├──────────────────┤
+│ u32: layer        │  Always 17 (silkscreen) in the surveyed corpus
+│ 22 bytes: unknown │  Placement — x/y, height, flags
+├──────────────────┤
+│ u32: textLen      │  0 when the element carries no string
+│ text bytes        │
+└──────────────────┘
+```
+
+**What the text holds is exporter-specific**, and this is the whole
+difficulty of the field:
+
+- MSI (and other Cadence/PADS re-exports) write the **BOM value** — `22uF`
+  under `C757`, `1nF` under `C905`. That is the useful case: the parser
+  lifts it into `Part.meta.value`, which the Info pane, net branch list and
+  MCP part search all already render.
+- Apple's exporter writes a **serialised placeholder** — `Device1`,
+  `Device2`, … one per part, never repeated. Seven boards in the local
+  corpus do this, up to 4,955 labels on a single board.
+- Most boards (iPhone, Samsung, iPad, MECHREVO) write `textLen = 0`.
+
+The parser therefore takes the first body label that isn't the refdes, then
+applies a **board-level placeholder guard** before committing any of them: a
+value column that is ≥95% distinct across ≥20 parts *and* ≥80% alphabetic-
+then-numeric (`Device1`, `Part207`) is exporter scaffolding, not a BOM — a
+board full of passives repeats `100nF` and `10K` constantly — so the whole
+channel is dropped and no part gets a value. Real values lead with the
+magnitude (`22uF`, `10K`, `0R`) and so never match the serial pattern.
+Logged under `(pcb values)` either way.
 
 ### Pin Sub-Block
 
