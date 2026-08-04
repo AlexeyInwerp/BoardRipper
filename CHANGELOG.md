@@ -1,5 +1,68 @@
 # BoardRipper changelog
 
+## v0.34.0 — 2026-08-05
+
+On an HDR display the selected component's outline can now burn brighter than
+white, so the part you are working on cannot be confused with the thousands of
+white neighbours around it. Off by default, experimental, and invisible on an
+SDR screen. Plus testpoint labels that no longer print on top of each other,
+and an MCP auth switch that stops kicking agents out.
+
+### HDR selection outline (experimental, opt-in)
+
+- **The selected outline, lit.** Not a glow blob behind the part — the same
+  shape the selection already strokes (rotated OBB, AABB fallback, a 24-gon
+  around single-pin parts), redrawn as HDR line segments that sit exactly on
+  the SDR ones. Thickness tracks the normal selection stroke, so with the
+  feature off nothing about selection changes at all. `4af3e4ad` `e774ca67`
+- **Turn it on where you will see it.** A card on the start page with an
+  intensity slider inline, because the right brightness depends on your
+  display and a trip to Settings discourages finding it by eye. The Settings ▸
+  Selection & Highlight control stays visible-but-hinted on an SDR display; the
+  start-page card hides entirely. `6cbbc9c0` `e774ca67`
+- **It asks your eyes, not your monitor.** `(dynamic-range: high)` is a
+  boolean — a marginal HDR panel reports exactly what an XDR panel reports. So
+  the prompt shows a real HDR patch beside reference white and says outright
+  that if they look the same, turning the feature on will change nothing.
+  Dismissable for good. `b10eb952`
+- **Undock to an SDR monitor and it tears itself down** on the next frame.
+  Rotate, mirror and butterfly all work for free — the layer projects through
+  the same matrix as the board labels. `e774ca67`
+- **Brightness is a baked ladder, not an opacity.** Measured on real hardware:
+  a PQ sprite keeps its headroom over the board canvas, but compositing it with
+  opacity flattens it straight back to SDR. So the intensity slider swaps
+  between 24 tiles baked from 4000 down to 200 nits (~7 KB in total) rather
+  than fading one. The finding, and the alternatives it ruled out, are written
+  down so they don't get "fixed" back into a bug. `14fbef4f` `7c163591`
+  `594b997a`
+
+### Rendering
+
+- **A testpoint's refdes no longer prints on top of its net name.** On every
+  single-pin part — testpoint, fiducial, standalone pad — the two labels were
+  emitted at byte-identical positions and drew straight through each other.
+  They now straddle the pad the way a BGA's pin-number/net pair does, one above
+  and one below, sized off the pad instead of a zero-width box. `eaf10d1e`
+  `0dcd63eb`
+
+### MCP
+
+- **Flipping the auth switch no longer logs every agent out.** Moving Settings ▸
+  Integrations back to Token used to kill live OAuth sessions instantly — the
+  tokens stayed valid, the server just stopped looking at them, while discovery
+  403'd so they couldn't reconnect either. The mode flag now means what it
+  always should have: whether *new* agents can onboard via OAuth. Ending a
+  session is an explicit act instead of a side effect. `699d453d`
+
+### Elsewhere
+
+- **An (i) button next to the update badge** says what BoardRipper is, who
+  wrote it, and where to find the source — in a place you actually walk past.
+  It renders in every build, including lite and offline, which are exactly the
+  ones a first-time user is likely to meet. The Settings ▸ About tab that
+  briefly existed is gone again; one surface, not two. `e5692c70` `56a22dbc`
+  `e4930150`
+
 ## v0.33.0 — 2026-07-29
 
 Click a pin and the Info tab now shows the whole net hanging off it — every
