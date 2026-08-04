@@ -7,7 +7,7 @@ import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore, type RenderSettings } from '../../store/render-settings';
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
-import { isHdrCapable, onHdrCapabilityChange } from '../../renderer/hdr-selection-outline';
+import { isHdrCapable, onHdrCapabilityChange, isHdrPromptDismissed, dismissHdrPrompt, DEMO_RUNG } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
 import {
   isAutoSwitchLinked,
@@ -715,46 +715,97 @@ function setGlobal<K extends 'hdrFocusGlow' | 'hdrGlowIntensity'>(
  *
  *  Deliberately NOT inside the collapsible "Quick settings" card: this is the
  *  feature's discovery surface, and buried under a sub-heading inside a card
- *  that users collapse, nobody finds it.
+ *  users collapse, nobody finds it.
  *
- *  HIDES entirely on a non-HDR display — unlike the Settings control, which
- *  stays visible-but-hinted. The home screen is a dashboard of things you can
- *  act on; a permanently dead card is noise. The intensity slider rides along
- *  because the right value is display-dependent and has to be found by eye. */
+ *  Three states:
+ *   - capable + OFF + not dismissed -> the DEMO prompt (below)
+ *   - capable + ON                  -> compact control with the intensity slider
+ *   - not capable, or dismissed+OFF -> nothing
+ *
+ *  The demo exists because `(dynamic-range: high)` is a boolean and cannot tell
+ *  us whether the headroom is actually *visible* on this panel — a marginal HDR
+ *  monitor reports exactly what an XDR display reports. Showing a real PQ patch
+ *  beside reference white lets the user answer that with their own eyes, which
+ *  no API can. Side-by-side and not a lone patch: an isolated bright thing is
+ *  hard to judge, next to white it is unambiguous.
+ *
+ *  Note the demo can only be a PATCH, not brighter TEXT — the image technique
+ *  lights stretched tiles, and live text cannot carry HDR. */
 function HdrGlowCard() {
   const enabled = useHdrGlow();
   const intensity = useHdrIntensity();
   const [capable, setCapable] = useState(isHdrCapable);
+  const [dismissed, setDismissed] = useState(isHdrPromptDismissed);
   useEffect(() => onHdrCapabilityChange(setCapable), []);
+
   if (!capable) return null;
+  if (!enabled && dismissed) return null;
+
+  if (!enabled) {
+    return (
+      <div className="home-hdr-card">
+        <div className="home-hdr-head">
+          <span className="home-hdr-title">
+            Your monitor supports HDR
+            <span className="home-hdr-badge">NEW</span>
+          </span>
+        </div>
+        <div className="home-hdr-demo">
+          <div className="home-hdr-demo-patches">
+            <div className="home-hdr-demo-patch home-hdr-demo-sdr" />
+            <div
+              className="home-hdr-demo-patch home-hdr-demo-hdr"
+              style={{ backgroundImage: `url(/hdr-line-${DEMO_RUNG}.avif)` }}
+            />
+          </div>
+          <p className="home-hdr-desc">
+            <strong>If the right patch looks brighter than the left</strong>, your display
+            has headroom above normal white — and BoardRipper can spend it on the
+            selected component's outline, so the part you searched for, looked up from a
+            PDF, or stepped to along a net is unmistakable on a dense board.
+            <br />
+            If both look identical, HDR is not reaching this window and turning it on
+            will change nothing.
+          </p>
+        </div>
+        <div className="home-hdr-actions">
+          <button
+            type="button"
+            className="home-hdr-btn home-hdr-btn-primary"
+            onClick={() => setGlobal('hdrFocusGlow', true)}
+          >
+            Turn it on
+          </button>
+          <button
+            type="button"
+            className="home-hdr-btn"
+            onClick={() => { dismissHdrPrompt(); setDismissed(true); }}
+          >
+            Don't show again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="home-hdr-card">
       <label className="home-hdr-head">
-        <span className="home-hdr-title">
-          HDR selection outline
-          <span className="home-hdr-badge">NEW</span>
-        </span>
+        <span className="home-hdr-title">HDR selection outline</span>
         <input
           type="checkbox"
           checked={enabled}
           onChange={(e) => setGlobal('hdrFocusGlow', e.target.checked)}
         />
       </label>
-      <p className="home-hdr-desc">
-        Your display can show light brighter than white. Turn this on and the selected
-        component's outline burns into that headroom — so the part you searched for,
-        looked up from a PDF, or stepped to on a net is unmistakable on a dense board.
-      </p>
-      {enabled && (
-        <label className="home-hdr-slider">
-          <span>Intensity</span>
-          <input
-            type="range" min={1} max={10} step={1} value={intensity}
-            onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
-          />
-          <span className="home-hdr-value">{intensity}</span>
-        </label>
-      )}
+      <label className="home-hdr-slider">
+        <span>Intensity</span>
+        <input
+          type="range" min={1} max={10} step={1} value={intensity}
+          onChange={(e) => setGlobal('hdrGlowIntensity', Number(e.target.value))}
+        />
+        <span className="home-hdr-value">{intensity}</span>
+      </label>
     </div>
   );
 }

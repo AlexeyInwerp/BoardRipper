@@ -7123,6 +7123,44 @@ body {
   color: var(--text-secondary);
 }
 .home-hdr-slider input[type='range'] { flex: 1; }
+/* Discovery demo: a real PQ patch beside reference white. Side-by-side is the
+   point — an isolated bright patch is hard to judge, next to white it isn't.
+   dynamic-range-limit must be set here too; the card itself is ordinary SDR. */
+.home-hdr-demo { display: flex; gap: 14px; align-items: flex-start; }
+.home-hdr-demo-patches {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.home-hdr-demo-patch { width: 46px; height: 46px; }
+.home-hdr-demo-sdr { background: #fff; }
+/* background-image is set inline from DEMO_RUNG so the rung has one source of
+   truth; only the compositing hint lives here. */
+.home-hdr-demo-hdr {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  dynamic-range-limit: no-limit;
+}
+.home-hdr-actions { display: flex; gap: 8px; }
+.home-hdr-btn {
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.home-hdr-btn:hover { border-color: var(--accent); }
+.home-hdr-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
 .home-hdr-value {
   min-width: 1.5em;
   text-align: right;

@@ -165,3 +165,27 @@ export class HdrSelectionOutline {
     this.edges.length = 0;
   }
 }
+
+/** Discovery prompt dismissal. Capability-triggered rather than version-
+ *  triggered: it appears whenever the display CAN do HDR but the feature is
+ *  off, which covers both "we just shipped this" and "you plugged in an HDR
+ *  monitor a year later" without needing a what's-new mechanism. */
+const PROMPT_DISMISSED_KEY = 'boardripper-hdr-prompt-dismissed-v1';
+
+export function isHdrPromptDismissed(): boolean {
+  try {
+    return localStorage.getItem(PROMPT_DISMISSED_KEY) === '1';
+  } catch {
+    return true;   // storage blocked — don't nag
+  }
+}
+
+export function dismissHdrPrompt(): void {
+  try {
+    localStorage.setItem(PROMPT_DISMISSED_KEY, '1');
+  } catch { /* ignore quota / private-mode errors */ }
+}
+
+/** Brightest baked rung — used by the discovery prompt's demo patch, where the
+ *  whole point is to make the headroom unmistakable. */
+export const DEMO_RUNG = 0;

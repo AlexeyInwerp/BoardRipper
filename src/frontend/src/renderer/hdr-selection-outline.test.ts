@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rungForIntensity, GLOW_RUNGS, layoutPolygonEdges } from './hdr-selection-outline';
+import { rungForIntensity, GLOW_RUNGS, layoutPolygonEdges, isHdrPromptDismissed, dismissHdrPrompt, DEMO_RUNG } from './hdr-selection-outline';
 
 describe('rungForIntensity', () => {
   it('maps max intensity to the brightest rung', () => {
@@ -69,5 +69,25 @@ describe('layoutPolygonEdges', () => {
   it('returns nothing for a degenerate polygon', () => {
     expect(layoutPolygonEdges([[5, 5]], 2)).toHaveLength(0);
     expect(layoutPolygonEdges([], 2)).toHaveLength(0);
+  });
+});
+
+describe('HDR discovery prompt dismissal', () => {
+  // vitest runs in the 'node' environment, so localStorage is absent — which is
+  // also the real-world "storage blocked / private mode" case. The prompt must
+  // report itself as already dismissed there rather than throwing or nagging
+  // every single boot with no way to persist the dismissal.
+  it('reports dismissed when storage is unavailable, instead of throwing', () => {
+    expect(() => isHdrPromptDismissed()).not.toThrow();
+    expect(isHdrPromptDismissed()).toBe(true);
+  });
+
+  it('swallows storage failures when dismissing', () => {
+    expect(() => dismissHdrPrompt()).not.toThrow();
+  });
+
+  it('demos at the brightest rung — the point is to be unmistakable', () => {
+    expect(DEMO_RUNG).toBe(0);
+    expect(rungForIntensity(10)).toBe(DEMO_RUNG);
   });
 });
