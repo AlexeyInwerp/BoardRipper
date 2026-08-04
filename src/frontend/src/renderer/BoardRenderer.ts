@@ -31,6 +31,7 @@ import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTE
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import { LabelOverlay } from './label-overlay';
+import { focusHaloGeometry } from './focus-halo';
 import type { LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
@@ -3737,18 +3738,11 @@ export class BoardRenderer {
     // 0402-class parts; for larger parts we add a fixed padding so the
     // gradient extends beyond the part edges without scaling 5× a giant
     // BGA out into the next county.
-    const MIN_SPOTLIGHT_DIAMETER = 1500; // mils — ~38 mm
-    const PART_PADDING = 800;            // mils added to part_max_dim
-    const b = part.bounds;
-    const bw = b.maxX - b.minX;
-    const bh = b.maxY - b.minY;
-    const partMaxDim = Math.max(bw, bh, 1);
-    const spriteSize = Math.max(MIN_SPOTLIGHT_DIAMETER, partMaxDim + PART_PADDING);
-
-    this._haloSprite.width  = spriteSize;
-    this._haloSprite.height = spriteSize;
-    this._haloSprite.x = (b.minX + b.maxX) / 2;
-    this._haloSprite.y = (b.minY + b.maxY) / 2;
+    const g = focusHaloGeometry(part.bounds);
+    this._haloSprite.width  = g.size;
+    this._haloSprite.height = g.size;
+    this._haloSprite.x = g.x;
+    this._haloSprite.y = g.y;
     this._haloSprite.visible = true;
   }
 
