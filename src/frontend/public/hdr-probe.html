@@ -10,7 +10,7 @@
   .row { display:flex; gap:16px; flex-wrap:wrap; }
   figure { margin:0; width:200px; }
   .box { width:200px; height:200px; position:relative; background:#000; overflow:hidden; }
-  .glow { position:absolute; inset:0; background:url(/hdr-glow.avif) center/contain no-repeat;
+  .glow { position:absolute; inset:0; background:url(/hdr-line-0.avif) center/contain no-repeat;
           dynamic-range-limit:no-limit; }
   body.clamp .glow { dynamic-range-limit:standard; }
   figcaption { padding-top:8px; color:#888; line-height:1.5; }
@@ -89,7 +89,7 @@ document.getElementById('rungs').innerHTML = [0, 4, 8, 12, 16, 20, 23].map((i) =
   <figure>
     <div class="box">
       <canvas class="bg" width="200" height="200"></canvas>
-      <div class="glow" style="background-image:url(/hdr-glow-${i}.avif)"></div>
+      <div class="glow" style="background-image:url(/hdr-line-${i}.avif)"></div>
     </div>
     <figcaption>rung ${i} — <b>${nitsOf(i)} nits</b></figcaption>
   </figure>`).join('');

@@ -7,7 +7,7 @@ import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
-import { isHdrCapable, onHdrCapabilityChange } from '../../renderer/hdr-glow-overlay';
+import { isHdrCapable, onHdrCapabilityChange } from '../../renderer/hdr-selection-outline';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
 import {
   isAutoSwitchLinked,

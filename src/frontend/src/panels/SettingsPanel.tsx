@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
 import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
-import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-glow-overlay';
+import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-selection-outline';
 import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';

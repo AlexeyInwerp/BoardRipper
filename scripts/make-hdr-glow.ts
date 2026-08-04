@@ -1,6 +1,11 @@
-/** Bakes the HDR focus-glow sprite: a radial white gradient whose centre sits
- *  at PEAK_NITS and falls to black at the edge, PQ-encoded and tagged
- *  CICP 9/16/0 (BT.2020 primaries / PQ transfer / identity matrix).
+/** Bakes the HDR selection-outline sprites: SOLID white tiles at a ladder of
+ *  peak luminances, PQ-encoded and tagged CICP 9/16/0 (BT.2020 primaries /
+ *  PQ transfer / identity matrix).
+ *
+ *  Solid, not a gradient: the feature draws the SELECTION OUTLINE in HDR — one
+ *  thin rotated div per polygon edge, each stretching this tile. A radial blob
+ *  was the wrong shape (an earlier iteration; the user wanted the existing
+ *  selection rectangle to burn, not a halo behind it).
  *
  *  MAINTAINER TOOL — not part of any build. avifenc is not in CI or the Docker
  *  image; the generated .avif is committed. Re-run only when changing the
@@ -14,20 +19,18 @@ import { writeFileSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pqEncode } from '../src/frontend/src/renderer/pq.ts';
 
-const SIZE = 256;
+const SIZE = 16;   // solid tile — stretched per edge, so it needs no detail
 const PEAK_NITS = 4000;   // centre luminance; real output is capped by display headroom
 const FLOOR_NITS = 200;   // ~SDR white — the dimmest frame, where the SDR highlight takes over
-const FRAMES = 24;        // luminance ladder used to fade WITHOUT opacity (see below)
-const OUT = 'src/frontend/public/hdr-glow.avif';
-const TMP = 'src/frontend/public/.hdr-glow-src.png';
+const FRAMES = 24;        // luminance ladder = the intensity scale (see below)
+const TMP = 'src/frontend/public/.hdr-line-src.png';
 
 /** Opacity compositing flattens HDR back to SDR (measured 2026-08-04 on the
  *  probe: swatch 4 == swatch 1). So the pulse cannot fade with alpha. Instead we
- *  bake a ladder of frames at decreasing PEAK luminance and swap the sprite —
- *  a real luminance fade rather than an alpha fade. Geometric spacing keeps the
- *  perceived steps even: the ladder spans ~4.3 stops, so each of 24 rungs is
- *  ~0.19 stops. At 7 rungs (0.63 stops each) the step-down was visibly steppy
- *  in the probe. Frames are ~1.2 KB, so rungs are nearly free. */
+ *  bake a ladder of tiles at decreasing PEAK luminance and swap the sprite.
+ *  Geometric spacing keeps the perceived steps even: the ladder spans ~4.3
+ *  stops, so each of 24 rungs is ~0.19 stops. Tiles are tiny, so rungs are
+ *  nearly free. This is the INTENSITY control, not an animation. */
 function frameNits(i: number): number {
   if (FRAMES <= 1) return PEAK_NITS;
   const t = i / (FRAMES - 1);
@@ -59,20 +62,14 @@ function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([len, body, crc]);
 }
 
-/** Build a 16-bit PNG of the PQ-encoded radial falloff at a given peak. */
+/** Build a 16-bit PNG: a solid PQ-encoded tile at the given peak luminance. */
 function writeSourcePng(peakNits: number): void {
   const raw = Buffer.alloc(SIZE * (1 + SIZE * 6)); // per row: filter byte + 3ch * 2B
+  const v = Math.round(pqEncode(peakNits) * 65535);
   let p = 0;
-  const r = SIZE / 2;
   for (let y = 0; y < SIZE; y++) {
     raw[p++] = 0; // filter: none
     for (let x = 0; x < SIZE; x++) {
-      const dx = x - r + 0.5, dy = y - r + 0.5;
-      const d = Math.min(1, Math.sqrt(dx * dx + dy * dy) / r);
-      // smoothstep falloff — same easing family as the existing dark halo
-      const t = 1 - d;
-      const falloff = t <= 0 ? 0 : t * t * (3 - 2 * t);
-      const v = Math.round(pqEncode(peakNits * falloff) * 65535);
       for (let c = 0; c < 3; c++) { raw.writeUInt16BE(v, p); p += 2; }
     }
   }
@@ -108,10 +105,8 @@ function encodeAvif(out: string): void {
 for (let i = 0; i < FRAMES; i++) {
   const nits = frameNits(i);
   writeSourcePng(nits);
-  encodeAvif(`src/frontend/public/hdr-glow-${i}.avif`);
-  // Frame 0 doubles as the canonical single-sprite asset.
-  if (i === 0) encodeAvif(OUT);
-  console.log(`  frame ${i}: peak ${Math.round(nits)} nits`);
+  encodeAvif(`src/frontend/public/hdr-line-${i}.avif`);
+  console.log(`  rung ${i}: peak ${Math.round(nits)} nits`);
 }
 unlinkSync(TMP);
-console.log(`wrote ${FRAMES} frames + ${OUT}`);
+console.log(`wrote ${FRAMES} solid rungs`);

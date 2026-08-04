@@ -32,7 +32,7 @@ import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import { LabelOverlay } from './label-overlay';
 import { focusHaloGeometry } from './focus-halo';
-import { HdrGlowOverlay, isHdrCapable, rungForIntensity } from './hdr-glow-overlay';
+import { HdrSelectionOutline, isHdrCapable, rungForIntensity, type ScreenPoint } from './hdr-selection-outline';
 import type { LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
@@ -394,11 +394,11 @@ export class BoardRenderer {
    *  canvas is a containerEl sibling, not a Pixi object). Task 8 extends the
    *  sync path; do not rename (referenced by name in the plan). */
   private textFastMode: LabelOverlay | null = null;
-  /** HDR focus glow layer — mounted lazily by ensureHdrOverlay() when the
+  /** HDR selection outline — mounted lazily by ensureHdrOverlay() when the
    *  setting is on AND the display can actually show HDR; torn down otherwise.
    *  Like textFastMode it is a containerEl sibling, so it survives Pixi
    *  context-loss reinit. */
-  private hdrOverlay: HdrGlowOverlay | null = null;
+  private hdrOverlay: HdrSelectionOutline | null = null;
   /** Set whenever the view, selection, dim state, or scene changed so the next
    *  tick redraws the overlay. Reset in onTick after a successful draw. */
   private overlayDirty = false;
@@ -1875,54 +1875,80 @@ export class BoardRenderer {
   /** Mirror of ensureLabelOverlay for the HDR glow layer. Gated on BOTH the
    *  opt-in setting and live display capability, so undocking to an SDR monitor
    *  tears it down on the next frame without any explicit listener. */
-  private ensureHdrOverlay(): HdrGlowOverlay | null {
+  private ensureHdrOverlay(): HdrSelectionOutline | null {
     if (!renderSettingsStore.settings.hdrFocusGlow || !isHdrCapable()) {
       if (this.hdrOverlay) { this.hdrOverlay.destroy(); this.hdrOverlay = null; }
       return null;
     }
     if (!this.hdrOverlay) {
-      this.hdrOverlay = new HdrGlowOverlay(this.containerEl);
-      log.render.log('HDR focus glow overlay mounted');
+      this.hdrOverlay = new HdrSelectionOutline(this.containerEl);
+      log.render.log('HDR selection outline mounted');
     }
     return this.hdrOverlay;
   }
 
-  /** Position the HDR glow on the current selection. Called from onTick AFTER
-   *  app.render(), so worldTransform is current — same ordering requirement as
-   *  syncLabelOverlay.
+  /** Light the current selection's outline in HDR — the SAME shape the SDR
+   *  selection draws (see drawPartOutline), just above SDR white. Called from
+   *  onTick AFTER app.render(), so worldTransform is current — same ordering
+   *  requirement as syncLabelOverlay.
    *
-   *  Steady, not animated: this only moves the sprite to track pan/zoom, so it
-   *  adds nothing to frames that were already going to run. Reads
+   *  Steady, not animated: this only re-projects the outline to track pan/zoom,
+   *  so it adds nothing to frames that were already going to run. Reads
    *  boardStore.selection directly rather than carrying a parallel "focus
    *  target" field — selection is already set and cleared at exactly the right
    *  moments, and a second copy would be one more thing to keep in sync. */
-  private syncHdrOverlay(overlay: HdrGlowOverlay, scene: BoardScene): void {
+  private syncHdrOverlay(overlay: HdrSelectionOutline, scene: BoardScene): void {
     const sel = boardStore.selection;
     if (sel.partIndex === null || !this.board) { overlay.hide(); return; }
 
     const part = this.board.parts[sel.partIndex];
     if (!part || !this.isPartVisible(part)) { overlay.hide(); return; }
 
-    // Pin-level selection glows the pin; part-level glows the whole part.
-    const pin = sel.pinIndex !== null ? part.pins[sel.pinIndex] : null;
-    const g = pin
-      ? focusHaloGeometry({
-          minX: pin.position.x, maxX: pin.position.x,
-          minY: pin.position.y, maxY: pin.position.y,
-        })
-      : focusHaloGeometry(part.bounds);
+    const s = renderSettingsStore.settings;
+    const sp = s.selectionPadding;
+
+    // Mirror drawPartOutline's shape choice exactly, so the HDR outline sits on
+    // the SDR one instead of beside it: OBB polygon when the part has one, AABB
+    // rect otherwise — and a circle (as a 24-gon) for single-pin parts, which
+    // is what renderSelection draws for them.
+    let world: Array<readonly [number, number]>;
+    if (part.pins.length === 1) {
+      const pin = part.pins[0];
+      const r = computePinRadius(s, pin.radius) + sp;
+      world = [];
+      const SEGMENTS = 24;
+      for (let i = 0; i < SEGMENTS; i++) {
+        const a = (i / SEGMENTS) * Math.PI * 2;
+        world.push([pin.position.x + Math.cos(a) * r, pin.position.y + Math.sin(a) * r]);
+      }
+    } else {
+      const poly = computePartRenderPoly(part, s);
+      if (poly) {
+        world = sp === 0 ? poly.map(p => [p[0], p[1]] as const) : expandPoly(poly, sp);
+      } else {
+        const rb = computePartRenderBounds(part, s);
+        const x0 = rb.px - sp, y0 = rb.py - sp;
+        const x1 = rb.px + rb.pw + sp, y1 = rb.py + rb.ph + sp;
+        world = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+      }
+    }
 
     // World -> screen through the same label-layer matrix the text overlay
     // uses, so rotate / mirror / butterfly are handled for free.
     const wt = (boardStore.butterfly && part.side === 'bottom' && scene.butterflyRoot)
       ? scene.bottomLabelLayer.worldTransform
       : scene.topLabelLayer.worldTransform;
-    const cssX = wt.a * g.x + wt.c * g.y + wt.tx;
-    const cssY = wt.b * g.x + wt.d * g.y + wt.ty;
-    const scale = Math.hypot(wt.a, wt.b);
+    const pts: ScreenPoint[] = world.map(([wx, wy]) => [
+      wt.a * wx + wt.c * wy + wt.tx,
+      wt.b * wx + wt.d * wy + wt.ty,
+    ] as ScreenPoint);
 
-    const rung = rungForIntensity(renderSettingsStore.settings.hdrGlowIntensity);
-    overlay.show(cssX, cssY, g.size * scale, rung);
+    // Match the SDR primary-selection stroke width (selectionWidth * 1.7 in
+    // world mils), with a 2px floor so it stays visible when zoomed out.
+    const scale = Math.hypot(wt.a, wt.b);
+    const thickness = Math.max(2, s.selectionWidth * 1.7 * scale);
+
+    overlay.showPolygon(pts, thickness, rungForIntensity(s.hdrGlowIntensity));
   }
 
   /** Part indices left lit by the ambient-dim overlay this frame (the
