@@ -1,6 +1,6 @@
 # HDR focus glow — brighter-than-white highlights on search/lookup/selection
 
-**Date:** 2026-08-04 · **Status:** approved (user-confirmed in session)
+**Date:** 2026-08-04 · **Status:** implemented (pending field verification on :1234)
 **Problem owner:** bench users on HDR-capable displays who lose the found part in a dense board.
 
 ## Problem
