@@ -4,7 +4,7 @@
 
 **Goal:** Spend HDR display headroom on the single element the user just navigated to — the current search hit, the PDF-lookup target, the selected part — so it is unmistakable among thousands of SDR-white neighbours on a dense board.
 
-**Architecture:** A pre-baked PQ-encoded HDR image (AVIF, CICP 9/16/0) on a DOM overlay `<div>` layered above the PixiJS canvas, positioned in screen space from the same world matrix the existing Canvas2D label overlay uses. A 500 ms eased pulse fires on arrival and decays to nothing, leaving the ordinary SDR highlight untouched underneath. Nothing about the Pixi render path changes — HDR is strictly additive.
+**Architecture:** A pre-baked PQ-encoded HDR image (AVIF, CICP 9/16/0) on a DOM overlay `<div>` layered above the PixiJS canvas, positioned in screen space from the same world matrix the existing Canvas2D label overlay uses. The glow holds steadily on whatever the user last navigated to — a "super-selection" — and the ordinary SDR highlight is untouched underneath it. Nothing about the Pixi render path changes; HDR is strictly additive.
 
 **Tech Stack:** TypeScript, PixiJS v8.17, vitest (unit), Playwright (E2E), `avifenc` (libavif, maintainer-side asset generation only).
 
@@ -13,12 +13,15 @@
 - **Spec:** `docs/specs/2026-08-04-hdr-focus-glow-design.md`. Read it before starting.
 - **The SDR highlight is never modified.** HDR is purely additive on top. Every task that touches `renderSelection()` must leave existing draw calls byte-identical.
 - **Settings are global**, not per-tab: `renderSettingsStore.globalSettings`, edited via `updateGlobal`. Follow `textFastMode` (`SettingsPanel.tsx:2432`), not the per-board draft settings.
-- **Defaults:** `hdrFocusGlow = false` (opt-in, labelled `(experimental)`), `hdrGlowIntensity = 3` (range 0–4, step 0.5).
-- **Pulse duration:** 500 ms. **Glow scope:** focus target only — never net members, never all search hits.
+- **Defaults:** `hdrFocusGlow = false` (opt-in, labelled `(experimental)`), `hdrGlowIntensity` on a 1–10 scale where 10 is brightest; default set from the user's rung pick on the probe.
+- **Steady, not a pulse.** The glow holds while the target is focused (user revision, 2026-08-04). No envelope, no clock, no animation.
+- **Alpha is unusable.** Opacity compositing flattens HDR to SDR (probe finding 3). Never vary the glow with `opacity`, `filter: brightness()`, or any alpha. Brightness varies ONLY by swapping to a sprite baked at a different peak luminance.
+- **Glow scope:** focus target only — never net members, never all search hits.
+- **Assets:** `hdr-glow-<0..23>.avif`, a 24-rung ladder 4000 → 200 nits. Rung 0 brightest. Committed; `avifenc` is a maintainer tool.
 - **Logging:** scoped loggers from `store/log-store.ts` only, never `console.log`. Use `log.render.*`. No logging in per-frame paths.
 - **Asset format is AVIF, not PNG.** Safari does not map PNG `cICP` to EDR (see spec Background). PNG would silently degrade to SDR on Safari, which is half the target audience.
 - **`avifenc` is a maintainer tool, not a build step.** It is not present in CI or the Docker image. The generated `.avif` is committed to the repo.
-- **Task 1 is a hard gate.** If the probe shows DOM compositing flattens HDR, stop and report — Tasks 2–7 are invalid and the WebGPU decision reopens.
+- **Task 1 gate: PASSED** (2026-08-04, real HDR hardware). The PQ sprite keeps its headroom over a WebGL canvas. Opacity does not survive compositing, hence the alpha constraint above.
 
 ---
 
@@ -441,130 +444,123 @@ git commit -m "refactor(render): extract focusHaloGeometry so both halos share o
 
 ---
 
-### Task 3: `focusPulse` store field
+### Task 3: `focusTarget` store field
 
 **Files:**
-- Create: `src/frontend/src/store/focus-pulse.ts`
-- Create: `src/frontend/src/store/focus-pulse.test.ts`
-- Modify: `src/frontend/src/store/board-store.ts` — tab state shape, the `focusPulse` getter, and the bump sites in `selectPart` (~line 1193), `focusPart` (~line 2043), `focusNet`, and the pin-focus variant (~line 2153)
+- Create: `src/frontend/src/store/focus-target.ts`
+- Create: `src/frontend/src/store/focus-target.test.ts`
+- Modify: `src/frontend/src/store/board-store.ts` — tab state shape, the `focusTarget` getter, and the set/clear sites in `selectPart` (~line 1193), `focusPart` (~line 2043), `focusNet`, and the pin-focus variant (~line 2153)
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `FocusPulse = { partIndex: number; pinIndex: number | null; seq: number }`; `nextFocusPulse(prev, partIndex, pinIndex) => FocusPulse`; `boardStore.focusPulse: FocusPulse | null`. Task 5 reads `boardStore.focusPulse`.
+- Produces: `FocusTarget = { partIndex: number; pinIndex: number | null }`; `sameFocusTarget(a, b) => boolean`; `boardStore.focusTarget: FocusTarget | null`. Task 5 reads `boardStore.focusTarget`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `src/frontend/src/store/focus-pulse.test.ts`:
+Create `src/frontend/src/store/focus-target.test.ts`:
 
 ```typescript
 import { describe, it, expect } from 'vitest';
-import { nextFocusPulse } from './focus-pulse';
+import { sameFocusTarget } from './focus-target';
 
-describe('nextFocusPulse', () => {
-  it('starts at seq 1 from nothing', () => {
-    expect(nextFocusPulse(null, 7, null)).toEqual({ partIndex: 7, pinIndex: null, seq: 1 });
+describe('sameFocusTarget', () => {
+  it('treats two nulls as the same', () => {
+    expect(sameFocusTarget(null, null)).toBe(true);
   });
 
-  it('increments seq on a different target', () => {
-    const a = nextFocusPulse(null, 7, null);
-    const b = nextFocusPulse(a, 9, null);
-    expect(b.seq).toBe(2);
-    expect(b.partIndex).toBe(9);
+  it('treats null and a target as different', () => {
+    expect(sameFocusTarget(null, { partIndex: 1, pinIndex: null })).toBe(false);
+    expect(sameFocusTarget({ partIndex: 1, pinIndex: null }, null)).toBe(false);
   });
 
-  // Stepping search back onto the hit you were already on must re-fire the
-  // glow, otherwise the second press looks broken.
-  it('increments seq even when re-landing on the SAME target', () => {
-    const a = nextFocusPulse(null, 7, 3);
-    const b = nextFocusPulse(a, 7, 3);
-    expect(b.seq).toBe(2);
-    expect(b.partIndex).toBe(7);
-    expect(b.pinIndex).toBe(3);
+  it('compares part and pin', () => {
+    expect(sameFocusTarget({ partIndex: 1, pinIndex: 2 }, { partIndex: 1, pinIndex: 2 })).toBe(true);
+    expect(sameFocusTarget({ partIndex: 1, pinIndex: 2 }, { partIndex: 1, pinIndex: 3 })).toBe(false);
+    expect(sameFocusTarget({ partIndex: 1, pinIndex: 2 }, { partIndex: 4, pinIndex: 2 })).toBe(false);
   });
 
-  it('carries a pin index when focus is pin-level', () => {
-    expect(nextFocusPulse(null, 2, 44).pinIndex).toBe(44);
+  it('distinguishes a part-level focus from a pin-level one on the same part', () => {
+    expect(sameFocusTarget({ partIndex: 1, pinIndex: null }, { partIndex: 1, pinIndex: 0 })).toBe(false);
   });
 });
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
 
-Run: `cd src/frontend && npx vitest run src/store/focus-pulse.test.ts`
-Expected: FAIL — cannot resolve `./focus-pulse`.
+Run: `cd src/frontend && npx vitest run src/store/focus-target.test.ts > /tmp/t.log 2>&1; tail -12 /tmp/t.log`
+Expected: FAIL — cannot resolve `./focus-target`.
+
+(The RTK shell hook swallows vitest's stdout; redirect to a file and tail it, or you will see an empty `PASS (0) FAIL (0)`.)
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/frontend/src/store/focus-pulse.ts`:
+Create `src/frontend/src/store/focus-target.ts`:
 
 ```typescript
-/** A "you just landed here" event for the HDR focus glow. Bumped by the three
- *  navigation paths that place the user on a specific element: search stepping,
- *  PDF -> board lookup, and selection stepping.
+/** What the HDR focus glow is currently marking: the element the user navigated
+ *  to via search stepping, PDF -> board lookup, or selection stepping.
  *
- *  `seq` increments on EVERY bump, including re-landing on the same target, so
- *  pressing next-hit twice on a one-result search still re-fires the pulse. */
-export interface FocusPulse {
+ *  A steady "super-selection", not an event — it holds for as long as the
+ *  target stays selected, so there is no sequence number and no clock. */
+export interface FocusTarget {
   partIndex: number;
   /** null when the focus is a whole part rather than one of its pins. */
   pinIndex: number | null;
-  seq: number;
 }
 
-export function nextFocusPulse(
-  prev: FocusPulse | null,
-  partIndex: number,
-  pinIndex: number | null,
-): FocusPulse {
-  return { partIndex, pinIndex, seq: (prev?.seq ?? 0) + 1 };
+export function sameFocusTarget(a: FocusTarget | null, b: FocusTarget | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.partIndex === b.partIndex && a.pinIndex === b.pinIndex;
 }
 ```
 
 - [ ] **Step 4: Run the test and make sure it passes**
 
-Run: `cd src/frontend && npx vitest run src/store/focus-pulse.test.ts`
+Run: `cd src/frontend && npx vitest run src/store/focus-target.test.ts > /tmp/t.log 2>&1; tail -8 /tmp/t.log`
 Expected: PASS, 4 tests.
 
 - [ ] **Step 5: Wire it into the board store**
 
 In `board-store.ts`:
 
-1. Import at the top: `import { nextFocusPulse, type FocusPulse } from './focus-pulse';`
-2. Add `focusPulse: FocusPulse | null;` to the per-tab state interface (the one declaring `searchSelectionActive` at line 144), and `focusPulse: null,` to **every** tab-state initialiser — there are two, at lines ~838 and ~1133. Miss one and a fresh tab throws on first focus.
+1. Import: `import type { FocusTarget } from './focus-target';`
+2. Add `focusTarget: FocusTarget | null;` to the per-tab state interface (the one declaring `searchSelectionActive` at line 144), and `focusTarget: null,` to **every** tab-state initialiser — there are two, at lines ~838 and ~1133. Miss one and a fresh tab reads `undefined`.
 3. Add a getter beside the `searchSelectionActive` getter (line 646):
 
 ```typescript
-  get focusPulse(): FocusPulse | null { return this.activeTab?.focusPulse ?? null; }
+  get focusTarget(): FocusTarget | null { return this.activeTab?.focusTarget ?? null; }
 ```
 
-4. At each of these four sites, after the existing selection state is assigned and **before** the store notifies, set the pulse. Use the resolved part index the method already computed, and the pin index where the method has one (`focusPart` sets `pinIndex: null`; the pin-focus variant at ~2153 has a real one):
+4. Set it at each landing site, using the part index the method already resolved, and the pin index where it has one:
 
 ```typescript
-      tab.focusPulse = nextFocusPulse(tab.focusPulse, resolvedPartIndex, resolvedPinIndex ?? null);
+      tab.focusTarget = { partIndex: resolvedPartIndex, pinIndex: resolvedPinIndex ?? null };
 ```
 
-- `selectPart` (~1193) — canvas/selection stepping. Skip the bump when the argument is `null` (deselect is not a landing).
-- `focusPart` (~2043) — search hits and PDF lookup both route through here.
+- `selectPart` (~1193) — set it; when the argument is `null` (deselect) set `tab.focusTarget = null` instead.
+- `focusPart` (~2043) — search hits and PDF lookup both route through here. `pinIndex: null`.
 - `focusNet` — same treatment; use the part index it selects.
 - the pin-focus variant (~2153) — pass its real pin index.
 
+5. Clear it wherever the selection is cleared — the same places that already set `searchSelectionActive = false` **and** blank the selection. Do not clear it on a mere `searchSelectionActive` flip: an ordinary canvas click is still a focus target.
+
 - [ ] **Step 6: Verify it compiles and nothing regressed**
 
-Run: `cd src/frontend && npx tsc --noEmit && npx vitest run`
-Expected: no type errors; all unit tests pass.
+Run: `cd src/frontend && (npx tsc --noEmit; npx vitest run) > /tmp/v.log 2>&1; grep -c "error TS" /tmp/v.log; tail -6 /tmp/v.log`
+Expected: 0 type errors; all unit tests pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/frontend/src/store/focus-pulse.ts \
-        src/frontend/src/store/focus-pulse.test.ts \
+git add src/frontend/src/store/focus-target.ts \
+        src/frontend/src/store/focus-target.test.ts \
         src/frontend/src/store/board-store.ts
-git commit -m "feat(store): focusPulse event on search / lookup / selection landings"
+git commit -m "feat(store): focusTarget — what the HDR super-selection is marking"
 ```
 
 ---
 
-### Task 4: `HdrGlowOverlay` — capability detection, DOM layer, pulse envelope
+### Task 4: `HdrGlowOverlay` — capability detection, DOM layer, rung selection
 
 **Files:**
 - Create: `src/frontend/src/renderer/hdr-glow-overlay.ts`
@@ -572,7 +568,7 @@ git commit -m "feat(store): focusPulse event on search / lookup / selection land
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `isHdrCapable() => boolean`; `onHdrCapabilityChange(cb: (v: boolean) => void) => () => void`; `pulseEnvelope(elapsedMs: number) => number`; `class HdrGlowOverlay { constructor(container: HTMLElement); resize(): void; show(cssX: number, cssY: number, cssSize: number, alpha: number): void; hide(): void; destroy(): void }`. Task 5 constructs and drives it.
+- Produces: `isHdrCapable() => boolean`; `onHdrCapabilityChange(cb) => () => void`; `rungForIntensity(intensity: number) => number`; `GLOW_RUNGS`; `class HdrGlowOverlay { constructor(container: HTMLElement); resize(): void; show(cssX: number, cssY: number, cssSize: number, rung: number): void; hide(): void; destroy(): void }`. Task 5 constructs and drives it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -580,45 +576,43 @@ Create `src/frontend/src/renderer/hdr-glow-overlay.test.ts`:
 
 ```typescript
 import { describe, it, expect } from 'vitest';
-import { pulseEnvelope, PULSE_MS } from './hdr-glow-overlay';
+import { rungForIntensity, GLOW_RUNGS } from './hdr-glow-overlay';
 
-describe('pulseEnvelope', () => {
-  it('is at full strength on arrival', () => {
-    expect(pulseEnvelope(0)).toBe(1);
+describe('rungForIntensity', () => {
+  it('maps max intensity to the brightest rung', () => {
+    expect(rungForIntensity(10)).toBe(0);
   });
 
-  it('is fully decayed at the end of the pulse', () => {
-    expect(pulseEnvelope(PULSE_MS)).toBe(0);
+  it('maps min intensity to the dimmest rung', () => {
+    expect(rungForIntensity(1)).toBe(GLOW_RUNGS - 1);
   });
 
-  it('stays at zero after the pulse', () => {
-    expect(pulseEnvelope(PULSE_MS + 5000)).toBe(0);
-  });
-
-  it('decays monotonically', () => {
-    let prev = 2;
-    for (let t = 0; t <= PULSE_MS; t += 25) {
-      const v = pulseEnvelope(t);
-      expect(v).toBeLessThanOrEqual(prev);
-      prev = v;
+  it('is monotonically decreasing in rung as intensity rises', () => {
+    let prev = GLOW_RUNGS;
+    for (let i = 1; i <= 10; i++) {
+      const r = rungForIntensity(i);
+      expect(r).toBeLessThanOrEqual(prev);
+      prev = r;
     }
   });
 
-  it('holds most of its brightness early, then falls away', () => {
-    // ease-out shape: the "here!" flash should read before it fades, so the
-    // half-way point must still be well above linear's 0.5.
-    expect(pulseEnvelope(PULSE_MS / 2)).toBeGreaterThan(0.5);
+  it('never returns a rung outside the baked ladder', () => {
+    for (const i of [-5, 0, 1, 5, 10, 99]) {
+      const r = rungForIntensity(i);
+      expect(r).toBeGreaterThanOrEqual(0);
+      expect(r).toBeLessThan(GLOW_RUNGS);
+    }
   });
 
-  it('treats negative elapsed time as full strength', () => {
-    expect(pulseEnvelope(-10)).toBe(1);
+  it('returns an integer (rungs are file names, not fractions)', () => {
+    expect(Number.isInteger(rungForIntensity(7))).toBe(true);
   });
 });
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
 
-Run: `cd src/frontend && npx vitest run src/renderer/hdr-glow-overlay.test.ts`
+Run: `cd src/frontend && npx vitest run src/renderer/hdr-glow-overlay.test.ts > /tmp/t.log 2>&1; tail -12 /tmp/t.log`
 Expected: FAIL — cannot resolve `./hdr-glow-overlay`.
 
 - [ ] **Step 3: Write the implementation**
@@ -627,7 +621,7 @@ Create `src/frontend/src/renderer/hdr-glow-overlay.ts`:
 
 ```typescript
 /** HDR focus glow — a DOM layer above the Pixi canvas carrying a PQ-encoded
- *  AVIF sprite, so the element the user just navigated to can ride up into the
+ *  AVIF sprite, so the element the user navigated to can ride up into the
  *  display's headroom above SDR white. Nothing else on screen can produce that
  *  brightness, which is the whole point.
  *
@@ -635,19 +629,22 @@ Create `src/frontend/src/renderer/hdr-glow-overlay.ts`:
  *  8-bit by spec, and Pixi clamps vertex colours to 8-bit before they reach the
  *  buffer. An HDR *image* is the only route that works in both Chrome and
  *  Safari today. Cost: soft blobs only — no HDR outlines or strokes.
+ *
+ *  Why brightness is a sprite swap and not an opacity: opacity compositing
+ *  flattens HDR back to SDR (measured on the probe — a glow at opacity .6 over
+ *  a canvas is exactly as bright as plain white). So the ladder of sprites,
+ *  each baked at a different peak luminance, IS the brightness control.
  *  See docs/specs/2026-08-04-hdr-focus-glow-design.md. */
 
-/** Pulse duration in ms — bright on arrival, gone by the end. */
-export const PULSE_MS = 500;
+/** Number of baked luminance rungs (hdr-glow-0.avif .. hdr-glow-23.avif),
+ *  4000 nits down to 200. Rung 0 is brightest. */
+export const GLOW_RUNGS = 24;
 
-/** Ease-out cubic decay, 1 -> 0 across PULSE_MS. Front-loaded so the flash
- *  registers before it fades. */
-export function pulseEnvelope(elapsedMs: number): number {
-  if (elapsedMs <= 0) return 1;
-  if (elapsedMs >= PULSE_MS) return 0;
-  const t = elapsedMs / PULSE_MS;
-  const inv = 1 - t;
-  return inv * inv * inv;
+/** Map the user-facing 1-10 intensity onto a rung. 10 = brightest = rung 0. */
+export function rungForIntensity(intensity: number): number {
+  const clamped = Math.min(10, Math.max(1, intensity));
+  const rung = Math.round(((10 - clamped) / 9) * (GLOW_RUNGS - 1));
+  return Math.min(GLOW_RUNGS - 1, Math.max(0, rung));
 }
 
 const HDR_QUERY = '(dynamic-range: high)';
@@ -672,6 +669,7 @@ export function onHdrCapabilityChange(cb: (capable: boolean) => void): () => voi
 export class HdrGlowOverlay {
   private el: HTMLDivElement;
   private container: HTMLElement;
+  private shownRung = -1;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -682,12 +680,10 @@ export class HdrGlowOverlay {
     s.top = '0';
     s.pointerEvents = 'none';       // pins under the glow must stay clickable
     s.zIndex = '3';                 // above the label overlay (zIndex 2)
-    s.transformOrigin = '50% 50%';
-    s.backgroundImage = 'url(/hdr-glow.avif)';
     s.backgroundSize = 'contain';
     s.backgroundRepeat = 'no-repeat';
-    s.opacity = '0';
-    s.willChange = 'opacity, transform';
+    s.display = 'none';
+    s.willChange = 'transform';
     // Tell the compositor not to tone-map this layer down to SDR.
     s.setProperty('dynamic-range-limit', 'no-limit');
     container.appendChild(el);
@@ -700,18 +696,24 @@ export class HdrGlowOverlay {
   resize(): void { /* intentionally empty */ }
 
   /** Place and light the glow. Coordinates are CSS px in the container's space
-   *  (the same space LabelOverlay draws in); `cssSize` is the sprite diameter. */
-  show(cssX: number, cssY: number, cssSize: number, alpha: number): void {
+   *  (the same space LabelOverlay draws in); `cssSize` is the sprite diameter;
+   *  `rung` selects the baked luminance. NOTE: no alpha parameter — see the
+   *  class comment. */
+  show(cssX: number, cssY: number, cssSize: number, rung: number): void {
     const s = this.el.style;
     const half = cssSize / 2;
     s.width = `${cssSize}px`;
     s.height = `${cssSize}px`;
     s.transform = `translate(${cssX - half}px, ${cssY - half}px)`;
-    s.opacity = String(Math.max(0, Math.min(1, alpha)));
+    if (rung !== this.shownRung) {
+      s.backgroundImage = `url(/hdr-glow-${rung}.avif)`;
+      this.shownRung = rung;
+    }
+    s.display = 'block';
   }
 
   hide(): void {
-    this.el.style.opacity = '0';
+    this.el.style.display = 'none';
   }
 
   destroy(): void {
@@ -722,15 +724,15 @@ export class HdrGlowOverlay {
 
 - [ ] **Step 4: Run the test and make sure it passes**
 
-Run: `cd src/frontend && npx vitest run src/renderer/hdr-glow-overlay.test.ts`
-Expected: PASS, 6 tests.
+Run: `cd src/frontend && npx vitest run src/renderer/hdr-glow-overlay.test.ts > /tmp/t.log 2>&1; tail -8 /tmp/t.log`
+Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/frontend/src/renderer/hdr-glow-overlay.ts \
         src/frontend/src/renderer/hdr-glow-overlay.test.ts
-git commit -m "feat(render): HdrGlowOverlay — PQ sprite layer, capability detection, pulse envelope"
+git commit -m "feat(render): HdrGlowOverlay — PQ sprite layer, capability detection, rung selection"
 ```
 
 ---
@@ -741,7 +743,7 @@ git commit -m "feat(render): HdrGlowOverlay — PQ sprite layer, capability dete
 - Modify: `src/frontend/src/renderer/BoardRenderer.ts` — imports (~line 33), fields (~line 394 beside `textFastMode`), `ensureHdrOverlay()` (beside `ensureLabelOverlay` at line 1845), the tick path (~line 831-860), and `destroy()`
 
 **Interfaces:**
-- Consumes: `focusHaloGeometry` (Task 2), `boardStore.focusPulse` (Task 3), `HdrGlowOverlay` / `isHdrCapable` / `pulseEnvelope` / `PULSE_MS` (Task 4), `renderSettingsStore.settings.hdrFocusGlow` + `.hdrGlowIntensity` (Task 6 — declare them there first if `tsc` complains, the two tasks may be done in either order).
+- Consumes: `focusHaloGeometry` (Task 2), `boardStore.focusTarget` (Task 3), `HdrGlowOverlay` / `isHdrCapable` / `rungForIntensity` (Task 4), `renderSettingsStore.settings.hdrFocusGlow` + `.hdrGlowIntensity` (Task 6 — declare them there first if `tsc` complains, the two tasks may be done in either order).
 - Produces: nothing consumed by later tasks.
 
 - [ ] **Step 1: Add imports and fields**
@@ -749,7 +751,7 @@ git commit -m "feat(render): HdrGlowOverlay — PQ sprite layer, capability dete
 In `BoardRenderer.ts`, beside the `LabelOverlay` import at line 33:
 
 ```typescript
-import { HdrGlowOverlay, isHdrCapable, pulseEnvelope, PULSE_MS } from './hdr-glow-overlay';
+import { HdrGlowOverlay, isHdrCapable, rungForIntensity } from './hdr-glow-overlay';
 ```
 
 Beside the `textFastMode` field (~line 394):
@@ -758,9 +760,6 @@ Beside the `textFastMode` field (~line 394):
   /** HDR focus glow layer — mounted lazily by ensureHdrOverlay() when the
    *  setting is on AND the display can actually show HDR; torn down otherwise. */
   private hdrOverlay: HdrGlowOverlay | null = null;
-  /** performance.now() of the last focus landing, and the seq that produced it. */
-  private hdrPulseStart = 0;
-  private hdrPulseSeq = -1;
 ```
 
 - [ ] **Step 2: Add the lifecycle method**
@@ -783,27 +782,21 @@ Immediately after `ensureLabelOverlay()` (which ends at line 1857), add:
     return this.hdrOverlay;
   }
 
-  /** Position and fade the HDR glow for the current focus pulse. Called from
-   *  onTick AFTER app.render(), so worldTransform is current — same ordering
-   *  requirement as syncLabelOverlay. */
+  /** Position the HDR glow on the current focus target. Called from onTick
+   *  AFTER app.render(), so worldTransform is current — same ordering
+   *  requirement as syncLabelOverlay.
+   *
+   *  Steady, not animated: this only moves the sprite to track pan/zoom, so it
+   *  adds nothing to frames that were already going to run. */
   private syncHdrOverlay(overlay: HdrGlowOverlay, scene: BoardScene): void {
-    const pulse = boardStore.focusPulse;
-    if (!pulse || !this.board) { overlay.hide(); return; }
+    const target = boardStore.focusTarget;
+    if (!target || !this.board) { overlay.hide(); return; }
 
-    // A new landing restarts the pulse clock.
-    if (pulse.seq !== this.hdrPulseSeq) {
-      this.hdrPulseSeq = pulse.seq;
-      this.hdrPulseStart = performance.now();
-    }
-
-    const elapsed = performance.now() - this.hdrPulseStart;
-    if (elapsed >= PULSE_MS) { overlay.hide(); return; }
-
-    const part = this.board.parts[pulse.partIndex];
+    const part = this.board.parts[target.partIndex];
     if (!part || !this.isPartVisible(part)) { overlay.hide(); return; }
 
     // Pin-level focus glows the pin; part-level glows the whole part.
-    const pin = pulse.pinIndex !== null ? part.pins[pulse.pinIndex] : null;
+    const pin = target.pinIndex !== null ? part.pins[target.pinIndex] : null;
     const g = pin
       ? focusHaloGeometry({
           minX: pin.position.x, maxX: pin.position.x,
@@ -820,14 +813,8 @@ Immediately after `ensureLabelOverlay()` (which ends at line 1857), add:
     const cssY = wt.b * g.x + wt.d * g.y + wt.ty;
     const scale = Math.hypot(wt.a, wt.b);
 
-    const intensity = renderSettingsStore.settings.hdrGlowIntensity;
-    // Intensity scales both reach and peak alpha: the sprite's own peak nits
-    // are fixed by its PQ encoding, so this is the only lever available.
-    const cssSize = g.size * scale * (0.5 + intensity * 0.25);
-    const alpha = pulseEnvelope(elapsed) * Math.min(1, intensity / 4);
-
-    overlay.show(cssX, cssY, cssSize, alpha);
-    this.needsRender = true;   // keep ticking while the pulse decays
+    const rung = rungForIntensity(renderSettingsStore.settings.hdrGlowIntensity);
+    overlay.show(cssX, cssY, g.size * scale, rung);
   }
 ```
 
@@ -857,7 +844,7 @@ Expected: no type errors; all unit tests pass. If `hdrFocusGlow` / `hdrGlowInten
 
 ```bash
 git add src/frontend/src/renderer/BoardRenderer.ts
-git commit -m "feat(render): drive the HDR focus glow from the focus pulse"
+git commit -m "feat(render): drive the HDR focus glow from the focus target"
 ```
 
 ---
@@ -883,7 +870,8 @@ In `render-settings.ts`, beside `netHighlightAlpha` in the `RenderSettings` inte
    *  an HDR display. Global (a property of the display, not the board).
    *  Experimental: opt-in during the field-debug window. */
   hdrFocusGlow: boolean;
-  /** Reach + peak alpha of the HDR focus glow. 0-4, default 3. */
+  /** Brightness of the HDR focus glow, 1-10 (10 = brightest). Selects a rung
+   *  on the baked luminance ladder — alpha cannot be used, it flattens HDR. */
   hdrGlowIntensity: number;
 ```
 
@@ -891,7 +879,7 @@ And in `DEFAULTS` (~line 557, beside `netHighlightAlpha: 0.6,`):
 
 ```typescript
   hdrFocusGlow: false,
-  hdrGlowIntensity: 3,
+  hdrGlowIntensity: 6,   // provisional — set from the user's rung pick on the probe
 ```
 
 - [ ] **Step 2: Add the Settings controls**
@@ -901,10 +889,10 @@ In `SettingsPanel.tsx`, inside the Selection & Highlight section, after the `Flo
 ```tsx
         <Toggle label="HDR focus glow (experimental)" value={draft.hdrFocusGlow} field="hdrFocusGlow" onUpdate={updateGlobal}
           title={hdrCapable
-            ? "On an HDR display, flash the element you just navigated to (search hit, PDF lookup, selected part) brighter than white for half a second. Purely additive — the normal highlight is unchanged."
+            ? "On an HDR display, burn the element you navigated to (search hit, PDF lookup, selected part) brighter than white for as long as it stays selected. Purely additive — the normal highlight is unchanged."
             : "No HDR display detected. This needs an HDR-capable screen in HDR mode; on macOS that is automatic, on Windows it must be enabled system-wide."} />
-        <Slider label="HDR Glow Intensity" value={draft.hdrGlowIntensity} min={0} max={4} step={0.5} field="hdrGlowIntensity" onUpdate={updateGlobal}
-          title="How far the HDR glow reaches and how bright its peak is. Higher = larger, brighter flash" />
+        <Slider label="HDR Glow Intensity" value={draft.hdrGlowIntensity} min={1} max={10} step={1} field="hdrGlowIntensity" onUpdate={updateGlobal}
+          title="How bright the HDR glow burns. Higher = further above SDR white. If the rest of the UI visibly dims while a part is selected, lower this" />
 ```
 
 `hdrCapable` comes from a `useState` + effect near the top of the settings component, so docking to another monitor updates the hint live:
@@ -945,7 +933,7 @@ function HdrGlowToggle() {
   return (
     <label
       className="home-toggle-row"
-      title="Flash the element you just navigated to brighter than white for half a second. Needs an HDR display."
+      title="Burn the element you navigated to brighter than white while it stays selected. Needs an HDR display."
     >
       <span>HDR focus glow (experimental)</span>
       <input
@@ -990,7 +978,7 @@ test.describe('HDR focus glow settings', () => {
   test('no glow layer is mounted while the setting is off', async ({ page }) => {
     await page.goto('/');
     // The overlay div is identified by its background sprite.
-    await expect(page.locator('div[style*="hdr-glow.avif"]')).toHaveCount(0);
+    await expect(page.locator('div[style*="hdr-glow-"]')).toHaveCount(0);
   });
 });
 ```
@@ -1031,7 +1019,7 @@ git commit -m "feat(settings): HDR focus glow switch in Settings and on the star
 Append a bullet to **Key Architectural Decisions** in `CLAUDE.md`, matching the density of its neighbours:
 
 ```markdown
-- **HDR focus glow (experimental, opt-in):** the element you just navigated to — search hit, PDF→board lookup target, selected part — flashes above SDR white for 500 ms on an HDR display. Implemented as a DOM layer (`renderer/hdr-glow-overlay.ts`) above the Pixi canvas carrying a PQ-encoded AVIF sprite (CICP 9/16/0, baked by `scripts/make-hdr-glow.ts` — a maintainer tool, `avifenc` is not in CI or the image; the `.avif` is committed). **Not** the WebGPU `rgba16float` route: WebGL has no shipped HDR path, Canvas2D is 8-bit, Pixi clamps vertex colours to 8-bit and hardcodes `bgra8unorm`, and WebGPU-HDR is Chromium-only. HDR *images* are the only technique honoured by both Chrome and Safari — the cost is soft blobs only, no HDR outlines or strokes. PNG `cICP` was rejected: Safari does not map it to EDR. Gated on `renderSettings.hdrFocusGlow` (global, default off) **and** live `matchMedia('(dynamic-range: high)')`, so undocking to an SDR monitor tears the layer down on the next frame. The SDR highlight is untouched and the glow is purely additive, which is the entire fallback story. Focus target only — never net members, never all search hits, because headroom is a shared budget that collapses under large lit areas. Sizing shares `focusHaloGeometry()` with the dark spotlight so the two cannot drift. Diagnostic: `/hdr-probe.html`. Spec: `docs/specs/2026-08-04-hdr-focus-glow-design.md`.
+- **HDR focus glow (experimental, opt-in):** the element you just navigated to — search hit, PDF→board lookup target, burns above SDR white for as long as it stays selected on an HDR display (a steady "super-selection", not a flash). Implemented as a DOM layer (`renderer/hdr-glow-overlay.ts`) above the Pixi canvas carrying a PQ-encoded AVIF sprite (CICP 9/16/0, baked by `scripts/make-hdr-glow.ts` — a maintainer tool, `avifenc` is not in CI or the image; the `.avif` is committed). **Not** the WebGPU `rgba16float` route: WebGL has no shipped HDR path, Canvas2D is 8-bit, Pixi clamps vertex colours to 8-bit and hardcodes `bgra8unorm`, and WebGPU-HDR is Chromium-only. HDR *images* are the only technique honoured by both Chrome and Safari — the cost is soft blobs only, no HDR outlines or strokes. PNG `cICP` was rejected: Safari does not map it to EDR. Gated on `renderSettings.hdrFocusGlow` (global, default off) **and** live `matchMedia('(dynamic-range: high)')`, so undocking to an SDR monitor tears the layer down on the next frame. The SDR highlight is untouched and the glow is purely additive, which is the entire fallback story. Focus target only — never net members, never all search hits, because headroom is a shared budget that collapses under large lit areas. Sizing shares `focusHaloGeometry()` with the dark spotlight so the two cannot drift. Diagnostic: `/hdr-probe.html`. Spec: `docs/specs/2026-08-04-hdr-focus-glow-design.md`.
 ```
 
 - [ ] **Step 2: Mark the spec implemented**
@@ -1054,18 +1042,18 @@ Run: `cd src/frontend && npm run dev`
 Ask the user to, on an HDR display: enable the toggle (start page or Settings ▸ Selection & Highlight), open a dense board, then run a search and step through hits, do a PDF→board lookup, and click through parts. What to report:
 
 - Does the landed-on element visibly flash brighter than white?
-- Is 500 ms the right duration — too flashy, too subtle?
-- Is intensity 3 a sensible default, and does the slider span a useful range?
+- Does a steady glow sit comfortably, or does the surrounding UI visibly dim under it (macOS re-tone-mapping)? Lower the intensity rung if so.
+- Is the default rung right, and does the 1-10 slider span a useful range?
 - Over a long session, is it pleasant or tiring?
 
 ---
 
 ## Self-Review
 
-**Spec coverage.** Overlay layer → Task 4. Asset + PQ encoding → Task 1. Capability gating → Tasks 4 (detection) and 6 (settings). Global-not-per-tab → Task 6 Step 1. Both switch surfaces incl. the hidden-vs-disabled split → Task 6 Steps 2–3. Focus pulse + three trigger sites → Task 3. Shared geometry extraction → Task 2. Screen projection via the label matrix → Task 5. Probe as gate → Task 1. Unit tests → Tasks 1–4; structural E2E → Task 6; manual hand-off → Task 7.
+**Spec coverage.** Overlay layer → Task 4. Asset + PQ encoding → Task 1. Capability gating → Tasks 4 (detection) and 6 (settings). Global-not-per-tab → Task 6 Step 1. Both switch surfaces incl. the hidden-vs-disabled split → Task 6 Steps 2–3. Focus target + trigger sites → Task 3. Shared geometry extraction → Task 2. Screen projection via the label matrix → Task 5. Probe as gate → Task 1. Unit tests → Tasks 1–4; structural E2E → Task 6; manual hand-off → Task 7.
 
 **Deviation from the spec, deliberate:** the spec says PNG; the plan uses **AVIF**, because Safari does not map PNG `cICP` to EDR and Safari is half the chosen audience. The spec's own rationale (cross-browser reach) forces this. Recorded in Task 7's CLAUDE.md bullet.
 
-**Type consistency.** `focusHaloGeometry(HaloBounds) => {x,y,size}` — defined Task 2, consumed Tasks 2 and 5. `FocusPulse{partIndex,pinIndex,seq}` — defined Task 3, consumed Task 5. `pulseEnvelope`/`PULSE_MS`/`isHdrCapable`/`onHdrCapabilityChange`/`HdrGlowOverlay.show(x,y,size,alpha)` — defined Task 4, consumed Tasks 5 and 6. `hdrFocusGlow`/`hdrGlowIntensity` — defined Task 6, consumed Task 5 (noted there as an ordering dependency).
+**Type consistency.** `focusHaloGeometry(HaloBounds) => {x,y,size}` — defined Task 2, consumed Tasks 2 and 5. `FocusTarget{partIndex,pinIndex}`/`sameFocusTarget` — defined Task 3, consumed Task 5. `rungForIntensity`/`GLOW_RUNGS`/`isHdrCapable`/`onHdrCapabilityChange`/`HdrGlowOverlay.show(x,y,size,rung)` — defined Task 4, consumed Tasks 5 and 6. `hdrFocusGlow`/`hdrGlowIntensity` — defined Task 6, consumed Task 5 (noted there as an ordering dependency).
 
 **Known soft spots.** Task 3 Step 5 gives field names and line numbers rather than literal diffs for `board-store.ts`, because the four call sites resolve their part index by different local names; the implementer must read each. Task 5 Step 3's insertion point is described relative to `syncLabelOverlay` rather than quoted, as the surrounding tick body is long.
