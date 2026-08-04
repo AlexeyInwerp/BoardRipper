@@ -1,5 +1,20 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Formats
+
+- **XZZ boards from MSI now show component values.** MSI `.pcb` files write
+  the BOM value into a label block on the part — "22uF" under C757 — which
+  the parser was skipping. It now reads it, so the Info pane, the net branch
+  list and MCP part search show a value where the file has one. Apple boards
+  are unaffected: their exporter fills the same field with placeholder text
+  (Device1, Device2, … one per part), and a board-level guard drops a value
+  column that never repeats rather than labelling every part with scaffolding.
+  Found, documented down to the hex, and prototyped by **Sean Johnson
+  ([@sjohnson1021](https://github.com/sjohnson1021))** in
+  [#27](https://github.com/AlexeyInwerp/BoardRipper/issues/27). `721a34b9`
+
 ## v0.34.0 — 2026-08-05
 
 On an HDR display the selected component's outline can now burn brighter than
