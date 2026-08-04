@@ -7,6 +7,7 @@ import { pdfStore } from '../../store/pdf-store';
 import { updateStore } from '../../store/update-store';
 import { renderSettingsStore } from '../../store/render-settings';
 import { themeStore, ACCENT_PRESETS } from '../../store/themes';
+import { isHdrCapable, onHdrCapabilityChange } from '../../renderer/hdr-glow-overlay';
 import { InterfaceScaleSlider } from '../InterfaceScaleSlider';
 import {
   isAutoSwitchLinked,
@@ -688,6 +689,40 @@ function AutoOpenPdfToggle() {
   );
 }
 
+function useHdrGlow(): boolean {
+  return useSyncExternalStore(
+    (cb) => renderSettingsStore.subscribe(cb),
+    () => renderSettingsStore.globalSettings.hdrFocusGlow,
+  );
+}
+
+/** Start-page switch for the HDR focus glow. Unlike the Settings control this
+ *  one HIDES on a non-HDR display: the home screen is a dashboard of things you
+ *  can act on, and a permanently dead row is just noise. */
+function HdrGlowToggle() {
+  const enabled = useHdrGlow();
+  const [capable, setCapable] = useState(isHdrCapable);
+  useEffect(() => onHdrCapabilityChange(setCapable), []);
+  if (!capable) return null;
+  return (
+    <label
+      className="home-toggle-row"
+      title="Burn the selected component brighter than white while it stays selected, so you cannot lose it on a dense board. Needs an HDR display."
+    >
+      <span>HDR focus glow (experimental)</span>
+      <input
+        type="checkbox"
+        checked={enabled}
+        onChange={(e) => {
+          const snap = renderSettingsStore.globalSnapshot();
+          snap.hdrFocusGlow = e.target.checked;
+          renderSettingsStore.applyGlobal(snap);
+        }}
+      />
+    </label>
+  );
+}
+
 function useThemeId(): string {
   return useSyncExternalStore(
     (cb) => themeStore.subscribe(cb),
@@ -935,6 +970,7 @@ function QuickSettings() {
         <div className="home-toggle-stack">
           <AutoSwitchToggle />
           {!isLiteBuild() && <AutoOpenPdfToggle />}
+          <HdrGlowToggle />
           <ThemeSelect />
           <InterfaceColorPickers />
         </div>

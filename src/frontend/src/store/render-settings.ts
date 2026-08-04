@@ -168,6 +168,17 @@ export interface RenderSettings {
   navZoomMode: 'auto' | 'keep' | 'always';
   netHighlightGrow: number;
   netHighlightAlpha: number;
+  /** HDR focus glow — burn the selected element above SDR white on an HDR
+   *  display, as a "super-selection" that cannot be confused with the thousands
+   *  of SDR-white neighbours on a dense board. Experimental: opt-in during the
+   *  field-debug window. Purely additive — the SDR highlight is unchanged, so
+   *  on an SDR display the feature is simply absent. */
+  hdrFocusGlow: boolean;
+  /** Brightness of the HDR focus glow, 1-10 (10 = brightest). Selects a rung on
+   *  the baked luminance ladder (hdr-glow-<n>.avif). NOT an alpha: opacity
+   *  compositing flattens HDR back to SDR, so brightness can only be varied by
+   *  swapping to a sprite baked at a different peak luminance. */
+  hdrGlowIntensity: number;
   /** Draw the coloured halo (filled ring) around highlighted pins / part
    *  outlines on net selection. When false, pins still recolour but the
    *  yellow/blue selection overlay is suppressed — used by Landrex for a
@@ -555,6 +566,8 @@ export const DEFAULTS: RenderSettings = {
   navZoomMode: 'auto',
   netHighlightGrow: 3,
   netHighlightAlpha: 0.6,
+  hdrFocusGlow: false,
+  hdrGlowIntensity: 6,   // provisional — tune live on an HDR display
   showSelectionHalo: true,
   dimOverlayAlpha: 0.5,
   ambientDim: true,

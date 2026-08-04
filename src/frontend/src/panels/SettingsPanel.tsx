@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, createContext, useContext } from 'react';
 import { IconPalette, IconLayoutBoardSplit, IconKeyboard, IconBooks, IconSettings, IconPlug, IconClick } from '@tabler/icons-react';
 import { themeStore, THEMES, ACCENT_PRESETS } from '../store/themes';
+import { isHdrCapable, onHdrCapabilityChange } from '../renderer/hdr-glow-overlay';
 import { resizeModeStore } from '../store/resize-mode-store';
 import type { Theme } from '../store/themes';
 import { renderSettingsStore, DEFAULTS, computeOverrides } from '../store/render-settings';
@@ -2000,6 +2001,12 @@ export function SettingsPanel() {
     setDraft(prev => ({ ...prev, ...partial }));
   }, []);
 
+  // HDR capability drives only the *hint text* on the glow toggle — the control
+  // stays visible and usable either way, so docking to an SDR monitor explains
+  // itself instead of silently doing nothing.
+  const [hdrCapable, setHdrCapable] = useState(isHdrCapable);
+  useEffect(() => onHdrCapabilityChange(setHdrCapable), []);
+
   // Re-sync draft + baseline when the store changes underneath us (e.g.
   // QuickSettings on the home screen, theme poke) while nothing is being
   // edited here — otherwise a later Apply would clobber those changes with
@@ -2372,6 +2379,12 @@ export function SettingsPanel() {
           title="Show a large background-backed label above the selected component with its reference designator (e.g. U1)" />
         <Toggle label="Floating Pin Label" value={draft.showElevatedPinLabel} field="showElevatedPinLabel" onUpdate={updateDraft}
           title="Show a background-backed label above the selected pin with its pin number and net name" />
+        <Toggle label="HDR focus glow (experimental)" value={draft.hdrFocusGlow} field="hdrFocusGlow" onUpdate={updateGlobal}
+          title={hdrCapable
+            ? "On an HDR display, burn the selected element brighter than white for as long as it stays selected — a super-selection you cannot lose on a dense board. Purely additive: the normal highlight is unchanged."
+            : "No HDR display detected. Needs an HDR-capable screen in HDR mode; automatic on macOS, must be enabled system-wide on Windows."} />
+        <Slider label="HDR Glow Intensity" value={draft.hdrGlowIntensity} min={1} max={10} step={1} field="hdrGlowIntensity" onUpdate={updateGlobal}
+          title="How far above SDR white the glow burns. If the rest of the UI visibly dims while a part is selected, lower this" />
       </CollapsibleSection>
       )}
 

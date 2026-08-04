@@ -32,6 +32,7 @@ import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
 import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
 import { LabelOverlay } from './label-overlay';
 import { focusHaloGeometry } from './focus-halo';
+import { HdrGlowOverlay, isHdrCapable, rungForIntensity } from './hdr-glow-overlay';
 import type { LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
 import { buildTraceGrid, queryTraceGrid, type TraceGrid } from './trace-grid';
@@ -393,6 +394,11 @@ export class BoardRenderer {
    *  canvas is a containerEl sibling, not a Pixi object). Task 8 extends the
    *  sync path; do not rename (referenced by name in the plan). */
   private textFastMode: LabelOverlay | null = null;
+  /** HDR focus glow layer — mounted lazily by ensureHdrOverlay() when the
+   *  setting is on AND the display can actually show HDR; torn down otherwise.
+   *  Like textFastMode it is a containerEl sibling, so it survives Pixi
+   *  context-loss reinit. */
+  private hdrOverlay: HdrGlowOverlay | null = null;
   /** Set whenever the view, selection, dim state, or scene changed so the next
    *  tick redraws the overlay. Reset in onTick after a successful draw. */
   private overlayDirty = false;
@@ -886,6 +892,12 @@ export class BoardRenderer {
       overlay.clear();   // setting on, but scene built pre-toggle → rebuild pending
     }
 
+    // HDR focus glow — deliberately OUTSIDE the label-overlay branch above: it
+    // works with either label mode, and has no dependency on labelModel. Also
+    // after app.render(), for the same worldTransform-freshness reason.
+    const hdr = this.ensureHdrOverlay();
+    if (hdr && this.activeScene) this.syncHdrOverlay(hdr, this.activeScene);
+
     if (perf) {
       this.perfAccum.frame += performance.now() - frameStart;
       this.perfSamples++;
@@ -1112,6 +1124,8 @@ export class BoardRenderer {
     // after resume. (v0.31.40 review follow-up)
     this.textFastMode?.destroy();
     this.textFastMode = null;
+    this.hdrOverlay?.destroy();
+    this.hdrOverlay = null;
     this.teardownForReinit();
     // teardownForReinit() releases the context but leaves contextLost=false;
     // set it so resume() routes through reinitApp() instead of touching the
@@ -1856,6 +1870,59 @@ export class BoardRenderer {
       this.overlayContentDirty = true;   // brand-new blank canvas
     }
     return this.textFastMode;
+  }
+
+  /** Mirror of ensureLabelOverlay for the HDR glow layer. Gated on BOTH the
+   *  opt-in setting and live display capability, so undocking to an SDR monitor
+   *  tears it down on the next frame without any explicit listener. */
+  private ensureHdrOverlay(): HdrGlowOverlay | null {
+    if (!renderSettingsStore.settings.hdrFocusGlow || !isHdrCapable()) {
+      if (this.hdrOverlay) { this.hdrOverlay.destroy(); this.hdrOverlay = null; }
+      return null;
+    }
+    if (!this.hdrOverlay) {
+      this.hdrOverlay = new HdrGlowOverlay(this.containerEl);
+      log.render.log('HDR focus glow overlay mounted');
+    }
+    return this.hdrOverlay;
+  }
+
+  /** Position the HDR glow on the current selection. Called from onTick AFTER
+   *  app.render(), so worldTransform is current — same ordering requirement as
+   *  syncLabelOverlay.
+   *
+   *  Steady, not animated: this only moves the sprite to track pan/zoom, so it
+   *  adds nothing to frames that were already going to run. Reads
+   *  boardStore.selection directly rather than carrying a parallel "focus
+   *  target" field — selection is already set and cleared at exactly the right
+   *  moments, and a second copy would be one more thing to keep in sync. */
+  private syncHdrOverlay(overlay: HdrGlowOverlay, scene: BoardScene): void {
+    const sel = boardStore.selection;
+    if (sel.partIndex === null || !this.board) { overlay.hide(); return; }
+
+    const part = this.board.parts[sel.partIndex];
+    if (!part || !this.isPartVisible(part)) { overlay.hide(); return; }
+
+    // Pin-level selection glows the pin; part-level glows the whole part.
+    const pin = sel.pinIndex !== null ? part.pins[sel.pinIndex] : null;
+    const g = pin
+      ? focusHaloGeometry({
+          minX: pin.position.x, maxX: pin.position.x,
+          minY: pin.position.y, maxY: pin.position.y,
+        })
+      : focusHaloGeometry(part.bounds);
+
+    // World -> screen through the same label-layer matrix the text overlay
+    // uses, so rotate / mirror / butterfly are handled for free.
+    const wt = (boardStore.butterfly && part.side === 'bottom' && scene.butterflyRoot)
+      ? scene.bottomLabelLayer.worldTransform
+      : scene.topLabelLayer.worldTransform;
+    const cssX = wt.a * g.x + wt.c * g.y + wt.tx;
+    const cssY = wt.b * g.x + wt.d * g.y + wt.ty;
+    const scale = Math.hypot(wt.a, wt.b);
+
+    const rung = rungForIntensity(renderSettingsStore.settings.hdrGlowIntensity);
+    overlay.show(cssX, cssY, g.size * scale, rung);
   }
 
   /** Part indices left lit by the ambient-dim overlay this frame (the
@@ -6352,6 +6419,9 @@ export class BoardRenderer {
     // Tear down the Canvas2D label overlay (removes its containerEl-sibling canvas).
     this.textFastMode?.destroy();
     this.textFastMode = null;
+    // Same for the HDR glow layer — also a containerEl sibling.
+    this.hdrOverlay?.destroy();
+    this.hdrOverlay = null;
     this.tooltipNetSpan = null;
     this.tooltipDetailSpan = null;
     this.tooltipMetaSpan = null;
