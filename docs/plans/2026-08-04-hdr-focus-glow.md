@@ -444,119 +444,24 @@ git commit -m "refactor(render): extract focusHaloGeometry so both halos share o
 
 ---
 
-### Task 3: `focusTarget` store field
+### Task 3: DROPPED — the glow reads `boardStore.selection`
 
-**Files:**
-- Create: `src/frontend/src/store/focus-target.ts`
-- Create: `src/frontend/src/store/focus-target.test.ts`
-- Modify: `src/frontend/src/store/board-store.ts` — tab state shape, the `focusTarget` getter, and the set/clear sites in `selectPart` (~line 1193), `focusPart` (~line 2043), `focusNet`, and the pin-focus variant (~line 2153)
+Reading the call sites showed a separate `focusTarget` would duplicate state that
+already exists. `selection` is `{ partIndex, pinIndex, highlightedNet, adjacentNets }`,
+set by `selectPart`, `selectPin`, `focusPart`, `focusNet` and `promotePartOnNet` —
+precisely the landing sites this task was going to instrument — and cleared exactly
+where the glow should clear.
 
-**Interfaces:**
-- Consumes: nothing.
-- Produces: `FocusTarget = { partIndex: number; pinIndex: number | null }`; `sameFocusTarget(a, b) => boolean`; `boardStore.focusTarget: FocusTarget | null`. Task 5 reads `boardStore.focusTarget`.
+The pulse design needed its own field only to carry the re-fire `seq`. The steady
+design has no re-fire, so `focusTarget` ≡ `selection.{partIndex, pinIndex}` with no
+remaining difference. A second copy kept in sync by hand is a bug waiting to happen.
 
-- [ ] **Step 1: Write the failing test**
+Consequence, and the reason this is recorded rather than silently skipped: **the
+feature makes no changes to `board-store.ts` at all.** It is purely additive — it
+cannot regress the existing selection mechanisms because it never touches them.
 
-Create `src/frontend/src/store/focus-target.test.ts`:
-
-```typescript
-import { describe, it, expect } from 'vitest';
-import { sameFocusTarget } from './focus-target';
-
-describe('sameFocusTarget', () => {
-  it('treats two nulls as the same', () => {
-    expect(sameFocusTarget(null, null)).toBe(true);
-  });
-
-  it('treats null and a target as different', () => {
-    expect(sameFocusTarget(null, { partIndex: 1, pinIndex: null })).toBe(false);
-    expect(sameFocusTarget({ partIndex: 1, pinIndex: null }, null)).toBe(false);
-  });
-
-  it('compares part and pin', () => {
-    expect(sameFocusTarget({ partIndex: 1, pinIndex: 2 }, { partIndex: 1, pinIndex: 2 })).toBe(true);
-    expect(sameFocusTarget({ partIndex: 1, pinIndex: 2 }, { partIndex: 1, pinIndex: 3 })).toBe(false);
-    expect(sameFocusTarget({ partIndex: 1, pinIndex: 2 }, { partIndex: 4, pinIndex: 2 })).toBe(false);
-  });
-
-  it('distinguishes a part-level focus from a pin-level one on the same part', () => {
-    expect(sameFocusTarget({ partIndex: 1, pinIndex: null }, { partIndex: 1, pinIndex: 0 })).toBe(false);
-  });
-});
-```
-
-- [ ] **Step 2: Run it to make sure it fails**
-
-Run: `cd src/frontend && npx vitest run src/store/focus-target.test.ts > /tmp/t.log 2>&1; tail -12 /tmp/t.log`
-Expected: FAIL — cannot resolve `./focus-target`.
-
-(The RTK shell hook swallows vitest's stdout; redirect to a file and tail it, or you will see an empty `PASS (0) FAIL (0)`.)
-
-- [ ] **Step 3: Write the implementation**
-
-Create `src/frontend/src/store/focus-target.ts`:
-
-```typescript
-/** What the HDR focus glow is currently marking: the element the user navigated
- *  to via search stepping, PDF -> board lookup, or selection stepping.
- *
- *  A steady "super-selection", not an event — it holds for as long as the
- *  target stays selected, so there is no sequence number and no clock. */
-export interface FocusTarget {
-  partIndex: number;
-  /** null when the focus is a whole part rather than one of its pins. */
-  pinIndex: number | null;
-}
-
-export function sameFocusTarget(a: FocusTarget | null, b: FocusTarget | null): boolean {
-  if (a === null || b === null) return a === b;
-  return a.partIndex === b.partIndex && a.pinIndex === b.pinIndex;
-}
-```
-
-- [ ] **Step 4: Run the test and make sure it passes**
-
-Run: `cd src/frontend && npx vitest run src/store/focus-target.test.ts > /tmp/t.log 2>&1; tail -8 /tmp/t.log`
-Expected: PASS, 4 tests.
-
-- [ ] **Step 5: Wire it into the board store**
-
-In `board-store.ts`:
-
-1. Import: `import type { FocusTarget } from './focus-target';`
-2. Add `focusTarget: FocusTarget | null;` to the per-tab state interface (the one declaring `searchSelectionActive` at line 144), and `focusTarget: null,` to **every** tab-state initialiser — there are two, at lines ~838 and ~1133. Miss one and a fresh tab reads `undefined`.
-3. Add a getter beside the `searchSelectionActive` getter (line 646):
-
-```typescript
-  get focusTarget(): FocusTarget | null { return this.activeTab?.focusTarget ?? null; }
-```
-
-4. Set it at each landing site, using the part index the method already resolved, and the pin index where it has one:
-
-```typescript
-      tab.focusTarget = { partIndex: resolvedPartIndex, pinIndex: resolvedPinIndex ?? null };
-```
-
-- `selectPart` (~1193) — set it; when the argument is `null` (deselect) set `tab.focusTarget = null` instead.
-- `focusPart` (~2043) — search hits and PDF lookup both route through here. `pinIndex: null`.
-- `focusNet` — same treatment; use the part index it selects.
-- the pin-focus variant (~2153) — pass its real pin index.
-
-5. Clear it wherever the selection is cleared — the same places that already set `searchSelectionActive = false` **and** blank the selection. Do not clear it on a mere `searchSelectionActive` flip: an ordinary canvas click is still a focus target.
-
-- [ ] **Step 6: Verify it compiles and nothing regressed**
-
-Run: `cd src/frontend && (npx tsc --noEmit; npx vitest run) > /tmp/v.log 2>&1; grep -c "error TS" /tmp/v.log; tail -6 /tmp/v.log`
-Expected: 0 type errors; all unit tests pass.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/frontend/src/store/focus-target.ts \
-        src/frontend/src/store/focus-target.test.ts \
-        src/frontend/src/store/board-store.ts
-git commit -m "feat(store): focusTarget — what the HDR super-selection is marking"
-```
+Task 5 therefore consumes `boardStore.selection` where it would have consumed
+`boardStore.focusTarget`. `src/frontend/src/store/focus-target.ts` is not created.
 
 ---
 
@@ -743,7 +648,7 @@ git commit -m "feat(render): HdrGlowOverlay — PQ sprite layer, capability dete
 - Modify: `src/frontend/src/renderer/BoardRenderer.ts` — imports (~line 33), fields (~line 394 beside `textFastMode`), `ensureHdrOverlay()` (beside `ensureLabelOverlay` at line 1845), the tick path (~line 831-860), and `destroy()`
 
 **Interfaces:**
-- Consumes: `focusHaloGeometry` (Task 2), `boardStore.focusTarget` (Task 3), `HdrGlowOverlay` / `isHdrCapable` / `rungForIntensity` (Task 4), `renderSettingsStore.settings.hdrFocusGlow` + `.hdrGlowIntensity` (Task 6 — declare them there first if `tsc` complains, the two tasks may be done in either order).
+- Consumes: `focusHaloGeometry` (Task 2), `boardStore.selection` (existing store state — see Task 3), `HdrGlowOverlay` / `isHdrCapable` / `rungForIntensity` (Task 4), `renderSettingsStore.settings.hdrFocusGlow` + `.hdrGlowIntensity` (Task 6 — declare them there first if `tsc` complains, the two tasks may be done in either order).
 - Produces: nothing consumed by later tasks.
 
 - [ ] **Step 1: Add imports and fields**
@@ -789,8 +694,8 @@ Immediately after `ensureLabelOverlay()` (which ends at line 1857), add:
    *  Steady, not animated: this only moves the sprite to track pan/zoom, so it
    *  adds nothing to frames that were already going to run. */
   private syncHdrOverlay(overlay: HdrGlowOverlay, scene: BoardScene): void {
-    const target = boardStore.focusTarget;
-    if (!target || !this.board) { overlay.hide(); return; }
+    const target = boardStore.selection;
+    if (target.partIndex === null || !this.board) { overlay.hide(); return; }
 
     const part = this.board.parts[target.partIndex];
     if (!part || !this.isPartVisible(part)) { overlay.hide(); return; }
@@ -1054,6 +959,6 @@ Ask the user to, on an HDR display: enable the toggle (start page or Settings �
 
 **Deviation from the spec, deliberate:** the spec says PNG; the plan uses **AVIF**, because Safari does not map PNG `cICP` to EDR and Safari is half the chosen audience. The spec's own rationale (cross-browser reach) forces this. Recorded in Task 7's CLAUDE.md bullet.
 
-**Type consistency.** `focusHaloGeometry(HaloBounds) => {x,y,size}` — defined Task 2, consumed Tasks 2 and 5. `FocusTarget{partIndex,pinIndex}`/`sameFocusTarget` — defined Task 3, consumed Task 5. `rungForIntensity`/`GLOW_RUNGS`/`isHdrCapable`/`onHdrCapabilityChange`/`HdrGlowOverlay.show(x,y,size,rung)` — defined Task 4, consumed Tasks 5 and 6. `hdrFocusGlow`/`hdrGlowIntensity` — defined Task 6, consumed Task 5 (noted there as an ordering dependency).
+**Type consistency.** `focusHaloGeometry(HaloBounds) => {x,y,size}` — defined Task 2, consumed Tasks 2 and 5. `rungForIntensity`/`GLOW_RUNGS`/`isHdrCapable`/`onHdrCapabilityChange`/`HdrGlowOverlay.show(x,y,size,rung)` — defined Task 4, consumed Tasks 5 and 6. `hdrFocusGlow`/`hdrGlowIntensity` — defined Task 6, consumed Task 5 (noted there as an ordering dependency).
 
 **Known soft spots.** Task 3 Step 5 gives field names and line numbers rather than literal diffs for `board-store.ts`, because the four call sites resolve their part index by different local names; the implementer must read each. Task 5 Step 3's insertion point is described relative to `syncLabelOverlay` rather than quoted, as the surrounding tick body is long.
