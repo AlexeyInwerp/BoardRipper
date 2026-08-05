@@ -1,7 +1,8 @@
 import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
-import { parseBoardFile, getFormat } from '../parsers';
+import { parseBoardFile, getFormat, getFileExtension } from '../parsers';
+import { bundleAscFiles } from '../parsers/bdv-asc-parser';
 import { parseBoardFileInWorker, isWorkerTransportError } from '../parsers/parse-in-worker';
 import { FZKeyError } from '../parsers/fz-parser';
 import { fzKeyStore } from './fz-key-store';
@@ -506,6 +507,33 @@ export interface Toast {
   action?: { label: string; run: () => void };
 }
 
+/** Read a set of plain `.asc` section files and bundle them into one virtual
+ *  file for the BDV ASC parser. Returns null when none of them holds a
+ *  recognisable section.
+ *
+ *  The name is the sources' longest common prefix (`LA-L031P_pins.asc` +
+ *  `LA-L031P_nails.asc` → `LA-L031P`), falling back to the first file's stem,
+ *  so the tab is named after the board rather than after whichever file was
+ *  clicked first. `lastModified` takes the newest source so the board cache
+ *  keys stably across re-opens instead of missing every time. */
+async function mergeAscFiles(files: File[]): Promise<File | null> {
+  const read = await Promise.all(files.map(async f => ({ name: f.name, text: await f.text() })));
+  const bundled = bundleAscFiles(read);
+  if (!bundled) return null;
+  const stems = files.map(f => f.name.replace(/\.[^.]*$/, ''));
+  let prefix = stems[0];
+  for (const stem of stems.slice(1)) {
+    let i = 0;
+    while (i < prefix.length && i < stem.length && prefix[i] === stem[i]) i++;
+    prefix = prefix.slice(0, i);
+  }
+  prefix = prefix.replace(/[\s._-]+$/, '');
+  const name = `${prefix || stems[0]}.asc`;
+  const lastModified = Math.max(...files.map(f => f.lastModified));
+  log.parser.log(`(asc) merged ${files.length} section files into "${name}": ${files.map(f => f.name).join(', ')}`);
+  return new File([bundled], name, { type: 'text/plain', lastModified });
+}
+
 class BoardStore extends Emitter {
   private _tabs: BoardTab[] = [];
   private _activeTabId: number | null = null;
@@ -956,8 +984,11 @@ class BoardStore extends Emitter {
           // NOTE: `buffer` was transferred to the worker and is detached —
           // every retry below reads fresh bytes from the File.
           if (e instanceof FZKeyError) {
-            if (e.reason === 'invalid') fzKeyStore.clearKey();
-            const ok = await fzKeyStore.ensureFzKey();
+            // .cae is the same container under a different key (issue #25), so
+            // the prompt has to name the one this file needs.
+            const kind = getFileExtension(file.name) === '.cae' ? 'cae' : 'fz';
+            if (e.reason === 'invalid') fzKeyStore.clearKey(kind);
+            const ok = await fzKeyStore.ensureFzKey(kind);
             if (!ok) throw e;
             board = await parseBoardFileInWorker(await file.arrayBuffer(), file.name);
           } else if (isWorkerTransportError(e)) {
@@ -1076,7 +1107,24 @@ class BoardStore extends Emitter {
   }
 
   async loadFiles(files: FileList | File[]) {
-    for (const file of files) {
+    const list = Array.from(files);
+    // Plain-ASC boards arrive as the three files the sections are named after
+    // — format.asc / nails.asc / pins.asc (issue #26). Selecting them together
+    // means "this is one board", not "open three tabs", so bundle them back
+    // into the single document the .bdv form already carries and load that.
+    const asc = list.filter(f => getFileExtension(f.name) === '.asc');
+    const rest = asc.length > 1 ? list.filter(f => getFileExtension(f.name) !== '.asc') : list;
+    if (asc.length > 1) {
+      const merged = await mergeAscFiles(asc);
+      if (merged) {
+        await this.loadFile(merged);
+      } else {
+        // Nothing recognisable in any of them — fall back to opening each on
+        // its own so the per-file error reaches the user instead of silence.
+        for (const f of asc) await this.loadFile(f);
+      }
+    }
+    for (const file of rest) {
       await this.loadFile(file);
     }
   }

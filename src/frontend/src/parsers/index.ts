@@ -3,7 +3,7 @@ import { registerFormat, detectFormat, detectByExtension, getAllFormats } from '
 import { BVR1Format } from './bvr1-format';
 import { BVR3Format } from './bvr3-format';
 import { BRDFormat } from './brd-format';
-import { FZFormat } from './fz-format';
+import { FZFormat, CAEFormat } from './fz-format';
 import { CADFormat } from './cad-format';
 import { MentorNeutralFormat } from './mentor-neutral-format';
 import { XZZFormat } from './xzz-format';
@@ -22,6 +22,7 @@ registerFormat(BDVFormat);          // Before Allegro/BRD — plain-text "BRDOUT
 registerFormat(AllegroBRDFormat);  // Before BRD — both use .brd, content detection differentiates
 registerFormat(BRDFormat);
 registerFormat(FZFormat);
+registerFormat(CAEFormat);
 registerFormat(MentorNeutralFormat); // Before CAD — both share .cad; content sniff routes Mentor first
 registerFormat(CADFormat);
 registerFormat(XZZFormat);

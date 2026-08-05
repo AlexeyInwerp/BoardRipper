@@ -27,8 +27,9 @@ are MIT/Apache-2.0/BSD.
 - **BVR3** — keyword-value, relative pin coords. Spec: `docs/formats/BVR_FORMAT.md`
 - **BRD** — binary obfuscated boardview (Apple/Mac repair). Spec: `docs/formats/BRD_FORMAT.md`
 - **BDV** — plain-text boardview (BRDOUT/NETS/PARTS/PINS/NAILS sections). Spec: `docs/formats/BDV_FORMAT.md`
-- **BDV ASC** — Honhan / Tebo-ICT obfuscated multi-section ASC (line-key cipher). Spec: `docs/formats/BDV_ASC_FORMAT.md`
+- **BDV ASC** — Honhan / Tebo-ICT multi-section ASC. Two deliveries of one document: obfuscated single-file `.bdv` (line-key cipher) and plain `.asc` section files (`format`/`nails`/`pins`), which open singly or merge into one board when selected together. Spec: `docs/formats/BDV_ASC_FORMAT.md`
 - **FZ** — ASUS boardview (RC6-encrypted, zlib-compressed). Spec: `docs/formats/FZ_FORMAT.md`
+- **CAE** — ASRock PCBRepair Pro. Same container and cipher as FZ, different key; shares `parseFZ`, which probes a list of candidate keys. Unverified against real data (no sample). Spec: `docs/formats/FZ_FORMAT.md`
 - **CAD** — GenCAD 1.4 text-based PCB interchange. Spec: `docs/formats/CAD_FORMAT.md`
 - **XZZ** — XZZ PCB (DES-encrypted boardview). Spec: `docs/formats/XZZ_FORMAT.md`
 - **TVW** — Teboview binary (multi-layer, traces, drill data). Spec: `docs/formats/TVW_FORMAT.md`

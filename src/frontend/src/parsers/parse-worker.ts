@@ -22,6 +22,7 @@ export interface ParseWorkerRequest {
   fileName: string;
   /** FZ decryption key — injected because workers have no localStorage. */
   fzKey: Uint32Array | null;
+  caeKey: Uint32Array | null;
 }
 
 export type ParseWorkerResponse =
@@ -45,8 +46,9 @@ logStore.subscribe(() => {
 });
 
 self.onmessage = async (ev: MessageEvent<ParseWorkerRequest>) => {
-  const { id, buffer, fileName, fzKey } = ev.data;
+  const { id, buffer, fileName, fzKey, caeKey } = ev.data;
   fzKeyStore.key = fzKey;
+  fzKeyStore.caeKey = caeKey;
   try {
     const board = await parseBoardFile(buffer, fileName);
     try {

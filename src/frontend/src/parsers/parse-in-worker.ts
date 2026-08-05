@@ -8,7 +8,7 @@
  */
 import { parseBoardFile } from './index';
 import { FZKeyError } from './fz-parser';
-import { getFzKey } from '../store/fz-key-store';
+import { getFzKey, fzKeyStore } from '../store/fz-key-store';
 import { isOfflineBuild } from '../store/build-mode';
 import { log } from '../store/log-store';
 import type { BoardData } from './types';
@@ -71,7 +71,7 @@ export async function parseBoardFileInWorker(buffer: ArrayBuffer, fileName: stri
   const w = ensureWorker();
   if (!w) return parseBoardFile(buffer, fileName);
   const id = nextId++;
-  const req: ParseWorkerRequest = { id, buffer, fileName, fzKey: getFzKey() };
+  const req: ParseWorkerRequest = { id, buffer, fileName, fzKey: getFzKey(), caeKey: fzKeyStore.caeKey };
   const board = await new Promise<BoardData>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     try {

@@ -19,6 +19,16 @@ import { validateFZKey } from '../parsers/fz-parser';
 import { log } from './log-store';
 
 const STORAGE_KEY = 'boardripper-fz-key';
+const STORAGE_KEY_CAE = 'boardripper-cae-key';
+
+/** Which product's key is meant. ASUS `.fz` and ASRock `.cae` share the
+ *  container and the cipher; only the key differs (issue #25). */
+export type FzKeyKind = 'fz' | 'cae';
+
+export const KEY_KIND_LABEL: Record<FzKeyKind, string> = {
+  fz: 'ASUS .fz',
+  cae: 'ASRock .cae',
+};
 
 /**
  * Public GitHub sources for the FZ key, tried in order. The fetch falls
@@ -120,12 +130,32 @@ function saveToStorage(key: Uint32Array): void {
   }
 }
 
+/** Load the CAE key. Unlike the FZ key there is no published parity
+ *  fingerprint to check it against, so validation is structural (44 words)
+ *  and the real proof is functional: the parser accepts whichever stored key
+ *  decrypts a given file to valid zlib. */
+function loadCaeFromStorage(): Uint32Array | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CAE);
+    return raw ? parseFzKeyText(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 class FZKeyStore extends Emitter {
   /** Cached key (null if unset). Treat as immutable from outside. */
   key: Uint32Array | null = loadFromStorage() ?? loadDevKey();
 
+  /** Cached ASRock .cae key (null if unset). Same container and cipher as
+   *  `key`, different constant — see FzKeyKind. */
+  caeKey: Uint32Array | null = loadCaeFromStorage();
+
   /** True while the FZKeyDialog should be visible. */
   dialogOpen = false;
+
+  /** Which key the open dialog is asking for. Set by `ensureFzKey`. */
+  dialogKind: FzKeyKind = 'fz';
 
   /**
    * Resolvers awaiting `ensureFzKey`. When the dialog closes (with or without
@@ -133,9 +163,16 @@ class FZKeyStore extends Emitter {
    */
   private _pending: Array<(ok: boolean) => void> = [];
 
-  /** True if a valid key is currently configured. */
-  hasKey(): boolean {
-    return this.key !== null;
+  /** True if a valid key is currently configured for `kind`. */
+  hasKey(kind: FzKeyKind = 'fz'): boolean {
+    return (kind === 'cae' ? this.caeKey : this.key) !== null;
+  }
+
+  /** Every configured key, in the order the parser should try them. The
+   *  parser probes each against the file rather than trusting the extension,
+   *  so a mislabelled file still opens. */
+  allKeys(): Uint32Array[] {
+    return [this.key, this.caeKey].filter((k): k is Uint32Array => k !== null);
   }
 
   /**
@@ -143,21 +180,35 @@ class FZKeyStore extends Emitter {
    * failure, or null on success. Notifies subscribers and resolves any
    * pending `ensureFzKey` promises when successful.
    */
-  setKeyFromText(text: string): string | null {
+  setKeyFromText(text: string, kind: FzKeyKind = 'fz'): string | null {
     const parsed = parseFzKeyText(text);
     if (!parsed) return 'Could not find 44 hex words in the input.';
-    if (!validateFZKey(parsed)) return 'Parity check failed — the bytes are not a valid FZ key.';
-    this.key = parsed;
-    saveToStorage(parsed);
+    if (kind === 'fz') {
+      // The FZ key has a published parity fingerprint, so a wrong paste can be
+      // rejected up front rather than at the next file open.
+      if (!validateFZKey(parsed)) return 'Parity check failed — the bytes are not a valid FZ key.';
+      this.key = parsed;
+      saveToStorage(parsed);
+    } else {
+      // No published fingerprint for the CAE key — structure is all we can
+      // check here; the parser proves it functionally on the next .cae.
+      this.caeKey = parsed;
+      try { localStorage.setItem(STORAGE_KEY_CAE, formatFzKey(parsed)); } catch { /* quota */ }
+    }
     this.notify();
     this._resolvePending(true);
     return null;
   }
 
-  /** Erase the stored key. Notifies subscribers. */
-  clearKey(): void {
-    this.key = null;
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  /** Erase a stored key. Notifies subscribers. */
+  clearKey(kind: FzKeyKind = 'fz'): void {
+    if (kind === 'cae') {
+      this.caeKey = null;
+      try { localStorage.removeItem(STORAGE_KEY_CAE); } catch { /* ignore */ }
+    } else {
+      this.key = null;
+      try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    }
     this.notify();
   }
 
@@ -201,7 +252,7 @@ class FZKeyStore extends Emitter {
     if (!this.dialogOpen) return;
     this.dialogOpen = false;
     this.notify();
-    this._resolvePending(this.hasKey());
+    this._resolvePending(this.hasKey(this.dialogKind));
   }
 
   /**
@@ -209,8 +260,9 @@ class FZKeyStore extends Emitter {
    * immediately, or after the user provides one through the dialog). Resolves
    * false if the user dismisses the dialog without saving.
    */
-  ensureFzKey(): Promise<boolean> {
-    if (this.hasKey()) return Promise.resolve(true);
+  ensureFzKey(kind: FzKeyKind = 'fz'): Promise<boolean> {
+    if (this.hasKey(kind)) return Promise.resolve(true);
+    this.dialogKind = kind;
     return new Promise<boolean>((resolve) => {
       this._pending.push(resolve);
       this.openDialog();
@@ -230,4 +282,9 @@ export const fzKeyStore = new FZKeyStore();
 // so callers don't have to import the singleton class identity.
 export function getFzKey(): Uint32Array | null {
   return fzKeyStore.key;
+}
+
+/** Every configured key, for parsers that probe rather than assume. */
+export function getFzKeys(): Uint32Array[] {
+  return fzKeyStore.allKeys();
 }

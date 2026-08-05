@@ -392,31 +392,54 @@ function isZlibAt(data: Uint8Array, offset: number): boolean {
 }
 
 /**
- * Parse an .fz boardview file.
+ * Parse an .fz (ASUS PCBRepair) or .cae (ASRock PCBRepair Pro) boardview file.
+ *
+ * The two are the same container — `[len:u32][zlib…]` under an RC6 stream —
+ * and differ only in the key, which is why one parser serves both (issue #25;
+ * cyrozap/pcbrepair-rs takes the same approach, trying plaintext then each
+ * key in turn with no branch on extension).
  *
  * @param buffer  Raw file bytes
- * @param key     RC6 key (44 × uint32). Required for encrypted files. If the
- *                file is encrypted and no key is supplied, throws
- *                `FZKeyError` — the UI catches this to prompt the user.
+ * @param keys    Candidate RC6 keys (44 × uint32 each). Required for encrypted
+ *                files; each is tried until one produces valid zlib. With none
+ *                supplied — or none that works — throws `FZKeyError`, which
+ *                the UI catches to prompt the user.
  */
-export async function parseFZ(buffer: ArrayBuffer, key?: Uint32Array): Promise<BoardData> {
+export async function parseFZ(
+  buffer: ArrayBuffer,
+  keys?: Uint32Array | Uint32Array[],
+): Promise<BoardData> {
   const data = new Uint8Array(buffer.slice(0)); // working copy
 
   // Determine if encrypted: check bytes 4-5 for zlib signature
   const needsDecrypt = !isZlibAt(data, 4);
 
   if (needsDecrypt) {
-    if (!key) {
+    const supplied = keys == null ? [] : Array.isArray(keys) ? keys : [keys];
+    if (supplied.length === 0) {
       throw new FZKeyError('missing');
     }
-    if (key.length !== 44) {
+    const candidates = supplied.filter(k => k.length === 44);
+    if (candidates.length === 0) {
       throw new Error('FZ key must be exactly 44 uint32 values.');
     }
+    // RC6 here is a stream cipher whose state starts from zero, so the first
+    // N plaintext bytes depend only on the first N ciphertext bytes. Probing a
+    // 64-byte prefix identifies the right key without paying a full decrypt
+    // per candidate — which matters once there is more than one to try.
+    const winner = candidates.find(k => {
+      const probe = data.slice(0, Math.min(64, data.length));
+      rc6Decrypt(probe, k);
+      return isZlibAt(probe, 4);
+    });
+    if (!winner) {
+      throw new FZKeyError('invalid');
+    }
     const tDec = performance.now();
-    rc6Decrypt(data, key);
+    rc6Decrypt(data, winner);
     log.perf.log(`FZ rc6Decrypt: ${(performance.now() - tDec).toFixed(0)}ms for ${data.length.toLocaleString()} bytes`);
 
-    // Verify decryption produced valid zlib at offset 4
+    // Belt and braces — the prefix probe already proved this key decodes.
     if (!isZlibAt(data, 4)) {
       throw new FZKeyError('invalid');
     }

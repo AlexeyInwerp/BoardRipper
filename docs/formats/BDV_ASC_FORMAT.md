@@ -18,8 +18,8 @@ markers).
 
 | Property | Value |
 |----------|-------|
-| Extension | `.bdv` |
-| Detection | First 14 bytes equal the ASCII string `dd:1.3?,r?-=bb` |
+| Extension | `.bdv` (obfuscated bundle) · `.asc` (plain section files) |
+| Detection | First 14 bytes equal the ASCII string `dd:1.3?,r?-=bb`, **or** plain text carrying one of the section header titles below |
 | Encoding | ASCII after applying the line-key cipher below |
 | Coordinate unit | Inches (parser multiplies by 1000 to get mils) |
 | Side encoding (pins) | `1` = top, `2` = bottom, `0` = through-hole |
@@ -27,6 +27,43 @@ markers).
 
 There is **no trace, via, or copper-routing data** in this format — it is
 component-level only.
+
+---
+
+## Plain (unencoded) delivery — `.asc`
+
+The same toolchain also ships the document **unobfuscated, split back into the
+files the markers are named after** (issue #26). Nothing about the content
+changes: `<<pins.asc>>`'s body and a standalone `pins.asc` are the same bytes,
+so one parser reads both. Only two things differ at the entry point:
+
+1. **No cipher.** `parseBDVAsc` decodes only when the `dd:1.3?,r?-=bb`
+   signature is present; otherwise the bytes are read as ASCII directly.
+2. **No markers.** A standalone file has no `<<name>>` of its own, so the
+   section is identified from the vendor header title the tool prints at the
+   top of each file:
+
+   | Title line | Section |
+   |---|---|
+   | `Board Outline Contour` | `format.asc` |
+   | `Test Fixture Nails` | `nails.asc` |
+   | `Part Pins List` | `pins.asc` |
+
+   With the header stripped there is a shape fallback: a `Part <name> (T)`
+   line means pins, a `$<id>` row means nails, bare numeric triples mean an
+   outline contour.
+
+A single file opens on its own — a lone `pins.asc` gives parts, pins and nets
+with no outline. Selecting several at once merges them into **one** board
+rather than one tab each: `bundleAscFiles` re-wraps each file under its own
+`<<name>>` marker and hands the result to the same code path the `.bdv` uses,
+so the two deliveries cannot drift apart. The merged tab is named after the
+files' common stem.
+
+**Extension collision.** `.asc` is also PADS Layout's ASCII export extension
+(`PART.ASC` / `CONN.ASC` beside a PADS job). Those start with `*PADS-PCB*` and
+are rejected by name — the same courtesy the XZZ parser extends to PADS binary
+`.pcb` files.
 
 ---
 

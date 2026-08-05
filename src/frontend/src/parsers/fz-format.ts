@@ -1,6 +1,6 @@
 import type { FormatDescriptor } from './registry';
 import { parseFZ } from './fz-parser';
-import { getFzKey } from '../store/fz-key-store';
+import { getFzKeys } from '../store/fz-key-store';
 
 /**
  * FZ format detection: first 4 bytes are a header, bytes 4-5 should be
@@ -31,9 +31,40 @@ export const FZFormat: FormatDescriptor = {
   },
 
   parse(buffer) {
-    // Key is sourced at parse-time from the user-managed store. Encrypted
-    // files with missing/invalid keys trigger FZKeyError in parseFZ; the
+    // Keys are sourced at parse-time from the user-managed store. parseFZ
+    // probes each against the file, so a .fz carrying the ASRock key (or a
+    // renamed .cae) still opens. Missing/invalid keys trigger FZKeyError; the
     // board-store catches it and opens the FZKeyDialog.
-    return parseFZ(buffer, getFzKey() ?? undefined);
+    return parseFZ(buffer, getFzKeys());
+  },
+};
+
+/**
+ * CAE — ASRock PCBRepair Pro.
+ *
+ * Byte-for-byte the same container as FZ (`[len:u32][zlib…]` under an RC6
+ * stream) with a different key, which is why it shares `parseFZ` outright
+ * (issue #25). Kept as its own descriptor so the status bar and the format
+ * list name it honestly rather than calling an ASRock board "FZ".
+ *
+ * Detection is extension-driven for the same reason FZ's is: an encrypted
+ * header is indistinguishable from random bytes. An unencrypted .cae is
+ * caught by FZFormat.detect() first — same zlib signature, same parser, so
+ * the outcome is identical either way.
+ */
+export const CAEFormat: FormatDescriptor = {
+  id: 'CAE',
+  name: 'CAE (ASRock Boardview)',
+  extensions: ['.cae'],
+  description: 'RC6-encrypted, zlib-compressed boardview format used by ASRock PCBRepair Pro. Same container as FZ, different key.',
+  docUrl: 'docs/formats/FZ_FORMAT.md',
+  flipY: true,
+
+  detect() {
+    return false;
+  },
+
+  parse(buffer) {
+    return parseFZ(buffer, getFzKeys());
   },
 };

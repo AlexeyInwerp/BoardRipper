@@ -24,6 +24,22 @@
 
 ### Formats
 
+- **Boardviews that arrive as loose `.asc` files now open as one board.** Some
+  vendor tools ship the Honhan / Tebo-ICT boardview split into the three files
+  it is made of — outline, test nails, part pins — instead of the single
+  encoded `.bdv`. Select them together and you get one board, not three tabs;
+  open just one and you get what it holds (a lone pins file still gives you
+  parts, pins and nets). Requested by
+  **[@luiztessadri](https://github.com/luiztessadri)** in
+  [#26](https://github.com/AlexeyInwerp/BoardRipper/issues/26).
+- **ASRock `.cae` files are accepted.** They are the same container and cipher
+  as ASUS `.fz` and differ only in the key, so they now share the parser,
+  which tries each key you have stored and takes whichever one actually
+  decrypts the file. As with the FZ key, BoardRipper does not ship the ASRock
+  key — there is a paste field for it. Untested against a real `.cae`: nobody
+  has sent one yet. Requested by
+  **[@luiztessadri](https://github.com/luiztessadri)** in
+  [#25](https://github.com/AlexeyInwerp/BoardRipper/issues/25).
 - **XZZ boards from MSI now show component values.** MSI `.pcb` files write
   the BOM value into a label block on the part — "22uF" under C757 — which
   the parser was skipping. It now reads it, so the Info pane, the net branch

@@ -21,6 +21,35 @@ named data blocks.
 
 ---
 
+## ASRock `.cae` — the same format, a different key
+
+ASRock PCBRepair Pro writes `.cae` files that are byte-for-byte the same
+container as `.fz` — `[len:u32][zlib…]` under the same RC6 stream — and differ
+only in the key (issue #25). `cyrozap/pcbrepair-rs` reaches the same
+conclusion from the other direction: its decoder tries, in order, no
+encryption, `FZ_EXPANDED_KEY`, then `CAE_EXPANDED_KEY`, with no branch on file
+extension, and validates a decrypt by checking for the zlib magic at offset 4.
+
+BoardRipper does the same. `parseFZ` takes a **list** of candidate keys and
+probes each against a 64-byte prefix — RC6 here is a stream cipher starting
+from zero state, so the first N plaintext bytes depend only on the first N
+ciphertext bytes, and identifying the right key costs no full decrypt. The
+first key that yields valid zlib wins, which means a renamed or mislabelled
+file still opens.
+
+The CAE key is **not** shipped, for the same reason the FZ key is not: it is
+third-party material, and the anti-circumvention exposure is identical. Unlike
+the FZ key it has no public mirror wired into the app and no published parity
+fingerprint, so it is paste-only and validated structurally (44 words) — the
+real proof is functional, when a file actually decrypts with it.
+
+**Status: unverified against real data.** There is no `.cae` in the sample
+corpus. The implementation follows the structure above and the multi-key
+selection is covered by `fz-multikey.test.ts` against a real encrypted `.fz`,
+but no ASRock file has been opened with it. See issue #25.
+
+---
+
 ## File Structure
 
 ### Binary Layout

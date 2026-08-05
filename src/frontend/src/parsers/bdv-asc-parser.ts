@@ -18,6 +18,67 @@ import { decodeBDVAsc } from './bdv-asc-decoder';
 
 const INCH_TO_MIL = 1000;
 
+/** Section titles the vendor tools print in each file's own header block.
+ *  These are what identify a STANDALONE .asc file, which carries no
+ *  `<<name.asc>>` marker of its own — the marker only exists inside the
+ *  bundled (obfuscated .bdv) form, where it is literally the file name the
+ *  section would have had on disk. */
+const SECTION_TITLES: Array<{ re: RegExp; section: string }> = [
+  { re: /Board\s+Outline\s+Contour/i, section: 'format.asc' },
+  { re: /Test\s+Fixture\s+Nails/i,    section: 'nails.asc' },
+  { re: /Part\s+Pins\s+List/i,        section: 'pins.asc' },
+];
+
+/** Identify which section a standalone .asc file holds.
+ *
+ *  Header title first (it is explicit and vendor-printed), then a shape
+ *  fallback for files whose header was stripped: a `Part <name> (T)` line is
+ *  unmistakably pins, a `$<id>` row is nails, and bare numeric triples are an
+ *  outline contour. Returns null when nothing matches, so the caller can say
+ *  so rather than silently parsing an empty board. */
+export function identifyAscSection(text: string): string | null {
+  const head = text.slice(0, 4000);
+  for (const { re, section } of SECTION_TITLES) {
+    if (re.test(head)) return section;
+  }
+  if (/^Part\s+\S+\s*\([TB]\)\s*$/m.test(text)) return 'pins.asc';
+  if (/^\$\S+\s+-?\d/m.test(text)) return 'nails.asc';
+  if (/^\s*-?\d+\.\d+\s+-?\d+\.\d+\s+-?\d+\.\d+\s*$/m.test(text)) return 'format.asc';
+  return null;
+}
+
+/** True when the bytes are the Honhan / Tebo-ICT obfuscated bundle rather
+ *  than plain ASC text. The signature is the cipher applied to the first
+ *  section marker, so its presence is exactly the question "is this
+ *  encoded?". */
+export function isObfuscatedBDVAsc(bytes: Uint8Array): boolean {
+  const SIG = 'dd:1.3?,r?-=bb';
+  if (bytes.length < SIG.length) return false;
+  for (let i = 0; i < SIG.length; i++) {
+    if (bytes[i] !== SIG.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+/** Wrap standalone section files back into the bundled form the section
+ *  splitter already understands: `<<name>>` + body, concatenated. The
+ *  obfuscated .bdv IS this bundle, so one code path serves both deliveries.
+ *  `name` is the file's own name — `pins.asc`, `PINS.ASC`, `board_pins.asc`
+ *  — and is only used as a hint; the section is identified from content and
+ *  falls back to the name when the content is unrecognisable. */
+export function bundleAscFiles(files: Array<{ name: string; text: string }>): string {
+  const out: string[] = [];
+  for (const f of files) {
+    const byContent = identifyAscSection(f.text);
+    const lower = f.name.toLowerCase();
+    const byName = SECTION_TITLES.find(t => lower.includes(t.section.replace('.asc', '')))?.section;
+    const section = byContent ?? byName;
+    if (!section) continue;
+    out.push(`<<${section}>>\n${f.text}`);
+  }
+  return out.join('\n');
+}
+
 /** Split the decoded document on the `<<name.asc>>` section markers. */
 function splitSections(text: string): Map<string, string> {
   const markers: Array<{ name: string; start: number; bodyStart: number }> = [];
@@ -164,8 +225,29 @@ function parseNails(body: string): Nail[] {
 // ---------------------------------------------------------------------------
 
 export function parseBDVAsc(buffer: ArrayBuffer): BoardData {
-  const text = decodeBDVAsc(new Uint8Array(buffer));
-  const sections = splitSections(text);
+  const bytes = new Uint8Array(buffer);
+  // Two deliveries of the same document: the obfuscated .bdv bundle, and the
+  // plain .asc files some vendor tools write instead (issue #26). Decode only
+  // when the cipher signature is actually there.
+  const text = isObfuscatedBDVAsc(bytes)
+    ? decodeBDVAsc(bytes)
+    : new TextDecoder('ascii').decode(bytes);
+  // `.asc` is also PADS Layout's ASCII export extension (PART.ASC / CONN.ASC
+  // next to a PADS job). Say what it is rather than failing as an unreadable
+  // boardview — same courtesy the XZZ parser extends to PADS binary `.pcb`.
+  if (/^\s*\*PADS-PCB\*/.test(text.slice(0, 200))) {
+    throw new Error('This is a PADS Layout ASCII export (*PADS-PCB*), not a boardview ASC file — BoardRipper does not read the PADS design database.');
+  }
+  let sections = splitSections(text);
+  if (sections.size === 0) {
+    // A standalone section file carries no marker — identify it and wrap it,
+    // so a lone pins.asc still opens (parts, pins and nets, no outline).
+    const section = identifyAscSection(text);
+    if (!section) {
+      throw new Error('ASC file holds no recognisable section (expected an outline contour, test nails, or part pins list)');
+    }
+    sections = new Map([[section, text]]);
+  }
 
   const outline = parseOutline(sections.get('format.asc') ?? '');
   const rawParts = parsePartsPins(sections.get('pins.asc') ?? '');
@@ -185,8 +267,8 @@ export function parseBDVAsc(buffer: ArrayBuffer): BoardData {
     };
   });
 
-  if (parts.length === 0 && outline.length === 0) {
-    throw new Error('BDV ASC file parsed but contains no parts or outline — decoder may have desynced');
+  if (parts.length === 0 && outline.length === 0 && nails.length === 0) {
+    throw new Error('BDV ASC file parsed but contains no parts, outline or nails — decoder may have desynced');
   }
 
   // Detect side-label inversion. Tebo-ICT / eM-Test files label parts from

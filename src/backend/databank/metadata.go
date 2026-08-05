@@ -18,6 +18,8 @@ var boardExtensions = map[string]bool{
 	".brd":      true, // BRD (Apple/Mac), BDV, Allegro
 	".bdv":      true, // BDV, BDV ASC
 	".fz":       true, // FZ (ASUS)
+	".cae":      true, // CAE (ASRock PCBRepair Pro) — same container as FZ
+	".asc":      true, // BDV ASC, plain (unencoded) section files
 	".cad":      true, // GenCAD 1.4, Mentor Boardstation Neutral
 	".pcb":      true, // XZZ
 	".tvw":      true, // Teboview

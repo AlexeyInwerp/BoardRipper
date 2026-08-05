@@ -1,6 +1,12 @@
 /**
  * Modal that prompts the user to provide the RC6 key needed to decrypt
- * encrypted ASUS .fz boardview files.
+ * encrypted ASUS `.fz` — or ASRock `.cae` — boardview files.
+ *
+ * The two formats share a container and a cipher and differ only in the key
+ * (issue #25), so the dialog serves both and names whichever one the file
+ * being opened needs. Only the FZ key has public mirrors and a parity
+ * fingerprint; the CAE key is paste-only and proven functionally, when a file
+ * actually decrypts with it.
  *
  * BoardRipper does not bundle this key. The dialog offers two paths:
  *   1. Fetch from a public GitHub mirror.
@@ -13,7 +19,7 @@
  */
 
 import { useSyncExternalStore, useState } from 'react';
-import { fzKeyStore, FZ_KEY_SOURCES } from '../store/fz-key-store';
+import { fzKeyStore, FZ_KEY_SOURCES, KEY_KIND_LABEL } from '../store/fz-key-store';
 
 function subscribe(cb: () => void) {
   return fzKeyStore.subscribe(cb);
@@ -26,7 +32,9 @@ export function FZKeyDialog() {
 }
 
 function FZKeyDialogBody() {
-  const hasKey = useSyncExternalStore(subscribe, () => fzKeyStore.hasKey());
+  const kind = useSyncExternalStore(subscribe, () => fzKeyStore.dialogKind);
+  const hasKey = useSyncExternalStore(subscribe, () => fzKeyStore.hasKey(kind));
+  const label = KEY_KIND_LABEL[kind];
   const [pasted, setPasted] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +50,7 @@ function FZKeyDialogBody() {
 
   const onSave = () => {
     setError(null); setInfo(null);
-    const err = fzKeyStore.setKeyFromText(pasted);
+    const err = fzKeyStore.setKeyFromText(pasted, kind);
     if (err) setError(err);
     else { setInfo('Key saved.'); window.setTimeout(() => fzKeyStore.closeDialog(), 500); }
   };
@@ -50,11 +58,13 @@ function FZKeyDialogBody() {
   return (
     <div className="library-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="fz-key-title">
       <div className="library-modal library-modal-wide">
-        <div className="library-modal-title" id="fz-key-title">FZ decryption key required</div>
+        <div className="library-modal-title" id="fz-key-title">{label} decryption key required</div>
         <div className="library-modal-filename">
-          ASUS .fz boardview files are RC6-encrypted. BoardRipper does not ship the key —
-          fetch it from a public mirror or paste it from any source you trust.
-          {hasKey && ' A valid key is already stored.'}
+          {label} boardview files are RC6-encrypted. BoardRipper does not ship the key —
+          {kind === 'fz'
+            ? ' fetch it from a public mirror or paste it from any source you trust.'
+            : ' paste it from any source you trust. This one has no public mirror here, and no parity fingerprint to check it against, so it is accepted on structure and proven when a file actually decrypts with it.'}
+          {hasKey && ' A key is already stored.'}
         </div>
 
         <details>
@@ -74,7 +84,7 @@ function FZKeyDialogBody() {
         </details>
 
 
-        <div className="library-modal-field">
+        {kind === 'fz' && <div className="library-modal-field">
           <span>Fetch from a public GitHub mirror (tries {FZ_KEY_SOURCES.length} in order)</span>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
@@ -92,10 +102,10 @@ function FZKeyDialogBody() {
               </a>
             ))}
           </div>
-        </div>
+        </div>}
 
         <div className="library-modal-field">
-          <span>Or paste 44 hex words (0x… tokens, any whitespace)</span>
+          <span>{kind === 'fz' ? 'Or paste' : 'Paste'} 44 hex words (0x… tokens, any whitespace)</span>
           <textarea
             spellCheck={false}
             placeholder="0x25d8d248 0xe1502405 0x56b5d486 0x69213fe0&#10;…44 words total…"
@@ -109,7 +119,7 @@ function FZKeyDialogBody() {
 
         <div className="library-modal-actions">
           {hasKey && (
-            <button type="button" onClick={() => { fzKeyStore.clearKey(); setInfo('Stored key cleared.'); }} disabled={busy}>
+            <button type="button" onClick={() => { fzKeyStore.clearKey(kind); setInfo('Stored key cleared.'); }} disabled={busy}>
               Clear stored
             </button>
           )}
