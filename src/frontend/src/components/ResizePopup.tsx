@@ -6,6 +6,13 @@
  *  Per row: −/+ buttons, a slider (double-click = reset to default), and
  *  wheel-over-the-row to nudge. Popup closes on Escape or outside click.
  *
+ *  These handles write GLOBAL, PERSISTED settings — every board, every
+ *  session. That is the feature, but it made a stray drag indistinguishable
+ *  from a rendering bug: nothing afterwards said a value had been changed, and
+ *  the only undo (double-click) was invisible. So a changed row is marked and
+ *  carries its own ⟲, and the footer says where the change lands and offers
+ *  one click to put the whole group back.
+ *
  *  MOUNT ONCE, app-level (App.tsx). Both the popup state and the settings it
  *  edits are global, so a per-board-panel mount produced one instance per open
  *  board tab: identical popups stacked on document.body, each with its own
@@ -15,7 +22,7 @@
 import { useRef, useEffect, useSyncExternalStore, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { resizeModeStore, CONTROLS } from '../store/resize-mode-store';
-import type { RenderSettings } from '../store/render-settings';
+import { DEFAULTS, type RenderSettings } from '../store/render-settings';
 
 function subscribe(cb: () => void) {
   return resizeModeStore.subscribe(cb);
@@ -27,6 +34,7 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
   const def = CONTROLS[k as string];
   const value = resizeModeStore.valueOf(k);
   const isColor = def.type === 'color';
+  const modified = resizeModeStore.isModified(k);
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (isColor) return;
     e.stopPropagation();
@@ -36,8 +44,23 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
   return (
     <div onWheel={onWheel} style={{ marginTop: 8 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontSize: 12 }}>{def.label}</span>
-        <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)', fontSize: 12 }}>
+        <span style={{ fontSize: 12 }}>
+          {def.label}
+          {modified && (
+            <span
+              data-testid="resize-modified-dot"
+              title="Changed from the default"
+              style={{ color: 'var(--accent-text)', marginLeft: 4 }}
+            >
+              •
+            </span>
+          )}
+        </span>
+        <span style={{
+          fontVariantNumeric: 'tabular-nums',
+          color: modified ? 'var(--accent-text)' : 'var(--text-secondary)',
+          fontSize: 12,
+        }}>
           {isColor ? toHex(value) : value}{!isColor && def.unit && <span style={{ opacity: 0.6, marginLeft: 3 }}>{def.unit}</span>}
         </span>
       </div>
@@ -63,6 +86,16 @@ function ControlRow({ k }: { k: keyof RenderSettings }) {
             style={{ flex: 1, accentColor: 'var(--accent)' }}
           />
           <button onClick={() => resizeModeStore.nudge(k, 1)} style={btnStyle} title={`+ ${def.step}`}>+</button>
+          {modified && (
+            <button
+              data-testid="resize-row-reset"
+              onClick={() => resizeModeStore.reset(k)}
+              style={btnStyle}
+              title={`Reset ${def.label} to its default (${DEFAULTS[k] as number})`}
+            >
+              ⟲
+            </button>
+          )}
         </div>
       )}
       <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 2, lineHeight: 1.3 }}>{def.hint}</div>
@@ -91,6 +124,8 @@ export function ResizePopup() {
   }, [popup]);
 
   if (!snap.enabled || !popup) return null;
+
+  const groupModified = popup.keys.some(k => resizeModeStore.isModified(k));
 
   const W = 250;
   const maxH = window.innerHeight - 24;
@@ -123,8 +158,30 @@ export function ResizePopup() {
 
       {popup.keys.map((k) => <ControlRow key={k as string} k={k} />)}
 
-      <div style={{ marginTop: 8, color: 'var(--text-secondary)', opacity: 0.7, fontSize: 11 }}>
-        scroll a row to adjust · double-click to reset
+      <div style={{
+        marginTop: 8, paddingTop: 6, borderTop: '1px solid var(--border)',
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8,
+        color: 'var(--text-secondary)', fontSize: 11,
+      }}>
+        <span style={{ opacity: 0.8 }}>
+          {groupModified ? 'Changed — saved for every board' : 'Saved for every board'}
+        </span>
+        <button
+          data-testid="resize-reset-all"
+          onClick={() => resizeModeStore.resetKeys(popup.keys)}
+          disabled={!groupModified}
+          style={{
+            background: 'none', border: 'none', padding: 0, font: 'inherit',
+            color: groupModified ? 'var(--accent-text)' : 'var(--text-secondary)',
+            opacity: groupModified ? 1 : 0.45,
+            cursor: groupModified ? 'pointer' : 'default',
+            textDecoration: groupModified ? 'underline' : 'none',
+            whiteSpace: 'nowrap', flex: 'none',
+          }}
+          title={groupModified ? 'Put every handle here back to its default' : 'Nothing here has been changed'}
+        >
+          Reset all
+        </button>
       </div>
     </div>,
     document.body,

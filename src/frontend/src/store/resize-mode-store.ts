@@ -158,6 +158,22 @@ class ResizeModeStore extends Emitter {
   reset(key: keyof RenderSettings) {
     this.commit(key, DEFAULTS[key] as number);
   }
+
+  /** True when a control no longer holds its compile-time default.
+   *
+   *  These edits write GLOBAL settings that persist across sessions and every
+   *  board, so the popup marks the ones that are carrying a change: a dragged
+   *  handle is otherwise invisible afterwards, and a stray drag reads as a
+   *  rendering bug rather than a setting. */
+  isModified(key: keyof RenderSettings): boolean {
+    return this.valueOf(key) !== (DEFAULTS[key] as number);
+  }
+
+  /** Reset every control in the group back to defaults — the undo for a drag
+   *  the user didn't mean. Silent no-op for keys already at their default. */
+  resetKeys(keys: (keyof RenderSettings)[]) {
+    for (const k of keys) this.reset(k);
+  }
 }
 
 export const resizeModeStore = new ResizeModeStore();
