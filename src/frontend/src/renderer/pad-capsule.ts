@@ -49,3 +49,72 @@ export function capsuleParams(
     axisRad,
   };
 }
+
+/** Structural subset of `Pin` this module reasons about — keeps the capsule
+ *  rules importable by unit tests without dragging in the parser types. */
+export interface CapsulePinLike {
+  padShape?: string;
+  padWidth?: number;
+  padHeight?: number;
+  padAngleDeg?: number;
+}
+
+/** True when a pin's pad is a genuine stadium: shape 'round' with two
+ *  positive, unequal dimensions. Square round pads are circles, and every
+ *  other shape (rect, roundrect, poly) has its own drawing path.
+ *
+ *  The rule lives beside the capsule math rather than in board-scene.ts
+ *  because both the scene builder and BoardRenderer's six highlight paths ask
+ *  the same question, and they used to answer it in seven different places. */
+export function isOblongRoundPad(pin: CapsulePinLike): boolean {
+  return pin.padShape === 'round'
+    && pin.padWidth  != null && pin.padWidth  > 0
+    && pin.padHeight != null && pin.padHeight > 0
+    && pin.padWidth !== pin.padHeight;
+}
+
+/** The `grow` that makes a capsule's pen exactly `2 * radius`.
+ *
+ *  A circle takes pin-size settings as a scalar radius; a capsule has no
+ *  single radius, so the same intent has to become an outward offset of the
+ *  whole stadium. `grow` is a true geometric offset — it cancels out of the
+ *  centre→cap-centre distance — so offsetting by (radius − short/2) sets the
+ *  pen to 2·radius while leaving the pad's skeleton, and therefore its
+ *  length and orientation, exactly where the file put them.
+ *
+ *  This is what keeps the pin-size slider working on boards where most pins
+ *  are oblong: on PL5TU1B 5,413 of 9,002 pins are capsules, and drawing them
+ *  from raw pad dims would have made the setting a no-op across the board. */
+export function capsuleGrowForRadius(pin: CapsulePinLike, radius: number): number {
+  const short = Math.min(pin.padWidth ?? 0, pin.padHeight ?? 0);
+  return radius - short / 2;
+}
+
+/** Sample a capsule outline as a closed polygon, `perCap` points per end cap.
+ *
+ *  For consumers that need vertices rather than a draw call — the HDR
+ *  selection outline builds one rotated DIV per polygon edge, so it cannot
+ *  use `arc`. Degenerate capsules return null; the caller falls back to its
+ *  circle path, which is what the shape has become. */
+export function capsulePolygon(
+  cx: number, cy: number,
+  w: number, h: number,
+  angleDeg: number, grow: number,
+  perCap = 12,
+): Array<readonly [number, number]> | null {
+  const cap = capsuleParams(cx, cy, w, h, angleDeg, grow);
+  if (!cap) return null;
+  const pts: Array<readonly [number, number]> = [];
+  // Cap 1 sweeps the far half-circle, cap 2 the near one; walking them in this
+  // order yields a single closed loop with the straight flanks implied by the
+  // join between the two arcs.
+  for (let i = 0; i <= perCap; i++) {
+    const a = cap.axisRad + Math.PI / 2 + (i / perCap) * Math.PI;
+    pts.push([cap.c1x + Math.cos(a) * cap.r, cap.c1y + Math.sin(a) * cap.r]);
+  }
+  for (let i = 0; i <= perCap; i++) {
+    const a = cap.axisRad - Math.PI / 2 + (i / perCap) * Math.PI;
+    pts.push([cap.c2x + Math.cos(a) * cap.r, cap.c2y + Math.sin(a) * cap.r]);
+  }
+  return pts;
+}

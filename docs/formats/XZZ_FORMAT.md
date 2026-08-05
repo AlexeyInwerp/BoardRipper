@@ -174,7 +174,8 @@ Within a part block, pins are encoded as typed sub-blocks:
 │ i32: x            │  Pin X position (÷ 10000 for mils)
 │ i32: y            │  Pin Y position (÷ 10000 for mils)
 ├──────────────────┤
-│ u32: zero         │  Constant 0
+│ u32: drill        │  Through-hole drill diameter (÷ 10000 for mils);
+│                   │  0 on an SMD pin. See below.
 │ u32: padAngle     │  Pad rotation in degrees CCW (÷ 10000)
 ├──────────────────┤
 │ u32: nameLen      │
@@ -190,9 +191,51 @@ Within a part block, pins are encoded as typed sub-blocks:
 └──────────────────┘
 ```
 
+**Drill diameter.** This field was documented as a constant zero for a long
+time, because the boards surveyed first are SMD-only. It is a drill: non-zero
+means the pin is through-hole, and the value is the hole diameter on the usual
+÷10000 = mils scale. Evidence, gathered independently on two disjoint corpora
+(issue #32 — Switch / PS5 / MSI; and 32 local `.pcb` files, 415,520 pins):
+
+- **The annular-ring relation never breaks.** The value is always strictly
+  smaller than both pad dimensions — 253 non-zero readings here, zero
+  inversions. A flag field has no reason to respect a physical constraint.
+- **It is sparse and it lands where through-holes live.** 0.03–0.43% of pins
+  per file, on connector legs, headers and mounting pins; never on a top-level
+  `0x09` test pad, which is right — probe points are surface features.
+- **One drill spans two pad shapes on the same part.** `N2494` on
+  A2442-820-02098-A carries drill 10.5 on both its 20×26 oblong pads and its
+  round ones — what you would expect of a bit diameter, not of anything
+  derived from pad geometry.
+- Only the "PCB layer" export family populates it; the "boardview" variants of
+  the very same Apple boards leave it zero.
+
+Parsed into `Pin.drill` / `Pad.drill`, and any part with a drilled pin is
+typed `throughhole` instead of the blanket `smd` every XZZ part used to claim.
+
+**Slots.** The hole in an oblong pad is the *same capsule at a smaller
+radius*, not a circle centred in it: a stadium is every point within `r` of a
+line segment, so the pad is that segment inflated by `min(w,h)/2` and the slot
+is the same segment inflated by `drill/2`. The copper ring is then uniform all
+the way round, caps included, with no margin to tune. The renderer gets this
+for free by drawing the pad shape at a negative `grow` of `−(min(w,h) − drill)/2`,
+since `grow` is a true geometric offset and cancels out of the centre→cap
+distance. Square pads degenerate to exactly `circle(drill/2)`; non-round shapes
+keep a plain circle, because a shrunken rectangle is not a drill.
+
+**Pad-geometry record list.** The 27 bytes after the pin name are documented
+above as three fixed chunks. They are really a terminated record list —
+`(w, h, type)` records until a `type` byte of `0x00`, then a 5-byte terminator
+— and "read the first, skip 32" is only correct because every pin carries
+exactly 3 records. That holds for all 415,520 pins here and across the issue
+#32 corpus, so there is nothing to fix against; a file with 1, 2 or 4+ records
+would silently misalign the `netIndex` read rather than fail loudly.
+
 **Oblong pads (shape 0x01 with w ≠ h).** Shape `0x01` is not strictly a
-circle: with w ≠ h it encodes a round-capped stroke (stadium) — `w` is the
-pen width, `h` the stroke length, rotated by `padAngle` CCW. The surveyed
+circle: with w ≠ h it encodes a round-capped stroke (stadium). The pen width
+is whichever dimension is **shorter** and the stroke length whichever is
+longer — there is no fixed axis, either field can be the pen — rotated by
+`padAngle` CCW. The surveyed
 MECHREVO corpus (PL5TU1B) writes a constant 15-mil pen with lengths 1–350
 mil. Renderer draws these as rotated capsules (`capsuleParams` in
 `renderer/pad-capsule.ts`). Three caveats, handled by

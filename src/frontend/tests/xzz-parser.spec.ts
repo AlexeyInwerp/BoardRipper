@@ -35,7 +35,12 @@ function loadSample(filePath: string): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 }
 
+// One of the ten files whose exporter populates the drill field (81 drilled
+// pins / 34 through-hole parts) and which also carries W-axis capsules.
+const DRILLED = path.resolve(XZZ_SAMPLES, "A24xx/A2442_820-02098 MacBook Pro/Schematic and boardview/MacBook Pro M1 Pro 14' A2442 820-02098-A PCB layer.pcb");
+
 const haveSmall = fs.existsSync(SMALL);
+const haveDrilled = fs.existsSync(DRILLED);
 const haveLarge = fs.existsSync(LARGE);
 
 test.describe('XZZ parser', () => {
@@ -88,6 +93,55 @@ test.describe('XZZ parser', () => {
         expect(typeof pin.net).toBe('string');
       }
     }
+  });
+
+  // Through-hole drill (the pin sub-block's long-mislabelled "u32 = 0"). This
+  // fixture is one of the ten in the corpus whose exporter populates it: 81
+  // pins across 34 parts, all connector legs and mounting pins.
+  test('reads through-hole drills and types the parts that carry them', async () => {
+    test.skip(!haveDrilled, 'XZZ sample (A2442 820-02098-A PCB layer) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(loadSample(DRILLED));
+
+    const drilled = board.parts.flatMap(p => p.pins).filter(p => p.drill != null);
+    expect(drilled.length).toBeGreaterThan(0);
+
+    // The annular-ring invariant: a drill is always strictly inside its own
+    // copper. This is the single strongest signal that the field is a drill
+    // and not a flag, so it is also the best regression guard for the offset.
+    for (const pin of drilled) {
+      const short = Math.min(pin.padWidth ?? Infinity, pin.padHeight ?? Infinity);
+      expect(pin.drill!).toBeGreaterThan(0);
+      if (Number.isFinite(short)) expect(pin.drill!).toBeLessThan(short);
+    }
+
+    // Every part holding a drilled pin is through-hole; nothing else is.
+    for (const part of board.parts) {
+      const anyDrill = part.pins.some(p => p.drill != null);
+      expect(part.type).toBe(anyDrill ? 'throughhole' : 'smd');
+    }
+    expect(board.parts.some(p => p.type === 'throughhole')).toBe(true);
+
+    // Slots: a drilled pin whose pad is an oblong stroke. These are what the
+    // negative-grow capsule path in board-scene draws, so the corpus must
+    // actually contain some or that path is untested against real data.
+    const slots = board.pads.filter(p => p.drill && p.shape === 'round' && p.width !== p.height);
+    expect(slots.length).toBeGreaterThan(0);
+  });
+
+  // Oblong pads must survive with the pen on EITHER axis. A2442-A carries 12
+  // pads of 42×15 (pen on h) that the old padH <= padW guard flattened into
+  // Ø42 dots.
+  test('keeps W-axis capsules instead of collapsing them to fat dots', async () => {
+    test.skip(!haveDrilled, 'XZZ sample (A2442 820-02098-A PCB layer) not present (proprietary fixture)');
+    const { parseXZZ } = await import('../src/parsers/xzz-parser');
+    const board = parseXZZ(loadSample(DRILLED));
+
+    const wAxis = board.parts.flatMap(p => p.pins).filter(p =>
+      p.padShape === 'round' && (p.padWidth ?? 0) > (p.padHeight ?? 0) && (p.padHeight ?? 0) > 0);
+    expect(wAxis.length).toBeGreaterThan(0);
+    // None of them may have been squared off by the guard.
+    for (const pin of wAxis) expect(pin.padWidth).not.toBe(pin.padHeight);
   });
 
   // Component value channel (the part's 0x06 body label). What lives there is

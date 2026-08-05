@@ -511,6 +511,9 @@ function parseNetBlock(data: Uint8Array): Map<number, string> {
 
 interface PinData {
   name: string; x: number; y: number; netIndex: number;
+  /** Drill diameter in mils (raw u32 at offset 16 ÷ 10000), 0 for SMD pins.
+   *  See parsePinSubBlock for the evidence that this slot is a drill. */
+  drill: number;
   /** Pad width in mils, ÷10000 from the raw u32 at (28 + nameLen). 0 = unknown. */
   padW: number;
   /** Pad height in mils. */
@@ -531,14 +534,22 @@ export interface OblongPinLike {
 
 /** Oblong-pad plausibility guard.
  *
- *  Shape 0x01 with w ≠ h is a round-capped stroke (stadium): `w` is the pen
- *  width, `h` the stroke length, rotated by padAngleDeg. Every oblong entry
- *  in the surveyed corpus (PL5TU1B) carries the same 15-mil pen width with
- *  lengths 1–350 mil. Real for chip pads (15×20…40) and QFP leads (15×60,
- *  matches the vendor's assembly drawing) — but bogus on BGA perimeter
- *  rings, where 15×300/350 "pads" would cross a dozen neighbouring balls
- *  the vendor's own drawing shows as plain 15-mil dots (probably escape-stub
- *  metadata, not pad copper).
+ *  Shape 0x01 with w ≠ h is a round-capped stroke (stadium): the pen width is
+ *  whichever of w/h is SHORTER, the stroke length whichever is longer, rotated
+ *  by padAngleDeg. There is no fixed axis — either field can be the pen.
+ *  This guard used to assume `w` was always the pen and write off anything
+ *  with h ≤ w as a degenerate stroke, which held only because every oblong
+ *  entry in the corpus it was tuned against (PL5TU1B / EC1 / CPU1) happens to
+ *  have w < h. It flattened real capsules elsewhere: 88 pads of 37×10 on
+ *  A2485-820-02100-A became Ø37 dots, 3.5× too fat in the direction that
+ *  matters for reading a connector footprint, and HAC-CPU-20's 71×20 USB-C
+ *  mounting legs likewise (issue #32).
+ *
+ *  Lengths run 1–350 mil against a typical 15-mil pen. Real for chip pads
+ *  (15×20…40) and QFP leads (15×60, matches the vendor's assembly drawing) —
+ *  but bogus on BGA perimeter rings, where 15×300/350 "pads" would cross a
+ *  dozen neighbouring balls the vendor's own drawing shows as plain 15-mil
+ *  dots (probably escape-stub metadata, not pad copper).
  *
  *  Copper pads of different pins can never overlap, so the guard is
  *  physical: a pin's oblong footprint (w×h box at the pad angle) must not
@@ -548,8 +559,14 @@ export interface OblongPinLike {
  *  exporter stamps ONE angle on every pin of a part while a QFP's top/bottom
  *  leads are physically perpendicular to its left/right leads; an oblong
  *  only collapses to a pen-width round dot when neither orientation is
- *  physically possible. Degenerate strokes (h ≤ w, e.g. 15×1) collapse
- *  unconditionally. A final majority pass drags stragglers along: the
+ *  physically possible. Sub-manufacturable pens collapse unconditionally:
+ *  once the pen is defined as min(w, h) the old "length shorter than pen"
+ *  branch is impossible by construction, but it was doing a second job the
+ *  axis fix would have silently dropped — PL5TU1B writes 139 entries of 15×1
+ *  and 42 more at 15×2/15×3, and 1-mil copper is not manufacturable. Those
+ *  are the same escape-stub metadata, and nothing else catches them (a
+ *  hairline overlaps no neighbour, so the physical test passes it). Hence
+ *  MIN_PEN_MILS. A final majority pass drags stragglers along: the
  *  exporter writes one length for a whole ring/side, so when most pins of
  *  an identical (w, h) group prove implausible, the survivors (stubs that
  *  happen to thread a gap in a staggered ball grid — CPU1 pin W1) are the
@@ -558,7 +575,12 @@ export interface OblongPinLike {
  *  (un-mirrored) frame.
  *
  *  Mutates `pins` in place; returns how many pads were collapsed. */
-export function normalizeOblongPads(pins: OblongPinLike[]): number {
+/** Narrowest pen that can be real copper. Below this the short dimension is
+ *  read as noise rather than as a hairline stroke — a 1-mil-wide pad is not
+ *  manufacturable, and PL5TU1B writes 181 of them. */
+const MIN_PEN_MILS = 4;
+
+export function normalizeOblongPads(pins: OblongPinLike[], stats?: { subPen: number }): number {
   let collapsed = 0;
   // True when p's w×h box rotated by angDeg overlaps no neighbour's pen circle.
   const plausibleAt = (p: OblongPinLike, angDeg: number): boolean => {
@@ -584,15 +606,29 @@ export function normalizeOblongPads(pins: OblongPinLike[]): number {
   const groupTotal = new Map<string, number>();
   const groupCollapsed = new Map<string, number>();
   const groupSurvivors = new Map<string, OblongPinLike[]>();
+  // Collapse to a round dot of diameter `d`, dropping the (now meaningless)
+  // stroke angle. Axis-symmetric: both dims are written, so it no longer
+  // matters which one carried the pen.
+  const collapseTo = (p: OblongPinLike, d: number): void => {
+    p.padW = d;
+    p.padH = d;
+    p.padAngleDeg = 0;
+    collapsed++;
+  };
   for (const p of pins) {
     if (p.padShape !== 'round' || p.padW <= 0 || p.padH <= 0 || p.padW === p.padH) continue;
-    if (p.padH <= p.padW) {                          // degenerate stroke → dot
-      p.padH = p.padW;
-      p.padAngleDeg = 0;
-      collapsed++;
+    const pen = Math.min(p.padW, p.padH);
+    const len = Math.max(p.padW, p.padH);
+    if (pen < MIN_PEN_MILS) {
+      // Not a credible pen — the short dimension is noise, not copper, so the
+      // record is read as "a dot roughly `len` across" rather than as a
+      // hairline. Keeps PL5TU1B's 15×1 escape stubs rendering as the Ø15 dots
+      // they have always been instead of turning them invisible.
+      collapseTo(p, len);
+      if (stats) stats.subPen++;
       continue;
     }
-    const key = `${p.padW}x${p.padH}`;
+    const key = `${pen}x${len}`;
     groupTotal.set(key, (groupTotal.get(key) ?? 0) + 1);
     if (plausibleAt(p, p.padAngleDeg) ||
         (plausibleAt(p, p.padAngleDeg + 90) &&       // perpendicular sibling-side lead
@@ -602,9 +638,7 @@ export function normalizeOblongPads(pins: OblongPinLike[]): number {
       list.push(p);
       continue;
     }
-    p.padH = p.padW;
-    p.padAngleDeg = 0;
-    collapsed++;
+    collapseTo(p, pen);
     groupCollapsed.set(key, (groupCollapsed.get(key) ?? 0) + 1);
   }
   // Majority pass: a size-group that is mostly implausible is exporter
@@ -612,9 +646,7 @@ export function normalizeOblongPads(pins: OblongPinLike[]): number {
   for (const [key, bad] of groupCollapsed) {
     if (bad * 2 <= (groupTotal.get(key) ?? 0)) continue;
     for (const p of groupSurvivors.get(key) ?? []) {
-      p.padH = p.padW;
-      p.padAngleDeg = 0;
-      collapsed++;
+      collapseTo(p, Math.min(p.padW, p.padH));
     }
   }
   return collapsed;
@@ -680,7 +712,7 @@ function isPlausiblePartValue(s: string): boolean {
 }
 
 function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: number } {
-  const EMPTY: PinData = { name: '', x: 0, y: 0, netIndex: 0, padW: 0, padH: 0, padAngleDeg: 0, padShape: 'rect' };
+  const EMPTY: PinData = { name: '', x: 0, y: 0, netIndex: 0, drill: 0, padW: 0, padH: 0, padAngleDeg: 0, padShape: 'rect' };
   const FAIL = { pin: EMPTY, next: data.length };
   if (ptr + 4 > data.length) return FAIL;
   const pinBlockSize = ru32(data, ptr);
@@ -689,9 +721,18 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
   if (ptr + 16 > data.length) return { ...FAIL, next: Math.min(pinBlockEnd, data.length) };
   const x = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
   const y = ri32(data, ptr) / XZZ_SCALE; ptr += 4;
-  ptr += 4; // u32 = 0 (constant)
+  // Drill diameter, same ÷10000 = mils scale as everything else; 0 on an SMD
+  // pin. Long documented as "u32 = 0 (constant)" because the boards surveyed
+  // first happen to be SMD-only. Across 32 .pcb files / 415,520 pins here,
+  // 253 pins carry a non-zero value and the annular-ring relation
+  // (drill < min(padW, padH)) holds on every single one — a flag field would
+  // have no reason to respect it. Values land in the 6.5–60 mil range, always
+  // on connector legs, headers and mounting pins, and never on a top-level
+  // 0x09 test pad (which is correct — probe points are surface features).
+  // Reported with independent Switch / PS5 / MSI evidence in issue #32.
+  const drill = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
   const padAngleDeg = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
-  if (ptr + 4 > data.length) return { pin: { ...EMPTY, x, y, padAngleDeg }, next: Math.min(pinBlockEnd, data.length) };
+  if (ptr + 4 > data.length) return { pin: { ...EMPTY, x, y, drill, padAngleDeg }, next: Math.min(pinBlockEnd, data.length) };
   const nameLen = ru32(data, ptr); ptr += 4;
   const name = (ptr + nameLen <= data.length) ? rstr(data, ptr, nameLen) : '';
   ptr += nameLen;
@@ -699,6 +740,14 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
   // each (27 bytes total). Reading the first one is sufficient — every chunk
   // is a copy on every part surveyed in A2442. Probably top/inner/bottom
   // layer copies of the same SMD pad shape on a multi-layer board.
+  //
+  // Known latent risk (issue #32): this is really a *terminated record list* —
+  // (w, h, type) records read until a type byte of 0x00, then a 5-byte
+  // terminator — and the fixed "read one, skip 32" only works because every
+  // pin carries exactly 3 records. That is true of 415,520 pins across all 32
+  // local files and of the reporter's Switch / PS5 / MSI corpus, so there is
+  // no counter-example to fix against; a file with 1, 2 or 4+ records would
+  // silently misalign the netIndex read below rather than fail loudly.
   let padW = 0, padH = 0, padShape: 'round' | 'rect' = 'rect';
   if (ptr + 9 <= data.length) {
     padW = ru32(data, ptr)     / XZZ_SCALE;
@@ -722,7 +771,7 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
       `trailing32=${hex(data, unk3Ptr, 32)}`,
     );
   }
-  return { pin: { name, x, y, netIndex, padW, padH, padAngleDeg, padShape }, next: Math.min(pinBlockEnd, data.length) };
+  return { pin: { name, x, y, netIndex, drill, padW, padH, padAngleDeg, padShape }, next: Math.min(pinBlockEnd, data.length) };
 }
 
 /** When > 0, dump the unknown-byte regions of the next N decoded parts to
@@ -862,23 +911,38 @@ interface ViaData { x: number; y: number; outer: number; netIndex: number; }
  *   [12..16) u32  drill diameter (÷10000 = mils)  — unused, the renderer
  *                                                   derives drill as a fixed
  *                                                   ratio of the pad ring.
- *   [16..20) u32  layer-from / flag (always 1 in surveyed Apple files)
- *   [20..24) u32  layer-to   / flag (always 5 in surveyed Apple files)
+ *   [16..20) u32  layer-from   (real layer index, not a flag — see below)
+ *   [20..24) u32  layer-to     (ditto; always > layer-from)
  *   [24..28) u32  net index  (matches netDict)
  *   [28..32) u32  padding
  *
- * Surveyed on A2442 820-02098-A (17,273 vias). Coordinate space matches the
- * part / segment blocks. The layer-pair fields stay flag-coded (1, 5) on every
- * via sampled — without a board exposing real blind/buried stack-ups we can't
- * confirm whether they're [from, to] or constant. Treat as through-hole and
- * leave `Via.layers` empty until counter-evidence appears.
+ * Coordinate space matches the part / segment blocks.
+ *
+ * The layer pair is a genuine layer span. An earlier survey of this same
+ * fixture — A2442 820-02098-A, 17,273 vias — recorded it as flag-coded
+ * (always 1, 5) and this comment told the next reader that no board exposed
+ * real blind/buried stack-ups. Both halves were wrong, and the counter-
+ * evidence was in the file the claim was written from: that board carries 19
+ * distinct pairs, of which (1, 5) is only 2,412. Across five via-carrying
+ * files here (A2442-A, A2485-A, S7-SM-G930FD, iPhone16E AP + BB): 18–41
+ * distinct pairs each, and `from < to` on every one of 45,000+ vias — never
+ * once inverted. Every value used also appears in that board's own segment
+ * layer set. Reported with the same finding on HAC-CPU-20 (2,559 vias, 25
+ * pairs) in issue #32.
+ *
+ * Still unused by choice, not for lack of evidence: `Via.layers` stays empty
+ * and every via renders through-hole, because acting on the span means
+ * deciding how a blind via should draw when its layers are hidden — a
+ * rendering question, not a parsing one. The drill at [12..16) is populated
+ * too (2.5–3 mil across this corpus) and equally unused.
  */
 function parseViaBlock(data: Uint8Array): ViaData | null {
   if (data.length < 28) return null;
   const x         = ri32(data, 0)  / XZZ_SCALE;
   const y         = ri32(data, 4)  / XZZ_SCALE;
   const outer     = ru32(data, 8)  / XZZ_SCALE;
-  // drill at offset 12, layer-from/to at 16/20 — unused for now
+  // drill at offset 12, layer span at 16/20 — parsed and documented above,
+  // deliberately not surfaced (see the block comment).
   const netIndex  = ru32(data, 24);
   return { x, y, outer, netIndex };
 }
@@ -1424,9 +1488,13 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
   // while positions and pad angles are still in the un-mirrored frame.
   {
     let collapsedTotal = 0;
-    for (const pd of partDataList) collapsedTotal += normalizeOblongPads(pd.pins);
+    const stats = { subPen: 0 };
+    for (const pd of partDataList) collapsedTotal += normalizeOblongPads(pd.pins, stats);
     if (collapsedTotal > 0) {
-      log.parser.log(`(pcb pads) oblong guard: collapsed ${collapsedTotal} implausible oblong pads to pen-width dots`);
+      log.parser.log(
+        `(pcb pads) oblong guard: collapsed ${collapsedTotal} implausible oblong pads to round dots` +
+        (stats.subPen > 0 ? ` (${stats.subPen} of them for a sub-${MIN_PEN_MILS}-mil pen — not manufacturable copper)` : ''),
+      );
     }
   }
 
@@ -1809,6 +1877,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         // the 1-based index when the file carries no name.
         name: '', number: p.name || String(i + 1),
         position: { x: p.x, y: p.y }, radius: r, side: pd.side, net,
+        ...(p.drill > 0 ? { drill: p.drill } : {}),
         ...(padBounds ? { padBounds } : {}),
         ...(hasGeom ? {
           padShape: p.padShape,
@@ -1913,7 +1982,12 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         `guardPassed=${guardPassed} → final angleDeg=${angleDeg}`,
       );
     }
-    parts.push({ name: pd.name, side: pd.side, type: 'smd', origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value ? { meta: { value: pd.value } } : {}) });
+    // A part is through-hole when any of its pins carries a drill. Until the
+    // drill field was decoded every XZZ part claimed 'smd', which is wrong
+    // exactly where the distinction matters — connectors, headers, mounting
+    // pins — and both the Info pane and MCP part_info read it.
+    const partType: Part['type'] = pd.pins.some(p => p.drill > 0) ? 'throughhole' : 'smd';
+    parts.push({ name: pd.name, side: pd.side, type: partType, origin: { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }, pins, bounds, ...(angleDeg !== undefined ? { angleDeg } : {}), ...(pd.value ? { meta: { value: pd.value } } : {}) });
 
     // Emit a Pad per pin with valid geometry (none when the file only
     // carries placeholder geometry — 12-mil dots are not copper pads).
@@ -1941,6 +2015,10 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         height: p.padH,
         angleDeg: p.padAngleDeg,
         attached: true,
+        // Guarded: a drill wider than the copper it sits in is not a hole.
+        // The relation holds on every pin in the corpus, but nothing upstream
+        // enforces it and the drill never reaches capsuleParams' own guards.
+        ...(p.drill > 0 && p.drill < Math.min(p.padW, p.padH) ? { drill: p.drill } : {}),
       });
     }
   }
@@ -1951,11 +2029,12 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
     return { position: { x: tp.x, y: tp.y }, side: 'top' as const, net: (raw2 === 'NC' || raw2 === 'UNCONNECTED') ? '' : raw2 };
   });
 
-  // Build vias from 0x02 blocks. `layers: []` = through-hole — the 0x02
-  // layer-pair fields are flag-coded (1, 5) on every surveyed Apple file with
-  // no observed variance, so we can't reliably decode blind/buried stack-ups
-  // yet. The renderer's via-overlay matches connected layers to nearby trace
-  // endpoints regardless of `layers`, so empty here is safe.
+  // Build vias from 0x02 blocks. `layers: []` = through-hole. The layer-pair
+  // fields ARE decodable — see parseViaBlock for the evidence that they carry
+  // a real span — but acting on them means deciding how a blind via draws when
+  // its layers are hidden, which is a rendering question we haven't answered.
+  // The renderer's via-overlay matches connected layers to nearby trace
+  // endpoints regardless of `layers`, so empty here stays safe.
   const vias = viasRaw.map(v => {
     const raw2 = netDict.get(v.netIndex) ?? '';
     return {

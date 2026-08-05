@@ -35,7 +35,7 @@ import {
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { pushLabel, sortLabelModel, type LabelModel } from './label-model';
-import { capsuleParams } from './pad-capsule';
+import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius } from './pad-capsule';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
 
@@ -190,6 +190,40 @@ export interface PadGeometry {
    *  octagonal copper). When present, drawPadShape traces the actual outline
    *  rather than the AABB rectangle. */
   polygon?: { x: number; y: number }[];
+}
+
+/** Emit ONE pin primitive — the shape a pin is drawn as, everywhere.
+ *
+ *  Before this existed, the base pin sprite was always a circle and six
+ *  highlight paths in BoardRenderer each re-derived "pin → shape" on the
+ *  premise that the sprite underneath them was a circle unless the pad
+ *  overlay was on. Oblong round pads broke that premise: an XZZ capsule
+ *  (shape 0x01 with w ≠ h) is a stadium in the file and was rendered as the
+ *  inscribed pen circle in the default view, so a connector leg looked like a
+ *  dot. Once the base sprite draws the capsule, every halo that still stamped
+ *  a circle put a bead in the capsule's waist.
+ *
+ *  `radius` is the pin's computed, settings-scaled radius; `grow` is extra
+ *  outward offset (selection padding, highlight bloom). For a capsule both
+ *  land on `capsuleParams`' geometric offset, so the pen tracks the pin-size
+ *  settings exactly as a circle's radius does — see capsuleGrowForRadius. */
+export function drawPinShape(gfx: Graphics, pin: Pin, radius: number, grow = 0): void {
+  if (isOblongRoundPad(pin)) {
+    const cap = capsuleParams(
+      pin.position.x, pin.position.y,
+      pin.padWidth!, pin.padHeight!, pin.padAngleDeg ?? 0,
+      capsuleGrowForRadius(pin, radius) + grow,
+    );
+    if (cap) {
+      gfx.arc(cap.c1x, cap.c1y, cap.r, cap.axisRad + Math.PI / 2, cap.axisRad + Math.PI * 1.5);
+      gfx.arc(cap.c2x, cap.c2y, cap.r, cap.axisRad - Math.PI / 2, cap.axisRad + Math.PI / 2);
+      gfx.closePath();
+      return;
+    }
+    // Degenerate (the grown stadium is no longer longer than it is wide) —
+    // fall through to the circle, which is what capsuleParams means by null.
+  }
+  gfx.circle(pin.position.x, pin.position.y, radius + grow);
 }
 
 export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
@@ -998,6 +1032,10 @@ export function buildBoardScene(
       const aabbW = p.bounds.maxX - p.bounds.minX;
       const aabbH = p.bounds.maxY - p.bounds.minY;
       if (aabbW <= 0 || aabbH <= 0) continue;
+      // Pre-rotation dims when the format carries them, AABB otherwise — the
+      // same rule drawPadShape applies internally, needed here for the drill.
+      const padW = (p.width  != null && p.width  > 0) ? p.width  : aabbW;
+      const padH = (p.height != null && p.height > 0) ? p.height : aabbH;
       const isAttached = p.attached !== false; // undefined → treat as attached
       // resolvePinColor honours user palette, NC-pattern detection, GND
       // bucketing, etc. so pad colours match the pin colours the user is
@@ -1017,10 +1055,29 @@ export function buildBoardScene(
         drawPadShape(gfx, p);
       }
       if (p.drill && p.drill > 0) {
-        const cx = (p.bounds.minX + p.bounds.maxX) / 2;
-        const cy = (p.bounds.minY + p.bounds.maxY) / 2;
-        topDrillGfx.circle(cx, cy, p.drill / 2);
-        botDrillGfx.circle(cx, cy, p.drill / 2);
+        // The hole in an oblong pad is a SLOT — the same capsule at a smaller
+        // radius, not a circle centred in it. A stadium is every point within
+        // r of a line segment, so the pad is that segment inflated by
+        // min(w,h)/2 and the slot is the SAME segment inflated by drill/2;
+        // the copper ring then comes out uniform all the way around, caps
+        // included, with no margin to tune. `grow` in capsuleParams is a true
+        // geometric offset (it cancels out of the centre→cap distance), so
+        // the slot is the existing draw call at a negative grow — no new
+        // geometry code. Square pads fall through capsuleParams' own
+        // degenerate guard to circle(drill/2), which is exactly right.
+        // Non-round shapes keep the plain circle: shrinking a rect or an
+        // octagon would draw a smaller rect or octagon, which is not a drill.
+        const short = Math.min(padW, padH);
+        if (p.shape === 'round' && p.drill < short) {
+          const shrink = -(short - p.drill) / 2;
+          drawPadShape(topDrillGfx, p, shrink);
+          drawPadShape(botDrillGfx, p, shrink);
+        } else {
+          const cx = (p.bounds.minX + p.bounds.maxX) / 2;
+          const cy = (p.bounds.minY + p.bounds.maxY) / 2;
+          topDrillGfx.circle(cx, cy, p.drill / 2);
+          botDrillGfx.circle(cx, cy, p.drill / 2);
+        }
         anyDrill = true;
       }
     }
@@ -1387,14 +1444,14 @@ export function buildBoardScene(
           if (padShape === 'square') {
             ncGfx.rect(pin.position.x - ri, pin.position.y - ri, ri * 2, ri * 2);
           } else {
-            ncGfx.circle(pin.position.x, pin.position.y, ri);
+            drawPinShape(ncGfx, pin, ri);
           }
         } else {
           const pinGfx = getGridPinGfx(isBottom, color, pin.position.x, pin.position.y);
           if (padShape === 'square') {
             pinGfx.rect(pin.position.x - r, pin.position.y - r, r * 2, r * 2);
           } else {
-            pinGfx.circle(pin.position.x, pin.position.y, r);
+            drawPinShape(pinGfx, pin, r);
           }
         }
       }

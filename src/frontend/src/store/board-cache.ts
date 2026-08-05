@@ -67,7 +67,10 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     exporters that write a component value there (MSI) show one in the Info
 //     pane. Boards whose label channel is placeholder text (Apple's serialised
 //     Device1/Device2/…) drop it board-wide and are unchanged.
-const PARSER_VERSION = 84;
+// 85: XZZ through-hole drill decoded (Pin.drill / Pad.drill / Part.type), and
+//     the oblong-pad guard is axis-symmetric — the pen is min(w, h), so
+//     capsules with the pen on the W axis stop collapsing into fat round dots.
+const PARSER_VERSION = 85;
 
 interface CachedBoard {
   key: string;

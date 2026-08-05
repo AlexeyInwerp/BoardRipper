@@ -29,9 +29,10 @@ import { selectionSetStore } from '../store/selection-set-store';
 import { worklistStore, MARK_COLOR_HEX, MEAS_KINDS, type NetMeasurement } from '../store/worklist-store';
 import { PART_MARK_SVG, NET_MARK_SVG, WATER_SVG, SURGE_SVG, MEAS_SVG, MEAS_LETTER, escapeHtml } from './worklist-tooltip-icons';
 import { openBoardSidebarTab } from '../panels/board-viewer-bridge';
-import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape } from './board-scene';
+import { buildBoardScene, drawOutline, drawOutlineDebug, updateBorderWidths, BOARD_COLORS, drawPadShape, drawPinShape } from './board-scene';
 import { LabelOverlay } from './label-overlay';
 import { focusHaloGeometry } from './focus-halo';
+import { isOblongRoundPad, capsuleGrowForRadius, capsulePolygon } from './pad-capsule';
 import { HdrSelectionOutline, isHdrCapable, rungForIntensity, type ScreenPoint } from './hdr-selection-outline';
 import type { LabelModel } from './label-model';
 import { compareStackHits, type StackHit } from './hit-test-ranking';
@@ -272,6 +273,26 @@ function drawPartOutline(
     gfx.rect(rb.px - sp, rb.py - sp, rb.pw + sp * 2, rb.ph + sp * 2);
   }
 }
+
+/** The outline a PART is highlighted with: its polygon/AABB outline, or — for
+ *  a single-pin part, which has no meaningful outline — the pin's own shape.
+ *  Four highlight paths (search results, primary selection, net members,
+ *  disco halo) carried drifted copies of this decision, all of them
+ *  hardcoding a circle for the single-pin case, which is wrong for a testpoint
+ *  or a mounting leg whose pad is a capsule. */
+function emitPartOutlineShape(
+  gfx: Graphics,
+  part: Part,
+  s: import('../store/render-settings').RenderSettings,
+  pad: number,
+): void {
+  if (part.pins.length === 1) {
+    drawPinShape(gfx, part.pins[0], computePinRadius(s, part.pins[0].radius), pad);
+    return;
+  }
+  drawPartOutline(gfx, part, s, pad);
+}
+
 
 export class BoardRenderer {
   /** Whether top layer should be visible (accounts for butterfly mode) */
@@ -1907,17 +1928,25 @@ export class BoardRenderer {
     const s = renderSettingsStore.settings;
     const sp = s.selectionPadding;
 
-    // Mirror drawPartOutline's shape choice exactly, so the HDR outline sits on
-    // the SDR one instead of beside it: OBB polygon when the part has one, AABB
-    // rect otherwise — and a circle (as a 24-gon) for single-pin parts, which
-    // is what renderSelection draws for them.
+    // Mirror emitPartOutlineShape's shape choice exactly, so the HDR outline
+    // sits on the SDR one instead of beside it: OBB polygon when the part has
+    // one, AABB rect otherwise — and for a single-pin part the pin's own
+    // shape, a circle as a 24-gon or a sampled capsule when the pad is an
+    // oblong stroke, which is what renderSelection draws for them.
     let world: Array<readonly [number, number]>;
     if (part.pins.length === 1) {
       const pin = part.pins[0];
       const r = computePinRadius(s, pin.radius) + sp;
-      world = [];
+      const capsule = isOblongRoundPad(pin)
+        ? capsulePolygon(
+            pin.position.x, pin.position.y,
+            pin.padWidth!, pin.padHeight!, pin.padAngleDeg ?? 0,
+            capsuleGrowForRadius(pin, computePinRadius(s, pin.radius)) + sp,
+          )
+        : null;
+      world = capsule ?? [];
       const SEGMENTS = 24;
-      for (let i = 0; i < SEGMENTS; i++) {
+      if (!capsule) for (let i = 0; i < SEGMENTS; i++) {
         const a = (i / SEGMENTS) * Math.PI * 2;
         world.push([pin.position.x + Math.cos(a) * r, pin.position.y + Math.sin(a) * r]);
       }
@@ -4050,13 +4079,7 @@ export class BoardRenderer {
         if (!part || !this.isPartVisible(part)) continue;
         const gfx = gfxFor(part);
         const outlines = gfx === this.butterflySelectionGfx ? botSearchOutlines : topSearchOutlines;
-        if (part.pins.length === 1) {
-          const pin = part.pins[0];
-          const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-          outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
-        } else {
-          outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
-        }
+        outlines.push(() => emitPartOutlineShape(gfx, part, s, s.selectionPadding));
       }
       for (const fn of topSearchOutlines) fn();
       if (topSearchOutlines.length > 0) {
@@ -4074,13 +4097,7 @@ export class BoardRenderer {
       const part = this.board.parts[sel.partIndex];
       if (part) {
         const gfx = gfxFor(part);
-        if (part.pins.length === 1) {
-          const pin = part.pins[0];
-          const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-          gfx.circle(pin.position.x, pin.position.y, r);
-        } else {
-          drawPartOutline(gfx, part, s, s.selectionPadding);
-        }
+        emitPartOutlineShape(gfx, part, s, s.selectionPadding);
         // Primary (clicked) part: bold WHITE accent + stronger fill so it is
         // unmistakably THE selection amid muted net-members (#23). White stays
         // distinct from the yellow members, the worklist mark colours
@@ -4199,12 +4216,13 @@ export class BoardRenderer {
           const storedPads = selPart.pins.length === 2 ? this.activeScene?.twoPinPadPolys.get(sel.partIndex) : null;
           const clamp = this.activeScene?.pinRadiusClamp.get(sel.partIndex) ?? Infinity;
 
-          // Pin sprite is always a classic circle now (see board-scene.ts
-          // pin-render block); when "Show pads" is on, the pad-overlay
-          // layer covers it with the real pad shape. The selection halo
-          // follows whichever is visible: pad shape when pads on,
-          // circle when off — so the halo never reveals more than the
-          // user already sees on the canvas.
+          // The pin sprite is a circle, or a capsule when the file gives the
+          // pad as an oblong stroke (drawPinShape); when "Show pads" is on,
+          // the pad-overlay layer covers it with the real pad shape. The
+          // selection halo follows whichever is visible: pad shape when pads
+          // are on, otherwise the SAME call the sprite used — so the halo can
+          // never reveal geometry the canvas is hiding, and never stamps a
+          // circle in the waist of a capsule.
           const usePadShapeForSel = boardStore.showPads;
           for (let pi = 0; pi < selPart.pins.length; pi++) {
             const pin = selPart.pins[pi];
@@ -4229,7 +4247,7 @@ export class BoardRenderer {
               arr.push(() => drawPadShape(gfx, padGeom));
             } else {
               const r = Math.min(computePinRadius(s, pin.radius), clamp);
-              arr.push(() => gfx.circle(pin.position.x, pin.position.y, r));
+              arr.push(() => drawPinShape(gfx, pin, r));
             }
           }
           for (const [color, fns] of pinDrawsByColor) {
@@ -4315,13 +4333,7 @@ export class BoardRenderer {
             const gfx = gfxFor(part);
             const isBot = gfx === this.butterflySelectionGfx;
             const outlines = isBot ? botPartOutlines : topPartOutlines;
-            if (part.pins.length === 1) {
-              const pin = part.pins[0];
-              const r = computePinRadius(s, pin.radius) + s.selectionPadding;
-              outlines.push(() => gfx.circle(pin.position.x, pin.position.y, r));
-            } else {
-              outlines.push(() => drawPartOutline(gfx, part, s, s.selectionPadding));
-            }
+            outlines.push(() => emitPartOutlineShape(gfx, part, s, s.selectionPadding));
           }
         }
 
@@ -4369,7 +4381,9 @@ export class BoardRenderer {
           // Same showPads gate as the single-pin selection redraw above —
           // glow + dim must trace the same shape as the pin sprite, or the
           // halo would re-reveal the real pad outline that we just stopped
-          // drawing in the pin layer.
+          // drawing in the pin layer. Off-pads goes through drawPinShape for
+          // exactly that reason: it IS the sprite's own call, so a capsule
+          // glows as a capsule without the halo widening to the raw pad.
           const usePadShapeForGlow = boardStore.showPads;
           if (usePadShapeForGlow && storedPads && storedPads[ref.pinIndex]) {
             const padPoly = storedPads[ref.pinIndex];
@@ -4391,8 +4405,8 @@ export class BoardRenderer {
           } else {
             const clamp = this.activeScene?.pinRadiusClamp.get(ref.partIndex) ?? Infinity;
             const r = Math.min(computePinRadius(s, pin.radius), clamp);
-            pushDim(() => gfx.circle(pin.position.x, pin.position.y, r));
-            pushGlow(() => gfx.circle(pin.position.x, pin.position.y, r + s.netHighlightGrow));
+            pushDim(() => drawPinShape(gfx, pin, r));
+            pushGlow(() => drawPinShape(gfx, pin, r, s.netHighlightGrow));
           }
         }
       }
@@ -5105,11 +5119,11 @@ export class BoardRenderer {
       gfx.fill({ color: ghostColor, alpha: ghostAlpha * 0.5 });
       gfx.stroke({ width: s.selectionWidth, color: ghostColor, alpha: outlineAlpha });
 
-      // Draw pins
+      // Draw pins — same shape the sprite uses, capsules included.
       for (const pin of part.pins) {
         const clamp = this.activeScene?.pinRadiusClamp.get(partIndex) ?? Infinity;
         const r = Math.min(computePinRadius(s, pin.radius), clamp);
-        gfx.circle(pin.position.x, pin.position.y, r);
+        drawPinShape(gfx, pin, r);
       }
       if (part.pins.length > 0) {
         gfx.fill({ color: ghostColor, alpha: ghostAlpha });
@@ -5188,14 +5202,7 @@ export class BoardRenderer {
 
     /** Single-pin parts have no polygon outline — emit a pin-shaped circle
      *  instead. Everything else delegates to the shared `drawPartOutline`. */
-    const emitShape = (part: Part, sp: number) => {
-      if (part.pins.length === 1) {
-        const pin = part.pins[0];
-        gfx.circle(pin.position.x, pin.position.y, computePinRadius(s, pin.radius) + sp);
-      } else {
-        drawPartOutline(gfx, part, s, sp);
-      }
-    };
+    const emitShape = (part: Part, sp: number) => emitPartOutlineShape(gfx, part, s, sp);
 
     /** Parts taking the solid-red treatment this frame: the whole net in disco
      *  mode, or the single previewed part during its burst. */

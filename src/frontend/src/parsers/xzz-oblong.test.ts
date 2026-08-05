@@ -73,12 +73,62 @@ describe('normalizeOblongPads (XZZ oblong-pad plausibility guard)', () => {
     expect(pins[1].padH).toBe(20);
   });
 
-  it('collapses degenerate stroke lengths (h ≤ w, e.g. 15×1) to a pen-width dot', () => {
-    const pins = [pin({ padH: 1 }), pin({ x: 100, padH: 8 })];
+  it('reads a sub-manufacturable pen (15×1) as a round dot, not a 1-mil hairline', () => {
+    // PL5TU1B writes 139 of these. The pen is min(w, h) = 1 mil, which is not
+    // copper anyone can fabricate, so the short dimension is noise and the
+    // record means "a dot about 15 mil across". Nothing else catches these —
+    // a hairline overlaps no neighbour, so the physical test would pass it.
+    const pins = [pin({ padH: 1 })];
     normalizeOblongPads(pins);
-    expect(pins[0].padH).toBe(15);
     expect(pins[0].padW).toBe(15);
-    expect(pins[1].padH).toBe(15);
+    expect(pins[0].padH).toBe(15);
+    expect(pins[0].padAngleDeg).toBe(0);
+  });
+
+  it('keeps a credible narrow pen (15×8) as a capsule instead of flattening it', () => {
+    // Same shape class as the 15×1 above but a fabricable 8-mil pen, and no
+    // neighbour to overlap. Under the old padH <= padW rule this collapsed to
+    // a Ø15 dot purely because the pen sat on the h axis.
+    const pins = [pin({ padH: 8 })];
+    normalizeOblongPads(pins);
+    expect(pins[0].padW).toBe(15);
+    expect(pins[0].padH).toBe(8);
+  });
+
+  it('keeps a capsule whose pen is on the W axis (71×20 @ 90°, HAC-CPU-20 USB-C leg)', () => {
+    // The axis regression: `w` is not always the pen. Reported on the Switch
+    // mounting legs (issue #32) and reproduced on A2485-820-02100-A, where 88
+    // pads of 37×10 became Ø37 dots — 3.5× too fat.
+    const pins = [pin({ padW: 71, padH: 20, padAngleDeg: 90 })];
+    normalizeOblongPads(pins);
+    expect(pins[0].padW).toBe(71);
+    expect(pins[0].padH).toBe(20);
+    expect(pins[0].padAngleDeg).toBe(90);
+  });
+
+  it('collapses an implausible W-axis capsule to the PEN, not to the long side', () => {
+    // Transposed mirror of the CPU1 stub case: 300×15 rather than 15×300. The
+    // collapse must land on Ø15 (the pen); the old rule wrote padH = padW and
+    // produced a Ø300 blob covering a dozen neighbours.
+    const row1 = [0, 25, 50, 75, 100].map(x =>
+      pin({ x: 6722 + x, y: 3026, padW: 300, padH: 15, padAngleDeg: 0 }));
+    const row2 = [0, 25, 50, 75, 100].map(x =>
+      pin({ x: 6722 + 12.5 + x, y: 3014, padW: 300, padH: 15, padAngleDeg: 0 }));
+    const pins = [...row1, ...row2];
+    normalizeOblongPads(pins);
+    for (const p of pins) {
+      expect(p.padW).toBe(15);
+      expect(p.padH).toBe(15);
+      expect(p.padAngleDeg).toBe(0);
+    }
+  });
+
+  it('reports sub-pen collapses separately through the stats out-param', () => {
+    const pins = [pin({ padH: 1 }), pin({ x: 100, padH: 2 }), pin({ x: 200, padH: 20, padAngleDeg: 90 })];
+    const stats = { subPen: 0 };
+    const collapsed = normalizeOblongPads(pins, stats);
+    expect(stats.subPen).toBe(2);
+    expect(collapsed).toBe(2);
   });
 
   it('ignores rect pads and square round pads', () => {
