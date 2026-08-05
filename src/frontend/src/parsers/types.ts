@@ -23,9 +23,12 @@ export interface Pin {
    *  (Allegro) let the renderer hit-test and highlight the full pad area
    *  rather than just the pin sprite. */
   padBounds?: BBox;
-  /** Drill diameter in mils for a through-hole pin — omitted on SMD. Mirrors
-   *  `Pad.drill`; carried on the pin as well so the pin layer can knock the
-   *  hole out with the pad overlay off (the default view). */
+  /** Drill diameter in mils for a through-hole pin — omitted on SMD.
+   *
+   *  The hole itself is drawn from `Pad.drill` in the pad-overlay layer, which
+   *  is on by default. This copy exists so the pin layer can knock the hole
+   *  out with the overlay off as well; nothing does that yet, and it needs a
+   *  separate drill Graphics in the pin batch rather than a shape swap. */
   drill?: number;
   /** Pad shape — when set, the selection-highlight renderer draws the
    *  matching primitive (circle for 'round', rounded rect for 'roundrect'
