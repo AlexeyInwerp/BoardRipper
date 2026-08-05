@@ -30,6 +30,9 @@ test.use({
 
 test('A2442-A: drilled pads carry slots, capsules keep the pen on either axis', async ({ page }) => {
   test.skip(!haveSample, 'samples/XZZ PCB SAMPLES A2442-820-02098-A not present');
+  // 6.8 MB board, two focus/settle cycles: ~18 s alone, but the suite's 30 s
+  // default is not enough once the rest of the run is competing for the CPU.
+  test.setTimeout(120000);
   await page.goto('/');
   await page.getByTestId('file-input').setInputFiles(SAMPLE);
   await expect(page.getByTestId('statusbar')).toContainText('Components:', { timeout: 120000 });
