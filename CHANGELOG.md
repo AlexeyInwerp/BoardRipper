@@ -1,6 +1,17 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.35.0 — 2026-08-06
+
+Connector legs on XZZ boards now draw with the hole in them — and where the pad
+is an elongated stroke, with the slot it is actually routed as. Two formats
+that had been sitting in the backlog are in: boardviews delivered as loose
+`.asc` section files, and ASRock `.cae`. Plus release notes that survive the
+update that delivered them.
+
+Most of this release came from outside: **Sean Johnson** reverse-engineered the
+XZZ drill field and the oblong-pad geometry down to the hex, and
+**@luiztessadri** filed both format requests. Apologies to the latter for the
+three-week wait — repair volume got ahead of the issue tracker.
 
 ### Updates
 
