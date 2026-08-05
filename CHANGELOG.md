@@ -14,6 +14,27 @@
   Found, documented down to the hex, and prototyped by **Sean Johnson
   ([@sjohnson1021](https://github.com/sjohnson1021))** in
   [#27](https://github.com/AlexeyInwerp/BoardRipper/issues/27). `721a34b9`
+- **XZZ through-holes look like through-holes.** A field the parser had
+  written off as a constant zero is the drill diameter, so connector legs,
+  headers and mounting pins now draw with a hole in them and their parts are
+  typed *through-hole* instead of claiming to be surface-mount. Where the pad
+  is an elongated stroke the hole is drawn as a matching **slot**, the way it
+  is actually routed, instead of a round dot floating in a blob. `5ca997e3`
+- **Oblong pads stop collapsing into fat dots.** The guard that decides
+  whether an elongated pad is real assumed the narrow side was always the same
+  axis. On a pad that ran the other way it flattened a 37 × 10 mil capsule
+  into a Ø37 circle — 3.5× too wide on exactly the connector footprints you
+  zoom in to read. Both axes are treated alike now, and the pads that really
+  are exporter noise (a "pad" one mil wide) are still filtered out. `5ca997e3`
+- **A capsule pad now looks like one everywhere.** With the pad overlay off,
+  correctly-parsed oblong pads were still drawn as dots, and selection,
+  hover, net highlight, search and the HDR outline each stamped a circle in
+  the middle of one. All of them now trace the real shape, and the pin-size
+  slider still moves it. `5ca997e3`
+- Found, evidenced across a Switch / PS5 / MSI corpus, and partly prototyped
+  by **Sean Johnson ([@sjohnson1021](https://github.com/sjohnson1021))** in
+  [#32](https://github.com/AlexeyInwerp/BoardRipper/issues/32) — the kind of
+  report that arrives with its own hex dumps and worked examples.
 
 ## v0.34.0 — 2026-08-05
 

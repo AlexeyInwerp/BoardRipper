@@ -87,13 +87,33 @@ test('A2442-A: drilled pads carry slots, capsules keep the pen on either axis', 
   await expect(canvas).toBeVisible();
   await page.screenshot({ path: 'test-results/xzz-drill-slots-pads-on.png' });
 
-  // …and with pads OFF, which is the default view and the one §2b is about:
-  // the base pin sprite itself must draw the capsule, and the selection halo
-  // must trace that capsule rather than stamping a circle in its waist.
+  // …and with pads OFF, which is what §2b is about: the base pin sprite must
+  // draw the capsule itself, and the selection halo must trace that capsule
+  // rather than stamping a circle in its waist.
+  //
+  // Pads are toggled at fit zoom and the part re-focused afterwards, NOT the
+  // other way round: toggling "Show pads" while zoomed in blanks the canvas
+  // permanently on this board. That reproduces identically on main (a scene
+  // rebuild while zoomed, same family as the post-rebuild cull noted in
+  // CLAUDE.md) and is not caused by anything here.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __boardStore?: { showPads: boolean; togglePads?: () => void; selectPart?: (i: number | null) => void };
+      __boardRenderer?: { fitToScreen?: () => void };
+    };
+    w.__boardStore?.selectPart?.(null);
+    w.__boardRenderer?.fitToScreen?.();
+  });
+  await page.waitForTimeout(600);
   await page.evaluate(() => {
     const w = window as unknown as { __boardStore?: { showPads: boolean; togglePads?: () => void } };
     if (w.__boardStore?.showPads) w.__boardStore.togglePads?.();
   });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => {
+    const w = window as unknown as { __boardStore?: { focusPart?: (n: string) => void } };
+    w.__boardStore?.focusPart?.('N4355');
+  });
+  await page.waitForTimeout(1500);
   await page.screenshot({ path: 'test-results/xzz-drill-slots-pads-off.png' });
 });
