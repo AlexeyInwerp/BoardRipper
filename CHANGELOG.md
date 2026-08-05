@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Updates
+
+- **What's new survives the update that delivered it.** The release notes used
+  to be gated on there being an update *available*, so applying one made them
+  vanish — leaving "You are on the latest version." and nothing to read, to
+  the one person who had just earned a reason to care. The notes for the
+  version you are running now live in the badge dropdown and on the start
+  page's Latest update card, cached locally at apply time so they survive a
+  post-swap network outage. `fa7ad0f5`
+
+### Interactive Mode
+
+- **A dragged slider no longer hides what it changed.** Interactive Mode
+  writes global, persisted settings — that is the feature — but a drag left no
+  trace, so a stray one read as a rendering bug. (It cost an afternoon chasing
+  "BRD pins are too big" that was `pinSizeScale` all along.) A row whose value
+  differs from the default now says so: an accent dot, an accent readout, and
+  its own reset button. The footer says where the change lands and puts the
+  whole group back in one click. `2e72faef`
+
 ### Formats
 
 - **XZZ boards from MSI now show component values.** MSI `.pcb` files write
