@@ -70,7 +70,11 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 // 85: XZZ through-hole drill decoded (Pin.drill / Pad.drill / Part.type), and
 //     the oblong-pad guard is axis-symmetric — the pen is min(w, h), so
 //     capsules with the pen on the W axis stop collapsing into fat round dots.
-const PARSER_VERSION = 85;
+// 86: XZZ outline no longer loses its rounded corners in the butterfly fold —
+//     the duplicate-edge guard was deleting every arc-sampled fillet, cutting
+//     the outline loop open (18 open fragments on A2485-820-02100-A). Cached
+//     boards hold the broken geometry and must re-parse.
+const PARSER_VERSION = 86;
 
 interface CachedBoard {
   key: string;
