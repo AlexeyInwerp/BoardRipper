@@ -1,6 +1,11 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.35.1 — 2026-08-07
+
+A hotfix for one long-standing defect: XZZ board outlines came apart at every
+rounded corner, and because the board fill closes each loose piece with a
+straight line, boards showed black wedges cut across them. It dates back to
+the first version of the two-halves fold.
 
 ### Formats
 
