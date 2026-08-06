@@ -389,6 +389,58 @@ function chainComponent(segIdxs: number[], segments: Segment[], eps = 1.0): Poin
   return chains;
 }
 
+/** Drop segments that are the SAME edge listed twice, in place. Returns how
+ *  many went.
+ *
+ *  "Same edge" means the endpoints coincide — not that they land near each
+ *  other. The distinction is the whole bug this replaced: the previous version
+ *  compared endpoints with a fixed 1-mil epsilon, which cannot express
+ *  duplication at all once a segment is shorter than the epsilon. Both
+ *  endpoints of a 0.8-mil segment sit within 1 mil of both endpoints of its
+ *  own neighbour, so each was deleted as a "duplicate" of the segment it was
+ *  joined to.
+ *
+ *  Arc-sampled corners produce exactly those segments: `parseXZZ` linearises
+ *  every outline arc into 9 pieces, so a 90° corner of r = 14.6 mil steps
+ *  0.8 mil at a time. The guard therefore ate the rounded corners — and only
+ *  the rounded corners — on 8 of the 32 corpus boards, cutting each outline
+ *  loop open at every fillet. Downstream that is invisible as a missing line
+ *  and very visible as a filled shape: `chainByComponent` emits the leftovers
+ *  as open sub-paths (up to 18 on A2485-820-02100-A, gaps to 5,934 mil on a
+ *  4,924-mil-wide board) and the renderer closes each one with a straight
+ *  line, laying black wedges across the board.
+ *
+ *  XZZ coordinates are integers ÷ 10000 and identical arcs sample to identical
+ *  floats, so a real duplicate is exactly equal. Quantising to 0.01 mil
+ *  (0.25 µm) absorbs any float noise while staying two orders of magnitude
+ *  below the shortest real segment, which makes "duplicate" and "neighbour"
+ *  distinguishable by construction rather than by a tuned threshold. Keyed
+ *  both ways round so a reversed copy of an edge still counts.
+ *
+ *  Worth knowing: across all 32 corpus files this has never once fired. The
+ *  premise it was written for — "XZZ files often list each outline edge
+ *  twice" — is unsupported by any sample here, and the reference parser
+ *  (OpenBoardView's XZZPCBFile.cpp) does not deduplicate at all. It is kept,
+ *  correctly implemented and logged, because a duplicated edge would give the
+ *  chain walker a degree-4 vertex to guess at. */
+export function dedupeCoincidentSegments(segments: Segment[]): number {
+  const Q = 100; // 1/0.01 mil
+  const k = (p: Point) => `${Math.round(p.x * Q)},${Math.round(p.y * Q)}`;
+  const seen = new Set<string>();
+  let write = 0;
+  for (let read = 0; read < segments.length; read++) {
+    const s = segments[read];
+    const a = k(s.p1), b = k(s.p2);
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    segments[write++] = s;
+  }
+  const dropped = segments.length - write;
+  segments.length = write;
+  return dropped;
+}
+
 /** Compute per-cluster bounding boxes for UI display of outline components. */
 function componentBBoxes(segments: Segment[]): Array<{ minX: number; minY: number; maxX: number; maxY: number; segCount: number }> {
   const tCluster = performance.now();
@@ -1577,20 +1629,7 @@ export function parseXZZ(buffer: ArrayBuffer): BoardData {
         const isBottom = fold.lowerIsBottom ? mid < fold.axis : mid > fold.axis;
         if (isBottom) { segments.splice(i, 1); removed++; }
       }
-      // Deduplicate: remove segments with both endpoints matching an earlier one
-      const eps = 1.0;
-      for (let i = segments.length - 1; i > 0; i--) {
-        const a = segments[i];
-        for (let j = 0; j < i; j++) {
-          const b = segments[j];
-          const match =
-            (Math.hypot(a.p1.x - b.p1.x, a.p1.y - b.p1.y) < eps &&
-             Math.hypot(a.p2.x - b.p2.x, a.p2.y - b.p2.y) < eps) ||
-            (Math.hypot(a.p1.x - b.p2.x, a.p1.y - b.p2.y) < eps &&
-             Math.hypot(a.p2.x - b.p1.x, a.p2.y - b.p1.y) < eps);
-          if (match) { segments.splice(i, 1); removed++; break; }
-        }
-      }
+      removed += dedupeCoincidentSegments(segments);
     } else {
       // Single connected outline: cut along the geometric midpoint.
       const outlineVals = segments.flatMap(s => fold.dim === 'x'

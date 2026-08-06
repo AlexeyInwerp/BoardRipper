@@ -97,6 +97,57 @@ Sequential entries, each containing:
 └──────────────┘
 ```
 
+### Outline integrity — the butterfly fold must not eat the loop
+
+The board outline is a set of **closed** loops: the perimeter plus one loop per
+cutout. Downstream this is not decorative — the renderer fills each sub-path,
+so an open loop is filled by joining its two loose ends with a straight line,
+and a broken outline shows up as black wedges laid across the board rather
+than as a missing line somewhere.
+
+Two facts make this fragile, and both were learned the hard way:
+
+1. **Arc-sampled corners produce very short segments.** Every outline arc is
+   linearised into 9 pieces, so a 90° fillet of r = 14.6 mil steps 0.8 mil at
+   a time. Any tolerance-based reasoning about outline segments has to stay
+   well under that, or it cannot tell a segment from its own neighbour.
+2. **The butterfly fold rewrites the segment list.** It discards the half it
+   is not keeping; anything else it removes comes straight out of the visible
+   outline.
+
+The bug that taught this (fixed 2026-08-07): the fold's duplicate-edge guard
+compared endpoints with a fixed **1-mil** epsilon. Both endpoints of a 0.8-mil
+segment lie within 1 mil of both endpoints of the segment it is joined to, so
+every arc-sampled fillet was deleted as a "duplicate" of its own neighbour.
+The loop was cut open at each rounded corner: on A2485-820-02100-A the outline
+went from one closed 767-point loop to **18 open fragments** with end gaps up
+to 5,934 mil on a 4,924-mil-wide board. Eight of the 32 corpus files were
+affected — the "PCB layer" and YiDianTong AP/BB exports, which are the ones
+with fine-sampled arcs.
+
+Two invariants worth keeping:
+
+- **A duplicate is a coincident edge, not a nearby one.** XZZ coordinates are
+  integers ÷ 10000 and identical arcs sample to identical floats, so real
+  duplicates are exactly equal; `dedupeCoincidentSegments` keys on endpoints
+  quantised to 0.01 mil, which is two orders of magnitude below the shortest
+  real segment. Duplicate and neighbour are then distinguishable by
+  construction rather than by a tuned threshold.
+- **Check the pre-fold geometry before blaming the file.** `BoardData.rawOutline`
+  holds the un-folded outline. Every corpus file chains into closed loops
+  there, so a broken final outline means the fold did it.
+
+For reference, OpenBoardView's `XZZPCBFile.cpp` neither deduplicates, chains,
+nor folds — it draws the layer-28 segments as a flat list. Chaining, filling
+and the butterfly fold are BoardRipper's own, so their correctness is ours to
+own; there is no upstream behaviour to defer to here.
+
+Residual known gap: `SM-G930F S7 YiDianTong` carries a genuine 1.03-mil
+discontinuity in its own outline, 3% beyond the chain walker's 1-mil vertex
+tolerance. It renders as closed (the fill spans 1 mil invisibly) and the
+tolerance is deliberately **not** widened to absorb it — a tuned threshold is
+what caused the bug above.
+
 ### Part Block
 
 After DES decryption:

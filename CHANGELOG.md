@@ -1,5 +1,22 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Formats
+
+- **XZZ board outlines are whole again.** On a lot of boards the outline came
+  apart — the edge broke into loose pieces at every rounded corner, and
+  because the board fill closes each piece with a straight line, the result
+  was black wedges cut across the board. The cause was a duplicate-edge guard
+  in the two-halves fold that compared endpoints with a fixed 1-mil tolerance:
+  a rounded corner is drawn as a run of 0.8-mil steps, and at that size a
+  segment is indistinguishable from the one it is joined to, so each corner
+  was deleted as a "duplicate" of itself. On the 16" A2485 the outline went
+  from one closed 767-point loop to 18 open fragments. Across the sample
+  corpus, boards with a correct outline go from 23 of 32 to 31 of 32 — the
+  remaining one has a real 26 µm gap in the file itself. Reported by the user
+  as long-standing; it dates back to the first version of the fold.
+
 ## v0.35.0 — 2026-08-06
 
 Connector legs on XZZ boards now draw with the hole in them — and where the pad
