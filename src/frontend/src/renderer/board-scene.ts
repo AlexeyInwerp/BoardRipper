@@ -194,6 +194,10 @@ export interface PadGeometry {
 
 /** Emit ONE pin primitive — the shape a pin is drawn as, everywhere.
  *
+ *  Proposed by Sean Johnson (@sjohnson1021) in issue #32, together with the
+ *  observation that six highlight paths in BoardRenderer were detectors of one
+ *  changed premise rather than six separate bugs.
+ *
  *  Before this existed, the base pin sprite was always a circle and six
  *  highlight paths in BoardRenderer each re-derived "pin → shape" on the
  *  premise that the sprite underneath them was a circle unless the pad
@@ -1056,7 +1060,8 @@ export function buildBoardScene(
       }
       if (p.drill && p.drill > 0) {
         // The hole in an oblong pad is a SLOT — the same capsule at a smaller
-        // radius, not a circle centred in it. A stadium is every point within
+        // radius, not a circle centred in it. Construction, proof and worked
+        // examples by Sean Johnson (@sjohnson1021), issue #32. A stadium is every point within
         // r of a line segment, so the pad is that segment inflated by
         // min(w,h)/2 and the slot is the SAME segment inflated by drill/2;
         // the copper ring then comes out uniform all the way around, caps

@@ -60,7 +60,12 @@ export interface CapsulePinLike {
 }
 
 /** True when a pin's pad is a genuine stadium: shape 'round' with two
- *  positive, unequal dimensions. Square round pads are circles, and every
+ *  positive, unequal dimensions.
+ *
+ *  This helper — and `drawPinShape` / `emitPartOutlineShape` beside it — were
+ *  proposed, by name and by responsibility, by Sean Johnson (@sjohnson1021)
+ *  in issue #32, along with the survey of the seven places that had each
+ *  answered this question separately. Square round pads are circles, and every
  *  other shape (rect, roundrect, poly) has its own drawing path.
  *
  *  The rule lives beside the capsule math rather than in board-scene.ts
@@ -74,6 +79,12 @@ export function isOblongRoundPad(pin: CapsulePinLike): boolean {
 }
 
 /** The `grow` that makes a capsule's pen exactly `2 * radius`.
+ *
+ *  Rests on the invariance Sean Johnson (@sjohnson1021) derived in issue #32:
+ *  `grow` is a true geometric offset, so it cancels out of the centre→cap
+ *  distance and slides a stadium's edges without moving its skeleton. Same
+ *  property, used in the other direction, is what lets a drill slot be the
+ *  pad's own draw call at a negative grow.
  *
  *  A circle takes pin-size settings as a scalar radius; a capsule has no
  *  single radius, so the same intent has to become an outward offset of the

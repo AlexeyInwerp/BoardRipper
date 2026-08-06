@@ -299,6 +299,21 @@ For a complete list of third-party sources, libraries, and attributions, see [TH
 
 BoardRipper exists because of the reverse-engineering work already done by the boardview community. Each entry below was consulted during development; full attribution and license details are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
+**Community reverse engineering incorporated into BoardRipper**
+
+- **Sean Johnson** ([@sjohnson1021](https://github.com/sjohnson1021)) — XZZ format
+  work, reverse-engineered independently and reported with full evidence:
+  the through-hole **drill diameter** in the pin sub-block and the slot
+  geometry for oblong through-holes ([#32](https://github.com/AlexeyInwerp/BoardRipper/issues/32)),
+  the **component value** carried in a part's second label block
+  ([#27](https://github.com/AlexeyInwerp/BoardRipper/issues/27)), the fact that
+  the oblong-pad pen is the shorter axis rather than a fixed field, the via
+  layer-span correction, and the `isOblongRoundPad` / `drawPinShape` /
+  `emitPartOutlineShape` refactor that unified seven copies of one decision.
+  Attribution is repeated at each site in the source. He also maintains
+  [XZZPCB-Layer-Viewer](https://github.com/sjohnson1021/XZZPCB-Layer-Viewer)
+  and an ImHex pattern for the format.
+
 **Parser references**
 
 - [KiCad](https://gitlab.com/kicad/code/kicad) *(GPL-3.0)* — Cadence Allegro BRD reader, transliterated to TypeScript. The reason BoardRipper as a whole is AGPL-3.0.

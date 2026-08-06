@@ -246,7 +246,8 @@ Within a part block, pins are encoded as typed sub-blocks:
 time, because the boards surveyed first are SMD-only. It is a drill: non-zero
 means the pin is through-hole, and the value is the hole diameter on the usual
 ÷10000 = mils scale. Evidence, gathered independently on two disjoint corpora
-(issue #32 — Switch / PS5 / MSI; and 32 local `.pcb` files, 415,520 pins):
+(Sean Johnson, [@sjohnson1021](https://github.com/sjohnson1021), issue #32 —
+Switch / PS5 / MSI; and 32 local `.pcb` files, 415,520 pins):
 
 - **The annular-ring relation never breaks.** The value is always strictly
   smaller than both pad dimensions — 253 non-zero readings here, zero
@@ -279,7 +280,8 @@ above as three fixed chunks. They are really a terminated record list —
 `(w, h, type)` records until a `type` byte of `0x00`, then a 5-byte terminator
 — and "read the first, skip 32" is only correct because every pin carries
 exactly 3 records. That holds for all 415,520 pins here and across the issue
-#32 corpus, so there is nothing to fix against; a file with 1, 2 or 4+ records
+#32 corpus (Sean Johnson, @sjohnson1021), so there is nothing to fix against;
+a file with 1, 2 or 4+ records
 would silently misalign the `netIndex` read rather than fail loudly.
 
 **Oblong pads (shape 0x01 with w ≠ h).** Shape `0x01` is not strictly a

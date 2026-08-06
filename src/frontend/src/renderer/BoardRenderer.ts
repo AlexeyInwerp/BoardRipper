@@ -276,6 +276,9 @@ function drawPartOutline(
 
 /** The outline a PART is highlighted with: its polygon/AABB outline, or — for
  *  a single-pin part, which has no meaningful outline — the pin's own shape.
+ *
+ *  Proposed by Sean Johnson (@sjohnson1021) in issue #32, which found the four
+ *  drifted copies this replaces.
  *  Four highlight paths (search results, primary selection, net members,
  *  disco halo) carried drifted copies of this decision, all of them
  *  hardcoding a circle for the single-pin case, which is wrong for a testpoint

@@ -595,7 +595,9 @@ export interface OblongPinLike {
  *  have w < h. It flattened real capsules elsewhere: 88 pads of 37×10 on
  *  A2485-820-02100-A became Ø37 dots, 3.5× too fat in the direction that
  *  matters for reading a connector footprint, and HAC-CPU-20's 71×20 USB-C
- *  mounting legs likewise (issue #32).
+ *  mounting legs likewise. The axis assumption, and that the pen is
+ *  min(w, h) rather than a fixed field, were identified by Sean Johnson
+ *  (@sjohnson1021) in issue #32.
  *
  *  Lengths run 1–350 mil against a typical 15-mil pen. Real for chip pads
  *  (15×20…40) and QFP leads (15×60, matches the vendor's assembly drawing) —
@@ -732,7 +734,10 @@ const PLACEHOLDER_SERIAL_RATIO = 0.8;
  *    [0x06] [size:u32] [26 unknown] [len:u32] [text…]
  *
  *  Returns `label: ''` for a block whose payload doesn't hold a readable
- *  string — the block is still skipped correctly via its size prefix. */
+ *  string — the block is still skipped correctly via its size prefix.
+ *
+ *  The block, and the 26-byte offset to its length prefix, were documented
+ *  from hex dumps by Sean Johnson (@sjohnson1021) in issue #27. */
 function readLabelSubBlock(data: Uint8Array, ptr: number): { label: string; next: number } {
   if (ptr + 4 > data.length) return { label: '', next: data.length };
   const size = ru32(data, ptr); ptr += 4;
@@ -781,7 +786,9 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
   // have no reason to respect it. Values land in the 6.5–60 mil range, always
   // on connector legs, headers and mounting pins, and never on a top-level
   // 0x09 test pad (which is correct — probe points are surface features).
-  // Reported with independent Switch / PS5 / MSI evidence in issue #32.
+  // Reverse-engineered by Sean Johnson (@sjohnson1021) and reported with
+  // Switch / PS5 / MSI evidence in issue #32; the annular-ring argument and
+  // the drill-vs-flag reasoning above are his.
   const drill = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
   const padAngleDeg = ru32(data, ptr) / XZZ_SCALE; ptr += 4;
   if (ptr + 4 > data.length) return { pin: { ...EMPTY, x, y, drill, padAngleDeg }, next: Math.min(pinBlockEnd, data.length) };
@@ -793,7 +800,8 @@ function parsePinSubBlock(data: Uint8Array, ptr: number): { pin: PinData; next: 
   // is a copy on every part surveyed in A2442. Probably top/inner/bottom
   // layer copies of the same SMD pad shape on a multi-layer board.
   //
-  // Known latent risk (issue #32): this is really a *terminated record list* —
+  // Known latent risk, spotted by Sean Johnson (@sjohnson1021) in issue #32:
+  // this is really a *terminated record list* —
   // (w, h, type) records read until a type byte of 0x00, then a 5-byte
   // terminator — and the fixed "read one, skip 32" only works because every
   // pin carries exactly 3 records. That is true of 415,520 pins across all 32
@@ -980,7 +988,7 @@ interface ViaData { x: number; y: number; outer: number; netIndex: number; }
  * distinct pairs each, and `from < to` on every one of 45,000+ vias — never
  * once inverted. Every value used also appears in that board's own segment
  * layer set. Reported with the same finding on HAC-CPU-20 (2,559 vias, 25
- * pairs) in issue #32.
+ * pairs) by Sean Johnson (@sjohnson1021) in issue #32.
  *
  * Still unused by choice, not for lack of evidence: `Via.layers` stays empty
  * and every via renders through-hole, because acting on the span means
