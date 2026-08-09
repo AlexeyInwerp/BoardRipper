@@ -1,5 +1,17 @@
 # BoardRipper changelog
 
+## Unreleased
+
+### Rendering
+
+- **Highlighting a net no longer draws a wedge across the board.** On boards
+  with elongated pins — PL5TU1B, where 5,413 of 9,002 pins are capsules —
+  selecting a net cut a wedge over the board, and some connection lines ran
+  off to the board corner. Both were one defect: a capsule was drawn without
+  first lifting the pen, so it stayed joined to whatever shape had been drawn
+  before it, and to the origin when nothing had. Introduced in v0.35.0, when
+  pins started drawing as capsules outside the pad overlay. `27d17f00`
+
 ## v0.35.1 — 2026-08-07
 
 A hotfix for one long-standing defect: XZZ board outlines came apart at every
