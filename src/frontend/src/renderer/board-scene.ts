@@ -35,7 +35,7 @@ import {
 } from '../store/render-settings';
 import type { RenderSettings } from '../store/render-settings';
 import { pushLabel, sortLabelModel, type LabelModel } from './label-model';
-import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius } from './pad-capsule';
+import { capsuleParams, isOblongRoundPad, capsuleGrowForRadius, type CapsuleParams } from './pad-capsule';
 import { DEFAULT_LAYER_PALETTE } from '../store/layer-store';
 import { themeStore, hexToInt } from '../store/themes';
 
@@ -219,15 +219,34 @@ export function drawPinShape(gfx: Graphics, pin: Pin, radius: number, grow = 0):
       capsuleGrowForRadius(pin, radius) + grow,
     );
     if (cap) {
-      gfx.arc(cap.c1x, cap.c1y, cap.r, cap.axisRad + Math.PI / 2, cap.axisRad + Math.PI * 1.5);
-      gfx.arc(cap.c2x, cap.c2y, cap.r, cap.axisRad - Math.PI / 2, cap.axisRad + Math.PI / 2);
-      gfx.closePath();
+      emitCapsulePath(gfx, cap);
       return;
     }
     // Degenerate (the grown stadium is no longer longer than it is wide) —
     // fall through to the circle, which is what capsuleParams means by null.
   }
   gfx.circle(pin.position.x, pin.position.y, radius + grow);
+}
+
+/** Emit a stadium as its own sub-path: two half-circle caps joined by the
+ *  straight flanks (the flanks are implicit in the arc-to-arc move).
+ *
+ *  The leading `moveTo` is load-bearing, not decoration. `arc()` follows
+ *  Canvas2D semantics — with a current point already set it draws a straight
+ *  line from that point to the arc's start. Pin capsules share a Graphics with
+ *  part outlines and net-highlight geometry, every one of which ends in
+ *  `closePath()` and therefore leaves a current point behind, so a capsule
+ *  that opened with a bare `arc()` joined the previous shape to this pin: a
+ *  wedge across the board, or a line running to the board corner when the
+ *  leftover point was the origin. Reported on PL5TU1B, whose pins are 60%
+ *  capsules. Anchoring the sub-path first makes each capsule independent of
+ *  whatever was drawn before it. */
+function emitCapsulePath(gfx: Graphics, cap: CapsuleParams): void {
+  const startAngle = cap.axisRad + Math.PI / 2;
+  gfx.moveTo(cap.c1x + Math.cos(startAngle) * cap.r, cap.c1y + Math.sin(startAngle) * cap.r);
+  gfx.arc(cap.c1x, cap.c1y, cap.r, startAngle, cap.axisRad + Math.PI * 1.5);
+  gfx.arc(cap.c2x, cap.c2y, cap.r, cap.axisRad - Math.PI / 2, startAngle);
+  gfx.closePath();
 }
 
 export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
@@ -251,10 +270,7 @@ export function drawPadShape(gfx: Graphics, p: PadGeometry, grow = 0): void {
       gfx.circle(cx, cy, Math.max(gW, gH) / 2);
       return;
     }
-    // Two half-circle arcs joined by the straight flanks (auto lineTo).
-    gfx.arc(cap.c1x, cap.c1y, cap.r, cap.axisRad + Math.PI / 2, cap.axisRad + Math.PI * 1.5);
-    gfx.arc(cap.c2x, cap.c2y, cap.r, cap.axisRad - Math.PI / 2, cap.axisRad + Math.PI / 2);
-    gfx.closePath();
+    emitCapsulePath(gfx, cap);
     return;
   }
 
