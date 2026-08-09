@@ -8,6 +8,8 @@ import type { PdfIndexFailedEntry } from '../pdf/pdf-index-client';
 import { boardStore } from '../store/board-store';
 import { pdfStore } from '../store/pdf-store';
 import { ensurePdfPanel, ensureBoardPanel } from '../store/dockview-api';
+import { loadLibraryBoard } from '../store/file-actions';
+import { loadBoardWithAscSiblings } from '../store/asc-open';
 import { lookupBoard } from '../store/apple-boards';
 import { IconStack2, IconHistory, IconFolder, IconPin, IconPinFilled, IconSettings, IconChevronsUp, IconChevronDown, IconDatabase, IconDeviceDesktop, IconCheck, IconFileText } from '@tabler/icons-react';
 import { log } from '../store/log-store';
@@ -483,7 +485,8 @@ export function LibraryPanel() {
     try {
       const fileObj = await databankStore.fetchFileBuffer(file);
       if (file.file_type === 'board') {
-        await boardStore.loadFiles([fileObj]);
+        // Split .asc deliveries open as one board — see loadLibraryBoard.
+        await loadLibraryBoard(file, fileObj);
 
         // Fetch bindings and auto-load bound PDFs (if enabled)
         if (autoPdf) {
@@ -506,7 +509,9 @@ export function LibraryPanel() {
             // Re-activate the board panel so auto-loaded PDFs don't steal focus
             const activeTab = boardStore.activeTabId;
             if (activeTab != null) {
-              ensureBoardPanel(activeTab, fileObj.name);
+              // The tab's own name — a merged .asc board is named after the
+              // board rather than the section that was clicked.
+              ensureBoardPanel(activeTab, boardStore.activeTab?.fileName ?? fileObj.name);
             }
           }
         }
@@ -1381,33 +1386,38 @@ function LiveBrowser({ browseResult, browsing, searchFilter, onIndexFolder }: {
     setCurrentPath(idx > 0 ? currentPath.slice(0, idx) : '');
   }, [currentPath]);
 
-  const handleOpenLiveFile = useCallback(async (entry: import('../store/databank-store').BrowseEntry) => {
-    const fullPath = currentPath ? currentPath + '/' + entry.name : entry.name;
-    try {
-      const res = await fetchWithCloudRetry(
-        `/api/files/path/${encodeURIComponent(fullPath)}`,
-        undefined,
-        {
-          label: entry.name,
-          onRetry: (attempt) => {
-            if (attempt === 2) {
-              boardStore.addToast(`Downloading "${entry.name}" from cloud storage…`, 'info');
-            }
-          },
+  /** Read one file of the browsed directory. Cloud-storage retries and the
+   *  503 codes are handled here, so both the clicked file and any `.asc`
+   *  siblings pulled in beside it get the same treatment. */
+  const readLiveFile = useCallback(async (name: string, modTime?: number): Promise<File> => {
+    const fullPath = currentPath ? currentPath + '/' + name : name;
+    const res = await fetchWithCloudRetry(
+      `/api/files/path/${encodeURIComponent(fullPath)}`,
+      undefined,
+      {
+        label: name,
+        onRetry: (attempt) => {
+          if (attempt === 2) {
+            boardStore.addToast(`Downloading "${name}" from cloud storage…`, 'info');
+          }
         },
-      );
-      if (!res.ok) {
-        if (res.status === 503) {
-          const { code, message } = await readCloudError(res);
-          boardStore.addToast(formatCloudErrorToast(entry.name, code, message), 'error');
-          throw new Error(`HTTP 503${code ? ` (${code})` : ''}`);
-        }
-        throw new Error(`HTTP ${res.status}`);
+      },
+    );
+    if (!res.ok) {
+      if (res.status === 503) {
+        const { code, message } = await readCloudError(res);
+        boardStore.addToast(formatCloudErrorToast(name, code, message), 'error');
+        throw new Error(`HTTP 503${code ? ` (${code})` : ''}`);
       }
-      const buffer = await res.arrayBuffer();
-      const fileObj = new File([buffer], entry.name, {
-        lastModified: entry.mod_time ? entry.mod_time * 1000 : Date.now(),
-      });
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const buffer = await res.arrayBuffer();
+    return new File([buffer], name, { lastModified: modTime ? modTime * 1000 : Date.now() });
+  }, [currentPath]);
+
+  const handleOpenLiveFile = useCallback(async (entry: import('../store/databank-store').BrowseEntry) => {
+    try {
+      const fileObj = await readLiveFile(entry.name, entry.mod_time);
 
       const ext = entry.name.split('.').pop()?.toLowerCase() ?? '';
       if (ext === 'pdf') {
@@ -1417,12 +1427,18 @@ function LiveBrowser({ browseResult, browsing, searchFilter, onIndexFolder }: {
         ensurePdfPanel(fileObj.name);
         pdfStore.switchTo(fileObj.name);
       } else {
-        await boardStore.loadFiles([fileObj]);
+        // A split .asc board opens whole: the directory listing is already
+        // on screen, so its sibling sections need no extra round trip to find.
+        const listed = (browseResult?.entries ?? []).filter(e => !e.is_dir);
+        await loadBoardWithAscSiblings(fileObj, {
+          siblingNames: async () => listed.map(e => e.name),
+          read: (name) => readLiveFile(name, listed.find(e => e.name === name)?.mod_time),
+        });
       }
     } catch (err) {
       log.ui.error('Failed to open live file:', err);
     }
-  }, [currentPath]);
+  }, [browseResult, readLiveFile]);
 
   if (browsing && !browseResult) return <div className="library-empty">Loading...</div>;
   if (!browseResult) return <div className="library-empty">Browse the live filesystem</div>;

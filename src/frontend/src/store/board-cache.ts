@@ -74,7 +74,12 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     the duplicate-edge guard was deleting every arc-sampled fillet, cutting
 //     the outline loop open (18 open fragments on A2485-820-02100-A). Cached
 //     boards hold the broken geometry and must re-parse.
-const PARSER_VERSION = 86;
+// 87: BDV ASC reads the two sections only the plain-file delivery ships —
+//     parts.asc (part rotation + package name) and nets.asc — and net names
+//     that contain spaces ("3D VISION") are no longer truncated at the first
+//     token on both pins and nails. Cached ASC boards hold the old, thinner
+//     parts and the split net names.
+const PARSER_VERSION = 87;
 
 interface CachedBoard {
   key: string;

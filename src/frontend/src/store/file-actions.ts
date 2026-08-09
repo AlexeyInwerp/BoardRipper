@@ -1,7 +1,8 @@
 import { boardStore } from './board-store';
 import { pdfStore } from './pdf-store';
-import { databankStore } from './databank-store';
+import { databankStore, type DatabankFile } from './databank-store';
 import { ensurePdfPanel, ensureBoardPanel } from './dockview-api';
+import { loadBoardWithAscSiblings } from './asc-open';
 import { log } from './log-store';
 
 /**
@@ -54,6 +55,30 @@ export async function openPdfFiles(
   }
 }
 
+/**
+ * Load a library board, pulling in the rest of its `.asc` sections when it is
+ * one file of a split Tebo-ICT delivery. Shared by the Library panel and the
+ * MCP `open_file` tool so a click and a tool call open the same board.
+ *
+ * Announces a merge — quietly opening five files when one was clicked would
+ * otherwise look like the app guessed at something.
+ */
+export async function loadLibraryBoard(file: DatabankFile, fileObj: File): Promise<void> {
+  const dir = file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : '';
+  await loadBoardWithAscSiblings(fileObj, {
+    siblingNames: () => databankStore.listFolderNames(dir),
+    read: async (name) => {
+      const path = dir ? `${dir}/${name}` : name;
+      // A sibling need not be indexed — the folder listing sees files the
+      // scanner skipped — so synthesise a row when the index has none.
+      const row =
+        databankStore.fileByPath(path) ??
+        ({ ...file, id: -1, path, filename: name, size: 0 } as DatabankFile);
+      return databankStore.fetchFileBuffer(row, { quiet: true });
+    },
+  });
+}
+
 /** Open a library file (board or PDF) by its databank file id — the
  *  bridge-callable core of LibraryPanel.handleOpenFile, so the MCP `open_file`
  *  tool can bring a library file into the live view. Boards auto-load their
@@ -72,9 +97,11 @@ export async function openLibraryFileById(
   const fileObj = await databankStore.fetchFileBuffer(file);
 
   if (file.file_type === 'board') {
-    await boardStore.loadFiles([fileObj]);
+    await loadLibraryBoard(file, fileObj);
     const tabId = boardStore.activeTabId;
-    if (tabId != null) ensureBoardPanel(tabId, fileObj.name);
+    // The tab's own name, not the clicked file's — a merged .asc board is
+    // named after the board, and the panel title has to agree with it.
+    if (tabId != null) ensureBoardPanel(tabId, boardStore.activeTab?.fileName ?? fileObj.name);
     // Auto-load bound (auto_open) PDFs so "open the board" also brings its schematic.
     const detail = await databankStore.fetchFileDetail(file.id);
     for (const binding of detail?.bindings ?? []) {
@@ -94,11 +121,16 @@ export async function openLibraryFileById(
       }
     }
     // Re-activate the board panel so auto-loaded PDFs don't steal focus.
-    if (tabId != null) ensureBoardPanel(tabId, fileObj.name);
+    // The tab's own name, not the clicked file's — a merged .asc board is
+    // named after the board, and the panel title has to agree with it.
+    if (tabId != null) ensureBoardPanel(tabId, boardStore.activeTab?.fileName ?? fileObj.name);
   } else {
     // PDF (or other) — open via the shared PDF path, then jump to a page.
     await openPdfFiles([fileObj]);
     if (page && page > 0) pdfStore.goToPage(page);
   }
-  return { name: fileObj.name, file_type: file.file_type };
+  // Report the board that ended up open — merging a split .asc delivery names
+  // the tab after the board, not after the section that was asked for.
+  const opened = file.file_type === 'board' ? boardStore.activeTab?.fileName : undefined;
+  return { name: opened ?? fileObj.name, file_type: file.file_type };
 }

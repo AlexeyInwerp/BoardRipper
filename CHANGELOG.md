@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Formats
+
+- **A split `.asc` board opens whole from one click.** The Tebo-ICT /
+  eM-Test toolchain ships a board as a folder of section files, and opening
+  one gave a fragment: `Pins.asc` a board with no outline, `Format.asc` a bare
+  rectangle, `Nails.asc` an empty screen, and `Nets.asc` / `Parts.asc` an
+  error. Clicking any of them in the Library now finds the rest in the same
+  folder and opens them as one board, saying so in a toast. The OS file picker
+  and drag-drop cannot see the folder, so there a lone section opens as before
+  plus a toast whose "Add sections…" button takes the missing files.
+- **`Parts.asc` and `Nets.asc` are read.** Two sections the obfuscated `.bdv`
+  bundle never carried, so they had never been seen: the placement list, which
+  is the only source of part rotation and package name in the whole delivery,
+  and the net listing. Net names containing spaces (`3D VISION`) are no longer
+  truncated at the first word on pins and nails alike. Cached ASC boards
+  re-parse.
+
 ### Rendering
 
 - **Highlighting a net no longer draws a wedge across the board.** On boards

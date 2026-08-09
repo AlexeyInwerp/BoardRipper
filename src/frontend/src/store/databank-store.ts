@@ -1890,6 +1890,30 @@ class DatabankStore extends Emitter {
     this.notify();
   }
 
+  /** File names in one library folder, without touching the Live-browse view
+   *  state `browse()` owns. Used to find the sibling sections of a split
+   *  `.asc` board. Starts from the index (authoritative in Electron, where the
+   *  local scan is complete) and merges the backend's directory listing, which
+   *  also sees files the index has not streamed in or indexed yet. */
+  async listFolderNames(dirPath: string): Promise<string[]> {
+    const prefix = dirPath ? `${dirPath}/` : '';
+    const names = new Set<string>();
+    for (const f of this._files) {
+      if (!f.path.startsWith(prefix)) continue;
+      if (f.path.indexOf('/', prefix.length) >= 0) continue;   // deeper than this folder
+      names.add(f.filename);
+    }
+    if (hasBackend()) {
+      const data = await this.apiFetch<BrowseResult>(
+        `/api/databank/browse?path=${encodeURIComponent(dirPath)}`,
+      );
+      for (const e of data?.entries ?? []) {
+        if (!e.is_dir) names.add(e.name);
+      }
+    }
+    return [...names];
+  }
+
   setBrowseMode(mode: 'database' | 'live') {
     this._browseMode = mode;
     try { localStorage.setItem('boardripper-library-browse-mode', mode); } catch { /* ignored */ }
@@ -2008,8 +2032,12 @@ class DatabankStore extends Emitter {
    *  "Downloading" phase — boardStore.loadFile is the only path that
    *  eventually calls finish(), so PDFs left the overlay open until the
    *  watchdog fired 30 s later. */
-  async fetchFileBuffer(file: DatabankFile): Promise<File> {
-    const trackProgress = file.file_type === 'board';
+  async fetchFileBuffer(file: DatabankFile, opts?: { quiet?: boolean }): Promise<File> {
+    // `quiet` is for the extra reads that belong to a load already being
+    // tracked — the sibling sections of a split .asc board. start() clears
+    // the overlay's log, so letting them track would blank the board's own
+    // progress and leave it attributed to the last sibling read.
+    const trackProgress = file.file_type === 'board' && !opts?.quiet;
     if (trackProgress) {
       loadProgressStore.start(file.filename, file.size);
       loadProgressStore.setPhase('Downloading', hasBackend()

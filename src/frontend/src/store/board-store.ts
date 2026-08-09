@@ -2,7 +2,8 @@ import type { BoardData, BoardRevision, Part, Pin } from '../parsers';
 import { Emitter } from './emitter';
 import { boardCache } from './board-cache';
 import { parseBoardFile, getFormat, getFileExtension } from '../parsers';
-import { bundleAscFiles } from '../parsers/bdv-asc-parser';
+import { bundleAscFiles, identifyAscSection } from '../parsers/bdv-asc-parser';
+import { ASC_SECTIONS, ascSectionFromName } from '../parsers/asc-siblings';
 import { parseBoardFileInWorker, isWorkerTransportError } from '../parsers/parse-in-worker';
 import { FZKeyError } from '../parsers/fz-parser';
 import { fzKeyStore } from './fz-key-store';
@@ -507,15 +508,31 @@ export interface Toast {
   action?: { label: string; run: () => void };
 }
 
+/** The board name the Tebo-ICT / eM-Test tools print at the head of every
+ *  section file, before the two-space gap that separates it from the licence
+ *  block: ` X555LD R36        Tebo-ICT,  license #Style` → `X555LD R36`.
+ *  Returns '' when no file carries a plausible one. */
+function ascHeaderBoardName(read: Array<{ text: string }>): string {
+  for (const { text } of read) {
+    const first = text.split(/\r?\n/, 1)[0] ?? '';
+    const m = /^\s*([A-Za-z0-9][A-Za-z0-9 ._-]{2,39}?)\s{2,}\S/.exec(first);
+    if (m) return m[1].trim();
+  }
+  return '';
+}
+
 /** Read a set of plain `.asc` section files and bundle them into one virtual
  *  file for the BDV ASC parser. Returns null when none of them holds a
  *  recognisable section.
  *
  *  The name is the sources' longest common prefix (`LA-L031P_pins.asc` +
- *  `LA-L031P_nails.asc` → `LA-L031P`), falling back to the first file's stem,
- *  so the tab is named after the board rather than after whichever file was
- *  clicked first. `lastModified` takes the newest source so the board cache
- *  keys stably across re-opens instead of missing every time. */
+ *  `LA-L031P_nails.asc` → `LA-L031P`), then the board name the vendor prints
+ *  in every section's header (the delivery whose files are bare `Pins.asc` /
+ *  `Nails.asc` has no shared prefix at all, and `Format.asc` is a poor name
+ *  for a board), and only then the first file's stem — so the tab is named
+ *  after the board rather than after whichever file was clicked first.
+ *  `lastModified` takes the newest source so the board cache keys stably
+ *  across re-opens instead of missing every time. */
 async function mergeAscFiles(files: File[]): Promise<File | null> {
   const read = await Promise.all(files.map(async f => ({ name: f.name, text: await f.text() })));
   const bundled = bundleAscFiles(read);
@@ -528,7 +545,7 @@ async function mergeAscFiles(files: File[]): Promise<File | null> {
     prefix = prefix.slice(0, i);
   }
   prefix = prefix.replace(/[\s._-]+$/, '');
-  const name = `${prefix || stems[0]}.asc`;
+  const name = `${prefix || ascHeaderBoardName(read) || stems[0]}.asc`;
   const lastModified = Math.max(...files.map(f => f.lastModified));
   log.parser.log(`(asc) merged ${files.length} section files into "${name}": ${files.map(f => f.name).join(', ')}`);
   return new File([bundled], name, { type: 'text/plain', lastModified });
@@ -1127,6 +1144,47 @@ class BoardStore extends Emitter {
     for (const file of rest) {
       await this.loadFile(file);
     }
+    if (asc.length === 1) await this.offerAscSiblings(asc[0]);
+  }
+
+  /** A single `.asc` picked from the OS file dialog or dropped on the window
+   *  is usually one section of a split board — but a sandboxed File has no
+   *  folder, so the siblings cannot be found the way the Library finds them.
+   *  Say what is missing and offer a picker that takes the rest. */
+  private async offerAscSiblings(file: File) {
+    const head = await file.slice(0, 8192).text();
+    // A file already carrying section markers is a whole bundle, not a piece
+    // of one — nothing is missing from it.
+    if (/<<\w+\.asc>>/i.test(head)) return;
+    const section = ascSectionFromName(file.name) ?? identifyAscSection(head)?.replace('.asc', '');
+    if (!section) return;
+    const missing = ASC_SECTIONS.filter(s => s !== section);
+    this.addToast(
+      `"${file.name}" is the ${section} section of a split ASC board — ${missing.join(', ')} are separate files.`,
+      'info',
+      {
+        label: 'Add sections…',
+        run: () => this.pickAscSiblings(file),
+      },
+      12000,
+    );
+  }
+
+  /** Second half of the offer: take the remaining section files, replace the
+   *  partial tab with the merged board. */
+  private pickAscSiblings(opened: File) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.asc';
+    input.onchange = async () => {
+      const picked = Array.from(input.files ?? []).filter(f => f.name !== opened.name);
+      if (picked.length === 0) return;
+      const partial = this._tabs.find(t => t.fileName === opened.name);
+      if (partial) this.closeTab(partial.id);
+      await this.loadFiles([opened, ...picked]);
+    };
+    input.click();
   }
 
   /**
