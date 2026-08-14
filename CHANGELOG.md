@@ -4,6 +4,14 @@
 
 ### Formats
 
+- **`.fz` boardviews written with old-Mac line endings open.** Some exports
+  end every record with a bare carriage return instead of a newline, and those
+  files failed with "contains no parts or pins" — the file was read and
+  unpacked correctly, but the whole board arrived as a single 745,000-character
+  line, so not one component was ever picked out of it. All three line-ending
+  conventions are now accepted. Canary: XPS 15 9530 Compal HD055 LA-L663P
+  Rev 1.0, which reads as 4,069 parts and 15,148 pins across 2,722 nets.
+  Reported by the user.
 - **A split `.asc` board opens whole from one click.** The Tebo-ICT /
   eM-Test toolchain ships a board as a folder of section files, and opening
   one gave a fragment: `Pins.asc` a board with no outline, `Format.asc` a bare
