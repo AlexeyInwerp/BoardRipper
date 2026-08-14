@@ -1,6 +1,12 @@
 # BoardRipper changelog
 
-## Unreleased
+## v0.35.3 — 2026-08-14
+
+Two boardviews that would not open now do. One is an `.fz` written with old-Mac
+line endings; the other is a board delivered as a folder of loose `.asc` section
+files, which from now on opens whole from a click on any one of them — and reads
+two sections nothing had ever read. Plus the wedge that net highlighting cut
+across boards with elongated pins.
 
 ### Formats
 
@@ -11,7 +17,7 @@
   line, so not one component was ever picked out of it. All three line-ending
   conventions are now accepted. Canary: XPS 15 9530 Compal HD055 LA-L663P
   Rev 1.0, which reads as 4,069 parts and 15,148 pins across 2,722 nets.
-  Reported by the user.
+  Reported by the user. `f06769e2`
 - **A split `.asc` board opens whole from one click.** The Tebo-ICT /
   eM-Test toolchain ships a board as a folder of section files, and opening
   one gave a fragment: `Pins.asc` a board with no outline, `Format.asc` a bare
@@ -19,13 +25,13 @@
   error. Clicking any of them in the Library now finds the rest in the same
   folder and opens them as one board, saying so in a toast. The OS file picker
   and drag-drop cannot see the folder, so there a lone section opens as before
-  plus a toast whose "Add sections…" button takes the missing files.
+  plus a toast whose "Add sections…" button takes the missing files. `6887a7d6`
 - **`Parts.asc` and `Nets.asc` are read.** Two sections the obfuscated `.bdv`
   bundle never carried, so they had never been seen: the placement list, which
   is the only source of part rotation and package name in the whole delivery,
   and the net listing. Net names containing spaces (`3D VISION`) are no longer
   truncated at the first word on pins and nails alike. Cached ASC boards
-  re-parse.
+  re-parse. `6887a7d6`
 
 ### Rendering
 
