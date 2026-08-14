@@ -136,6 +136,16 @@ S!<value1>!<value2>!...
 - Lines starting with `S` contain data records
 - Fields are separated by `!`
 
+**Line endings are not consistent across exporters.** All three of LF, CRLF and
+bare CR (classic-Mac) occur in the wild — some GOCCANH `GCVN` exports use CR
+only, with no LF anywhere in the document. The parser therefore splits on
+`/\r\n?|\n/`, not `/\r?\n/`. This matters more than it looks: a CR-only file
+inflates perfectly and then presents as a single multi-hundred-thousand-character
+"line", so every record is silently skipped and the failure surfaces at the far
+end as "contains no parts or pins" rather than as anything resembling a
+line-ending problem. Canary: *XPS 15 9530 Compal HD055 LA-L663P Rev 1.0*
+(4,069 parts / 15,148 pins / 2,722 nets). Test: `fz-line-endings.test.ts`.
+
 ### REFDES Block (Components)
 
 ```

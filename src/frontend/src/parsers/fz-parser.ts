@@ -214,7 +214,11 @@ function parseContent(text: string, unitIsMm: boolean): { parts: FZPart[]; pins:
   type Block = 'REFDES' | 'NET_NAME' | 'TESTVIA' | 'OTHER';
   let currentBlock: Block = 'OTHER';
 
-  for (const raw of text.split(/\r?\n/)) {
+  // Split on CRLF, bare LF, *and* bare CR. Some GOCCANH "GCVN" exports use
+  // classic-Mac CR-only endings (canary: XPS 15 9530 Compal HD055 LA-L663P) —
+  // a `\r?\n` splitter yields one 745k-char "line", so no record is ever seen
+  // and the file dies on "contains no parts or pins".
+  for (const raw of text.split(/\r\n?|\n/)) {
     const line = raw.trim();
     if (!line) continue;
 

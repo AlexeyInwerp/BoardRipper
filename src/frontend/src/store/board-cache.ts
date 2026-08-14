@@ -79,7 +79,12 @@ const MAX_PDF_TEXT_ENTRIES = 30;
 //     that contain spaces ("3D VISION") are no longer truncated at the first
 //     token on both pins and nails. Cached ASC boards hold the old, thinner
 //     parts and the split net names.
-const PARSER_VERSION = 87;
+// 88: FZ content splits on bare CR (classic-Mac) endings, not just LF/CRLF.
+//     A CR-only export inflated fine but yielded one giant "line", so no record
+//     was ever read and the board died on "contains no parts or pins" (canary:
+//     XPS 15 9530 Compal HD055 LA-L663P). Those files never cached — they threw
+//     — but a mixed-ending file could have cached a partial board, so re-parse.
+const PARSER_VERSION = 88;
 
 interface CachedBoard {
   key: string;
